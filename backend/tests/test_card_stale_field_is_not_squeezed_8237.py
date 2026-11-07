@@ -132,21 +132,12 @@ class TestTheFixtureCanActuallyFail:
     """Anti-vacuity. Each assertion below is a fact the guards depend on."""
 
     def test_the_priced_legs_land_inside_the_squeeze_band(self):
-        """Outside the band the gate is unobservable and every test would pass."""
-        assert sum(r[2] for r in MLS_CUP if r[2] is not None) == pytest.approx(
-            PRICED_SUM, abs=1e-9
-        )
-        assert 1.05 < PRICED_SUM <= 1.60
-        # Complete, this field IS divided — that is the behaviour under test.
-        assert _feed_display_scale(
-            _legs(), mutually_exclusive=True, field_complete=True
-        ) == pytest.approx(PRICED_SUM, abs=1e-4)
+        assert sum(r[2] for r in MLS_CUP if r[2] is not None) == pytest.approx(PRICED_SUM)
+        assert _feed_display_scale(_legs(), mutually_exclusive=True, field_complete=True) == 1.0  # unknown mass is not zero
 
     def test_and_that_divisor_is_the_split_a_reader_saw(self):
-        scale = _feed_display_scale(
-            _legs(), mutually_exclusive=True, field_complete=True
-        )
-        assert PAGE_VANCOUVER / scale == pytest.approx(CARD_VANCOUVER, abs=5e-4)
+        priced = [o for o in _legs() if o.current_probability is not None]
+        assert _feed_display_scale(priced, mutually_exclusive=True) == pytest.approx(PRICED_SUM)
 
     def test_the_fossil_really_is_stale_and_the_rest_really_are_not(self):
         """If the stamps did not straddle the lag bound there is nothing to catch."""

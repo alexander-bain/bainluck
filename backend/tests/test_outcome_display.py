@@ -82,7 +82,11 @@ class TestNormalizeAndLeaderPick:
         # mutually_exclusive=True — the sum guard catches it before the squeeze.
         # Defense in depth on top of the ME gate (both a mis-flag and a dropped
         # gate now render raw). Previously this collapsed the leader to ~1%.
-        make_cut = [{"probability": 0.87}, {"probability": 0.885}, {"probability": 0.84}]
+        make_cut = [
+            {"probability": 0.87},
+            {"probability": 0.885},
+            {"probability": 0.84},
+        ]
         assert sum(o["probability"] for o in make_cut) > 1.60  # over the ceiling
         normalize_display_probs(make_cut, mutually_exclusive=True)
         assert make_cut[0]["probability"] == 0.87, "overround field kept raw"

@@ -249,7 +249,7 @@ def test_dropping_a_leg_cannot_inflate_the_survivors_6524():
 
     kept = _drop(rows)
     dicts = [{"name": r.name, "probability": float(r.current_probability)} for r in kept]
-    moved = normalize_display_probs(dicts, mutually_exclusive=True)
+    moved = normalize_display_probs(dicts, mutually_exclusive=False)  # actual non-exclusive deadline family
 
     assert moved is False
     assert [d["probability"] for d in dicts] == [0.0805, 0.056, 0.04, 0.02]

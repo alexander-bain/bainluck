@@ -417,11 +417,11 @@ def test_the_city_ladder_carries_a_price_for_every_bucket():
     for label in ("63°F or below", "64-65°F"):
         bucket = dist[label]
         assert bucket["prob"] == 0, "the specimen is only interesting while it rounds to 0"
-        assert bucket["probability"] == pytest.approx(FIVE_HUNDREDTHS_OF_A_POINT)
+        assert bucket["probability"] == pytest.approx(FIVE_HUNDREDTHS_OF_A_POINT / 1.0005, abs=1e-8)
 
     # Controls: the buckets that were never wrong keep both fields agreeing.
     assert dist["78-79°F"]["prob"] == 62
-    assert dist["78-79°F"]["probability"] == pytest.approx(0.62)
+    assert dist["78-79°F"]["probability"] == pytest.approx(0.62 / 1.0005, abs=1e-8)
 
 
 def test_hero_climate_and_wildcards_all_carry_the_raw_value():
@@ -482,3 +482,69 @@ def test_the_wildcard_card_stops_contradicting_its_own_sparkline():
 
     card = asyncio.run(get_wildcards(AsyncDB(session)))[0]
     assert card["probability"] * 100 == pytest.approx(99.5)
+
+
+def test_settled_monthly_rain_and_natural_event_rows_carry_settled_flag_12093():
+    """#12093 Defect 3: settled 1.0 legs on /weather monthly rainfall and
+    natural events carry ``settled: True`` while live 0.995 legs carry
+    ``settled: False``."""
+    session = _new_session()
+    session.add(
+        _market(
+            80,
+            "KXRAINTPAM-26NOV",
+            f"Rain in Tampa in {_TOMORROW:%b %Y}?",
+            days_out=25.0,
+        )
+    )
+    tampa_won = _outcome(8001, 80, "Above 1 inch", 1.0)
+    tampa_won.is_winner = True
+    tampa_won.resolution_source = "api_settlement"
+    session.add(tampa_won)
+    session.add(_outcome(8002, 80, "Above 2 inches", 0.925))
+
+    _stub(
+        session,
+        81,
+        "KXRAINSEAM-26NOV",
+        f"Rain in Seattle in {_TOMORROW:%b %Y}?",
+        [("Above 1 inch", NINETY_NINE_FIVE)],
+        days_out=25.0,
+    )
+
+    session.add(
+        _market(
+            82,
+            "KXHURCAT-26TRUDY",
+            "Hurricane Trudy category?",
+            days_out=25.0,
+        )
+    )
+    for idx, (label, prob, won) in enumerate(
+        [
+            ("Category 1 or above", 1.0, True),
+            ("Category 2 or above", 1.0, True),
+            ("Category 3 or above", 1.0, True),
+            ("Category 4 or above", 0.01, None),
+            ("Category 5 or above", 0.01, None),
+        ]
+    ):
+        o = _outcome(8200 + idx, 82, label, prob)
+        o.is_winner = won
+        o.resolution_source = "api_settlement" if won else None
+        session.add(o)
+
+    session.commit()
+    db = AsyncDB(session)
+
+    rain_payload = asyncio.run(get_rain(db))
+    monthly_by_city = {row["city"]: row for row in rain_payload["monthly"]}
+    assert monthly_by_city["Tampa"]["settled"] is True
+    assert monthly_by_city["Seattle"]["settled"] is False
+
+    events_payload = asyncio.run(get_events(db))
+    trudy = next(
+        row for row in events_payload["hurricane"] if "Trudy" in row["q"]
+    )
+    assert trudy["leader"] == "Category 3 or above"
+    assert trudy["settled"] is True

@@ -983,12 +983,17 @@ def _served_venue_points(res, name):
 
 
 def _assert_every_raw_point_served(res, raw_nagel, raw_henning):
-    """Each leg's served venue points are exactly its raw candles: own clock, own value."""
+    """Keep each raw quote and clock; print the contemporaneous full-field share."""
+    mass = {ts: p + dict(raw_henning)[ts] for ts, p in raw_nagel}
     for name, raw in (("Arthur Nagel", raw_nagel), ("Philip Henning", raw_henning)):
         served = _served_venue_points(res, name)
         assert sorted(served) == sorted(ts for ts, _ in raw), name
+        points = {datetime.fromisoformat(pt["timestamp"]): pt
+                  for o in res["outcomes"] if o["name"] == name
+                  for pt in o["history"] if pt.get("provenance") == "venue_history"}
         for ts, p in raw:
-            assert served[ts] == pytest.approx(p, abs=1e-9), (name, ts)
+            assert served[ts] == pytest.approx(p / mass[ts], abs=1e-8), (name, ts)
+            assert points[ts].get("raw_probability", served[ts]) == pytest.approx(p, abs=1e-9)
 
 
 def _complete_synchronous_bank(book_sum):
@@ -1013,17 +1018,15 @@ def test_R1_a_complete_synchronous_kalshi_bank_off_one_dollar_is_served_whole(bo
     _assert_every_raw_point_served(res, nagel, henning)
 
 
-def test_R1_a_kalshi_bank_the_squeeze_would_move_is_still_refused_whole():
-    """The printed-scale contract is unchanged: at 1.06 the squeeze would print a
-    number the venue never quoted, so the WHOLE series is refused, as on base."""
+def test_R1_a_complete_kalshi_bank_is_normalized_without_erasing_its_points():
+    """#11995 replaces the old 1.05 threshold with a full-field normalization."""
     nagel, henning = _complete_synchronous_bank(1.06)
     _, res = _serve_kalshi_bank(nagel, henning)
     vh = res["venue_history"]
-    assert vh["points_served"] == 0, vh
+    assert vh["points_served"] == 60, vh
     assert vh.get("incoherent_pair_points_withheld", 0) == 0, vh
-    assert "printed_scale_is_not_the_venue_raw_scale" in json.dumps(vh.get("refusals") or []), vh
-    assert not _served_venue_points(res, "Arthur Nagel")
-    assert not _served_venue_points(res, "Philip Henning")
+    assert not vh.get("refusals"), vh
+    _assert_every_raw_point_served(res, nagel, henning)
 
 
 def test_R1_the_retained_r3_pairs_off_one_dollar_survive_at_their_own_clocks_and_values():

@@ -533,3 +533,61 @@ def test_unknown_listing_with_held_issue_performs_no_write(monkeypatch):
                                             error="truncated"),
         )
         assert res["action"] == "dedup_unknown_no_op"
+
+
+# --------------------------------------------------------------------------
+# #11958 — an issue at GitHub's 2,500-comment cap is continued, not 403'd forever
+# --------------------------------------------------------------------------
+def _full(number, body=None):
+    issue = _issue(number, body=_decl() if body is None else body)
+    issue["comments"] = sf.GITHUB_COMMENT_CAP
+    return issue
+
+
+def test_issue_is_full_reads_the_comment_count():
+    assert sf.issue_is_full(_full(2728))
+    assert not sf.issue_is_full({**_issue(1), "comments": sf.GITHUB_COMMENT_CAP - 1})
+    assert not sf.issue_is_full(_issue(1))  # absent count: not full
+    assert not sf.issue_is_full({**_issue(1), "comments": "junk"})
+
+
+def test_red_on_a_full_issue_files_a_successor_that_names_it(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(sf, "_claim_fingerprint", lambda *a: "no_redis")
+    monkeypatch.setattr(gh, "comment_on_issue",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("a full issue takes no comment")))
+    created = {}
+
+    def fake_create(title, body, labels):
+        created.update(title=title, body=body)
+        return 12200, "NODE"
+
+    monkeypatch.setattr(gh, "create_github_issue", fake_create)
+    monkeypatch.setattr(gh, "add_to_project_board", lambda nid: None)
+    res = sf.reconcile_issue(
+        red=True, fingerprint=FP, marker_key=MARKER, title="[Matching Drift] golden",
+        body=_decl(), open_issues=[_full(2728)],
+    )
+    assert res["action"] == "filed" and res["issue"] == 12200
+    assert created["body"].startswith(_decl())
+    assert "Continues #2728, which reached GitHub's limit of 2,500 comments" in created["body"]
+
+
+def test_red_with_a_full_predecessor_and_a_live_successor_comments_on_the_successor(monkeypatch):
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+    commented = {}
+    monkeypatch.setattr(gh, "comment_on_issue", lambda n, b: commented.update(n=n))
+    monkeypatch.setattr(gh, "create_github_issue",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not file")))
+    res = sf.reconcile_issue(
+        red=True, fingerprint=FP, marker_key=MARKER, title="t", body="b",
+        open_issues=[_full(2728), _issue(12200, body=_decl())], red_comment="still red",
+    )
+    assert res["action"] == "commented" and res["issue"] == 12200 == commented["n"]
+
+
+def test_green_still_finds_a_full_issue_to_close():
+    # Closing needs no comment (close_issue tolerates the refused note), so the
+    # GREEN lookup keeps matching a full issue.
+    assert sf.find_matching_issue([_full(2728)], FP, MARKER) == 2728
+    assert sf.find_matching_issue([_full(2728)], FP, MARKER, accepting_comments=True) is None

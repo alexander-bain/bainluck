@@ -126,15 +126,370 @@ describe("#10357 round-up model", () => {
       ["no footer", { ...base(), footer: " " }, "no_footer"],
       ["no kicker", { ...base(), kicker: "" }, "no_kicker"],
       ["two rows", { ...base(), rows: base().rows.slice(0, 2) }, "row_count"],
-      ["five rows", { ...base(), rows: [...base().rows, { ...base().rows[0], market_id: 99 }] }, "row_count"],
+      [
+        "six rows",
+        {
+          ...base(),
+          rows: [
+            ...base().rows,
+            { ...base().rows[0], market_id: 98 },
+            { ...base().rows[0], market_id: 99 },
+          ],
+        },
+        "row_count",
+      ],
       ["a row with no number", { ...base(), rows: base().rows.map((r, i) => (i === 2 ? { ...r, probability: NaN } : r)) }, "bad_row"],
       ["a row with no label", { ...base(), rows: base().rows.map((r, i) => (i === 1 ? { ...r, label: "" } : r)) }, "bad_row"],
+      ["a row with neither market_id nor event_id", { ...base(), rows: base().rows.map((r, i) => (i === 1 ? { label: r.label, probability: r.probability } : r)) }, "bad_row"],
+      ["a row with both market_id and event_id", { ...base(), rows: base().rows.map((r, i) => (i === 1 ? { ...r, event_id: 301 } : r)) }, "bad_row"],
       ["the same market twice", { ...base(), rows: base().rows.map((r, i) => (i === 1 ? { ...r, market_id: base().rows[0].market_id } : r)) }, "duplicate_market"],
+      [
+        "the same event twice",
+        {
+          ...base(),
+          rows: [
+            { event_id: 303, label: "Heat at Bucks: Bucks", probability: 0.6 },
+            { event_id: 303, label: "Suns at Lakers: Lakers", probability: 0.56 },
+            { event_id: 301, label: "Knicks at Celtics: Celtics", probability: 0.52 },
+            { event_id: 305, label: "Devils at Rangers: Rangers", probability: 0.51 },
+          ],
+        },
+        "duplicate_market",
+      ],
+      [
+        "an event_id row with outcome_id",
+        {
+          ...base(),
+          rows: [
+            { event_id: 303, outcome_id: 1, label: "Heat at Bucks: Bucks", probability: 0.6 } as unknown as FeedRoundupContract["rows"][number],
+            { event_id: 304, label: "Suns at Lakers: Lakers", probability: 0.56 },
+            { event_id: 301, label: "Knicks at Celtics: Celtics", probability: 0.52 },
+            { event_id: 305, label: "Devils at Rangers: Rangers", probability: 0.51 },
+          ],
+        },
+        "bad_row",
+      ],
+      [
+        "the same field_band outcome twice",
+        {
+          ...base(),
+          rows: [
+            { market_id: 227, outcome_id: 22705, label: "Penn State", probability: 0.795 },
+            { market_id: 227, outcome_id: 22705, label: "Notre Dame", probability: 0.68 },
+            { market_id: 227, outcome_id: 22707, label: "Alabama", probability: 0.64 },
+            { market_id: 227, outcome_id: 22708, label: "Miami", probability: 0.6 },
+          ],
+        },
+        "duplicate_market",
+      ],
     ])("%s", (_name, contract, refusal) => {
       const res = buildRoundupCardModel("NFL division front-runners", contract as FeedRoundupContract | null, NOW_MS);
       expect(res.model).toBeNull();
       expect(res.refusal).toBe(refusal);
     });
+  });
+
+  it("admits #11915's event_id rows ('The closest games tonight') and renders the card on Discover", () => {
+    const closestGamesContract: FeedRoundupContract = {
+      kicker: "Round-up",
+      tag: "SPORTS",
+      footer: "Bain Luck blend · the 4 closest of 7 games tonight",
+      rows: [
+        { event_id: 102, label: "Bucks at Celtics: Celtics", probability: 0.61, observed_at: FRESH },
+        { event_id: 104, label: "Timberwolves at Nuggets: Nuggets", probability: 0.58, observed_at: FRESH },
+        { event_id: 103, label: "Devils at Rangers: Devils", probability: 0.54, observed_at: FRESH },
+        { event_id: 101, label: "Suns at Lakers: Lakers", probability: 0.51, observed_at: FRESH },
+      ],
+    };
+    const { model, refusal } = buildRoundupCardModel("The closest games tonight", closestGamesContract, NOW_MS);
+    expect(refusal).toBeNull();
+    expect(model!.cadence).toBe("live");
+    expect(model!.rows.map((r) => r.marketId)).toEqual([102, 104, 103, 101]);
+    expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "61% Bucks at Celtics: Celtics",
+      "58% Timberwolves at Nuggets: Nuggets",
+      "54% Devils at Rangers: Devils",
+      "51% Suns at Lakers: Lakers",
+    ]);
+
+    const html = render(closestGamesContract, {
+      title: "The closest games tonight",
+      ref: {
+        slug: "roundup-closest-games-tonight",
+        name: "The closest games tonight",
+        revision: 410023918,
+        collection_count: 4,
+      },
+    });
+    expect(stripTags(html)).toBe(
+      "Round-up SPORTS The closest games tonight 61 % Bucks at Celtics: Celtics 58 % Timberwolves at Nuggets: Nuggets 54 % Devils at Rangers: Devils 51 % Suns at Lakers: Lakers Bain Luck blend · the 4 closest of 7 games tonight",
+    );
+    expect(html).toMatch(/<a href="\/collections\/roundup-closest-games-tonight"[^>]*data-testid="roundup-card"/);
+  });
+
+  it("admits field_band rows ('College Football Playoff picture') sharing one spine market_id with distinct outcome_ids without normalizing to 100", () => {
+    const cfpContract: FeedRoundupContract = {
+      kicker: "Round-up",
+      tag: "NCAAF",
+      footer: "Chance to make the 12-team field · teams between 20% and 80%",
+      rows: [
+        { market_id: 227, outcome_id: 22705, label: "Penn State", probability: 0.795, observed_at: "2026-10-06T20:30:00Z" },
+        { market_id: 227, outcome_id: 22706, label: "Notre Dame", probability: 0.68, observed_at: "2026-10-06T20:30:00Z" },
+        { market_id: 227, outcome_id: 22707, label: "Alabama", probability: 0.64, observed_at: "2026-10-06T20:30:00Z" },
+        { market_id: 227, outcome_id: 22708, label: "Miami", probability: 0.60, observed_at: "2026-10-06T20:30:00Z" },
+      ],
+    };
+    const { model, refusal } = buildRoundupCardModel("College Football Playoff picture", cfpContract, NOW_MS);
+    expect(refusal).toBeNull();
+    expect(model!.cadence).toBe("futures");
+    expect(model!.rows.map((r) => r.marketId)).toEqual([22705, 22706, 22707, 22708]);
+    expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "80% Penn State",
+      "68% Notre Dame",
+      "64% Alabama",
+      "60% Miami",
+    ]);
+
+    const html = render(cfpContract, {
+      title: "College Football Playoff picture",
+      ref: {
+        slug: "roundup-cfp-picture",
+        name: "College Football Playoff picture",
+        revision: 382910412,
+        collection_count: 2,
+      },
+    });
+    expect(stripTags(html)).toBe(
+      "Round-up NCAAF College Football Playoff picture 80 % Penn State 68 % Notre Dame 64 % Alabama 60 % Miami Chance to make the 12-team field · teams between 20% and 80%",
+    );
+    expect(html).toMatch(/<a href="\/collections\/roundup-cfp-picture"[^>]*data-testid="roundup-card"/);
+  });
+
+  it("admits same_deadline_board five-row cards ('By December 31') with kicker 'SAME DEADLINE', count_line 'Showing 5 of 6', and no venue name or blend claim", () => {
+    const dec31Contract: FeedRoundupContract = {
+      kicker: "SAME DEADLINE",
+      tag: null,
+      count_line: "Showing 5 of 6",
+      footer: "Separate markets that settle by the same day.",
+      rows: [
+        { market_id: 62162058, label: "Next Claude Opus (5.6+) released", probability: 0.885, observed_at: FRESH },
+        { market_id: 27594137, label: "Trump meets with Putin", probability: 0.83, observed_at: FRESH },
+        { market_id: 30587891, label: "Will Banksy create a new mural or street artwork?", probability: 0.47, observed_at: FRESH },
+        { market_id: 8422080, label: "Pete Hegseth out as Secretary of Defense", probability: 0.40, observed_at: FRESH },
+        { market_id: 13791228, label: "SCOTUS accepts sports event contract case", probability: 0.205, observed_at: FRESH },
+      ],
+    };
+    const { model, refusal } = buildRoundupCardModel("By December 31", dec31Contract, NOW_MS);
+    expect(refusal).toBeNull();
+    expect(model!.kicker).toBe("SAME DEADLINE");
+    expect(model!.tag).toBeNull();
+    expect(model!.countLine).toBe("Showing 5 of 6");
+    expect(model!.footer).toBe("Separate markets that settle by the same day.");
+    expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "89% Next Claude Opus (5.6+) released",
+      "83% Trump meets with Putin",
+      "47% Will Banksy create a new mural or street artwork?",
+      "40% Pete Hegseth out as Secretary of Defense",
+      "21% SCOTUS accepts sports event contract case",
+    ]);
+
+    const html = render(dec31Contract, {
+      title: "By December 31",
+      ref: {
+        slug: "by-december-31",
+        name: "By December 31",
+        revision: 91238411,
+        collection_count: 6,
+      },
+    });
+    const plain = stripTags(html);
+    expect(plain).toBe(
+      "SAME DEADLINE By December 31 89 % Next Claude Opus (5.6+) released 83 % Trump meets with Putin 47 % Will Banksy create a new mural or street artwork? 40 % Pete Hegseth out as Secretary of Defense 21 % SCOTUS accepts sports event contract case Showing 5 of 6 Separate markets that settle by the same day.",
+    );
+    expect(plain).not.toMatch(/\b(kalshi|polymarket|sportsbooks?|blend|question|questions)\b/i);
+    expect(html).toContain('data-testid="roundup-count-line">Showing 5 of 6</div>');
+    expect(html).not.toContain('data-testid="roundup-tag"');
+    expect(html).toMatch(/<a href="\/collections\/by-december-31"[^>]*data-testid="roundup-card"/);
+  });
+
+  it("admits sibling_family cards ('Will it snow by November 15?' and 'Will they be featured on GTA VI: The Album?') with the two-part count_line ('Showing X of Y … · No number yet: …')", () => {
+    const snowContract: FeedRoundupContract = {
+      kicker: "SNOW · NOV 15",
+      tag: null,
+      count_line: "Showing 5 of 10 cities · No number yet: Detroit, Minneapolis, Pittsburgh",
+      footer: "Each city is its own market. They don't add up to 100%.",
+      rows: [
+        { market_id: 60087431, label: "Indianapolis", probability: 0.485, rendered_percent: 49, observed_at: FRESH },
+        { market_id: 60087427, label: "Buffalo", probability: 0.45, rendered_percent: 45, observed_at: FRESH },
+        { market_id: 60087426, label: "Boston", probability: 0.38, rendered_percent: 38, observed_at: FRESH },
+        { market_id: 60087435, label: "Salt Lake City", probability: 0.34, rendered_percent: 34, observed_at: FRESH },
+        { market_id: 60084869, label: "Kansas City", probability: 0.255, rendered_percent: 26, observed_at: FRESH },
+      ],
+    };
+    const { model, refusal } = buildRoundupCardModel("Will it snow by November 15?", snowContract, NOW_MS);
+    expect(refusal).toBeNull();
+    expect(model!.kicker).toBe("SNOW · NOV 15");
+    expect(model!.tag).toBeNull();
+    expect(model!.countLine).toBe("Showing 5 of 10 cities · No number yet: Detroit, Minneapolis, Pittsburgh");
+    expect(model!.countLine!.split(" · ")).toEqual([
+      "Showing 5 of 10 cities",
+      "No number yet: Detroit, Minneapolis, Pittsburgh",
+    ]);
+    expect(model!.footer).toBe("Each city is its own market. They don't add up to 100%.");
+    expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "49% Indianapolis",
+      "45% Buffalo",
+      "38% Boston",
+      "34% Salt Lake City",
+      "26% Kansas City",
+    ]);
+
+    const html = render(snowContract, {
+      title: "Will it snow by November 15?",
+      ref: {
+        slug: "snow-first-flakes-2026",
+        name: "Will it snow by November 15?",
+        revision: 71829301,
+        collection_count: 27,
+      },
+    });
+    const plain = stripTags(html).replace(/&#x27;/g, "'");
+    expect(plain).toBe(
+      "SNOW · NOV 15 Will it snow by November 15? 49 % Indianapolis 45 % Buffalo 38 % Boston 34 % Salt Lake City 26 % Kansas City Showing 5 of 10 cities · No number yet: Detroit, Minneapolis, Pittsburgh Each city is its own market. They don't add up to 100%.",
+    );
+    expect(plain).not.toMatch(/\b(kalshi|polymarket|sportsbooks?|blend|question|questions)\b/i);
+    expect(html).toContain(
+      'data-testid="roundup-count-line">Showing 5 of 10 cities · No number yet: Detroit, Minneapolis, Pittsburgh</div>',
+    );
+    expect(html).toMatch(/<a href="\/collections\/snow-first-flakes-2026"[^>]*data-testid="roundup-card"/);
+  });
+
+  it("accepts a two-row yardstick_pair ('FOR SCALE') card and preserves [target, anchor] order", () => {
+    const yardstickContract: FeedRoundupContract = {
+      kicker: "FOR SCALE",
+      tag: null,
+      footer: "Two independent markets at the same probability right now.",
+      rows: [
+        {
+          market_id: 113200,
+          label: "The Iranian regime falls before 2027",
+          probability: 0.036,
+          rendered_percent: 4,
+          observed_at: FRESH,
+        },
+        {
+          market_id: 113012,
+          label: "US recession by end of 2026",
+          probability: 0.055,
+          rendered_percent: 6,
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const title = "The Iranian regime falls before 2027: as likely as a US recession by end of 2026";
+    const { model, refusal } = buildRoundupCardModel(title, yardstickContract, NOW_MS);
+    expect(refusal).toBeNull();
+    expect(model!.kicker).toBe("FOR SCALE");
+    expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "4% The Iranian regime falls before 2027",
+      "6% US recession by end of 2026",
+    ]);
+  });
+
+  it("accepts two-row HEAD TO HEAD and 2-4 row THIS WEEK cards (#11936)", () => {
+    const headToHeadContract: FeedRoundupContract = {
+      kicker: "HEAD TO HEAD",
+      tag: "TENNIS",
+      footer: "Each player is their own market; both can win 2+.",
+      rows: [
+        {
+          market_id: 66937562,
+          outcome_id: 669375622,
+          label: "Carlos Alcaraz",
+          probability: 0.42,
+          rendered_percent: 42,
+          observed_at: FRESH,
+        },
+        {
+          market_id: 66937563,
+          outcome_id: 669375632,
+          label: "Jannik Sinner",
+          probability: 0.38,
+          rendered_percent: 38,
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const h2h = buildRoundupCardModel(
+      "Who wins 2+ Grand Slams in 2027?",
+      headToHeadContract,
+      NOW_MS,
+    );
+    expect(h2h.refusal).toBeNull();
+    expect(h2h.model!.kicker).toBe("HEAD TO HEAD");
+    expect(h2h.model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "42% Carlos Alcaraz",
+      "38% Jannik Sinner",
+    ]);
+
+    const golfWeekContract: FeedRoundupContract = {
+      kicker: "GOLF · THIS WEEK",
+      tag: "GOLF",
+      footer: "Each row is the leader in its own tournament.",
+      rows: [
+        {
+          market_id: 28862743,
+          label: "World Wide Technology Championship · Nov 5–8 · Ben James",
+          probability: 0.313,
+          rendered_percent: 31,
+          observed_at: FRESH,
+        },
+        {
+          market_id: 28862742,
+          label: "Abu Dhabi Aldar Championship · Nov 5–8 · Rory McIlroy",
+          probability: 0.19125,
+          rendered_percent: 19,
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const golf = buildRoundupCardModel(
+      "Two tournaments",
+      golfWeekContract,
+      NOW_MS,
+    );
+    expect(golf.refusal).toBeNull();
+    expect(golf.model!.kicker).toBe("GOLF · THIS WEEK");
+    expect(golf.model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "31% World Wide Technology Championship · Nov 5–8 · Ben James",
+      "19% Abu Dhabi Aldar Championship · Nov 5–8 · Rory McIlroy",
+    ]);
+  });
+
+  it("ages event_id rows on the 30-minute live cadence while market_id rows keep the 6-hour futures cadence", () => {
+    const twoHoursOld = "2026-10-06T19:41:00Z";
+    const eventContract: FeedRoundupContract = {
+      kicker: "Round-up",
+      tag: "SPORTS",
+      footer: "Bain Luck blend · the 4 closest of 7 games tonight",
+      rows: [
+        { event_id: 102, label: "Bucks at Celtics: Celtics", probability: 0.61, observed_at: FRESH },
+        { event_id: 104, label: "Timberwolves at Nuggets: Nuggets", probability: 0.58, observed_at: twoHoursOld },
+        { event_id: 103, label: "Devils at Rangers: Devils", probability: 0.54, observed_at: FRESH },
+        { event_id: 101, label: "Suns at Lakers: Lakers", probability: 0.51, observed_at: FRESH },
+      ],
+    };
+    const marketContract = contractFor(card("canonical"), [FRESH, twoHoursOld, FRESH, FRESH]);
+
+    const { model: eventModel } = buildRoundupCardModel("The closest games tonight", eventContract, NOW_MS);
+    expect(eventModel!.rows.map((r) => r.rowMark)).toEqual([false, true, false, false]);
+    const eventHtml = render(eventContract, { title: "The closest games tonight" });
+    expect(marks(eventHtml)).toEqual(["row:2h ago"]);
+    expect(eventHtml).toContain('data-cadence="live"');
+
+    const { model: marketModel } = buildRoundupCardModel("NFL division front-runners", marketContract, NOW_MS);
+    expect(marketModel!.rows.map((r) => r.rowMark)).toEqual([false, false, false, false]);
+    expect(marks(render(marketContract))).toEqual([]);
   });
 
   describe("age, from R4's three fixture cases (now = 2026-10-06T21:41Z, six-hour futures rule)", () => {
@@ -257,5 +612,69 @@ describe("#10357 round-up card render", () => {
     expect(html).not.toContain('data-testid="bundle-eyebrow"');
     expect(html).not.toContain("aria-expanded");
     expect(html).toContain('data-testid="bundle-action-bar"');
+  });
+
+  it("#11949 Order 6: renders two-bar awards rows (Nominated % alongside Wins %) and refuses invalid secondary probabilities", () => {
+    const awardsContract: FeedRoundupContract = {
+      kicker: "GOLDEN GLOBES",
+      tag: "ENTERTAINMENT",
+      footer: "Several nominees are nominated; one wins.",
+      rows: [
+        {
+          market_id: 9100,
+          outcome_id: 91001,
+          label: "One Battle After Another",
+          probability: 0.42,
+          rendered_percent: 42,
+          secondary_probability: 0.88,
+          secondary_rendered_percent: 88,
+          primary_bar_label: "Wins",
+          secondary_bar_label: "Nominated",
+          observed_at: FRESH,
+        },
+        {
+          market_id: 9100,
+          outcome_id: 91002,
+          label: "Sinners",
+          probability: 0.31,
+          rendered_percent: 31,
+          secondary_probability: 0.79,
+          secondary_rendered_percent: 79,
+          primary_bar_label: "Wins",
+          secondary_bar_label: "Nominated",
+          observed_at: FRESH,
+        },
+        {
+          market_id: 9100,
+          outcome_id: 91003,
+          label: "Hamnet",
+          probability: 0.27,
+          rendered_percent: 27,
+          secondary_probability: 0.74,
+          secondary_rendered_percent: 74,
+          primary_bar_label: "Wins",
+          secondary_bar_label: "Nominated",
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const html = render(awardsContract, { title: "Best Picture: who's nominated, who wins" });
+    expect(html).toContain('data-testid="roundup-row-secondary"');
+    expect(html).toContain("Nominated 88% · Wins 42%");
+    expect(html).toContain("Nominated 79% · Wins 31%");
+    expect(html).toContain("Nominated 74% · Wins 27%");
+
+    const invalidAwards: FeedRoundupContract = {
+      ...awardsContract,
+      rows: [
+        awardsContract.rows[0],
+        awardsContract.rows[1],
+        { ...awardsContract.rows[2], secondary_probability: 1.2 },
+      ],
+    };
+    expect(buildRoundupCardModel("Best Picture", invalidAwards, NOW_MS)).toEqual({
+      model: null,
+      refusal: "bad_row",
+    });
   });
 });

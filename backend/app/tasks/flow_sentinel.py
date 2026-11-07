@@ -1844,9 +1844,85 @@ async def _run_chart_density(client: httpx.AsyncClient) -> dict:
     }
 
 
+def discover_ladder_order_failures(feed_items: list[dict]) -> tuple[list[dict], int]:
+    """Check served Discover cards for out-of-order ladder rungs and count ladder_refused (#11942)."""
+    from app.utils.discover_card_archetypes import _date_points_are_monotonic
+    from app.utils.outcome_display import ladder_rungs_out_of_order
+
+    failures: list[dict] = []
+    ladder_refused = 0
+    for item in feed_items or []:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        data = item.get("data") or {}
+        if item_type == "futures":
+            card = data.get("discover_card") or {}
+            if card.get("ladder_treatment_refused"):
+                ladder_refused += 1
+            if card.get("suggested_format") == "threshold_heatmap":
+                points = card.get("threshold_points") or []
+                is_date = bool(points) and all(
+                    isinstance(p, dict) and p.get("source") == "date_bucket"
+                    for p in points
+                )
+                out_of_order = (
+                    not _date_points_are_monotonic(points)
+                    if is_date
+                    else ladder_rungs_out_of_order(
+                        points,
+                        lambda p: p.get("label"),
+                        lambda p: p.get("probability"),
+                        data.get("name"),
+                    )
+                )
+                if out_of_order:
+                    failures.append(
+                        {
+                            "market_id": data.get("id"),
+                            "detail": (
+                                f"ladder out of order on '{data.get('name')}' ({data.get('id')})"
+                            ),
+                        }
+                    )
+        elif item_type == "bundle" and data.get("kind") == "deadline_family":
+            family = data.get("deadline_family") or {}
+            members = sorted(
+                [m for m in (family.get("members") or []) if isinstance(m, dict)],
+                key=lambda m: float(m.get("deadline_epoch") or 0),
+            )
+            running_pct: int | None = None
+            for m in members:
+                if (m.get("settlement") or {}).get("state") != "open":
+                    continue
+                pct = m.get("yes_rendered_percent")
+                if pct is None:
+                    continue
+                pct_int = int(pct)
+                if running_pct is not None and pct_int < running_pct:
+                    failures.append(
+                        {
+                            "market_id": family.get("representative_market_id"),
+                            "detail": (
+                                f"deadline_family ladder out of order on '{data.get('title')}'"
+                            ),
+                        }
+                    )
+                    break
+                running_pct = pct_int if running_pct is None else max(running_pct, pct_int)
+    logger.info(
+        "Flow sentinel discover ladder order: checked=%d ladder_refused=%d out_of_order=%d",
+        len(feed_items or []),
+        ladder_refused,
+        len(failures),
+    )
+    return failures, ladder_refused
+
+
 async def _run_category_discover(client: httpx.AsyncClient) -> dict:
     failures = []
     checked = 0
+    ladder_refused = 0
 
     # (a) Category pages non-empty.
     for path, empty_check in (
@@ -1868,7 +1944,8 @@ async def _run_category_discover(client: httpx.AsyncClient) -> dict:
     try:
         feed = await _get_json(client, "/api/feed",
                                {"limit": "50", "include_events": "false", "include_futures": "true"})
-        items = [i for i in feed.get("items", []) if i.get("type") == "futures"]
+        all_feed_items = feed.get("items", [])
+        items = [i for i in all_feed_items if i.get("type") == "futures"]
         if not items:
             failures.append({"detail": "/api/feed first page returned zero futures items"})
         else:
@@ -1878,6 +1955,8 @@ async def _run_category_discover(client: httpx.AsyncClient) -> dict:
             fq_fails = feed_quality_failures(debug["summary"])
             for f in fq_fails:
                 failures.append({"detail": f"feed {f['metric']}={f['value']} (target {f['target']})"})
+            ladder_fails, ladder_refused = discover_ladder_order_failures(all_feed_items)
+            failures.extend(ladder_fails)
     except Exception as exc:
         failures.append({"detail": f"/api/feed quality check errored: {str(exc)[:120]}"})
 
@@ -1886,7 +1965,7 @@ async def _run_category_discover(client: httpx.AsyncClient) -> dict:
         "checked": checked,
         "passed": len(failures) == 0,
         "failures": failures,
-        "evidence": {"checks": checked},
+        "evidence": {"checks": checked, "ladder_refused": ladder_refused},
     }
 
 

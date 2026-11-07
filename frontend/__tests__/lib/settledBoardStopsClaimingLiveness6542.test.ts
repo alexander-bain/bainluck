@@ -139,6 +139,7 @@ describe("#6542 — FuturesChart hands its settledness to the freshness read", (
     // file: a `[\s\S]*?` form spanning hundreds of lines would happily find a
     // `{ settled }` belonging to something else entirely.
     const call = CODE.slice(start, CODE.indexOf(");", start));
-    expect(call).toContain("{ settled }");
+    // #11929 adds `gapFloorMs` beside it; `settled` must still be handed over.
+    expect(call).toMatch(/\{ settled[ ,}]/);
   });
 });

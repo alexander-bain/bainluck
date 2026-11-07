@@ -170,13 +170,13 @@ describe("#10476 only hubs Discover would open become Browse links", () => {
       ["NFL 2026 · Week 4", "/collections/nfl-2026-week-4"],
       ["NFL 2026 · Week 5", "/collections/nfl-2026-week-5"],
     ]);
-    expect(entries[0].subtitle).toBe("16 games · 3431 questions");
+    expect(entries[0].subtitle).toBe("16 games · 3431 markets");
   });
 
   test.each([
     ["unpublished", { state: "unpublished" }],
     ["withdrawn", { state: "withdrawn" }],
-    ["empty (no games, no questions)", { game_count: 0, question_count: 0 }],
+    ["empty (no games, no markets)", { game_count: 0, question_count: 0 }],
     ["edition disagreeing with the slug (wrong week)", { edition: { kind: "nfl_week", league: "nfl", season: 2026, stage: "Regular Season", week: 6 } }],
     ["an edition this ship does not offer", { edition: { kind: "theme", league: "nfl", season: 2026, stage: null, week: null } }],
     ["a destination off the canonical page", { destination: { kind: "container", slug: "nfl-2026-week-5", web: "https://elsewhere.example/x", api: "" } }],
@@ -340,7 +340,7 @@ describe("#10476 the Collections block renders only what it may link", () => {
     expect(html).toContain('<a href="/collections/nfl-2026-week-4"');
     expect(html).toContain('<a href="/collections/nfl-2026-week-5"');
     expect(html).toContain("NFL 2026 · Week 4");
-    expect(html).toContain("15 games · 38 questions");
+    expect(html).toContain("15 games · 38 markets");
     expect(html).not.toContain("aria-current");
   });
 

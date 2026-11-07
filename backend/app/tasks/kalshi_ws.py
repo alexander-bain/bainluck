@@ -594,6 +594,9 @@ class _KalshiPriceOwner:
         self.beside_written: set[int] = set()
         # #10090: the consumer's `_FlushTimings`, when it keeps one.
         self.timings = None
+        # #11929: the run's chart-point writer (`utils/stream_history_points`),
+        # installed by the consumer; None writes no history point.
+        self.stream_history = None
         # #10090: the run's one blend refresh. It may outlive the flush that
         # started it, so the next flush's committed cohort joins it
         # (`admit_fresh`) instead of that flush waiting for it to return. With
@@ -1521,6 +1524,35 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     )
     blend_refresher.held_quotes = HeldRowQuotes()
     await blend_refresher.held_quotes.sample_database_clock(get_task_session)
+    # #10090 market previews: a held market's buffered price, published at
+    # arrival on its `live:market:<id>` channel (`utils/market_preview`). No
+    # database work: the ids are this run's maps, the settled test is the
+    # run's own `prices.settled_market_ids`, Redis is the refresher's client.
+    # Reached through the refresher, like `held_quotes`: no new name.
+    from app.utils.market_preview import MarketPreviewPublisher
+
+    blend_refresher.market_preview = MarketPreviewPublisher(
+        "kalshi", lambda: blend_refresher._client(),
+        refused=lambda market_id: market_id in prices.settled_market_ids,
+    )
+    # #11929: chart history points from the committed flush (never from the
+    # preview above). Off unless `STREAM_HISTORY_POINTS` names this venue; the
+    # run's settled markets are refused, as the preview refuses them.
+    from app.utils.stream_history_points import StreamHistoryPoints
+
+    stream_history = prices.stream_history = StreamHistoryPoints(
+        "kalshi", refused_market=lambda market_id: market_id in prices.settled_market_ids,
+    )
+    blend_refresher.stream_history = stream_history
+    # #11929 27-B: observed spans (a span, not a row). Off unless
+    # `STREAM_OBSERVED_SPANS` names kalshi and its move points are on. Spans a
+    # dead run left open are closed at the venue heartbeat before this run
+    # opens any of its own.
+    from app.utils.stream_observed_spans import ObservedSpans
+
+    observed_spans = ObservedSpans("kalshi")
+    if observed_spans.enabled:
+        await observed_spans.recover(get_task_session)
     # #10090: when this arm is the named preview source, claim its display
     # epoch before any frame (`LiveBlendRefresher.claim_preview_display`).
     if getattr(blend_refresher, "preview", False):
@@ -2395,6 +2427,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # #10090 the preview graph cache: the rows the UPDATE returned,
                 # handed to the refresher only once this phase has committed.
                 returned_rows: list = []
+                # #11929: this phase's chart points, written in its transaction.
+                history_plan = None
                 written_observations: dict = {}
                 primary_observations: dict = {}
                 phase_clock = None
@@ -2631,6 +2665,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                         rerank_market_fields_stmt(sorted(reranked_markets))
                                     )
                                 ).rowcount
+                        # #11929 — bounded chart history from the committed
+                        # write: the rows this UPDATE returned, at the values
+                        # it wrote, one INSERT in this same transaction. Never
+                        # from a preview; memory advances only after COMMIT.
+                        history = getattr(prices, "stream_history", None)
+                        if getattr(history, "enabled", False) is True and returned_rows:
+                            history_plan = history.plan(returned_rows, phase)
+                            await history.write(session, history_plan)
                     if not flush_counted and beside is None:
                         stats["flushes"] += 1
                         flush_counted = True
@@ -2758,6 +2800,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         continue
                     return False
 
+                # #11929: the phase's transaction committed; its chart points
+                # are stored, so their legs' memory advances now.
+                if history_plan is not None:
+                    prices.stream_history.committed(history_plan)
                 if skipped_phase:
                     # #10090: counted, never logged per flush. Still buffered
                     # and unfinished; no cooldown, so the next flush retries it
@@ -3201,6 +3247,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         async with buffer_lock:
             primary_quote_custody.receive(outcome_id, msg)
             price_buffer[outcome_id] = (prob, yes_bid, yes_ask)
+            # #10090: the buffered price, to a held market's readers now (no I/O
+            # here; one drain task publishes). Linked and open contracts alike.
+            preview = getattr(blend_refresher, "market_preview", None)
+            if preview is not None:
+                preview.note(market_id, outcome_id, prob)
             if getattr(blend_refresher, "preview_events", ()):
                 note_observation_continuity(outcome_id, ticker, (prob, yes_bid, yes_ask))
             # Under the lock, so seq order is buffer order. Never raises into
@@ -3403,6 +3454,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # #5411 guard anyway; dropping it keeps the count honest.
             async with buffer_lock:
                 price_buffer.pop(outcome_id, None)
+                # #10090: nor is a graded leg ever previewed again.
+                preview = getattr(blend_refresher, "market_preview", None)
+                if preview is not None:
+                    preview.refuse_outcome(outcome_id)
+                # #11929: nor does it take another chart point (reached
+                # through the refresher, as the preview is).
+                history = getattr(blend_refresher, "stream_history", None)
+                if history is not None:
+                    history.refuse_outcome(outcome_id)
                 # #10090: and no held quote outlives it (no phase will carry
                 # this leg again to release it). The grade advanced
                 # `last_updated`, so the overlay already refuses it meanwhile.
@@ -3879,7 +3939,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
                 "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
                 "resnapshots=%d quote_priority=%d probe_refused=%d "
-                "bundled_refused=%d parked=%d skipped_locked=%d | %s",
+                "bundled_refused=%d parked=%d history_points=%d "
+                "history_keepalive=%d history_keepalive_errors=%d "
+                "history_capped=%d history_skipped=%d history_refused=%d "
+                "history_errors=%d skipped_locked=%d | %s",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -3904,6 +3967,19 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # then the refused pairs parked until an input changes.
                 blend.get("bundled_refused", 0),
                 len(getattr(blend_refresher, "_book_refused", ())),
+                # #11929: chart points the flush wrote; due legs the per-market
+                # cap held for a later minute; ticks not due (under a point,
+                # inside 5 min); settled/graded refusals; failed inserts.
+                # Cumulative for the run, like `updates`.
+                stream_history.stats["history_points"],
+                # #11929 keep-alive: points for live legs whose price sat
+                # still 15 min (`keepalive_pass` below); failed passes.
+                stream_history.stats["history_keepalive"],
+                stream_history.stats["history_keepalive_errors"],
+                stream_history.stats["history_capped"],
+                stream_history.stats["history_skipped"],
+                stream_history.stats["history_refused"],
+                stream_history.stats["history_errors"],
                 # #10090: price rows a row lock elsewhere held back (with their
                 # unit) while the rest of their phase committed.
                 stats.get("price_rows_skipped_locked", 0),
@@ -3921,6 +3997,72 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 stamped=blend["stamped"],
                 no_reading=blend["no_reading"],
             )
+            # #11929 keep-alive: its own session and transaction, after the
+            # minute line, outside the flush gate. Failures are counted inside.
+            if stream_history.keepalive:
+                try:
+                    await stream_history.keepalive_pass(
+                        get_task_session, await keepalive_legs(),
+                    )
+                except Exception:  # noqa: BLE001 — never the stats heartbeat
+                    stream_history.stats["history_keepalive_errors"] += 1
+                    logger.warning("Kalshi WS: keep-alive pass failed", exc_info=True)
+            # #11929 27-B: observed spans, after the keep-alive, in their own
+            # session and transaction. Failures are counted inside.
+            if observed_spans.enabled:
+                try:
+                    await observed_spans.tick(get_task_session, await span_legs())
+                except Exception:  # noqa: BLE001 — never the stats heartbeat
+                    observed_spans.stats["spans_errors"] += 1
+                    logger.warning("Kalshi WS: observed spans tick failed", exc_info=True)
+                logger.info("Kalshi WS spans: %s", observed_spans.line())
+
+    async def span_legs():
+        """#11929 27-B: outcome ids on a SUBSCRIBED connection that received a
+        frame within `SPAN_LIFE_S` (Alex: a silently dropped subscription never
+        prints "unchanged"). The keep-alive's population, minus silent
+        connections."""
+        from app.utils.stream_observed_spans import SPAN_LIFE_S
+
+        now = time.monotonic()
+        legs = []
+        for clients, ids in (
+            (list(game_clients), ticker_to_ids),
+            (list(open_clients), open_contract_ids),
+        ):
+            for client in clients:
+                sock = client.sock
+                if not getattr(sock, "is_subscribed", False):
+                    continue
+                last = getattr(sock, "last_message_at", None)
+                if last is None or now - last > SPAN_LIFE_S:
+                    continue
+                for ticker in client.tickers:
+                    pair = ids.get(ticker)
+                    if pair is not None:
+                        legs.append(pair[1])
+                await asyncio.sleep(0)
+        return legs
+
+    async def keepalive_legs():
+        """#11929: (outcome_id, market_id) of every leg a SUBSCRIBED connection
+        carries now — game clients through the slate map, open-contract clients
+        through theirs. A ticker that left scope is unmapped, so not live; a
+        disconnected client's legs are not being read, so no point."""
+        legs = []
+        for clients, ids in (
+            (list(game_clients), ticker_to_ids),
+            (list(open_clients), open_contract_ids),
+        ):
+            for client in clients:
+                if not getattr(client.sock, "is_subscribed", False):
+                    continue
+                for ticker in client.tickers:
+                    pair = ids.get(ticker)
+                    if pair is not None:
+                        legs.append((pair[1], pair[0]))
+                await asyncio.sleep(0)
+        return legs
 
     flush_task = asyncio.create_task(flush_loop(), name="kalshi-flush-loop")
     stats_task = asyncio.create_task(stats_loop(), name="kalshi-stats-loop")
@@ -4481,6 +4623,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             stats["loops_unreaped"] = await reap_stopped_loops(
                 "kalshi", (flush_task, stats_task),
             )
+            # #11929 27-B: after the stats loop is reaped (no tick can race
+            # it), every open span closes at its last tick alive. A failure or
+            # an interrupt leaves them for the next run's `recover`.
+            try:
+                stats["spans_closed_at_exit"] = await observed_spans.close_all(
+                    get_task_session,
+                )
+            except asyncio.CancelledError as exc:
+                interrupted = interrupted or exc
         if interrupted is not None:
             raise interrupted
 

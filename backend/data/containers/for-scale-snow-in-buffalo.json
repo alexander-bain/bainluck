@@ -1,0 +1,65 @@
+{
+  "slug": "for-scale-snow-in-buffalo",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "kicker": "FOR SCALE",
+  "name": "For scale: snow in Buffalo by Nov 15",
+  "category": "cross-topic",
+  "tag": "",
+  "section_title": "For scale",
+  "footer": "Two unrelated markets with the same chance.",
+  "rule": {
+    "producer": "yardstick_pair",
+    "anchor": {
+      "market": "polymarket:60087427",
+      "short_label": "snow in Buffalo by Nov 15",
+      "row_label": "Snow in Buffalo by Nov 15",
+      "deadline": "2026-11-15"
+    },
+    "same_band_max_diff": 2,
+    "apart_band_min_diff": 10,
+    "allow_less_likely": false,
+    "max_age_hours": 48,
+    "min_hours_to_decision": 48,
+    "candidates": [
+      "polymarket:30587891",
+      "polymarket:8422080",
+      "polymarket:68064291",
+      "polymarket:62141888",
+      "polymarket:68320839",
+      "polymarket:62611724"
+    ],
+    "candidate_labels": {
+      "30587891": {
+        "short_label": "Banksy creates a new mural by Dec 31",
+        "row_label": "Banksy creates a new mural or street artwork by Dec 31"
+      },
+      "8422080": {
+        "short_label": "Pete Hegseth out by Dec 31",
+        "row_label": "Pete Hegseth out as Secretary of Defense by Dec 31"
+      },
+      "68064291": {
+        "short_label": "A government shutdown by Dec 31",
+        "row_label": "Government shutdown by Dec 31"
+      },
+      "62141888": {
+        "short_label": "Next Claude Opus released by Nov 30",
+        "row_label": "Next Claude Opus (5.6+) released by Nov 30"
+      },
+      "68320839": {
+        "short_label": "A 7.0+ earthquake occurs worldwide by Nov 30",
+        "row_label": "7.0+ earthquake worldwide by Nov 30"
+      },
+      "62611724": {
+        "short_label": "Trump meets with Putin by Nov 30",
+        "row_label": "Trump meets with Putin by Nov 30"
+      }
+    },
+    "cache": "none",
+    "twins": "none",
+    "normalize": false,
+    "relation": "exact",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time"
+  }
+}

@@ -1,6 +1,9 @@
 'use strict';
 
 function verdict(pr, reviews) {
+  if (pr.labels.some(label => label.name === 'eval-candidate')) {
+    return {conclusion:'failure',summary:'Never-merge reviewer eval candidate. Its bot verdict is study evidence; this label cannot authorize a merge.'};
+  }
   if (!pr.labels.some(label => label.name === 'tier-b')) {
     return {conclusion:'success',summary:'This PR does not carry tier-b.'};
   }
@@ -11,10 +14,11 @@ function verdict(pr, reviews) {
     }
   }
   const approval = [...latest.values()].find(review =>
-    review.user.login !== pr.user.login && review.state === 'APPROVED' &&
+    review.user.login === 'claude[bot]' && review.user.login !== pr.user.login &&
+    review.state === 'APPROVED' &&
     review.commit_id === pr.head.sha);
-  return approval ? {conclusion:'success',summary:`Approved at this head by ${approval.user.login}.`} :
-    {conclusion:'failure',summary:'tier-b requires an approving review at the current head from someone other than the PR author. The installed Claude GitHub Action supplies an independent bot identity; the author cannot approve their own PR.'};
+  return approval ? {conclusion:'success',summary:`Approved at this head by ${approval.user.login}. The author window merges after green CI and Fable ACCEPT at this head.`} :
+    {conclusion:'failure',summary:'tier-b requires claude[bot] approval at the current head. The author window merges only after green CI and Fable ACCEPT at that head; labels and human reviews cannot replace the bot approval.'};
 }
 
 async function currentOpen(github, repo, eventNumber) {
@@ -52,14 +56,24 @@ async function publish(github,repo,sha,result) {
 
 async function evaluate(github, context) {
   const repo=context.repo;
+  const run=context.payload.workflow_run;
+  if (context.eventName === 'workflow_run' && (
+    context.payload.action !== 'completed' || run?.status !== 'completed' ||
+    run.name !== 'Tier-B review' || run.path !== '.github/workflows/tier-b-review.yml' ||
+    run.event !== 'pull_request' || !Array.isArray(run.pull_requests) || run.pull_requests.length !== 1
+  )) {
+    throw new Error('A completed installed Tier-B reviewer run with exactly one associated PR is required.');
+  }
   const eventNumber=context.eventName === 'schedule' ? undefined : Number(
-    context.payload.pull_request?.number ?? context.payload.client_payload?.pull_number ?? context.payload.inputs?.pull_number);
+    context.eventName === 'workflow_run' ? run.pull_requests[0].number :
+      context.payload.pull_request?.number ?? context.payload.client_payload?.pull_number ?? context.payload.inputs?.pull_number);
   if (eventNumber !== undefined && (!Number.isSafeInteger(eventNumber) || eventNumber < 1)) {
     throw new Error('A pull request number is required outside the scheduled sweep.');
   }
   const observed=new Set();
-  // Events touch their PR only. The half-hour sweep also reconciles review
-  // dismissals and events coalesced by GitHub's per-PR concurrency queue.
+  // Events touch their PR only. Reviewer runs only identify that PR: current
+  // heads and reviews come from GitHub, never run artifacts, outputs or SHA.
+  // The half-hour sweep also reconciles dismissals and coalesced events.
   for (let attempt=0;attempt<2;attempt++) {
     const current=await currentOpen(github,repo,eventNumber);
     const groups=new Map();
@@ -77,26 +91,7 @@ async function evaluate(github, context) {
           continue;
         }
         const reviews=await github.paginate(github.rest.pulls.listReviews,{...repo,pull_number:pr.number,per_page:100});
-        const files = await github.paginate(github.rest.pulls.listFiles, {...repo,pull_number:pr.number,per_page:100});
-        const policyChanged = files.some(file => [file.filename,file.previous_filename].some(name => ['.github/workflows/tier-b-review.yml','docs/release-loop/tier-b-review-brief.md'].includes(name)));
-        const eligible = policyChanged ? reviews.filter(review => review.user.type !== 'Bot' && !review.user.login.endsWith('[bot]')) : reviews;
-        let result = verdict(pr,eligible);
-        if (policyChanged && result.conclusion !== 'success' && pr.labels.some(label=>label.name==='alex-approved')) {
-          const events = await github.paginate(github.rest.issues.listEvents, {...repo,issue_number:pr.number,per_page:100});
-          const applied = events.filter(event=>['labeled','unlabeled'].includes(event.event) && event.label?.name==='alex-approved')
-            .sort((a,b)=>b.id-a.id)[0];
-          if (applied?.event==='labeled' && applied.actor?.login==='alexander-bain') {
-            const head = await github.rest.repos.getCommit({...repo,ref:pr.head.sha}).then(r=>r.data);
-            const labeledAt = Date.parse(applied.created_at);
-            const committedAt = Date.parse(head.commit?.committer?.date);
-            result = Number.isFinite(labeledAt) && Number.isFinite(committedAt) && labeledAt > committedAt
-              ? {conclusion:'success',summary:'Alex approved this review-policy change via alex-approved. Attribution uses Alex’s shared account; windows must never apply this label.'}
-              : {conclusion:'failure',summary:'alex-approved predates the current head; re-apply after review'};
-          } else {
-            result = {...result,summary:result.summary+' The alex-approved label must be applied by Alex.'};
-          }
-        }
-        results.push(policyChanged ? {...result,summary:result.summary+' Review policy changed; Alex must merge this PR.'} : result);
+        results.push(verdict(pr,reviews));
       }
       const failed=results.filter(result=>result.conclusion!=='success');
       verdicts.set(sha,{conclusion:failed.length?'failure':'success',

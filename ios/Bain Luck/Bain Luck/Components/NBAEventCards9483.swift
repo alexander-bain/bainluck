@@ -39,6 +39,9 @@ struct NBALadderCardView9483: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                EventAtlasStoryCardMarkKeyView11666(items: EventAtlasStoryCards11666.ladderMarkKey(for: card))
+            }
             chart(selected: point)
             if isMargin {
                 HStack {
@@ -94,14 +97,15 @@ struct NBALadderCardView9483: View {
     }
 
     private func figure(_ label: String, value: Double) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let unitWord = value == 1 && card.unit == "goals" ? "goal" : card.unit
+        return VStack(alignment: .leading, spacing: 0) {
             // Wraps like its value at large sizes: "Pregame projection",
             // never "Pregame proje…".
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(card.words(value) + (isMargin ? "" : " points"))
+            Text(card.words(value) + (isMargin ? "" : " \(unitWord)"))
                 .font(.headline.monospacedDigit())
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -115,7 +119,9 @@ struct NBALadderCardView9483: View {
     private func readout(_ point: NBALadderCard9483.Point?) -> some View {
         VStack(spacing: 2) {
             if let point {
-                let text = Self.readout(card, point)
+                let text = ReleaseSurfaces.isEventPageAtlasEnabled()
+                    ? EventAtlasStoryCards11666.ladderReadout(card, point)
+                    : Self.readout(card, point)
                 Text(text.main)
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(point.chance == nil ? Color.secondary : color(point))
@@ -147,7 +153,7 @@ struct NBALadderCardView9483: View {
         if let result = point.result {
             parts.append(result ? "Hit" : "Miss")
         } else if point.chance != nil {
-            parts.append(card.phase == .before ? "Pregame chance" : "Before tip-off")
+            parts.append(card.phase == .before ? "Pregame chance" : "Before \(card.startWord)")
         }
         if let now = point.now { parts.append("now \(formatProbability(now))") }
         return (main, parts.joined(separator: " · "))
@@ -210,6 +216,12 @@ struct NBALadderCardView9483: View {
                              yStart: .value("Chance", 0), yEnd: .value("Chance", chance))
                         .foregroundStyle(color(point).opacity(isSelected ? 0.9 : 0.3))
                         .lineStyle(StrokeStyle(lineWidth: isSelected ? 2 : 1.5))
+                    if ReleaseSurfaces.isEventPageAtlasEnabled(), let now = point.now {
+                        RuleMark(x: .value("Line", point.x),
+                                 yStart: .value("Chance", chance), yEnd: .value("Chance", now))
+                            .foregroundStyle(color(point).opacity(isSelected ? 0.95 : 0.65))
+                            .lineStyle(StrokeStyle(lineWidth: isSelected ? 2.5 : 1.75))
+                    }
                     PointMark(x: .value("Line", point.x), y: .value("Chance", chance))
                         .symbol {
                             Circle()
@@ -223,6 +235,15 @@ struct NBALadderCardView9483: View {
                              yStart: .value("Chance", 0), yEnd: .value("Chance", 0.12))
                         .foregroundStyle(color(point))
                         .lineStyle(StrokeStyle(lineWidth: 2.5))
+                }
+                if ReleaseSurfaces.isEventPageAtlasEnabled(), let now = point.now {
+                    PointMark(x: .value("Line", point.x), y: .value("Chance", now))
+                        .symbol {
+                            Circle()
+                                .fill(color(point))
+                                .overlay(Circle().strokeBorder(Color.cardBackground, lineWidth: 1))
+                                .frame(width: isSelected ? 10 : 7, height: isSelected ? 10 : 7)
+                        }
                 }
             }
         }

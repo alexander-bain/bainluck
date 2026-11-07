@@ -169,10 +169,13 @@ class TestTheNonExclusiveFieldIsLeftAlone:
     `None`, and False is pinned raw beside it rather than deleted."""
 
     @pytest.mark.parametrize("exclusivity", [None])
-    def test_it_still_divides_even_with_withheld_legs(self, exclusivity):
-        assert _feed_display_scale(
-            _survivors(), mutually_exclusive=exclusivity, field_complete=False
-        ) == pytest.approx(SURVIVING_SUM, abs=1e-9)
+    def test_unknown_exclusivity_cannot_redistribute_withheld_legs(self, exclusivity):
+        assert (
+            _feed_display_scale(
+                _survivors(), mutually_exclusive=exclusivity, field_complete=False
+            )
+            == 1.0
+        )
 
     def test_a_flagged_non_exclusive_field_is_raw_with_or_without_withheld_legs(self):
         for complete in (True, False):

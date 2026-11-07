@@ -50,7 +50,7 @@ nonisolated func futuresDetailRenderedPercents(_ outcomes: [FuturesOutcome]) -> 
     let printed = renderedCardPercents(headlineOrder.map(\.probability))
     var byOutcomeId: [Int: Int] = [:]
     for (index, outcome) in headlineOrder.enumerated() {
-        guard printed.indices.contains(index), let percent = printed[index] else { continue }
+        guard printed.indices.contains(index), let percent = outcome.renderedPercent ?? printed[index] else { continue }
         byOutcomeId[outcome.id] = percent
     }
     return byOutcomeId

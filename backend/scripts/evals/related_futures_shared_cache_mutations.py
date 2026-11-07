@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P136 mutation battery for the related-futures shared cache (P127-2).
+"""Extends cache_failure_resilience (ruling 002).
+
+LAT-P136 mutation battery for the related-futures shared cache (P127-2).
 
 A guard suite that passes proves the code runs; it does not prove the code is
 PINNED. Each mutant below is a plausible way this change could be broken by a

@@ -235,6 +235,7 @@ class TestTheLadder:
                 1 for o in detail["outcomes"] if o["probability"] == pytest.approx(value)
             )
 
+        assert sum(o["probability"] is not None for o in before["outcomes"]) == 30
         assert _at(before, 0.48) == 15 and _at(before, 0.475) == 1
         assert _at(after, 0.48) == 0 and _at(after, 0.475) == 0
 

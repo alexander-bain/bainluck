@@ -190,7 +190,9 @@ class TestTheNonExclusiveCeilingIsUntouched:
             legs = _flat(10, total / 10)
             assert _feed_display_scale(
                 legs, "an independent binary field", mutually_exclusive=None
-            ) == pytest.approx(total), f"unknown-exclusivity sum {total} must keep dividing"
+            ) == pytest.approx(
+                total
+            ), f"unknown-exclusivity sum {total} must keep dividing"
             assert _feed_display_scale(
                 legs, "an independent binary field", mutually_exclusive=False
             ) == pytest.approx(1.0), f"non-exclusive sum {total} must print raw"
@@ -242,7 +244,7 @@ class TestTheCeilingIsPerClassAtTheBoundary:
         """If the page's boundary moves, the card's must move with it — that the two
         agree is the entire ship, so a literal 1.60 here would be the defect again."""
         src = inspect.getsource(feed_module._feed_display_scale)
-        assert "_FIELD_SUM_MAX" in src
+        assert "display_probability_divisor" in src
         just_over = _flat(9, (_FIELD_SUM_MAX + 0.02) / 9)
         assert _feed_display_scale(
             just_over, "one winner", mutually_exclusive=True
@@ -258,9 +260,7 @@ class TestUnknownExclusivityKeepsTodaysBehaviour:
         ) == pytest.approx(1.86)
 
     def test_the_default_is_none_so_untouched_callers_do_not_move(self):
-        assert _feed_display_scale(
-            _legs(UCL_LEGS), UCL_QUESTION
-        ) == pytest.approx(1.86)
+        assert _feed_display_scale(_legs(UCL_LEGS), UCL_QUESTION) == pytest.approx(1.86)
 
     def test_a_rehydrated_market_without_the_column_does_not_raise(self):
         """A bare attribute read would take the card out (gotcha #42)."""

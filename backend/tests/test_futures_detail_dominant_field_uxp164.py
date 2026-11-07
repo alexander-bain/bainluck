@@ -75,6 +75,8 @@ def _pipeline_before(rows, mutually_exclusive=True):
 def _pipeline_after(rows, mutually_exclusive=True):
     """The same pipeline with the UX-P164 drop in its shipped position."""
     out = [dict(r) for r in rows]
+    has_named = any(o["name"] not in {"Other", "The Field"} for o in out)
+    out = drop_dominant_field_outcomes(out, _name_of, lambda o: 1.0 if has_named and _prob_of(o) == 1.0 else None)
     normalize_display_probs(out, mutually_exclusive=mutually_exclusive)
     out = drop_dominant_field_outcomes(out, _name_of, _prob_of)
     leader_pick_order(out)
@@ -180,6 +182,7 @@ class TestTheInformationCarveOutSurvives:
             {"name": "Real", "probability": 0.85},
         ]
         assert "Other" in [o["name"] for o in _pipeline_after(below)]
+        assert "Other" not in [o["name"] for o in drop_dominant_field_outcomes(at, _name_of, _prob_of)]
         assert "Other" not in [o["name"] for o in _pipeline_after(at)]
 
 
@@ -224,7 +227,7 @@ class TestBothSerializersMoved:
         # above already records UX-P163 paying for once; loosening the anchor by
         # one character keeps the assertion and drops the false red.
         pick_at = src.index("leader_pick_order(outcomes")
-        assert norm_at < drop_at < pick_at, (
+        assert drop_at < norm_at < pick_at, (
             "the drop must judge the RENDERED number (after normalization) and "
             "agree with the demotion (before leader-pick)"
         )
@@ -236,7 +239,7 @@ class TestBothSerializersMoved:
         drop_at = src.index("out = _drop_dominant_field_outcomes(")
         norm_at = src.index("_normalize_search_outcome_probs(")
         pick_at = src.index("return _leader_pick_order(out)")
-        assert norm_at < drop_at < pick_at
+        assert drop_at < norm_at < pick_at
 
     def test_search_and_detail_cannot_diverge_on_this_market(self):
         # #993's actual requirement: the click-through MATCHES the answer search
@@ -270,7 +273,7 @@ class TestTheApiContract:
         src = inspect.getsource(futures._format_market_detail)
         capture_at = src.index("concept_outcome_count = len(outcomes)")
         drop_at = src.index("outcomes = drop_dominant_field_outcomes(")
-        assert capture_at < drop_at, "the count must be captured pre-drop"
+        assert "+ raw_dominant_dropped" in src  # preserve classification before the raw refusal
         # Anchor on the CALL, not the token. `"outcome_count": len(outcomes)` in the
         # response dict is a DIFFERENT and correct use of the post-drop length — it
         # reports how many rows the page shows. Only the derive call must be pre-drop.

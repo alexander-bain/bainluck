@@ -225,11 +225,13 @@ def test_unknown_or_nonexclusive_market_metadata_cannot_manufacture_a_distributi
 
 
 @pytest.mark.parametrize("probs", [(0.99, 0.02), (0.95, 0.90), (0.01, 0.99)])
-def test_existing_normalizer_refusal_bands_and_floor_are_not_redefined(probs):
+def test_one_winner_quotes_use_11995_full_field_rule(probs):
     rows = legs()
     rows[0].current_probability, rows[1].current_probability = probs
     quote = build(outcomes=rows)["open_winner_quote"]
-    assert [r["probability"] for r in quote["outcomes"]] == list(probs)
+    assert [r["probability"] for r in quote["outcomes"]] == pytest.approx(
+        list(probs) if sum(probs) > 1.6 else [p / sum(probs) for p in probs]
+    )
 
 
 def test_selected_whole_market_owns_the_normalization_metadata():

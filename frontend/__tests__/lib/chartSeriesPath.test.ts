@@ -123,7 +123,8 @@ describe("#3659 chartSeriesPath — a hole is not drawn through", () => {
     const before = HOLED[0];
     const after = HOLED[1];
 
-    expect(bridges[0]).toBe(`M ${before.x} ${before.y} L ${after.x} ${after.y}`);
+    // #11929: a hold then a riser, never the diagonal it used to be.
+    expect(bridges[0]).toBe(`M ${before.x} ${before.y} H ${after.x} V ${after.y}`);
   });
 
   test("an isolated observation survives as a dot, not as nothing", () => {

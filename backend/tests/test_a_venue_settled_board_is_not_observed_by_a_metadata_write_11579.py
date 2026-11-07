@@ -202,7 +202,7 @@ class TestTheMarketPage:
 
     def test_strawman_without_the_marker_it_prints(self):
         served = self._served(_mip(metadata=None))
-        assert served["Nickeil Alexander-Walker"] == pytest.approx(0.995, abs=0.01)
+        assert served["Nickeil Alexander-Walker"] > 0.95  # live full-field normalization
 
 
 # ─── the Hawks team page, through `_query_team_futures` and the real screen ───

@@ -44,13 +44,17 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
   // Keep authoritative results even when they have no price; settled rows keep
   // their existing result vocabulary and order.
   const unpriced = resolved ? [] : (outcomes ?? []).filter(outcome => outcome.probability == null && outcomeRowVerdict(outcome, false) === null);
-  const shownOutcomes = unpriced.length ? outcomes?.filter(outcome => outcome.probability != null || outcomeRowVerdict(outcome, false) !== null)
+  const availableOutcomes = unpriced.length ? outcomes?.filter(outcome => outcome.probability != null || outcomeRowVerdict(outcome, false) !== null)
     .sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1)) : outcomes;
   const hasVerdict = outcomes?.some((outcome) => outcomeRowVerdict(outcome, resolved) !== null) ?? false;
+  const fieldPreview = presentation === "field" || (presentation === "auto" && (market?.outcome_count ?? 0) > 2);
+  const shownOutcomes = fieldPreview && !resolved && !hasVerdict
+    ? availableOutcomes?.slice(0, 5) : availableOutcomes;
+  const moreCount = Math.max(unpriced.length, (market?.outcome_count ?? 0) - (shownOutcomes?.length ?? 0));
   const missingPrices = !!market && (!outcomes?.length || (presentation && outcomes.length < market.outcome_count) || outcomes.some((outcome) => outcome.probability == null));
   const winner = (market as (FeedFuturesData & { settled_winner?: string }) | null)?.settled_winner;
   if (presentation && market && !resolved && !hasVerdict && !missingPrices) {
-    return <MidtermsMarketCard market={market} presentation={presentation} />;
+    return <MidtermsMarketCard market={market} presentation={fieldPreview ? "field" : presentation} />;
   }
   // The existing sports card owns game lifecycle and probabilities. A missing
   // price or served result uses the existing verdict/format rule, never nil -> 0%.
@@ -69,7 +73,7 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
         {shownOutcomes?.map((outcome, index) => {
           const verdict = outcomeRowVerdict(outcome, resolved);
           const party = presentation && !resolved && !verdict ? midtermsOutcomeParty(market.id, outcome) : null;
-          const label = verdict === "won" ? "Won" : verdict === "lost" ? "Lost" : resolved ? "Result unavailable" : outcome.probability == null ? "Probability unavailable" : formatProbabilityPercent(outcome.probability);
+          const label = verdict === "won" ? "Won" : verdict === "lost" ? "Lost" : resolved ? "Result unavailable" : outcome.probability == null ? "Probability unavailable" : formatProbabilityPercent(outcome.probability, { rendered: outcome.rendered_percent });
           const showRowHeadshot = (index === 0 || verdict === "won") && isPersonOutcomeName(outcome.name);
           return <div key={`${outcome.id ?? index}:${outcome.name}`} className="flex items-baseline justify-between gap-3">
             <span className="min-w-0 flex items-center gap-1.5 text-text-secondary">
@@ -81,8 +85,8 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
             <span className={`shrink-0 font-semibold ${verdict === "won" ? "text-accent-brand" : "text-text-primary"}`} style={party ? { color: MIDTERMS_PARTY_COLOR[party] } : undefined}>{label}</span>
           </div>;
         })}
-        {unpriced.length > 0 && <p data-unpriced-outcomes={unpriced.length} className="text-text-secondary">
-          {shownOutcomes?.length ? `${unpriced.length} more without a price yet` : `${unpriced.length} ${unpriced.length === 1 ? "outcome" : "outcomes"} without a price yet`}
+        {!resolved && moreCount > 0 && <p data-unpriced-outcomes={unpriced.length} className="text-text-secondary">
+          {shownOutcomes?.length ? `${moreCount} more` : `${moreCount} ${moreCount === 1 ? "outcome" : "outcomes"} without a price yet`}
         </p>}
         {!outcomes?.length && <p className="text-text-secondary">{resolved ? "Result unavailable" : "Probabilities aren't available right now."}</p>}
       </div>}

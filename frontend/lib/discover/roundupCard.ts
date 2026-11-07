@@ -16,22 +16,34 @@
  *   not old (the product never calls a price it cannot date stale).
  */
 import { probabilityParts, type ProbabilityParts } from "@/lib/probabilityDisplay";
-import { FUTURES_STALE_AFTER_MS, oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";
+import { FUTURES_STALE_AFTER_MS, SOURCE_STALE_AFTER_MS, oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";
 import type { FeedRoundupContract } from "@/lib/types";
 
 /** Over this many characters the headline drops to its long size (R4). */
 export const ROUNDUP_LONG_HEADLINE_CHARS = 44;
 export const ROUNDUP_MIN_ROWS = 3;
-export const ROUNDUP_MAX_ROWS = 4;
+export const ROUNDUP_MAX_ROWS = 5;
+
+export interface RoundupSecondaryBarModel {
+  marker: ProbabilityParts["marker"];
+  digits: string;
+  fill: number;
+  primaryLabel: string;
+  secondaryLabel: string;
+}
 
 export interface RoundupRowModel {
   marketId: number;
+  kind: "event" | "market";
+  cadence: "live" | "futures";
   label: string;
   /** The formatter's boundary marker when rounding would claim a boundary; else null. */
   marker: ProbabilityParts["marker"];
   digits: string;
   /** Bar fill as a share of the track, [0, 1]. */
   fill: number;
+  /** Optional second bar for awards category rows (nominated % alongside wins %). */
+  secondary?: RoundupSecondaryBarModel | null;
   observedAt: string | null;
   /** This row carries its own age mark (the "some rows old" state). */
   rowMark: boolean;
@@ -42,8 +54,10 @@ export interface RoundupCardModel {
   title: string;
   tag: string | null;
   footer: string;
+  countLine: string | null;
   longHeadline: boolean;
   rows: RoundupRowModel[];
+  cadence: "live" | "futures";
   /** The footer's age mark (the "every row old" state), or null. */
   cardMarkObservedAt: string | null;
 }
@@ -73,40 +87,110 @@ export function buildRoundupCardModel(
   const footer = text(contract.footer);
   if (!footer) return { model: null, refusal: "no_footer" };
   const served = Array.isArray(contract.rows) ? contract.rows : [];
-  if (served.length < ROUNDUP_MIN_ROWS || served.length > ROUNDUP_MAX_ROWS) {
+  const upperKicker = kicker.toUpperCase();
+  const isYardstickPair = upperKicker === "FOR SCALE";
+  const isTwoRowPair =
+    isYardstickPair || upperKicker.startsWith("HEAD TO HEAD");
+  const isWeekEvents =
+    upperKicker.endsWith("THIS WEEK") || upperKicker.endsWith("THIS WEEKEND");
+  const minRows = isTwoRowPair || isWeekEvents ? 2 : ROUNDUP_MIN_ROWS;
+  const maxRows = isTwoRowPair ? 2 : isWeekEvents ? 4 : ROUNDUP_MAX_ROWS;
+  if (served.length < minRows || served.length > maxRows) {
     return { model: null, refusal: "row_count" };
   }
 
   const seen = new Set<number>();
-  const readable: { row: (typeof served)[number]; label: string; index: number }[] = [];
+  const readable: {
+    row: (typeof served)[number];
+    rowId: number;
+    kind: "event" | "market";
+    cadence: "live" | "futures";
+    label: string;
+    index: number;
+  }[] = [];
   for (const [index, row] of served.entries()) {
     const label = text(row?.label);
     const p = row?.probability;
-    if (!row || !isPositiveInt(row.market_id) || !label || typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1) {
+    const hasMarket = row != null && row.market_id !== undefined && row.market_id !== null;
+    const hasEvent = row != null && row.event_id !== undefined && row.event_id !== null;
+    const hasOutcome = row != null && row.outcome_id !== undefined && row.outcome_id !== null;
+    const baseId = hasMarket ? row.market_id : hasEvent ? row.event_id : undefined;
+    const rowId = hasOutcome ? row.outcome_id : baseId;
+    const hasSecondary =
+      row != null &&
+      row.secondary_probability !== undefined &&
+      row.secondary_probability !== null;
+    const sp = row?.secondary_probability;
+    if (
+      !row ||
+      hasMarket === hasEvent ||
+      (hasOutcome && !hasMarket) ||
+      !isPositiveInt(baseId) ||
+      !isPositiveInt(rowId) ||
+      !label ||
+      typeof p !== "number" ||
+      !Number.isFinite(p) ||
+      p < 0 ||
+      p > 1 ||
+      (hasSecondary &&
+        (typeof sp !== "number" || !Number.isFinite(sp) || sp < 0 || sp > 1))
+    ) {
       return { model: null, refusal: "bad_row" };
     }
-    if (seen.has(row.market_id)) return { model: null, refusal: "duplicate_market" };
-    seen.add(row.market_id);
-    readable.push({ row, label, index });
+    if (seen.has(rowId)) return { model: null, refusal: "duplicate_market" };
+    seen.add(rowId);
+    readable.push({
+      row,
+      rowId,
+      kind: hasEvent ? "event" : "market",
+      cadence: hasEvent ? "live" : "futures",
+      label,
+      index,
+    });
   }
 
-  // Highest first; a tie keeps the served order.
-  readable.sort((a, b) => b.row.probability - a.row.probability || a.index - b.index);
+  // Highest first; a tie keeps the served order. Yardstick pairs ("FOR SCALE")
+  // keep their served [target, anchor] order so the two rows match the headline.
+  if (!isYardstickPair) {
+    readable.sort((a, b) => b.row.probability - a.row.probability || a.index - b.index);
+  }
 
   const stamps = readable.map(({ row }) => (typeof row.observed_at === "string" ? row.observed_at : null));
-  const stale = stamps.map((s) => sourceIsStale(s, nowMs, FUTURES_STALE_AFTER_MS));
+  const stale = readable.map(({ cadence }, i) =>
+    sourceIsStale(stamps[i], nowMs, cadence === "live" ? SOURCE_STALE_AFTER_MS : FUTURES_STALE_AFTER_MS),
+  );
   const allOld = stale.every(Boolean);
+  const cardCadence: "live" | "futures" = readable.some((r) => r.cadence === "live") ? "live" : "futures";
 
-  const rows: RoundupRowModel[] = readable.map(({ row, label }, i) => {
+  const rows: RoundupRowModel[] = readable.map(({ row, rowId, kind, cadence, label }, i) => {
     const parts = probabilityParts(row.probability, {
       rendered: typeof row.rendered_percent === "number" ? row.rendered_percent : undefined,
     });
+    let secondary: RoundupSecondaryBarModel | null = null;
+    if (typeof row.secondary_probability === "number") {
+      const secParts = probabilityParts(row.secondary_probability, {
+        rendered:
+          typeof row.secondary_rendered_percent === "number"
+            ? row.secondary_rendered_percent
+            : undefined,
+      });
+      secondary = {
+        marker: secParts.marker,
+        digits: secParts.digits,
+        fill: row.secondary_probability,
+        primaryLabel: text(row.primary_bar_label) || "Wins",
+        secondaryLabel: text(row.secondary_bar_label) || "Nominated",
+      };
+    }
     return {
-      marketId: row.market_id,
+      marketId: rowId,
+      kind,
+      cadence,
       label,
       marker: parts.marker,
       digits: parts.digits,
       fill: row.probability,
+      secondary,
       observedAt: stamps[i],
       rowMark: !allOld && stale[i],
     };
@@ -118,8 +202,10 @@ export function buildRoundupCardModel(
       title: headline,
       tag: text(contract.tag) || null,
       footer,
+      countLine: text(contract.count_line) || null,
       longHeadline: headline.length > ROUNDUP_LONG_HEADLINE_CHARS,
       rows,
+      cadence: cardCadence,
       cardMarkObservedAt: allOld ? oldestSourceStamp(stamps) : null,
     },
     refusal: null,

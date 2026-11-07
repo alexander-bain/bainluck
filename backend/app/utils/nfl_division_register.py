@@ -206,6 +206,20 @@ class DivisionBlend:
                 best = c
         return best
 
+    @property
+    def leaders(self) -> tuple[ClubBlend, ...]:
+        """All clubs tied at the top within the whole-number percent the card prints (#11941)."""
+        from app.utils.graded_card import rendered_percent
+
+        lead = self.leader
+        lead_pct = rendered_percent(lead.probability)
+        if lead_pct is None:
+            return (lead,)
+        tied = tuple(
+            c for c in self.clubs if rendered_percent(c.probability) == lead_pct
+        )
+        return tied or (lead,)
+
 
 @dataclass(frozen=True)
 class Refusal:

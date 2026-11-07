@@ -411,7 +411,7 @@ class TestTheSnapshotCarriesIt:
             len(fms.OUTCOME_ROW_COLUMNS),
             len(fms.SPORT_COLUMNS),
         )
-        assert shape == (8, 33, 13, 2), (
+        assert shape == (9, 33, 13, 2), (
             "the snapshot wire shape changed. Bump `SNAPSHOT_SCHEMA_VERSION` "
             "(it is part of the shared cache key, so the bump is what stops this "
             "build reading a predecessor's rows) and update this tuple."

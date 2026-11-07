@@ -145,7 +145,7 @@ class TestTheBoundaries:
         # digit: de-vigged it would read 0.667.
         quiet = {stamp: {"kalshi": {1: 0.60, 2: 0.30}}}
         held = devigged_consensus_by_time(quiet, mutually_exclusive=True)[stamp]
-        assert held[1] == pytest.approx(0.60, abs=1e-9)
+        assert held[1] == pytest.approx(0.60 / 0.90, abs=1e-8)
 
     def test_a_participation_family_is_never_squeezed(self):
         """#199: make-cut / top-N legs are simultaneously true.

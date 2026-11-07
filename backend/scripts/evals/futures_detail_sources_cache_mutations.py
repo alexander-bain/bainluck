@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P127 mutation battery for the futures-detail provenance cache.
+"""Extends cache_failure_resilience (ruling 002).
+
+LAT-P127 mutation battery for the futures-detail provenance cache.
 
 A guard suite that passes proves the code runs; it does not prove the code is
 PINNED. Each mutant below is a plausible way a later edit could break this —

@@ -12,11 +12,14 @@ import re
 from datetime import date, datetime
 from typing import Any
 
+from app.utils.graded_card import rendered_percent
 from app.utils.market_grouping import extract_threshold
 from app.utils.market_staleness import whole_name_date
 from app.utils.outcome_display import (
     LADDER_MIN_DRAWN_RUNGS,
     incoherent_ladder_indexes,
+    ladder_rungs_out_of_order,
+    ladder_treatment_collapsed,
 )
 from app.utils.outcome_display_names import display_outcome_names
 
@@ -522,7 +525,33 @@ def _date_bucket_points(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     points.sort(key=lambda p: float(p["value"]))
+    if not _date_points_are_monotonic(points):
+        return []
     return points
+
+
+def _date_points_are_monotonic(points: list[dict[str, Any]]) -> bool:
+    running_pct: int | None = None
+    for point in points:
+        prob = point.get("probability")
+        if prob is None:
+            continue
+        pct = rendered_percent(float(prob))
+        if pct is None:
+            continue
+        if running_pct is not None and pct < running_pct:
+            return False
+        running_pct = pct if running_pct is None else max(running_pct, pct)
+    return True
+
+
+def _outcomes_are_all_date_buckets(outcomes: list[dict[str, Any]]) -> bool:
+    if len(outcomes) < 2:
+        return False
+    return all(
+        _parse_date_bucket(_clean_text(o.get("name") or o.get("label"))) is not None
+        for o in outcomes
+    )
 
 
 def _ladder_is_scale_coherent(points: list[dict[str, Any]]) -> bool:
@@ -557,6 +586,8 @@ def _threshold_points(
     date_points = _date_bucket_points(outcomes)
     if date_points:
         return date_points
+    if _outcomes_are_all_date_buckets(outcomes):
+        return []
 
     points: list[dict[str, Any]] = []
 
@@ -658,6 +689,14 @@ def _threshold_points(
             # guard gives: refuse the treatment outright.
             points = []
             rejected_incoherent = True
+    elif points and ladder_rungs_out_of_order(
+        points,
+        lambda p: p.get("label"),
+        lambda p: p.get("probability"),
+        name,
+    ):
+        points = []
+        rejected_incoherent = True
 
     # Mixed scales mean the labels were never one ladder — drop the threshold
     # treatment entirely rather than render self-contradicting bars.
@@ -1016,7 +1055,11 @@ def classify_discover_card_archetype(
     # purpose: a client that has not learnt the field still renders today's
     # board, where re-ordering the list here would have handed every shipped
     # iPhone build a leader bar on whichever drawn date came first.
-    row_dates = _chronological_dates(distribution_outcomes, resolution_date)
+    row_dates = (
+        None
+        if ladder_treatment_refused
+        else _chronological_dates(distribution_outcomes, resolution_date)
+    )
     if row_dates is not None:
         for row, day in zip(distribution_outcomes, row_dates):
             row["date"] = day.isoformat() if day is not None else None

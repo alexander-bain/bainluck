@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""RED-prove `tests/test_cold_path_rejected_samples.py` — LAT-P110, #2260.
+"""Extends first_card_client_contract (ruling 002).
+
+RED-prove `tests/test_cold_path_rejected_samples.py` — LAT-P110, #2260.
 
 Four ways to put the rate limiter back into the medians, each applied ALONE from
 a `cp` backup, each required to turn the suite RED, each sha256-verified

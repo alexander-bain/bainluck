@@ -164,4 +164,4 @@ def test_display_scale_matches_normalize_decision():
         [{"name": "A", "probability": 0.88}, {"name": "B", "probability": 0.71}],
         outcomes,
     )
-    assert round(0.88 / scale, 4) == top[0]["probability"]
+    assert round(0.88 / scale, 8) == top[0]["probability"]

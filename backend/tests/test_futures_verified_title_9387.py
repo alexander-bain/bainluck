@@ -473,13 +473,13 @@ class TestTheTrioServesOneVerifiedNumber:
         assert payload["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
         buf = by_name(payload, "Buffalo Bills")
         # Three venues, equal weight under the existing blend: the middle one.
-        assert buf["probability"] == 0.13
+        assert buf["probability"] == pytest.approx(0.13 / 0.4715, abs=1e-8)
         assert buf["american_odds"] == probability_to_american(0.13)
         assert buf["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
         assert buf["aggregation_rule"] == "weighted_median"
         assert buf["observed_at"] == KALSHI_AT.isoformat(), "the OLDEST included observation"
         rams = by_name(payload, "Los Angeles Rams")
-        assert rams["probability"] == 0.105
+        assert rams["probability"] == pytest.approx(0.105 / 0.4715, abs=1e-8)
 
     async def test_every_venue_page_serves_the_same_answer_on_its_own_rows(self):
         odds, _ = await detail(ODDS_ID, trio(), VERIFIED)
@@ -488,7 +488,9 @@ class TestTheTrioServesOneVerifiedNumber:
         for payload, buffalo in ((odds, 1309486), (kalshi, 643833), (pm, 1709101)):
             assert payload["representation"] == VERIFIED, _why(payload)
             row = next(o for o in payload["outcomes"] if o["id"] == buffalo)
-            assert row["probability"] == 0.13
+            assert row["probability"] == pytest.approx(
+                0.13 if payload["id"] == PM_ID else 0.13 / 0.4715, abs=1e-8
+            )  # PM has an unpriced Other: unknown mass is never normalized
             assert row["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
             assert payload["question_identity"]["edition"] == "2027"
 
@@ -511,7 +513,7 @@ class TestTheTrioServesOneVerifiedNumber:
     async def test_a_blended_row_carries_no_movement_from_another_estimator(self):
         default, _ = await detail(ODDS_ID, trio())
         verified, _ = await detail(ODDS_ID, trio(), VERIFIED)
-        assert by_name(default, "Buffalo Bills")["opening_probability"] is not None
+        assert by_name(default, "Buffalo Bills")["opening_probability"] is None  # normalized scale
         buf = by_name(verified, "Buffalo Bills")
         for key in ("opening_probability", "opening_american_odds",
                     "probability_change_24h", "price_changed_at"):
@@ -527,7 +529,7 @@ class TestTheTrioServesOneVerifiedNumber:
         default, _ = await detail(ODDS_ID, trio(kalshi=kalshi, pm=pm))
         payload, _ = await detail(ODDS_ID, trio(kalshi=kalshi, pm=pm), VERIFIED)
         assert by_name(default, "New York Jets")["rank"] == 7
-        assert by_name(payload, "New York Jets")["probability"] == 0.2
+        assert by_name(payload, "New York Jets")["probability"] == pytest.approx(0.2 / 0.6565, abs=1e-8)
         assert by_name(payload, "New York Jets")["rank"] == 1
         ranked = sorted(payload["outcomes"], key=lambda o: o["rank"])
         values = [o["probability"] or 0 for o in ranked]
@@ -568,7 +570,7 @@ class TestSameKeyQuestionsNeverJoin:
         # and drop that venue, moving both the value and the contributors.
         buf = by_name(payload, "Buffalo Bills")
         assert buf["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
-        assert buf["probability"] == 0.13
+        assert buf["probability"] == pytest.approx(0.13 / 0.4715, abs=1e-8)
 
     def test_the_candidate_read_is_venue_identity_not_the_canonical_key(self):
         stmt = futures_routes._verified_title_candidates_stmt(NFL_TITLE, "2027", ODDS_ID)
@@ -597,7 +599,7 @@ class TestTheSportsbookAnchor:
         assert payload["representation"] == VERIFIED, _why(payload)
         buf = next(o for o in payload["outcomes"] if o["id"] == 643833)
         assert buf["contributing_sources"] == ["kalshi", "polymarket"]
-        assert buf["probability"] == 0.1325
+        assert buf["probability"] == pytest.approx(0.1325 / 0.4865, abs=1e-8)
         assert buf["aggregation_rule"] == "equal_weight_midpoint"
         assert payload["contributing_sources"] == ["kalshi", "polymarket"]
 
@@ -627,7 +629,7 @@ class TestTheSportsbookAnchor:
         assert payload["representation"] == VERIFIED, _why(payload)
         kc = by_name(payload, "Kansas City Chiefs")
         assert kc["contributing_sources"] == ["kalshi", "polymarket"]
-        assert kc["probability"] == round((0.085 + 0.0865) / 2, 6)
+        assert kc["probability"] == pytest.approx(0.08575 / 0.47225, abs=1e-8)
         assert by_name(payload, "Buffalo Bills")["contributing_sources"][0] == "odds_api"
 
 
@@ -714,7 +716,7 @@ class TestMembershipIsReprovedOnTheLoadedRows:
         prob_key = "probability" if route == "detail" else "current_probability"
         buf = next(o for o in payload["outcomes"] if o["id"] == KALSHI_BUFFALO)
         assert buf["contributing_sources"] == ["kalshi", "polymarket"]
-        assert buf[prob_key] == 0.1325
+        assert buf[prob_key] == pytest.approx(0.1325 / 0.4865, abs=1e-8)
         for o in payload["outcomes"]:
             assert "odds_api" not in o.get("contributing_sources", []), o["name"]
 
@@ -740,7 +742,7 @@ class TestMembershipIsReprovedOnTheLoadedRows:
         prob_key = "probability" if route == "detail" else "current_probability"
         buf = next(o for o in payload["outcomes"] if o["id"] == KALSHI_BUFFALO)
         assert buf["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
-        assert buf[prob_key] == 0.135
+        assert buf[prob_key] == pytest.approx(0.135 / 0.4765, abs=1e-8)
         assert buf["observed_at"] == KALSHI_AT.isoformat(), "the OLDEST included observation"
 
     @pytest.mark.parametrize("route", ["detail", "timeline"])
@@ -858,7 +860,7 @@ class TestWrongEdition:
         ]
         payload, _ = await detail(ODDS_ID, trio(extra=extra), VERIFIED)
         buf = by_name(payload, "Buffalo Bills")
-        assert buf["probability"] == 0.13
+        assert buf["probability"] == pytest.approx(0.13 / 0.4715, abs=1e-8)
         assert buf["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
 
     async def test_a_sportsbook_anchored_to_another_edition_finds_no_partner(self):
@@ -889,8 +891,8 @@ class TestExactTeamCorrespondence:
         ny = by_name(payload, "New York")
         assert ny["contributing_sources"] == ["odds_api"]
         assert ny["aggregation_rule"] == "single_source"
-        assert ny["probability"] == 0.02
-        assert ny["opening_probability"] is not None, "same estimator keeps its opening"
+        assert ny["probability"] == pytest.approx(0.02 / 0.4715, abs=1e-8)
+        assert ny["opening_probability"] is None, "normalization suppresses the raw opening"
 
     async def test_kalshi_corresponds_by_its_ticker_not_its_city_string(self):
         # Kalshi's display strings are bare cities and truncations; every one of
@@ -970,7 +972,7 @@ class TestSettlementRule:
         assert other["contributing_sources"] == ["polymarket"]
         assert other["aggregation_rule"] == "single_source"
         odds, _ = await detail(ODDS_ID, trio(pm=pm), VERIFIED)
-        assert by_name(odds, "Buffalo Bills")["probability"] == 0.13
+        assert by_name(odds, "Buffalo Bills")["probability"] == pytest.approx(0.13 / 0.4715, abs=1e-8)
 
 
 # ── 8. everything else falls back ────────────────────────────────────────────
@@ -1094,7 +1096,7 @@ class TestTheChartAgreesAndKeepsItsHistory:
         top_ids = {m["id"] for m in verified["outcomes"] if m["id"] is not None}
         field = by_name(verified, "Field")
         expected = round(sum(o["probability"] or 0 for o in hero["outcomes"]
-                             if o["id"] not in top_ids), 6)
+                             if o["id"] not in top_ids), 8)
         assert field["current_probability"] == expected
         assert field["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
 

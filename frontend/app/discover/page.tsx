@@ -153,7 +153,10 @@ function saveDismissed(items: Set<string>) {
 
 function getItemId(item: FeedItem): string {
   if (item.type === "event") return `event-${(item.data as FeedEventData).id}`;
-  if (item.type === "futures") return `futures-${(item.data as FeedFuturesData).id}`;
+  if (item.type === "futures") {
+    const fd = item.data as FeedFuturesData & { leg_key?: string };
+    return fd.leg_key ? `futures-${fd.id}-${fd.leg_key}` : `futures-${fd.id}`;
+  }
   // Theme/comparison bundles carry a stable unique `id` (story_key/group_id +
   // member ids). Without this case bundles fell through to `tournament-undefined`,
   // collided, and got dropped by the dedup pass (Queue #62 / OPS-88).

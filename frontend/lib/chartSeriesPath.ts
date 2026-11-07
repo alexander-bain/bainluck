@@ -87,7 +87,9 @@ export interface ChartSeriesPath {
   runs: string[];
   /**
    * One `d` string per hole, each spanning exactly the two observations that
-   * bracket it. Drawn faint and dotted — this is not data.
+   * bracket it. Drawn faint and dotted — this is not data. Always a hold then a
+   * riser (#11929), never a slope: a diagonal across a hole draws a movement
+   * nobody observed between two distant real points.
    */
   bridges: string[];
   /**
@@ -139,14 +141,15 @@ function runFrom(points: readonly PlottedPoint[], step: boolean): string {
  */
 export function chartSeriesPath(
   points: readonly PlottedPoint[],
-  { step = false }: { step?: boolean } = {},
+  { step = false, gapFloorMs }: { step?: boolean; gapFloorMs?: number } = {},
 ): ChartSeriesPath {
   if (points.length === 0) return { runs: [], bridges: [], dots: [] };
   if (points.length === 1) {
     return { runs: [runFrom(points, step)], bridges: [], dots: [points[0]] };
   }
 
-  const threshold = seriesGapThresholdMs(points.map((p) => p.t));
+  // #11929: `gapFloorMs` is the caller's — a venue-bank line's 12 h joint.
+  const threshold = seriesGapThresholdMs(points.map((p) => p.t), gapFloorMs);
 
   // No cadence to grade against — too few points, or none of them datable. The
   // honest move is to draw exactly what we drew yesterday rather than to invent
@@ -172,7 +175,7 @@ export function chartSeriesPath(
     if (Number.isFinite(gap) && gap > threshold) {
       close(current);
       bridges.push(
-        `M ${points[i - 1].x} ${points[i - 1].y} ${segmentTo(points[i], step)}`,
+        `M ${points[i - 1].x} ${points[i - 1].y} ${segmentTo(points[i], true)}`,
       );
       current = [points[i]];
     } else {

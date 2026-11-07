@@ -765,6 +765,15 @@ def diagnose_feed_items(
                 "family_key": quality.family_key,
                 "story_key": quality.story_key,
                 "ladder": quality.is_ladder_or_bucket,
+                "ladder_refused": bool(
+                    item.get("_ladder_refused_group_head")
+                    or (
+                        not item.get("_ladder_refused")
+                        and (data.get("discover_card") or {}).get(
+                            "ladder_treatment_refused"
+                        )
+                    )
+                ),
                 "reasons": quality.reasons,
                 "stale_root_cause": diagnose_stale_card_root_cause(item, now=now),
                 "ground_truth": matches_ground_truth(name, ground_truth),
@@ -833,6 +842,7 @@ def summarize_feed_diagnostics(
         "top_n": top_n,
         "boring_count": len(boring),
         "ladder_count": len(ladder),
+        "ladder_refused": sum(1 for c in diagnosed if c.get("ladder_refused")),
         "duplicate_family_count": sum(duplicate_families.values()),
         "duplicate_families": duplicate_families,
         "explanation_ok_count": len(explanation_ok),

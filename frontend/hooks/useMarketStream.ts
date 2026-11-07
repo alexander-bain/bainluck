@@ -3,15 +3,23 @@
 import { useEffect, useRef } from 'react';
 import { API_URL } from '@/lib/api';
 import { createMarketStreamController } from '@/lib/marketStreamController';
+import type { MarketPreviewFrame } from '@/lib/discover/marketPreview';
 
 /** Owners keep REST fallback/pacing/order. This hook reports no quote freshness. */
-export function useMarketStream({ marketIds, enabled, onInvalidate }: {
+export function useMarketStream({ marketIds, enabled, onInvalidate, onPreview, onPreviewReset }: {
   marketIds: number[];
   enabled: boolean;
   onInvalidate: (ids: number[]) => void;
+  /** #10090: provisional venue moves (`market_preview`); never a committed price. */
+  onPreview?: (frame: MarketPreviewFrame) => void;
+  onPreviewReset?: (ids: number[]) => void;
 }): void {
   const callback = useRef(onInvalidate);
   callback.current = onInvalidate;
+  const preview = useRef(onPreview);
+  preview.current = onPreview;
+  const reset = useRef(onPreviewReset);
+  reset.current = onPreviewReset;
   const key = [...new Set(marketIds)].sort((a, b) => a - b).join(',');
   useEffect(() => {
     if (!enabled || !key || typeof EventSource === 'undefined') return;
@@ -26,6 +34,8 @@ export function useMarketStream({ marketIds, enabled, onInvalidate }: {
           marketIds: ids.slice(start, start + 50), now: () => Date.now(),
           open: batch => new EventSource(`${API_URL}/api/markets/stream?ids=${batch.join(',')}`),
           onInvalidate: batch => callback.current(batch),
+          onPreview: frame => preview.current?.(frame),
+          onPreviewReset: batch => reset.current?.(batch),
         });
         controllers.push(controller);
         controller.start();

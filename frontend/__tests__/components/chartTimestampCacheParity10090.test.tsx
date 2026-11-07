@@ -66,6 +66,13 @@ const scenarios: [string, string, Props][] = [
     { timestamp: "2026-09-20T04:42:20Z", home_probability: 0.7, away_probability: 0.3 },
   ] as Props["history"] }],
   ["MLB finished, recorded checkpoint window", "2026-09-20T04:47:00Z", { ...mlbLive, isLive: false, eventStatus: "completed", aggregateLine: preview, publications: publications as Props["publications"] }],
+  // #11929 — the forward-fill's withdrawal now runs only past a STALE RIGHT
+  // EDGE (interior holes are drawn through), so a scenario with one keeps that
+  // call site exercised: Kalshi's readings cut 40 minutes before the live edge.
+  ["MLB live, Kalshi stale at the right edge", "2026-09-20T04:47:00Z", { ...mlbLive, externalTimeRange: "live", winProbHistory: {
+    ...mlb.win_prob_history,
+    kalshi: mlb.win_prob_history.kalshi.filter((p: { timestamp: string }) => Date.parse(p.timestamp) < Date.parse("2026-09-20T04:07:00Z")),
+  } }],
   ["Michigan–Iowa final, all range (over the cap)", "2026-09-26T23:30:00Z", { ...finalProps, externalTimeRange: "all" }],
   ["Michigan–Iowa final, default range", "2026-09-26T23:30:00Z", finalProps],
 ];

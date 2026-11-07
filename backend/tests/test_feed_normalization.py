@@ -67,9 +67,9 @@ class TestNormalizeFeedProbabilities:
         # all_sum = 1.20 — between 1.05 and 2.0
         result = _normalize_feed_probabilities(top, all_outcomes)
         # Each should be divided by 1.20
-        assert result[0]["probability"] == round(0.40 / 1.20, 4)
-        assert result[1]["probability"] == round(0.35 / 1.20, 4)
-        assert result[2]["probability"] == round(0.20 / 1.20, 4)
+        assert result[0]["probability"] == round(0.40 / 1.20, 8)
+        assert result[1]["probability"] == round(0.35 / 1.20, 8)
+        assert result[2]["probability"] == round(0.20 / 1.20, 8)
 
     def test_independent_binary_normalization_preserves_feed_shape(self):
         """Normalization must not drop or rewrite non-probability card fields."""
@@ -107,8 +107,8 @@ class TestNormalizeFeedProbabilities:
         all_outcomes = [_make_outcome(0.55), _make_outcome(0.48)]
         # all_sum = 1.03 — above 1.01 for binary, should normalize
         result = _normalize_feed_probabilities(top, all_outcomes)
-        assert result[0]["probability"] == round(0.55 / 1.03, 4)
-        assert result[1]["probability"] == round(0.48 / 1.03, 4)
+        assert result[0]["probability"] == round(0.55 / 1.03, 8)
+        assert result[1]["probability"] == round(0.48 / 1.03, 8)
 
     def test_empty_probabilities_pass_through(self):
         """Outcomes with no probability values should pass through."""
@@ -131,6 +131,6 @@ class TestNormalizeFeedProbabilities:
         all_outcomes = [_make_outcome(0.60), _make_outcome(None), _make_outcome(0.50), _make_outcome(0.10)]
         # all_sum = 1.20, between 1.05 and 2.0 -> normalize
         result = _normalize_feed_probabilities(top, all_outcomes)
-        assert result[0]["probability"] == round(0.60 / 1.20, 4)
+        assert result[0]["probability"] == 0.60
         assert result[1]["probability"] is None  # None stays None
-        assert result[2]["probability"] == round(0.50 / 1.20, 4)
+        assert result[2]["probability"] == 0.50

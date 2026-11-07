@@ -51,7 +51,7 @@ export function RoundupCard({
 
   const label = `${model.title}. ${model.rows
     .map((r) => `${r.label}, ${r.marker === "<" ? "under " : r.marker === ">" ? "over " : ""}${r.digits}%`)
-    .join("; ")}. ${model.footer}`;
+    .join("; ")}.${model.countLine ? ` ${model.countLine}.` : ""} ${model.footer}`;
 
   return (
     <div data-testid="roundup-card-slot">
@@ -69,13 +69,18 @@ export function RoundupCard({
             <RoundupRow key={row.marketId} row={row} nowMs={now} />
           ))}
         </div>
+        {model.countLine ? (
+          <div className="text-[12px] text-text-secondary" data-testid="roundup-count-line">
+            {model.countLine}
+          </div>
+        ) : null}
         <div
           className="flex items-center justify-between gap-2 border-t border-surface-border pt-[10px] text-[11.5px] text-text-secondary"
           data-testid="roundup-footer"
         >
           <span>{model.footer}</span>
           {model.cardMarkObservedAt ? (
-            <PriceAgeMark observedAt={model.cardMarkObservedAt} nowMs={now} cadence="futures" scope="card" />
+            <PriceAgeMark observedAt={model.cardMarkObservedAt} nowMs={now} cadence={model.cadence} scope="card" />
           ) : null}
         </div>
       </Link>

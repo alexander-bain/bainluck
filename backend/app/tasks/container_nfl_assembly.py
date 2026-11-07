@@ -367,7 +367,7 @@ async def run_nfl_week_assembly(
         report.update(terminal="partial", reason=incomplete[0])
     else:
         report.update(terminal="complete", reason=None)
-    # #5341: dark unless CONTAINER_NFL_AUTO_PUBLISH_ENABLED; same transaction.
+    # #5341 A4: on by default, explicit off switch; same transaction.
     report["publication"] = await publish_complete_week(
         session, container, target, harvest, assembly,
         fixtures=fixtures, unidentified_limit=REPORT_LIMIT, apply=apply,

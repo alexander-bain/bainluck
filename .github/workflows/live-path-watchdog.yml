@@ -202,6 +202,7 @@ jobs:
     env:
       SEARCH_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
+      PYTEST_ADDOPTS: ${{ matrix.group == 'shared-tail' && '--reruns 1 -rR' || '' }}
     steps:
     - id: db_000_reused_exact_commit_test_evidence
       name: Reused exact-commit test evidence
@@ -234,6 +235,17 @@ jobs:
       if: ${{ !cancelled() && (needs.change-scope.outputs.reuse != 'true') }}
       run: "python -c \"\nimport os, sys\nurl = os.environ.get('SEARCH_TEST_DATABASE_URL')\nif not url:\n    sys.exit('SEARCH_TEST_DATABASE_URL\
         \ unset \u2014 the recall gate would silently SKIP')\nprint(f'recall gate armed against {url.rsplit(chr(64), 1)[-1]}')\n\"\n"
+    - id: db_004a_55a_shared_tail_retry_once_plugin
+      name: "#55-A shared tail \u2014 provision the pinned retry-once plugin"
+      if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/rerunfailures"
+        wheel=pytest_rerunfailures-16.7-py3-none-any.whl
+        pip download --no-deps --only-binary=:all: pytest-rerunfailures==16.7 -d "$dir"
+        echo "edf1886209c2b7dafe35b5bf1708d6ec40ccf6c6b357f0f02807efcec0204c99  $dir/$wheel" | sha256sum -c -
+        pip install --no-deps "$dir/$wheel"
+        python -c "import pytest_rerunfailures; print('retry-once plugin', pytest_rerunfailures.__file__)"
     - id: db_005_10703_shared_tail_provision_pg_trgm_on_t
       name: "#10703 shared tail \u2014 provision pg_trgm on the fresh database"
       if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
@@ -1268,7 +1280,7 @@ jobs:
       if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
       run: "result=0\npython -m pytest tests/test_ws_market_change_hooks_9484.py tests/test_ws_polymarket_open_contract_prices_9484.py tests/test_poly_ws_binary_complement_9733.py\
         \ tests/test_poly_ws_book_snapshot_prices_9733.py tests/integration/test_pm_bulk_price_write_10664_pg.py tests/test_pm_standalone_flush_off_game_path_10090.py\
-        \ -v -rs > /tmp/pm10664.txt 2>&1 || result=$?\ncat /tmp/pm10664.txt\nif [ \"$result\" -ne 0 ]; then exit \"$result\"; fi\nif grep -qiE\
+        \ tests/test_stream_history_points_11929.py tests/test_stream_history_keepalive_11929.py tests/test_venue_history_backfill_11929.py tests/test_stream_observed_spans_11929.py tests/test_observed_span_steps_11929.py -v -rs > /tmp/pm10664.txt 2>&1 || result=$?\ncat /tmp/pm10664.txt\nif [ \"$result\" -ne 0 ]; then exit \"$result\"; fi\nif grep -qiE\
         \ \"[0-9]+ skipped\" /tmp/pm10664.txt; then\n  echo \"::error::#10664 real PostgreSQL gate skipped\"\n  exit 1\nfi\n"
     - id: db_166_10689_kalshi_typed_statement_transaction
       name: '#10689 Kalshi typed statement transaction contracts (real Postgres)'
@@ -1628,9 +1640,9 @@ jobs:
       run: "set -o pipefail\npython -m pytest tests/integration/test_vacuum_block_signals_2006_real_postgres.py \\\n  -v -rs 2>&1 | tee /tmp/vacuum2006.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/vacuum2006.txt; then\n  echo \"::error::#2006 vacuum-signal gate SKIPPED \u2014 the gate did not\
         \ run\"\n  exit 1\nfi\n# A skip check cannot see a DESELECTION, and most arms here are\n# satisfied by a rail that reports everything:\
-        \ losing the cross-role\n# xid arm specifically would leave this step green and meaningless.\n# `[= ]11 passed`, not `^11 passed` (the\
-        \ summary sits inside an `=====`\n# banner) and not a bare `11 passed` (which `111 passed` satisfies).\nif ! grep -qE \"[= ]11 passed\"\
-        \ /tmp/vacuum2006.txt; then\n  echo \"::error::#2006 vacuum-signal gate did not run all 11 arms \u2014 tests were deselected or removed\"\
+        \ losing the cross-role\n# xid arm specifically would leave this step green and meaningless.\n# `[= ]12 passed`, not `^12 passed` (the\
+        \ summary sits inside an `=====`\n# banner) and not a bare `12 passed` (which `112 passed` satisfies).\nif ! grep -qE \"[= ]12 passed\"\
+        \ /tmp/vacuum2006.txt; then\n  echo \"::error::#2006 vacuum-signal gate did not run all 12 arms \u2014 tests were deselected or removed\"\
         \n  exit 1\nfi\n"
     - id: db_213_6977_diacritic_search_fold_three_rails_r
       name: '#6977 diacritic search fold, three rails (real Postgres)'

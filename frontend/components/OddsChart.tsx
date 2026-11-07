@@ -101,17 +101,14 @@ import {
   type SupportObservation,
   type UnsupportedInterval,
 } from "@/lib/chartObservationSupport";
-
-/**
- * #7878 — the dashed connector drawn across an interior interval nobody
- * observed. One extra dataKey per plotted series; holds a straight-line
- * interpolation between the two observations that bound the hole, and null
- * everywhere else. It is a DISPLAY device for readability, not a price:
- * excluded from the tooltip, the legend, the y-domain and the forward-fill.
- */
-const gapConnectorKey = (dataKey: string): string => `${dataKey}__gap`;
-
-const isGapConnectorKey = (dataKey: string): boolean => dataKey.endsWith("__gap");
+import {
+  AtlasChartMarkKey,
+  AtlasResultWordMark,
+  AtlasSelectedReadingReadout,
+  AtlasSeriesReadingMarks,
+  type AtlasChartReadingPoint,
+  type AtlasSelectedReading,
+} from "@/components/atlas/AtlasChartMarks";
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
 // Colors come from the one source-color registry (@/lib/sourceColors) — the
@@ -540,6 +537,18 @@ interface OddsChartProps {
    * Absent means today's label.
    */
   tenths?: boolean;
+  /**
+   * #11974 Step E2 — renders the shared Atlas mark grammar (`AtlasChartMarkKey`,
+   * `AtlasSeriesReadingMarks`, `AtlasResultWordMark`, `AtlasSelectedReadingReadout`)
+   * behind `?atlas=1`. Absent or false keeps the default chart markup unchanged.
+   */
+  atlasMode?: boolean;
+  /**
+   * #11974 Step E2 — on a finished game, which side won ("home" or "away"), so
+   * the chart ends with a result word (`✓ Won` or `✗ Lost`) beside the last
+   * recorded reading instead of a synthetic 100% spike.
+   */
+  settledWinnerSide?: "home" | "away" | null;
 }
 
 type TimeRange = "all" | "live";
@@ -752,6 +761,7 @@ export function ChartRowMarks({
   shape,
   rowStartMs,
   layerClassName,
+  afterMarks,
   ...state
 }: ChartRenderState & {
   rows: ChartRowMark[];
@@ -762,6 +772,7 @@ export function ChartRowMarks({
    * `Customized` spreads the chart's own props onto this element.
    */
   layerClassName?: string;
+  afterMarks?: (state: ChartRenderState) => React.ReactNode;
   shape: (props: {
     cx: number;
     cy: number;
@@ -822,6 +833,7 @@ export function ChartRowMarks({
         </defs>
       )}
       {marks}
+      {afterMarks?.(state)}
     </g>
   );
 }
@@ -851,6 +863,182 @@ function SnappedCheckpointCursor({ x, offset }: { x: number; offset?: ChartRende
       strokeWidth={1}
       pointerEvents="none"
     />
+  );
+}
+
+interface AtlasObservationRow {
+  index: number;
+  delta: number;
+  prob: number;
+  timestamp: string;
+  atMs?: number;
+}
+
+interface AtlasSelectionBus {
+  selected: AtlasSelectedReading | null;
+  timeRange: string;
+  listeners: Set<() => void>;
+  select: (reading: AtlasSelectedReading | null) => void;
+}
+
+const ATLAS_SELECTION_BUS = new WeakMap<object, AtlasSelectionBus>();
+
+function getAtlasSelectionBus(hostKey: object, timeRange: string): AtlasSelectionBus {
+  let bus = ATLAS_SELECTION_BUS.get(hostKey);
+  if (!bus) {
+    const listeners = new Set<() => void>();
+    bus = {
+      selected: null,
+      timeRange,
+      listeners,
+      select(reading: AtlasSelectedReading | null) {
+        bus!.selected = reading;
+        listeners.forEach((fn) => fn());
+      },
+    };
+    ATLAS_SELECTION_BUS.set(hostKey, bus);
+  } else if (bus.timeRange !== timeRange) {
+    bus.timeRange = timeRange;
+    bus.selected = null;
+  }
+  return bus;
+}
+
+function useAtlasSelectionBus(bus: AtlasSelectionBus): [AtlasSelectedReading | null, (r: AtlasSelectedReading | null) => void] {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const onUpdate = () => setTick((t) => t + 1);
+    bus.listeners.add(onUpdate);
+    return () => {
+      bus.listeners.delete(onUpdate);
+    };
+  }, [bus]);
+  return [bus.selected, bus.select];
+}
+
+function AtlasOddsChartHeader({
+  bus,
+  settled,
+  showOpening,
+}: {
+  bus: AtlasSelectionBus;
+  settled: boolean;
+  showOpening: boolean;
+}) {
+  const [selectedReading, setSelectedReading] = useAtlasSelectionBus(bus);
+  return (
+    <div className="space-y-2 shrink-0" data-testid="event-atlas-chart-header">
+      <AtlasChartMarkKey
+        settled={settled}
+        showOpening={showOpening}
+        openingLabel="Pregame"
+      />
+      <AtlasSelectedReadingReadout
+        reading={
+          selectedReading && !showOpening && selectedReading.isOpening
+            ? { ...selectedReading, isOpening: false }
+            : selectedReading
+        }
+        onClear={() => setSelectedReading(null)}
+      />
+    </div>
+  );
+}
+
+/**
+ * #11974 Step E2 — renders the shared Atlas mark grammar (`AtlasSeriesReadingMarks`
+ * and `AtlasResultWordMark`) inside `<ComposedChart>` via Recharts `<Customized>`,
+ * reusing Builder D's `AtlasChartMarks` components without modifying them.
+ */
+function AtlasOddsChartMarksLayer({
+  bus,
+  observationRows,
+  rowStartMs,
+  outcomeName,
+  color,
+  includesOpening,
+  settledResult,
+  currentCallout,
+  ...state
+}: ChartRenderState & {
+  bus: AtlasSelectionBus;
+  observationRows: AtlasObservationRow[];
+  rowStartMs: ReadonlyArray<number>;
+  outcomeName: string;
+  color: string;
+  includesOpening: boolean;
+  settledResult: "won" | "lost" | null;
+  currentCallout: { rowIndex: number; delta: number; atMs?: number } | null;
+}) {
+  const [selectedReading, setSelectedReading] = useAtlasSelectionBus(bus);
+  const yAxis = Object.values(state.yAxisMap ?? {})[0];
+  const scale = yAxis?.scale;
+  if (!yAxis || typeof scale !== "function") return null;
+  const plotLeft = state.offset?.left ?? 44;
+  const plotRight = plotLeft + (state.offset?.width ?? 320);
+  let rowXs: Array<number | null> | null = null;
+  const points: AtlasChartReadingPoint[] = [];
+  for (const row of observationRows) {
+    let cx: number | null;
+    if (row.atMs !== undefined) {
+      rowXs ??= chartRowXs(state, rowStartMs.length);
+      cx = timeToChartX(row.atMs, rowStartMs, rowXs);
+    } else {
+      cx = chartRowX(state, row.index);
+    }
+    const cy = scale(row.delta);
+    if (cx === null || !Number.isFinite(cy)) continue;
+    points.push({
+      t: Date.parse(row.timestamp) || row.index,
+      x: cx,
+      y: cy,
+      prob: row.prob,
+      timestamp: row.timestamp,
+    });
+  }
+  let resultCoord: { x: number; y: number } | null = null;
+  const plotTop = yAxis.y ?? 10;
+  const plotBottom = plotTop + (yAxis.height ?? 220);
+  if (settledResult && currentCallout) {
+    let cx: number | null;
+    if (currentCallout.atMs !== undefined) {
+      rowXs ??= chartRowXs(state, rowStartMs.length);
+      cx = timeToChartX(currentCallout.atMs, rowStartMs, rowXs);
+    } else {
+      cx = chartRowX(state, currentCallout.rowIndex);
+    }
+    const cy = scale(currentCallout.delta);
+    if (cx !== null && Number.isFinite(cy)) {
+      const clampedY = Math.max(plotTop + 12, Math.min(plotBottom - 10, cy));
+      resultCoord = { x: cx - 42, y: clampedY };
+    }
+  } else if (settledResult && points.length > 0) {
+    const last = points[points.length - 1];
+    const clampedY = Math.max(plotTop + 12, Math.min(plotBottom - 10, last.y));
+    resultCoord = { x: last.x - 42, y: clampedY };
+  }
+  return (
+    <g className="recharts-layer atlas-odds-chart-marks">
+      <AtlasSeriesReadingMarks
+        outcomeId={1}
+        outcomeName={outcomeName}
+        points={points}
+        color={color}
+        includesOpening={includesOpening}
+        selectedReading={selectedReading}
+        onSelectReading={setSelectedReading}
+      />
+      {settledResult && resultCoord && (
+        <AtlasResultWordMark
+          outcomeId={1}
+          result={settledResult}
+          x={resultCoord.x}
+          y={resultCoord.y}
+          plotLeft={plotLeft}
+          plotRight={plotRight}
+        />
+      )}
+    </g>
   );
 }
 
@@ -1058,6 +1246,8 @@ export default function OddsChart({
   defaultSourcesExpanded = false,
   publications,
   tenths = false,
+  atlasMode = false,
+  settledWinnerSide,
 }: OddsChartProps) {
   // #3419: the axis is categorical on this label, so it must be spelled the
   // same way the parent spelled its ticks. Absent a parent domain the window is
@@ -1667,10 +1857,10 @@ export default function OddsChart({
    * backend blend has its own edge policy, #3898/#3911, and is not a reading
    * of any one source). Judged per series against its own in-game cadence —
    * the policy and its limits are documented in `lib/chartObservationSupport`.
-   * The forward-fill below consults this so a carried value never crosses an
-   * unsupported interval, and the tooltip and the stale-edge caption read it
-   * to say WHY a line stops rather than leaving a blank the reader has to
-   * guess at.
+   * The forward-fill below consults this so a carried value never runs past
+   * a stale right edge (a TRAILING interval), and the tooltip and the
+   * stale-edge caption read it to say how old the line's last reading is.
+   * #11929: an INTERIOR interval is drawn through like any other segment.
    */
   const observationSupport = useMemo((): Record<string, SeriesSupport> => {
     const gameStartMs = commenceTime ? parseISO(commenceTime).getTime() : NaN;
@@ -1739,8 +1929,9 @@ export default function OddsChart({
     // 15316298: Kalshi and Polymarket end 04:24Z, ESPN's post-final echoes
     // run to 04:48Z) is finished, not stale; captioning it "none since" would
     // read as an outage warning on a game that is over. So the trailing
-    // anchor is withheld once the game is closed — interior holes are still
-    // judged, and the settled tail keeps today's behaviour (#922's domain).
+    // anchor is withheld once the game is closed, and the settled tail keeps
+    // today's behaviour (#922's domain). Interior holes are still classified,
+    // but since #11929 nothing reads them: they are drawn like any segment.
     let domainEndMs: number | null = null;
     if (isClosed) {
       domainEndMs = null;
@@ -1761,7 +1952,7 @@ export default function OddsChart({
   }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, filteredScoreHistory, useNewWinProbData, commenceTime, chartEndTime, isClosed, evidenceContract]);
 
   // #11356 — with Sources closed over the blend no source line is drawn, so
-  // nothing may describe one (the tooltip's hole notes, the stale caption).
+  // nothing may describe one (the tooltip's stale-edge notes, the stale caption).
   const sourcesHiddenBehindBlend = showBlendLine && !legendExpanded;
 
   /** Series whose line ends before the chart does, with nothing observed since. */
@@ -2029,49 +2220,30 @@ export default function OddsChart({
       }
     }
 
-    // #7878 — THE CARRY HAS A BOUND. "The probability IS the last known value
-    // until a new data point arrives" is true of a quote that is still being
-    // observed and has not moved, and false of a source that has stopped
-    // reporting; the loop above cannot tell them apart, so a 73-minute hole
-    // (15315912) and a 3h17m stall (15316479) both came out as one solid line
-    // — the second one a diagonal, since recharts joined two different values.
+    // #7878 — THE CARRY HAS A BOUND AT THE RIGHT EDGE ONLY. A TRAILING
+    // unsupported interval (see `observationSupport`) is a live line whose
+    // source has stopped reporting: every minute after its last observation
+    // is withdrawn again, so the line ends ON that observation instead of
+    // being drawn on to "now" — there is no far end to reach.
     //
-    // For every minute inside an unsupported interval (see
-    // `observationSupport`) the carried value is withdrawn again, so the solid
-    // line ends ON the last observation and, for an interior hole, resumes ON
-    // the next. An interior hole additionally gets a straight-line connector
-    // under its own dataKey — drawn faint and dashed, kept out of the tooltip
-    // — so the eye can follow the series across the hole without the chart
-    // claiming a price at any minute in it. A trailing hole gets nothing:
-    // there is no far end to connect to, and drawing to "now" is the defect.
+    // #11929 (Alex, 2026-11-04 12:09 PT) SUPERSEDES #7878's interior-hole
+    // contract: "A solid line through unobserved time. A hole between two
+    // observations is drawn like any other segment of that line (the chart's
+    // normal interpolation): no bridge, no dotted treatment, no label." So an
+    // INTERIOR interval keeps the forward-fill above — the carried value runs
+    // to the next observation and the `type="linear"` line steps to it on that
+    // minute, exactly as it does between any two adjacent observations. No
+    // break, no connector, nothing in the tooltip names the stretch.
     for (const key of probKeys) {
       const support = observationSupport[key];
-      if (!support || support.unsupported.length === 0) continue;
-      const gapKey = gapConnectorKey(key);
-      // Endpoint values, read off the buckets themselves (post-fill they are
-      // the real observations at those minutes).
-      const valueAtMinute = (ms: number): number | null => {
-        const v = dataMap.get(new Date(Math.floor(ms / 60_000) * 60_000).toISOString())?.[key];
-        return typeof v === "number" ? v : null;
-      };
+      if (!support) continue;
       for (const iv of support.unsupported) {
+        if (iv.kind !== "trailing") continue;
         const fromMinute = Math.floor(iv.fromMs / 60_000) * 60_000;
-        const toMinute = Math.floor(iv.toMs / 60_000) * 60_000;
-        const fromValue = valueAtMinute(iv.fromMs);
-        const toValue = iv.kind === "interior" ? valueAtMinute(iv.toMs) : null;
         for (const pt of sorted) {
-          const ms = chartTimestampMs(pt.timestamp);
-          if (ms < fromMinute) continue;
-          // An interior hole ends at the next observation's minute; a
-          // trailing one runs to the end of the drawn domain, live edge
-          // included — every minute after the last reading is withdrawn.
-          if (iv.kind === "interior" && ms > toMinute) break;
-          const verdict = bucketSupport(ms, { ...support, unsupported: [iv] });
-          if (verdict.kind === "gap" || (iv.kind === "trailing" && ms > fromMinute)) pt[key] = null;
-          if (iv.kind === "interior" && fromValue !== null && toValue !== null && toMinute > fromMinute) {
-            const f = (ms - fromMinute) / (toMinute - fromMinute);
-            pt[gapKey] = fromValue + (toValue - fromValue) * f;
-          }
+          // Every minute after the last reading is withdrawn, live edge
+          // included.
+          if (chartTimestampMs(pt.timestamp) > fromMinute) pt[key] = null;
         }
       }
     }
@@ -2404,8 +2576,8 @@ export default function OddsChart({
   // Stamped onto the chartData points, the same way `crossingDelta` and
   // `calloutDelta` are (a separate data array would break the categorical
   // domain). Every ranged minute holds two real observations of the primary
-  // series, so the line is drawn there: #7878 withdraws only unobserved
-  // minutes, and the inputs are already cut to the chart window.
+  // series, so the line is drawn there: #7878 withdraws only the minutes
+  // after a stale right edge, and the inputs are already cut to the chart window.
   const primaryLineColor = primarySeriesKey === "bainLuckDelta"
     ? BAIN_LUCK_CONFIG.color
     : resolvedSources.find((s) => s.dataKey === primarySeriesKey)?.color ?? sourceHex("betting");
@@ -2671,6 +2843,99 @@ export default function OddsChart({
     return null;
   }, [chartData, primarySeriesKey, drawableCheckpoints, rowStartMs, awayWithheld, tenthsLabel]);
 
+  // #11974 Step E2 — settled result word ("won" / "lost") and real reading rows
+  // for the shared Atlas mark layer when `atlasMode` is enabled. Deliberately
+  // uses no extra hooks in `OddsChart` so `useId()` order inside `<ChartRowMarks>`
+  // stays byte-identical to `master` when `atlasMode` is off (#10090).
+  const atlasSettledResult: "won" | "lost" | null = (() => {
+    if (!atlasMode) return null;
+    const endDelta =
+      currentCallout?.delta ??
+      (chartData.length > 0 ? primaryValueAt(chartData[chartData.length - 1]) : null) ??
+      50;
+    const endSide: "home" | "away" = !awayWithheld && endDelta < 50 ? "away" : "home";
+    if (settledWinnerSide === "home" || settledWinnerSide === "away") {
+      return settledWinnerSide === endSide ? "won" : "lost";
+    }
+    if (settledWinnerSide === null) return null;
+    if (!isClosed || !scoreHistory || scoreHistory.length === 0) return null;
+    const last = scoreHistory[scoreHistory.length - 1];
+    if (
+      last.home_score == null ||
+      last.away_score == null ||
+      last.home_score === last.away_score
+    ) {
+      return null;
+    }
+    const winnerSide: "home" | "away" =
+      last.home_score > last.away_score ? "home" : "away";
+    return winnerSide === endSide ? "won" : "lost";
+  })();
+
+  const atlasIncludesOpening = timeRange === "all";
+  const atlasSelectionBus = atlasMode ? getAtlasSelectionBus(chartRef, timeRange) : null;
+
+  const atlasObservationRows: AtlasObservationRow[] = (() => {
+    if (!atlasMode || chartData.length === 0) return [];
+    const exactByMinute = new Map<string, string>();
+    const rawPoints: ReadonlyArray<{
+      timestamp: string;
+      home_probability: number | null;
+      live_edge?: boolean;
+    }> =
+      primarySeriesKey === "bainLuckDelta"
+        ? filteredAggregateLine
+        : primarySeriesKey === "homeDelta"
+          ? filteredHistory
+          : primarySeriesKey === "espnDelta"
+            ? filteredEspnHistory
+            : (() => {
+                const src = nonBettingSources.find((s) => s.dataKey === primarySeriesKey);
+                return src ? (filteredWinProbHistory[src.key] ?? []) : [];
+              })();
+    for (const p of rawPoints) {
+      if (
+        p.home_probability === null ||
+        !Number.isFinite(p.home_probability) ||
+        p.live_edge === true
+      ) {
+        continue;
+      }
+      if (!Number.isFinite(Date.parse(p.timestamp))) continue;
+      exactByMinute.set(toMinuteKey(p.timestamp), p.timestamp);
+    }
+    const rows: AtlasObservationRow[] = [];
+    let prevDelta: number | null = null;
+    for (let i = 0; i < chartData.length; i++) {
+      const delta = primaryValueAt(chartData[i]);
+      if (delta === null) continue;
+      const exactTs = exactByMinute.get(chartData[i].timestamp);
+      const isChangeOrFirst = prevDelta === null || delta !== prevDelta;
+      prevDelta = delta;
+      if (exactTs !== undefined || (exactByMinute.size === 0 && isChangeOrFirst)) {
+        rows.push({
+          index: i,
+          delta,
+          prob: chartAxisToHomeProb(delta),
+          timestamp: exactTs ?? chartData[i].bainLuckAt ?? chartData[i].timestamp,
+        });
+      }
+    }
+    if (primarySeriesKey === "bainLuckDelta" && drawableCheckpoints.length > 0) {
+      for (const cp of drawableCheckpoints) {
+        rows.push({
+          index: cp.rowIndex,
+          delta: homeProbToChartAxis(cp.p),
+          prob: cp.p,
+          timestamp: cp.t,
+          atMs: cp.tMs,
+        });
+      }
+      rows.sort((a, b) => (Date.parse(a.timestamp) || a.index) - (Date.parse(b.timestamp) || b.index));
+    }
+    return rows;
+  })();
+
   // #8392 — the axis gutter gives each team name the room the other does not
   // need. A hook, so it sits above the empty-chart return below; the raw names
   // are its re-measure key (the printed short names are derived from them).
@@ -2801,61 +3066,26 @@ export default function OddsChart({
 
   // Custom tooltip showing actual probabilities
   /**
-   * #7878 — the faint dashed connector across an interior hole in one series.
-   * Rendered only when that series has one (so a healthy chart's DOM is
-   * unchanged); `tooltipType="none"` keeps its interpolated values out of the
-   * tooltip payload, `activeDot={false}` keeps a hover from marking a point
-   * that was never observed, and it is never forward-filled or in the
-   * y-domain (it is not in `plottedProbKeys`). Straight, because a straight
-   * segment is the only shape that claims nothing about the path in between.
-   */
-  const gapConnector = (dataKey: string, color: string, width: number, opacity = 0.5) => {
-    const support = observationSupport[dataKey];
-    if (!support || !support.unsupported.some((iv) => iv.kind === "interior")) return null;
-    return (
-      <Line
-        key={gapConnectorKey(dataKey)}
-        type="linear"
-        dataKey={gapConnectorKey(dataKey)}
-        stroke={color}
-        strokeWidth={width}
-        strokeOpacity={opacity}
-        strokeDasharray="2 5"
-        strokeLinecap="round"
-        dot={false}
-        activeDot={false}
-        legendType="none"
-        tooltipType="none"
-        isAnimationActive={false}
-        className="recharts-gap-connector"
-      />
-    );
-  };
-
-  /**
-   * #7878 — what the tooltip says about a series at a minute it does not
-   * support: never a number, always the two observations that bound the hole
-   * (or the last one, for a stale edge). Times are spelled with the axis's
-   * own label format so they match the ticks the reader is looking at.
+   * #7878 — what the tooltip says about a series past its stale right edge:
+   * never a number, always the time of its last reading. Spelled with the
+   * axis's own label format so it matches the ticks the reader is looking at.
+   * #11929 — an INTERIOR hole gets no note: it is drawn as an ordinary
+   * segment of the line and nothing may call the reader's attention to it.
    */
   const gapNotesAt = (bucketTimestamp: string): Array<{ key: string; displayName: string; color: string; text: string }> => {
     const ms = parseISO(bucketTimestamp).getTime();
     const notes: Array<{ key: string; displayName: string; color: string; text: string }> = [];
     // #11356 — a note about a line describes a DRAWN line: with Sources closed
-    // over the blend, no source line is on the plot to have a hole in it. The
+    // over the blend, no source line is on the plot to have a stale edge. The
     // gate is "sources hidden behind the blend", not "source lines drawn": with
-    // no blend the one Sportsbooks line is drawn and its holes keep their note.
+    // no blend the one Sportsbooks line is drawn and its stale edge keeps its note.
     if (sourcesHiddenBehindBlend) return notes;
     for (const source of resolvedSources) {
       const support = observationSupport[source.dataKey];
       if (!support) continue;
       const verdict = bucketSupport(ms, support);
-      if (verdict.kind !== "gap") continue;
-      const from = format(new Date(verdict.interval.fromMs), labelFormat);
-      const text =
-        verdict.interval.kind === "interior"
-          ? `no readings ${from} – ${format(new Date(verdict.interval.toMs), labelFormat)}`
-          : `last reading ${from}, none since`;
+      if (verdict.kind !== "gap" || verdict.interval.kind !== "trailing") continue;
+      const text = `last reading ${format(new Date(verdict.interval.fromMs), labelFormat)}, none since`;
       notes.push({ key: source.key, displayName: source.displayName, color: source.color, text });
     }
     return notes;
@@ -2910,8 +3140,8 @@ export default function OddsChart({
             })
           : null;
 
-      // #9481: filterNull=false preserves gap disclosures, but also gives us
-      // entries with undefined values before that source's first reading.
+      // #9481: filterNull=false preserves stale-edge disclosures, but also gives
+      // us entries with undefined values before that source's first reading.
       // Only finite numbers may reach the shared probability formatter.
       const pricedPayload = payload.filter(
         (entry): entry is typeof entry & { value: number } =>
@@ -2953,15 +3183,12 @@ export default function OddsChart({
               e.dataKey !== "homeDelta" &&
               e.dataKey !== "bainLuckDelta" &&
               !e.dataKey.startsWith("wp_") &&
-              e.dataKey !== "espnDelta" &&
-              // #7878: belt to `tooltipType="none"`'s braces — an interpolated
-              // connector value is not a sportsbook's number.
-              !isGapConnectorKey(e.dataKey)
+              e.dataKey !== "espnDelta"
           )
         : [];
 
-      // #7878: series with no reading at this minute say so, instead of
-      // vanishing from the card as if they had never existed.
+      // #7878: a series past its stale right edge says so, instead of
+      // vanishing from the card as if it had never existed.
       const gapNotes = matchingPoint ? gapNotesAt(matchingPoint.timestamp) : [];
       // Nothing to say (a minute before any line starts): no card, as before.
       if (!bainLuckEntry && sourceEntries.length === 0 && bookmakerEntries.length === 0 && gapNotes.length === 0) {
@@ -3187,9 +3414,9 @@ export default function OddsChart({
           </>
           )}
 
-          {/* #7878 — missing observations, named as such. Never a price:
-              "no readings" is the whole claim; whether the market was quiet,
-              closed or unpolled is not something this payload can say. */}
+          {/* #7878 — a stale right edge, named as such. Never a price: "none
+              since" is the whole claim; whether the market was quiet, closed
+              or unpolled is not something this payload can say. */}
           {gapNotes.length > 0 && (
             <div className={sourceEntries.length > 0 || (showBlendLine && bainLuckEntry) ? "mt-2 pt-2 border-t border-surface-border space-y-1" : "space-y-1"}>
               {gapNotes.map((note) => (
@@ -3398,6 +3625,15 @@ export default function OddsChart({
             Odds flipped ({crossingCount})
           </button>
         )}
+        {atlasMode && atlasSelectionBus && (
+          <div className="w-full pt-1">
+            <AtlasOddsChartHeader
+              bus={atlasSelectionBus}
+              settled={atlasSettledResult !== null}
+              showOpening={atlasIncludesOpening}
+            />
+          </div>
+        )}
       </div>
 
       {/* Probability Chart with vertical team labels */}
@@ -3566,9 +3802,9 @@ export default function OddsChart({
               }
               const pt = chartData[idx];
               const delta = blendWithheld ? null : (pt[primarySeriesKey] as number | null);
-              // #7878 — a minute the primary series does not support (an
-              // unobserved hole, or the stretch after a stale edge) has no
-              // number to hand the hero. The old `: 0.5` fallback would have
+              // #7878 — a minute the primary series does not support (the
+              // stretch after a stale edge) has no number to hand the hero.
+              // The old `: 0.5` fallback would have
               // printed 50% there; clearing the hover is the honest answer
               // and is what `onMouseLeave` already does.
               if (delta == null) {
@@ -3678,9 +3914,9 @@ export default function OddsChart({
             />
             {/* #7878 — `filterNull={false}`: recharts' default drops every
                 null-valued entry and then renders no card at all when none
-                remain, which is exactly the minute after a stale edge or
-                inside a hole. The card has something true to say there ("no
-                readings …"), so it must be asked. `CustomTooltip` still
+                remain, which is exactly the minute after a stale edge. The
+                card has something true to say there ("last reading …, none
+                since"), so it must be asked. `CustomTooltip` still
                 shows a number only for entries that carry one, and returns
                 nothing when it has neither a number nor a note. */}
             {/* #10249 — `active={false}` once a finger has lifted, so no later
@@ -3694,15 +3930,13 @@ export default function OddsChart({
 
             {/* #7878 — `connectNulls` is GONE from every observation series
                 below. It was the second half of the defect: the forward-fill
-                left no nulls to connect, and where the fill now withdraws a
-                carry across an unsupported interval, `connectNulls` would
-                have drawn the straight segment right back. The lines break
-                where the observations stop; the faint dashed `__gap`
-                connectors (one per series, `gapConnector` below) are what
-                carries the eye across an interior hole, and they are
-                excluded from the tooltip so no minute in the hole gets a
-                number. The backend blend keeps its `connectNulls`: it is not
-                an observation series and is not judged here. */}
+                left no nulls to connect, and where the fill withdraws a carry
+                after a stale right edge, `connectNulls` would draw the line
+                on regardless. #11929: an interior hole is not withdrawn at
+                all — the forward-fill carries through it and the line is one
+                ordinary segment, with no connector, dash or label. The
+                backend blend keeps its `connectNulls`: it is not an
+                observation series and is not judged here. */}
             {/* #10090 — every probability line below is `isAnimationActive={false}`.
                 Recharts' default eases each new data array in over 1.5 s, and
                 when the row count changes (every history read on a live page:
@@ -3726,9 +3960,6 @@ export default function OddsChart({
                 legendType="none"
               />
             ))}
-            {!isMultiSource && bookmakers.map((bookmaker) =>
-              gapConnector(`${bookmaker}_delta`, "rgba(0,0,0,0.15)", 1),
-            )}
 
             {/* ── MODE A: Multi-source — individual source lines (near-invisible so
                 the one blended Bain Luck line clearly dominates, per L2-131) ── */}
@@ -3780,16 +4011,6 @@ export default function OddsChart({
               />
               );
             })}
-            {sourceLinesShown && resolvedSources.map((source) => {
-              const isPrimarySource = source.dataKey === primarySeriesKey;
-              return gapConnector(
-                source.dataKey,
-                source.color,
-                isPrimarySource ? 1.5 : 1,
-                isPrimarySource ? 0.5 : legendExpanded ? 0.4 : 0.15,
-              );
-            })}
-
             {/* MODE B's non-betting branch used to stand here, drawing
                 `nonBettingSources` at strokeWidth 2.5 under `!isMultiSource`.
                 It could never run: `isMultiSource` IS `nonBettingSources.length
@@ -3813,8 +4034,6 @@ export default function OddsChart({
                 activeDot={{ r: 4, fill: sourceHex("espn") }}
               />
             )}
-            {!isMultiSource && !useNewWinProbData && filteredEspnHistory.length > 0 &&
-              gapConnector("espnDelta", sourceHex("espn"), 1.5, 0.5)}
 
             {/* Area fill removed — was causing green semi-circle artifacts */}
 
@@ -3905,7 +4124,6 @@ export default function OddsChart({
                 activeDot={{ r: 5, fill: sourceHex("betting") }}
               />
             )}
-            {!isMultiSource && gapConnector("homeDelta", sourceHex("betting"), 1.5, 0.5)}
 
             {/* #10093 — a live minute's real low-to-high, inked at that minute
                 in the primary line's own colour (see `intraMinuteRanges`). The
@@ -3979,6 +4197,23 @@ export default function OddsChart({
               <Customized component={<ChartRowMarks
                 rows={[{ index: currentCallout.rowIndex, y: currentCallout.delta, payload: chartData[currentCallout.rowIndex], atMs: currentCallout.atMs }]}
                 rowStartMs={rowStartMs}
+                afterMarks={
+                  atlasMode && atlasSelectionBus && (atlasObservationRows.length > 0 || atlasSettledResult !== null)
+                    ? (renderState) => (
+                        <AtlasOddsChartMarksLayer
+                          {...renderState}
+                          bus={atlasSelectionBus}
+                          observationRows={atlasObservationRows}
+                          rowStartMs={rowStartMs}
+                          outcomeName={homeTeam}
+                          color={primaryLineColor}
+                          includesOpening={atlasIncludesOpening}
+                          settledResult={atlasSettledResult}
+                          currentCallout={currentCallout}
+                        />
+                      )
+                    : undefined
+                }
                 shape={(props: {
                   cx?: number;
                   cy?: number;

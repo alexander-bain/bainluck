@@ -142,13 +142,19 @@ class TestTheDefectItself:
             hours=3, seconds=1
         )
 
-    def test_a_line_that_already_ended_at_zero_gains_no_second_point(self):
+    def test_a_line_that_already_ended_at_zero_still_carries_its_result(self):
+        """The settlement point is the RESULT, never drawn (#10955). Without it
+        a line that converged to 0 lost "Lost" on the legend (109085)."""
         loser = _outcome(1, "Marcus Kinhult", resolution_source="leaderboard")
         oh = {1: _series(1, "Marcus Kinhult", [(EARLIER, 0.0)])}
 
         _apply_settled_loser_freeze(_market([loser]), oh, SETTLE)
 
-        assert len(oh[1]["history"]) == 1
+        assert len(oh[1]["history"]) == 2
+        assert _last(oh[1])["bookmaker"] == "settlement"
+        assert _last(oh[1])["probability"] == 0.0
+        _apply_settled_loser_freeze(_market([loser]), oh, SETTLE)
+        assert len(oh[1]["history"]) == 2  # a second pass adds nothing
 
 
 class TestTheControlsThatMustStayUntouched:

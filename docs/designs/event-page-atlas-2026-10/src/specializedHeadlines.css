@@ -1,0 +1,47 @@
+.specialized-headline{padding:18px 16px;border-radius:20px;background:var(--surface-card)}
+.specialized-headline .hero-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.specialized-contenders{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.specialized-contenders.three{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.specialized-contenders>div{display:flex;flex-direction:column;gap:6px;min-width:0}
+.specialized-contenders span{font-size:14px;font-weight:600;line-height:1.4;color:var(--text-primary)}
+.specialized-contenders small{font-size:12px;line-height:1.4;color:var(--text-secondary)}
+.specialized-contenders strong{font-size:36px;letter-spacing:-1px;line-height:1.15}
+.specialized-contenders.three strong{font-size:29px}
+.specialized-contenders .home strong{color:var(--series-home)}
+.specialized-contenders .away strong{color:var(--series-away)}
+.specialized-contenders strong.specialized-missing{font-size:17px;letter-spacing:0;line-height:1.35}
+.specialized-state,.specialized-context{font-size:12px;line-height:1.5;color:var(--text-secondary)}
+.specialized-state{padding-top:12px;border-top:1px solid var(--surface-border);margin:16px 0}
+.specialized-kickoff{display:flex;justify-content:space-between;gap:12px;margin-top:20px;font-size:13px}
+.specialized-headline .combat-winner-journey{margin-top:18px}
+.soccer-final-journey .hero-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.soccer-final-journey .soccer-three-baseline{margin-top:8px}
+.soccer-final-journey .soccer-final-score{margin:14px 0}
+.large-text .specialized-contenders{grid-template-columns:1fr}
+.large-text .specialized-contenders span{font-size:20px}
+.large-text .specialized-contenders small,.large-text .specialized-state,.large-text .specialized-context,.large-text .specialized-kickoff{font-size:16px}
+.large-text .specialized-contenders strong{font-size:38px}
+.large-text .specialized-contenders strong.specialized-missing{font-size:22px}
+.wide-content .combat-headline{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(0,1.2fr);column-gap:30px;align-items:start}
+.wide-content .combat-headline>.hero-head{grid-column:1;grid-row:1}
+.wide-content .combat-headline>.specialized-contenders{grid-column:1;grid-row:2}
+.wide-content .combat-headline>.specialized-state{grid-column:1;grid-row:3}
+.wide-content .combat-headline>.combat-winner-journey{grid-column:2;grid-row:1/5;margin:0}
+.wide-content.large-text .combat-headline{display:block}
+
+.wide-content .soccer-final-journey{display:grid;grid-template-columns:minmax(290px,.8fr) minmax(0,1.2fr);gap:28px;align-items:start}
+.soccer-headline-summary,.soccer-headline-history{min-width:0}
+.wide-content.large-text .soccer-final-journey{display:block}
+
+.combat-official-finish{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px 14px;color:var(--text-primary)}
+.combat-official-finish>strong{font-size:20px;letter-spacing:-.3px;color:var(--series-away)}
+.combat-official-finish>span{font-size:15px;line-height:1.5}
+.large-text .combat-official-finish>strong{font-size:24px}
+.large-text .combat-official-finish>span{font-size:18px}
+
+.esports-final-score{display:grid;grid-template-columns:1fr auto;gap:5px 16px;align-items:center;color:var(--text-primary)}
+.esports-final-score>strong{font-size:20px;color:var(--series-home)}
+.esports-final-score>b{grid-column:2;grid-row:1/3;font-size:32px;line-height:1;text-align:right;letter-spacing:-1px}
+.esports-final-score small{display:block;font-size:12px;letter-spacing:0;font-weight:500;margin-top:6px;color:var(--text-secondary)}
+.esports-final-score>span{font-size:14px;color:var(--text-secondary)}
+.large-text .esports-final-score>strong{font-size:24px}.large-text .esports-final-score>span,.large-text .esports-final-score small{font-size:17px}

@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchPolitics } from "@/lib/api";
 import type {
+  ChamberControl,
   PoliticsData,
   PoliticsMarketRow,
   PoliticsCandidate,
@@ -16,7 +17,7 @@ import type {
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
-import { formatGapSpan, seriesFreshness, seriesHasHole, seriesWindowLabel } from "@/lib/seriesFreshness";
+import { NEVER_A_HOLE_MS, seriesFreshness, seriesWindowLabel } from "@/lib/seriesFreshness";
 import s from "./politics.module.css";
 import { SourceBadge } from "@/components/politics/atoms";
 import { CrossSourceSpotlight } from "@/components/politics/CrossSourceSpotlight";
@@ -25,6 +26,8 @@ import PartyControlRow from "@/components/politics/PartyControlRow";
 import MarketCard from "@/components/politics/MarketCard";
 import DiscoverCollectionCard from "@/components/discover/DiscoverCollectionCard";
 import { usePinnedCollection } from "@/hooks/usePinnedCollection";
+import PoliticsAtlasView from "@/components/politics/PoliticsAtlasView";
+import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -147,7 +150,7 @@ function CandidateSpark({ history, width = 60, height = 18 }: {
   width?: number;
   height?: number;
 }) {
-  const freshness = seriesFreshness((history ?? []).map((h) => h.t));
+  const freshness = seriesFreshness((history ?? []).map((h) => h.t), undefined, { gapFloorMs: NEVER_A_HOLE_MS });
 
   if (!history || history.length < 2) {
     // Already the right call for n=0 (DeSantis and Rubio serve `history: []`):
@@ -311,15 +314,13 @@ function PresBarRace({ sorted, sourceMode, data }: {
    */
   const trendNote = useMemo(() => {
     const marked = sorted
-      .map((c) => seriesFreshness((c.history ?? []).map((h) => h.t)))
+      .map((c) => seriesFreshness((c.history ?? []).map((h) => h.t), undefined, { gapFloorMs: NEVER_A_HOLE_MS }))
       .filter((f) => f.state === "gapped" || f.state === "stale");
     if (marked.length === 0) return null;
 
-    const widest = marked.reduce((a, b) => ((b.largestGapMs ?? 0) > (a.largestGapMs ?? 0) ? b : a));
-    const gap = widest.largestGapMs;
-    return gap && seriesHasHole(widest)
-      ? `Dimmed trend lines have stretches we have no numbers for — the longest is ${formatGapSpan(gap)}.`
-      : `Dimmed trend lines are missing recent numbers.`;
+    // #11929 (Alex, Nov 4 12:09 PM): nothing names a hole; only a line that is
+    // behind now is dimmed and captioned.
+    return `Dimmed trend lines are missing recent numbers.`;
   }, [sorted]);
 
   /**
@@ -660,7 +661,9 @@ export default function PoliticsPage() {
     refreshInterval: 60000,
   });
 
-  if (error) {
+  const atlasEnabled = useAtlasPageOptIn();
+
+  if (error || (data as { error?: string } | undefined)?.error === "timeout") {
     return (
       <div className={s.page}>
         {pinnedCollection && <div className="mb-4"><DiscoverCollectionCard entry={pinnedCollection} /></div>}
@@ -675,6 +678,25 @@ export default function PoliticsPage() {
         {pinnedCollection && <div className="mb-4"><DiscoverCollectionCard entry={pinnedCollection} /></div>}
         <PoliticsSkeleton />
       </div>
+    );
+  }
+
+  if (atlasEnabled) {
+    return (
+      <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
+        <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
+          {pinnedCollection && (
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 20px 0" }}>
+              <DiscoverCollectionCard entry={pinnedCollection} />
+            </div>
+          )}
+          <PoliticsAtlasView data={data} />
+          <footer className={s.footer}>
+            Bain Luck translates prediction-market prices into probabilities.
+            Prediction market data. Not financial advice.
+          </footer>
+        </div>
+      </ErrorBoundary>
     );
   }
 

@@ -83,17 +83,15 @@ guard. Compared BY OUTCOME ID, never by position or label:
 
 and the two conditions that make that comparison worth making:
 
-  * A SUPPORTED DATED CLAIM (#4079). One outcome carries a bank basis the REAL
-    `update_max_movement` sweep wrote from real snapshot rows, aged inside
-    `DATED_BASIS_MIN_AGE_HOURS..DATED_BASIS_WINDOW_HOURS`, so the served number
-    is a real dated subtraction. A guard where every value is null passes
-    trivially and proves nothing.
-  * THE REFUSAL / NORMALIZATION CONDITION (#4079's scale ruling, codex
-    2026-09-19). On a board whose raw prices sum past the #23 threshold the
-    detail serializer squeezes every printed probability and then withholds
-    every `probability_change_24h`, because the dated move is raw−raw and the
-    printed number is not. The chart table must arrive at the same refusal —
-    and, crucially, must NOT re-derive a movement off the stored column.
+  * A SUPPORTED DATED CLAIM (#4079, Alex21-A). Every member carries a bank
+    basis the REAL `update_max_movement` sweep wrote from simultaneous snapshot
+    rows, aged inside `DATED_BASIS_MIN_AGE_HOURS..DATED_BASIS_WINDOW_HOURS`.
+    Both routes compare normalized now with normalized then, using each
+    instant's own divisor. All-null comparisons would prove nothing.
+  * THE REFUSAL CONDITION. The squeezed fixture has an incomplete historical
+    bank: the writer did not bank every peer. Both surfaces must withhold the
+    normalized movement rather than combine a raw delta with a normalized
+    current number or borrow today's divisor for yesterday.
 
   * THE HISTORICAL CONTROL. The PLOTTED series is deliberately NOT rescaled by
     that squeeze (codex's ruling: the points are real observations at real
@@ -361,9 +359,9 @@ async def _seed_board(
     return board
 
 
-#: A COHERENT sports board: the raw prices sum to 1.00, so the #23 squeeze does
-#: not fire and the dated movement column survives to be compared.
-def _seed_coherent_sports_board() -> Board:
+#: A coherent current field. The supported-comparison arm makes every peer
+#: eligible for the real sweep, so its historical field is complete (Alex21-A).
+def _seed_coherent_sports_board(*, complete_dated_field=False) -> Board:
     return _arun(
         _seed_board(
             sport_key="americanfootball_nfl",
@@ -372,12 +370,27 @@ def _seed_coherent_sports_board() -> Board:
             outcomes=[
                 # name,                  current, stored change, basis price
                 ("Kansas City Chiefs", 0.42, 0.03, 0.36),
-                ("Buffalo Bills", 0.31, -0.02, 0.33),
+                (
+                    "Buffalo Bills",
+                    0.31,
+                    -0.03 if complete_dated_field else -0.02,
+                    0.36 if complete_dated_field else 0.33,
+                ),
                 # A NULL stored change is the #4079 refusal that is NOT the
                 # squeeze: the writers never claimed a move, so the board stays
                 # silent even though the bank could date one.
-                ("Philadelphia Eagles", 0.17, None, 0.17),
-                ("Detroit Lions", 0.10, 0.01, 0.09),
+                (
+                    "Philadelphia Eagles",
+                    0.17,
+                    0.03 if complete_dated_field else None,
+                    0.08 if complete_dated_field else 0.17,
+                ),
+                (
+                    "Detroit Lions",
+                    0.10,
+                    -0.03 if complete_dated_field else 0.01,
+                    0.15 if complete_dated_field else 0.09,
+                ),
             ],
         )
     )
@@ -692,10 +705,15 @@ class TestTheTwoSurfacesAgreeByOutcomeId:
         assert compared == len(board.outcome), "every seeded row must be compared"
 
     def test_4_a_supported_dated_claim_reaches_both_surfaces_identically(self):
-        """The #4079 dated move, banked by the REAL sweep, served by both routes."""
-        board = _seed_coherent_sports_board()
+        """Both routes compare complete fields banked by the REAL sweep."""
+        board = _seed_coherent_sports_board(complete_dated_field=True)
         _run_real_sweep()
         basis = _require_banked(board, "Kansas City Chiefs")
+        bank = _bank(board.market_id)
+        assert set(bank) == {str(oid) for oid in board.outcome.values()}
+        assert len({cell[1] for cell in bank.values()}) == 1
+        historical_mass = sum(float(cell[0]) for cell in bank.values())
+        assert historical_mass == pytest.approx(0.95)
 
         timeline, detail = _timeline_then_detail(board.market_id)
         table, ladder = timeline.ok()["outcomes"], detail.ok()["outcomes"]
@@ -713,13 +731,14 @@ class TestTheTwoSurfacesAgreeByOutcomeId:
             "PRECONDITION (not the #7284 claim): the DETAIL route withheld the "
             f"dated move too, so this arm compares two refusals. bank basis={basis}"
         )
-        assert abs(served - rung) < TOL, (
-            f"id {outcome_id}: chart table {served!r} vs ladder {rung!r}"
-        )
-        # And it is the dated subtraction, not the stored per-write delta (0.03).
-        assert abs(served - (0.42 - basis)) < 1e-6, (
-            f"served {served!r} is neither `current - banked basis` "
-            f"({0.42 - basis:+.4f}) nor the ladder's value"
+        assert (
+            abs(served - rung) < TOL
+        ), f"id {outcome_id}: chart table {served!r} vs ladder {rung!r}"
+        # Each instant has its own divisor; the writer's raw bank stays intact.
+        expected = 0.42 - basis / historical_mass
+        assert abs(served - expected) < 1e-6, (
+            f"served {served!r} is not the normalized dated comparison "
+            f"({expected:+.4f})"
         )
 
     def test_5_a_row_the_writers_never_claimed_is_silent_on_both(self):
@@ -760,6 +779,9 @@ class TestTheSqueezeRefusalReachesTheChartTable:
         board = _seed_squeezed_sports_board()
         _run_real_sweep()
         _require_banked(board, "Boston Celtics")
+        assert set(_bank(board.market_id)) != {
+            str(oid) for oid in board.outcome.values()
+        }, "this refusal arm requires an incomplete historical field"
 
         timeline, detail = _timeline_then_detail(board.market_id)
         table, ladder = timeline.ok()["outcomes"], detail.ok()["outcomes"]

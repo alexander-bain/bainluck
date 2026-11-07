@@ -150,11 +150,116 @@ export function sharedBucketPrefix(labels: string[]): string {
  */
 const SIDE_LABEL_MAX_CHARS = 14;
 
+const BUCKET_UNIT_MULT: Record<string, number> = {
+  k: 1e3,
+  thousand: 1e3,
+  m: 1e6,
+  million: 1e6,
+  b: 1e9,
+  billion: 1e9,
+  t: 1e12,
+  trillion: 1e12,
+};
+
+const BUCKET_NUM_PATTERN = "[-+]?\\d+(?:,\\d{3})*(?:\\.\\d+)?";
+const BUCKET_UNIT_PATTERN = "(?:%|\\s*(?:thousand|million|billion|trillion|[kmbtKMBT])\\b|\\s*(?:st|nd|rd|th)\\b|\\s*bps\\b)?";
+const BUCKET_RANGE_RE = new RegExp(
+  `^(?:rank\\s+)?\\$?(${BUCKET_NUM_PATTERN})(${BUCKET_UNIT_PATTERN})\\s*(?:to|[–—-])\\s*\\$?(${BUCKET_NUM_PATTERN})(${BUCKET_UNIT_PATTERN})$`,
+  "i"
+);
+const BUCKET_LOWER_PREFIX_RE = new RegExp(
+  `^(?:<|≤|<=|below\\s+|under\\s+|less\\s+than\\s+|at\\s+most\\s+)\\$?(${BUCKET_NUM_PATTERN})(${BUCKET_UNIT_PATTERN})$`,
+  "i"
+);
+const BUCKET_LOWER_SUFFIX_RE = new RegExp(
+  `^\\$?(${BUCKET_NUM_PATTERN})(${BUCKET_UNIT_PATTERN})\\s+(?:or\\s+(?:below|less|lower|under)|and\\s+(?:below|under))$`,
+  "i"
+);
+const BUCKET_ORDINAL_HIGHER_RE = /^(\d+)\s*(?:st|nd|rd|th)\s+or\s+higher$/i;
+const BUCKET_ORDINAL_BELOW_RE = /^below\s+(\d+)\s*(?:st|nd|rd|th)$/i;
+const BUCKET_UPPER_PREFIX_RE = new RegExp(
+  `^(?:>|≥|>=|above\\s+|at\\s+least\\s+|over\\s+|more\\s+than\\s+|greater\\s+than\\s+)\\$?(${BUCKET_NUM_PATTERN})(${BUCKET_UNIT_PATTERN})$`,
+  "i"
+);
+const BUCKET_UPPER_SUFFIX_RE = new RegExp(
+  `^\\$?(${BUCKET_NUM_PATTERN})(${BUCKET_UNIT_PATTERN})(?:\\+|\\s+or\\s+(?:above|more|higher)|\\s+and\\s+(?:above|more|higher))$`,
+  "i"
+);
+const BUCKET_EXACT_RE = new RegExp(
+  `^(?:exactly\\s+)?\\$?(${BUCKET_NUM_PATTERN})(${BUCKET_UNIT_PATTERN})$`,
+  "i"
+);
+
+function bucketUnitMult(unit?: string): number {
+  if (!unit) return 1;
+  return BUCKET_UNIT_MULT[unit.trim().toLowerCase()] ?? 1;
+}
+
+export function parseNumericBucketSortKey(label: string): [number, number, number] | null {
+  const s = (label || "").trim();
+  if (!s || (s.includes(",") && s.includes(":"))) return null;
+  let m = BUCKET_ORDINAL_HIGHER_RE.exec(s);
+  if (m) {
+    const v = parseFloat(m[1]);
+    return [v, -1, v];
+  }
+  m = BUCKET_ORDINAL_BELOW_RE.exec(s);
+  if (m) {
+    const v = parseFloat(m[1]);
+    return [v, 2, v];
+  }
+  m = BUCKET_RANGE_RE.exec(s);
+  if (m) {
+    const v1 = parseFloat(m[1].replace(/,/g, ""));
+    const v2 = parseFloat(m[3].replace(/,/g, ""));
+    const u1 = (m[2] || "").trim() || (m[4] || "").trim();
+    const u2 = (m[4] || "").trim() || u1;
+    return [v1 * bucketUnitMult(u1), 0, v2 * bucketUnitMult(u2)];
+  }
+  for (const rx of [BUCKET_LOWER_PREFIX_RE, BUCKET_LOWER_SUFFIX_RE]) {
+    m = rx.exec(s);
+    if (m) {
+      const v = parseFloat(m[1].replace(/,/g, "")) * bucketUnitMult(m[2]);
+      return [v, -1, v];
+    }
+  }
+  for (const rx of [BUCKET_UPPER_PREFIX_RE, BUCKET_UPPER_SUFFIX_RE]) {
+    m = rx.exec(s);
+    if (m) {
+      const v = parseFloat(m[1].replace(/,/g, "")) * bucketUnitMult(m[2]);
+      return [v, 1, v];
+    }
+  }
+  m = BUCKET_EXACT_RE.exec(s);
+  if (m) {
+    const v = parseFloat(m[1].replace(/,/g, "")) * bucketUnitMult(m[2]);
+    return [v, 0, v];
+  }
+  return null;
+}
+
+export function orderNumericBuckets(buckets: [number, string][]): [number, string][] {
+  if (buckets.length < 2) return buckets;
+  const keyed: { key: [number, number, number]; idx: number; item: [number, string] }[] = [];
+  for (let i = 0; i < buckets.length; i++) {
+    const key = parseNumericBucketSortKey(buckets[i][1]);
+    if (!key) return buckets;
+    keyed.push({ key, idx: i, item: buckets[i] });
+  }
+  return keyed
+    .sort(
+      (a, b) =>
+        a.key[0] - b.key[0] ||
+        a.key[1] - b.key[1] ||
+        a.key[2] - b.key[2] ||
+        a.idx - b.idx
+    )
+    .map((entry) => entry.item);
+}
+
 export function Histogram({ buckets, color }: {
   buckets: [number, string][]; color: string; height?: number;
 }) {
-  const max = Math.max(...buckets.map(b => b[0]));
-  const peak = buckets.reduce((best, b, i) => (b[0] > buckets[best][0] ? i : best), 0);
   const shared = sharedBucketPrefix(buckets.map(b => b[1]));
   const label = (raw: string) => (shared && raw.startsWith(shared) ? raw.slice(shared.length).trim() : raw);
   // A combo market's buckets are two legs each — `Headline: 0.5% or above,
@@ -165,10 +270,13 @@ export function Histogram({ buckets, color }: {
   // above the bar, unstripped (the leading `Headline:` names a leg; it is not
   // boilerplate) and wrapping rather than truncating.
   const stacked = buckets.some(b => label(b[1]).length > SIDE_LABEL_MAX_CHARS);
+  const ordered = stacked ? buckets : orderNumericBuckets(buckets);
+  const max = Math.max(...ordered.map(b => b[0]));
+  const peak = ordered.reduce((best, b, i) => (b[0] > ordered[best][0] ? i : best), 0);
   if (stacked) {
     return (
       <div className="flex flex-col gap-1.5">
-        {buckets.map((b, i) => {
+        {ordered.map((b, i) => {
           const w = max > 0 ? (b[0] / max) * 100 : 0;
           const isPeak = i === peak;
           return (
@@ -194,7 +302,7 @@ export function Histogram({ buckets, color }: {
   }
   return (
     <div className="flex flex-col gap-px">
-      {buckets.map((b, i) => {
+      {ordered.map((b, i) => {
         const w = max > 0 ? (b[0] / max) * 100 : 0;
         const isPeak = i === peak;
         return (

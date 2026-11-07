@@ -1,0 +1,40 @@
+{
+  "slug": "by-december-31",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "kicker": "SAME DEADLINE",
+  "name": "By December 31",
+  "category": "cross-topic",
+  "tag": "",
+  "section_title": "Markets settling by December 31",
+  "footer": "Separate markets that settle by the same day.",
+  "rule": {
+    "producer": "same_deadline_board",
+    "deadline": "2026-12-31",
+    "deadline_phrase": "by December 31",
+    "min_members": 4,
+    "max_members": 6,
+    "card_rows": 5,
+    "min_categories": 3,
+    "band": [
+      0.05,
+      0.95
+    ],
+    "candidates": [
+      "polymarket:62162058",
+      "polymarket:27594137",
+      "polymarket:30587891",
+      "polymarket:8422080",
+      "polymarket:13791228",
+      "polymarket:13794660",
+      "polymarket:7578123",
+      "polymarket:13793198",
+      "polymarket:8244551"
+    ],
+    "twins": "none",
+    "normalize": false,
+    "relation": "exact",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time"
+  }
+}

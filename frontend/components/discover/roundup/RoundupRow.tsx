@@ -31,7 +31,7 @@ export function RoundupRow({ row, nowMs }: { row: RoundupRowModel; nowMs: number
         <span className="min-w-0 break-words text-[15px] leading-[1.3] text-text-primary" data-testid="roundup-row-label">
           {row.label}
         </span>
-        {row.rowMark ? <PriceAgeMark observedAt={row.observedAt} nowMs={nowMs} cadence="futures" scope="row" /> : null}
+        {row.rowMark ? <PriceAgeMark observedAt={row.observedAt} nowMs={nowMs} cadence={row.cadence} scope="row" /> : null}
       </span>
       <span
         className="col-start-2 mt-[7px] block h-[6px] overflow-hidden rounded-[3px] bg-surface-elevated"
@@ -43,6 +43,28 @@ export function RoundupRow({ row, nowMs }: { row: RoundupRowModel; nowMs: number
           data-testid="roundup-row-bar"
         />
       </span>
+      {row.secondary ? (
+        <div
+          className="col-start-2 mt-1.5 space-y-1 text-[12px] leading-none text-text-secondary"
+          data-testid="roundup-row-secondary"
+        >
+          <span
+            className="block h-[5px] w-full overflow-hidden rounded-[3px] bg-surface-elevated"
+            aria-hidden="true"
+          >
+            <i
+              className="block h-full min-w-[3px] rounded-r-[3px] bg-text-muted"
+              style={{ width: `${Math.max(0, Math.min(1, row.secondary.fill)) * 100}%` }}
+              data-testid="roundup-row-secondary-bar"
+            />
+          </span>
+          <span className="block font-mono tabular-nums" data-testid="roundup-row-secondary-value">
+            {row.secondary.secondaryLabel} {row.secondary.marker}
+            {row.secondary.digits}% · {row.secondary.primaryLabel} {row.marker}
+            {row.digits}%
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

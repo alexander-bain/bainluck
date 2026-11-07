@@ -20,6 +20,7 @@ from app.utils.deadline_family_story import (
     is_deadline_family_story_key,
     verify_and_select_deadline_family,
 )
+from app.utils.discover_card_archetypes import _outcomes_are_all_date_buckets
 from app.utils.feed_market_quality import GOLF_TOURNAMENT_STORY_PREFIX
 from app.utils.feed_market_quality import UFC_EVENT_STORY_PREFIX
 from app.utils.feed_market_quality import _story_key as compute_story_key
@@ -1609,7 +1610,25 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
 
     if _resolve_within_one_cycle(data, other):
         title = _expand_shared_month_abbreviations(title, other_stripped)
+        m_stop = _TENNIS_TOUR_STOP_RE.match(title)
+        if m_stop is not None:
+            tour = m_stop.group("tour")
+            stop = m_stop.group("stop").strip()
+            tail = m_stop.group("tail").strip()
+            other_low = other_stripped.lower()
+            if (
+                tour.lower() in other_low
+                and stop.lower() in other_low
+                and "tennis:" not in other_low
+            ):
+                title = f"{tour} {stop} {tail}"
     return _CEREMONY_PLURAL_RE.sub(lambda m: m.group(1), title)
+
+
+_TENNIS_TOUR_STOP_RE = re.compile(
+    r"^\s*(?P<tour>WTA|ATP)\s+Tennis:\s*(?P<stop>[^,]+?),\s*(?P<country>[^,]+?)(?:,|\s+)\s*(?P<tail>Winner\b.*)$",
+    re.IGNORECASE,
+)
 
 
 def _dedupe_same_question_members(
@@ -2290,6 +2309,61 @@ def _make_deadline_family_bundle_item(
     }
 
 
+def _expand_refused_single_ladder_item(item: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Split a refused single-market date ladder into plain per-leg markets (#11942)."""
+    data = _futures_data(item)
+    discover_card = data.get("discover_card")
+    if not isinstance(discover_card, Mapping) or not discover_card.get(
+        "ladder_treatment_refused"
+    ):
+        return None
+    top_outcomes = data.get("top_outcomes") or []
+    if not isinstance(top_outcomes, list) or not _outcomes_are_all_date_buckets(
+        top_outcomes
+    ):
+        return None
+    leg_ages = item.get("_refused_ladder_leg_ages") or {}
+    base_name = str(data.get("name") or "").rstrip("? ").strip()
+    legs: list[dict[str, Any]] = []
+    for idx, outcome in enumerate(top_outcomes):
+        if not isinstance(outcome, Mapping):
+            continue
+        label = str(outcome.get("name") or "").strip()
+        prob = outcome.get("probability")
+        if not label or prob is None:
+            continue
+        pct = outcome.get("rendered_percent")
+        if pct is None:
+            pct = round(float(prob) * 100)
+        leg_data = dict(data)
+        leg_data["name"] = f"{base_name} by {label}?" if base_name else label
+        leg_data["leg_key"] = label
+        leg_data["top_outcomes"] = [dict(outcome, rank=1)]
+        leg_data["outcome_count"] = 1
+        leg_data["price_observed_at"] = (
+            leg_ages.get(label)
+            if isinstance(leg_ages, Mapping) and leg_ages.get(label)
+            else data.get("price_observed_at")
+        )
+        leg_card = dict(discover_card)
+        leg_card["suggested_format"] = "binary_probability"
+        leg_card["threshold_points"] = []
+        leg_card["distribution_outcomes"] = []
+        leg_card["distribution_order"] = "probability"
+        leg_card["remaining_outcome_count"] = 0
+        leg_card["ladder_treatment_refused"] = True
+        leg_data["discover_card"] = leg_card
+        leg_item = dict(item)
+        leg_item.pop("_grouped_members", None)
+        leg_item["data"] = leg_data
+        leg_item["headline"] = f"{label} at {int(pct)}%"
+        leg_item["_ladder_refused"] = True
+        if idx == 0:
+            leg_item["_ladder_refused_group_head"] = True
+        legs.append(leg_item)
+    return legs if legs else None
+
+
 def assemble_deadline_family_bundles(
     items: list[dict[str, Any]],
     *,
@@ -2330,6 +2404,7 @@ def assemble_deadline_family_bundles(
             bucket.append(candidate)
 
     bundle_by_group: dict[tuple[str, str], dict[str, Any]] = {}
+    refused_ladder_groups: set[tuple[str, str]] = set()
     represented_ids: set[str] = set()
     lead_item_id_by_group: dict[tuple[str, str], str] = {}
 
@@ -2340,6 +2415,14 @@ def assemble_deadline_family_bundles(
             if str(_futures_data(m).get("group_type") or "").strip().lower()
             != "polymarket_event"
         ]
+        if len(child_members) >= min_items and any(
+            (_futures_data(m).get("discover_card") or {}).get(
+                "ladder_treatment_refused"
+            )
+            for m in members
+        ):
+            refused_ladder_groups.add(key)
+            continue
         if len(child_members) < min_items:
             continue
         contracts: list[dict[str, Any]] = []
@@ -2354,6 +2437,8 @@ def assemble_deadline_family_bundles(
 
         full_family, err = verify_and_select_deadline_family(contracts, now=now)
         if full_family is None or err is not None:
+            if err == "ladder_refused":
+                refused_ladder_groups.add(key)
             continue
 
         chosen_members = child_members
@@ -2385,6 +2470,8 @@ def assemble_deadline_family_bundles(
                 chosen_contracts, now=now
             )
             if capped_family is None or capped_err is not None:
+                if capped_err == "ladder_refused":
+                    refused_ladder_groups.add(key)
                 continue
             chosen_members = ranked
             family_payload = capped_family
@@ -2413,6 +2500,26 @@ def assemble_deadline_family_bundles(
             for sib in _grouped_members(item)
             if not sib.get("_q8_family_only_admission")
         ]
+        if key in refused_ladder_groups:
+            plain_legs = [
+                m
+                for m in [item, *siblings]
+                if not m.get("_q8_family_only_admission")
+                and str(_futures_data(m).get("group_type") or "").strip().lower()
+                != "polymarket_event"
+            ]
+            for idx, leg in enumerate(plain_legs):
+                plain_leg = dict(leg)
+                plain_leg.pop("_grouped_members", None)
+                plain_leg["_ladder_refused"] = True
+                if idx == 0:
+                    plain_leg["_ladder_refused_group_head"] = True
+                cleaned_items.append(plain_leg)
+            continue
+        expanded_single = _expand_refused_single_ladder_item(item)
+        if expanded_single is not None:
+            cleaned_items.extend(expanded_single)
+            continue
         if item.get("_q8_family_only_admission"):
             if siblings:
                 promoted = dict(siblings[0])
@@ -2676,14 +2783,24 @@ def assemble_nfl_division_roundup(
     closest = sorted(blends, key=lambda b: (b.leader.probability, order[b.division]))[:NFL_DIVISION_ROUNDUP_ROWS]
     shown = sorted(closest, key=lambda b: (-b.leader.probability, order[b.division]))
 
+    from app.utils.feed_reasons import format_tied_leaders
+
     rows = []
     for b in shown:
         lead = b.leader
+        tied = getattr(b, "leaders", (lead,))
+        club_label = format_tied_leaders([c.club for c in tied])
+        stamps = [c.observed_at for c in tied]
+        row_observed_at = (
+            min(stamps).isoformat()
+            if stamps and all(s is not None for s in stamps)
+            else None
+        )
         rows.append({
             "market_id": int(b.kalshi_market_id),
-            "label": f"{b.division}: {lead.club}",
+            "label": f"{b.division}: {club_label}",
             "probability": float(lead.probability),
-            "observed_at": lead.observed_at.isoformat() if lead.observed_at else None,
+            "observed_at": row_observed_at,
             "pair": {"kalshi_market_id": int(b.kalshi_market_id), "polymarket_market_id": int(b.polymarket_market_id)},
         })
     member_ids = [r["market_id"] for r in rows]
@@ -2809,9 +2926,11 @@ def _build_nfl_division_roundup_members(
         ]
         if len(blended_outcomes) != 4:
             return None, None
+        tied = getattr(div_blend, "leaders", (div_blend.leader,))
+        stamps = [c.observed_at for c in tied]
         lead_age = (
-            div_blend.leader.observed_at.isoformat()
-            if div_blend.leader.observed_at is not None
+            min(stamps).isoformat()
+            if stamps and all(s is not None for s in stamps)
             else None
         )
         card = {

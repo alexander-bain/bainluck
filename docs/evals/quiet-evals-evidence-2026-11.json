@@ -1,0 +1,687 @@
+{
+  "matching_reconciliation": {
+    "task": "matching_reconciliation",
+    "last_started_at": "2026-11-04T04:46:33.949393+00:00",
+    "last_success_at": "2026-11-04T04:47:49.010655+00:00",
+    "last_verdict": "unverified",
+    "last_verdict_reason": "not_enforced(unknown:no_terminal_fields)",
+    "health": "healthy",
+    "result": {
+      "checks_run": 4,
+      "checks_failed": 3,
+      "red": [
+        "golden"
+      ],
+      "filed": [
+        {
+          "fingerprint": "e6ec282d2e28",
+          "marker": "matching-drift-fingerprint",
+          "action": "comment_failed",
+          "issue": 2728,
+          "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues/2728/comments'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/40",
+          "check": "golden"
+        },
+        {
+          "fingerprint": "c57d66db252e",
+          "marker": "matching-drift-fingerprint",
+          "action": "green_no_issue",
+          "check": "anchor_collision"
+        },
+        {
+          "fingerprint": "d8f6b2fb2ab9",
+          "marker": "matching-drift-fingerprint",
+          "action": "green_no_issue",
+          "check": "event_espn_id_collision"
+        },
+        {
+          "fingerprint": "4509eec9e81f",
+          "marker": "matching-drift-fingerprint",
+          "action": "green_no_issue",
+          "check": "market_multi_event"
+        }
+      ],
+      "errors": [
+        "check_receipt_coverage: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.QueryCanceledError'>: canceling statement due to statement timeout\n[SQL: \n        SELECT count(*)\n        FROM futures_markets",
+        "check_linked_unsourced: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.InFailedSQLTransactionError'>: current transaction is aborted, commands ignored until end of transaction block\n[SQL: \n        ",
+        "check_receipt_contradicts_link: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.InFailedSQLTransactionError'>: current transaction is aborted, commands ignored until end of transaction block\n[SQL: \n        "
+      ]
+    }
+  },
+  "grid_sentinel": {
+    "task": "grid_sentinel",
+    "last_started_at": "2026-11-03T07:42:50.012081+00:00",
+    "last_success_at": "2026-11-03T07:42:59.162452+00:00",
+    "last_verdict": "unverified",
+    "last_verdict_reason": "not_enforced(unknown:no_terminal_fields)",
+    "health": "healthy",
+    "result": {
+      "filed": [
+        {
+          "fingerprint": "655b9f1d5e2a",
+          "marker": "grid-sentinel-fingerprint",
+          "action": "error",
+          "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+          "league": "mlb"
+        }
+      ],
+      "scorecard": {
+        "leagues_total": 3,
+        "leagues_red": 1,
+        "leagues_green": 2,
+        "leagues_unverified": 0,
+        "per_league": [
+          {
+            "league": "mlb",
+            "verdict": "red",
+            "checks_skipped": [],
+            "phase": "postseason",
+            "real_defects": 1,
+            "explained_artifacts": 0,
+            "watch": 0,
+            "teams": 30,
+            "columns": [
+              "make_playoffs",
+              "division",
+              "championship"
+            ],
+            "cells_self_checked": 0
+          },
+          {
+            "league": "nba",
+            "verdict": "green",
+            "checks_skipped": [],
+            "phase": "in_season",
+            "real_defects": 0,
+            "explained_artifacts": 0,
+            "watch": 0,
+            "teams": 30,
+            "columns": [
+              "make_playoffs",
+              "division",
+              "conference",
+              "championship"
+            ],
+            "cells_self_checked": 60
+          },
+          {
+            "league": "nhl",
+            "verdict": "green",
+            "checks_skipped": [],
+            "phase": "in_season",
+            "real_defects": 0,
+            "explained_artifacts": 0,
+            "watch": 0,
+            "teams": 32,
+            "columns": [
+              "make_playoffs",
+              "division",
+              "conference",
+              "championship"
+            ],
+            "cells_self_checked": 60
+          }
+        ]
+      },
+      "generated_at": "2026-11-03T07:42:59.076519+00:00",
+      "errors": []
+    }
+  },
+  "flow_sentinel": {
+    "task": "flow_sentinel",
+    "last_started_at": "2026-11-03T07:19:04.091137+00:00",
+    "last_success_at": "2026-11-03T07:19:56.343193+00:00",
+    "last_verdict": "unverified",
+    "last_verdict_reason": "not_enforced(unknown:no_terminal_fields)",
+    "health": "no_data",
+    "result": {
+      "filed": [
+        {
+          "fingerprint": "2e1bdad3c1b1",
+          "marker": "flow-sentinel-fingerprint",
+          "action": "error",
+          "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+          "flow": "event_completeness"
+        },
+        {
+          "fingerprint": "10bf3ba1fe1b",
+          "marker": "flow-sentinel-fingerprint",
+          "action": "error",
+          "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+          "flow": "category_discover"
+        },
+        {
+          "fingerprint": "6a31e44ac345",
+          "marker": "flow-sentinel-fingerprint",
+          "action": "error",
+          "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+          "flow": "unlinked_held"
+        },
+        {
+          "fingerprint": "bbbe68ed999f",
+          "marker": "flow-sentinel-fingerprint",
+          "action": "comment_failed",
+          "issue": 1511,
+          "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues/1511/comments'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/40",
+          "flow": "team_identity_dupes"
+        }
+      ],
+      "scorecard": {
+        "flows_total": 17,
+        "flows_verified": 15,
+        "flows_passed": 11,
+        "flows_failed": 4,
+        "flows_unknown": 2,
+        "unknown_flows": [
+          "participation_family",
+          "winner_field_coherence"
+        ],
+        "per_flow": [
+          {
+            "flow": "search_gold_set",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 25,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "search_gold_top1",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 8,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "duplicate_events",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 238,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "event_completeness",
+            "outcome": "fail",
+            "passed": false,
+            "checked": 1,
+            "failing": 1,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "sports_feed_events",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 1,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "discover_first_page",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 1,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "resolved_state",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 237,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "chart_density",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 1,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "category_discover",
+            "outcome": "fail",
+            "passed": false,
+            "checked": 5,
+            "failing": 1,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "participation_family",
+            "outcome": "unknown",
+            "passed": false,
+            "checked": 0,
+            "failing": 0,
+            "unknown": true,
+            "skipped": true
+          },
+          {
+            "flow": "matured_linkage",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 588,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "unlinked_held",
+            "outcome": "fail",
+            "passed": false,
+            "checked": 2000,
+            "failing": 6,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "season_aggregate_linkage",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 1,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "frozen_final_scores",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 27,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "espn_id_linkage_drift",
+            "outcome": "pass",
+            "passed": true,
+            "checked": 27,
+            "failing": 0,
+            "unknown": false,
+            "skipped": false
+          },
+          {
+            "flow": "winner_field_coherence",
+            "outcome": "unknown",
+            "passed": false,
+            "checked": 0,
+            "failing": 0,
+            "unknown": true,
+            "skipped": true
+          },
+          {
+            "flow": "team_identity_dupes",
+            "outcome": "fail",
+            "passed": false,
+            "checked": 2,
+            "failing": 1,
+            "unknown": false,
+            "skipped": false
+          }
+        ]
+      },
+      "generated_at": "2026-11-03T07:19:56.225795+00:00",
+      "errors": []
+    }
+  },
+  "discover_llm_eval": {
+    "task": "discover_llm_eval",
+    "last_started_at": "2026-11-03T09:36:30.895510+00:00",
+    "last_success_at": "2026-11-03T09:36:58.051410+00:00",
+    "last_verdict": "unverified",
+    "last_verdict_reason": "not_enforced(unknown:no_terminal_fields)",
+    "health": "healthy",
+    "result": {
+      "graded": 50,
+      "proposals": 45,
+      "email_misses": 20,
+      "errors": 0
+    }
+  },
+  "grid-sentinel_last": {
+    "generated_at": "2026-11-03T07:42:59.076519+00:00",
+    "filed": [
+      {
+        "fingerprint": "655b9f1d5e2a",
+        "marker": "grid-sentinel-fingerprint",
+        "action": "error",
+        "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+        "league": "mlb"
+      }
+    ],
+    "scorecard": {
+      "leagues_total": 3,
+      "leagues_red": 1,
+      "leagues_green": 2,
+      "leagues_unverified": 0,
+      "per_league": [
+        {
+          "league": "mlb",
+          "verdict": "red",
+          "checks_skipped": [],
+          "phase": "postseason",
+          "real_defects": 1,
+          "explained_artifacts": 0,
+          "watch": 0,
+          "teams": 30,
+          "columns": [
+            "make_playoffs",
+            "division",
+            "championship"
+          ],
+          "cells_self_checked": 0
+        },
+        {
+          "league": "nba",
+          "verdict": "green",
+          "checks_skipped": [],
+          "phase": "in_season",
+          "real_defects": 0,
+          "explained_artifacts": 0,
+          "watch": 0,
+          "teams": 30,
+          "columns": [
+            "make_playoffs",
+            "division",
+            "conference",
+            "championship"
+          ],
+          "cells_self_checked": 60
+        },
+        {
+          "league": "nhl",
+          "verdict": "green",
+          "checks_skipped": [],
+          "phase": "in_season",
+          "real_defects": 0,
+          "explained_artifacts": 0,
+          "watch": 0,
+          "teams": 32,
+          "columns": [
+            "make_playoffs",
+            "division",
+            "conference",
+            "championship"
+          ],
+          "cells_self_checked": 60
+        }
+      ]
+    },
+    "provenance": {
+      "source": "volatile",
+      "identity": "sentinel:grid",
+      "schema_version": "v1",
+      "generation": 1793691779076,
+      "generated_at": "2026-11-03T07:42:59.076519+00:00",
+      "age_s": 76258.9,
+      "complete": true,
+      "dated": false,
+      "envelope_format": "durable-state/v1",
+      "tiers": {
+        "volatile": {
+          "status": "ok",
+          "tier": "volatile"
+        },
+        "durable": {
+          "status": "malformed",
+          "tier": "durable",
+          "error_class": "ChecksumMismatch",
+          "error": "payload checksum does not match the stored envelope"
+        }
+      },
+      "note": "served from the Redis accelerator"
+    }
+  },
+  "flow-sentinel_last": {
+    "generated_at": "2026-11-03T07:19:56.225795+00:00",
+    "filed": [
+      {
+        "fingerprint": "2e1bdad3c1b1",
+        "marker": "flow-sentinel-fingerprint",
+        "action": "error",
+        "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+        "flow": "event_completeness"
+      },
+      {
+        "fingerprint": "10bf3ba1fe1b",
+        "marker": "flow-sentinel-fingerprint",
+        "action": "error",
+        "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+        "flow": "category_discover"
+      },
+      {
+        "fingerprint": "6a31e44ac345",
+        "marker": "flow-sentinel-fingerprint",
+        "action": "error",
+        "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+        "flow": "unlinked_held"
+      },
+      {
+        "fingerprint": "bbbe68ed999f",
+        "marker": "flow-sentinel-fingerprint",
+        "action": "comment_failed",
+        "issue": 1511,
+        "error": "Client error '403 Forbidden' for url 'https://api.github.com/repos/alexander-bain/bainluck/issues/1511/comments'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/40",
+        "flow": "team_identity_dupes"
+      }
+    ],
+    "scorecard": {
+      "flows_total": 17,
+      "flows_verified": 15,
+      "flows_passed": 11,
+      "flows_failed": 4,
+      "flows_unknown": 2,
+      "unknown_flows": [
+        "participation_family",
+        "winner_field_coherence"
+      ],
+      "per_flow": [
+        {
+          "flow": "search_gold_set",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 25,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "search_gold_top1",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 8,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "duplicate_events",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 238,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "event_completeness",
+          "outcome": "fail",
+          "passed": false,
+          "checked": 1,
+          "failing": 1,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "sports_feed_events",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 1,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "discover_first_page",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 1,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "resolved_state",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 237,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "chart_density",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 1,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "category_discover",
+          "outcome": "fail",
+          "passed": false,
+          "checked": 5,
+          "failing": 1,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "participation_family",
+          "outcome": "unknown",
+          "passed": false,
+          "checked": 0,
+          "failing": 0,
+          "unknown": true,
+          "skipped": true
+        },
+        {
+          "flow": "matured_linkage",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 588,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "unlinked_held",
+          "outcome": "fail",
+          "passed": false,
+          "checked": 2000,
+          "failing": 6,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "season_aggregate_linkage",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 1,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "frozen_final_scores",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 27,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "espn_id_linkage_drift",
+          "outcome": "pass",
+          "passed": true,
+          "checked": 27,
+          "failing": 0,
+          "unknown": false,
+          "skipped": false
+        },
+        {
+          "flow": "winner_field_coherence",
+          "outcome": "unknown",
+          "passed": false,
+          "checked": 0,
+          "failing": 0,
+          "unknown": true,
+          "skipped": true
+        },
+        {
+          "flow": "team_identity_dupes",
+          "outcome": "fail",
+          "passed": false,
+          "checked": 2,
+          "failing": 1,
+          "unknown": false,
+          "skipped": false
+        }
+      ]
+    },
+    "provenance": {
+      "source": "volatile",
+      "identity": "sentinel:flow",
+      "schema_version": "v1",
+      "generation": 1793690396225,
+      "generated_at": "2026-11-03T07:19:56.225795+00:00",
+      "age_s": 77618.6,
+      "complete": true,
+      "dated": false,
+      "envelope_format": "durable-state/v1",
+      "tiers": {
+        "volatile": {
+          "status": "ok",
+          "tier": "volatile"
+        },
+        "durable": {
+          "status": "ok",
+          "tier": "durable"
+        }
+      },
+      "note": "served from the Redis accelerator"
+    }
+  },
+  "browser_audit": {
+    "run_id": 41490775406,
+    "created_at": "2026-11-02T17:23:48Z",
+    "status": "failure",
+    "deploy_smoke_consent": {
+      "selected": 26,
+      "failed": 24,
+      "manifest": "valid"
+    },
+    "tournament_inventory": {
+      "selected": 18,
+      "failed": 4,
+      "manifest": "valid"
+    },
+    "filer_run": 41492667045,
+    "filer_status": "success",
+    "filer_findings_acted_on": 43,
+    "filer_manifests": 2
+  }
+}

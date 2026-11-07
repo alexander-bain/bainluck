@@ -1,4 +1,6 @@
-"""LAT-P139 — the serve-a-stale-copy-of-a-clock mutation class.
+"""Extends search_truth_closure_contract (ruling 002).
+
+LAT-P139 — the serve-a-stale-copy-of-a-clock mutation class.
 
 WHAT A MUTANT PROVES HERE
 -------------------------

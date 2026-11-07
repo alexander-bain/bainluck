@@ -947,6 +947,7 @@ export interface SettlementDisplay {
 }
 
 export interface FuturesOutcome {
+  rendered_percent?: number | null;
   id: number;
   name: string;
   probability: number | null;
@@ -1304,6 +1305,10 @@ export interface FuturesMarketDetailResponse extends FuturesMarket {
   /** #8892: on a game container, the id of the match-winner outcome a hero leads
    *  with. Null everywhere else; absent on builds before #8894. */
   lead_outcome_id?: number | null;
+  /** #11942: true when cumulative ladder rungs are out of order on an open market;
+   *  every venue rung stays in `outcomes` with its `last_updated`, while the
+   *  detail page refuses the ladder drawing and lists the rungs plainly. */
+  ladder_treatment_refused?: boolean;
   /** #10165: on a Polymarket game container, the game it is the container OF —
    *  the page sends the reader there. Null everywhere else; absent on builds
    *  before #10173. */
@@ -1341,7 +1346,8 @@ export interface FuturesHistoryPoint {
   bookmaker: string;
   /** #683 — present only on a point recovered from Kalshi's archive
    *  (`"kalshi_archive"`). Such a point is an interval: `timestamp` is its
-   *  close, `interval_start` its open. Live points carry none of these. */
+   *  close, `interval_start` its open. Live points carry none of these.
+   *  #7351 — `"venue_history"` on a point from the venue's history bank. */
   provenance?: string;
   interval_start?: string;
   period_minutes?: number;
@@ -1882,6 +1888,8 @@ export interface FeedFuturesData {
    */
   price_observed_at?: string | null;
   top_outcomes: FeedFuturesOutcome[];
+  /** #11995: whole percentages were allocated over the complete one-winner field. */
+  full_field_rendered?: boolean;
   /**
    * Why this card's printed percents do not total 100, or null if they do (#2088).
    *
@@ -2215,24 +2223,39 @@ export interface FeedBundleData {
   deadline_family?: FeedDeadlineFamilyContract | null;
 }
 
-// #10357 — a round-up card ("NFL division front-runners"). Every number is the
-// server's Bain Luck blend; the client orders, formats and ages, never computes.
-export interface FeedRoundupRow {
-  market_id: number;
-  /** "NFC East: Cowboys" — the division, then its leader. */
+// #10357 — a round-up card ("NFL division front-runners", "The closest games
+// tonight", "College Football Playoff picture"). Every number is the server's
+// served probability; the client orders, formats and ages, never computes. Each
+// row keys on `market_id` (optionally with `outcome_id` for a `field_band`
+// round-up whose rows are outcomes of one field market) or `event_id` (game
+// round-up), never both `market_id` and `event_id`.
+export type FeedRoundupRow = {
+  /** "NFC East: Cowboys" — the division, game, or outcome label. */
   label: string;
-  /** The leader's blended probability, a fraction in [0, 1]. */
+  /** The row's probability, a fraction in [0, 1]. */
   probability: number;
   /** The server's whole-percent rendering of `probability`, when it sent one. */
   rendered_percent?: number | null;
-  /** The OLDEST contributing price behind this row's blend. */
+  /** Optional second bar probability in [0, 1] for two-bar awards rows (e.g. nomination %). */
+  secondary_probability?: number | null;
+  /** The server's whole-percent rendering of `secondary_probability`, when it sent one. */
+  secondary_rendered_percent?: number | null;
+  /** Optional short label for the primary bar when a second bar is present (e.g. "Wins"). */
+  primary_bar_label?: string | null;
+  /** Optional short label for the secondary bar when present (e.g. "Nominated"). */
+  secondary_bar_label?: string | null;
+  /** The OLDEST contributing price behind this row. */
   observed_at?: string | null;
-}
+} & (
+  | { market_id: number; outcome_id?: number; event_id?: never }
+  | { event_id: number; market_id?: never; outcome_id?: never }
+);
 
 export interface FeedRoundupContract {
   kicker: string;
   tag?: string | null;
   footer: string;
+  count_line?: string | null;
   rows: FeedRoundupRow[];
 }
 
@@ -2361,6 +2384,12 @@ export interface FeedResponse {
     pinned_events: number;
     pinned_futures: number;
   };
+  /**
+   * #12095 — the deploy (git sha) that ranked this deck. Sent only while the
+   * server's `RANKING_SNAPSHOTS` switch is on; Discover events carry it with
+   * the `edition` as their slate id.
+   */
+  ranker_version?: string;
 }
 
 // Related events on futures detail pages

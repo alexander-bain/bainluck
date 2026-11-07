@@ -448,6 +448,10 @@ class TestAnExplicitEmptyTargetListIsNotAFullRun:
 
         import app.utils.tournament_register as reg
 
+        # C-1 / B-7: the scheduled run is calendar-gated; pin it in season so
+        # this test does not branch on today's date (gotcha #44).
+        monkeypatch.setattr(rail, "in_season", lambda slug, now=None: True)
+
         def _load(tournament, season):
             seen.append((tournament, season))
             return None
@@ -463,6 +467,8 @@ class TestAnExplicitEmptyTargetListIsNotAFullRun:
 
         import app.services.espn_tennis as espn
         import app.tasks.redis_state as redis_state
+
+        monkeypatch.setattr(rail, "in_season", lambda slug, now=None: True)  # C-1 / B-7
 
         async def _fetch(event_name):
             seen.append(event_name)

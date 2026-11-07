@@ -1,4 +1,6 @@
-"""LAT-P111 — RED-proof for `tests/test_search_futures_tier_split.py`.
+"""Extends search_truth_closure_contract (ruling 002).
+
+LAT-P111 — RED-proof for `tests/test_search_futures_tier_split.py`.
 
 A green guard suite proves the code passes it. It does NOT prove the suite would
 notice if the code broke — and for this change that second property is the whole

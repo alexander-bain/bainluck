@@ -43,7 +43,10 @@ import SwiftUI
 /// renders exactly as before — #2088's `card_sum_reason` sentence, not this
 /// function, is what explains those.
 nonisolated func discoverFuturesCardPercents(_ outcomes: [FeedFuturesOutcome]) -> [Int?] {
-    renderedCardPercents(outcomes.map(\.probability))
+    let fallback = renderedCardPercents(outcomes.map(\.probability))
+    return outcomes.enumerated().map { index, outcome in
+        outcome.renderedPercent ?? fallback[index]
+    }
 }
 
 /// The exact string one outcome row prints. `?? 0` preserves what the row

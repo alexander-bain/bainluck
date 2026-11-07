@@ -131,6 +131,7 @@ class TestTheFixtureCanActuallyFail:
 
 
 class TestTheSpecimen:
+
     def test_the_detail_payload_prints_the_venues_price(self):
         """The issue's guard: `/api/futures/209` leader within 2 pts of 0.985."""
         served = _detail(NL_MVP)

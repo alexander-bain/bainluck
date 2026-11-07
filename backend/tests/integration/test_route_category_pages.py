@@ -87,6 +87,7 @@ def _market(
     image_url=None,
     hook_description=None,
     status="open",
+    mutually_exclusive=True,
 ):
     now = datetime.now(timezone.utc)
     return SimpleNamespace(
@@ -106,6 +107,7 @@ def _market(
         image_url=image_url,
         hook_description=hook_description,
         status=status,
+        mutually_exclusive=mutually_exclusive,
     )
 
 

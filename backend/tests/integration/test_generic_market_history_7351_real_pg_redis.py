@@ -1668,28 +1668,29 @@ def _field_venue_coherent(venue: Venue, *, omit: tuple[str, int] | None = None):
            "CAN measure — and the venue instants still have to answer for themselves"),
 ])
 def test_C4_an_exclusive_fields_venue_instants_must_answer_for_themselves(venue, broker, capture_scale, what):
-    """`/history` prints the #23-squeezed scale; a raw venue point is not on it.
+    """#11995: complete venue columns use THEIR denominator, never the captures'.
 
-    🔴 THE SECOND PARAMETER IS THE CONTROL. The squeeze is a WHOLE-FIELD operation:
-    what it does to one outcome is a function of the other outcomes' values at the
-    SAME instant. The first presentation admitted the whole market whenever every
-    CAPTURED instant happened to come through unchanged — which is exactly what a
-    field sitting at 100% does for as long as it sits there — and then served venue
-    points at instants no capture reached. That is an inference from one instant to
-    a different one. Here the captures need no squeeze at all and the series is
-    still refused, because this venue's own field sums to 1.04 and 1.08 at two of
-    its three instants: measured where the point is, not where the captures are.
+    The paired capture scales show that either capture field can coexist with
+    venue observations at 1.00 / 1.04 / 1.08. Keep each quote's clock and raw
+    provenance while printing its share of its own contemporaneous full field.
+    Missing-companion refusal remains covered by C4b below.
     """
     _seed_field(mutually_exclusive=True, capture_scale=capture_scale)
     _field_venue(venue)
     _timeline(FIELD_MARKET_ID)
     broker.run_enqueued()
     hist = _history(FIELD_MARKET_ID)
-    assert hist["venue_history"]["state"] == "refused", what
-    assert hist["venue_history"]["refusals"][-1]["reason"] == (
-        "printed_scale_is_not_the_venue_raw_scale"
-    ), what
-    assert all("provenance" not in p for e in hist["outcomes"] for p in e["history"])
+    assert hist["venue_history"]["state"] == "warm", what
+    assert hist["venue_history"]["points_served"] == 12
+    served = {e["name"]: {p["timestamp"]: p for p in e["history"]
+                           if p.get("provenance") == "venue_history"}
+              for e in hist["outcomes"]}
+    for _oid, _suffix, name, p in FIELD:
+        for i, h in enumerate((40, 30, 12)):
+            point = served[name][_iso(_hours_ago(h))]
+            raw = p + i * 0.01
+            assert point["probability"] == pytest.approx(raw / (1 + 4 * i * 0.01), abs=1e-8)
+            assert point.get("raw_probability", point["probability"]) == pytest.approx(raw)
     # The phone's reader plots the RAW scale by ruling (#7284) and may serve them.
     tl = _timeline(FIELD_MARKET_ID)
     assert tl["venue_history"]["points_served"] == 12

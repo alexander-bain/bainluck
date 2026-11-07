@@ -50,6 +50,16 @@ JORDAN = 1001
 FIELD = {1002: 0.40, 1003: 0.25, 1004: 0.15, 1005: 0.05}
 
 
+def _normalized_move(current, previous=0.02):
+    """Ruling21-A: each complete recorded field supplies its own denominator.
+
+    Writers and the raw dated bank keep their original values/assertions. Only
+    the served normalized winner field uses this comparison.
+    """
+    peers = sum(FIELD.values())
+    return current / (current + peers) - previous / (previous + peers)
+
+
 # ---------------------------------------------------------------------------
 # Harness
 # ---------------------------------------------------------------------------
@@ -78,6 +88,13 @@ async def _reset_and_seed(markets):
     A leg with `current_probability` None and no observations is not created.
     Returns {(tour, market_type): market_id} and {(tour, market_type, dg_id): outcome_id}.
     """
+    # One fixed clock for a recorded field; per-row wall-clock sampling could
+    # straddle the bank's whole-second boundary and invent staggered instants.
+    seed_now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    def _seed_ago(hours):
+        return seed_now - timedelta(hours=hours)
+
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from app.models.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
@@ -109,7 +126,7 @@ async def _reset_and_seed(markets):
                 llm_sport_category="golf",
                 status="open",
                 mutually_exclusive=(market_type == "win"),
-                commence_time=_ago(30),
+                commence_time=_seed_ago(30),
                 resolution_date=datetime.now(timezone.utc) + timedelta(days=2),
                 market_metadata={"datagolf_event_id": EVENT_ID, "tour": tour},
             )
@@ -124,19 +141,19 @@ async def _reset_and_seed(markets):
                     current_probability=current,
                     opening_probability=spec.get("opening", {}).get(dg_id, current),
                     probability_change_24h=spec.get("deltas", {}).get(dg_id),
-                    last_updated=_ago(0.5),
+                    last_updated=_seed_ago(0.5),
                 )
                 session.add(outcome)
                 await session.flush()
                 outcome_ids[(tour, market_type, dg_id)] = outcome.id
                 for hours_ago, prob, bookmaker, *rest in observations:
-                    valid_until = rest[0] if rest else _ago(hours_ago)
+                    valid_until = rest[0] if rest else _seed_ago(hours_ago)
                     session.add(
                         FuturesOddsSnapshot(
                             outcome_id=outcome.id,
                             bookmaker=bookmaker,
                             probability=prob,
-                            captured_at=_ago(hours_ago),
+                            captured_at=_seed_ago(hours_ago),
                             valid_until=valid_until,
                             reading_count=1,
                         )
@@ -440,25 +457,29 @@ def test_the_specimen_serves_its_dated_day_move(monkeypatch, rail) -> None:
         f"metadata={run['metadata']} result={run['result']}"
     )
     assert run["metadata"].get(DATED_BASIS_ELIGIBILITY_METADATA_KEY) == DATED_BASIS_PRICED_LEG
-    assert run["served"] is not None and abs(run["served"] - 0.13) < 1e-6, (
-        f"{rail}: the served ladder must show +0.13 (0.15 now − 0.02 at 19 h); got {run['served']}"
-    )
+    assert (
+        run["served"] is not None and abs(run["served"] - _normalized_move(0.15)) < 1e-6
+    ), f"{rail}: the served ladder must compare the normalized now and19h fields; got {run['served']}"
 
 
 def test_a_tiny_poll_keeps_the_bank_and_moves_the_answer(monkeypatch) -> None:
     """A 0.05-point poll is far under the floor; the shared A9 would delete the
     bank on it. A9-DG keeps it, and the served move follows the new price."""
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
     run = _drive_specimen(monkeypatch, "live")
     assert run["served"] is not None
 
     _write(monkeypatch, "live", _priced(0.1505))
     result = _sweep(monkeypatch)
-    market_ids, _ = asyncio.run(_ids())
+    market_ids, outcome_ids = asyncio.run(_ids())
     served = _served(monkeypatch, market_ids[("pga", "win")])
 
-    assert served[run["jordan"]] is not None and abs(served[run["jordan"]] - 0.1305) < 1e-6, (
-        f"a tiny poll lost the dated move: {served[run['jordan']]} result={result}"
-    )
+    # A tiny overround keeps its real move; today's divisor is not yesterday's.
+    assert served[run["jordan"]] == pytest.approx(_normalized_move(0.1505), abs=1e-8)
+    _, metadata = _rows(market_ids, outcome_ids)
+    assert metadata[market_ids[("pga", "win")]][DATED_BASIS_METADATA_KEY][str(run["jordan"])][0] == 0.02
+    assert result["dated_basis_unbanked_datagolf"] == 0
 
 
 async def _ids():
@@ -486,7 +507,7 @@ async def _ids():
     return markets, outcomes
 
 
-def test_a_flat_leg_beside_a_mover_serves_its_measured_flat_day(monkeypatch) -> None:
+def test_a_raw_flat_leg_beside_a_mover_keeps_its_normalized_day(monkeypatch) -> None:
     """Swept after ONE poll: Jordan's 0.13 clears the floor, so the market is in
     the SHARED arm's scope too. Without its `source` exclusion, A8 would replace
     the DataGolf bank with only the legs at the floor, and every flat leg beside
@@ -502,8 +523,20 @@ def test_a_flat_leg_beside_a_mover_serves_its_measured_flat_day(monkeypatch) -> 
 
     mover = served[outcome_ids[("pga", "win", JORDAN)]]
     flat = served[outcome_ids[("pga", "win", 1002)]]
-    assert mover is not None and abs(mover - 0.13) < 1e-6, mover
-    assert flat == 0.0, f"a measured flat day serves 0.0, got {flat}"
+    assert mover is not None and abs(mover - _normalized_move(0.15)) < 1e-6, mover
+    assert flat == pytest.approx(
+        FIELD[1002] - FIELD[1002] / (sum(FIELD.values()) + 0.02), abs=1e-8
+    )
+    deltas, metadata = _rows(market_ids, outcome_ids)
+    assert float(deltas[outcome_ids[("pga", "win", 1002)]]) == 0.0
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+    assert (
+        metadata[mid][DATED_BASIS_METADATA_KEY][str(outcome_ids[("pga", "win", 1002)])][
+            0
+        ]
+        == 0.4
+    )
 
 
 def test_a_previous_price_of_zero_is_a_price(monkeypatch) -> None:
@@ -546,6 +579,8 @@ def test_each_market_and_tour_dates_its_own_legs(monkeypatch) -> None:
     win = _served(monkeypatch, market_ids[("pga", "win")])[outcome_ids[("pga", "win", JORDAN)]]
     t5 = _served(monkeypatch, market_ids[("pga", "top_5")])[outcome_ids[("pga", "top_5", JORDAN)]]
     eu = _served(monkeypatch, market_ids[("euro", "win")])[outcome_ids[("euro", "win", JORDAN)]]
+    # The later placement-only poll omits the winner peers, so this current
+    # field is incomplete and stays raw; this arm checks market/tour isolation.
     assert win is not None and abs(win - 0.13) < 1e-6, win
     assert t5 is not None and abs(t5 - 0.15) < 1e-6, t5
     assert eu is not None and abs(eu - (-0.05)) < 1e-6, eu
@@ -675,7 +710,9 @@ def test_the_bank_lead_keeps_the_move_served_past_the_next_sweep(monkeypatch) ->
         f"A8-DG must take the 20 h observation, not the one five minutes from "
         f"leaving the window; banked {cell}"
     )
-    assert served is not None and abs(served - 0.10) < 1e-6, served
+    assert (
+        served is None
+    )  # the full bank has20h and19h observations, not one field instant
     assert later is not None and abs(later - 0.10) < 1e-6, (
         f"fifteen minutes on — one sweep gap — the move must still be served; got {later}"
     )
@@ -691,7 +728,7 @@ def test_strawman_no_bank_lead_goes_dark_before_the_next_sweep(monkeypatch) -> N
     cell, served, later = _drive_edge(monkeypatch, rewrite=_rewrite)
     # Without the lead the edge observation is banked: right now, dark soon.
     assert cell is not None and abs(cell[0] - 0.02) < 1e-9, cell
-    assert served is not None and abs(served - 0.13) < 1e-6, served
+    assert served is None  # staggered field also refuses before the cell expires
     assert later is None, later
 
 
@@ -924,13 +961,19 @@ def test_r11_a_market_that_leaves_open_loses_its_bank(monkeypatch) -> None:
 
 
 def test_p1_successive_tiny_polls_keep_the_bank(monkeypatch) -> None:
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
     run = _drive_specimen(monkeypatch, "live")
     assert run["served"] is not None
-    for price, expected in ((0.151, 0.131), (0.1505, 0.1305)):
+    for price in (0.151, 0.1505):
         _write(monkeypatch, "live", _priced(price))
         _sweep(monkeypatch)
         served = _jordan_served(monkeypatch)
-        assert served is not None and abs(served - expected) < 1e-6, (price, served)
+        assert served == pytest.approx(_normalized_move(price), abs=1e-8)
+        markets, outcomes = asyncio.run(_ids())
+        _, metadata = _rows(markets, outcomes)
+        bank = metadata[markets[("pga", "win")]][DATED_BASIS_METADATA_KEY]
+        assert bank[str(run["jordan"])][0] == 0.02
 
 
 def test_p2_an_overnight_of_unchanged_polls_keeps_the_answer(monkeypatch) -> None:
@@ -940,7 +983,7 @@ def test_p2_an_overnight_of_unchanged_polls_keeps_the_answer(monkeypatch) -> Non
         _write(monkeypatch, "live", _priced(0.15))
         _sweep(monkeypatch)
     served = _jordan_served(monkeypatch)
-    assert served is not None and abs(served - 0.13) < 1e-6, served
+    assert served is not None and abs(served - _normalized_move(0.15)) < 1e-6, served
 
 
 def test_p3_prices_of_zero_and_one_are_previous_prices(monkeypatch) -> None:
@@ -1281,7 +1324,8 @@ def _line(prompts: list[str], name: str) -> str:
 def test_d5_league_card_states_the_dated_move(monkeypatch) -> None:
     """`/api/leagues/{sport}` cards: `_serialize_outcomes`, both callers' shape
     (a full ORM market), on the real rows. DataGolf → dated +0.13, not the
-    stored 0; Kalshi → its stored +0.05 exactly as before."""
+    stored 0; the complete winner field uses its normalized day comparison.
+    Kalshi → its stored +0.05 exactly as before."""
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import selectinload
@@ -1307,7 +1351,7 @@ def test_d5_league_card_states_the_dated_move(monkeypatch) -> None:
         return out
 
     cards = asyncio.run(_cards())
-    assert cards["Matthew Jordan"] is not None and abs(cards["Matthew Jordan"] - 0.13) < 1e-6, cards
+    assert cards["Matthew Jordan"] is not None and abs(cards["Matthew Jordan"] - _normalized_move(0.15)) < 1e-6, cards
     assert abs(cards["Player 2001"] - 0.05) < 1e-6, cards
 
 

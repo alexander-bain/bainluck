@@ -1274,26 +1274,13 @@ async def _fix_outcome_names_impl():
 
 
 async def _mark_resolved_impl(now: Optional[datetime] = None):
-    """Mark futures markets as resolved when their resolution_date has passed.
+    """Resolve from venue winner evidence, or the legacy non-Kalshi date rule.
 
-    CAL-P086A (`C-WINNER-WRITER-1` [P0]): this task has NO winner evidence. It
-    knows one thing — a date passed — and it used to spend that on a bare
-    `status='resolved'`, which reads downstream as "this market settled" and
-    enlarges the calibration denominator without contributing a graded row.
-    Combined with `FuturesOutcome.is_winner`'s `False` default — the column is
-    nullable, but production stores the default rather than NULL — the result is
-    not an ungraded market but a market that looks all-loser.
-
-    The write still happens: markets stuck in `open` break every pipeline that
-    keys on `resolved` (gotcha #33), and stranding them would be a worse bug.
-    What changed is that it now SAYS what it is. Each row carries
-    `market_metadata.resolution_gate` naming the reason, so the population is
-    one query away instead of being inferable only from a silence — gotcha #53's
-    whole discipline, applied to a state transition instead of an HTTP body.
-
-    Codex's stronger recommendation — stop this task resolving prediction-market
-    sources at all — is deliberately NOT taken here. It is a coverage change to
-    a live producer and it belongs to Alex, who can now take it on a count.
+    #11947: a stored date is not a Kalshi result. Leave those markets open,
+    awaiting the venue, so the existing price and settlement tasks still reach
+    them. The clock writes neither ``resolved`` nor ``settled_at`` for Kalshi.
+    The venue-winner statement below can still resolve a graded one-winner
+    board. Other sources retain their existing named-reason date transition.
 
     #8586 — A DATE NEVER OUTRANKS THE EVENT GRAPH. A market linked to an event
     that is ``live``, or ``scheduled`` with a start still ahead, is not resolved
@@ -1302,7 +1289,7 @@ async def _mark_resolved_impl(now: Optional[datetime] = None):
     resolved Medvedev–Royer 16 minutes into play (11 markets on 9/25, 51 on
     9/20). The root fix is in ``derive_resolution_window``; this is the belt for
     rows still carrying the old date, and for any future writer that repeats it.
-    Unlinked markets and finished events are unchanged.
+    This event-graph screen also protects the non-Kalshi date transition.
 
     #8615 — A VENUE-GRADED WINNER ON A ONE-WINNER BOARD ENDS THE QUESTION. The
     graders write ``is_winner`` per leg and never the market's ``status``; the
@@ -1363,6 +1350,7 @@ async def _mark_resolved_impl(now: Optional[datetime] = None):
                 update(FuturesMarket)
                 .where(
                     FuturesMarket.status == "open",
+                    FuturesMarket.source != "kalshi",
                     FuturesMarket.resolution_date.isnot(None),
                     FuturesMarket.resolution_date < now,
                     ~exists().where(

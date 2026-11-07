@@ -3,22 +3,22 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const file = path.resolve(__dirname, '../../tools/release/tier_b.cjs');
-test('Tier-B rejects self-approval and accepts current-head independent approval', () => {
+test('Tier-B requires current-head claude[bot] approval and rejects self-approval', () => {
   assert.ok(fs.existsSync(file), 'Tier-B policy missing');
   const {verdict} = require(file);
   const pr = {user:{login:'alex'},head:{sha:'abc'},labels:[{name:'tier-b'}]};
   assert.equal(verdict(pr, [{id:1,user:{login:'alex'},state:'APPROVED',commit_id:'abc'}]).conclusion,'failure');
-  assert.equal(verdict(pr, [{id:1,user:{login:'fable'},state:'APPROVED',commit_id:'abc'}]).conclusion,'success');
+  assert.equal(verdict(pr, [{id:1,user:{login:'claude[bot]'},state:'APPROVED',commit_id:'abc'}]).conclusion,'success');
 });
 test('stale, dismissed and superseded approvals cannot pass', () => {
   assert.ok(fs.existsSync(file), 'Tier-B policy missing');
   const {verdict} = require(file);
   const pr = {user:{login:'alex'},head:{sha:'abc'},labels:[{name:'tier-b'}]};
   for (const state of ['DISMISSED','CHANGES_REQUESTED']) {
-    assert.equal(verdict(pr,[{id:1,user:{login:'fable'},state:'APPROVED',commit_id:'abc'},
-      {id:2,user:{login:'fable'},state,commit_id:'abc'}]).conclusion,'failure');
+    assert.equal(verdict(pr,[{id:1,user:{login:'claude[bot]'},state:'APPROVED',commit_id:'abc'},
+      {id:2,user:{login:'claude[bot]'},state,commit_id:'abc'}]).conclusion,'failure');
   }
-  assert.equal(verdict(pr,[{id:1,user:{login:'fable'},state:'APPROVED',commit_id:'old'}]).conclusion,'failure');
+  assert.equal(verdict(pr,[{id:1,user:{login:'claude[bot]'},state:'APPROVED',commit_id:'old'}]).conclusion,'failure');
   assert.equal(verdict({...pr,labels:[]},[]).conclusion,'success');
 });
 
@@ -72,49 +72,31 @@ test('membership changes during the final check lookup force a fresh verdict',as
 });
 
 
-test('review policy changes reject bot approval and require Alex to merge', async () => {
-  const {evaluate} = require(file);
-  for (const changed of [
-    {filename:'.github/workflows/tier-b-review.yml'},
-    {filename:'docs/release-loop/tier-b-review-brief.md'},
-    {filename:'moved-brief.md',previous_filename:'docs/release-loop/tier-b-review-brief.md'},
-  ]) {
-    const pr={number:1,state:'open',user:{login:'alex'},head:{sha:'head'},labels:[{name:'tier-b'}]};
-    for (const user of [{login:'claude[bot]',type:'Bot'},{login:'github-actions[bot]'},{login:'reviewer',type:'User'}]) {
-      const created=[];
-      const github={rest:{pulls:{get:async()=>({data:pr}),list:()=>{},listReviews:()=>{},listFiles:()=>{}},
-        checks:{listForRef:()=>{},create:async result=>created.push(result)}},
-        paginate:async(fn,args)=>{
-          if(fn===github.rest.pulls.list)return [pr];
-          if(fn===github.rest.pulls.listFiles){assert.equal(args.per_page,100);return [changed];}
-          if(fn===github.rest.pulls.listReviews)return [{id:1,user,state:'APPROVED',commit_id:'head'}];
-          return [];
-        }};
-      await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:1}}});
-      assert.equal(created[0].conclusion,user.login==='reviewer'?'success':'failure');
-      assert.match(created[0].output.summary,/Alex must merge/);
+test('policy files use the same current-head Claude approval as ordinary files', async () => {
+  const {evaluate}=require(file);
+  for (const filename of ['.github/workflows/tier-b-review.yml',
+    'docs/release-loop/tier-b-review-brief.md', 'tools/release/tier_b.cjs',
+    '.github/workflows/tier-b.yml', 'backend/app/example.py']) {
+    for (const login of ['claude[bot]', 'reviewer', 'github-actions[bot]']) {
+      const pr={number:1,state:'open',user:{login:'alex'},head:{sha:'head'},labels:[{name:'tier-b'}]};
+      const client=policyClient([pr]);
+      client.github.rest.pulls.listReviews=async()=>[{id:1,user:{login},state:'APPROVED',commit_id:'head'}];
+      client.github.rest.pulls.listFiles=async()=>assert.fail(`file scope must not alter approval: ${filename}`);
+      await evaluate(client.github,{repo,eventName:'pull_request_target',payload:{pull_request:{number:1}}});
+      assert.equal(client.created[0].conclusion,login==='claude[bot]'?'success':'failure');
+      assert.doesNotMatch(client.created[0].output.summary,/Alex must merge/);
     }
   }
 });
 
-test('bot review works on ordinary changes but unknown file scope never publishes success', async () => {
-  const {evaluate} = require(file);
-  const pr={number:1,state:'open',user:{login:'alex'},head:{sha:'head'},labels:[{name:'tier-b'}]};
-  const created=[];
-  let unavailable=false;
-  const github={rest:{pulls:{get:async()=>({data:pr}),list:()=>{},listReviews:()=>{},listFiles:()=>{}},
-    checks:{listForRef:()=>{},create:async result=>created.push(result)}},
-    paginate:async fn=>{
-      if(fn===github.rest.pulls.list)return [pr];
-      if(fn===github.rest.pulls.listFiles){if(unavailable)throw new Error('file API unavailable');return [{filename:'backend/app/example.py'}];}
-      if(fn===github.rest.pulls.listReviews)return [{id:1,user:{login:'claude[bot]',type:'Bot'},state:'APPROVED',commit_id:'head'}];
-      return [];
-    }};
-  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:1}}});
-  assert.equal(created[0].conclusion,'success');
-  unavailable=true;created.length=0;
-  await assert.rejects(evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},eventName:'schedule',payload:{}}),/file API unavailable/);
-  assert.equal(created.length,0);
+test('a human approval or a different bot never substitutes for Claude',()=>{
+  const {verdict}=require(file);
+  const pr={user:{login:'author'},head:{sha:'head'},labels:[{name:'tier-b'}]};
+  for(const login of ['fable','alexander-bain','reviewer','github-actions[bot]']) {
+    assert.equal(verdict(pr,[{id:1,user:{login},state:'APPROVED',commit_id:'head'}]).conclusion,'failure');
+  }
+  assert.equal(verdict({...pr,user:{login:'claude[bot]'}},
+    [{id:1,user:{login:'claude[bot]'},state:'APPROVED',commit_id:'head'}]).conclusion,'failure');
 });
 
 // Count actual mock API requests, including publishes, on the population that
@@ -134,145 +116,88 @@ function policyClient(prs) {
 }
 const repo={owner:'alexander-bain',repo:'bainluck'};
 
-async function alexApprovalCase({files=[{filename:'.github/workflows/tier-b-review.yml'}],
-  labels=[{name:'tier-b'},{name:'alex-approved'}],events=[],reviews=[],eventError,commitError}={}) {
-  const pr={number:1,state:'open',user:{login:'alexander-bain'},head:{sha:'head'},labels};
+test('the retired alex-approved label has no approval effect or attribution lookups',async()=>{
+  const {evaluate}=require(file);
+  const pr={number:1,state:'open',user:{login:'alexander-bain'},head:{sha:'head'},
+    labels:[{name:'tier-b'},{name:'alex-approved'}]};
   const client=policyClient([pr]);
-  client.pr=pr;
-  client.headCommitDate='2026-11-02T00:00:00Z';
-  client.github.rest.repos={getCommit:async args=>{
-    client.calls.push({method:'commit',...args});assert.equal(args.ref,pr.head.sha);
-    if(commitError)throw commitError;
-    return {data:{commit:{committer:{date:client.headCommitDate}}}};
-  }};
-  client.github.rest.pulls.listFiles=async args=>{client.calls.push({method:'files',...args});return files;};
-  client.github.rest.pulls.listReviews=async args=>{client.calls.push({method:'reviews',...args});return reviews;};
-  client.github.rest.issues={listEvents:async args=>{
-    client.calls.push({method:'events',...args});
-    assert.equal(args.issue_number,1);assert.equal(args.per_page,100);
-    if(eventError)throw eventError;
-    return events;
-  }};
-  client.run=()=>require(file).evaluate(client.github,{repo,eventName:'pull_request_target',payload:{pull_request:{number:1}}});
-  return client;
-}
-
-for(const files of [
-  [{filename:'.github/workflows/tier-b-review.yml'}],
-  [{filename:'docs/release-loop/tier-b-review-brief.md'}],
-  [{filename:'moved.md',previous_filename:'docs/release-loop/tier-b-review-brief.md'}],
-]) test(`Alex's own policy PR passes through his label: ${files[0].filename}`,async()=>{
-  const client=await alexApprovalCase({files,events:[{id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:'2026-11-02T00:01:00Z'}]});
-  await client.run();
-  assert.equal(client.created[0].conclusion,'success');
-  assert.match(client.created[0].output.summary,/Alex approved.*alex-approved/);
-  assert.match(client.created[0].output.summary,/Alex must merge/);
-  assert.equal(client.calls.filter(c=>c.method==='commit').length,1);
-  assert.match(client.created[0].output.summary,/windows must never apply this label/);
-});
-
-for(const events of [
-  [],
-  [{id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'other'}}],
-  [{id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain[bot]'}}],
-  [{id:2,event:'labeled',label:{name:'alex-approved'}}],
-  [{id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}},
-   {id:3,event:'unlabeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}}],
-  [{id:3,event:'labeled',label:{name:'alex-approved'},actor:{login:'other'}},
-   {id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}},
-   {id:2,event:'unlabeled',label:{name:'alex-approved'},actor:{login:'other'}}],
-]) test(`an unverified or replaced alex-approved label cannot approve: ${JSON.stringify(events)}`,async()=>{
-  const client=await alexApprovalCase({events});await client.run();
+  client.github.rest.issues={listEvents:async()=>assert.fail('label attribution was retired')};
+  client.github.rest.repos={getCommit:async()=>assert.fail('label timestamp exit was retired')};
+  await evaluate(client.github,{repo,eventName:'pull_request_target',payload:{pull_request:{number:1}}});
   assert.equal(client.created[0].conclusion,'failure');
-  assert.match(client.created[0].output.summary,/label must be applied by Alex/);
-  assert.equal(client.calls.filter(c=>c.method==='commit').length,0);
+  client.github.rest.pulls.listReviews=async()=>[
+    {id:1,user:{login:'claude[bot]'},state:'APPROVED',commit_id:'head'}];
+  await evaluate(client.github,{repo,eventName:'pull_request_target',payload:{pull_request:{number:1}}});
+  assert.equal(client.created.at(-1).conclusion,'success');
 });
 
-test('Alex can reapply the label after another actor; unrelated label events do not replace it',async()=>{
-  const client=await alexApprovalCase({events:[
-    {id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'other'}},
-    {id:2,event:'unlabeled',label:{name:'alex-approved'},actor:{login:'other'}},
-    {id:3,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:'2026-11-02T00:01:00Z'},
-    {id:4,event:'labeled',label:{name:'tier-b'},actor:{login:'other'}},
-  ]});await client.run();assert.equal(client.created[0].conclusion,'success');
-});
-
-test('the exit requires the current label and policy file scope, and never audits Tier A',async()=>{
-  for(const options of [
-    {labels:[{name:'tier-b'}]},
-    {files:[{filename:'tools/release/tier_b.cjs'}]},
-    {labels:[{name:'alex-approved'}]},
-  ]) {
-    const client=await alexApprovalCase({...options,events:[{id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}}]});
-    await client.run();
-    assert.equal(client.created[0].conclusion,options.labels?.every(l=>l.name!=='tier-b')?'success':'failure');
-    assert.equal(client.calls.filter(c=>c.method==='events').length,0);
-    assert.equal(client.calls.filter(c=>c.method==='commit').length,0);
-  }
-});
-
-test('unknown label attribution never publishes success',async()=>{
-  const client=await alexApprovalCase({eventError:new Error('events unavailable')});
-  await assert.rejects(client.run(),/events unavailable/);assert.equal(client.created.length,0);
-});
-
-test('a label approved on one head fails after a push until Alex reapplies it',async()=>{
-  const events=[{id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:'2026-11-02T00:01:00Z'}];
-  const client=await alexApprovalCase({events});
-  await client.run();assert.equal(client.created.at(-1).conclusion,'success');
-  client.pr.head.sha='new-head';client.headCommitDate='2026-11-02T00:02:00Z';
-  await client.run();assert.equal(client.created.at(-1).conclusion,'failure');
-  assert.match(client.created.at(-1).output.summary,/alex-approved predates the current head; re-apply after review/);
-  events.push({id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:'2026-11-02T00:03:00Z'});
-  await client.run();assert.equal(client.created.at(-1).conclusion,'success');
-  assert.deepEqual(client.calls.filter(c=>c.method==='commit').map(c=>c.ref),['head','new-head','new-head']);
-});
-
-test('equal or unknown label/head dates cannot approve',async()=>{
-  for(const [labeledAt,committedAt] of [
-    ['2026-11-02T00:00:00Z','2026-11-02T00:00:00Z'],
-    [undefined,'2026-11-02T00:00:00Z'],
-    ['invalid','2026-11-02T00:00:00Z'],
-    ['2026-11-02T00:01:00Z',undefined],
-  ]) {
-    const client=await alexApprovalCase({events:[{id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:labeledAt}]});
-    client.headCommitDate=committedAt;await client.run();
-    assert.equal(client.created.at(-1).conclusion,'failure');
-    assert.match(client.created.at(-1).output.summary,/alex-approved predates the current head; re-apply after review/);
-  }
-});
-
-test('an unavailable head commit never publishes success',async()=>{
-  const client=await alexApprovalCase({commitError:new Error('commit unavailable'),events:[{id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:'2026-11-02T00:01:00Z'}]});
-  await assert.rejects(client.run(),/commit unavailable/);assert.equal(client.created.length,0);
-});
 const openPRs=()=>Array.from({length:74},(_,i)=>({number:i+1,state:'open',user:{login:'author'},
   head:{sha:`head-${i+1}`},labels:i<6?[{name:'tier-b'}]:[]}));
+const reviewerRun=(overrides={})=>({action:'completed',workflow_run:{
+  name:'Tier-B review',path:'.github/workflows/tier-b-review.yml',event:'pull_request',
+  status:'completed',head_sha:'head-1',pull_requests:[{number:1}],...overrides}});
 
 for (const [eventName,payload] of [
   ['pull_request_target',{pull_request:{number:1}}],
+  ['workflow_run',reviewerRun()],
   ['repository_dispatch',{client_payload:{pull_number:1}}],
   ['workflow_dispatch',{inputs:{pull_number:'1'}}],
-]) test(`${eventName} evaluates only its PR, even with 74 open PRs`,async()=>{
+]) test(`${eventName} ${payload.action || ''} evaluates only its PR, even with 74 open PRs`,async()=>{
   const {evaluate}=require(file);
   const {github,calls,created}=policyClient(openPRs());
   await evaluate(github,{repo,eventName,payload});
   assert.equal(calls.filter(c=>c.method==='list').length,0);
-  assert.deepEqual(calls.filter(c=>c.pull_number).map(c=>c.pull_number),[1,1,1,1]);
+  assert.deepEqual(calls.filter(c=>c.pull_number).map(c=>c.pull_number),[1,1,1]);
   assert.equal(created.length,1);
   assert.equal(created[0].head_sha,'head-1');
   assert.equal(created[0].conclusion,'failure');
-  assert.equal(calls.length,6);
+  assert.equal(calls.length,5);
 });
 
-test('a Tier-A event skips reviews and files and publishes success',async()=>{
+for (const [eventName,payload] of [
+  ['pull_request_target',{pull_request:{number:74}}],
+  ['workflow_run',reviewerRun({pull_requests:[{number:74}]})],
+]) test(`a Tier-A ${eventName} skips reviews and files and publishes success`,async()=>{
   const {evaluate}=require(file);
   const {github,calls,created}=policyClient(openPRs());
-  await evaluate(github,{repo,eventName:'pull_request_target',payload:{pull_request:{number:74}}});
+  await evaluate(github,{repo,eventName,payload});
   assert.equal(calls.filter(c=>['list','reviews','files'].includes(c.method)).length,0);
   assert.deepEqual(calls.filter(c=>c.method==='get').map(c=>c.pull_number),[74,74]);
   assert.equal(calls.length,4);
   assert.equal(created[0].conclusion,'success');
+});
+
+test('malformed, ambiguous or unrelated reviewer completions refuse before API calls',async()=>{
+  const {evaluate}=require(file);
+  const payloads=[
+    {},reviewerRun({pull_requests:undefined}),reviewerRun({pull_requests:[]}),
+    reviewerRun({pull_requests:[{number:1},{number:2}]}),
+    reviewerRun({path:'.github/workflows/untrusted.yml'}),
+    reviewerRun({name:'Other review'}),reviewerRun({event:'workflow_dispatch'}),
+    reviewerRun({status:'in_progress'}),{...reviewerRun(),action:'requested'},
+    ...[undefined,0,-1,'not-a-number',1.5].map(number=>reviewerRun({pull_requests:[{number}]})),
+  ];
+  for(const payload of payloads) {
+    const {github,calls}=policyClient(openPRs());
+    await assert.rejects(evaluate(github,{repo,eventName:'workflow_run',payload}),/required/);
+    assert.equal(calls.length,0);
+  }
+});
+
+test('a stale reviewer run cannot approve the PR current head',async()=>{
+  const {evaluate}=require(file);
+  const {github,created}=policyClient(openPRs());
+  github.rest.pulls.listReviews=async()=>[
+    {id:1,user:{login:'claude[bot]'},state:'APPROVED',commit_id:'stale'}];
+  const payload=reviewerRun({head_sha:'stale',pull_requests:[{number:1,head:{sha:'stale'}}]});
+  await evaluate(github,{repo,eventName:'workflow_run',payload});
+  assert.equal(created[0].head_sha,'head-1');
+  assert.equal(created[0].conclusion,'failure');
+  github.rest.pulls.listReviews=async()=>[
+    {id:2,user:{login:'claude[bot]'},state:'APPROVED',commit_id:'head-1'}];
+  await evaluate(github,{repo,eventName:'workflow_run',payload});
+  assert.equal(created.at(-1).head_sha,'head-1');
+  assert.equal(created.at(-1).conclusion,'success');
 });
 
 test('a 74-PR sweep stays linear and never refreshes or reads review scope for Tier A',async()=>{
@@ -282,12 +207,12 @@ test('a 74-PR sweep stays linear and never refreshes or reads review scope for T
   assert.equal(calls.filter(c=>c.method==='list').length,2);
   assert.equal(calls.filter(c=>c.method==='get').length,12);
   assert.equal(calls.filter(c=>c.method==='reviews').length,6);
-  assert.equal(calls.filter(c=>c.method==='files').length,6);
+  assert.equal(calls.filter(c=>c.method==='files').length,0);
   assert.ok(calls.filter(c=>c.pull_number).every(c=>c.pull_number<=6));
   assert.equal(created.length,74);
   assert.equal(created.filter(c=>c.conclusion==='failure').length,6);
   assert.equal(created.filter(c=>c.conclusion==='success').length,68);
-  assert.equal(calls.length,174);
+  assert.equal(calls.length,168);
 });
 
 test('an unscoped event cannot accidentally sweep every open PR',async()=>{
@@ -319,8 +244,12 @@ test('membership churn retries once, then fails every observed head',async()=>{
 
 test('the workflow uses a half-hour sweep and keeps per-PR events from coalescing each other',()=>{
   const workflow=fs.readFileSync(path.resolve(__dirname,'../../.github/workflows/tier-b.yml'),'utf8');
+  assert.doesNotMatch(workflow,/pull_request_review:/);
+  assert.match(workflow,/workflow_run:\n\s+workflows: \[Tier-B review\]\n\s+types: \[completed\]/);
+  assert.match(workflow,/ref: \$\{\{ github.event.repository.default_branch \}\}/);
+  assert.match(workflow,/persist-credentials: false/);
   assert.match(workflow,/cron: '\*\/30 \* \* \* \*'/);
   assert.match(workflow,/cancel-in-progress: false/);
-  assert.ok(workflow.includes("github.event.pull_request.number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep'"));
+  assert.ok(workflow.includes("github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep'"));
   assert.match(workflow,/pull_number:\s+description: Pull request to evaluate\s+required: true\s+type: number/);
 });

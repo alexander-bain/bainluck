@@ -189,7 +189,7 @@ def test_the_roundup_shows_the_four_closest_highest_first_with_the_ruled_footer(
         "NFC East: Giants",
         "AFC West: Broncos",
         "NFC North: Lions",
-        "NFC South: Buccaneers",
+        "NFC South: Panthers and Buccaneers",
     ]
     probs = [r["probability"] for r in c["rows"]]
     assert probs == sorted(probs, reverse=True)
@@ -197,6 +197,47 @@ def test_the_roundup_shows_the_four_closest_highest_first_with_the_ruled_footer(
     leaders = sorted(b.leader.probability for b in blends)
     assert sorted(probs) == leaders[:4]
     assert data["member_ids"] == [r["market_id"] for r in c["rows"]]
+
+
+def test_nfc_south_tie_names_both_clubs_and_takes_oldest_observation_11941():
+    markets = markets_copy()
+    south_pair = next(p for p in NFL_DIVISION_REGISTER if p.division == "NFC South")
+    k_south = row_for(markets, "kalshi", south_pair.kalshi_event_ticker)
+    p_south = row_for(markets, "polymarket", south_pair.polymarket_event_id)
+    # Set Panthers and Buccaneers to an exact 31.75% blend tie (Kalshi 32.5 / 31.5,
+    # Polymarket 31.0 / 32.0) with distinct timestamps so we can verify the row takes
+    # the oldest observation across the tied leaders.
+    older_ts = "2026-11-02T10:00:00+00:00"
+    newer_ts = "2026-11-02T18:00:00+00:00"
+    for out in k_south["outcomes"]:
+        if out["name"] == "Carolina":
+            out["probability"] = 0.325
+            out["last_updated"] = older_ts
+        elif out["name"] == "Tampa Bay":
+            out["probability"] = 0.315
+            out["last_updated"] = newer_ts
+    for out in p_south["outcomes"]:
+        if out["name"] == "Carolina Panthers":
+            out["probability"] = 0.310
+            out["last_updated"] = newer_ts
+        elif out["name"] == "Tampa Bay Buccaneers":
+            out["probability"] = 0.320
+            out["last_updated"] = newer_ts
+
+    blends, refusals = compose_register(boards(markets))
+    assert refusals == []
+    nfc_south = next(b for b in blends if b.division == "NFC South")
+    assert [c.club for c in nfc_south.leaders] == ["Panthers", "Buccaneers"]
+    assert all(c.probability == pytest.approx(0.3175) for c in nfc_south.leaders)
+
+    item = assemble_nfl_division_roundup(blends, refusals)
+    assert item is not None
+    south_row = next(
+        r for r in item["data"]["roundup"]["rows"] if r["label"].startswith("NFC South:")
+    )
+    assert south_row["label"] == "NFC South: Panthers and Buccaneers"
+    assert south_row["probability"] == pytest.approx(0.3175)
+    assert south_row["observed_at"] == older_ts
 
 
 def test_the_row_number_is_the_blend_not_either_venue():

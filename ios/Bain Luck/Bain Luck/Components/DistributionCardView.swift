@@ -186,7 +186,7 @@ struct DistributionCardView: View {
         isLeader: Bool
     ) -> some View {
         let probability = outcome.probability ?? 0
-        let pct = Int((probability * 100).rounded())
+        let pct = outcome.renderedPercent ?? Int((probability * 100).rounded())
         let barWidth = max(5, probability / maxProbability * 100)
 
         HStack(spacing: 8) {

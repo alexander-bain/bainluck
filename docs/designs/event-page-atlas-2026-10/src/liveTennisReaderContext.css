@@ -1,0 +1,29 @@
+.lt-reader-context{min-width:0;display:flex;flex-direction:column;gap:6px}
+.lt-reader-score{position:relative;min-height:20px}
+.lt-reader-score>b{display:block;font-size:14px!important;line-height:1.35}
+.lt-reader-legend>button{position:absolute;right:0;top:-12px;width:44px;height:44px;display:grid;place-items:center;border:0;background:none;color:var(--text-secondary)}
+.lt-reader-legend>button svg{width:16px;height:16px}
+.lt-reader-legend{position:relative;padding-right:44px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:11px;color:var(--text-secondary);line-height:1.3}
+.lt-reader-phase{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.lt-reader-phase>i{height:6px;width:6px;border:1.5px solid currentColor;border-radius:50%;flex-shrink:0}
+.lt-reader-phase>.recorded{background:currentColor}
+.lt-reader-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+.lt-reader-player{min-width:0;color:var(--series-home)}
+.lt-reader-player.away{color:var(--series-away)}
+.lt-reader-player .lt-reader-name{color:inherit;font-size:12px;font-weight:650}
+.lt-reader-values{display:flex;align-items:baseline;gap:4px;font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums;line-height:1.4}
+.lt-reader-values>span{color:var(--text-secondary)}
+.lt-reader-values>strong{font-size:16px;letter-spacing:-.035em;color:inherit}
+.lt-reader-values>.lt-reader-arrow{font-size:10px}
+.lt-reader-track{position:relative;height:2px;margin:8px 5px 7px;background:var(--surface-border)}
+.lt-reader-track>i{position:absolute;display:block;top:50%;transform:translate(-50%,-50%)}
+.lt-reader-track>.lt-reader-change{height:2px;background:currentColor;opacity:.5;transform:translateY(-50%)}
+.lt-reader-dot,.lt-reader-opening{width:7px;height:7px;border-radius:50%;border:1.5px solid currentColor;background:currentColor}
+.lt-reader-track>.lt-reader-opening{background:var(--surface-card)}
+.cf-anchor .lt-reader-note{font-size:11px;color:var(--text-secondary);line-height:1.35}
+.cf-large .lt-reader-score>b{font-size:16px!important}
+.cf-large .lt-reader-legend,.cf-large .lt-reader-player .lt-reader-name,.cf-large .lt-reader-values,.cf-large .lt-reader-note{font-size:14px}
+.cf-large .lt-reader-values>strong{font-size:17px}
+.cf-large .lt-reader-values{flex-wrap:wrap;white-space:normal}
+.cf-large .lt-reader-pair{gap:14px}
+.cf-large .lt-reader-legend{column-gap:5px}

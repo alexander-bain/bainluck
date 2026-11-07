@@ -1,7 +1,7 @@
 {
   "schema_version": "eval-registry/v1",
   "ratified_at": "2026-08-09",
-  "legacy_policy": "Artifacts committed before ratification may remain unregistered until touched. Every artifact added or materially changed after ratification must be a canonical or name extends/supersedes.",
+  "legacy_policy": "Artifacts committed before ratification may remain unregistered until touched. Every artifact added or materially changed after ratification must be a canonical or name extends/supersedes. The Nov 2026 D audit retains all 47 reviewed post-ratification artifacts; no legacy disposition was justified. Legacy entries require an individual reason and evidence.",
   "domains": [
     {
       "domain": "eval-governance",
@@ -9,6 +9,21 @@
       "members": [
         {
           "name": "eval_bite_rate_audit",
+          "relation": "extends",
+          "target": "eval_registry_contract"
+        },
+        {
+          "name": "scoreboard",
+          "relation": "extends",
+          "target": "eval_registry_contract"
+        },
+        {
+          "name": "_mutation_guard",
+          "relation": "extends",
+          "target": "eval_registry_contract"
+        },
+        {
+          "name": "scan_mutation_residue",
           "relation": "extends",
           "target": "eval_registry_contract"
         }
@@ -124,6 +139,81 @@
           "name": "politics_cache_tier_contract",
           "relation": "extends",
           "target": "cache_failure_resilience"
+        },
+        {
+          "name": "cache_refresh_behind_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "feed_prewarm_absent_shape_net_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "futures_categories_census_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "futures_categories_warm_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "futures_detail_sources_cache_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "futures_movers_warm_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "game_markets_shared_cache_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "golf_schedule_cache_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "league_context_grid_cache_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "prop_families_cache_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "prop_families_partial_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "related_futures_shared_cache_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "search_suggestions_cold_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "season_market_discovery_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
+        },
+        {
+          "name": "typeahead_warmer_mutations",
+          "relation": "extends",
+          "target": "cache_failure_resilience"
         }
       ]
     },
@@ -185,6 +275,11 @@
           "name": "trading_activity_authority_contract",
           "relation": "extends",
           "target": "calibration_population_integrity"
+        },
+        {
+          "name": "staged_calibration_convergence_contract",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
         }
       ]
     },
@@ -226,6 +321,36 @@
           "name": "tournament_ux_closure_contract",
           "relation": "extends",
           "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "event_hero_duel_percent_mutations",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "ios_duel_percent_served_pair_mutations",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "kalshi_segment_resolved_link_mutations",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "market_born_duplicate_drain_mutations",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "polymarket_leg_label_drain_mutations",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
+        },
+        {
+          "name": "observed_product_quality_contract",
+          "relation": "extends",
+          "target": "feed_card_trust_contract"
         }
       ]
     },
@@ -253,13 +378,69 @@
           "name": "first_content_latency_attribution_contract",
           "relation": "extends",
           "target": "first_card_client_contract"
+        },
+        {
+          "name": "browse_single_scan_mutations",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        },
+        {
+          "name": "cold_path_rejected_sample_mutations",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        },
+        {
+          "name": "duration_sample_window_mutations",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        },
+        {
+          "name": "feed_personalization_roundtrip_mutations",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        },
+        {
+          "name": "futures_source_breakdown_loose_scan_mutations",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        },
+        {
+          "name": "latest_observation_mutations",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        },
+        {
+          "name": "league_rails_fence_mutations",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        },
+        {
+          "name": "tennis_population_mutations",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        },
+        {
+          "name": "typeahead_fuzzy_index_mutations",
+          "relation": "extends",
+          "target": "first_card_client_contract"
+        },
+        {
+          "name": "typeahead_outcome_arm_mutations",
+          "relation": "extends",
+          "target": "first_card_client_contract"
         }
       ]
     },
     {
       "domain": "discover-ordering",
       "canonical": "discover_lead_order_contract",
-      "members": []
+      "members": [
+        {
+          "name": "tag_counts_group_by_mutations",
+          "relation": "extends",
+          "target": "discover_lead_order_contract"
+        }
+      ]
     },
     {
       "domain": "search-truth",
@@ -309,8 +490,79 @@
           "name": "search_response_truth_contract",
           "relation": "extends",
           "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "build_search_gold_registry",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "offline_rerank_fidelity_mutations",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "outcome_evidence_class_mutations",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_bucket_producer",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_offline_rerank",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_origin_channel_mutations",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_results_producer",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_scorer_wiring_mutations",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_stemmer_alias_mutations",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_suggestions_mirror_mutations",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_suggestions_movers_pool_mutations",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_tier_split_mutations",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "search_word_test_mutations",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
+        },
+        {
+          "name": "typeahead_concept_provenance_mutations",
+          "relation": "extends",
+          "target": "search_truth_closure_contract"
         }
       ]
     }
-  ]
+  ],
+  "legacy": []
 }

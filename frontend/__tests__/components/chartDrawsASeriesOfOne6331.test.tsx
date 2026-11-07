@@ -34,6 +34,17 @@
  * Every case here is two-sided, for the reason #2961 and #3659 both wrote into
  * this suite: a chart that always draws a dot has moved the problem, not fixed
  * it. The negative cases are the load-bearing ones.
+ *
+ * ═══ SUPERSEDED HOLE CONTRACT (#11929) ═══
+ *
+ * Two cases here used to pin #3659's hole treatment — the riders' 34-day hole
+ * drew a dotted bridge, and the caption said "No numbers for N days". Alex,
+ * 2026-11-04 12:09 PM PT (#11929): "A solid line through unobserved time. A
+ * hole between two observations is drawn like any other segment of that line
+ * (the chart's normal interpolation): no bridge, no dotted treatment, no
+ * label, and the caption's 'No numbers for N hours' sentence goes with it —
+ * nothing on the chart calls the reader's attention to a gap." Those two now
+ * pin the ruling; the lone-point mark (this file's subject) is unchanged.
  */
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -197,14 +208,21 @@ describe("#6331 a healthy chart gains nothing", () => {
     expect(marks(html)).toEqual([]);
   });
 
-  test("a hole between two healthy runs draws a bridge and no mark", () => {
-    // Both riders carry the 34-day hole this market really has. A break in a
-    // line is not an isolated observation, and must not be marked as one.
+  test("a hole between two healthy runs is one solid line per rider, with no bridge and no mark", () => {
+    // Both riders carry the 34-day hole this market really has. #11929: the
+    // hole is an ordinary segment of each rider's line — no dotted bridge —
+    // and a hole is not an isolated observation, so nothing is marked either.
     const html = renderToStaticMarkup(
       <FuturesChart historyData={HEALTHY} settled height={200} />,
     );
+    const runs = html.match(/<path[^>]*\bd="M [^"]*"[^>]*>/g) ?? [];
 
-    expect(html).toContain('stroke-dasharray="1 5"'); // the #3659 bridge
+    expect(html).not.toContain('stroke-dasharray="1 5"');
+    expect(runs).toHaveLength(2);
+    for (const r of runs) {
+      // 17 observations per rider → `M` + 16 `L`, the hole among them.
+      expect((/\bd="([^"]*)"/.exec(r)![1].match(/[ML] /g) ?? []).length).toBe(17);
+    }
     expect(marks(html)).toEqual([]);
   });
 
@@ -257,34 +275,24 @@ describe("#6331 the mark carries the chart's existing weighting", () => {
 });
 
 describe("#6331 what this fix deliberately does not touch", () => {
-  test("the gap caption still describes the hole it always described", () => {
-    // Arm 1 of the issue was measured and REFUTED by ux/1271: the 34-day
-    // sentence is the union's real largest gap, to the minute. Suppressing it
-    // would delete a true warning about a line bridging a month of silence.
-    // Pinned here so a later pass at this panel does not "tidy" it away.
-    //
-    // Read ten minutes after the field's last observation, because
-    // `seriesFreshness` ranks "behind NOW" ABOVE "holed" and every rider shares
-    // the same stamps, so the union's median gap is 0 and `staleAfter` collapses
-    // to the 15-minute floor. Which of the two sentences the panel prints is
-    // therefore a fact about the clock, not about this fix.
-    //
-    // Worth recording, because it re-reads the original capture: lane1b saw the
-    // gap sentence at 07:36Z on a 26-hour-old field only BECAUSE #6360 was
-    // stamping the champion's point at `now()` — age ≈ 0 let the gapped branch
-    // win. With that point frozen, this page now prints "Last number 26 hours
-    // ago", which is true. So the pin here is the caption's survival in
-    // general, on a series that really is holed-but-fresh.
+  test("the gap caption is gone (#11929), and the champion is still marked", () => {
+    // Was: "the gap caption still describes the hole it always described" —
+    // ux/1271 measured the 34-day sentence as true, and this pinned it. Alex's
+    // #11929 ruling removed it on purpose: "the caption's 'No numbers for N
+    // hours' sentence goes with it". Same clock as before — ten minutes after
+    // the field's last observation, the moment the gapped arm used to win —
+    // so this is the exact render that printed the sentence.
     jest.setSystemTime(LAST + 10 * 60 * 1000);
     try {
       const html = renderToStaticMarkup(
         <FuturesChart historyData={VUELTA} settled height={200} />,
       );
 
-      expect(html).toMatch(/No numbers for \d+ days in this stretch/);
-      // …and the champion is still marked while that sentence is on screen:
-      // the caption and the mark describe different things and neither
-      // suppresses the other.
+      expect(html).not.toContain("No numbers for");
+      expect(html).not.toContain('data-series-state="gapped"');
+      expect(html).not.toContain('stroke-dasharray="1 5"');
+      // The lone champion is still marked: the ruling is about holes, not
+      // about a series of one.
       expect(marks(html)).toHaveLength(1);
     } finally {
       jest.setSystemTime(NOW);

@@ -9,7 +9,7 @@ import { chartYTicks } from "@/lib/chartCeiling";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
 import { anchorScrollLeft, edgeOverflowFor, seriesMovementMarks } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
-import { seriesFreshness } from "@/lib/seriesFreshness";
+import { NEVER_A_HOLE_MS, seriesFreshness } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
 import {
   settlementResultWord,
@@ -33,6 +33,18 @@ import {
   assignSeriesColors,
   fixedOrderSeriesColors,
 } from "@/lib/seriesColors";
+import {
+  AtlasChartMarkKey,
+  AtlasResultWordMark,
+  AtlasSelectedReadingReadout,
+  AtlasSeriesReadingMarks,
+  type AtlasSelectedReading,
+} from "@/components/atlas/AtlasChartMarks";
+import {
+  ATLAS_STATE_COPY,
+  formatAtlasTimestampPT,
+} from "@/components/atlas/atlasStateCopy";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 // Series palettes live in the shared registry (L2-157, census class E). This
 // kernel is the flagship series surface, so its palette is the canonical one.
@@ -46,6 +58,47 @@ const FULL_CHART_WIDTH = 800;
 const MINI_CHART_WIDTH = 400;
 const FULL_PADDING = { top: 20, right: 20, bottom: 40, left: 50 };
 const MINI_PADDING = { top: 4, right: 4, bottom: 4, left: 4 };
+
+export interface AtlasEndLabelEntry {
+  outcomeId: number;
+  text: string;
+  y: number;
+  pointX: number;
+  color: string;
+  opacity: number;
+}
+
+export interface PlacedAtlasEndLabel extends AtlasEndLabelEntry {
+  labelY: number;
+}
+
+/**
+ * Spread direct endpoint labels vertically without altering probability
+ * coordinates (`dunhillLabels` pattern from `dunhillReading.ts`, #883 Step F5).
+ */
+export function spreadAtlasEndLabels(
+  entries: readonly AtlasEndLabelEntry[],
+  top: number,
+  bottom: number,
+  gap = 16,
+): PlacedAtlasEndLabel[] {
+  const sorted = [...entries].sort((a, b) => a.y - b.y);
+  const result = sorted.map((r, i) => ({
+    ...r,
+    labelY: Math.max(top + i * gap, r.y),
+  }));
+  for (let i = 1; i < result.length; i += 1) {
+    result[i].labelY = Math.max(result[i].labelY, result[i - 1].labelY + gap);
+  }
+  const overshoot = Math.max(
+    0,
+    (result[result.length - 1]?.labelY ?? bottom) - bottom,
+  );
+  return result.map((r) => ({
+    ...r,
+    labelY: Math.max(top, r.labelY - overshoot),
+  }));
+}
 
 /** #10955 (327): the chart legend's "Lost" at the secondary-text contrast. */
 export const LOST_LEGEND_WORD_CLASS = "[&>span]:text-text-secondary";
@@ -232,6 +285,19 @@ interface FuturesChartProps {
    *  in `lib/historyRange.ts`). One caption under the plot; the drawn points
    *  are unchanged. Absent everywhere a caller did not ask for the full range. */
   historyWithheld?: boolean;
+  /** #883 Step F3 — ?atlas=1 opt-in for shared mark grammar (hollow opening,
+   *  solid recorded readings, result as a word, tap any real reading for exact PT time,
+   *  step line shape per decision 11-A). */
+  atlas?: boolean;
+  /** Whether the plotted history window includes the market's true opening reading
+   *  (true on full/All range when history is not withheld; false on 24h/7d/30d windows). */
+  atlasIncludesOpening?: boolean;
+  /** Optional callback fired when a user taps a real reading on the chart under ?atlas=1. */
+  onSelectReading?: (reading: AtlasSelectedReading | null) => void;
+  /** #883 Step F5 (Decide 47: E) — optional per-outcome end-label value override
+   *  (e.g. server-normalized current "%" or settled "✓ Won" / "✗ Lost") printed
+   *  beside the series name at the right edge of the journey under ?atlas=1. */
+  outcomeEndLabels?: Map<number, string>;
 }
 
 export function FuturesChart({
@@ -245,7 +311,7 @@ export function FuturesChart({
   goldTheme = false,
   greenTheme = false,
   className,
-  stepInterpolation = false,
+  stepInterpolation,
   fixedYAxis = true,
   fieldCeiling = false,
   timeMarkers,
@@ -259,9 +325,17 @@ export function FuturesChart({
   cadenceNoteShown = false,
   seriesOrder,
   historyWithheld = false,
+  atlas = false,
+  atlasIncludesOpening = true,
+  onSelectReading,
+  outcomeEndLabels,
 }: FuturesChartProps) {
-  const effectiveShowLegend = showLegend ?? !mini;
+  const effectiveShowLegend = showLegend ?? (!mini && !atlas);
   const effectiveShowAxes = showAxes ?? !mini;
+  // Default to step lines under ?atlas=1 (NOW #11852 Decision 11-A) while preserving false for non-Atlas callers.
+  const effectiveStepInterpolation = stepInterpolation ?? atlas;
+  // Only mark index 0 as "Opening" when the plotted history covers the full range and is not partial/withheld.
+  const effectiveAtlasIncludesOpening = atlasIncludesOpening && !historyWithheld;
   const palette = greenTheme ? GREEN_COLORS : goldTheme ? GOLD_COLORS : DEFAULT_COLORS;
 
   // #7813: the label a series prints in the legend and in the hover tooltip.
@@ -350,6 +424,16 @@ export function FuturesChart({
   // L2-164: zoom state for the opt-in low-prob zoom chip — also before any
   // early returns so the hooks order is stable.
   const [zoomed, setZoomed] = useState(false);
+
+  // #883 Step F3: selected real reading when a user taps a mark under ?atlas=1.
+  const [selectedReading, setSelectedReading] = useState<AtlasSelectedReading | null>(null);
+  const handleSelectReading = useCallback(
+    (reading: AtlasSelectedReading | null) => {
+      setSelectedReading(reading);
+      onSelectReading?.(reading);
+    },
+    [onSelectReading],
+  );
 
   // #3035: on a phone the plot overflows its card, and a scroll container rests
   // on its LEFT edge — the OLDEST data — so a live race opened on last week. Rest
@@ -461,12 +545,13 @@ export function FuturesChart({
   // #6542: `settled` is handed over so a decided board stops reporting how long
   // ago its last number arrived — of course it is old; the question is answered.
   // The hole warning is unaffected (see the `stale` branch in `seriesFreshness`).
+  // #11929 (Alex, Nov 4 12:09 PM): no caption names a hole; see NEVER_A_HOLE_MS.
   const freshness = seriesFreshness(
     plottedOutcomes.flatMap((o) =>
       o.history.filter((p) => p.probability !== null).map((p) => p.timestamp),
     ),
     undefined,
-    { settled },
+    { settled, gapFloorMs: NEVER_A_HOLE_MS },
   );
   // #683 — a plain call beside `freshness`, over the same drawn outcomes.
   const archiveNote = archiveChartNote(plottedOutcomes);
@@ -565,6 +650,75 @@ export function FuturesChart({
     }
   });
 
+  const resultMarkByOutcomeId = new Map(
+    resultMarkSpecs.map((spec) => [spec.outcome.outcome_id, spec]),
+  );
+  const atlasEndLabelEntries: AtlasEndLabelEntry[] = [];
+  if (atlas && !mini) {
+    displayedOutcomes.forEach((outcome, idx) => {
+      const realPoints = plottedOutcomes[idx].history.filter(
+        (p) => p.probability !== null,
+      );
+      const lastPoint = realPoints[realPoints.length - 1];
+      const resultSpec = resultMarkByOutcomeId.get(outcome.outcome_id);
+      if (!lastPoint && !resultSpec) return;
+
+      const pointX = lastPoint
+        ? xScale(new Date(lastPoint.timestamp).getTime())
+        : resultSpec!.x;
+      const pointY = lastPoint
+        ? yScale(lastPoint.probability!)
+        : resultSpec!.y;
+
+      const overrideValue = outcomeEndLabels?.get(outcome.outcome_id);
+      const settlementResult = settlementResults.get(outcome.outcome_id);
+      const valueText =
+        overrideValue !== undefined
+          ? overrideValue
+          : settlementResult === "won"
+            ? ATLAS_STATE_COPY.wonWithCheck
+            : settlementResult === "lost"
+              ? ATLAS_STATE_COPY.lostWithCross
+              : lastPoint && lastPoint.probability !== null
+                ? formatProbabilityPercent(lastPoint.probability)
+                : "";
+
+      const rawName = seriesLabel(plottedOutcomes[idx].name);
+      const displayName =
+        rawName.length > 22
+          ? `${rawName.slice(0, 21).trimEnd()}…`
+          : rawName;
+      const text = valueText ? `${displayName} ${valueText}` : displayName;
+
+      const isDimmed =
+        highlightedOutcomeId != null &&
+        highlightedOutcomeId !== outcome.outcome_id;
+      const opacity = isDimmed ? 0.35 : outcome.eliminated ? 0.45 : 1;
+
+      const anchorY = resultSpec
+        ? Math.max(padding.top + 8, pointY - 12)
+        : pointY;
+
+      atlasEndLabelEntries.push({
+        outcomeId: outcome.outcome_id,
+        text,
+        y: anchorY,
+        pointX,
+        color: colorFor(outcome, idx),
+        opacity,
+      });
+    });
+  }
+  const placedAtlasEndLabels =
+    atlas && !mini && atlasEndLabelEntries.length > 0
+      ? spreadAtlasEndLabels(
+          atlasEndLabelEntries,
+          padding.top + 8,
+          padding.top + innerHeight - 4,
+          16,
+        )
+      : [];
+
   // The legend's result word: the product's one settled vocabulary, beside the
   // name it belongs to. This is where the result is READ — the mark in the plot
   // only points at it — so overlapping end-marks never hide whose result is
@@ -659,6 +813,22 @@ export function FuturesChart({
 
   return (
     <div className={`${mini ? "" : "space-y-4"} ${className ?? ""}`}>
+      {atlas && !mini && (
+        <div className="space-y-2">
+          <AtlasChartMarkKey
+            settled={settled || resultMarkSpecs.length > 0}
+            showOpening={effectiveAtlasIncludesOpening}
+          />
+          <AtlasSelectedReadingReadout
+            reading={
+              selectedReading && !effectiveAtlasIncludesOpening && selectedReading.isOpening
+                ? { ...selectedReading, isOpening: false }
+                : selectedReading
+            }
+            onClear={() => handleSelectReading(null)}
+          />
+        </div>
+      )}
       {/* #3035: the fades must live OUTSIDE the scrolling element. Absolutely
           positioned children of an overflow container travel with its content,
           so a fade placed inside would slide off the edge it is meant to mark. */}
@@ -684,7 +854,7 @@ export function FuturesChart({
           <svg
             ref={svgRef}
             viewBox={`0 0 ${chartWidth} ${effectiveHeight}`}
-            className={mini ? "w-full" : "w-full min-w-[600px]"}
+            className={mini || atlas ? "w-full" : "w-full min-w-[600px]"}
             style={{
               // Honor the caller's requested height (L2-149): the old hard 250px
               // non-mini cap silently shrank taller surfaces (event-concept charts
@@ -821,12 +991,19 @@ export function FuturesChart({
 
             {/* Lines */}
             {displayedOutcomes.map((outcome, idx) => {
-              const points = plottedOutcomes[idx].history
+              const readingPoints = plottedOutcomes[idx].history
                 .filter((p) => p.probability !== null)
                 .map((p) => {
                   const t = new Date(p.timestamp).getTime();
-                  return { t, x: xScale(t), y: yScale(p.probability!) };
+                  return {
+                    t,
+                    x: xScale(t),
+                    y: yScale(p.probability!),
+                    prob: p.probability!,
+                    timestamp: p.timestamp,
+                  };
                 });
+              const points = readingPoints.map(({ t, x, y }) => ({ t, x, y }));
 
               // #6331: ONE observation is still an observation. This read `< 2`,
               // so a series with a single real point drew nothing at all — while
@@ -844,15 +1021,15 @@ export function FuturesChart({
               // returns null now.
               if (points.length === 0) return null;
 
-              // #3659: the solid stroke touches only real observations. Any gap
-              // wider than THIS outcome's own cadence is handed to a faint
-              // dotted bridge instead — same threshold that writes the note
-              // under the plot, so the line and the caption can never describe
-              // different intervals. A series with no hole yields exactly one
-              // run, byte-identical to what this expression produced inline
-              // before, and no bridges at all.
+              // #11929 (Alex, Nov 4 12:09 PM) supersedes #3659's hole contract:
+              // "a solid line through unobserved time" — a hole is drawn like
+              // any other segment of the line (linear, or step under
+              // `stepInterpolation`), so with NEVER_A_HOLE_MS every series is
+              // one run and `bridges` is always empty. A lone single point is
+              // still a run of one, marked by `dots` (#6331).
               const { runs, bridges, dots } = chartSeriesPath(points, {
-                step: !!stepInterpolation,
+                step: !!effectiveStepInterpolation,
+                gapFloorMs: NEVER_A_HOLE_MS,
               });
 
               // L2-149: highlight/eliminated line weighting. When one outcome is
@@ -932,6 +1109,18 @@ export function FuturesChart({
                       fillOpacity={strokeOpacity}
                     />
                   ))}
+                  {atlas && !mini && (
+                    <AtlasSeriesReadingMarks
+                      outcomeId={outcome.outcome_id}
+                      outcomeName={seriesLabel(plottedOutcomes[idx].name)}
+                      points={readingPoints}
+                      color={colorFor(outcome, idx)}
+                      opacity={strokeOpacity}
+                      includesOpening={effectiveAtlasIncludesOpening}
+                      selectedReading={selectedReading}
+                      onSelectReading={handleSelectReading}
+                    />
+                  )}
                 </Fragment>
               );
             })}
@@ -1007,9 +1196,80 @@ export function FuturesChart({
                       strokeLinejoin="round"
                     />
                   )}
+                  {atlas &&
+                    !mini &&
+                    !placedAtlasEndLabels.some(
+                      (item) => item.outcomeId === m.outcome.outcome_id,
+                    ) && (
+                      <AtlasResultWordMark
+                        outcomeId={m.outcome.outcome_id}
+                        result={m.result}
+                        x={x}
+                        y={y}
+                        plotLeft={padding.left}
+                        plotRight={chartWidth - padding.right}
+                        opacity={opacity}
+                      />
+                    )}
                 </g>
               );
             })}
+
+            {/* #883 Step F5 (Decide 47: E) — each drawn series carries its outcome
+                name + current % (or result word) in its series color at the right
+                edge of the journey, so the chart says what it draws without a
+                separate toggle legend. */}
+            {atlas && !mini && placedAtlasEndLabels.length > 0 && (
+              <g data-testid="atlas-chart-end-labels">
+                {placedAtlasEndLabels.map((item) => {
+                  const plotRight = chartWidth - padding.right;
+                  const labelX = Math.max(
+                    padding.left + 12,
+                    Math.min(plotRight - 10, item.pointX - 10),
+                  );
+                  const leaderEndX = Math.max(labelX + 4, item.pointX - 4);
+                  const leaderPath = `M ${item.pointX} ${item.y} L ${leaderEndX} ${item.labelY} L ${labelX + 3} ${item.labelY}`;
+                  return (
+                    <g
+                      key={`end-label-${item.outcomeId}`}
+                      data-testid="atlas-chart-end-label"
+                      data-outcome-id={item.outcomeId}
+                      data-color={item.color}
+                      opacity={item.opacity}
+                    >
+                      <path
+                        d={leaderPath}
+                        fill="none"
+                        stroke={item.color}
+                        strokeWidth={1}
+                        strokeOpacity={0.55}
+                      />
+                      <text
+                        x={labelX}
+                        y={item.labelY + 3.5}
+                        textAnchor="end"
+                        fill={item.color}
+                        stroke="#FFFFFF"
+                        strokeWidth={3.5}
+                        strokeLinejoin="round"
+                        style={{ paintOrder: "stroke" }}
+                        className="text-[10px] font-semibold tabular-nums"
+                      >
+                        {resultMarkSpecs.some(
+                          (m) => m.outcome.outcome_id === item.outcomeId,
+                        ) ? (
+                          <tspan data-testid="atlas-chart-result-word">
+                            {item.text}
+                          </tspan>
+                        ) : (
+                          item.text
+                        )}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            )}
 
             {/* Hover crosshair and dots */}
             {hoverInfo && !mini && (
@@ -1048,7 +1308,11 @@ export function FuturesChart({
             >
               <div className="bg-surface-deep/95 backdrop-blur-sm rounded-lg px-3 py-2 border border-surface-border shadow-lg min-w-[140px] max-w-full">
                 <div className="text-[10px] text-text-muted mb-1 font-mono">
-                  {formatTooltipTime(hoverInfo.time)}
+                  {atlas
+                    ? formatAtlasTimestampPT(new Date(hoverInfo.time).toISOString(), {
+                        includeSeconds: true,
+                      }) ?? formatTooltipTime(hoverInfo.time)
+                    : formatTooltipTime(hoverInfo.time)}
                 </div>
                 {hoverArchiveNote && (
                   <div

@@ -1,4 +1,6 @@
-"""Apply the tier-lexicographic scorer to CAPTURED producer output (ruling 041).
+"""Extends search_truth_closure_contract (ruling 002).
+
+Apply the tier-lexicographic scorer to CAPTURED producer output (ruling 041).
 
 Why this exists, and what it is honestly worth
 ----------------------------------------------

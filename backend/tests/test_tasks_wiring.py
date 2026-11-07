@@ -301,6 +301,8 @@ class TestBeatScheduleCompleteness:
         "snapshot-discover-ground-truth-diagnostics-daily",
         "snapshot-discover-label-eval-run-daily",
         "snapshot-discover-candidate-pool-daily",
+        "snapshot-ranking-slate-daily",
+        "probability-publication-coverage",
         "import-external-curator-ground-truth-daily",
         "check-ground-truth-health-daily",
         "capture-featured-markets-daily",
@@ -321,10 +323,10 @@ class TestBeatScheduleCompleteness:
         "canonicalize-entities-daily",
         "precompute-interestingness",
         "check-aggregation-quality",
-        "check-tier1-coverage",
+        # "check-tier1-coverage" retired by C-1 / B-7 (2026-11-06): one log line, no reader.
         "daily-digest",
         "backfill-polymarket-price-history",
-        "backfill-kalshi-price-history",
+        # "backfill-kalshi-price-history" retired by C-1 / B-12: no watermark, cannot drain.
         "kalshi-cliff-drain",
         "backfill-polymarket-open-sparse",
         "backfill-kalshi-open-sparse",
@@ -336,6 +338,8 @@ class TestBeatScheduleCompleteness:
         "backfill-espn-ids",
         "backfill-historical-links",
         "update-max-movement",
+        # B-5 (2026-11-06): the hour's one heavy run of the same task.
+        "update-max-movement-heavy",
         "export-engagement-nightly",
         "daily-challenge-push",
         "big-move-alerts",
@@ -360,6 +364,8 @@ class TestBeatScheduleCompleteness:
         "warm-tag-counts",
         "warm-prop-families",
         "warm-typeahead",
+        # W-1 (2026-11-06): the Flow Sentinel gold-set pre-warm, daily 07:05 UTC.
+        "warm-typeahead-gold-set",
         # Option D (#1866, LAT-P067) — the typeahead index builder + its D4
         # sentinel. Gotcha #12: this allowlist is the reason a new beat entry
         # cannot land silently.
@@ -487,6 +493,10 @@ class TestBeatScheduleCompleteness:
         "poll-venue-prices-30s",
         # #10090 — the 3-minute Polymarket tail rotation, dark by default.
         "poll-venue-prices-tail",
+        # #11929 PR-A — the settled-market venue history backfill, dark by
+        # default. Gotcha #12: this allowlist is the reason a new beat entry
+        # cannot land silently.
+        "backfill-venue-history-gaps",
     }
 
     def test_no_missing_entries(self):

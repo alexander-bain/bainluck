@@ -84,6 +84,7 @@ def _market(name, status, outcomes):
         name=name,
         status=status,
         llm_sport_category=None,
+        mutually_exclusive=outcomes is not SF_QUALIFIERS,  # a multi-qualifier field, not one winner
         outcomes=outcomes,
     )
 

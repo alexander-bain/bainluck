@@ -1,4 +1,6 @@
-"""LAT-P122 — the census-that-everybody-rebuilds mutation class.
+"""Extends cache_failure_resilience (ruling 002).
+
+LAT-P122 — the census-that-everybody-rebuilds mutation class.
 
 WHAT A MUTANT PROVES HERE
 -------------------------

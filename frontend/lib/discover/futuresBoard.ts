@@ -53,6 +53,7 @@ import type { FeedFuturesData } from "@/lib/types";
 export type FuturesBoardRow = {
   label: string;
   probability: number | null;
+  rendered_percent?: number | null;
   movement?: number | null;
   /** #10374 — the row's calendar day (`YYYY-MM-DD`) on a date board; `null` on
    *  its "No release by…" residual. Absent on every other board. */
@@ -142,10 +143,13 @@ export function futuresDistributionBoard(data: FeedFuturesData): FuturesBoard | 
   // #1526 — sort BEFORE slicing, or the slice drops the leader.
   const leaderFirstRows = leaderFirstSlice(priced, FUTURES_BOARD_ROW_LIMIT);
   // #8033 — taken leader-first, before any re-listing below; see its comment.
-  const leaderFirstPercents = renderedRaceBoardPercents(
+  const fallbackPercents = renderedRaceBoardPercents(
     leaderFirstRows.map((row) => row.probability),
     card.field_is_a_race === true,
   );
+  const leaderFirstPercents = leaderFirstRows.every(row => row.rendered_percent != null)
+    ? leaderFirstRows.map(row => row.rendered_percent ?? null)
+    : fallbackPercents;
   // #10374 — Alex, rage shake 170: a date question lists its days in date order.
   // The SAME four rows (the leader-first cut above, so the favourite can never
   // fall off for being late in the month), re-listed earliest first with the

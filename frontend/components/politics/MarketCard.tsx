@@ -60,7 +60,9 @@ function BinaryCard({
   const { first, second } = twoLegCardPair(market);
   const yesProb = first.prob;
   const noProb = second?.prob ?? 100 - yesProb;
-  const [yesPct, noPct] = renderedOutcomeRowPercents([yesProb / 100, noProb / 100]);
+  const fallback = renderedOutcomeRowPercents([yesProb / 100, noProb / 100]);
+  const yesPct = market.top_outcomes.find(o => o.name === first.name)?.rendered_percent ?? fallback[0];
+  const noPct = market.top_outcomes.find(o => o.name === second?.name)?.rendered_percent ?? fallback[1];
   const yesLeads = yesProb >= 50;
 
   return (
@@ -247,7 +249,7 @@ function MultiCard({
               className={s.probNum}
               style={{ fontSize: 28, color: "var(--text-primary)", flexShrink: 0 }}
             >
-              {Math.round(leader.prob)}%
+              {leader.rendered_percent ?? Math.round(leader.prob)}%
             </span>
           </div>
 
@@ -284,7 +286,7 @@ function MultiCard({
                 >
                   <span style={{ color: "var(--text-secondary)" }}>{o.name}</span>
                   <span className={s.probNum} style={{ color: "var(--text-muted)", fontSize: 12 }}>
-                    {Math.round(o.prob)}%
+                    {o.rendered_percent ?? Math.round(o.prob)}%
                   </span>
                 </div>
               ))}

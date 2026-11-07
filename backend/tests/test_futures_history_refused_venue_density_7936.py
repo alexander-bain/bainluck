@@ -260,7 +260,7 @@ class TestTheShip:
 
         assert payload["actual_hours"] == 720
         assert payload.get("auto_extended") is True
-        assert payload["total_data_points"] == 3
+        assert payload["total_data_points"] == 5  # three captures + two supported carried endpoints
         assert set(_served(payload)) == set(_LEGS)
         assert payload["hours"] == 168, "the REQUESTED window is still reported as asked"
 

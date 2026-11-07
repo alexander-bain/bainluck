@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""RED-prove `tests/test_league_rails_query_plan.py` — LAT-P110, #2260.
+"""Extends first_card_client_contract (ruling 002).
+
+RED-prove `tests/test_league_rails_query_plan.py` — LAT-P110, #2260.
 
 A guard that has never been seen to fail is a guard nobody has tested. This
 harness applies each mutation ALONE from a `cp` backup, runs the suite, requires

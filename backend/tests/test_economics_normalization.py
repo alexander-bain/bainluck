@@ -1,9 +1,9 @@
-"""Tests for Economics page probability normalization (M8 fix).
+"""Tests for Economics page probability normalization and #12126/#12128 guards.
 
-Distribution markets (CPI, Fed rates, GDP, energy) assemble bracket
-probabilities from independent binary markets.  These can sum well over 100%.
-Both _brackets_from_outcomes and _cumulative_to_discrete must normalize when
-the total exceeds 105%.
+`_brackets_from_outcomes` normalizes only mutually-exclusive, complete fields
+holding at least 90% (`SPECIALTY_FIELD_MASS_MIN`) of raw probability within the
+160% ceiling (scale-down only). `_cumulative_to_discrete` converts cumulative
+threshold ladders into discrete intervals without rescaling sums over 105%.
 """
 
 import re
@@ -27,19 +27,30 @@ def _make_outcome(name: str, prob: float, rank: int = 0):
     )
 
 
-def _make_market(name: str, outcomes: list, source: str = "kalshi", external_id: str = "kxcpi"):
+def _make_market(
+    name: str,
+    outcomes: list,
+    source: str = "kalshi",
+    external_id: str = "kxcpi",
+    mutually_exclusive: bool | None = True,
+):
     return SimpleNamespace(
-        id=1, name=name, source=source, external_id=external_id, outcomes=outcomes,
+        id=1,
+        name=name,
+        source=source,
+        external_id=external_id,
+        outcomes=outcomes,
+        mutually_exclusive=mutually_exclusive,
     )
 
 
 # ---------------------------------------------------------------------------
-# _brackets_from_outcomes — multi-outcome market normalization
+# _brackets_from_outcomes — multi-outcome market normalization (#11995 / #12093)
 # ---------------------------------------------------------------------------
 
 
 class TestBracketsFromOutcomes:
-    """_brackets_from_outcomes should normalize when probabilities sum > 105%."""
+    """_brackets_from_outcomes normalizes via #11995 6-A guards."""
 
     def test_normal_distribution_unchanged(self):
         outcomes = [
@@ -55,7 +66,7 @@ class TestBracketsFromOutcomes:
         assert brackets[0][0] == 35.0
 
     def test_inflated_distribution_normalized(self):
-        """Independent binary markets whose probs sum >> 100% get normalized."""
+        """Mutually-exclusive market whose probs sum up to 160% gets normalized."""
         outcomes = [
             _make_outcome("2.5% - 3.0%", 0.55, rank=1),
             _make_outcome("3.0% - 3.5%", 0.45, rank=2),
@@ -69,16 +80,16 @@ class TestBracketsFromOutcomes:
         assert total <= 101.0, f"Sum should be <=101%, got {total}%"
         assert brackets[0][0] < 55.0
 
-    def test_exactly_105_not_normalized(self):
-        """Threshold is strictly > 105; sum of exactly 105 is left alone."""
+    def test_underround_not_scaled_up(self):
+        """#11995 6-A scale-down only: sum < 100% is left untouched."""
         outcomes = [
-            _make_outcome("Low", 0.55, rank=1),
-            _make_outcome("High", 0.50, rank=2),
+            _make_outcome("Low", 0.45, rank=1),
+            _make_outcome("High", 0.40, rank=2),
         ]
         market = _make_market("Rate Level", outcomes)
         brackets = _brackets_from_outcomes(market)
-        assert brackets[0][0] == 55.0
-        assert brackets[1][0] == 50.0
+        assert brackets[0][0] == 45.0
+        assert brackets[1][0] == 40.0
 
     def test_normalize_false_skips(self):
         outcomes = [
@@ -105,22 +116,146 @@ class TestBracketsFromOutcomes:
         market = _make_market("Empty", [])
         assert _brackets_from_outcomes(market) == []
 
-    def test_severe_overround(self):
-        """6 brackets each at ~40% (sum 240%) should normalize correctly."""
+    def test_over_160_ceiling_refused(self):
+        """#11995 6-A: raw sum > 160% refuses normalization (independent binaries)."""
         outcomes = [_make_outcome(f"Bracket {i}", 0.40, rank=i) for i in range(6)]
         market = _make_market("Inflated", outcomes)
         brackets = _brackets_from_outcomes(market)
-        total = sum(b[0] for b in brackets)
-        assert 99.0 <= total <= 101.0, f"Sum should be ~100%, got {total}%"
+        assert [b[0] for b in brackets] == [40.0] * 6
+
+    def test_one_cent_floor_excluded_from_divisor(self):
+        """#11995 6-A / #8595: 1c floor outcomes are excluded from the divisor."""
+        outcomes = [
+            _make_outcome("2.0% - 2.5%", 0.55, rank=1),
+            _make_outcome("2.5% - 3.0%", 0.55, rank=2),
+            *[
+                _make_outcome(f"Tail {i}", 0.01, rank=i + 3)
+                for i in range(10)
+            ],
+        ]
+        market = _make_market("CPI", outcomes)
+        brackets = _brackets_from_outcomes(market)
+        # Non-floor mass is 1.10 -> each 0.55 leg normalizes to 50.0%, not 0.55/1.20 = 45.8%
+        assert brackets[0][0] == 50.0
+        assert brackets[1][0] == 50.0
+        assert brackets[2][0] == 0.9
+
+    def test_mutually_exclusive_none_or_false_not_rescaled(self):
+        """#12010 / #12093: mutually_exclusive must be True to normalize."""
+        outcomes = [
+            _make_outcome("2.0% - 2.5%", 0.60, rank=1),
+            _make_outcome("2.5% - 3.0%", 0.55, rank=2),
+        ]
+        for me in (None, False):
+            market = _make_market("CPI", outcomes, mutually_exclusive=me)
+            brackets = _brackets_from_outcomes(market)
+            assert [b[0] for b in brackets] == [60.0, 55.0]
+
+    def test_blank_outcome_label_refused_and_withholds_normalization(self):
+        """#12126 / #12128 / #11949: blank outcome labels are stripped and mark field incomplete."""
+        outcomes = [
+            _make_outcome("2.0% - 2.5%", 0.60, rank=1),
+            _make_outcome("   ", 0.50, rank=2),
+            _make_outcome("2.5% - 3.0%", 0.50, rank=3),
+        ]
+        market = _make_market("CPI", outcomes, mutually_exclusive=True)
+        brackets = _brackets_from_outcomes(market)
+        assert [b[1] for b in brackets] == ["2.0% - 2.5%", "2.5% - 3.0%"]
+        assert [b[0] for b in brackets] == [60.0, 50.0]
+
+    def test_missing_source_stays_none_and_blank_outcome_filtered_in_rows(self):
+        """#12126 / #12128 / #11949: missing source stays None, never 'kalshi' or ''."""
+        from app.routes.economics import _cross_source_row_fn, _distribution_row, _market_row
+
+        m_bin = _make_market(
+            "Will tariffs rise?",
+            [
+                _make_outcome("", 0.90, rank=1),
+                _make_outcome("Yes", 0.42, rank=2),
+                _make_outcome("No", 0.58, rank=3),
+            ],
+            source="",
+            external_id="",
+        )
+        row = _market_row(m_bin)
+        assert row is not None
+        assert row["src"] is None
+        assert row["prob"] == 42.0
+
+        m_dist = _make_market(
+            "CPI Brackets",
+            [
+                _make_outcome("2.0% - 2.5%", 0.45, rank=1),
+                _make_outcome("   ", 0.25, rank=2),
+                _make_outcome("2.5% - 3.0%", 0.30, rank=3),
+            ],
+            source="",
+            external_id="",
+        )
+        dist = _distribution_row(m_dist, min_outcomes=2)
+        assert dist is not None
+        assert dist["src"] is None
+        assert [r[1] for r in dist["rows"]] == ["2.0% - 2.5%", "2.5% - 3.0%"]
+
+        cs = _cross_source_row_fn(m_dist)
+        assert cs is not None
+        assert cs["src"] is None
+        assert [t["name"] for t in cs["top_outcomes"]] == ["2.0% - 2.5%", "2.5% - 3.0%"]
+
+    def test_specialty_field_mass_min_threshold(self):
+        """#12126 / #12128: SPECIALTY_FIELD_MASS_MIN = 0.9 guard on _brackets_from_outcomes.
+
+        Sub-90% raw mass stays unscaled; boundary 0.90 and overround 1.10 pass
+        the >= 0.90 gate (0.90 is left unscaled by scale-down-only, 1.10 scales
+        down to 100%).
+        """
+        # Sub-90% raw mass (0.45 + 0.25 + 0.15 = 0.85 < 0.90) -> raw
+        sub_90 = _make_market(
+            "CPI",
+            [
+                _make_outcome("2.0% - 2.5%", 0.45, rank=1),
+                _make_outcome("2.5% - 3.0%", 0.25, rank=2),
+                _make_outcome("3.0% - 3.5%", 0.15, rank=3),
+            ],
+            mutually_exclusive=True,
+        )
+        assert [b[0] for b in _brackets_from_outcomes(sub_90)] == [45.0, 25.0, 15.0]
+
+        # Boundary 90% raw mass (0.50 + 0.25 + 0.15 = 0.90) -> passes >= 0.90
+        # mass check; divisor <= 1.0 so scale-down-only keeps raw values
+        at_90 = _make_market(
+            "CPI",
+            [
+                _make_outcome("2.0% - 2.5%", 0.50, rank=1),
+                _make_outcome("2.5% - 3.0%", 0.25, rank=2),
+                _make_outcome("3.0% - 3.5%", 0.15, rank=3),
+            ],
+            mutually_exclusive=True,
+        )
+        assert [b[0] for b in _brackets_from_outcomes(at_90)] == [50.0, 25.0, 15.0]
+
+        # Overround 110% raw mass (0.55 + 0.35 + 0.20 = 1.10 >= 0.90) -> scaled down to 100%
+        over_100 = _make_market(
+            "CPI",
+            [
+                _make_outcome("2.0% - 2.5%", 0.55, rank=1),
+                _make_outcome("2.5% - 3.0%", 0.35, rank=2),
+                _make_outcome("3.0% - 3.5%", 0.20, rank=3),
+            ],
+            mutually_exclusive=True,
+        )
+        scaled = _brackets_from_outcomes(over_100)
+        assert [b[0] for b in scaled] == [50.0, 31.8, 18.2]
+        assert round(sum(b[0] for b in scaled), 1) == 100.0
 
 
 # ---------------------------------------------------------------------------
-# _cumulative_to_discrete — cumulative "Above X" normalization
+# _cumulative_to_discrete — cumulative "Above X" discrete conversion
 # ---------------------------------------------------------------------------
 
 
 class TestCumulativeToDiscrete:
-    """_cumulative_to_discrete should normalize when discrete probs sum > 105%."""
+    """_cumulative_to_discrete converts cumulative rungs into discrete intervals without rescaling."""
 
     def test_well_behaved_cumulative(self):
         outcomes = [
@@ -154,13 +289,7 @@ class TestCumulativeToDiscrete:
         assert len(brackets) <= 4
 
     def test_normalization_guard_fires(self):
-        """Verify the normalization guard catches sums > 105%.
-
-        For well-formed monotonic cumulative data, discrete sums can't exceed
-        the first cumulative value (so max ~100%).  The guard is defensive,
-        protecting against edge cases and upstream data quality issues.
-        It should not make things worse for normal data.
-        """
+        """Well-formed monotonic cumulative data yields discrete intervals summing <= first rung."""
         outcomes = [
             _make_outcome("Above 100", 0.90),
             _make_outcome("Above 200", 0.70),
@@ -171,6 +300,18 @@ class TestCumulativeToDiscrete:
         total = sum(b[0] for b in brackets)
         # 20 + 30 + 30 + 10 = 90 — well under threshold
         assert total <= 105.0
+
+    def test_discrete_sum_over_105_not_rescaled(self):
+        """#12126 / #12128: discrete diffs summing over 105% are NOT rescaled via 100 / total."""
+        outcomes = [
+            _make_outcome("Above 100", 1.20),
+            _make_outcome("Above 200", 0.80),
+            _make_outcome("Above 300", 0.30),
+        ]
+        brackets = _cumulative_to_discrete(outcomes)
+        probs = [b[0] for b in brackets]
+        assert sum(probs) == 120.0
+        assert probs == [40.0, 50.0, 30.0]
 
 
 class TestCumulativeSignedThresholds:
@@ -301,3 +442,72 @@ class TestModalBracket:
         assert idx == 0
         assert prob == 0.0
         assert label == ""
+
+
+# ---------------------------------------------------------------------------
+# FOMC `resolved` guard (#12126 / #12128 / #11949)
+# ---------------------------------------------------------------------------
+
+
+class TestFomcResolvedGuard:
+    """FOMC meeting `resolved` reads only venue settlement via `market_reads_settled`, never `status == 'closed'`."""
+
+    def test_closed_status_or_high_price_without_venue_result_is_not_resolved(self):
+        from datetime import datetime, timezone
+        from pathlib import Path
+        from app.utils.futures_liveness import market_reads_settled
+
+        now = datetime(2026, 11, 6, 12, 0, tzinfo=timezone.utc)
+        closed_ungraded = SimpleNamespace(
+            id=501,
+            name="What will the upper bound of the federal funds rate be after Dec 2026?",
+            status="closed",
+            market_metadata={},
+            outcomes=[
+                SimpleNamespace(
+                    id=1,
+                    name="Above 4.25%",
+                    current_probability=0.99,
+                    is_winner=None,
+                    resolution_source=None,
+                ),
+                SimpleNamespace(
+                    id=2,
+                    name="Above 4.50%",
+                    current_probability=0.01,
+                    is_winner=False,
+                    resolution_source=None,
+                ),
+            ],
+        )
+        assert market_reads_settled(closed_ungraded, now=now) is False
+
+        venue_settled = SimpleNamespace(
+            id=502,
+            name="What will the upper bound of the federal funds rate be after Sep 2026?",
+            status="open",
+            market_metadata={"shape": {"expected_winners": 1}},
+            outcomes=[
+                SimpleNamespace(
+                    id=1,
+                    name="4.25% - 4.50%",
+                    current_probability=0.99,
+                    is_winner=True,
+                    resolution_source="api_settlement",
+                ),
+                SimpleNamespace(
+                    id=2,
+                    name="4.00% - 4.25%",
+                    current_probability=0.01,
+                    is_winner=False,
+                    resolution_source="api_settlement",
+                ),
+            ],
+        )
+        assert market_reads_settled(venue_settled, now=now) is True
+
+        route_src = (
+            Path(__file__).resolve().parent.parent / "app" / "routes" / "economics.py"
+        ).read_text()
+        assert '"resolved": market_reads_settled(m, now=now)' in route_src
+        assert '"resolved": m.status == "closed"' not in route_src

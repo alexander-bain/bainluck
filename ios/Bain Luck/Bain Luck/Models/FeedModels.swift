@@ -650,7 +650,9 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let blendFoldRevision: ServedFoldRevision?
     let heroProbabilitySource: String?
     let heroProbabilityObservedAt: String?
-    let currentOdds: CurrentOdds?
+    /// `var` so Discover can print an admitted preview over a copy (#10090,
+    /// `DiscoverCardPreviews`); the committed card store is never written.
+    var currentOdds: CurrentOdds?
     let openingOdds: OpeningOdds?
     /// #8622 — see `PrematchOdds`. Read through `PrematchReading.resolve`.
     let prematchOdds: PrematchOdds?
@@ -756,6 +758,7 @@ extension FeedEventData {
 
 /// Futures-market payload embedded inside a futures-type feed card.
 nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
+    var fullFieldRendered: Bool? = nil
     let id: Int
     /// Fresh leaf identity; older cached feed bodies may omit it.
     var externalId: String? = nil
@@ -769,7 +772,13 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let marketTier: Int?
     let status: String?
     let resolutionDate: String?
-    let topOutcomes: [FeedFuturesOutcome]?
+    /// `var` so Discover can print an admitted market preview over a copy
+    /// (#10090, `DiscoverMarketPreview`); the committed card store is never written.
+    var topOutcomes: [FeedFuturesOutcome]?
+    /// #10090 — the divisor `topOutcomes` was printed on (`_feed_display_scale`).
+    /// A venue preview is a raw price, so it is overlaid only when this is
+    /// exactly 1; absent (an older payload) overlays nothing.
+    var displayScale: Double? = nil
     let outcomeCount: Int?
     let canonicalMarketKey: String?
     let groupId: String?
@@ -861,6 +870,7 @@ nonisolated struct FeedDiscoverThresholdPoint: Decodable, Identifiable, Sendable
 
 /// Single outcome row for distribution-style cards.
 nonisolated struct FeedDiscoverDistributionOutcome: Decodable, Sendable {
+    var renderedPercent: Int? = nil
     let label: String
     let probability: Double?
     let movement: Double?
@@ -946,6 +956,7 @@ nonisolated struct MatchedOutcome: Decodable, Identifiable, Sendable {
 
 /// Top outcome summary shown on a futures feed card.
 nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
+    var renderedPercent: Int? = nil
     let id: Int
     let name: String
     let probability: Double?

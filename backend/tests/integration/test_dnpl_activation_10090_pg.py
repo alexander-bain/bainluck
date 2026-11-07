@@ -211,8 +211,14 @@ async def test_actual_controller_recovers_and_keeps_namespace_count_bounded(reco
     assert await r.client.exists(*namespace_keys(first)) == 0
 
 
-async def test_admission_eviction_never_allows_delayed_arm_to_recreate(recovery):
+async def test_admission_eviction_never_allows_delayed_arm_to_recreate(
+    recovery, monkeypatch
+):
     r = recovery
+    # #11939: run 41795716723 exhausted the 150ms store budget during COMMIT.
+    # This case checks admission eviction; authority deadlines have their own
+    # tests. Match the 2s lab budget already used by the lifecycle controls.
+    monkeypatch.setattr(r.store, "budget_s", 2.0)
     first = await r.prepare()
     await r.controller.arm(first)
     await r.controller.initialize(first)
@@ -390,6 +396,10 @@ async def test_replacement_primary_frees_pending_predecessor_then_recovers(
     recovery, monkeypatch, evict_fence, lose_reply
 ):
     r = recovery
+    # This case tests replacement identity/cleanup, not the 150ms deadline.
+    # CI41970710552 timed out committing initialize on a loaded runner; keep
+    # timeout and uncertain-ack coverage in the dedicated authority cases.
+    monkeypatch.setattr(r.store, "budget_s", 2.0)
     first = await r.prepare()
     await r.controller.arm(first)
     await r.controller.initialize(first)
@@ -523,6 +533,12 @@ async def test_operator_plan_real_lifecycle_stops_without_replaying(
     )
 
     budgets = OperatorBudgets(1000, 5000) if remote_budget else OperatorBudgets()
+    if not remote_budget:
+        # #11939: run 41746363779 attempt 2 hit AuthorityWriteUncertain from the
+        # local store's 150ms deadline on the readback at the end (a loaded
+        # runner). The local-budget case checks the plan's lifecycle, not that
+        # deadline, so widen it as #11916 did for its siblings in this file.
+        monkeypatch.setattr(r.store, "budget_s", 2.0)
     if remote_budget:
         import asyncio
         from contextlib import asynccontextmanager

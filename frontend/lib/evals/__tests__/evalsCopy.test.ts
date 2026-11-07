@@ -1,0 +1,125 @@
+/**
+ * #12102 S1 — every word /evals says passes the site's bans and the page's own.
+ *
+ * The plan's acceptance for S1: `copy.ts` passes `ALL_COPY_BANS` plus
+ * `SUPPLIER_PROSE_BANS`. This suite reads every string the page's data modules
+ * export — copy, gap rows, source labels, chip words — and adds the page's own
+ * rules (`copyRules.ts`: no "question", no future tense). The words a render
+ * assembles are checked again by the page test, and the shipped bundle by
+ * `shippedCopyBans.test.ts`.
+ */
+
+import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy, type CopyBan } from "@/lib/copyBans";
+import * as copy from "@/lib/evals/copy";
+import { EVALS_COPY_RULES } from "@/lib/evals/copyRules";
+import { GAPS } from "@/lib/evals/gaps";
+import { loadReviewerResults } from "@/lib/evals/reviewerResults";
+import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
+import { loadRuns } from "@/lib/evals/runs";
+import { FAMILY_WORDS } from "@/lib/evals/scoreboard";
+import { GATE_WORDS, RELATION_WORDS } from "@/lib/evals/twinExam";
+import { loadWatchers } from "@/lib/evals/watchers";
+import { EVALS_SOURCES } from "@/lib/evals/sources";
+import { RESULT_WORD, ageLabel } from "@/lib/evals/truth";
+
+const BANS: CopyBan[] = [...ALL_COPY_BANS, ...SUPPLIER_PROSE_BANS, ...EVALS_COPY_RULES];
+
+/** Every string inside a value, at any depth. Keys are identifiers and are skipped. */
+function stringsIn(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(stringsIn);
+  if (value && typeof value === "object") return Object.values(value).flatMap(stringsIn);
+  return [];
+}
+
+/** All reader-facing strings. (The page's rules live in `copyRules.ts`, not here: their reasons name the words they ban.) */
+function readerStrings(): string[] {
+  return [
+    ...stringsIn(copy),
+    ...GAPS.flatMap((g) => [g.text, g.planned?.waitingOn ?? ""]),
+    ...EVALS_SOURCES.map((s) => s.label),
+    ...loadRuns().flatMap((r) => [r.title, r.note, r.receipt.label]),
+    ...Object.values(FAMILY_WORDS).flatMap((w) => [w.name, w.checks]),
+    ...(loadReviewerStudy()?.cases ?? []).flatMap((c) => [c.label, c.text]),
+    loadReviewerStudy()?.receipt.label ?? "",
+    ...(() => {
+      const r = loadReviewerResults(loadReviewerStudy());
+      return r ? [r.receipt.label, r.planReceipt.label, ...r.results.map((x) => x.receipt.label)] : [];
+    })(),
+    ...Object.values(GATE_WORDS).flatMap((g) => [g.name, g.checks, ...Object.values(g.units)]),
+    ...Object.values(RELATION_WORDS),
+    ...(loadWatchers()?.watchers ?? []).flatMap((w) => [w.name, w.checks, w.verdict?.receipt.label ?? ""]),
+    ...Object.values(RESULT_WORD),
+    ageLabel(0),
+    ageLabel(1),
+    ageLabel(2),
+  ].filter(Boolean);
+}
+
+describe("/evals copy passes the bans", () => {
+  it("no string the page exports trips a site-wide or page rule", () => {
+    const hits = readerStrings().flatMap((text) =>
+      findBannedCopy(text, BANS).map((h) => `${h.ban.id}: "${h.matched}" in "${h.context}"`)
+    );
+    expect(hits).toEqual([]);
+  });
+
+  it("the sweep reads the strings it claims to — nested copy, gap rows and labels included", () => {
+    const strings = readerStrings();
+    expect(strings).toContain(copy.STORY_COPY.code.paragraphs[0]);
+    expect(strings).toContain(copy.RESULT_CHIP_MEANING.fail);
+    expect(strings).toContain(copy.TERMS[0].meaning);
+    expect(strings).toContain(GAPS[0].text);
+    expect(strings).toContain(EVALS_SOURCES[0].label);
+    expect(strings).toContain(loadRuns()[0].note);
+    expect(strings).toContain(FAMILY_WORDS.search_truth_closure_contract.checks);
+    expect(strings).toContain(loadReviewerStudy()?.cases[0].text);
+    expect(strings).toContain(copy.TESTS_FOR_TESTS_COPY.biteNoneReal);
+    expect(strings).toContain(GATE_WORDS.wrong_merges.checks);
+    expect(strings).toContain(copy.CONFUSION_COPY.heldOutNote);
+    expect(strings).toContain(loadWatchers()?.watchers[0].checks);
+    expect(strings).toContain(copy.WATCHERS_COPY.stateRedStopped);
+    expect(strings.length).toBeGreaterThan(30);
+  });
+
+  it("the rules can fail — planted copy is caught by each family", () => {
+    const planted = "We will show the blend price soon, and Kalshi says this question is settled.";
+    const ids = findBannedCopy(planted, BANS).map((h) => h.ban.id);
+    expect(ids).toEqual(
+      expect.arrayContaining(["blend", "price-family", "venue-kalshi", "evals-will", "evals-soon", "evals-question"])
+    );
+  });
+
+  it("a venue name as a source label passes; as the subject of a sentence it does not", () => {
+    expect(findBannedCopy("Kalshi · Polymarket", BANS)).toEqual([]);
+    expect(findBannedCopy("Kalshi says it is likely.", BANS).map((h) => h.ban.id)).toContain("venue-kalshi");
+  });
+});
+
+describe("the rules stay out of the reader's bundle", () => {
+  it("copy.ts, which the page imports, does not carry the rule list", () => {
+    expect(Object.keys(copy)).not.toContain("EVALS_COPY_RULES");
+  });
+});
+
+describe("the page says what Decide 43 ruled", () => {
+  it("J1: the story's code chapter says plainly that AI agents write most of the code, and who checks the work", () => {
+    expect(copy.STORY_COPY.code.paragraphs[0]).toMatch(/^AI agents write most of this site's code/);
+    expect(copy.STORY_COPY.code.paragraphs[0]).toMatch(/other AI agents and Alex, who builds Bain Luck, check the work/);
+  });
+
+  it("J1, on the top screen too: its plain answer opens with who writes the code", () => {
+    expect(copy.TOP_COPY.answer).toMatch(/^AI agents write most of (the|this site's) code/);
+  });
+
+  it("the line above the full record names every label the page can show, LAST REVIEWED included", () => {
+    for (const label of ["LIVE", "LAST RUN", "PLANNED", "LAST REVIEWED"]) {
+      expect(copy.STORY_COPY.recordLead).toContain(label);
+    }
+  });
+
+  it("the combined number is called the combined probability", () => {
+    const gap = GAPS.find((g) => g.id === "combined-probability");
+    expect(gap?.text).toMatch(/combined probability/);
+  });
+});

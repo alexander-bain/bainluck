@@ -21,7 +21,7 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
   const row = {
     q: market.name, market_id: market.id, src: market.source ?? "",
     prob: market.top_outcomes[0].probability! * 100, outcome_count: market.outcome_count,
-    top_outcomes: market.top_outcomes.map(outcome => ({ name: outcome.name, prob: outcome.probability! * 100 })),
+    top_outcomes: market.top_outcomes.map(outcome => ({ name: outcome.name, prob: outcome.probability! * 100, rendered_percent: outcome.rendered_percent })),
   };
   const balance = market.id === 108619 && presentation === "field"
     ? market.top_outcomes.map(outcome => ({ outcome, parties: midtermsBalanceParties(outcome.name) })) : [];
@@ -42,7 +42,7 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
               <span style={{ color: colour(house) }} aria-label={`${partyName(house)} House`}>House {house}</span>
               <span style={{ color: colour(senate) }} aria-label={`${partyName(senate)} Senate`}>Senate {senate}</span>
             </div>
-            <p className="font-mono text-[28px] font-semibold leading-none tabular-nums" style={{ color: house === senate ? colour(house) : "var(--text-primary)" }}>{formatProbabilityPercent(outcome.probability!)}</p>
+            <p className="font-mono text-[28px] font-semibold leading-none tabular-nums" style={{ color: house === senate ? colour(house) : "var(--text-primary)" }}>{formatProbabilityPercent(outcome.probability!, { rendered: outcome.rendered_percent })}</p>
             <p className="mt-2 text-xs leading-snug text-text-secondary">{outcome.name}</p>
           </div>;
         })}
@@ -52,12 +52,12 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
   }
 
   const pair = twoLegCardPair(row);
-  if (presentation === "field" || !pair.second) return <MarketCard market={row} theme="congressional" forceField={presentation === "field"} forceDuel={presentation === "duel"} showLeaderHeadshot />;
+  if (presentation === "field" || !pair.second) return <MarketCard market={{ ...row, top_outcomes: row.top_outcomes.slice(0, 5) }} theme="congressional" forceField={presentation === "field"} forceDuel={presentation === "duel"} showLeaderHeadshot />;
   const percentages = renderedOutcomeRowPercents([pair.first.prob / 100, pair.second.prob / 100]);
   const legs = [pair.first, pair.second].map((leg, index) => {
     const source = market.top_outcomes.find(outcome => outcome.name === leg.name);
     return { ...leg, party: midtermsOutcomeParty(market.id, source ?? { name: leg.name }),
-      label: formatProbabilityPercent(leg.prob / 100, { rendered: percentages[index] }) };
+      label: formatProbabilityPercent(leg.prob / 100, { rendered: source?.rendered_percent ?? percentages[index] }) };
   });
   if (legs[0].party === "R" && legs[1].party === "D") legs.reverse();
   const compact = presentation === "duel";

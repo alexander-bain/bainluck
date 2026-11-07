@@ -21,6 +21,7 @@ enum NFLEventCard9483: Equatable, Identifiable {
     case milestone(NFLMilestoneCard9483)
     case ladder(NBALadderCard9483)
     case mlb(MLBFinalCard11284)
+    case nhlScoring(EventAtlasNhlCards11666.ScoringCard)
 
     var id: String {
         switch self {
@@ -28,6 +29,7 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .milestone(let card): return "milestone:\(card.id)"
         case .ladder(let card): return card.id
         case .mlb(let card): return card.id
+        case .nhlScoring(let card): return card.id
         }
     }
 
@@ -37,6 +39,7 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .milestone(let card): return "\(card.player) · \(card.stat)"
         case .ladder(let card): return card.title
         case .mlb(let card): return card.title
+        case .nhlScoring(let card): return card.title
         }
     }
 
@@ -50,6 +53,7 @@ enum NFLEventCard9483: Equatable, Identifiable {
         // A finished game's saved chances, finals and results are history:
         // nothing on these cards is a current quote that can expire.
         case .mlb: return self
+        case .nhlScoring(let card): return .nhlScoring(card.current(at: now))
         }
     }
 }

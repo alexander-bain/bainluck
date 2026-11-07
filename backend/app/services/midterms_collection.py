@@ -89,9 +89,7 @@ async def load_midterms_cards(
             .all()
         )
     polymarket_pool = [
-        m
-        for m in [*primary, *candidates]
-        if getattr(m, "source", None) == "polymarket"
+        m for m in [*primary, *candidates] if getattr(m, "source", None) == "polymarket"
     ]
     by_polymarket_id = {m.id: m for m in polymarket_pool}
     twins, report = {}, []
@@ -130,49 +128,45 @@ async def load_midterms_cards(
     for mid, market in all_markets.items():
         try:
             card = _format_futures_for_search(market, withheld.get(mid))
+            card["mutually_exclusive"] = getattr(market, "mutually_exclusive", True)
             card["settled_at"] = (
                 market.settled_at.isoformat() if market.settled_at else None
             )
-            by_name = {outcome_key(o.name): o for o in market.outcomes}
-            for outcome in card["top_outcomes"]:
-                original = by_name.get(outcome_key(outcome["name"]))
-                if original is not None:
-                    outcome.update(
-                        is_winner=original.is_winner,
-                        resolution_source=original.resolution_source,
-                    )
-            # A settled winner can lack a surviving price. Its official result is
-            # still a result; the display never needs to infer it from that price.
-            for outcome in market.outcomes:
-                if (
-                    outcome.is_winner is True
-                    and outcome.resolution_source == "api_settlement"
-                    and not any(
-                        outcome_key(o["name"]) == outcome_key(outcome.name)
-                        for o in card["top_outcomes"]
-                    )
-                ):
-                    card["top_outcomes"].append(
-                        {
-                            "name": outcome.name,
-                            "probability": None,
-                            "is_winner": True,
-                            "resolution_source": outcome.resolution_source,
-                        }
-                    )
-            for original in clean_outcomes(market.outcomes):
-                if not any(
-                    outcome_key(o["name"]) == outcome_key(original.name)
-                    for o in card["top_outcomes"]
-                ):
-                    card["top_outcomes"].append(
-                        {
-                            "name": original.name,
-                            "probability": None,
-                            "is_winner": original.is_winner,
-                            "resolution_source": original.resolution_source,
-                        }
-                    )
+            # #11948: search's top-five preview is not the collection's field.
+            # Carry every real leg at its own screened venue price. In
+            # particular, never normalize a truncated preview to sum to 100%.
+            originals = list(clean_outcomes(market.outcomes))
+            known = {id(o) for o in originals}
+            originals.extend(
+                o
+                for o in market.outcomes
+                if id(o) not in known
+                and o.is_winner is True
+                and o.resolution_source == "api_settlement"
+            )
+            preview_order = {
+                outcome_key(o["name"]): index
+                for index, o in enumerate(card["top_outcomes"])
+            }
+            originals.sort(
+                key=lambda o: preview_order.get(outcome_key(o.name), len(preview_order))
+            )
+            refused = withheld.get(mid) or set()
+            card["top_outcomes"] = [
+                {
+                    "id": getattr(o, "id", None),
+                    "name": o.name,
+                    "probability": (
+                        float(o.current_probability)
+                        if getattr(o, "id", None) not in refused
+                        and o.current_probability is not None
+                        else None
+                    ),
+                    "is_winner": o.is_winner,
+                    "resolution_source": o.resolution_source,
+                }
+                for o in originals
+            ]
             card["outcome_count"] = max(
                 card["outcome_count"], len(card["top_outcomes"])
             )

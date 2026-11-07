@@ -1,0 +1,340 @@
+[
+  {
+    "name": "D'Andre Swift",
+    "stat": "Rushing Yards",
+    "team": "Bears",
+    "headline": "Cleared a 30% milestone",
+    "focus": 80,
+    "actual": 84.0,
+    "headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4259545.png",
+    "points": [
+      {
+        "x": 40.0,
+        "p": 0.755,
+        "row_key": "player_props:178",
+        "market_id": 62146484,
+        "hit": true
+      },
+      {
+        "x": 50.0,
+        "p": 0.635,
+        "row_key": "player_props:180",
+        "market_id": 62146484,
+        "hit": true
+      },
+      {
+        "x": 60.0,
+        "p": 0.525,
+        "row_key": "player_props:182",
+        "market_id": 62146484,
+        "hit": true
+      },
+      {
+        "x": 70.0,
+        "p": 0.395,
+        "row_key": "player_props:184",
+        "market_id": 62146484,
+        "hit": true
+      },
+      {
+        "x": 80.0,
+        "p": 0.295,
+        "row_key": "player_props:186",
+        "market_id": 62146484,
+        "hit": true
+      },
+      {
+        "x": 90.0,
+        "p": 0.215,
+        "row_key": "player_props:188",
+        "market_id": 62146484,
+        "hit": false
+      },
+      {
+        "x": 100.0,
+        "p": 0.145,
+        "row_key": "player_props:190",
+        "market_id": 62146484,
+        "hit": false
+      },
+      {
+        "x": 110.0,
+        "p": 0.105,
+        "row_key": "player_props:192",
+        "market_id": 62146484,
+        "hit": false
+      },
+      {
+        "x": 120.0,
+        "p": 0.065,
+        "row_key": "player_props:193",
+        "market_id": 62146484,
+        "hit": false
+      },
+      {
+        "x": 130.0,
+        "p": 0.045,
+        "row_key": "player_props:194",
+        "market_id": 62146484,
+        "hit": false
+      },
+      {
+        "x": 140.0,
+        "p": 0.035,
+        "row_key": "player_props:195",
+        "market_id": 62146484,
+        "hit": false
+      },
+      {
+        "x": 150.0,
+        "p": 0.035,
+        "row_key": "player_props:196",
+        "market_id": 62146484,
+        "hit": false
+      }
+    ]
+  },
+  {
+    "name": "Luther Burden III",
+    "stat": "Receiving Yards",
+    "team": "Bears",
+    "headline": "61 yards. A 23% milestone cleared.",
+    "focus": 60,
+    "actual": 61.0,
+    "headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4685278.png",
+    "points": [
+      {
+        "x": 15.0,
+        "p": 0.795,
+        "row_key": "player_props:44",
+        "market_id": 62146482,
+        "hit": true
+      },
+      {
+        "x": 25.0,
+        "p": 0.645,
+        "row_key": "player_props:46",
+        "market_id": 62146482,
+        "hit": true
+      },
+      {
+        "x": 40.0,
+        "p": 0.425,
+        "row_key": "player_props:49",
+        "market_id": 62146482,
+        "hit": true
+      },
+      {
+        "x": 50.0,
+        "p": 0.315,
+        "row_key": "player_props:51",
+        "market_id": 62146482,
+        "hit": true
+      },
+      {
+        "x": 60.0,
+        "p": 0.225,
+        "row_key": "player_props:53",
+        "market_id": 62146482,
+        "hit": true
+      },
+      {
+        "x": 70.0,
+        "p": 0.155,
+        "row_key": "player_props:55",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 80.0,
+        "p": 0.105,
+        "row_key": "player_props:57",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 90.0,
+        "p": 0.075,
+        "row_key": "player_props:59",
+        "market_id": 62146482,
+        "hit": false
+      }
+    ]
+  },
+  {
+    "name": "DeVonta Smith",
+    "stat": "Receiving Yards",
+    "team": "Eagles",
+    "headline": "Just short of the 51% milestone",
+    "focus": 70,
+    "actual": 65.0,
+    "headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4241478.png",
+    "points": [
+      {
+        "x": 40.0,
+        "p": 0.795,
+        "row_key": "player_props:14",
+        "market_id": 62146482,
+        "hit": true
+      },
+      {
+        "x": 50.0,
+        "p": 0.7,
+        "row_key": "player_props:16",
+        "market_id": 62146482,
+        "hit": true
+      },
+      {
+        "x": 60.0,
+        "p": 0.595,
+        "row_key": "player_props:18",
+        "market_id": 62146482,
+        "hit": true
+      },
+      {
+        "x": 70.0,
+        "p": 0.51,
+        "row_key": "player_props:20",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 80.0,
+        "p": 0.4,
+        "row_key": "player_props:22",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 90.0,
+        "p": 0.325,
+        "row_key": "player_props:24",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 100.0,
+        "p": 0.255,
+        "row_key": "player_props:26",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 110.0,
+        "p": 0.185,
+        "row_key": "player_props:28",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 120.0,
+        "p": 0.13,
+        "row_key": "player_props:29",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 130.0,
+        "p": 0.09,
+        "row_key": "player_props:30",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 140.0,
+        "p": 0.07,
+        "row_key": "player_props:31",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 150.0,
+        "p": 0.05,
+        "row_key": "player_props:32",
+        "market_id": 62146482,
+        "hit": false
+      },
+      {
+        "x": 160.0,
+        "p": 0.04,
+        "row_key": "player_props:33",
+        "market_id": 62146482,
+        "hit": false
+      }
+    ]
+  },
+  {
+    "name": "Jalen Hurts",
+    "stat": "Passing Yards",
+    "team": "Eagles",
+    "headline": "153 yards. The 200-yard mark was favored.",
+    "focus": 200,
+    "actual": 153.0,
+    "headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4040715.png",
+    "points": [
+      {
+        "x": 150.0,
+        "p": 0.835,
+        "row_key": "player_props:360",
+        "market_id": 62146479,
+        "hit": true
+      },
+      {
+        "x": 175.0,
+        "p": 0.735,
+        "row_key": "player_props:362",
+        "market_id": 62146479,
+        "hit": false
+      },
+      {
+        "x": 200.0,
+        "p": 0.585,
+        "row_key": "player_props:364",
+        "market_id": 62146479,
+        "hit": false
+      },
+      {
+        "x": 225.0,
+        "p": 0.43,
+        "row_key": "player_props:366",
+        "market_id": 62146479,
+        "hit": false
+      },
+      {
+        "x": 250.0,
+        "p": 0.295,
+        "row_key": "player_props:368",
+        "market_id": 62146479,
+        "hit": false
+      },
+      {
+        "x": 275.0,
+        "p": 0.175,
+        "row_key": "player_props:370",
+        "market_id": 62146479,
+        "hit": false
+      },
+      {
+        "x": 300.0,
+        "p": 0.105,
+        "row_key": "player_props:372",
+        "market_id": 62146479,
+        "hit": false
+      },
+      {
+        "x": 325.0,
+        "p": 0.055,
+        "row_key": "player_props:374",
+        "market_id": 62146479,
+        "hit": false
+      },
+      {
+        "x": 350.0,
+        "p": 0.03,
+        "row_key": "player_props:375",
+        "market_id": 62146479,
+        "hit": false
+      }
+    ]
+  }
+]

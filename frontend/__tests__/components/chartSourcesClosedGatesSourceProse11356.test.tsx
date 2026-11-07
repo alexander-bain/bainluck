@@ -1,9 +1,18 @@
 /**
+ * #11929 — ALEX'S RULING (2026-11-04 12:09 PT) SUPERSEDES the interior-hole
+ * note this file's first arm used to pin: "A solid line through unobserved
+ * time … no bridge, no dotted treatment, no label." A minute inside an
+ * interior hole is now an ordinary carried minute with no note at all, so
+ * the gate below is proven on the note that remains — the STALE RIGHT EDGE
+ * ("last reading …, none since") — on the same specimen, sportsbooks-only,
+ * with its readings cut an hour before the chart ends. The arm also asserts
+ * the interior hole now says nothing.
+ *
  * #11356 — with Sources closed over the blend no source line is drawn, so no
- * prose may describe one: not the tooltip's hole notes (#7878) and not the
- * stale-edge caption under the chart. The gate is "sources hidden behind the
- * blend", NOT "source lines drawn" — with no blend (sportsbooks-only, MODE B)
- * the one Sportsbooks line IS drawn and its holes keep their note.
+ * prose may describe one: not the tooltip's stale-edge notes (#7878) and not
+ * the stale-edge caption under the chart. The gate is "sources hidden behind
+ * the blend", NOT "source lines drawn" — with no blend (sportsbooks-only,
+ * MODE B) the one Sportsbooks line IS drawn and its stale edge keeps its note.
  *
  * lane1's source review of PR #11387 (`0d0412ae63`) found the gate keyed on
  * `sourceLinesShown`, which is also false in sportsbooks-only mode: a minute
@@ -81,10 +90,11 @@ const textOf = (html: string) =>
   [...html.matchAll(/>([^<]*)</g)].map((m) => m[1]).join(" ");
 const cardText = (html: string) => textOf(html).replace(/\s+/g, " ").trim();
 
-describe("sportsbooks-only: a hole in the one drawn line keeps its note", () => {
+describe("sportsbooks-only: a stale edge on the one drawn line keeps its note", () => {
   // The #7878 specimen with its one series fed as SPORTSBOOK history: no
-  // blend, so the drawn line is MODE B's `homeDelta`. The one hole the rule
-  // finds on it is 08:14–09:28.
+  // blend, so the drawn line is MODE B's `homeDelta`. Its interior hole is
+  // 08:14–09:28; its readings are cut at CUT, an hour before the chart's
+  // right edge (12:31), so the line has a stale trailing edge.
   const SPECIMEN: EventHistoryResponse & {
     status: string;
     commence_time: string;
@@ -98,7 +108,10 @@ describe("sportsbooks-only: a hole in the one drawn line keeps its note", () => 
     fromIso: "2026-09-21T08:14:33.775017+00:00",
     toIso: "2026-09-21T09:28:12.162071+00:00",
   };
-  const asBook = SPECIMEN.win_prob_history!.kalshi.map((p) => ({
+  const CUT = Date.parse("2026-09-21T11:30:00+00:00");
+  const kept = SPECIMEN.win_prob_history!.kalshi.filter((p) => Date.parse(p.timestamp) < CUT);
+  const lastKept = kept[kept.length - 1].timestamp;
+  const asBook = kept.map((p) => ({
     timestamp: p.timestamp,
     home_probability: p.home_probability,
     away_probability: p.away_probability,
@@ -108,7 +121,7 @@ describe("sportsbooks-only: a hole in the one drawn line keeps its note", () => 
     bookmaker: "consensus",
   }));
 
-  it("a minute inside the hole draws a card naming the two bounding readings", () => {
+  it("a minute past the stale edge draws a card naming the last reading; a minute inside the hole draws a number and no note", () => {
     mockRecorded.tooltip = null;
     mockRecorded.data = [];
     const domain = computeSharedChartDomain(
@@ -135,6 +148,32 @@ describe("sportsbooks-only: a hole in the one drawn line keeps its note", () => 
         />
       </AnalyticsProvider>,
     );
+    // The render above reassigned it; TS still narrows it to the `null` set first.
+    const content = (mockRecorded.tooltip as TooltipProps | null)
+      ?.content as React.ReactElement;
+    const card = (label: string, value: number | null) =>
+      renderToStaticMarkup(
+        React.cloneElement(content, {
+          active: true,
+          label,
+          payload: [
+            { value, name: "Sportsbooks", color: "#0f172a", dataKey: "homeDelta" },
+          ],
+        }),
+      );
+
+    // Past the stale edge: null, and the card says how old the line is.
+    const past = mockRecorded.data.filter(
+      (d) => Date.parse(d.timestamp) > Date.parse(lastKept) + 60_000,
+    );
+    expect(past.length).toBeGreaterThan(30);
+    const stale = past[Math.floor(past.length / 2)];
+    expect(stale.homeDelta ?? null).toBeNull();
+    expect(cardText(card(stale.time, null))).toContain(
+      `Sportsbooks last reading ${format(parseISO(lastKept), domain.labelFormat)}, none since`,
+    );
+
+    // #11929 — inside the interior hole: a carried number, and no note.
     const from = Date.parse(HOLE.fromIso);
     const to = Date.parse(HOLE.toIso);
     const inside = mockRecorded.data.filter((d) => {
@@ -143,27 +182,10 @@ describe("sportsbooks-only: a hole in the one drawn line keeps its note", () => 
     });
     expect(inside.length).toBeGreaterThan(60);
     const bucket = inside[Math.floor(inside.length / 2)];
-    expect(bucket.homeDelta ?? null).toBeNull();
-    // The render above reassigned it; TS still narrows it to the `null` set first.
-    const content = (mockRecorded.tooltip as TooltipProps | null)
-      ?.content as React.ReactElement;
-    const html = renderToStaticMarkup(
-      React.cloneElement(content, {
-        active: true,
-        label: bucket.time,
-        payload: [
-          {
-            value: null,
-            name: "Sportsbooks",
-            color: "#0f172a",
-            dataKey: "homeDelta",
-          },
-        ],
-      }),
-    );
-    expect(cardText(html)).toContain(
-      `Sportsbooks no readings ${format(parseISO(HOLE.fromIso), domain.labelFormat)} – ${format(parseISO(HOLE.toIso), domain.labelFormat)}`,
-    );
+    expect(typeof bucket.homeDelta).toBe("number");
+    const holeCard = cardText(card(bucket.time, bucket.homeDelta as number));
+    expect(holeCard).toMatch(/\d+(\.\d+)?%/);
+    expect(holeCard).not.toMatch(/no readings|none since|No numbers for/i);
   });
 });
 

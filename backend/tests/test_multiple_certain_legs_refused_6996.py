@@ -264,7 +264,7 @@ class TestTheSerializerWithholdsWhatTheRuleRefuses:
                 id=i,
                 name=f"Entrant {i}",
                 external_id=f"ENT-{i}",
-                current_probability=0.2,
+                current_probability=op,
                 current_american_odds=400,
                 rank=i,
                 rank_change_24h=None,
@@ -329,7 +329,12 @@ class TestTheSerializerWithholdsWhatTheRuleRefuses:
         assert any(o["probability"] is not None for o in detail["outcomes"])
 
     def test_a_lone_certain_leg_keeps_its_openings_through_the_route(self):
-        detail = self._detail(self._market([0.999, 0.0005, 0.0005]))
+        from datetime import datetime, timezone
+
+        market = self._market([0.999, 0.0005, 0.0005])
+        for outcome in market.outcomes:
+            outcome.opening_captured_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        detail = self._detail(market)
         assert detail["openings_withheld"] is False
         assert [o["opening_probability"] for o in detail["outcomes"]] == [
             0.999, 0.0005, 0.0005,

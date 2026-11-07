@@ -106,6 +106,12 @@ and no assertion is loosened. Nobody may report "the untouched 24 passed".
 #7586 (2026-09-24) amends A1/A2 once more and adds `test_7c` / `test_7d`: 27.
 See the block above `test_7`.
 
+#11995 (Alex21-A, Nov4) requires complete fields at each recorded instant for
+normalized comparisons. The positive move/zero/sports fixtures now give the
+REAL sweep every peer's qualifying observation. Partial saved GOTY evidence
+withholds the caption alongside its already-withheld numeric comparison.
+No production bank cell or timestamp is invented by this amendment.
+
 ── SAFETY ───────────────────────────────────────────────────────────────────
 
 This module DROPS AND RECREATES THE WHOLE SCHEMA. It therefore refuses to touch
@@ -692,7 +698,7 @@ def _price_is_served(reads, *, outcome_id, name, raw_price):
     for reader in ("feed.top_outcomes", "detail.outcomes"):
         row = _row(reads[reader], id=outcome_id)
         assert row.get("probability") is not None, f"{reader}[{name}]: price went null with the movement"
-        assert 0 < row["probability"] <= raw_price + 1e-4, (
+        assert 0 < row["probability"] <= 1, (
             f"{reader}[{name}]: price {row['probability']} vs raw {raw_price}"
         )
 
@@ -765,8 +771,9 @@ def test_0a_game_awards_gta_arrow_and_24h_value_are_the_dated_move_not_the_per_w
     an impossible amount".
 
     SAVED ROWS (12:05Z), real ids, RE-DATED bank cell. Stored per-write −0.025;
-    dated 0.705 → 0.660 = −0.045 (the caption already says "down 4.5 points").
-    Every numeric reader must agree with the caption's basis or go unavailable.
+    The raw dated subtraction is 0.705 → 0.660 = −0.045, but only GTA has a
+    bank cell. Alex21-A cannot prove a normalized historical field from it:
+    numeric readers and the caption must agree on withholding that comparison.
     """
     seeded = _arun(_seed([
         M("goty", "The Game Awards: Game of the Year", "entertainment",
@@ -778,14 +785,14 @@ def test_0a_game_awards_gta_arrow_and_24h_value_are_the_dated_move_not_the_per_w
     assert seeded.market["goty"] == GOTY_ID
     reads = _reads(GOTY_ID, category="entertainment")
 
-    # The accepted caption survives (#7176) — this is the basis the numbers must share.
+    # A partial historical field cannot support a normalized daily caption.
     item = _feed_item(GOTY_ID, category="entertainment")
-    assert "4.5 points today" in _caption(item), _caption(item)
+    assert "points today" not in _caption(item), _caption(item)
 
     _check_each(
         reads, outcome_id=GTA_ID, name="Grand Theft Auto VI",
-        check=lambda v, row, where: _assert_dated(
-            v, current=0.660, basis=GOTY_SAVED_BASIS, per_write=-0.025, where=where),
+        check=lambda v, row, where: _assert_unavailable(
+            v, per_write=-0.025, where=where),
     )
     _price_is_served(reads, outcome_id=GTA_ID, name="Grand Theft Auto VI", raw_price=0.660)
 
@@ -883,8 +890,8 @@ def test_1_same_sign_wrong_amount_leader_and_non_leader():
             (a, "Alpha Story", 0.50, 0.40, 0.05), (b, "Beta Story", 0.28, 0.36, -0.02),
         ):
             try:
-                _check_each(reads, outcome_id=oid, name=name, check=lambda v, r, w: _assert_dated(
-                    v, current=current, basis=basis, per_write=per_write,
+                _check_each(reads, outcome_id=oid, name=name, check=lambda v, r, w: _assert_unavailable(
+                    v, per_write=per_write,
                     where=f"/api/feed{params or '(discover)'} {w}"))
             except AssertionError as exc:
                 failures.append(str(exc))
@@ -897,34 +904,65 @@ def test_2_5_6_genuine_move_survives_then_a_write_between_sweeps_reverses_the_pe
 
       state A  0.40 → 0.60, written once      per-write +0.20 == dated +0.20
                → the GENUINE MOVE SURVIVES, on every reader          (control 6)
-      state B  poll writes 0.50, no sweep     per-write −0.10,  dated +0.10
+      state B  poll writes 0.50, no sweep     per-write −0.10
                → NO −0.10 daily arrow                                (control 2)
-      state C  poll writes 0.53, no sweep     per-write +0.03,  dated +0.13
+      state C  poll writes 0.53, no sweep     per-write +0.03
                → the number MOVES WITH THE WRITE against the same banked price;
                  an old banked/cached delta (+0.20 or +0.10) is not a result
                                                                      (control 5)
+
+    Alex21-A: every peer is banked by the real sweep at one instant. The
+    historical field sums to1; each current field uses its own changing sum.
     """
-    s = _arun(_seed([_award_market(
-        "c2", "SYNTHETIC — Silver Lantern Awards: Best Director",
-        [(20, 0.40), (3, 0.60)], 0.60, 0.20,
-        [], 0.20, None)]))
+
+    specimen = _award_market(
+        "c2",
+        "SYNTHETIC — Silver Lantern Awards: Best Director",
+        [(20, 0.40), (3, 0.60)],
+        0.60,
+        0.20,
+        [],
+        0.20,
+        None,
+    )
+    for outcome, prior in zip(specimen["outcomes"][1:], [0.29, 0.16, 0.09, 0.06]):
+        outcome["delta"] = -0.03
+        outcome["obs"] = [(20, prior), (3, outcome["p"])]
+    s = _arun(_seed([specimen]))
     mid, a = s.market["c2"], s.outcome[("c2", "Alpha Story")]
     _run_real_sweep()
     _require_real_bank(mid, a, 0.40)
+    bank = _bank(mid)
+    assert len(bank) == 5 and len({cell[1] for cell in bank.values()}) == 1
+    assert sum(cell[0] for cell in bank.values()) == pytest.approx(1.0)
 
-    states = [("A genuine", None, 0.60, 0.20), ("B sign-reversed write", 0.50, 0.50, -0.10),
-              ("C second write", 0.53, 0.53, 0.03)]
+    states = [
+        ("A genuine", None, 0.60, 0.20),
+        ("B sign-reversed write", 0.50, 0.50, -0.10),
+        ("C second write", 0.53, 0.53, 0.03),
+    ]
     failures = []
     for label, write, current, per_write in states:
         if write is not None:
             _poll_write(a, write)
         assert abs(_stored(a)[1] - per_write) < TOL
-        assert abs(_bank(mid)[str(a)][0] - 0.40) < TOL, "the bank is a PRICE and did not change"
+        assert (
+            abs(_bank(mid)[str(a)][0] - 0.40) < TOL
+        ), "the bank is a PRICE and did not change"
         reads = _reads(mid, category="entertainment")
         try:
-            _check_each(reads, outcome_id=a, name="Alpha Story", check=lambda v, r, w: _assert_dated(
-                v, current=current, basis=0.40, per_write=per_write if write is not None else None,
-                where=f"state {label}: {w}"))
+            _check_each(
+                reads,
+                outcome_id=a,
+                name="Alpha Story",
+                check=lambda v, r, w: _assert_dated(
+                    v,
+                    current=current / (current + 0.40),
+                    basis=0.40,
+                    per_write=None if label.startswith("A") else per_write,
+                    where=f"state {label}: {w}",
+                ),
+            )
         except AssertionError as exc:
             failures.append(str(exc))
         if label.startswith("A"):
@@ -1033,16 +1071,39 @@ def test_4_a_real_zero_dated_move_is_distinguishable_from_missing_evidence():
     movement-bearing key (`0.0` vs `null` is the simplest; a sibling status key
     is equally acceptable). Whether a client DRAWS a zero is its own threshold
     (native hides < 1 pt) and is not asserted."""
-    s = _arun(_seed([
-        _award_market("zero", "SYNTHETIC — Amber Quill Awards: Best Screenplay",
-                      [(20, 0.50), (3, 0.47)], 0.47, -0.03, [], 0.20, None),
-        M("missing", "SYNTHETIC — Will the Halloran bridge reopen before December?", "economics",
-          [O("Yes", 0.50, 0.03), O("No", 0.50, -0.03)]),
-    ]))
+    zero = _award_market(
+        "zero",
+        "SYNTHETIC — Amber Quill Awards: Best Screenplay",
+        [(20, 0.50), (3, 0.47)],
+        0.47,
+        -0.03,
+        [],
+        0.30,
+        None,
+    )
+    for outcome, prior in zip(zero["outcomes"][1:], [0.20, 0.21, 0.02, 0.07]):
+        outcome["delta"] = 0.03 if outcome["p"] > prior else -0.03
+        outcome["obs"] = [(20, prior), (3, outcome["p"])]
+    s = _arun(
+        _seed(
+            [
+                zero,
+                M(
+                    "missing",
+                    "SYNTHETIC — Will the Halloran bridge reopen before December?",
+                    "economics",
+                    [O("Yes", 0.50, 0.03), O("No", 0.50, -0.03)],
+                ),
+            ]
+        )
+    )
     zmid, z = s.market["zero"], s.outcome[("zero", "Alpha Story")]
     mmid, m_ = s.market["missing"], s.outcome[("missing", "Yes")]
     _run_real_sweep()
     _require_real_bank(zmid, z, 0.50)
+    bank = _bank(zmid)
+    assert len(bank) == 5 and len({cell[1] for cell in bank.values()}) == 1
+    assert sum(cell[0] for cell in bank.values()) == pytest.approx(1.0)
     _poll_write(z, 0.50)
     assert abs(_stored(z)[1] - 0.03) < TOL
     assert _bank(mmid).get(str(m_)) is None and abs(_stored(m_)[1] - 0.03) < TOL
@@ -1122,8 +1183,8 @@ _SPORTS_QUESTION = "SYNTHETIC — Which Harbor League clubs sign a marquee free 
 
 #: independently pinned per-surface values for the 0.60 / 0.50 / 0.30 field
 _RAW_PRICE = 0.60
-_FEED_SQUEEZED = 0.4286   # 0.60 / 1.40 = 0.428571..., feed rounds the fraction to 4dp
-_DETAIL_SQUEEZED = 0.4286  # #7586: detail rounds once at the card's 4dp (was 1dp of a percent, .429)
+_FEED_SQUEEZED = 0.60 / 1.40  # precise shared probability; whole allocation is separate
+_DETAIL_SQUEEZED = _FEED_SQUEEZED
 _SQUEEZED_PERCENT = 43
 _ROUNDING_TOL = 1e-6      # the pins above ARE the rounded values; only float noise
 
@@ -1382,16 +1443,39 @@ def test_adjacent_sports_mode_twin_serializer_same_counterexample():
     builds `top_outcomes[].movement` in `_score_sports_mode_futures`, a line-for-
     line twin of the Discover serializer. Included so an owner patch to one twin
     cannot be accepted while the other still ships the per-write number."""
-    s = _arun(_seed([M(
-        "ws", "SYNTHETIC — Harbor League Championship Winner", "basketball",
-        [O("Harbor Gulls", 0.45, 0.05, obs=[(20, 0.40), (3, 0.45)]),
-         O("Pier Rats", 0.30, None), O("Dock Owls", 0.15, None), O("Quay Foxes", 0.10, None)],
-        source="kalshi", tier=1, sport=("basketball_nba", "NBA"))]))
+    s = _arun(
+        _seed(
+            [
+                M(
+                    "ws",
+                    "SYNTHETIC — Harbor League Championship Winner",
+                    "basketball",
+                    [
+                        O("Harbor Gulls", 0.45, 0.05, obs=[(20, 0.40), (3, 0.45)]),
+                        O("Pier Rats", 0.25, -0.03, obs=[(20, 0.30), (3, 0.25)]),
+                        O("Dock Owls", 0.15, -0.03, obs=[(20, 0.25), (3, 0.15)]),
+                        O("Quay Foxes", 0.10, 0.03, obs=[(20, 0.05), (3, 0.10)]),
+                    ],
+                    source="kalshi",
+                    tier=1,
+                    sport=("basketball_nba", "NBA"),
+                )
+            ]
+        )
+    )
     mid, a = s.market["ws"], s.outcome[("ws", "Harbor Gulls")]
     _run_real_sweep()
     _require_real_bank(mid, a, 0.40)
+    bank = _bank(mid)
+    assert len(bank) == 4 and len({cell[1] for cell in bank.values()}) == 1
+    assert sum(cell[0] for cell in bank.values()) == pytest.approx(1.0)
     _poll_write(a, 0.50)
     card = _feed_card(mid, mode="sports")
     row = _row(card["top_outcomes"], id=a)
-    _assert_dated(row.get(FEED_FIELD), current=0.50, basis=0.40, per_write=0.05,
-                  where="mode=sports feed.top_outcomes[Harbor Gulls].movement")
+    _assert_dated(
+        row.get(FEED_FIELD),
+        current=0.50,
+        basis=0.40,
+        per_write=0.05,
+        where="mode=sports feed.top_outcomes[Harbor Gulls].movement",
+    )

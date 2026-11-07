@@ -114,6 +114,10 @@ interface QuantityGroupProps {
    * same ladder, roomier label track. Queue L2-119.
    */
   wideLabels?: boolean;
+  /** Copy for a null, ungraded rung; omitted callers keep the dash. */
+  missingPriceLabel?: string;
+  /** #883 Step F2 — ?atlas=1 opt-in for true-position threshold profile. */
+  atlas?: boolean;
 }
 
 // #9576 — the rows' boundary rule, not a bare round: a still-trading 0.995
@@ -138,6 +142,8 @@ export default function QuantityGroup({
   bare = false,
   maxRungs,
   wideLabels = false,
+  missingPriceLabel,
+  atlas = false,
 }: QuantityGroupProps) {
   if (!rungs || rungs.length === 0) return null;
 
@@ -269,6 +275,22 @@ export default function QuantityGroup({
     ? { width: `calc(4ch + 0.5rem)` }
     : undefined;
 
+  const numericRungs = atlas
+    ? ordered.filter(
+        (r) => typeof r.value === "number" && Number.isFinite(r.value),
+      )
+    : [];
+  const minVal =
+    numericRungs.length >= 2
+      ? Math.min(...numericRungs.map((r) => r.value!))
+      : 0;
+  const maxVal =
+    numericRungs.length >= 2
+      ? Math.max(...numericRungs.map((r) => r.value!))
+      : 0;
+  const showTruePositionProfile =
+    atlas && !compact && numericRungs.length >= 2 && maxVal > minVal;
+
   const inner = (
     <>
       {(title || headerHint) && (
@@ -281,6 +303,96 @@ export default function QuantityGroup({
           {headerHint && (
             <span className="ml-auto text-[11px] text-text-muted">{headerHint}</span>
           )}
+        </div>
+      )}
+
+      {atlas && !compact && (
+        <div
+          data-testid="atlas-threshold-eyebrow"
+          className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2"
+        >
+          Independent thresholds · do not add to 100%
+        </div>
+      )}
+
+      {showTruePositionProfile && (
+        <div
+          data-testid="atlas-threshold-true-positions"
+          className="mb-3 rounded-lg border border-surface-border bg-surface-deep p-3"
+        >
+          <svg
+            viewBox="0 0 332 136"
+            role="img"
+            aria-label="Thresholds at their true numeric positions. Zero to 100 percent."
+            className="block w-full"
+          >
+            {[0, 0.5, 1].map((p) => {
+              const y = 110 - p * 90;
+              return (
+                <g key={p}>
+                  <line
+                    x1="34"
+                    x2="314"
+                    y1={y}
+                    y2={y}
+                    stroke="currentColor"
+                    strokeWidth="1"
+                    className="text-surface-border"
+                  />
+                  <text
+                    x="28"
+                    y={y + 3}
+                    textAnchor="end"
+                    className="fill-text-muted text-[9px]"
+                  >
+                    {p * 100}%
+                  </text>
+                </g>
+              );
+            })}
+            {numericRungs.map((rung) => {
+              const ratio = (rung.value! - minVal) / (maxVal - minVal);
+              const x = Number((38 + ratio * 270).toFixed(2));
+              const hasProb =
+                rung.probability != null &&
+                Number.isFinite(rung.probability) &&
+                rung.probability >= 0 &&
+                rung.probability <= 1;
+              const y = hasProb
+                ? Number((110 - rung.probability! * 90).toFixed(2))
+                : null;
+              return (
+                <g key={rung.key} data-testid="atlas-threshold-position-mark">
+                  <line
+                    x1={x}
+                    x2={x}
+                    y1="110"
+                    y2="114"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                    className="text-text-muted"
+                  />
+                  <text
+                    x={x}
+                    y="126"
+                    textAnchor="middle"
+                    className="fill-text-secondary text-[9px] font-mono"
+                  >
+                    {rung.value}
+                  </text>
+                  {y != null && (
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={rung.highlighted ? "5" : "4"}
+                      fill="currentColor"
+                      className="text-accent-brand"
+                    />
+                  )}
+                </g>
+              );
+            })}
+          </svg>
         </div>
       )}
 
@@ -311,6 +423,9 @@ export default function QuantityGroup({
           // aria-label keeps its `{label}: {pct}` prefix — hooks address rungs
           // by it — with the verdict appended.
           const rungVerdict = rung.verdict ?? null;
+          const missingPriceText = rung.probability == null && rungVerdict == null
+            ? missingPriceLabel : undefined;
+          const probabilityText = missingPriceText ?? pct(rung.probability);
           // #8562 — a tinted rung (the leader, or a graded one) is inset with
           // `px-2 -mx-2`. At `w-full` that padding came out of its CONTENT box,
           // so the leader's label and track were 16px shorter than its
@@ -409,7 +524,7 @@ export default function QuantityGroup({
                     : "",
                 interactive ? "transition-colors hover:bg-surface-elevated/60 rounded-lg" : "",
               ].join(" ")}
-              aria-label={`${rung.label}: ${pct(rung.probability)}${rungVerdict === "won" ? ", Won" : rungVerdict === "lost" ? ", Lost" : ""}`}
+              aria-label={`${rung.label}: ${probabilityText}${rungVerdict === "won" ? ", Won" : rungVerdict === "lost" ? ", Lost" : ""}`}
             >
               {stackMove ? (
                 <span style={{ width: stackedCellWidth }} className="shrink-0 flex flex-col gap-0.5">
@@ -472,7 +587,9 @@ export default function QuantityGroup({
                   rung keeps today's number, verdict or no verdict around it. */}
               <span
                 className={[
-                  "w-10 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums",
+                  missingPriceText
+                    ? "shrink-0 whitespace-nowrap text-right text-xs font-medium"
+                    : "w-10 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums",
                   rungVerdict === "won"
                     ? "text-accent-brand"
                     : rungVerdict === "lost"
@@ -482,7 +599,7 @@ export default function QuantityGroup({
                         : "text-text-primary",
                 ].join(" ")}
               >
-                {pct(rung.probability)}
+                {probabilityText}
                 {rungVerdict != null && (
                   <span
                     className={`block text-[10px] font-medium ${

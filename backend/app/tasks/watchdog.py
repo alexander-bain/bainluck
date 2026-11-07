@@ -116,8 +116,10 @@ _BOOKMAKER_ABSENT_SINCE_KEY = "bainluck:watchdog:bookmaker_curve_absent_since"
 # issue's acceptance criterion ("fires within ~1 h") is not deliverable by the
 # xid signal and it is worth saying so once rather than discovering it later.
 # `age(backend_xmin)` counts TRANSACTIONS, not time, so its rate is this
-# database's xid rate: the incident's own 81,643 over ~40 h is **0.57 xid/s**.
-# At that rate XMIN_PAGE (50,000) is reached after roughly 24 HOURS. So:
+# database's xid rate: the incident's own 81,643 over ~40 h was **0.57 xid/s**.
+# The database now runs about a hundred times faster (57.7 xid/s, measured
+# 2026-11-04 — see `VACUUM_XID_RATE_PER_S`), so the thresholds are sized in
+# HOURS and converted at the measured rate: XMIN_PAGE is still ~24 HOURS. So:
 #
 #   * the WALL-CLOCK signal is the one that pages inside the hour;
 #   * the XID signal is the unambiguous corroborator, and the only one that
@@ -137,11 +139,27 @@ _BOOKMAKER_ABSENT_SINCE_KEY = "bainluck:watchdog:bookmaker_curve_absent_since"
 # plan and any attended vacuum stay out of this module entirely.
 VACUUM_BLOCK_FLAG_KEY = "bainluck:watchdog:vacuum_block"
 
-#: Held-horizon thresholds in XIDS, straight from the issue body (warn 10,000 /
-#: page 50,000) against a measured-healthy 372. At this database's 0.57 xid/s
-#: those are ~4.9 h and ~24 h of held horizon.
-VACUUM_XMIN_WARN = 10_000
-VACUUM_XMIN_PAGE = 50_000
+#: Held-horizon thresholds, sized in HOURS of held horizon and converted to xids
+#: at this database's measured rate (Alex ruled A, 2026-11-04 3:30 PM PT: "same
+#: hours as #2005").
+#:
+#: #2006 set warn 10,000 / page 50,000 xids, which were ~4.9 h / ~24 h at the
+#: 0.57 xid/s of the #2005 era (the incident's 81,643 over ~40 h). Measured
+#: 2026-11-04: `txid_current_snapshot()` xmax went 141,984,884 -> 142,417,911
+#: from 1:30 to 3:35 PM PT, 433,027 xids in 7,510 s = 57.7 xid/s (a 9-minute
+#: window at 1:30 PM read 51/s; every public table's age(relfrozenxid), ~142.4M,
+#: is ~28 days at this rate). At 57.7 xid/s the old numbers were 2.9 MINUTES and
+#: 14 MINUTES — an ordinary long read warned (#11988 saw 16,189 behind a 239 s
+#: read; the duplicate-link scan has run 902 s, ~52,000 xids).
+#:
+#: Re-measure before trusting these if the write mix changes: an xid threshold
+#: is a statement about a rate. The wall-clock signal below is rate-free.
+VACUUM_XID_RATE_PER_S = 57.7
+VACUUM_XMIN_WARN_HOURS = 4.9
+VACUUM_XMIN_PAGE_HOURS = 24.0
+#: 1,000,000 ≈ 4.8 h and 5,000,000 ≈ 24.1 h at 57.7 xid/s.
+VACUUM_XMIN_WARN = 1_000_000
+VACUUM_XMIN_PAGE = 5_000_000
 
 #: Oldest non-idle transaction, in SECONDS.
 #:
@@ -223,9 +241,27 @@ Q_VACUUM_OLDEST_XACT = (
     "AND coalesce(application_name, '') NOT LIKE 'pg_dump%' "
     "ORDER BY xact_start ASC LIMIT 1"
 )
+#: A table qualifies for the dead-tuple signal only with at least this many dead
+#: tuples — a share of a handful of rows is arithmetic, not evidence.
+#:
+#: #11988, measured 2026-11-04: `owed_chart_points` is a queue holding 3–14 live
+#: rows at ~6 inserts and ~6 deletes a second. Autovacuum ran on it every minute
+#: (8 passes in 8 minutes), yet it read 99.6% dead between passes: the rows
+#: deleted while the current 1–4 minute read held the horizon, plus ANALYZE
+#: extrapolating its sample over a 5,007-page heap. ~6,000 over ~6 cleared the
+#: old floor (`n_live_tup + n_dead_tup > 1000`) on every pass, so this signal
+#: paged alone — 9 board issues in 2 hours — while both horizon signals read ok
+#: and the queue's own read took 0.065 ms.
+#:
+#: An absolute DEAD floor, not a live-row floor, so the queue still counts when
+#: it matters: under a real hold like #2005's it passes 100,000 in under five
+#: hours. Above the floor the same day, the worst table was `odds_snapshots`
+#: at 15.4% (5.0M dead of 32.7M) — under WARN, as it should be.
+VACUUM_DEAD_MIN_TUPLES = 100_000
+
 Q_VACUUM_WORST_DEAD_PCT = (
     "SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables "
-    "WHERE schemaname = 'public' AND n_live_tup + n_dead_tup > 1000 "
+    f"WHERE schemaname = 'public' AND n_dead_tup >= {VACUUM_DEAD_MIN_TUPLES} "
     "ORDER BY n_dead_tup::float8 / NULLIF(n_live_tup + n_dead_tup, 0) DESC "
     "LIMIT 1"
 )
@@ -278,8 +314,8 @@ _WATCHDOG_ALERT_MARKER = "watchdog-alert-fingerprint"
 # event-loop-block as Sentry-ONLY classes with no board or cockpit equivalent.
 # So this rate-limits REPEATS, never the first occurrence: one emission per
 # [alert_class, normalized provider] per ALERT_COOLDOWN_SECONDS. The GitHub
-# filing rail (_file_watchdog_issue) is untouched — it has its own search-based
-# dedup and accretes evidence onto the open issue.
+# filing rail (_file_watchdog_issue) is untouched — it has its own dedup (the
+# open alert-intake list) and accretes evidence onto the open issue.
 ALERT_COOLDOWN_SECONDS = 6 * 3600
 _ALERT_COOLDOWN_PREFIX = "bainluck:watchdog:alert_cooldown:"
 
@@ -400,45 +436,47 @@ def _file_watchdog_issue(alert_class: str, provider: str, title: str, body: str)
     """File OR comment ONE deduped GitHub issue per [alert_class, provider].
 
     Mirrors the flow/calibration sentinel rail (bug_report_github). Fingerprint
-    is embedded in the body so the search-based dedup finds the open issue and
-    accretes evidence instead of spawning duplicates. No-ops (returns a reason)
-    when GITHUB_TOKEN is unset so a token gap can never crash the watchdog."""
+    is embedded in the body so the dedup finds the open issue and accretes
+    evidence instead of spawning duplicates. No-ops (returns a reason) when
+    GITHUB_TOKEN is unset so a token gap can never crash the watchdog.
+
+    THE DEDUP READS THE REST LIST, NEVER ``/search/issues`` (#11988). Production's
+    token gets ``422 Unprocessable Entity`` from search — logged on every vacuum
+    page on 2026-11-04 (22:05:05 and 22:12:46 UTC) — and the old code read a
+    failed search as "no open issue", so every page filed a new one: nine open
+    ``vacuum_block:postgres`` issues in two hours. ``fetch_open_alert_issues`` is
+    the sentinels' strongly consistent list (every issue filed here carries
+    ``alert-intake``); an unreadable list is UNKNOWN and files nothing, as the
+    sentinel rail does — the Sentry alarm has already gone either way. Of
+    several open matches the LOWEST number is canonical, so evidence lands on
+    one stable issue."""
     fingerprint = f"{alert_class}:{provider}"
     try:
         from app.tasks.bug_report_github import (
             GITHUB_TOKEN,
-            REPO,
             add_to_project_board,
             comment_on_issue,
             create_github_issue,
         )
-        import httpx
+        from app.tasks.sentinel_filing import fetch_open_alert_issues
     except Exception as exc:  # pragma: no cover - import guard
         return {"action": "error", "error": f"import: {exc}"[:200]}
 
     if not GITHUB_TOKEN:
         return {"action": "skipped_no_token", "fingerprint": fingerprint}
 
-    marker = f"{_WATCHDOG_ALERT_MARKER}:{fingerprint}"
-    body = f"{body}\n\n<!-- {marker} -->"
-    # Dedup: find an open issue carrying this fingerprint marker.
-    existing = None
-    try:
-        resp = httpx.get(
-            "https://api.github.com/search/issues",
-            headers={
-                "Authorization": f"Bearer {GITHUB_TOKEN}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            params={"q": f'repo:{REPO} in:body "{marker}" state:open'},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        existing = items[0]["number"] if items else None
-    except Exception as exc:
-        logger.warning("watchdog dedup search failed (%s): %s", fingerprint, exc)
+    marker = f"<!-- {_WATCHDOG_ALERT_MARKER}:{fingerprint} -->"
+    body = f"{body}\n\n{marker}"
+    # Dedup: the open alert-intake issues carrying this fingerprint marker.
+    listing = fetch_open_alert_issues()
+    if not listing.ok:
+        logger.warning("watchdog dedup list unreadable (%s): %s", fingerprint, listing.error)
+        return {"action": "dedup_unknown_no_op", "error": listing.error,
+                "fingerprint": fingerprint}
+    owners = sorted(
+        issue["number"] for issue in listing.issues if marker in (issue.get("body") or "")
+    )
+    existing = owners[0] if owners else None
 
     if existing:
         try:
@@ -848,7 +886,7 @@ def classify_vacuum_signals(xmin_age, xact_age_s, dead_pct):
     THE CORRECTION THIS FUNCTION EXISTS FOR. The rejected candidate opened with
     ``if xmin_age is None or xact_age_s is None or dead_pct is None: return
     "unavailable"`` — so one absent optional input erased two present ones, and
-    the #2005 shape itself (``xmin_age=81_643`` with no table stats) classified
+    the #2005 shape itself (a ~40 h held horizon with no table stats) classified
     as "we could not tell" rather than as the page it is. That is #2005's own
     failure mode rebuilt inside its fix: the absence of a signal read as the
     absence of a problem.

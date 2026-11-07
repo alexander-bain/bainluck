@@ -222,6 +222,10 @@ def devigged_consensus_by_time(
     *,
     mutually_exclusive: bool = True,
     field_complete: bool = True,
+    incomplete_times: set[datetime] | None = None,
+    graded_outcome_ids: Collection[int] = (),
+    outcome_names: Mapping[int, str] | None = None,
+    question: str | None = None,
 ) -> dict[datetime, dict[int, float]]:
     """Return ``{captured_at: {outcome_id: probability}}`` on the PRINTED scale.
 
@@ -237,17 +241,14 @@ def devigged_consensus_by_time(
         field_complete: ``prices_withheld == 0`` on the board being charted,
             forwarded to the #23 squeeze exactly as the detail serializer
             forwards it. #7103's gate, which this module ran without until
-            #7747 — see the note above. PER BOARD, never per instant: the
-            squeeze is a change of SCALE, so applying it to some instants of
-            one line and not others renders as movement, which is the failure
-            this module exists to close.
+            #7747 — see the note above. An instant also needs every field
+            member, observed or carried forward. A missing member is unknown
+            mass, not zero.
 
     Returns:
-        One entry per timestamp that produced a usable column. A timestamp whose
-        books all refused normalization is ABSENT rather than present-and-raw:
-        a gap in a line is honest, and a raw point drawn beside de-vigged ones
-        is the very defect this closes, and would be invisible — it renders as
-        movement (gotcha #53 — an absence and a fact must not share a shape).
+        One entry per usable timestamp. Incomplete columns stay raw and are
+        added to incomplete_times when supplied; they never redistribute a
+        missing leg's mass among the observed legs.
     """
     # Lazy, and from the route module that owns them, for the same reason
     # `outcome_display.normalize_display_probs` lazily imports the #23 util out
@@ -258,8 +259,18 @@ def devigged_consensus_by_time(
         _ALREADY_PROBABILITY_SOURCES,
         _DEVIGGED_AT_INGEST_SOURCES,
     )
-    from app.utils.odds_math import devig_consensus
+    from app.utils.odds_math import devig_consensus, remove_vig_nway
     from app.utils.outcome_display import normalize_display_probs
+    from app.utils.ladder_monotonicity import cumulative_outcome_ladder
+
+    nonexclusive = mutually_exclusive is not True or bool(
+        outcome_names
+        and cumulative_outcome_ladder(
+            [{"name": name} for name in outcome_names.values()],
+            dates=True,
+            question=question,
+        )
+    )
 
     # A source in neither bucket is de-vigged by the default arm. That is right
     # for a new Odds API sportsbook and WRONG for a new prediction market, and
@@ -281,6 +292,15 @@ def devigged_consensus_by_time(
         )
 
     series: dict[datetime, dict[int, float]] = {}
+    expected_ids = set(outcome_names or ()) | {
+        oid
+        for books in raw_by_time.values()
+        for column in books.values()
+        for oid in column
+    }
+    # A venue-graded leg needs no ongoing quote. Its own historical readings
+    # still contribute where present; its absent quote is not unknown mass.
+    expected_ids.difference_update(graded_outcome_ids)
 
     for captured_at, books in raw_by_time.items():
         # Keys are outcome ids; `devig_consensus` is key-agnostic.
@@ -290,10 +310,41 @@ def devigged_consensus_by_time(
         if not book_columns:
             continue
 
+        present_ids = {
+            oid
+            for column in book_columns.values()
+            for oid, value in column.items()
+            if value is not None
+        }
+        complete_instant = (
+            captured_at not in (incomplete_times or set())
+            and expected_ids <= present_ids
+        )
+        if not complete_instant and incomplete_times is not None:
+            incomplete_times.add(captured_at)
+        if not complete_instant and not nonexclusive:
+            # Skipping redistribution must not admit a malformed book that
+            # the existing per-book converter would refuse (None/NaN/etc.).
+            book_columns = {
+                bookmaker: column
+                for bookmaker, column in book_columns.items()
+                if bookmaker in _ALREADY_PROBABILITY_SOURCES
+                or remove_vig_nway(column.values()) is not None
+            }
+
         consensus = devig_consensus(
             book_columns,
             method="mean",
-            already_normalized=_ALREADY_PROBABILITY_SOURCES,
+            # An absent field member stays raw at BOTH normalization stages.
+            # Carry-forward supplies unchanged quotes before this call; a leg
+            # still absent across every book is unknown mass, never zero.
+            # Books may quote different subsets of a complete combined field;
+            # keep the existing live per-book de-vig before their mean (#4992).
+            already_normalized=(
+                book_columns
+                if nonexclusive or not complete_instant
+                else _ALREADY_PROBABILITY_SOURCES
+            ),
         )
         if not consensus:
             continue
@@ -306,12 +357,16 @@ def devigged_consensus_by_time(
         # exact-0.5 untraded midpoints), so position cannot be trusted to
         # survive the call.
         entries = [
-            {"_key": key, "probability": value} for key, value in consensus.items()
+            {"_key": key, "name": (outcome_names or {}).get(key, ""), "probability": value}
+            for key, value in consensus.items()
         ]
         normalize_display_probs(
             entries,
             mutually_exclusive=mutually_exclusive,
-            field_complete=field_complete,
+            # A refused historical tick is unknown mass at THIS instant, even
+            # when the board's current quotes are complete (#11995 / #7548).
+            field_complete=field_complete and complete_instant,
+            question=question,
         )
 
         point = {entry["_key"]: entry["probability"] for entry in entries}

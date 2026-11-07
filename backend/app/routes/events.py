@@ -22274,7 +22274,7 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
     Rows are copied, never mutated, so a caller holding the list it passed in
     keeps the raw prices.
     """
-    from app.utils.outcome_display import _FIELD_SUM_MAX
+    from app.utils.outcome_display import normalize_display_probs
 
     exclusive = {
         market.id for market in markets if getattr(market, "mutually_exclusive", None) is True
@@ -22294,27 +22294,14 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
             if market_id in exclusive:
                 legs.setdefault(market_id, []).append(row)
 
-    divisor: dict = {}
+    normalized: dict[int, dict] = {}
     for market_id, rows in legs.items():
         if market_id in merged or len(rows) < 3:
             continue
-        probs = [row.get("probability") for row in rows]
-        if any(p is None for p in probs):
-            continue
-        total = sum(float(p) for p in probs)
-        if 1.0 < total <= _FIELD_SUM_MAX:
-            divisor[market_id] = total
-    if not divisor:
-        return other_rows
-
-    out = []
-    for row in other_rows:
-        ids = _row_market_ids(row)
-        market_id = next(iter(ids)) if len(ids) == 1 else None
-        if market_id in divisor:
-            row = {**row, "probability": round(float(row["probability"]) / divisor[market_id], 4)}
-        out.append(row)
-    return out
+        copies = [dict(row) for row in rows]
+        normalize_display_probs(copies)
+        normalized.update({id(row): copy for row, copy in zip(rows, copies)})
+    return [normalized.get(id(row), row) for row in other_rows]
 
 
 def _futures_row_market_ids(row: dict) -> set:
@@ -38399,7 +38386,10 @@ def _build_search_top_outcomes(
     # the withdrawal predicate judges the same legs this builder draws; nothing
     # about the chain itself changed.
     # #10248 D5. Function-local: the module's top-level imports are reserved.
-    from app.utils.futures_market_snapshot import reader_change_24h
+    from app.utils.futures_market_snapshot import (
+        normalized_field_comparisons,
+        reader_change_24h,
+    )
 
     real = _search_surviving_legs(market)
     # #5516: an exclusive board whose whole served ladder sums far under 100% is
@@ -38501,6 +38491,8 @@ def _build_search_top_outcomes(
     # #8834: a cumulative ladder is drawn as the rungs around its crossing, in
     # threshold order, and never reaches the probability sort below. See
     # `_search_ladder_window` for why the sort is wrong on exactly this shape.
+    display_field = list(real)  # #11995: bank the full field before preview selection
+    has_named_outcome = any(not _is_field_outcome(o.name) for o in display_field)
     window = _search_ladder_window(market, real, _withheld_ids, limit, lean)
     pinned = None
     if window is not None:
@@ -38716,9 +38708,41 @@ def _build_search_top_outcomes(
                     od["rank"] = None
     # #199: don't sum-to-1 non-mutually-exclusive participation families
     # (golf make-cut/top-N) — that squashed an honest 87% make-cut to ~20% in search.
-    _normalize_search_outcome_probs(
-        out, mutually_exclusive=getattr(market, "mutually_exclusive", True)
+    out = _drop_dominant_field_outcomes(
+        out, lambda o: o.get("name"), lambda o: 1.0 if has_named_outcome and o.get("probability") == 1.0 else None
     )
+    full_display = [
+        {"id": o.id, "name": o.name,
+         "is_winner": getattr(o, "is_winner", None),
+         "resolution_source": getattr(o, "resolution_source", None),
+         "probability": None if o.id in _withheld_ids or o.current_probability is None
+         else float(o.current_probability)}
+        for o in display_field
+    ]
+    full_display = _drop_dominant_field_outcomes(
+        full_display, lambda o: o.get("name"), lambda o: 1.0 if has_named_outcome and o.get("probability") == 1.0 else None
+    )
+    comparisons = normalized_field_comparisons(
+        market,
+        full_display,
+        field_complete=not _withheld_ids,
+    )
+    changed = _normalize_search_outcome_probs(
+        full_display, mutually_exclusive=getattr(market, "mutually_exclusive", True),
+        field_complete=not _withheld_ids, question=getattr(market, "name", None),
+    )
+    by_id = {o["id"]: o for o in full_display}
+    selected_ids = {name: o.id for o, name in named}
+    for row in out:
+        basis = by_id.get(selected_ids.get(row["name"]))
+        if basis is not None:
+            row["probability"] = basis["probability"]
+            if "rendered_percent" in basis:
+                row["rendered_percent"] = basis["rendered_percent"]
+            if comparisons is not None:
+                row["movement"] = comparisons[basis["id"]]["probability_change_24h"]
+            elif changed:
+                row["movement"] = None
     # UX-P164: search is the OTHER half of the #993 pair and it had the identical
     # defect — measured live 2026-08-29, `/api/events/search?q=which party will win
     # the house` served `Democratic Party 0.855 | Republican Party 0.145 | Other

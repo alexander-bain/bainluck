@@ -1,0 +1,15 @@
+.catalog-quote-buttons{display:flex;flex-direction:column;gap:5px}
+.catalog-quote-buttons>button{display:flex;flex-direction:column;gap:8px;min-height:44px;text-align:left;padding:8px;border:1px solid transparent;border-radius:8px;width:100%}
+.catalog-quote-buttons>button[aria-pressed=true]{border-color:var(--series-home);background:var(--surface-page)}
+.catalog-quote-buttons>button:focus-visible{outline:3px solid var(--series-home);outline-offset:2px}
+.catalog-quote-label{display:flex;gap:10px;align-items:baseline;justify-content:space-between;font-size:14px;line-height:1.35;width:100%}
+.catalog-quote-label>span{min-width:0;overflow-wrap:anywhere}.catalog-quote-label>strong{flex-shrink:0;color:var(--series-home);font-size:14px;font-variant-numeric:tabular-nums}
+.catalog-quote-track{display:block;position:relative;width:100%;height:8px;background:var(--surface-border);border-radius:8px}
+.catalog-quote-track>span{display:block;height:100%;border-radius:8px;background:var(--series-home);opacity:.55}
+.catalog-quote-buttons>button[aria-pressed=true] .catalog-quote-track>span{opacity:1}
+.catalog-quote-axis{display:flex;justify-content:space-between;padding:4px 8px 0;font-size:11px;color:var(--text-secondary)}
+.large-text .catalog-quote-label{flex-direction:column;align-items:flex-start;font-size:19px}.large-text .catalog-quote-label>strong{font-size:19px}.large-text .catalog-evidence-tiles{grid-template-columns:1fr}
+
+/* Preview-only controls, outside the product screen. */
+.atlas-preview{background:var(--surface-card);border:1px solid var(--surface-border);border-radius:12px;padding:6px;flex-wrap:wrap;max-width:calc(100vw - 110px)}
+@media(max-width:700px){.atlas-preview{max-width:310px}}

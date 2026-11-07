@@ -23,6 +23,7 @@ export type Source = "kalshi" | "polymarket";
 export type ServedPercent = {
   prob: number;
   probability?: number | null;
+  settled?: boolean;
 };
 
 /** The probability a weather row's percent stands for, in [0, 1].
@@ -36,6 +37,15 @@ export function weatherProbability(row: ServedPercent): number {
   const raw = row.probability;
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
   return row.prob / 100;
+}
+
+/** Whether a weather row's outcome has settled won (#12093).
+ *
+ *  Reads the server's explicit `settled` boolean (`row.settled === true`).
+ *  Absent `settled` (for instance during the hour a cached payload lacks the
+ *  field) renders the percent, never an inferred result word. */
+export function weatherRowSettled(row: ServedPercent): boolean {
+  return row.settled === true;
 }
 
 /** One bucket of a city's temperature ladder. Named because four call sites

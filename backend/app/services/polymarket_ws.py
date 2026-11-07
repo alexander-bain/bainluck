@@ -17,6 +17,7 @@ import math
 import os
 import random
 import ssl
+import time
 from typing import Any, Callable, Optional
 
 from pydantic_core import from_json
@@ -686,6 +687,10 @@ class PolymarketWebSocket:
         self._shard_wire: dict[int, set[str]] = {}
         self._shards_connected: set[int] = set()
         self._shard_connected_at: dict[int, float] = {}
+        # #11929 27-B: per shard, `time.monotonic()` of the last data frame
+        # (PONGs excluded: a socket can answer pings after the venue dropped
+        # its subscription). Read by `live_asset_ids`.
+        self._shard_last_message: dict[int, float] = {}
         # #10090 — per shard, the tokens whose quotes, trades and books this
         # client still hands to its callbacks. A refreshable socket can carry
         # tokens its catalog dropped. The game and open clients share one set of
@@ -1046,6 +1051,7 @@ class PolymarketWebSocket:
         """
         self._shards_connected.discard(shard)
         self._shard_connected_at.pop(shard, None)
+        self._shard_last_message.pop(shard, None)
 
     async def _run_one(self, asset_ids: Optional[list[str]], shard: int):
         """One connection: subscribe, stream, reconnect. The original loop."""
@@ -1125,6 +1131,7 @@ class PolymarketWebSocket:
                                 if raw in ("PONG", b"PONG"):
                                     continue
                                 self._message_count += 1
+                                self._shard_last_message[shard] = time.monotonic()
 
                                 try:
                                     data = decode(raw)
@@ -1315,6 +1322,27 @@ class PolymarketWebSocket:
         line would have called a working fan-out dead.
         """
         return bool(self._shards_connected)
+
+    def connected_asset_ids(self) -> set[str]:
+        """#11929 keep-alive: the subscribed ids on shards connected now. A
+        disconnected shard's ids are not being read, so they get no point."""
+        out: set[str] = set()
+        for shard in list(self._shards_connected):
+            out.update(self._shard_ids.get(shard) or ())
+        return out
+
+    def live_asset_ids(self, life_s: float, *, now: Optional[float] = None) -> set[str]:
+        """#11929 27-B: the subscribed ids on shards connected now AND sent a
+        data frame within ``life_s``. A connected shard gone quiet is not
+        proof its subscription still stands, so its ids are not live."""
+        at = time.monotonic() if now is None else now
+        out: set[str] = set()
+        for shard in list(self._shards_connected):
+            last = self._shard_last_message.get(shard)
+            if last is None or at - last > life_s:
+                continue
+            out.update(self._shard_ids.get(shard) or ())
+        return out
 
     def _served_by_shard(self) -> dict[int, set[str]]:
         """Per shard, the SUBSCRIBED ids the venue has actually sent a frame for.

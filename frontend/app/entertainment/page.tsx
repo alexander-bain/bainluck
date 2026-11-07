@@ -12,6 +12,7 @@ import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { namedPairLabels, twoLegCardPair } from "@/lib/twoLegCardPair";
 import { eventPath } from "@/lib/eventKey";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
+import { parseNumericBucketSortKey } from "@/components/economics/atoms";
 import type {
   EntertainmentData,
   EntMarketRow,
@@ -22,6 +23,8 @@ import type {
 } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
 import EntertainmentSkeleton from "@/components/skeletons/EntertainmentSkeleton";
+import EntertainmentAtlasView from "@/components/entertainment/EntertainmentAtlasView";
+import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 import s from "./entertainment.module.css";
 
 // ─────────────────────────────────────────────────────────
@@ -189,11 +192,6 @@ function MetaRow({
   return (
     <div className={s.metaRow}>
       <EntSourceChip source={src} />
-      {volume != null && volume > 0 && (
-        <span style={{ fontFamily: "var(--font-mono, monospace)", fontVariantNumeric: "tabular-nums" }}>
-          Vol ${volume >= 1000 ? `${(volume / 1000).toFixed(0)}k` : volume}
-        </span>
-      )}
       {resolvesLine && <span>· {resolvesLine}</span>}
     </div>
   );
@@ -337,11 +335,29 @@ function EntHistogram({
   data: { range: string; prob: number }[];
   height?: number;
 }) {
-  const maxV = Math.max(...data.map((d) => d.prob), 0.01);
+  const ordered = (() => {
+    if (data.length < 2) return data;
+    const keyed: { key: [number, number, number]; idx: number; item: { range: string; prob: number } }[] = [];
+    for (let i = 0; i < data.length; i++) {
+      const key = parseNumericBucketSortKey(data[i].range);
+      if (!key) return data;
+      keyed.push({ key, idx: i, item: data[i] });
+    }
+    return keyed
+      .sort(
+        (a, b) =>
+          a.key[0] - b.key[0] ||
+          a.key[1] - b.key[1] ||
+          a.key[2] - b.key[2] ||
+          a.idx - b.idx
+      )
+      .map((entry) => entry.item);
+  })();
+  const maxV = Math.max(...ordered.map((d) => d.prob), 0.01);
   return (
     <div>
       <div className={s.histWrap} style={{ height }}>
-        {data.map((d, i) => {
+        {ordered.map((d, i) => {
           const isPeak = d.prob === maxV;
           return (
             <div
@@ -356,7 +372,7 @@ function EntHistogram({
         })}
       </div>
       <div className={s.histLabels}>
-        {data.map((d, i) => (
+        {ordered.map((d, i) => (
           <span key={i} className={s.histLabel}>
             {d.range}
           </span>
@@ -1587,12 +1603,14 @@ export default function EntertainmentPage() {
   useScrollDepth({ pageType: "entertainment" });
   useEngagementTime({ pageType: "entertainment" });
 
+  const atlasEnabled = useAtlasPageOptIn();
+
   const [filter, setFilter] = useState<FilterKey>("all");
   const { data, error } = useSWR("entertainment-data-v2", fetchEntertainment, {
     refreshInterval: 60000,
   });
 
-  if (error) {
+  if (error || (data as { error?: string } | undefined)?.error) {
     return (
       <div className={s.page}>
         <ErrorState message="Failed to load entertainment data" onRetry={() => window.location.reload()} />
@@ -1608,6 +1626,16 @@ export default function EntertainmentPage() {
     );
   }
 
+  if (atlasEnabled) {
+    return (
+      <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
+        <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
+          <EntertainmentAtlasView data={data} />
+        </div>
+      </ErrorBoundary>
+    );
+  }
+
   const show = (key: FilterKey) => filter === "all" || filter === key;
 
   return (
@@ -1617,10 +1645,10 @@ export default function EntertainmentPage() {
       <div className={s.pageHead}>
         <div className={s.eyebrow}>🎤 Entertainment & Culture</div>
         <h1 className={s.pageTitle}>
-          What the markets are betting on in pop culture
+          What the world expects in pop culture
         </h1>
         <p className={s.pageSub}>
-          Live probabilities on charts, box office, reality TV, and the
+          Probabilities on charts, box office, reality TV, and the
           moments breaking the internet.
         </p>
         <div className={s.pageMeta}>
@@ -1682,7 +1710,7 @@ export default function EntertainmentPage() {
         {/* Footer */}
         <div className={s.footer}>
           <span>
-            Probabilities update on a 30-second cadence. Bain Luck is a
+            Updated hourly from prediction markets. Bain Luck is a
             discovery platform — we never accept bets.
           </span>
           <span style={{ fontFamily: "var(--font-mono, monospace)" }}>

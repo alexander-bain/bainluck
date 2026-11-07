@@ -3646,7 +3646,9 @@ def _log_stats_line(
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
         "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
         "| %s | %s | held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
-        "lock_timeouts=%d skipped_locked=%d repeats_skipped=%d",
+        "lock_timeouts=%d history_points=%d history_keepalive=%d "
+        "history_keepalive_errors=%d history_capped=%d history_skipped=%d "
+        "history_refused=%d history_errors=%d skipped_locked=%d repeats_skipped=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -3683,6 +3685,18 @@ def _log_stats_line(
         # already known-held. Kept out of `errors`, so a sustained table lock
         # shows here rather than as one error and then silence.
         stats.get("price_lock_timeouts", 0),
+        # #11929: chart points the flush wrote; due legs the per-market cap
+        # held for a later minute; ticks not due (under a point, inside 5 min);
+        # settled/graded refusals; failed inserts. Cumulative for the run.
+        stats.get("history_points", 0),
+        # #11929 keep-alive: points for live legs whose price sat still 15
+        # min, and failed keep-alive passes. Cumulative for the run.
+        stats.get("history_keepalive", 0),
+        stats.get("history_keepalive_errors", 0),
+        stats.get("history_capped", 0),
+        stats.get("history_skipped", 0),
+        stats.get("history_refused", 0),
+        stats.get("history_errors", 0),
         # #10090: price rows a row lock elsewhere held back (with their unit)
         # while the rest of their chunk committed. Counted, never logged per
         # flush; each stays buffered and is retried by the next flush.
@@ -4513,6 +4527,31 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     from app.utils.reader_presence import held_event_cache
     blend_refresher.reader_held = held_event_cache().event_ids
     tail_receipts.reader_held = held_event_cache().event_ids
+    # #10090 market previews: a held market's buffered price, published at
+    # arrival on its `live:market:<id>` channel (`utils/market_preview`). No
+    # database work: market ids come from `market_by_outcome` (this run's map),
+    # Redis is the refresher's client; `handle_resolved` refuses its market.
+    # Reached through the refresher, like `held_quotes`: no new name.
+    from app.utils.market_preview import MarketPreviewPublisher
+
+    blend_refresher.market_preview = MarketPreviewPublisher(
+        "polymarket", lambda: blend_refresher._client(),
+    )
+    # #11929: chart history points from the committed flush (`write_chunk`),
+    # never from the preview above. Off unless `STREAM_HISTORY_POINTS` names
+    # this venue; `handle_resolved` refuses its market. Reached through the
+    # refresher, like `market_preview`: no new name in the writer.
+    from app.utils.stream_history_points import StreamHistoryPoints
+
+    blend_refresher.stream_history = StreamHistoryPoints("polymarket")
+    # #11929 27-B: observed spans (a span, not a row). Off unless
+    # `STREAM_OBSERVED_SPANS` names polymarket and its move points are on.
+    # Spans a dead run left open close at the venue heartbeat first.
+    from app.utils.stream_observed_spans import ObservedSpans
+
+    observed_spans = ObservedSpans("polymarket")
+    if observed_spans.enabled:
+        await observed_spans.recover(get_task_session)
     # #10090 decision J: `confirmed_at` for this venue's events. A buffered
     # withdrawal whose book prices a published leg out is a pending change
     # (the rule `flush_withdrawals` applies to the stored price).
@@ -4689,6 +4728,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         clock_ticket = None
         clock_owner = None
         write_clock = None
+        # #11929: this chunk's chart points, written in its transaction.
+        history_plan = None
+        stream_history = getattr(blend_refresher, "stream_history", None)
         try:
             async with get_task_session() as session:
                 if stage_trace is not None:
@@ -4852,6 +4894,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             *pm_rerank_market_fields_execution(sorted(reranked_markets))
                         )
                     ).rowcount
+                # #11929 — bounded chart history from the committed write: the
+                # rows this UPDATE returned (never a held-back one), at the
+                # prices it wrote, one INSERT in this same transaction. Never
+                # from a preview; memory advances only after COMMIT.
+                if getattr(stream_history, "enabled", False) is True and written_rows:
+                    history_plan = stream_history.plan(written_rows, chunk)
+                    await stream_history.write(session, history_plan)
             stats["price_updates"] += len(written_rows)
             stats["open_contract_prices_written"] += sum(
                 1 for row in written_rows if row.id in open_outcome_ids
@@ -4962,6 +5011,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 return None
             return False
 
+        # #11929: the chunk's transaction committed; its chart points are
+        # stored, so their legs' memory advances now.
+        if history_plan is not None:
+            stream_history.committed(history_plan)
         if held_back:
             # #10090: counted, never logged per flush (`skipped_locked=` on the
             # minute line). Each held row stays buffered and known-held, due at
@@ -7034,6 +7087,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 note_withdrawn = getattr(blend_refresher, "note_receipt_withdrawn", None)
                 if note_withdrawn is not None:
                     note_withdrawn([oid for oid, _bid, _ask in legs])
+                # #10090 market previews: nor does an unsent preview of it.
+                preview = getattr(blend_refresher, "market_preview", None)
+                if preview is not None:
+                    preview.forget(oid for oid, _bid, _ask in legs)
                 wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
                 if wake_outcomes is not None:
                     wake_outcomes(
@@ -7070,9 +7127,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             if input_generation != routing_generation:
                 return
             priced = with_complements(targets, prob, open_complement_of)
+            preview = getattr(blend_refresher, "market_preview", None)
             for outcome_id, leg_prob in priced:
                 price_buffer[outcome_id] = leg_prob
                 _mark_input(outcome_id, leg_prob, "price", msg)
+                # #10090: to a held market's readers now (no I/O here).
+                if preview is not None:
+                    preview.note(market_by_outcome.get(outcome_id), outcome_id, leg_prob)
             if repeat_skip_s > 0:
                 for outcome_id, _leg_prob in priced:
                     leg_writes[outcome_id] = next(leg_write_counter)
@@ -7293,9 +7354,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             if input_generation != routing_generation:
                 return
             priced = with_complements(targets, prob, open_complement_of)
+            preview = getattr(blend_refresher, "market_preview", None)
             for outcome_id, leg_prob in priced:
                 price_buffer[outcome_id] = leg_prob
                 _mark_input(outcome_id, leg_prob, "trade", msg)
+                # #10090: to a held market's readers now (no I/O here).
+                if preview is not None:
+                    preview.note(market_by_outcome.get(outcome_id), outcome_id, leg_prob)
                 if repeat_skip_s > 0:
                     leg_writes[outcome_id] = next(leg_write_counter)
             wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
@@ -7336,6 +7401,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         market_id = condition_to_market.get(condition_id)
         if not market_id:
             return
+        # #10090: a resolving market is never previewed again (before the
+        # venue read, so no later tick in its last window goes out).
+        preview = getattr(blend_refresher, "market_preview", None)
+        if preview is not None:
+            preview.refuse_market(market_id)
+        # #11929: nor does it take another chart point (its terminal price
+        # still reaches the row through the flush; never the chart).
+        history = getattr(blend_refresher, "stream_history", None)
+        if history is not None:
+            history.refuse_market(market_id)
         task = asyncio.create_task(_settle_resolution(
             msg, condition_id, market_id,
             list(outcomes_by_market.get(market_id, [])), dict(asset_to_outcome),
@@ -7523,6 +7598,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             owner = catalog_boundary.stamps
             stats["stamp_wait_s"] = owner.waited_s if owner is not None else 0.0
             stamp_spans = getattr(blend_refresher, "stamp_spans", None)
+            # #11929: the chart-point counters ride the minute line.
+            history_stats = getattr(
+                getattr(blend_refresher, "stream_history", None), "stats", None,
+            )
+            if isinstance(history_stats, dict):
+                stats.update(history_stats)
             _log_stats_line(
                 stats, ws_stats, blend, game_flush=game_flush_timings.line(),
                 **({"stamp_tx": stamp_spans.line()} if stamp_spans is not None else {}),
@@ -7547,6 +7628,82 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 stamped=blend["stamped"],
                 no_reading=blend["no_reading"],
             )
+            # #11929 keep-alive: its own session and transaction, after the
+            # minute line, outside every flush. Failures are counted inside.
+            history = getattr(blend_refresher, "stream_history", None)
+            if getattr(history, "keepalive", False) is True:
+                try:
+                    await history.keepalive_pass(get_task_session, keepalive_legs())
+                except Exception:  # noqa: BLE001 — never the stats heartbeat
+                    history.stats["history_keepalive_errors"] += 1
+                    logger.warning("Polymarket WS: keep-alive pass failed", exc_info=True)
+            # #11929 27-B: observed spans, after the keep-alive, in their own
+            # session and transaction. Failures are counted inside.
+            if observed_spans.enabled:
+                try:
+                    await observed_spans.tick(get_task_session, span_legs())
+                except Exception:  # noqa: BLE001 — never the stats heartbeat
+                    observed_spans.stats["spans_errors"] += 1
+                    logger.warning("Polymarket WS: observed spans tick failed", exc_info=True)
+                logger.info("Polymarket WS spans: %s", observed_spans.line())
+
+    def span_legs():
+        """#11929 27-B: outcome ids on a shard that is connected AND sent a data
+        frame within `SPAN_LIFE_S` (Alex: a silently dropped subscription never
+        prints "unchanged"). Game tokens through the game socket's live shards;
+        open-contract tokens, their mirrored legs and binary complements through
+        each open socket's own live shards. A client that cannot say which of
+        its shards are alive (no `live_asset_ids`) contributes nothing: no
+        proof of life, no span."""
+        from app.utils.stream_observed_spans import SPAN_LIFE_S
+
+        legs = []
+        live = getattr(ws, "live_asset_ids", None)
+        if callable(live):
+            tokens = live(SPAN_LIFE_S)
+            legs.extend(oid for token, oid in list(asset_to_outcome.items()) if token in tokens)
+        open_tokens: set = set()
+        for sock in list(open_sockets):
+            open_live = getattr(sock, "live_asset_ids", None)
+            if callable(open_live):
+                open_tokens |= open_live(SPAN_LIFE_S)
+        if open_tokens:
+            to_outcome = dict(open_asset_to_outcome)
+            mirrors = dict(open_asset_mirrors)
+            for token in open_tokens:
+                if token in to_outcome:
+                    legs.append(to_outcome[token])
+                legs.extend(oid for oid, _mid in mirrors.get(token, ()))
+        # #9733: a tick on a leg also prices its binary's other leg.
+        complements = dict(open_complement_of)
+        legs.extend([complements[oid] for oid in legs if oid in complements])
+        markets = market_by_outcome
+        return [oid for oid in legs if oid in markets]
+
+    def keepalive_legs():
+        """#11929: (outcome_id, market_id) of every leg a CONNECTED socket
+        carries now. Game tokens on connected shards only
+        (`connected_asset_ids`); open-contract tokens, their mirrored legs and
+        binary complements while an open socket is connected. Copied first: the maps
+        are replaced in place by a catalog refresh."""
+        legs = []
+        connected = getattr(ws, "connected_asset_ids", None)
+        game = list(asset_to_outcome.items())
+        if callable(connected):
+            live_tokens = connected()
+            legs.extend(oid for token, oid in game if token in live_tokens)
+        elif getattr(ws, "is_connected", False):
+            legs.extend(oid for _token, oid in game)
+        if any(getattr(s, "is_connected", False) for s in open_sockets):
+            legs.extend(list(open_asset_to_outcome.values()))
+            legs.extend(
+                oid for pairs in list(open_asset_mirrors.values()) for oid, _mid in pairs
+            )
+        # #9733: a tick on a leg also prices its binary's other leg.
+        complements = dict(open_complement_of)
+        legs.extend([complements[oid] for oid in legs if oid in complements])
+        markets = market_by_outcome
+        return [(oid, markets[oid]) for oid in legs if oid in markets]
 
     flush_task = asyncio.create_task(flush_loop(), name="polymarket-flush-loop")
     prop_task = asyncio.create_task(prop_loop(), name="polymarket-prop-flush-loop")
@@ -8130,6 +8287,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     "recycle_reset" if stats.get("status") == "resubscribe"
                     else exit_reason
                 )
+            # #11929 27-B: the stats loop is reaped above, so no tick races
+            # this; every open span closes at its last tick alive. A failure or
+            # an interrupt leaves them for the next run's `recover`.
+            try:
+                stats["spans_closed_at_exit"] = await observed_spans.close_all(
+                    get_task_session,
+                )
+            except asyncio.CancelledError as exc:
+                history_interrupted = history_interrupted or exc
             if history_interrupted is not None:
                 raise history_interrupted
 

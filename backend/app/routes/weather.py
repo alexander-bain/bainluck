@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
+from app.utils.futures_liveness import leg_is_graded
 from app.utils.ladder_headline import ladder_median_row
 from app.utils.market_display_name import clean_served_questions
 from app.utils.market_staleness import should_exclude_from_featured, is_title_implied_stale
@@ -27,6 +28,10 @@ from app.utils.market_staleness import should_exclude_from_featured, is_title_im
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# #12126 / #12128 / #11949 — normalize a mutually-exclusive field only when it
+# holds at least 90% of the probability mass and has no blank outcome labels.
+SPECIALTY_FIELD_MASS_MIN = 0.9
 
 
 async def _read_weather_cache(sub_key: str):
@@ -603,6 +608,26 @@ def _card_prob(market: FuturesMarket) -> float:
     return round(_card_probability(market) * 100)
 
 
+def _outcome_settled_won(outcome) -> bool:
+    """Has this outcome been authoritatively settled as a winner (#12093)?"""
+    if outcome is None:
+        return False
+    if getattr(outcome, "is_winner", None) is True:
+        return True
+    return (
+        leg_is_graded(
+            getattr(outcome, "is_winner", None),
+            getattr(outcome, "resolution_source", None),
+        )
+        and float(getattr(outcome, "current_probability", None) or 0) >= 1.0
+    )
+
+
+def _card_outcome_settled(market: FuturesMarket) -> bool:
+    """Has the outcome behind ``_card_outcome`` been settled as a winner (#12093)?"""
+    return _outcome_settled_won(_card_outcome(market))
+
+
 def _leader_outcome_name(market: FuturesMarket) -> str | None:
     """Name of the outcome whose probability ``_card_prob`` prints, or None.
 
@@ -781,7 +806,10 @@ def _normalize_q(q: str) -> str:
 
 def _cross_source_row(market: FuturesMarket) -> dict | None:
     """Build a market row suitable for cross-source comparison."""
-    outcomes = _clean_outcomes(list(market.outcomes))
+    outcomes = [
+        o for o in _clean_outcomes(list(market.outcomes))
+        if (o.name or "").strip()
+    ]
     outcomes = sorted(
         outcomes, key=lambda o: float(o.current_probability or 0), reverse=True
     )
@@ -791,12 +819,12 @@ def _cross_source_row(market: FuturesMarket) -> dict | None:
     return {
         "q": market.name,
         "prob": round(float(outcomes[0].current_probability or 0) * 100, 1),
-        "src": _market_source(market),
+        "src": _market_source(market) or None,
         "market_id": market.id,
         "tag": _derive_tag(market.name or ""),
         "top_outcomes": [
             {
-                "name": o.name,
+                "name": (o.name or "").strip(),
                 "prob": round(float(o.current_probability or 0) * 100, 1),
             }
             for o in top
@@ -1024,7 +1052,7 @@ async def get_featured(db: AsyncSession):
             # indistinguishable from a payload served out of the pre-UX-P186
             # Redis cache, which the hero must also survive.
             "leader": _leader_outcome_name(m),
-            "src": _market_source(m),
+            "src": _market_source(m) or None,
             "tag": _derive_tag(m.name),
             "closes": _format_closes(m.resolution_date),
             "market_id": m.id,
@@ -1091,9 +1119,12 @@ async def get_cities(db: AsyncSession):
         sources.add(_market_source(chosen))
 
         for o in chosen.outcomes:
+            label = (o.name or "").strip()
+            if not label:
+                continue
             raw = float(o.current_probability or 0)
             p = round(raw * 100)
-            sort_key = _extract_sort_temp(o.name)
+            sort_key = _extract_sort_temp(label)
             # `probability` is the raw twin of `prob` (#6616). The tails of a
             # city's ladder are where this matters most: 96 rows across 42
             # cities serve `prob: 0` over live prices — Los Angeles quotes both
@@ -1101,11 +1132,14 @@ async def get_cities(db: AsyncSession):
             # reads as a flat zero draws no bar and offers no tooltip, which
             # tells a reader the outcome is impossible by omission.
             dist.append(
-                {"label": o.name, "prob": p, "probability": raw, "_sort": sort_key}
+                {"label": label, "prob": p, "probability": raw, "_sort": sort_key}
             )
             if float(o.current_probability or 0) > mode_prob:
                 mode_prob = float(o.current_probability or 0)
-                mode_label = o.name
+                mode_label = label
+
+        if not dist:
+            continue
 
         dist.sort(key=lambda d: d["_sort"])
         for d in dist:
@@ -1192,10 +1226,10 @@ async def get_cities(db: AsyncSession):
             "preferredY": info["y"],
             "x": info["x"],
             "y": info["y"],
-            "srcs": sorted(sources),
+            "srcs": sorted(s for s in sources if s),
             # The venue whose ladder this card draws (#9260). `srcs` is every
             # venue quoting the city, sorted, so its first entry is not it.
-            "src": _market_source(chosen),
+            "src": _market_source(chosen) or None,
             "marketId": chosen.id,
             # The day this city's ladder is about, `YYYY-MM-DD`, or None.
             # The map labels its date from this and nothing else (#8046).
@@ -1249,10 +1283,25 @@ async def _squeeze_like_the_market_page(
             exc_info=True,
         )
         return
-    if normalize_display_probs(
-        dist,
-        mutually_exclusive=getattr(market, "mutually_exclusive", True),
-        field_complete=not withheld,
+    venue_exclusive = getattr(market, "mutually_exclusive", None) is True
+    raw_outcomes = list(getattr(market, "outcomes", None) or [])
+    has_blank_outcome = any(
+        not (getattr(o, "name", None) or "").strip() for o in raw_outcomes
+    ) or any(not (d.get("label") or "").strip() for d in dist)
+    raw_mass = sum(float(d.get("probability") or 0) for d in dist)
+    field_complete = (
+        not withheld
+        and not has_blank_outcome
+        and raw_mass + 1e-9 >= SPECIALTY_FIELD_MASS_MIN
+    )
+    if (
+        venue_exclusive
+        and field_complete
+        and normalize_display_probs(
+            dist,
+            mutually_exclusive=True,
+            field_complete=field_complete,
+        )
     ):
         for d in dist:
             d["prob"] = round(float(d["probability"] or 0) * 100)
@@ -1499,7 +1548,8 @@ async def get_rain(db: AsyncSession):
             # loudest: Miami, Seattle, NYC and Houston all store 0.995000 on an
             # OPEN "Above 1 inch" market and all four printed a flat 100%.
             "probability": raw,
-            "src": _market_source(m),
+            "settled": _get_yes_settled(m),
+            "src": _market_source(m) or None,
             "delta24h": delta,
         })
 
@@ -1727,6 +1777,19 @@ def _nyc_rain_probability(market: FuturesMarket) -> Optional[int]:
     return round(raw * 100)
 
 
+def _get_yes_outcome(market: FuturesMarket):
+    """The outcome behind ``_get_yes_probability_raw``."""
+    for o in market.outcomes or []:
+        if o.name and o.name.lower() in ("yes", "y"):
+            return o
+    return _leader_outcome(market)
+
+
+def _get_yes_settled(market: FuturesMarket) -> bool:
+    """Has the outcome behind ``_get_yes_probability_raw`` been settled won (#12093)?"""
+    return _outcome_settled_won(_get_yes_outcome(market))
+
+
 def _get_yes_probability_raw(market: FuturesMarket) -> float:
     """The 'Yes' probability of a binary market, 0-1.
 
@@ -1801,11 +1864,12 @@ async def get_events(db: AsyncSession, now: datetime | None = None):
             # "Number of tornadoes in Sep 2026?" both print 100% here over open,
             # tradeable books.
             "probability": _card_probability(m),
+            "settled": _card_outcome_settled(m),
             # The sharpest instance of the defect on the whole page: "Hurricane
             # Marie category? — 95%" is 95% of "Category 4 or above", and
             # Category 4 and Category 5 are not the same forecast.
             "leader": _leader_outcome_name(m),
-            "src": _market_source(m),
+            "src": _market_source(m) or None,
             "closes": _format_closes(m.resolution_date),
             # The row's own market (#9478), the same id /featured serves, so a
             # tap opens /futures/{market_id} instead of going nowhere.
@@ -1909,7 +1973,7 @@ async def get_climate(db: AsyncSession):
             # events, wildcards and hero cards; None when the question answers
             # itself.
             "leader": _leader_outcome_name(m),
-            "src": _market_source(m),
+            "src": _market_source(m) or None,
             "closes": _format_closes(m.resolution_date),
             # See get_events (#9478).
             "market_id": m.id,
@@ -2018,7 +2082,7 @@ async def get_wildcards(db: AsyncSession):
             # extent this summer?" led with a bare 16% off a seven-way ladder
             # whose top four sit within 1.2 points of each other.
             "leader": _leader_outcome_name(m),
-            "src": _market_source(m),
+            "src": _market_source(m) or None,
             "closes": _format_closes(m.resolution_date),
             # Membership above is a substring match; `_derive_tag` is
             # word-bounded, so "supervolcano" got in and was labelled

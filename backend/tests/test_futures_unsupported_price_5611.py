@@ -480,7 +480,7 @@ class TestTheRefusedValueLeavesTheDivisor:
         """
         board = [{"prob": 1.0}, {"prob": 1.0}, {"prob": 0.80}, {"prob": 0.50}]
         raw = {o["id"]: o["probability"] for o in _detail(_market(board))["outcomes"]}
-        assert raw[3] == pytest.approx(0.80), "sum 3.30 > 1.60 — served raw today"
+        assert raw[3] == pytest.approx(0.80), "sum3.30 is suspect and stays raw"
 
         after = {
             o["id"]: o["probability"]

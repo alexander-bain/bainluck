@@ -1461,6 +1461,143 @@ class KalshiArchiveInterval(Base):
     )
 
 
+class VenueHistoryPoint(Base):
+    """One venue-reported price for one futures leg at the venue's own time. (#11929)
+
+    PR-A of the gap backfill: preserves Kalshi's hourly candles for recently
+    settled markets before the venue purges them. The writer is
+    ``app/tasks/venue_history_backfill.py``. **Nothing reads this table yet.**
+    Serving it on charts is PR-B. ``futures_odds_snapshots`` readers (calibration,
+    ``/history``, movers) cannot see these rows.
+
+    ``observed_at`` is the venue's timestamp (a candle's ``end_period_ts``), never
+    our fetch time, which is ``fetched_at``. The UNIQUE key makes a rerun conflict
+    instead of doubling (``ON CONFLICT DO NOTHING``). Its leading column is
+    ``outcome_id``, so it also serves per-leg lookups.
+
+    ``ondelete=CASCADE``: several existing deleters remove ``futures_outcomes``
+    rows (orphan cleanup, crypto retention, admin repair). They already delete
+    the leg's snapshots first. Without the cascade, the first deleter to reach a
+    leg with preserved history would fail on this foreign key.
+    """
+
+    __tablename__ = "venue_history_points"
+    __table_args__ = (
+        UniqueConstraint("outcome_id", "observed_at", name="uq_vhp_outcome_observed"),
+        CheckConstraint("probability > 0 AND probability < 1", name="ck_vhp_probability"),
+        CheckConstraint("resolution_s > 0", name="ck_vhp_resolution"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    outcome_id: Mapped[int] = mapped_column(
+        ForeignKey("futures_outcomes.id", ondelete="CASCADE"), nullable=False
+    )
+    market_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    venue: Mapped[str] = mapped_column(Text, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    probability: Mapped[float] = mapped_column(Numeric(7, 6), nullable=False)
+    yes_bid: Mapped[Optional[float]] = mapped_column(Numeric(7, 6), nullable=True)
+    yes_ask: Mapped[Optional[float]] = mapped_column(Numeric(7, 6), nullable=True)
+    price_basis: Mapped[str] = mapped_column(Text, nullable=False)
+    resolution_s: Mapped[int] = mapped_column(Integer, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class VenueHistoryBackfillProgress(Base):
+    """Per-market progress of the #11929 gap backfill, so the sweep never re-starts at its head.
+
+    One row per (venue, market). ``legs_done`` lists the outcome ids whose whole
+    life has been fetched and written. A run stopped by its wall budget resumes at
+    the next leg, not at the first one. ``attempts`` counts runs that failed on
+    this market with a venue error other than 429. At ``MAX_ATTEMPTS`` the
+    market is skipped, so one market the venue keeps refusing cannot block the
+    oldest-first sweep (gotchas #34, #41). Written only by
+    ``app/tasks/venue_history_backfill.py``; nothing else reads it.
+    """
+
+    __tablename__ = "venue_history_backfill_progress"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('in_progress', 'done', 'failed')", name="ck_vhbp_status"
+        ),
+    )
+
+    venue: Mapped[str] = mapped_column(Text, primary_key=True)
+    market_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    legs_done: Mapped[list] = mapped_column(
+        ARRAY(Integer), nullable=False, server_default=text("'{}'")
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    points_inserted: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class StreamObservedSpan(Base):
+    """One stretch a socket consumer observed one futures leg live. (#11929 27-B)
+
+    Opened (``ended_at`` NULL) at the first minute tick that finds the leg on a
+    connected, subscribed connection with a message in the last 180 s; closed
+    once when it leaves that population (disconnect, unsubscribe, silence, or
+    the consumer run ending). The writer is ``app/utils/stream_observed_spans.py``.
+    **Nothing reads this table yet**; drawing a span flat on charts is the serve
+    PR. An open span ends, for any reader, at its venue's
+    :class:`StreamSpanHeartbeat`.
+
+    No foreign key to ``futures_outcomes``, on purpose: adding one takes SHARE
+    ROW EXCLUSIVE on that table, and #12020's FK showed what that costs the live
+    Kalshi flushes (8 lock timeouts in one second). An orphaned span names a leg
+    no chart can request, so it is never read.
+    """
+
+    __tablename__ = "stream_observed_spans"
+    __table_args__ = (
+        CheckConstraint(
+            "ended_at IS NULL OR ended_at >= started_at", name="ck_sos_order"
+        ),
+        CheckConstraint("venue IN ('kalshi', 'polymarket')", name="ck_sos_venue"),
+        Index("ix_sos_outcome_started", "outcome_id", "started_at"),
+        Index(
+            "ix_sos_open_by_venue", "venue", postgresql_where=text("ended_at IS NULL")
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    venue: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    end_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class StreamSpanHeartbeat(Base):
+    """Per venue, the last minute tick the span writer committed. (#11929 27-B)
+
+    Written in the same transaction as every tick, so an open
+    :class:`StreamObservedSpan` is never read as lasting past the last tick
+    that saw its leg alive.
+    """
+
+    __tablename__ = "stream_span_heartbeats"
+
+    venue: Mapped[str] = mapped_column(Text, primary_key=True)
+    beat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class LineMovementAnalysis(Base):
     """Cached LLM-generated explanations for significant line movements."""
 
@@ -1908,6 +2045,12 @@ class DiscoverInteraction(Base):
         index=True,
         server_default="unknown",
     )
+    # #12095 (Decide 37-B): the list this event was shown in — the feed
+    # response's `edition` token — and the deploy sha that ranked it. Stored
+    # only while `RANKING_SNAPSHOTS` is on; NULL means "not recorded", never a
+    # slate. `rank` is the position.
+    slate_id: Mapped[Optional[str]] = mapped_column(String(64))
+    ranker_version: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -2037,6 +2180,63 @@ class DiscoverGroundTruthDiagnostic(Base):
             "source_group",
             "triage_bucket",
         ),
+    )
+
+
+class RankingSlateSnapshot(Base):
+    """#12095 (Decide 37-B): one served ranking slate, as a single document.
+
+    The served order (item keys) and up to 500 candidates with the features the
+    ranker had and the truth-gate flags (``app/utils/ranking_eval.py``).
+    ``slate_id`` is the deck's ``edition`` token, which events carry, so the
+    two join. No foreign keys: nothing here may lock a hot table. 90-day
+    retention, enforced by the writer.
+    """
+
+    __tablename__ = "ranking_slate_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    surface: Mapped[str] = mapped_column(String(32), nullable=False)
+    slate_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ranker_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    served_order: Mapped[list] = mapped_column(JSONB, nullable=False)
+    candidates: Mapped[list] = mapped_column(JSONB, nullable=False)
+    summary: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    __table_args__ = (
+        Index("ix_ranking_slates_surface_captured", "surface", "captured_at"),
+        Index("ix_ranking_slates_slate_id", "slate_id"),
+    )
+
+
+class RankingGrade(Base):
+    """#12095 Phase 2: one grader's grade for one card of one captured slate.
+
+    Written by the admin grading page; ``tools/ranking/grades.py export`` copies
+    them to ``evals/ranking/grades/<date>-<surface>-<grader>.json``, the store
+    the scorecard reads. ``expert`` False marks a non-expert (kid) grader, kept
+    apart from the founder grades. No foreign keys.
+    """
+
+    __tablename__ = "ranking_grades"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    slate_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    surface: Mapped[str] = mapped_column(String(32), nullable=False)
+    grader: Mapped[str] = mapped_column(String(40), nullable=False)
+    expert: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    item_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    grade: Mapped[str] = mapped_column(String(16), nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(String(300))
+    graded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_ranking_grades_slate", "slate_id", "grader"),
+        Index("ix_ranking_grades_graded_at", "graded_at"),
     )
 
 

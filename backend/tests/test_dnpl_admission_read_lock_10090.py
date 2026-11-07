@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.tasks import live_blend_refresh
 from app.tasks.live_blend_refresh import LiveBlendRefresher
 from app.utils import blend_preview
 from tests.test_dnpl_authority_registry_10090 import registry, proposal
@@ -37,6 +38,10 @@ async def setup_worker(rig, monkeypatch, *, claimed=True, source="kalshi"):
 @pytest.mark.parametrize("source", ["kalshi", "polymarket"])
 async def test_claimed_admission_survives_busy_publication(rig, monkeypatch, source):
     client, _, now, reg, worker = await setup_worker(rig, monkeypatch, source=source)
+    # A loaded CI runner spent the 250 ms on Redis round trips alone (master run
+    # 41743975967, shard 1). The property is the held publisher lock, which would
+    # time the read out at any budget, so widen it as #11916 did for its rigs.
+    monkeypatch.setattr(live_blend_refresh, "PREVIEW_ADMISSION_READ_BUDGET_S", 2.0)
     entered, release = asyncio.Event(), asyncio.Event()
     original = reg.execute
 

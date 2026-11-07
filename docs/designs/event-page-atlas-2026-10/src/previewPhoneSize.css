@@ -1,0 +1,10 @@
+.phone-size-preview{display:contents}
+/* Design-only app shell: actual CSS layout size, never an image scale claim. */
+.phone-size-tools{position:fixed;bottom:8px;left:8px;z-index:999;display:flex;gap:6px;align-items:center;padding:5px 8px;background:var(--surface-card);border:1px solid var(--surface-border);border-radius:10px;font:12px system-ui;color:var(--text-secondary)}
+.phone-size-tools button{min-height:32px;border:0;border-radius:6px;background:var(--surface-deep);color:var(--text-primary);font:inherit;padding:5px 8px}
+.phone-size-tools button[aria-pressed=true]{outline:1px solid var(--series-home);color:var(--series-home)}
+body:has(.compact-phone-preview) .phone-scale-box{width:395px!important;height:687px!important}
+body:has(.compact-phone-preview) .phone-device{width:395px!important;height:687px!important;transform:none!important;border-radius:32px;border:1px solid var(--surface-border);background:var(--surface-deep)}
+body:has(.compact-phone-preview) .phone-bezel{display:none}
+body:has(.compact-phone-preview) .device-screen{width:375px!important;height:667px!important;left:9px!important;top:9px!important;border-radius:24px!important}
+body:has(.compact-phone-preview) .device-menu-bar{visibility:hidden}

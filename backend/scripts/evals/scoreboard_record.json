@@ -1,0 +1,2263 @@
+{
+  "schema_version": "eval-scoreboard-record/v1",
+  "source_sha": "54470c89fdf9a4a00356160465af48e81d375bf0",
+  "recorded_at_pt": "2026-11-03 8:48:47 PM PT",
+  "command": "python3 -m pytest tests/evals/ --junitxml=/tmp/codex-evals-baseline.xml -q",
+  "suite": {
+    "passed": 1285,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": {
+    "eval_registry_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/eval_registry_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_eval_registry_contract.py"
+        ]
+      }
+    },
+    "eval_bite_rate_audit": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/eval_bite_rate_audit.json",
+          "selector": [
+            "samples"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_eval_bite_rate_audit.py"
+        ]
+      }
+    },
+    "admin_surface_truth_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/admin_surface_truth_contract.json",
+          "selector": [
+            "headlines"
+          ],
+          "unit": "fixture rows"
+        },
+        {
+          "path": "backend/tests/evals/fixtures/admin_surface_truth_contract.json",
+          "selector": [
+            "classification"
+          ],
+          "unit": "fixture rows"
+        },
+        {
+          "path": "backend/tests/evals/fixtures/admin_surface_truth_contract.json",
+          "selector": [
+            "labeling"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_admin_surface_truth_contract.py"
+        ]
+      }
+    },
+    "admin_health_evidence_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/admin_health_evidence_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_admin_health_evidence_contract.py"
+        ]
+      }
+    },
+    "admin_health_closure_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/admin_health_closure_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_admin_health_closure_contract.py"
+        ]
+      }
+    },
+    "admin_destructive_boundary_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/admin_destructive_boundary_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 20,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_admin_destructive_boundary_contract.py"
+        ]
+      }
+    },
+    "admin_auth_gate_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/admin_auth_gate_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": {
+        "passed": 14,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_admin_auth_gate_mutations.py"
+        ]
+      }
+    },
+    "admin_destructive_audit_sanitization": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/test_admin_destructive_audit_sanitization.py",
+          "kind": "test_functions",
+          "unit": "named generated tests"
+        }
+      ],
+      "last_result": {
+        "passed": 17,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_admin_destructive_audit_sanitization.py"
+        ]
+      }
+    },
+    "admin_verdict_parity_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/admin_verdict_parity_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_admin_verdict_parity_contract.py"
+        ]
+      }
+    },
+    "measurement_surface_truth_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/measurement_surface_truth_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_measurement_surface_truth_contract.py"
+        ]
+      }
+    },
+    "grid_freshness_query_authority_contract": {
+      "case_sources": [],
+      "last_result": null
+    },
+    "query_plan_rail_authority_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/query_plan_rail_authority_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_query_plan_rail_authority_contract.py"
+        ]
+      }
+    },
+    "browser_audit_replacement_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/browser_audit_replacement_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_browser_audit_replacement_contract.py"
+        ]
+      }
+    },
+    "browser_edge_failure_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/browser_edge_failure_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_browser_edge_failure_contract.py"
+        ]
+      }
+    },
+    "browser_filer_privilege_residual_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/browser_filer_privilege_residual_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_browser_filer_privilege_residual_contract.py"
+        ]
+      }
+    },
+    "browser_product_jank_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/browser_product_jank_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_browser_product_jank_contract.py"
+        ]
+      }
+    },
+    "browser_replacement_closure_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/browser_replacement_closure_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_browser_replacement_closure_contract.py"
+        ]
+      }
+    },
+    "browser_sweep_filing_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/browser_sweep_filing_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_browser_sweep_filing_contract.py"
+        ]
+      }
+    },
+    "cache_failure_resilience": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/cache_failure_resilience_fixtures.json",
+          "selector": [
+            "scenarios"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 20,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_cache_failure_resilience.py"
+        ]
+      }
+    },
+    "cache_connection_ownership_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/cache_connection_ownership_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 13,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_cache_connection_ownership_contract.py"
+        ]
+      }
+    },
+    "degraded_cache_privacy_contract": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/degraded_feed_publication_fixtures.json",
+          "selector": [
+            "scenarios"
+          ],
+          "unit": "fixture rows"
+        },
+        {
+          "path": "backend/scripts/evals/degraded_feed_publication_fixtures.json",
+          "selector": [
+            "rejected_counterexamples"
+          ],
+          "unit": "fixture rows"
+        },
+        {
+          "path": "backend/scripts/evals/kid_session_privacy_fixtures.json",
+          "selector": [
+            "scenarios"
+          ],
+          "unit": "fixture rows"
+        },
+        {
+          "path": "backend/scripts/evals/kid_session_privacy_fixtures.json",
+          "selector": [
+            "rejected_counterexamples"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_degraded_cache_privacy_contract.py"
+        ]
+      }
+    },
+    "event_cache_repair_closure_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/event_cache_repair_closure_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_event_cache_repair_closure_contract.py"
+        ]
+      }
+    },
+    "event_negative_cache_precedence_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/event_negative_cache_precedence_contract.json",
+          "selector": [],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_event_negative_cache_precedence_contract.py"
+        ]
+      }
+    },
+    "politics_cache_tier_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/politics_cache_tier_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_politics_cache_tier_contract.py"
+        ]
+      }
+    },
+    "calibration_population_integrity": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/calibration_population_integrity_fixtures.json",
+          "selector": [
+            "scenarios"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 7,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_calibration_population_integrity.py"
+        ]
+      }
+    },
+    "calibration_independence_disclosure_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/calibration_independence_disclosure_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_calibration_independence_disclosure_contract.py"
+        ]
+      }
+    },
+    "calibration_census_closure_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/calibration_census_closure_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_calibration_census_closure_contract.py"
+        ]
+      }
+    },
+    "calibration_fingerprint_derived_map": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/calibration_fingerprint_derived_map.json",
+          "selector": [
+            "inputs"
+          ],
+          "unit": "fingerprint inputs"
+        }
+      ],
+      "last_result": {
+        "passed": 13,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_calibration_fingerprint_derived_map.py"
+        ]
+      }
+    },
+    "calibration_metric_robustness": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/test_calibration_metric_robustness.py",
+          "kind": "test_functions",
+          "unit": "named generated tests"
+        }
+      ],
+      "last_result": {
+        "passed": 7,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_calibration_metric_robustness.py"
+        ]
+      }
+    },
+    "calibration_publish_gate_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/calibration_publish_gate_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_calibration_publish_gate_contract.py"
+        ]
+      }
+    },
+    "calibration_surface_population_authority": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/calibration_surface_population_authority.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_calibration_surface_population_authority.py"
+        ]
+      }
+    },
+    "calibration_rendered_parity_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/calibration_rendered_parity_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_calibration_rendered_parity_contract.py"
+        ]
+      }
+    },
+    "calibration_subcohort_diagnosis_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/calibration_subcohort_diagnosis_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_calibration_subcohort_diagnosis_contract.py"
+        ]
+      }
+    },
+    "matched_calibration_evidence_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/matched_calibration_evidence_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_matched_calibration_evidence_contract.py"
+        ]
+      }
+    },
+    "nonexclusive_bundle_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/nonexclusive_bundle_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_nonexclusive_bundle_contract.py"
+        ]
+      }
+    },
+    "trading_activity_authority_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/trading_activity_authority_contract.json",
+          "selector": [],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_trading_activity_authority_contract.py"
+        ]
+      }
+    },
+    "feed_card_trust_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/feed_card_trust_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_feed_card_trust_contract.py"
+        ]
+      }
+    },
+    "additional_markets_authority_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/additional_markets_authority_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_additional_markets_authority_contract.py"
+        ]
+      }
+    },
+    "golf_event_membership_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/golf_event_membership_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_golf_event_membership_contract.py"
+        ]
+      }
+    },
+    "prop_divergence_grouping_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/prop_divergence_grouping_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_prop_divergence_grouping_contract.py"
+        ]
+      }
+    },
+    "settled_event_result_authority": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/settled_event_result_authority.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 12,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_settled_event_result_authority.py"
+        ]
+      }
+    },
+    "settlement_authority_ladder_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/settlement_authority_ladder_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_settlement_authority_ladder_contract.py"
+        ]
+      }
+    },
+    "settled_prop_grade_authority_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/settled_prop_grade_authority_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_settled_prop_grade_authority_contract.py"
+        ]
+      }
+    },
+    "tournament_ux_closure_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/tournament_ux_closure_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_tournament_ux_closure_contract.py"
+        ]
+      }
+    },
+    "native_parity_inventory": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/native_parity_inventory.json",
+          "selector": [
+            "capabilities"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 8,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_native_parity_inventory.py"
+        ]
+      }
+    },
+    "native_surface_authority_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/native_surface_authority_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_native_surface_authority_contract.py"
+        ]
+      }
+    },
+    "first_card_client_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/first_card_client_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 8,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_first_card_client_contract.py"
+        ]
+      }
+    },
+    "animation_dependency_equivalence_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/animation_dependency_equivalence_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_animation_dependency_equivalence_contract.py"
+        ]
+      }
+    },
+    "first_content_latency_attribution_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/first_content_latency_attribution_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_first_content_latency_attribution_contract.py"
+        ]
+      }
+    },
+    "discover_lead_order_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/discover_lead_order_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 14,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_discover_lead_order_contract.py"
+        ]
+      }
+    },
+    "search_truth_closure_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/search_truth_closure_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_search_truth_closure_contract.py"
+        ]
+      }
+    },
+    "search_concept_containment_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/search_concept_containment_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 13,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_search_concept_containment_contract.py"
+        ]
+      }
+    },
+    "search_degraded_response_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/search_degraded_response_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_search_degraded_response_contract.py"
+        ]
+      }
+    },
+    "search_dropdown_cross_surface_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/search_dropdown_cross_surface_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_search_dropdown_cross_surface_contract.py"
+        ]
+      }
+    },
+    "search_enrichment_failure_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/search_enrichment_failure_contract.json",
+          "selector": [],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_search_enrichment_failure_contract.py"
+        ]
+      }
+    },
+    "search_latency_budget_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/search_latency_budget_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 15,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_search_latency_budget_contract.py"
+        ]
+      }
+    },
+    "search_missing_answer_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/search_missing_answer_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_search_missing_answer_contract.py"
+        ]
+      }
+    },
+    "search_observability_truth_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/search_observability_truth_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_search_observability_truth_contract.py"
+        ]
+      }
+    },
+    "search_recovery_state_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/search_recovery_state_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_search_recovery_state_contract.py"
+        ]
+      }
+    },
+    "search_response_truth_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/search_response_truth_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 15,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_search_response_truth_contract.py"
+        ]
+      }
+    },
+    "scoreboard": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/test_scoreboard.py",
+          "kind": "test_functions",
+          "unit": "reporting tests"
+        }
+      ],
+      "last_result": null
+    },
+    "_mutation_guard": {
+      "case_sources": [
+        {
+          "path": "backend/tests/test_mutation_guard.py",
+          "kind": "test_functions",
+          "unit": "shared guard tests (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "browse_single_scan_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/browse_single_scan_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "build_search_gold_registry": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_gold_probes.json",
+          "selector": [
+            "probes"
+          ],
+          "unit": "shared gold probes (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "cache_refresh_behind_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/cache_refresh_behind_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "cold_path_rejected_sample_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/cold_path_rejected_sample_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "duration_sample_window_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/duration_sample_window_mutations.py",
+          "kind": "ast_list",
+          "key": "ADHERENCE_MUTANTS",
+          "unit": "mutants"
+        },
+        {
+          "path": "backend/scripts/evals/duration_sample_window_mutations.py",
+          "kind": "ast_list",
+          "key": "REDIS_MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "event_hero_duel_percent_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/event_hero_duel_percent_mutations.py",
+          "kind": "ast_list",
+          "key": "RESOLVER_MUTATIONS",
+          "unit": "mutants"
+        },
+        {
+          "path": "backend/scripts/evals/event_hero_duel_percent_mutations.py",
+          "kind": "ast_list",
+          "key": "COMPONENT_MUTATIONS",
+          "unit": "mutants"
+        },
+        {
+          "path": "backend/scripts/evals/event_hero_duel_percent_mutations.py",
+          "kind": "ast_list",
+          "key": "VIEW_MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "feed_personalization_roundtrip_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/feed_personalization_roundtrip_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "feed_prewarm_absent_shape_net_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/feed_prewarm_absent_shape_net_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "futures_categories_census_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/futures_categories_census_mutations.py",
+          "kind": "ast_list",
+          "key": "CENSUS_MUTATIONS",
+          "unit": "mutants"
+        },
+        {
+          "path": "backend/scripts/evals/futures_categories_census_mutations.py",
+          "kind": "ast_list",
+          "key": "SERVE_STALE_MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "futures_categories_warm_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/futures_categories_warm_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "futures_detail_sources_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/futures_detail_sources_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "futures_movers_warm_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/futures_movers_warm_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "futures_source_breakdown_loose_scan_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/futures_source_breakdown_loose_scan_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "game_markets_shared_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/game_markets_shared_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "golf_schedule_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/golf_schedule_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "ios_duel_percent_served_pair_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/ios_duel_percent_served_pair_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "kalshi_segment_resolved_link_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/kalshi_segment_resolved_link_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "latest_observation_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/latest_observation_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "league_context_grid_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/league_context_grid_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "league_rails_fence_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/league_rails_fence_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "market_born_duplicate_drain_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/market_born_duplicate_drain_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "offline_rerank_fidelity_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/offline_rerank_fidelity_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "outcome_evidence_class_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/outcome_evidence_class_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "polymarket_leg_label_drain_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/polymarket_leg_label_drain_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "prop_families_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/prop_families_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "prop_families_partial_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/prop_families_partial_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "related_futures_shared_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/related_futures_shared_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "scan_mutation_residue": {
+      "case_sources": [
+        {
+          "path": "backend/tests/test_mutation_guard.py",
+          "kind": "test_functions",
+          "unit": "shared guard tests (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "search_bucket_producer": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_gold_probes.json",
+          "selector": [
+            "probes"
+          ],
+          "unit": "shared gold probes (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "search_offline_rerank": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_gold_probes.json",
+          "selector": [
+            "probes"
+          ],
+          "unit": "shared gold probes (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "search_origin_channel_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_origin_channel_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_results_producer": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_gold_probes.json",
+          "selector": [
+            "probes"
+          ],
+          "unit": "shared gold probes (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "search_scorer_wiring_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_scorer_wiring_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_stemmer_alias_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_stemmer_alias_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_suggestions_cold_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_suggestions_cold_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_suggestions_mirror_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_suggestions_mirror_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_suggestions_movers_pool_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_suggestions_movers_pool_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_tier_split_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_tier_split_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_word_test_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_word_test_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "season_market_discovery_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/season_market_discovery_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "tag_counts_group_by_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/tag_counts_group_by_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "tennis_population_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/tennis_population_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "typeahead_concept_provenance_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/typeahead_concept_provenance_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "typeahead_fuzzy_index_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/typeahead_fuzzy_index_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "typeahead_outcome_arm_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/typeahead_outcome_arm_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "typeahead_warmer_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/typeahead_warmer_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "staged_calibration_convergence_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/staged_calibration_convergence_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_staged_calibration_convergence_contract.py"
+        ]
+      }
+    },
+    "observed_product_quality_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/observed_product_quality_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_observed_product_quality_contract.py"
+        ]
+      }
+    }
+  },
+  "pre_ratification": [
+    "absence_semantics_contract",
+    "account_boundary_contract",
+    "additional_markets_authority_contract",
+    "admin_health_closure_contract",
+    "admin_health_evidence_contract",
+    "admin_surface_truth_contract",
+    "admin_verdict_parity_contract",
+    "animation_dependency_equivalence_contract",
+    "anonymous_cold_sharing_contract",
+    "browser_audit_replacement_contract",
+    "browser_edge_failure_contract",
+    "browser_filer_privilege_residual_contract",
+    "browser_product_jank_contract",
+    "browser_replacement_closure_contract",
+    "browser_sweep_filing_contract",
+    "cache_connection_ownership_contract",
+    "cache_failure_resilience",
+    "cal_robustness_census",
+    "calibrate_interestingness",
+    "calibration_coverage_bridge_contract",
+    "calibration_coverage_unit_authority",
+    "calibration_exit_exam_bundle_contract",
+    "calibration_independence_disclosure_contract",
+    "calibration_leakage_census",
+    "calibration_main_phase_budget_contract",
+    "calibration_metric_robustness",
+    "calibration_orphan_containment_contract",
+    "calibration_policy_census",
+    "calibration_population_integrity",
+    "calibration_publish_gate_contract",
+    "calibration_repair_retention_contract",
+    "calibration_surface_population_authority",
+    "calibration_task_resumability_contract",
+    "calibration_version_rollover_contract",
+    "calibration_watchdog_evidence_contract",
+    "chunked_coverage_recomposition_contract",
+    "closure_boundary_contract",
+    "codeql_workflow_truth_contract",
+    "cohort_sweep",
+    "cold_feed_equivalence",
+    "cold_feed_generation_contract",
+    "cold_feed_latency_authority",
+    "collapsed_family_mount_contract",
+    "concept_terminal_residual_contract",
+    "concurrency_lifecycle_contract",
+    "continuous_integrator_distribution_contract",
+    "curated_pick_auto_apply_contract",
+    "curator_generation_replacement_contract",
+    "curator_market_match_contract",
+    "curator_recall_closure_contract",
+    "cursor_durability_contract",
+    "data_quality_alert_episode_contract",
+    "deadline_parser_boundary_contract",
+    "debug_serving_drift_contract",
+    "degraded_cache_privacy_contract",
+    "discover_cardinality_containment_contract",
+    "discover_events_resilience",
+    "discover_staleness_authority",
+    "durable_state_survival_contract",
+    "espn_live_capture_continuity_contract",
+    "eval_import_portability_contract",
+    "eval_registry_contract",
+    "eval_scaffold_generation_contract",
+    "event_cache_repair_closure_contract",
+    "event_negative_cache_precedence_contract",
+    "evidence_age_contract",
+    "expected_event_inventory",
+    "feed_card_trust_contract",
+    "feed_cardinality_contract",
+    "feed_prewarm_decay_contract",
+    "feed_trust_contract",
+    "first_card_client_contract",
+    "first_content_latency_attribution_contract",
+    "freshness_probability_authority",
+    "futures_population_subdivision_contract",
+    "game_moments_persistence",
+    "golf_event_membership_contract",
+    "grid_freshness_truth",
+    "grid_register_contract",
+    "int022_ux_residual_contract",
+    "int023_curator_residual_contract",
+    "integration_finding_disposition_contract",
+    "interestingness_temporal_holdout_contract",
+    "kid_taste",
+    "label_pass_lifecycle_contract",
+    "live_curator_recall_contract",
+    "live_probability_freshness_contract",
+    "manus_retirement_contract",
+    "matched_calibration_evidence_contract",
+    "measurement_surface_truth_contract",
+    "morning_digest_discover_parity_contract",
+    "my_stuff_first_card",
+    "named_event_completeness",
+    "native_parity_inventory",
+    "nonexclusive_bundle_contract",
+    "nonfutures_envelope_renderability_contract",
+    "observed_product_quality_contract",
+    "odds_snapshot_density_contract",
+    "overtaken_premise_authority_contract",
+    "paired_latency_experiment_contract",
+    "playoff_grid_native_parity_contract",
+    "politics_cache_tier_contract",
+    "polymarket_discovery_ledger",
+    "polymarket_recovery_ledger",
+    "precommence_live_authority",
+    "principal_bound_client_state_contract",
+    "probe_registry",
+    "product_measurement_claim_gate",
+    "program_integration_contract",
+    "prop_divergence_grouping_contract",
+    "provider_task_propagation_contract",
+    "python_import_guard_contract",
+    "query_plan_rail_authority_contract",
+    "range_card_distribution_truth_contract",
+    "rater_reliability",
+    "recent_program_merge_contract",
+    "rendered_lifecycle_coverage_contract",
+    "review_verify_closure_authority",
+    "ruling_authority_contract",
+    "scoreboard_contamination_contract",
+    "search_concept_containment_contract",
+    "search_degraded_response_contract",
+    "search_dropdown_cross_surface_contract",
+    "search_enrichment_failure_contract",
+    "search_gold_eval",
+    "search_latency_budget_contract",
+    "search_missing_answer_contract",
+    "search_observability_truth_contract",
+    "search_plan_rail_contract",
+    "search_recovery_state_contract",
+    "search_response_truth_contract",
+    "search_truth_closure_contract",
+    "semantic_relationship_eval",
+    "settled_event_result_authority",
+    "settled_prop_grade_authority_contract",
+    "settled_score_repair_contract",
+    "shape_semantics_v2",
+    "soccer_classifier_contract",
+    "social_ground_truth_replacement_contract",
+    "staged_calibration_convergence_contract",
+    "statistical_claim_authority",
+    "task_health_truth_contract",
+    "taxonomy_defect_contract",
+    "tournament_browser_evidence_contract",
+    "tournament_ux_closure_contract",
+    "trading_activity_authority_contract",
+    "typed_provider_fetch_contract",
+    "ux_stack_honesty_residual_contract",
+    "watchdog_ledger_evidence_contract",
+    "wikipedia_fanout_residual_contract"
+  ],
+  "post_ratification_at_story": [
+    {
+      "name": "_mutation_guard",
+      "first_commit": "8ed848a082",
+      "first_date": "2026-08-23",
+      "subject": "fix(evals): close the mutant-residue class \u2014 and try/finally was never the fix"
+    },
+    {
+      "name": "admin_auth_gate_mutations",
+      "first_commit": "925ce21b33",
+      "first_date": "2026-08-11",
+      "subject": "Q332 (#1279): wire the nine unwired destructive routes, then prove the gate with mutants"
+    },
+    {
+      "name": "admin_destructive_boundary_contract",
+      "first_commit": "925ce21b33",
+      "first_date": "2026-08-11",
+      "subject": "Q332 (#1279): wire the nine unwired destructive routes, then prove the gate with mutants"
+    },
+    {
+      "name": "browse_single_scan_mutations",
+      "first_commit": "85dc418741",
+      "first_date": "2026-08-29",
+      "subject": "fix(LAT-P123): tapping a category in the Search tab stops paying for the same table scan twice"
+    },
+    {
+      "name": "build_search_gold_registry",
+      "first_commit": "ac7169a2cb",
+      "first_date": "2026-08-10",
+      "subject": "#1206 queue 313: gold-set migration + the first measured Search baseline"
+    },
+    {
+      "name": "cache_refresh_behind_mutations",
+      "first_commit": "58503f5913",
+      "first_date": "2026-08-28",
+      "subject": "fix(LAT-P116, #2272): search stops charging one user for two cache rebuilds"
+    },
+    {
+      "name": "calibration_census_closure_contract",
+      "first_commit": "f1e0c79b7f",
+      "first_date": "2026-08-10",
+      "subject": "codex: close calibration census evidence contract"
+    },
+    {
+      "name": "calibration_fingerprint_derived_map",
+      "first_commit": "d55eca42ac",
+      "first_date": "2026-08-10",
+      "subject": "codex: derive calibration fingerprint coverage"
+    },
+    {
+      "name": "calibration_rendered_parity_contract",
+      "first_commit": "87f160e5c6",
+      "first_date": "2026-08-10",
+      "subject": "codex: require rendered calibration parity"
+    },
+    {
+      "name": "calibration_subcohort_diagnosis_contract",
+      "first_commit": "c1ad31fccf",
+      "first_date": "2026-08-10",
+      "subject": "codex: pin calibration subcohort diagnosis"
+    },
+    {
+      "name": "cold_path_rejected_sample_mutations",
+      "first_commit": "f0baa85814",
+      "first_date": "2026-08-28",
+      "subject": "fix(LAT-P110, #2260): the needle's cold-search member was never warm \u2014 it was rate-limited, and the harness graded the throttle as a fast search"
+    },
+    {
+      "name": "discover_lead_order_contract",
+      "first_commit": "3b793509d6",
+      "first_date": "2026-08-10",
+      "subject": "UX-P052 (C185): two prefix-writers become one composition"
+    },
+    {
+      "name": "duration_sample_window_mutations",
+      "first_commit": "ed0d6c5f84",
+      "first_date": "2026-08-12",
+      "subject": "LAT-P040 (#835, #1790): the p95 was a 50-minute statistic wearing a 19-hour window"
+    },
+    {
+      "name": "eval_bite_rate_audit",
+      "first_commit": "064cb2f664",
+      "first_date": "2026-08-10",
+      "subject": "codex: audit eval bite rate and weekly escapes"
+    },
+    {
+      "name": "event_hero_duel_percent_mutations",
+      "first_commit": "c6d03a26ee",
+      "first_date": "2026-08-29",
+      "subject": "test(LAT-P119): the guards for a fix that can be present and inert, and the residue scanner's first non-Python target"
+    },
+    {
+      "name": "feed_personalization_roundtrip_mutations",
+      "first_commit": "89ebc8af70",
+      "first_date": "2026-08-28",
+      "subject": "perf(LAT-P113, #2266): a brand-new install stops paying for three questions with fixed answers"
+    },
+    {
+      "name": "feed_prewarm_absent_shape_net_mutations",
+      "first_commit": "eaf8630dba",
+      "first_date": "2026-08-28",
+      "subject": "perf(LAT-P112, #2265): opening Discover stops randomly costing 3.7 seconds"
+    },
+    {
+      "name": "futures_categories_census_mutations",
+      "first_commit": "32c3b21481",
+      "first_date": "2026-08-29",
+      "subject": "fix(LAT-P122): the Search tab's category grid stops costing a table scan per visitor"
+    },
+    {
+      "name": "futures_categories_warm_mutations",
+      "first_commit": "270ee10b9f",
+      "first_date": "2026-08-29",
+      "subject": "fix(LAT-P137, #1587): the Search page's category grid stops being built by whoever opens Search"
+    },
+    {
+      "name": "futures_detail_sources_cache_mutations",
+      "first_commit": "48317b6433",
+      "first_date": "2026-08-29",
+      "subject": "fix(LAT-P127): the championship market page stops sorting 189,312 rows to print 256"
+    },
+    {
+      "name": "futures_movers_warm_mutations",
+      "first_commit": "ef4cfc9004",
+      "first_date": "2026-08-28",
+      "subject": "fix(LAT-P115, #2270): the Biggest Movers strip stops being cold on every open"
+    },
+    {
+      "name": "futures_source_breakdown_loose_scan_mutations",
+      "first_commit": "b9c8bba769",
+      "first_date": "2026-08-30",
+      "subject": "test(LAT-P148, #2333): 16 guards, a 16-mutant battery, and the two survivors that bought two of them"
+    },
+    {
+      "name": "game_markets_shared_cache_mutations",
+      "first_commit": "5c28aa65b5",
+      "first_date": "2026-08-29",
+      "subject": "fix(LAT-P121): the event page's markets stop being rebuilt for almost every reader"
+    },
+    {
+      "name": "golf_schedule_cache_mutations",
+      "first_commit": "add7378d5d",
+      "first_date": "2026-08-29",
+      "subject": "fix(LAT-P126): the golf schedule stops re-fetching five DataGolf tours on every load"
+    },
+    {
+      "name": "ios_duel_percent_served_pair_mutations",
+      "first_commit": "383bdd7fd1",
+      "first_date": "2026-08-29",
+      "subject": "fix(LAT-P120): the four native surfaces that decide one question one side at a time"
+    },
+    {
+      "name": "kalshi_segment_resolved_link_mutations",
+      "first_commit": "d74b0ad104",
+      "first_date": "2026-09-02",
+      "subject": "fix(Q048, lane1/048): a ghost is not a fixture \u2014 and a resolved market is still evidence"
+    },
+    {
+      "name": "latest_observation_mutations",
+      "first_commit": "371eb09e7b",
+      "first_date": "2026-08-30",
+      "subject": "test(LAT-P147, #2328): 23 guards, a 15-mutant battery, and the survivor that bought the driven assertion"
+    },
+    {
+      "name": "league_context_grid_cache_mutations",
+      "first_commit": "6cfcf631b0",
+      "first_date": "2026-08-29",
+      "subject": "fix(LAT-P128): the event page stops rebuilding a playoff grid that sits warm in Redis"
+    },
+    {
+      "name": "league_rails_fence_mutations",
+      "first_commit": "d837dabb1f",
+      "first_date": "2026-08-28",
+      "subject": "perf(LAT-P110, #2260): a quiet league tab stops paying a 60,000-row walk to show its last 7 games"
+    },
+    {
+      "name": "market_born_duplicate_drain_mutations",
+      "first_commit": "972621710a",
+      "first_date": "2026-09-02",
+      "subject": "fix(Q050, ruling 048): a market-born duplicate url reads the real final"
+    },
+    {
+      "name": "native_surface_authority_contract",
+      "first_commit": "75564d7fbd",
+      "first_date": "2026-08-10",
+      "subject": "codex: audit native authority boundaries"
+    },
+    {
+      "name": "offline_rerank_fidelity_mutations",
+      "first_commit": "0b0ad5345c",
+      "first_date": "2026-08-13",
+      "subject": "LAT-P050: the offline harness scored a world the server does not run"
+    },
+    {
+      "name": "outcome_evidence_class_mutations",
+      "first_commit": "d7d1aa14b7",
+      "first_date": "2026-08-14",
+      "subject": "LAT-P052 (#1861, #1855): the gold set gains a class that can grade #1843 \u2014 and #1855 is priced"
+    },
+    {
+      "name": "polymarket_leg_label_drain_mutations",
+      "first_commit": "df6bd105f8",
+      "first_date": "2026-09-01",
+      "subject": "Q499: a price that names no side gets its side back (item 22 residual)"
+    },
+    {
+      "name": "prop_families_cache_mutations",
+      "first_commit": "7f68dcabe2",
+      "first_date": "2026-08-29",
+      "subject": "fix(LAT-P138, #1249): the team page's props stop being rebuilt for every reader"
+    },
+    {
+      "name": "prop_families_partial_mutations",
+      "first_commit": "9ca6bb6255",
+      "first_date": "2026-08-30",
+      "subject": "test(LAT-P145, #2320): 59 guards, a 21-mutant battery, and the three anchors this change drifted"
+    },
+    {
+      "name": "related_futures_shared_cache_mutations",
+      "first_commit": "3c4a24c6bc",
+      "first_date": "2026-08-29",
+      "subject": "test(LAT-P136, #1587): 35 guards, a two-target battery, and the AST check a survivor bought"
+    },
+    {
+      "name": "scan_mutation_residue",
+      "first_commit": "8ed848a082",
+      "first_date": "2026-08-23",
+      "subject": "fix(evals): close the mutant-residue class \u2014 and try/finally was never the fix"
+    },
+    {
+      "name": "search_bucket_producer",
+      "first_commit": "19de307520",
+      "first_date": "2026-08-10",
+      "subject": "LAT-P029 (#1494): the two queries the gold set could not answer, and a gate that knew the difference"
+    },
+    {
+      "name": "search_offline_rerank",
+      "first_commit": "c8f3f4bea3",
+      "first_date": "2026-08-12",
+      "subject": "Q325 (ruling 041, #993/#1206): nothing ranked the kinds against each other"
+    },
+    {
+      "name": "search_origin_channel_mutations",
+      "first_commit": "28509630e5",
+      "first_date": "2026-08-28",
+      "subject": "test(LAT-P118): the mutation battery for a suppression that cannot be seen working"
+    },
+    {
+      "name": "search_results_producer",
+      "first_commit": "ac7169a2cb",
+      "first_date": "2026-08-10",
+      "subject": "#1206 queue 313: gold-set migration + the first measured Search baseline"
+    },
+    {
+      "name": "search_scorer_wiring_mutations",
+      "first_commit": "4443b15178",
+      "first_date": "2026-08-13",
+      "subject": "LAT-P049 (#1846): the scorer reaches /search, and takes #1839's guard with it"
+    },
+    {
+      "name": "search_stemmer_alias_mutations",
+      "first_commit": "75a9eb09b7",
+      "first_date": "2026-08-11",
+      "subject": "LAT-P036 (#1761, #1731): 'president' led with a 2,359-volume golf market because the stemmer disagrees with itself"
+    },
+    {
+      "name": "search_suggestions_cold_mutations",
+      "first_commit": "407806a311",
+      "first_date": "2026-08-29",
+      "subject": "fix(LAT-P124): the /search suggestion chips stop making every visitor wait ten seconds"
+    },
+    {
+      "name": "search_suggestions_mirror_mutations",
+      "first_commit": "69cd6faca0",
+      "first_date": "2026-08-29",
+      "subject": "test(LAT-P139, #2285): 37 guards, a 14-mutant battery, and the seven mutants a refactor moved"
+    },
+    {
+      "name": "search_suggestions_movers_pool_mutations",
+      "first_commit": "ef4564f694",
+      "first_date": "2026-08-30",
+      "subject": "test(LAT-P151, #2285): 40 guards, a 20-mutant battery, and the floor the proof forgot"
+    },
+    {
+      "name": "search_tier_split_mutations",
+      "first_commit": "0858c41a51",
+      "first_date": "2026-08-28",
+      "subject": "perf(LAT-P111, #2261): searching 'winner' or 'champion' stops taking 20 seconds and returning nothing"
+    },
+    {
+      "name": "search_word_test_mutations",
+      "first_commit": "c96383f3f1",
+      "first_date": "2026-08-11",
+      "subject": "LAT-P035 (#1758): 'nba champion' returned nine tennis markets because a doubles player is spelled Zhiyenbayeva"
+    },
+    {
+      "name": "season_market_discovery_mutations",
+      "first_commit": "56e3954c72",
+      "first_date": "2026-08-30",
+      "subject": "fix(LAT-P144, #1587): the event page stops re-deriving the whole sport's market list on every load"
+    },
+    {
+      "name": "settlement_authority_ladder_contract",
+      "first_commit": "5cc60c99e9",
+      "first_date": "2026-08-10",
+      "subject": "codex: attack settlement authority ladder"
+    },
+    {
+      "name": "tag_counts_group_by_mutations",
+      "first_commit": "3cfdfa2b36",
+      "first_date": "2026-08-28",
+      "subject": "fix(LAT-P114, #2267): the Categories page stops saying \"Failed to load categories\""
+    },
+    {
+      "name": "tennis_population_mutations",
+      "first_commit": "f90ba0bdd3",
+      "first_date": "2026-08-30",
+      "subject": "test(LAT-P146, #2323): 62 guards, a 27-mutant battery, and the survivor that bought a test"
+    },
+    {
+      "name": "typeahead_concept_provenance_mutations",
+      "first_commit": "b2f6ad1356",
+      "first_date": "2026-08-14",
+      "subject": "LAT-P051 (#1846): the discovery path stops deciding provenance on typeahead"
+    },
+    {
+      "name": "typeahead_fuzzy_index_mutations",
+      "first_commit": "11587f39ea",
+      "first_date": "2026-08-29",
+      "subject": "test(LAT-P135, #1866): guard both fuzzy surfaces, and the probe that ruled Discover out"
+    },
+    {
+      "name": "typeahead_outcome_arm_mutations",
+      "first_commit": "426ee3062e",
+      "first_date": "2026-08-30",
+      "subject": "test(LAT-P143, #1866): 37 guards, a 20-mutant battery, and the clause that changes no result"
+    },
+    {
+      "name": "typeahead_warmer_mutations",
+      "first_commit": "4e43c37288",
+      "first_date": "2026-08-14",
+      "subject": "LAT-P056 (#1866): the typeahead miss was never compute \u2014 it is cold GIN pages"
+    }
+  ],
+  "mutation_residue": {
+    "verdict": "CLEAN",
+    "needles": 602,
+    "targets": 51,
+    "scope": "all tracked files: 5,060,510 broad checks",
+    "recorded_at_pt": "2026-11-03 8:50:23 PM PT",
+    "broad_checks": 5060510,
+    "disk_free_batteries": 4,
+    "command": "python3 scripts/evals/scan_mutation_residue.py --all-tracked",
+    "short_replacements_excluded": 133,
+    "preexisting_literals": 52,
+    "files_scanned": 10790,
+    "source_sha": "54470c89fdf9a4a00356160465af48e81d375bf0"
+  }
+}

@@ -27,7 +27,9 @@ from app.utils.container_presentation import MEMBER_MARKET, market_destination
 
 __all__ = [
     "ROUNDUP_CACHE_TTL_S",
+    "ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS",
     "ROUNDUP_PRODUCERS",
+    "ROUNDUP_PRODUCER_TIMEOUT_SECONDS",
     "ROUNDUP_READ_BUDGET_SECONDS",
     "ROUNDUP_SEAT_FLOOR",
     "RoundupMembers",
@@ -50,7 +52,9 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 ROUNDUP_CACHE_TTL_S = 60.0
-ROUNDUP_READ_BUDGET_SECONDS = 0.5
+ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5
+ROUNDUP_READ_BUDGET_SECONDS = 2.5
+ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS = 10.0
 #: Oct 7–8 Discover opening ruling (#4080 / #5100 / #5105): seats 1–10 (indices
 #: 0–9) are the dated why-now opening ten. Standing round-ups sit in page one's
 #: back half starting at index 10 (seat 11), with no ranking change.
@@ -68,6 +72,12 @@ class RoundupMembers:
     members: tuple[dict[str, Any], ...]
     rows: tuple[dict[str, Any], ...] = ()
     feed_item: Optional[dict[str, Any]] = None
+    footer: Optional[str] = None
+    count_line: Optional[str] = None
+    title: Optional[str] = None
+    kicker: Optional[str] = None
+    sections: tuple[dict[str, Any], ...] = ()
+    revision_ids: tuple[int, ...] = ()
 
     def __init__(
         self,
@@ -75,10 +85,32 @@ class RoundupMembers:
         rows: Sequence[dict[str, Any]] = (),
         *,
         feed_item: Optional[dict[str, Any]] = None,
+        footer: Optional[str] = None,
+        count_line: Optional[str] = None,
+        title: Optional[str] = None,
+        kicker: Optional[str] = None,
+        sections: Sequence[dict[str, Any]] = (),
+        revision_ids: Sequence[int] = (),
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
         object.__setattr__(self, "feed_item", feed_item)
+        object.__setattr__(
+            self, "footer", str(footer) if footer is not None else None
+        )
+        object.__setattr__(
+            self, "count_line", str(count_line) if count_line is not None else None
+        )
+        object.__setattr__(
+            self, "title", str(title) if title is not None else None
+        )
+        object.__setattr__(
+            self, "kicker", str(kicker) if kicker is not None else None
+        )
+        object.__setattr__(self, "sections", tuple(sections))
+        object.__setattr__(
+            self, "revision_ids", tuple(int(rid) for rid in revision_ids)
+        )
 
 
 @dataclass(frozen=True)
@@ -102,6 +134,9 @@ class RoundupProducer:
     section_title: str
     footer: str
     produce: Callable[[Any], Any]
+    section_titles: tuple[str, ...] = ()
+    membership: str = "computed-produced"
+    rule: Optional[dict[str, Any]] = None
     tag: Optional[str] = None
     kicker: str = "Round-up"
     story_key: Optional[str] = None
@@ -114,10 +149,12 @@ class RoundupProducer:
         name: str,
         kind: str = "roundup",
         category: str = "",
-        section_title: str = "",
+        section_title: str | Sequence[str] = "",
         footer: str = "",
         produce: Optional[Callable[[Any], Any]] = None,
         *,
+        membership: str = "computed-produced",
+        rule: Optional[Mapping[str, Any]] = None,
         tag: Optional[str] = None,
         kicker: str = "Round-up",
         story_key: Optional[str] = None,
@@ -126,13 +163,26 @@ class RoundupProducer:
     ) -> None:
         if produce is None:
             raise TypeError("RoundupProducer requires a 'produce' callable")
+        if isinstance(section_title, (list, tuple)):
+            titles_tuple = tuple(str(t) for t in section_title if str(t))
+            primary_title = titles_tuple[0] if titles_tuple else ""
+        else:
+            primary_title = str(section_title)
+            titles_tuple = (primary_title,) if primary_title else ()
         object.__setattr__(self, "slug", str(slug))
         object.__setattr__(self, "name", str(name))
         object.__setattr__(self, "kind", str(kind or "roundup"))
         object.__setattr__(self, "category", str(category))
-        object.__setattr__(self, "section_title", str(section_title))
+        object.__setattr__(self, "section_title", primary_title)
+        object.__setattr__(self, "section_titles", titles_tuple)
         object.__setattr__(self, "footer", str(footer))
         object.__setattr__(self, "produce", produce)
+        object.__setattr__(
+            self, "membership", str(membership or "computed-produced")
+        )
+        object.__setattr__(
+            self, "rule", dict(rule) if isinstance(rule, Mapping) else None
+        )
         object.__setattr__(
             self,
             "tag",
@@ -186,6 +236,20 @@ def _normalize_member_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_section_entry(
+    section: Mapping[str, Any], default_title: str
+) -> dict[str, Any]:
+    raw_sec_members = section.get("members") or ()
+    norm_members = [_normalize_member_entry(m) for m in raw_sec_members]
+    return {
+        "class": str(section.get("class") or "title"),
+        "title": str(section.get("title") or default_title),
+        "layout": str(section.get("layout") or "field"),
+        "count": len(norm_members),
+        "members": norm_members,
+    }
+
+
 def compose_roundup_container(
     producer: RoundupProducer,
     members: RoundupMembers | Sequence[Mapping[str, Any]],
@@ -198,25 +262,29 @@ def compose_roundup_container(
         return None
     normalized = [_normalize_member_entry(m) for m in raw_members]
     member_ids = [int(m["id"]) for m in normalized]
-    return {
-        "state": "published",
-        "slug": producer.slug,
-        "revision": roundup_revision(member_ids),
-        "reason": None,
-        "edition": None,
-        "container": {
-            "id": roundup_container_id(producer.slug),
-            "slug": producer.slug,
-            "name": producer.name,
-            "kind": producer.kind,
-            "category": producer.category,
-            "status": "open",
-            "window_start": None,
-            "window_end": None,
-            "parent_container_id": None,
-        },
-        "subtitle": producer.footer,
-        "sections": [
+    rev_ids = (
+        list(members.revision_ids)
+        if isinstance(members, RoundupMembers) and members.revision_ids
+        else member_ids
+    )
+    subtitle = (
+        members.footer
+        if isinstance(members, RoundupMembers) and members.footer
+        else producer.footer
+    )
+    container_name = (
+        members.title
+        if isinstance(members, RoundupMembers) and members.title
+        else producer.name
+    )
+    if isinstance(members, RoundupMembers) and members.sections:
+        sections = [
+            _normalize_section_entry(sec, producer.section_title)
+            for sec in members.sections
+        ]
+        total_members = sum(len(sec["members"]) for sec in sections)
+    else:
+        sections = [
             {
                 "class": "title",
                 "title": producer.section_title,
@@ -224,8 +292,28 @@ def compose_roundup_container(
                 "count": len(normalized),
                 "members": normalized,
             }
-        ],
-        "member_count": len(normalized),
+        ]
+        total_members = len(normalized)
+    return {
+        "state": "published",
+        "slug": producer.slug,
+        "revision": roundup_revision(rev_ids),
+        "reason": None,
+        "edition": None,
+        "container": {
+            "id": roundup_container_id(producer.slug),
+            "slug": producer.slug,
+            "name": container_name,
+            "kind": producer.kind,
+            "category": producer.category,
+            "status": "open",
+            "window_start": None,
+            "window_end": None,
+            "parent_container_id": None,
+        },
+        "subtitle": subtitle,
+        "sections": sections,
+        "member_count": total_members,
         "withheld": [],
         "withheld_count": 0,
         "children": [],
@@ -243,7 +331,11 @@ def compose_roundup_feed_item(
     rows = list(members.rows)
     normalized = [_normalize_member_entry(x) for x in members.members]
     member_ids = [int(m["id"]) for m in normalized]
+    rev_ids = list(members.revision_ids) if members.revision_ids else member_ids
     item_id = producer.story_key or f"roundup:{producer.slug.removeprefix('roundup-')}"
+    footer = members.footer or producer.footer
+    effective_title = members.title or producer.name
+    effective_kicker = members.kicker or producer.kicker
     base_score = (
         float(members.feed_item.get("score", producer.score) or 0.0)
         if isinstance(members.feed_item, Mapping)
@@ -251,7 +343,7 @@ def compose_roundup_feed_item(
     )
     member_items = [
         {
-            "type": "futures",
+            "type": "event" if m.get("type") == "event" else "futures",
             "score": base_score,
             "reason": str(
                 (
@@ -259,7 +351,7 @@ def compose_roundup_feed_item(
                     if idx < len(rows) and isinstance(rows[idx], Mapping)
                     else None
                 )
-                or producer.name
+                or effective_title
             ),
             "headline": str(
                 (
@@ -267,7 +359,7 @@ def compose_roundup_feed_item(
                     if idx < len(rows) and isinstance(rows[idx], Mapping)
                     else None
                 )
-                or producer.name
+                or effective_title
             ),
             "data": dict(m["card"]),
         }
@@ -277,8 +369,8 @@ def compose_roundup_feed_item(
     collection_ref = {
         "slug": producer.slug,
         "href": f"/collections/{producer.slug}",
-        "name": producer.name,
-        "revision": roundup_revision(member_ids),
+        "name": effective_title,
+        "revision": roundup_revision(rev_ids),
         "collection_count": len(member_ids),
     }
     if members.feed_item is not None:
@@ -287,15 +379,26 @@ def compose_roundup_feed_item(
             out["data"]["items"] = member_items
             out["data"]["collection_ref"] = collection_ref
         return out
+    tag_value = (
+        producer.tag if producer.tag is not None else producer.category.upper()
+    ) or None
+    roundup_contract: dict[str, Any] = {
+        "kicker": effective_kicker,
+        "tag": tag_value,
+        "footer": footer,
+        "rows": rows,
+    }
+    if members.count_line:
+        roundup_contract["count_line"] = members.count_line
     return {
         "type": "bundle",
         "score": base_score,
-        "reason": producer.name,
-        "headline": producer.name,
+        "reason": effective_title,
+        "headline": effective_title,
         "context_summary": None,
         "data": {
             "id": item_id,
-            "title": producer.name,
+            "title": effective_title,
             "kind": producer.kind,
             "story_key": item_id,
             "shared_question": None,
@@ -303,12 +406,7 @@ def compose_roundup_feed_item(
             "member_ids": member_ids,
             "items": member_items,
             "collection_ref": collection_ref,
-            "roundup": {
-                "kicker": producer.kicker,
-                "tag": producer.tag or producer.category.upper(),
-                "footer": producer.footer,
-                "rows": rows,
-            },
+            "roundup": roundup_contract,
         },
     }
 
@@ -319,6 +417,103 @@ def _redis_cache_key(slug: str) -> str:
 
 def reset_roundup_cache_for_tests() -> None:
     _roundup_local_cache.clear()
+
+
+_TRANSIENT_REFUSAL_TOKENS = (
+    "source_unavailable",
+    "hydrate_failed",
+    "missing_db_session",
+    "unsupported_session",
+)
+
+
+def _is_cacheable_refusal(reasons: Sequence[Any]) -> bool:
+    """Return False when a refusal reflects a transient loader/session error rather than data state."""
+    for item in reasons:
+        parts = item if isinstance(item, (tuple, list)) else (item,)
+        for part in parts:
+            if not isinstance(part, str):
+                continue
+            tok = part.strip().lower()
+            if any(
+                tok == transient or tok.startswith(f"{transient}:")
+                for transient in _TRANSIENT_REFUSAL_TOKENS
+            ):
+                return False
+    return True
+
+
+async def _store_roundup_cache_entry(
+    cache_key: tuple[str, Any],
+    slug: str,
+    ts: float,
+    feed_item: Optional[dict[str, Any]],
+    container_payload: Optional[dict[str, Any]],
+    db: Any,
+) -> None:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    _roundup_local_cache[cache_key] = (
+        ts,
+        copy.deepcopy(feed_item),
+        copy.deepcopy(container_payload),
+    )
+    if isinstance(db, AsyncSession):
+        try:
+            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+            encoded = json.dumps(
+                {
+                    "built_at": ts,
+                    "feed_item": feed_item,
+                    "container_payload": container_payload,
+                },
+                separators=(",", ":"),
+            )
+            client = await get_shared_async_redis()
+            await bounded_redis_call(
+                lambda: client.set(
+                    _redis_cache_key(slug),
+                    encoded,
+                    ex=int(ROUNDUP_CACHE_TTL_S),
+                ),
+                treat_none_as_miss=False,
+            )
+        except Exception:  # noqa: BLE001 — cache write is best-effort
+            logger.debug(
+                "roundup_containers: shared cache write failed for %s",
+                slug,
+                exc_info=True,
+            )
+
+
+async def _cache_roundup_timeout_refusal(
+    producer: RoundupProducer,
+    db: Any,
+    *,
+    ts: Optional[float] = None,
+) -> None:
+    """Cache a timed-out producer as a refusal ``(None, None)`` for ``ROUNDUP_CACHE_TTL_S``."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.container_read_cache import container_read_cache_enabled
+
+    is_fixture_seq = isinstance(db, (list, tuple))
+    rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
+    no_cache = (
+        rule_cfg.get("cache") == "none"
+        or rule_cfg.get("producer") == "yardstick_pair"
+    )
+    if is_fixture_seq or no_cache or not container_read_cache_enabled():
+        return
+    cache_key = (
+        producer.slug,
+        "live" if isinstance(db, AsyncSession) else id(db),
+    )
+    effective_ts = time.time() if ts is None else float(ts)
+    await _store_roundup_cache_entry(
+        cache_key, producer.slug, effective_ts, None, None, db
+    )
 
 
 async def evaluate_roundup_producer(
@@ -337,7 +532,12 @@ async def evaluate_roundup_producer(
 
     is_fixture_seq = isinstance(db, (list, tuple))
     ts = time.time() if now is None else float(now)
-    use_cache = not is_fixture_seq and container_read_cache_enabled()
+    rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
+    no_cache = (
+        rule_cfg.get("cache") == "none"
+        or rule_cfg.get("producer") == "yardstick_pair"
+    )
+    use_cache = not is_fixture_seq and not no_cache and container_read_cache_enabled()
     cache_key = (
         producer.slug,
         "live" if isinstance(db, AsyncSession) else id(db),
@@ -392,6 +592,10 @@ async def evaluate_roundup_producer(
             producer.slug,
             reasons,
         )
+        if use_cache and _is_cacheable_refusal(reasons):
+            await _store_roundup_cache_entry(
+                cache_key, producer.slug, ts, None, None, db
+            )
         return None, None
 
     if not isinstance(outcome, RoundupMembers):
@@ -400,41 +604,16 @@ async def evaluate_roundup_producer(
     container_payload = compose_roundup_container(producer, outcome)
     feed_item = compose_roundup_feed_item(producer, outcome)
     if container_payload is None or feed_item is None:
+        if use_cache:
+            await _store_roundup_cache_entry(
+                cache_key, producer.slug, ts, None, None, db
+            )
         return None, None
 
     if use_cache:
-        _roundup_local_cache[cache_key] = (
-            ts,
-            copy.deepcopy(feed_item),
-            copy.deepcopy(container_payload),
+        await _store_roundup_cache_entry(
+            cache_key, producer.slug, ts, feed_item, container_payload, db
         )
-        if isinstance(db, AsyncSession):
-            try:
-                from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
-
-                encoded = json.dumps(
-                    {
-                        "built_at": ts,
-                        "feed_item": feed_item,
-                        "container_payload": container_payload,
-                    },
-                    separators=(",", ":"),
-                )
-                client = await get_shared_async_redis()
-                await bounded_redis_call(
-                    lambda: client.set(
-                        _redis_cache_key(producer.slug),
-                        encoded,
-                        ex=int(ROUNDUP_CACHE_TTL_S),
-                    ),
-                    treat_none_as_miss=False,
-                )
-            except Exception:  # noqa: BLE001 — cache write is best-effort
-                logger.debug(
-                    "roundup_containers: shared cache write failed for %s",
-                    producer.slug,
-                    exc_info=True,
-                )
 
     return feed_item, container_payload
 
@@ -703,26 +882,76 @@ async def add_roundup_feed_items(
     seat_floor: int = ROUNDUP_SEAT_FLOOR,
     page_window: int = 20,
     budget_seconds: float = ROUNDUP_READ_BUDGET_SECONDS,
+    stage_budget_seconds: Optional[float] = None,
     now: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
     """Evaluate registered round-up producers and place their cards on Discover."""
-    if not items or len(items) < seat_floor or budget_seconds <= 0:
+    if not items or len(items) < seat_floor:
         return items
-    try:
-        produced = await asyncio.wait_for(
-            roundup_feed_items(db),
-            timeout=min(budget_seconds, ROUNDUP_READ_BUDGET_SECONDS),
-        )
-    except Exception:
-        if hasattr(db, "rollback") and callable(db.rollback):
-            try:
-                await db.rollback()
-            except Exception:  # noqa: BLE001
-                pass
+    if budget_seconds <= 0:
         logger.warning(
-            "Discover round-up read failed; keeping ordinary cards", exc_info=True
+            "Discover round-up stage skipped: feed budget exhausted (budget_seconds=%.3f)",
+            budget_seconds,
         )
         return items
+
+    stage_cap = (
+        float(stage_budget_seconds)
+        if stage_budget_seconds is not None
+        else ROUNDUP_READ_BUDGET_SECONDS
+    )
+    stage_budget = min(float(budget_seconds), stage_cap)
+    started = time.perf_counter()
+    producers = list(ROUNDUP_PRODUCERS.values())
+    produced: list[dict[str, Any]] = []
+    for idx, producer in enumerate(producers):
+        elapsed = time.perf_counter() - started
+        remaining = stage_budget - elapsed
+        if remaining <= 0:
+            logger.warning(
+                "Discover round-up stage budget exhausted after %d/%d producers "
+                "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d)",
+                idx,
+                len(producers),
+                budget_seconds,
+                stage_budget,
+                len(produced),
+            )
+            break
+        per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
+        try:
+            feed_item, container_payload = await asyncio.wait_for(
+                evaluate_roundup_producer(producer, db),
+                timeout=per_timeout,
+            )
+        except asyncio.TimeoutError:
+            if hasattr(db, "rollback") and callable(db.rollback):
+                try:
+                    await db.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+            if per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS:
+                await _cache_roundup_timeout_refusal(producer, db)
+            logger.warning(
+                "Discover round-up read failed for %s; keeping ordinary cards",
+                producer.slug,
+                exc_info=True,
+            )
+            continue
+        except Exception:
+            if hasattr(db, "rollback") and callable(db.rollback):
+                try:
+                    await db.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+            logger.warning(
+                "Discover round-up read failed for %s; keeping ordinary cards",
+                producer.slug,
+                exc_info=True,
+            )
+            continue
+        if feed_item is not None and container_payload is not None:
+            produced.append(feed_item)
 
     if not produced:
         return items
@@ -746,10 +975,78 @@ def register_roundup_producer(producer: RoundupProducer) -> RoundupProducer:
 
 def _register_builtin_producers() -> None:
     import app.utils.discover_bundles as _bundles
+    import app.utils.field_band as _field_band
+    import app.utils.field_leaders as _field_leaders
+    import app.utils.same_deadline_board as _same_deadline
+    import app.utils.sibling_family as _sibling_family
+    import app.utils.week_events as _week_events
+    import app.utils.window_events_closest as _window_closest
+    import app.utils.yardstick_pair as _yardstick_pair
 
     producer = getattr(_bundles, "NFL_DIVISION_ROUNDUP_PRODUCER", None)
     if producer is not None:
         register_roundup_producer(producer)
+
+    closest_producer = getattr(
+        _window_closest, "CLOSEST_GAMES_TONIGHT_PRODUCER", None
+    )
+    if closest_producer is not None:
+        register_roundup_producer(closest_producer)
+
+    import app.utils.awards_category_roundup as _awards_cat
+    import app.utils.register_closest as _register_closest
+
+    # Register directly when already initialized; when imported mid-initialization,
+    # each module's bottom-of-file register_roundup_producer call completes registration.
+    if hasattr(_register_closest, "CLOSEST_RACES_PRODUCER"):
+        register_roundup_producer(_register_closest.CLOSEST_RACES_PRODUCER)
+    if hasattr(_awards_cat, "GOLDEN_GLOBES_BEST_PICTURE_PRODUCER"):
+        register_roundup_producer(_awards_cat.GOLDEN_GLOBES_BEST_PICTURE_PRODUCER)
+
+    cfp_producer = getattr(_field_band, "CFP_PICTURE_PRODUCER", None)
+    if cfp_producer is not None:
+        register_roundup_producer(cfp_producer)
+
+    nov30_producer = getattr(_same_deadline, "BY_NOVEMBER_30_PRODUCER", None)
+    if nov30_producer is not None:
+        register_roundup_producer(nov30_producer)
+
+    dec31_producer = getattr(_same_deadline, "BY_DECEMBER_31_PRODUCER", None)
+    if dec31_producer is not None:
+        register_roundup_producer(dec31_producer)
+
+    for attr in (
+        "GTA_VI_ALBUM_FEATURES_PRODUCER",
+        "SNOW_FIRST_FLAKES_2026_PRODUCER",
+        "RT_SCORES_THIS_WEEK_PRODUCER",
+        "WHO_ANNOUNCES_BEFORE_2027_PRODUCER",
+        "ALCARAZ_SINNER_TWO_MAJORS_2027_PRODUCER",
+    ):
+        sf_producer = getattr(_sibling_family, attr, None)
+        if sf_producer is not None:
+            register_roundup_producer(sf_producer)
+
+    golf_week_producer = getattr(_week_events, "GOLF_THIS_WEEK_PRODUCER", None)
+    if golf_week_producer is not None:
+        register_roundup_producer(golf_week_producer)
+
+    for attr in (
+        "TOMORROWS_HIGHS_PRODUCER",
+        "OPENING_WEEKEND_PRODUCER",
+        "THIS_WEEKS_ECONOMIC_DATA_PRODUCER",
+    ):
+        fl_producer = getattr(_field_leaders, attr, None)
+        if fl_producer is not None:
+            register_roundup_producer(fl_producer)
+
+    for attr in (
+        "FOR_SCALE_SNOW_IN_DC_PRODUCER",
+        "FOR_SCALE_SNOW_IN_BUFFALO_PRODUCER",
+        "FOR_SCALE_US_RECESSION_2026_PRODUCER",
+    ):
+        yardstick_producer = getattr(_yardstick_pair, attr, None)
+        if yardstick_producer is not None:
+            register_roundup_producer(yardstick_producer)
 
 
 _register_builtin_producers()
