@@ -318,7 +318,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from app.utils.search_cache import (
-    SEARCH_RESPONSE_TTL_SECONDS,
+    SEARCH_HEAD_WARMER_TTL_SECONDS,
     SEARCH_WARM_SHAPE,
     normalize_search_query,
     search_response_cache_key,
@@ -393,7 +393,25 @@ PER_QUERY_TIMEOUT_SECONDS = 25
 #: ONE QUERY PER SESSION remains an invariant and not a tuning choice: an
 #: `AsyncSession` is not safe for concurrent use, so a second coroutine on the same
 #: session is a corruption bug rather than a slowdown.
+#:
+#: W-1 (2026-11-06): still 8, and now for a second reason. At the 600 s warmer
+#: entry life every width from 2 up keeps the head resident, but widths 2-7 price
+#: a pass at 110-190 s, past two thirds of the task's 120 s soft time limit
+#: (`TASK_SOFT_TIME_LIMIT_SECONDS`), so the solver refuses them on that bar.
 WARM_CONCURRENCY = 8
+
+#: Mirror of `warm_search_head`'s `soft_time_limit` in `app/tasks/__init__.py`, so
+#: the width solver sees the ceiling that ends a pass from above.
+#: `test_the_pass_budget_fits_inside_the_workers_own_time_limit` asserts the two
+#: agree. W-1 added it: once the 600 s entry life made narrow widths
+#: residency-sound, the residency clauses alone solved to width 2, whose 190 s pass
+#: the worker would kill at 120 s.
+TASK_SOFT_TIME_LIMIT_SECONDS = 120
+
+#: The share of the soft limit a worst-case pass may take; the rest is teardown
+#: (`width` session exits), which nothing in this module bounds. The same bar
+#: `test_the_pass_budget_fits_inside_the_workers_own_time_limit` holds.
+PASS_SHARE_OF_SOFT_LIMIT = 2 / 3
 
 #: Socket + connect bound for ONE TTL read, and the reason it is stated as a
 #: constant is that the two TTL reads are part of the worker unit whose length the
@@ -539,12 +557,19 @@ LOCK_CONTROL_OPS_PER_PASS = 4
 #: and come back one period later with `REFRESH_AHEAD - P` left. At 150 that was
 #: 90 s against a permitted 100 s rebuild: a 10 s hole, which is what CERT-2084
 #: measured. #3539 wrote `REFRESH_AHEAD - P_effective > D_max` from the start.
-REFRESH_AHEAD_SECONDS = 150
+#: W-1 (2026-11-06): 150 -> 430 with the 300 s floor and the 600 s warmer entry
+#: life — `derive_refresh_ahead_s()` at period 300 + budget 70 + one 60 s beat.
+#: 430 > 600 - 300 (CAUGHT), 430 - 300 = 130 > the 70 s budget (SURVIVES),
+#: 430 <= 600 (BOUNDED); `residency_invariant()` checks all eight clauses.
+REFRESH_AHEAD_SECONDS = 430
 
 #: The floor between two real passes, checked UNDER the run lock so two beats
 #: cannot both pass it. This is the load bound: the beat may fire more often,
 #: but a pass may not start more often than this.
-MIN_PASS_PERIOD_SECONDS = 45
+#: W-1 (worker audit 2026-11-06 B-2): 45 -> 300. The head was rebuilt every
+#: ~45-60 s on worker-background whether or not anyone searched; at 300 s it costs
+#: a fifth of that, and a reader's head answer is up to ~10 minutes old.
+MIN_PASS_PERIOD_SECONDS = 300
 
 #: The head window. Matches the window `typeahead_warmer._head_from_query_log`
 #: reads, so the two surfaces disagree about WHICH queries are hot and never
@@ -613,7 +638,7 @@ _LAST_PASS_START_TTL_SECONDS = 3600
 #: The beat's publish period, mirrored here so `derive_message_expiry_s` can be
 #: read without the beat file open. `tests/test_tasks_wiring.py` asserts the two
 #: agree, so this is a mirror and never a second source of truth.
-BEAT_PERIOD_SECONDS = 20.0
+BEAT_PERIOD_SECONDS = 60.0
 
 #: How many of this beat's messages may be alive in the broker at once.
 #: STRUCTURAL, not sampled: `expires / beat_period` of them coexist by
@@ -625,7 +650,7 @@ MAX_LIVE_MESSAGES = 16
 def derive_message_expiry_s(
     *,
     beat_s: float = BEAT_PERIOD_SECONDS,
-    entry_life_s: float = SEARCH_RESPONSE_TTL_SECONDS,
+    entry_life_s: float = SEARCH_HEAD_WARMER_TTL_SECONDS,
     max_live: int = MAX_LIVE_MESSAGES,
 ) -> float:
     """How long a `warm-search-head` message must be allowed to live. Derived.
@@ -1062,7 +1087,7 @@ def residual_lock_recovery_s(
 
 def derive_lock_ttl_s(
     *,
-    ttl_s: float = SEARCH_RESPONSE_TTL_SECONDS,
+    ttl_s: float = SEARCH_HEAD_WARMER_TTL_SECONDS,
     beat_s: float = BEAT_PERIOD_SECONDS,
     budget_s: float | None = None,
 ) -> int:
@@ -1180,9 +1205,17 @@ _LOCK_TTL_SECONDS = derive_lock_ttl_s()
 def minimum_concurrency_for_residency(
     *,
     head_size: int = DEFAULT_HEAD_SIZE,
-    ttl_s: float = SEARCH_RESPONSE_TTL_SECONDS,
+    ttl_s: float = SEARCH_HEAD_WARMER_TTL_SECONDS,
+    soft_limit_s: float = TASK_SOFT_TIME_LIMIT_SECONDS,
 ) -> int | None:
     """The narrowest width at which `residency_invariant()` holds. `None` = no width does.
+
+    W-1 (2026-11-06): ...and whose worst-case pass fits in
+    `PASS_SHARE_OF_SOFT_LIMIT` of the task's soft time limit. At the 600 s warmer
+    entry life the residency clauses alone accept width 2 (budget 190 s), which
+    the worker kills at 120 s; the solver now refuses a width the task cannot run.
+    The table below is the pre-W-1 derivation at a 180 s entry life, kept as the
+    record of why width 8 was first reached.
 
     🔴 THE WIDTH IS SOLVED FOR, NOT CHOSEN, AND THIS FUNCTION IS THE SOLVER.
     CERT-2089 moved it 2 -> 4 on this argument in prose; CERT-2095 showed the
@@ -1226,6 +1259,8 @@ def minimum_concurrency_for_residency(
     """
     for conc in range(1, head_size + 1):
         budget = full_rebuild_budget_s(head_size=head_size, concurrency=conc)
+        if budget > soft_limit_s * PASS_SHARE_OF_SOFT_LIMIT:
+            continue
         refresh_ahead = derive_refresh_ahead_s(budget_s=budget)
         ok, _ = residency_invariant(
             ttl_s=ttl_s, refresh_ahead_s=refresh_ahead, budget_s=budget
@@ -1306,7 +1341,7 @@ def derive_refresh_ahead_s(
 
 def residency_invariant(
     *,
-    ttl_s: float = SEARCH_RESPONSE_TTL_SECONDS,
+    ttl_s: float = SEARCH_HEAD_WARMER_TTL_SECONDS,
     refresh_ahead_s: float = REFRESH_AHEAD_SECONDS,
     period_s: float | None = None,
     budget_s: float | None = None,
@@ -2448,7 +2483,7 @@ def _summarize(
         "over_budget": over_budget,
         "concurrency": width,
         "refresh_ahead_s": REFRESH_AHEAD_SECONDS,
-        "ttl_s": SEARCH_RESPONSE_TTL_SECONDS,
+        "ttl_s": SEARCH_HEAD_WARMER_TTL_SECONDS,
         "period_s": None if since_last is None else round(since_last, 3),
         "min_period_s": MIN_PASS_PERIOD_SECONDS,
     }

@@ -154,6 +154,7 @@ jest.mock("swr", () => ({
 }));
 
 import WeatherPage from "@/app/weather/page";
+import { findBannedCopy, JARGON_BANS, visibleTextFromHtml } from "@/lib/copyBans";
 
 describe("/weather?atlas=1 (#11949 Order 11)", () => {
   afterEach(() => {
@@ -185,5 +186,7 @@ describe("/weather?atlas=1 (#11949 Order 11)", () => {
     expect(html).not.toContain(">Unlikely<");
     expect(html).not.toContain(">Likely<");
     expect(html).not.toContain(">Toss-up<");
+    // No banned copy ("blend", etc.)
+    expect(findBannedCopy(visibleTextFromHtml(html), JARGON_BANS)).toEqual([]);
   });
 });

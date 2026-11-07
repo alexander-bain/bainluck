@@ -75,7 +75,8 @@ function toOrderedOutcomes(
   orderNumeric: boolean,
   settledWinner?: string | null
 ): AtlasCategoryOutcome[] {
-  const items = outcomes.map((o, idx) => ({
+  const valid = (outcomes ?? []).filter((o) => Boolean((o?.name || "").trim()));
+  const items = valid.map((o, idx) => ({
     o,
     idx,
     num: parseLeadingNumber(o.name),
@@ -165,7 +166,7 @@ function renderChamberRaceCard(
         marketId: ctrl.market_id,
         kicker: `CHAMBER CONTROL · ${settledWinner ? "settled" : "open"}`,
         marketTitle: `${chamberName} Control`,
-        source: ctrl.source ?? null,
+        source: ctrl.source && ctrl.source.trim() ? ctrl.source.trim() : null,
       }}
       contenders={contenders}
       settledWinner={settledWinner}
@@ -177,14 +178,22 @@ function renderPoliticsMarketByShape(
   row: ExtendedPoliticsMarketRow,
   themeKey: string
 ) {
-  const outcomes = row.top_outcomes ?? [];
+  const outcomes = (row.top_outcomes ?? []).filter((o) =>
+    Boolean((o?.name || "").trim())
+  );
+  if (outcomes.length === 0 && !(row.q || "").trim()) {
+    return null;
+  }
   const meta: AtlasMarketMeta = {
     marketId: row.market_id,
     marketTitle: row.q,
     kicker: themeKey.toUpperCase(),
-    source: row.src,
+    source: row.src && row.src.trim() ? row.src.trim() : null,
   };
-  const settledWinner = row.settled_winner ?? null;
+  const settledWinner =
+    row.settled_winner && row.settled_winner.trim()
+      ? row.settled_winner.trim()
+      : null;
 
   if (outcomes.length <= 1) {
     const lead = outcomes[0];
@@ -268,7 +277,9 @@ export default function PoliticsAtlasView({ data }: { data: PoliticsData }) {
   const showTheme = (key: string) => !activeTheme || activeTheme === key;
 
   const pres = t.presidential;
-  const presCandidates = pres?.candidates ?? [];
+  const presCandidates = (pres?.candidates ?? []).filter((c) =>
+    Boolean((c?.name || "").trim())
+  );
   const sortedPres = [...presCandidates].sort(
     (a, b) => (b.merged ?? -1) - (a.merged ?? -1)
   );
@@ -400,7 +411,18 @@ export default function PoliticsAtlasView({ data }: { data: PoliticsData }) {
               marketTitle:
                 pres?.headline_q || "Who wins the 2028 presidential election?",
               observedAt: data.updated_at,
-              sourceCount: pres?.has_dual_source ? 2 : 1,
+              source: pres?.has_dual_source
+                ? null
+                : pres?.kalshi_market_id
+                  ? "kalshi"
+                  : pres?.poly_market_id
+                    ? "polymarket"
+                    : null,
+              sourceCount: pres?.has_dual_source
+                ? 2
+                : pres?.kalshi_market_id || pres?.poly_market_id
+                  ? 1
+                  : null,
             }}
             outcomes={presOutcomes}
             journeySeries={presJourneySeries}

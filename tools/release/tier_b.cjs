@@ -1,6 +1,9 @@
 'use strict';
 
 function verdict(pr, reviews) {
+  if (pr.labels.some(label => label.name === 'eval-candidate')) {
+    return {conclusion:'failure',summary:'Never-merge reviewer eval candidate. Its bot verdict is study evidence; this label cannot authorize a merge.'};
+  }
   if (!pr.labels.some(label => label.name === 'tier-b')) {
     return {conclusion:'success',summary:'This PR does not carry tier-b.'};
   }
