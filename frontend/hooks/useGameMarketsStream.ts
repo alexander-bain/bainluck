@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMarketStream } from './useMarketStream';
 import { createFuturesReadScheduler } from '@/lib/futuresDetailStream';
-import { createGameMarketsReconciler, fetchFreshGameMarkets, type LiveGameMarkets } from '@/lib/gameMarketsStream';
+import {
+  createGameMarketsReconciler, fetchFreshGameMarkets, settledGameMarkets, type LiveGameMarkets,
+} from '@/lib/gameMarketsStream';
 
 /** #10285: the reconciler each game page last adopted with. Back to a game page used to render the
  * props and Additional Markets empty until a ~3s fresh read landed, while SWR served every other
@@ -23,16 +25,20 @@ function hold(key: string, reconcile: Reconciler) {
   if (heldReconcilers.size > HELD_GAMES) heldReconcilers.delete(heldReconcilers.keys().next().value!);
 }
 
-/** The same held context serves scheduled, live and final contracts. */
-export function useGameMarketsStream(eventId: number, canonicalId: number) {
+/** The same held context serves scheduled, live and final contracts. `finished` is the page's own
+ * read of the event; it only chooses the FIRST read's tier, before any body has been held (#12283). */
+export function useGameMarketsStream(eventId: number, canonicalId: number, finished = false) {
   const key = `${eventId}:${canonicalId}`;
   const [state, setState] = useState<{ key: string; body: LiveGameMarkets }>();
   const scheduler = useRef<ReturnType<typeof createFuturesReadScheduler>>();
+  const finishedNow = useRef(finished);
+  finishedNow.current = finished;
   useEffect(() => {
     if (!Number.isSafeInteger(eventId) || eventId <= 0) return;
     const reconcile = heldReconcilers.get(key) ?? createGameMarketsReconciler();
     const worker = createFuturesReadScheduler({ now: () => Date.now(), read: async (signal, current) => {
-      const next = await fetchFreshGameMarkets(eventId, signal);
+      const held = reconcile.current();
+      const next = await fetchFreshGameMarkets(eventId, signal, held ? !settledGameMarkets(held) : !finishedNow.current);
       if (!current()) return;
       if (next.event_id !== canonicalId || !Array.isArray(next.totals) || !Array.isArray(next.player_props)) {
         throw new Error('Game markets identity or payload mismatch');
@@ -52,7 +58,7 @@ export function useGameMarketsStream(eventId: number, canonicalId: number) {
     };
   }, [eventId, canonicalId, key]);
   const body = state?.key === key ? state.body : heldReconcilers.get(key)?.current();
-  useMarketStream({ marketIds: body?.stream_market_ids ?? [], enabled: !!body,
+  useMarketStream({ marketIds: body?.stream_market_ids ?? [], enabled: !!body && !settledGameMarkets(body),
     onInvalidate: () => scheduler.current?.request() });
   return { data: body };
 }
