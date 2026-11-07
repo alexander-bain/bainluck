@@ -181,22 +181,20 @@ def _cache_window_seconds(header: str | None) -> float:
     return max(ages, default=float("inf")) + max(stale, default=0)
 
 
+# Election night, inside the pin window (pin_until is 2026-11-07 08:00Z).
+READ_AT = datetime(2026, 11, 4, 6, 0, tzinfo=timezone.utc)
+assert READ_AT < datetime.fromisoformat(MANIFEST["pin_until"])
+
+
 @pytest.fixture
 def served(monkeypatch):
     from app.routes import containers, futures
     from app.services import get_db
     from app.utils.container_corrections import PublishedRead
-    from app.utils.midterms_collection import midterms_pin
 
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
     monkeypatch.setenv("COLLECTIONS_ENABLED", "true")
     monkeypatch.setenv("CONTAINER_COLLECTIONS_ENABLED", "true")
-    pin_now = datetime(2026, 11, 6, 23, tzinfo=timezone.utc)
-    monkeypatch.setattr(
-        containers,
-        "midterms_pin",
-        lambda payload, now=pin_now: midterms_pin(payload, now=now),
-    )
     members = [
         {"id": mid, "type": "market", "class": s["key"], "source": "human"}
         for s in MANIFEST["sections"]
@@ -219,6 +217,11 @@ def served(monkeypatch):
 
     monkeypatch.setattr(containers, "read_published", published)
     monkeypatch.setattr(futures, "withheld_price_outcome_ids_for_markets", refused_prices)
+    # The Discover pin is only served before MANIFEST["pin_until"]; read it at a
+    # fixed instant inside that window, never the real clock (it went red at
+    # 2026-11-07 08:00Z, the pin's own end — #12252 item 3's class).
+    real_pin = containers.midterms_pin
+    monkeypatch.setattr(containers, "midterms_pin", lambda payload, now=None: real_pin(payload, now=READ_AT))
     app = FastAPI()
     app.include_router(containers.router, prefix="/api/containers")
     app.dependency_overrides[get_db] = session
