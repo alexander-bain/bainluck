@@ -2,7 +2,9 @@ name: Tier-B review
 on:
   pull_request:
     types: [opened, reopened, synchronize, labeled, ready_for_review]
-  # Native completion event frees the reviewer runner while CI is queued.
+  # Use the existing authenticated completion path for both green ordinary CI
+  # and the labelled study's zero-runner, skipped CI. Native action token
+  # exchange failed before model startup on the pull_request_target arm.
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -21,15 +23,28 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' &&
        contains(github.event.pull_request.labels.*.name, 'tier-b') &&
+       !contains(github.event.pull_request.labels.*.name, 'eval-candidate') &&
        github.event.pull_request.draft == false &&
        github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event == 'pull_request' &&
-       github.event.workflow_run.conclusion == 'success' &&
+       (github.event.workflow_run.conclusion == 'success' ||
+        (github.event.workflow_run.conclusion == 'skipped' &&
+         github.event.workflow_run.actor.login == github.repository_owner &&
+         github.event.workflow_run.triggering_actor.login == github.repository_owner)) &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
+      - name: Load trusted study admission rules
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'skipped'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: _review_admission
+          sparse-checkout: tools/release/reviewer_eval_candidate.cjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: Resolve the current eligible PR
         id: select
         uses: actions/github-script@v8
@@ -42,7 +57,7 @@ jobs:
               const run = context.payload.workflow_run;
               if (context.payload.action !== 'completed' || run?.name !== 'CI' ||
                   run.path !== '.github/workflows/ci.yml' || run.event !== 'pull_request' ||
-                  run.status !== 'completed' || run.conclusion !== 'success' ||
+                  run.status !== 'completed' || !['success', 'skipped'].includes(run.conclusion) ||
                   run.head_repository?.full_name !== fullName) return;
               head = run.head_sha;
               const associated = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit,
@@ -56,35 +71,57 @@ jobs:
               head = context.payload.pull_request.head.sha;
             } else return;
             const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
-            if (pr.state !== 'open' || pr.draft || pr.head.sha !== head ||
+            const skippedCI = context.eventName === 'workflow_run' &&
+              context.payload.workflow_run.conclusion === 'skipped';
+            if (skippedCI && !pr.labels.some(label => label.name === 'eval-candidate')) return;
+            const study = skippedCI
+              ? require('./_review_admission/tools/release/reviewer_eval_candidate.cjs') : null;
+            const isEval = study?.eligible(pr, context, head) === true;
+            if (skippedCI && !isEval) return;
+            if (pr.state !== 'open' || (!isEval && pr.draft) || pr.head.sha !== head ||
                 pr.head.repo?.full_name !== fullName ||
                 !pr.labels.some(label => label.name === 'tier-b')) return;
+            if (!isEval && pr.labels.some(label => label.name === 'eval-candidate')) return;
             // No second paid review when ready/labeled and CI completion overlap.
             const reviews = await github.paginate(github.rest.pulls.listReviews,
               {...repo, pull_number: number, per_page: 100});
-            if (reviews.some(review => review.user?.login === 'claude[bot]' &&
+            if ((isEval && study.alreadyReviewed(reviews, head)) || reviews.some(review => review.user?.login === 'claude[bot]' &&
                 review.commit_id === head &&
                 ['APPROVED', 'CHANGES_REQUESTED'].includes(review.state))) return;
             core.setOutput('number', String(number));
             core.setOutput('head', head);
             core.setOutput('branch', pr.head.ref);
+            if (isEval) core.setOutput('eval_candidate', 'true');
       - name: Wait for green CI at this head
         id: ci
         if: steps.select.outputs.number != ''
         env:
           REVIEW_PR: ${{ steps.select.outputs.number }}
           REVIEW_HEAD: ${{ steps.select.outputs.head }}
+          EVAL_CANDIDATE: ${{ steps.select.outputs.eval_candidate }}
         uses: actions/github-script@v8
         with:
           script: |
             const repo = context.repo;
             const number = Number(process.env.REVIEW_PR);
             const head = process.env.REVIEW_HEAD;
+            if (process.env.EVAL_CANDIDATE === 'true') {
+              const study = require('./_review_admission/tools/release/reviewer_eval_candidate.cjs');
+              const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
+              if (!study.eligible(pr, context, head)) return;
+              const reviews = await github.paginate(github.rest.pulls.listReviews,
+                {...repo, pull_number: number, per_page: 100});
+              if (study.alreadyReviewed(reviews, head)) return;
+              core.setOutput('ready', 'true');
+              core.notice(`Never-merge eval candidate at ${head}; CI qualification bypassed under 75-A. Native cap $0.40.`);
+              return;
+            }
             const deadline = Date.now() + 5 * 60 * 1000;
             while (Date.now() < deadline) {
               const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
               if (pr.state !== 'open' || pr.draft || pr.head.sha !== head ||
-                  !pr.labels.some(label => label.name === 'tier-b')) {
+                  !pr.labels.some(label => label.name === 'tier-b') ||
+                  pr.labels.some(label => label.name === 'eval-candidate')) {
                 core.notice('PR closed, became draft, lost tier-b, or moved head; no review.');
                 return;
               }
@@ -196,9 +233,10 @@ jobs:
           show_full_output: true
           prompt: |
             Review pull request #${{ steps.select.outputs.number }} in ${{ github.repository }} as the independent Tier-B reviewer.
-            Required CI was verified green at head ${{ steps.select.outputs.head }} before this review. Inspect the current required checks if needed; optional failures are evidence to assess, not an automatic refusal. The Tier-B approval check waits for your verdict and is excluded from this pre-review gate.
+            Review exactly head ${{ steps.select.outputs.head }}; stop if it moved. Never merge, push, write production data or open any .env* file.
+            ${{ steps.select.outputs.eval_candidate == 'true' && 'This is a frozen never-merge reviewer-study input (#11951), admitted with eval-candidate under Alex decision75-A. Its CI qualification is bypassed and must not be described as green. Apply the same semantic brief below; for this study only, its red-CI refusal rule is waived. A red check alone is not a semantic finding: trace each defect to production code, its trigger and user impact. End with the same APPROVE or REQUEST_CHANGES verdict. The policy keeps this labelled input unmergeable; its verdict is study evidence only.' || 'Required CI was verified green before this review. Inspect the current required checks if needed; optional failures are evidence to assess, not an automatic refusal. The Tier-B approval check waits for your verdict and is excluded from this pre-review gate.' }}
             Run tests directly, without a pipe: cd backend && python3 -m pytest <files> -q. Use Read/Grep for files. Shell commands may also use an absolute backend path; python/python3 pytest are allowed separately from cd.
-            Follow docs/release-loop/tier-b-review-brief.md exactly; it is the whole brief. End with exactly one review: approve or request changes.
+            Follow docs/release-loop/tier-b-review-brief.md for the semantic review, with the qualification instruction above controlling this run. End with exactly one review: approve or request changes.
           claude_args: >-
             --model claude-sonnet-5-5 --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(cd:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh run view:*),Bash(echo:*),Bash(tail:*)" --max-turns 60
             ${{ startsWith(steps.select.outputs.branch, 'codex/eval-reviewer-') && '--max-budget-usd 0.40' || '' }}

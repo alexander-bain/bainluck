@@ -102,8 +102,8 @@ export default function ForwardRecordSection({ state }: { state: ForwardRecordSt
                   {FORWARD_COPY.categoriesInside}{" "}
                   <Figure truth={ready.truth} value={String(ready.view.categories.barPp)}>
                     {barPointsText(ready.view.categories.barPp)}
-                  </Figure>
-                  -{FORWARD_COPY.categoriesBar}
+                  </Figure>{" "}
+                  {FORWARD_COPY.categoriesBar}
                 </p>
                 <div
                   aria-hidden="true"

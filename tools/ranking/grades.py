@@ -4,6 +4,9 @@
     # 1. Save a slate (newest by default) for the scorecard and the sheet:
     python3 tools/ranking/grades.py fetch [--slate latest|<slate id>] [--surface discover]
 
+    # 3. Copy grades made on the /grade page into the same store:
+    python3 tools/ranking/grades.py export [--slate <slate id>] [--days 14]
+
     # 2. Turn its opening ten into a grading sheet for one grader:
     python3 tools/ranking/grades.py sheet --slate evals/ranking/slates/<file>.json --grader alex
     python3 tools/ranking/grades.py sheet --slate ... --grader kid1 --kid
@@ -25,6 +28,7 @@ held in memory only. The token is never printed or written.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import netrc
 import os
@@ -43,7 +47,14 @@ SLATES_DIR = REPO / "evals" / "ranking" / "slates"
 GRADES_DIR = REPO / "evals" / "ranking" / "grades"
 GRADES = ("shareable", "interesting", "neither")
 PT = ZoneInfo("America/Los_Angeles")
-KID_ID = re.compile(r"^kid[0-9]+$")
+#: A kid's grader id: ``kid1`` (hand sheets) or ``kid-<6 hex>`` (export's
+#: pseudonym for a name typed on the /grade page). Never a child's name.
+KID_ID = re.compile(r"^kid(?:[0-9]+|-[0-9a-f]{6})$")
+
+
+def kid_pseudonym(name: str) -> str:
+    """The stable public id for a kid's typed name (the name stays in the DB)."""
+    return "kid-" + hashlib.sha256(" ".join(name.lower().split()).encode()).hexdigest()[:6]
 
 
 def pt_date(stamp: Optional[str]) -> str:
@@ -82,15 +93,72 @@ def _admin_token() -> str:
     return token
 
 
-def fetch_slate(ref: str, surface: str) -> dict:
+def _admin_get(path: str) -> dict:
     api = os.environ.get("BAINLUCK_API") or DEFAULT_API
-    url = f"{api}/api/admin/ranking/slates/{urllib.parse.quote(ref, safe='')}?surface={urllib.parse.quote(surface)}"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {_admin_token()}"})
+    req = urllib.request.Request(f"{api}{path}", headers={"Authorization": f"Bearer {_admin_token()}"})
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             return json.load(resp)
     except urllib.error.HTTPError as exc:
-        raise SystemExit(f"GET slate {ref!r}: HTTP {exc.code} {exc.read()[:300].decode(errors='replace')}")
+        raise SystemExit(f"GET {path.split('?')[0]}: HTTP {exc.code} {exc.read()[:300].decode(errors='replace')}")
+
+
+def fetch_slate(ref: str, surface: str) -> dict:
+    return _admin_get(
+        f"/api/admin/ranking/slates/{urllib.parse.quote(ref, safe='')}?surface={urllib.parse.quote(surface)}"
+    )
+
+
+#: Marks a grades file written by ``export`` (the /grade page's grades), so a
+#: re-export refreshes it and never overwrites a hand-filled sheet.
+EXPORT_SOURCE = "grade-page"
+
+
+def export_documents(grades: list[dict]) -> list[dict]:
+    """The /grade page's grades as grades files: one per (slate, grader), the
+    same shape ``sheet`` makes, in position order."""
+    docs: dict[tuple, dict] = {}
+    for g in grades:
+        expert = g.get("expert") is True
+        # A kid's typed name never reaches the public repo: it becomes a pseudonym.
+        grader = g["grader"] if expert else kid_pseudonym(g["grader"])
+        key = (g["slate_id"], grader)
+        doc = docs.setdefault(
+            key,
+            {
+                "slate_id": g["slate_id"],
+                "surface": g.get("surface") or "discover",
+                "grader": grader,
+                "expert": expert,
+                "source": EXPORT_SOURCE,
+                "date": pt_date(g.get("graded_at")),
+                "items": [],
+            },
+        )
+        # A kid's free-text note could carry a name, so it stays in the
+        # database and is not exported; an adult's note is.
+        note = (g.get("note") or "") if expert else ""
+        doc["items"].append(
+            {"position": g["position"], "item_key": g["item_key"], "grade": g["grade"], "note": note}
+        )
+    for doc in docs.values():
+        doc["items"].sort(key=lambda i: i["position"])
+    return list(docs.values())
+
+
+def export_path(out: Path, doc: dict) -> Path:
+    """``<PT date>-<surface>-<slate id>-<grader>.json``; ``-web`` is added when a
+    hand-filled sheet already holds that name (never overwritten)."""
+    stem = f"{doc['date']}-{doc['surface']}-{doc['slate_id']}-{grader_slug(doc['grader'])}"
+    path = out / f"{stem}.json"
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text())
+        except ValueError:
+            existing = {}
+        if existing.get("source") != EXPORT_SOURCE:
+            path = out / f"{stem}-web.json"
+    return path
 
 
 def slate_filename(slate: dict) -> str:
@@ -188,6 +256,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     s.add_argument("--grader", required=True)
     s.add_argument("--kid", action="store_true")
     s.add_argument("--out", type=Path, default=GRADES_DIR)
+    e = sub.add_parser("export")
+    e.add_argument("--slate", default=None)
+    e.add_argument("--days", type=int, default=14)
+    e.add_argument("--out", type=Path, default=GRADES_DIR)
     v = sub.add_parser("check")
     v.add_argument("files", nargs="+", type=Path)
     args = ap.parse_args(argv)
@@ -212,6 +284,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         path.write_text(json.dumps(sheet, indent=1) + "\n")
         sys.stdout.write(sheet_markdown(sheet))
         print(f"\nwrote {path}")
+        return 0
+    if args.cmd == "export":
+        query = f"?days={args.days}" + (f"&slate_id={urllib.parse.quote(args.slate)}" if args.slate else "")
+        args.out.mkdir(parents=True, exist_ok=True)
+        for doc in export_documents(_admin_get(f"/api/admin/ranking/grades{query}")["grades"]):
+            path = export_path(args.out, doc)
+            path.write_text(json.dumps(doc, indent=1) + "\n")
+            print(f"{path} ({len(doc['items'])} grades)")
         return 0
     bad = 0
     for path in args.files:

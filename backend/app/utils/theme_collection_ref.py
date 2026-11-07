@@ -10,11 +10,12 @@ adds no flag: a ref can only exist for a container a person has already
 published, so publication stays the only switch.
 
 THE TARGET IS DETERMINED, NEVER SEARCHED FOR. ``resolve_collection_target``
-(``theme_definitions``, steps 0–3) chooses the one intended container from the
-bundle's own feed key and the containers that admit EVERY preview id, in any
-publication state. Only then do the step-4 checks below run, on that target
-alone. They can remove the link. They can never choose another one. Nothing
-here infers a destination from a title, a header or a member id.
+chooses the intended container from the bundle's feed key and membership
+edges. Under decision 62-A, Discover projects the preview onto that page's
+live snapshot before the strict all-members link check. Excluded members
+compete as singles; fewer than two page members dissolve the group. Search
+retains its strict whole-family link check. Publication, revision and snapshot
+checks run on the intended target alone and never choose another one.
 
 STEP 4, ON THE TARGET ONLY (each a reason for ops, never reader text):
 
@@ -73,6 +74,8 @@ from sqlalchemy import bindparam, text
 
 from app.utils.container_corrections import PUBLICATION_COLUMN, REVISION_COLUMN
 from app.utils.theme_definitions import (
+    FEED_KEY_MAP,
+    MAPPED_TARGET_ABSENT,
     REGISTRY,
     CandidateContainer,
     resolve_collection_target,
@@ -103,6 +106,7 @@ PREVIEW_ID_INVALID = "preview_id_invalid"
 # The bounded read failed or ran out of budget: no ref, ordinary card.
 READ_FAILED = "read_failed"
 EMITTED = "emitted"
+PAGE_MEMBERSHIP_TOO_SMALL = "page_membership_too_small"
 
 #: Where the reason rides, beside the bundler's own ``grouped_by`` evidence.
 DEBUG_KEY = "collection_ref"
@@ -528,6 +532,85 @@ def _with_ref(item: dict, ref: Optional[dict], reason: str) -> dict:
     return {**item, "data": data}
 
 
+def _page_members(item: dict, snapshot: Mapping[str, Any]) -> list[dict]:
+    """62-A: render the page's set at card size; release outsiders as singles.
+
+    Work on copies: these objects may also live in a cached feed build. The
+    snapshot includes the complete inventory, independently of this preview.
+    """
+    data = item["data"]
+    represented = set(snapshot["shown_ids"]) | set(snapshot["folded_ids"])
+    withheld = {mid for ids in (snapshot.get("withheld") or {}).values() for mid in ids}
+    allowed = represented - withheld
+    members = data["items"]
+    kept = [m for m in members if m["data"]["id"] in allowed]
+    released = [m for m in members if m["data"]["id"] not in allowed]
+    if len(kept) < 2:
+        return list(members)
+    if not released:
+        return [item]
+    ids = [m["data"]["id"] for m in kept]
+    updated = {**data, "items": kept, "member_ids": ids, "item_count": len(kept)}
+    updated["id"] = f"theme:{bundle_feed_key(data)}:{'-'.join(map(str, ids))}"
+    debug = data.get("debug_bundles")
+    if isinstance(debug, dict):
+        updated["debug_bundles"] = {
+            **debug,
+            "member_ids": ids,
+            "member_names": [m["data"].get("name") for m in kept],
+        }
+    scores = [float(m["score"]) for m in kept if m.get("score") is not None]
+    card = {**item, "data": updated}
+    if scores:
+        card["score"] = max(scores)
+        if "_rank_score" in card:
+            card["_rank_score"] = max(scores)
+    return [card, *released]
+
+
+async def _project_page_membership(
+    item: dict,
+    candidates: Mapping[int, tuple[CandidateContainer, CandidateRow]],
+    published: PublishedThemes,
+    read_snapshot: SnapshotReader,
+) -> list[dict]:
+    data = item["data"]
+    preview = bundle_preview_ids(data)
+    if not preview or not isinstance(data.get("items"), list):
+        return [item]
+    target, reason = resolve_collection_target(
+        bundle_feed_key(data),
+        preview,
+        [c for c, _ in candidates.values()],
+        require_all_preview=False,
+    )
+    if target is None:
+        subject = FEED_KEY_MAP.get(bundle_feed_key(data))
+        if (
+            reason == MAPPED_TARGET_ABSENT
+            and subject
+            and any(
+                REGISTRY[t.slug].subject == subject
+                for t in published.themes
+                if t.slug in REGISTRY
+            )
+        ):
+            # Its known page admits none of the preview: no collection group.
+            return list(data["items"])
+        return [item]
+    row = candidates[target.container_id][1]
+    if (
+        row.publication_state != PUBLISHED
+        or row.slug not in REGISTRY
+        or published.revision_of(row.container_id) != row.revision
+    ):
+        return [item]
+    snapshot = await read_snapshot(row.container_id, row.revision)
+    if snapshot_checks(snapshot, row.slug, []) is not None:
+        return [item]
+    return _page_members(item, snapshot)
+
+
 async def attach_theme_collection_refs(
     items: list,
     *,
@@ -554,7 +637,7 @@ async def attach_theme_collection_refs(
     for i in bundles:
         preview_union.update(bundle_preview_ids(items[i]["data"]) or ())
 
-    async def _decide(session) -> dict[int, tuple[Optional[dict], str]]:
+    async def _decide(session) -> dict[int, tuple[list[dict], str]]:
         rows = await read_candidate_rows(session, preview_union)
         candidates = candidates_for(rows)
         memo: dict[tuple[int, int], Optional[dict]] = {}
@@ -566,9 +649,18 @@ async def attach_theme_collection_refs(
 
         out = {}
         for i in bundles:
-            out[i] = await resolve_bundle_ref(
-                items[i]["data"], candidates, published=published, read_snapshot=_snapshot
+            item = items[i]
+            projected = await _project_page_membership(
+                item, candidates, published, _snapshot
             )
+            if not projected or not _is_theme_bundle(projected[0]):
+                out[i] = (projected, PAGE_MEMBERSHIP_TOO_SMALL)
+                continue
+            item, *released = projected
+            ref, reason = await resolve_bundle_ref(
+                item["data"], candidates, published=published, read_snapshot=_snapshot
+            )
+            out[i] = ([_with_ref(item, ref, reason), *released], reason)
         return out
 
     ok, decided = await _side_read(
@@ -579,13 +671,17 @@ async def attach_theme_collection_refs(
     )
     if not ok:
         # Keeping every card, without a link (logged by _side_read).
-        decided = {i: (None, READ_FAILED) for i in bundles}
+        decided = {i: ([_with_ref(items[i], None, READ_FAILED)], READ_FAILED) for i in bundles}
 
-    out = list(items)
+    out = []
     report = {}
-    for i, (ref, reason) in decided.items():
-        out[i] = _with_ref(items[i], ref, reason)
-        report[str(items[i]["data"].get("id"))] = reason
+    for i, item in enumerate(items):
+        if i not in decided:
+            out.append(item)
+            continue
+        cards, reason = decided[i]
+        out.extend(cards)
+        report[str(item["data"].get("id"))] = reason
     if observe is not None:
         observe(report)
     return out

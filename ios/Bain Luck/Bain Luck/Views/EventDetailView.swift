@@ -1891,15 +1891,17 @@ struct EventDetailView: View {
                             EmptyView()
                         }
                     } else if ReleaseSurfaces.isEventPageAtlasEnabled(),
-                              let stateLabel = EventAtlasStates11666.heroStateLabel(
-                                  status: event.status,
-                                  commenceTime: event.commenceTime?.asDate,
-                                  authorityPeriod: event.espn?.period,
+                              EventState.showsVenueClosedNoWinner(
+                                  event.status,
                                   venueSettled: event.venueSettled,
                                   venueClosedNoWinner: event.venueClosedNoWinner,
-                                  hasCurrentOdds: event.currentOdds != nil
+                                  commenceTime: event.commenceTime?.asDate,
+                                  now: displayNow(asOf: vm.lastUpdated)
                               ) {
-                        EventAtlasHeroStateLabelView11666(label: stateLabel)
+                        // #11666 (Step E4) — StatusBadge three points above already
+                        // prints `EventState.venueClosedNoWinnerLabel` ("Ended · no winner");
+                        // keep the middle slot empty so one card never wears two settled chips.
+                        EmptyView()
                     } else if let odds = event.currentOdds,
                               // #9470 — an `opening` hero prints the server's
                               // pair and is named as an opening line.
@@ -2105,6 +2107,7 @@ struct EventDetailView: View {
                         // is gone: it was a thumbnail of the full chart one card
                         // below, which since #8320 starts on the first screen.
                     } else {
+                        let heroNow = displayNow(asOf: vm.lastUpdated)
                         if ReleaseSurfaces.isEventPageAtlasEnabled(),
                            let stateLabel = EventAtlasStates11666.heroStateLabel(
                                status: event.status,
@@ -2112,9 +2115,17 @@ struct EventDetailView: View {
                                authorityPeriod: event.espn?.period,
                                venueSettled: event.venueSettled,
                                venueClosedNoWinner: event.venueClosedNoWinner,
-                               hasCurrentOdds: false
+                               hasCurrentOdds: false,
+                               now: heroNow
                            ) {
                             EventAtlasHeroStateLabelView11666(label: stateLabel)
+                        } else if ReleaseSurfaces.isEventPageAtlasEnabled(),
+                                  EventState.isSuspendedAndStarted(
+                                      event.status,
+                                      commenceTime: event.commenceTime?.asDate,
+                                      now: heroNow
+                                  ) {
+                            EmptyView()
                         } else {
                             Text("vs")
                                 .font(.title2)

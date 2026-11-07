@@ -96,9 +96,20 @@ def _make_outcome(name: str, prob: float):
     )
 
 
-def _make_market(name: str, outcomes: list, source: str = "kalshi", external_id: str = "kxtest"):
+def _make_market(
+    name: str,
+    outcomes: list,
+    source: str | None = "kalshi",
+    external_id: str = "kxtest",
+    mutually_exclusive: bool | None = True,
+):
     return SimpleNamespace(
-        id=1, name=name, source=source, external_id=external_id, outcomes=outcomes,
+        id=1,
+        name=name,
+        source=source,
+        external_id=external_id,
+        outcomes=outcomes,
+        mutually_exclusive=mutually_exclusive,
     )
 
 
@@ -136,6 +147,45 @@ class TestMarketRowNormalization:
         market = _make_market("Who wins?", outcomes)
         row = _market_row(market, now=_NOW)
         assert row["prob"] == row["top_outcomes"][0]["prob"]
+
+    def test_market_row_requires_mutually_exclusive_true_and_90pct_mass_11949(self):
+        """#11949 (#12126/#12128 guard): normalize only when mutually_exclusive is True and mass >= 0.9."""
+        outcomes_over = [
+            _make_outcome("Trump", 0.50),
+            _make_outcome("DeSantis", 0.35),
+            _make_outcome("Haley", 0.25),
+        ]
+        row_none = _market_row(
+            _make_market("Who wins?", outcomes_over, mutually_exclusive=None),
+            now=_NOW,
+        )
+        assert [o["prob"] for o in row_none["top_outcomes"]] == [50.0, 35.0, 25.0]
+
+        outcomes_partial = [
+            _make_outcome("Trump", 0.40),
+            _make_outcome("DeSantis", 0.25),
+            _make_outcome("Haley", 0.15),
+        ]
+        row_partial = _market_row(
+            _make_market("Who wins?", outcomes_partial, mutually_exclusive=True),
+            now=_NOW,
+        )
+        assert [o["prob"] for o in row_partial["top_outcomes"]] == [40.0, 25.0, 15.0]
+
+    def test_market_row_refuses_blank_outcome_label_and_missing_source_stays_none_11949(self):
+        """#11949 (#12126/#12128 guard): blank outcome labels are refused and missing source stays None."""
+        outcomes = [
+            _make_outcome("   ", 0.55),
+            _make_outcome("Trump", 0.52),
+            _make_outcome("DeSantis", 0.48),
+        ]
+        market = _make_market("Who wins?", outcomes, source=None, mutually_exclusive=True)
+        row = _market_row(market, now=_NOW)
+        assert [o["name"] for o in row["top_outcomes"]] == ["Trump", "DeSantis"]
+        assert row["src"] is None
+
+        all_blank = [_make_outcome("", 0.60), _make_outcome("  ", 0.40)]
+        assert _market_row(_make_market("Who wins?", all_blank), now=_NOW) is None
 
 
 # ---------------------------------------------------------------------------

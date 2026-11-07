@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# #10708 INACTIVE roster preparation. Run from backend/.
+# #10708 roster validator. Run from backend/.
 # Validate the entire roster before emitting one normalized pytest-path line.
-# Workflow adoption, transitive reach and exact residue range remain unpaid.
+# Called by ci-native-tests.sh, which adds every test naming a native path; a
+# refusal here makes the native scope fall back to full.
 set -uo pipefail
 ROSTER="${CI_NATIVE_BACKEND_READERS:-$(dirname "$0")/../ci-native-backend-readers.txt}"
 python3 - "$ROSTER" <<'PY'

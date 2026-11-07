@@ -5,9 +5,13 @@ import SwiftUI
 /// `ReleaseSurfaces.isEventPageAtlasEnabled()`.
 ///
 /// Key guarantees:
-/// 1. Shared state wording matches `ATLAS_STATE_COPY`:
-///    - `"Loading"`, `"Update interrupted"`, `"Postponed"`, `"Void"`,
-///      `"No recent probability"`, `"No price yet"`, `"✓ Won"`, `"✗ Lost"`, `"Pending"`.
+/// 1. Shared state wording matches the one-settled-language and Ruling 138
+///    probability-first contracts:
+///    - `"Loading"`, `"Update interrupted"`, `"Postponed"`,
+///      `"Ended · no winner"` (`EventState.venueClosedNoWinnerLabel` — never
+///      the betting word `"Void"`), `"No recent probability"`,
+///      `"No probability yet"` (never the banned `"price"` stem),
+///      `"✓ Won"`, `"✗ Lost"`, `"Pending"`.
 /// 2. In `AllMarketsCatalogView9483`, a stale live outcome (`absence == .stale`)
 ///    prints `"No recent probability"` (`EventAtlasStates11666.noRecentPrice`)
 ///    when Atlas is enabled, while closed periods (`"Period finished"`) and
@@ -16,18 +20,20 @@ import SwiftUI
 /// 3. In `SpecialEventMarketsView`, settled outcome verdicts print `"✓ Won"` and
 ///    `"✗ Lost"` when Atlas is enabled, and multi-venue disagreement resolves to
 ///    `"Pending"`.
-/// 4. In `EventDetailView`, loading, hero stoppage (`"Postponed"` / `"Canceled"`),
-///    voided (`"Void"`), and missing probability (`"No recent probability"` once
-///    started vs `"No price yet"` pregame) render the shared Atlas state copy
-///    when `ReleaseSurfaces.isEventPageAtlasEnabled()` is true.
+/// 4. In `EventDetailView`, loading and missing probability (`"No recent probability"`
+///    once started vs `"No probability yet"` pregame) render the shared Atlas
+///    state copy when `ReleaseSurfaces.isEventPageAtlasEnabled()` is true, while
+///    states that `StatusBadge` three points above already speaks (`Ended · no winner`,
+///    `Postponed`, `Canceled`, `No result reported`) return `nil` so the card
+///    never draws two chips making one claim.
 nonisolated enum EventAtlasStates11666 {
 
     static let loading = "Loading"
     static let updateInterrupted = "Update interrupted"
     static let postponed = "Postponed"
-    static let voided = "Void"
+    static let voided = EventState.venueClosedNoWinnerLabel
     static let noRecentPrice = "No recent probability"
-    static let noPriceYet = "No price yet"
+    static let noPriceYet = "No probability yet"
     static let won = "Won"
     static let lost = "Lost"
     static let wonWithCheck = "✓ Won"
@@ -53,8 +59,13 @@ nonisolated enum EventAtlasStates11666 {
         }
     }
 
-    /// Resolves the hero state label when an event is stopped, voided, or has no
-    /// printable probability under `ReleaseSurfaces.isEventPageAtlasEnabled()`.
+    /// Resolves the hero state label when an event has no printable probability
+    /// under `ReleaseSurfaces.isEventPageAtlasEnabled()`.
+    ///
+    /// Returns `nil` whenever `StatusBadge` three points above already speaks the
+    /// event's terminal or stopped state (`isFinished`, `showsVenueSettledVerdict`,
+    /// `showsVenueClosedNoWinner`, or `isSuspendedAndStarted`), preventing duplicate
+    /// or conflicting state chips on one hero card.
     static func heroStateLabel(
         status: String?,
         commenceTime: Date?,
@@ -82,11 +93,10 @@ nonisolated enum EventAtlasStates11666 {
             commenceTime: commenceTime,
             now: now
         ) {
-            return voided
+            return nil
         }
         if EventState.isSuspendedAndStarted(status, commenceTime: commenceTime, now: now) {
-            let stoppage = EventState.suspendedLabel(authorityPeriod: authorityPeriod)
-            return stoppage == EventState.suspendedLabel ? nil : stoppage
+            return nil
         }
         guard !hasCurrentOdds else { return nil }
         let started = status == "live" || EventState.hasStarted(commenceTime: commenceTime, now: now)

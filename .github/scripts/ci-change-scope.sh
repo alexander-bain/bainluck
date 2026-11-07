@@ -6,6 +6,8 @@
 #
 #   full      run everything (backend shards, shard-completeness, search-recall)
 #   frontend  the candidate cannot reach anything those jobs test
+#   native    every changed path is under ios/ (#10708); ci.yml runs only the
+#             backend tests that read native paths
 #
 # WHY: the four backend shards plus search-recall are ~11.1m and ~8.3m of a
 # 12.1m run. A candidate confined to `frontend/` that no backend test can even
@@ -38,9 +40,10 @@ MANIFEST="${CI_CROSS_TIER_MANIFEST:-$(dirname "$0")/../ci-cross-tier-paths.txt}"
 say () { echo "$*" >&2; }
 emit () { echo "$1"; say "DECISION: $1 ($2)"; exit 0; }
 
-# #10708 INACTIVE preparation: current ci.yml normalizes native to full.
-# Native classification is not accepted reduced coverage. Transitive readers,
-# database reach and residue-scanner range still require activation review.
+# #10708 (Alex 77: A): `native` is ACTIVE for pull requests. ci.yml runs the
+# native backend readers (.github/scripts/ci-native-tests.sh) in place of the
+# shards, the database groups and the frontend build; a push is always full,
+# and a refused or empty native test set falls back to full.
 path_bucket () {
   case "$1" in
     frontend/*) echo frontend ;;
@@ -102,6 +105,6 @@ done <<< "$CHANGED"
 
 case "$BUCKET" in
   frontend) emit frontend "every changed path is under frontend/ and none is listed cross-tier" ;;
-  native) emit native "pure ios/ candidate; INACTIVE preparation, workflow retains full selection" ;;
+  native) emit native "every changed path is under ios/; the native backend readers protect it" ;;
   *) emit full "unparseable candidate bucket" ;;
 esac

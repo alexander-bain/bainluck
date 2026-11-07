@@ -195,4 +195,357 @@ final class DiscoverFeedReconcileTests: XCTestCase {
         XCTAssertNil(response.edition)
         XCTAssertEqual(response.limit, 50, "the rest of the payload still decoded")
     }
+
+    // MARK: - #11984: Discover feed holds still until pull-to-refresh
+
+    /// Ruling A: when a deck is already painted and the load is not a pull
+    /// (`mayReorder == false`), a different incoming edition still reconciles in
+    /// place rather than repainting.
+    func testDifferentEditionReconcilesWhenReorderIsDisallowed11984() {
+        XCTAssertEqual(
+            DiscoverFeedReconcile.decision(
+                paintedCount: 20,
+                mayReorder: false,
+                paintedEdition: "9f2c1ab740de55c3",
+                incomingEdition: "5c7ef69d20eff005"),
+            .reconcile)
+        XCTAssertEqual(
+            DiscoverFeedReconcile.decision(
+                paintedCount: 20,
+                mayReorder: false,
+                paintedEdition: nil,
+                incomingEdition: "5c7ef69d20eff005"),
+            .reconcile)
+        XCTAssertEqual(
+            DiscoverFeedReconcile.decision(
+                paintedCount: 0,
+                mayReorder: false,
+                paintedEdition: nil,
+                incomingEdition: "5c7ef69d20eff005"),
+            .repaint,
+            "an empty screen still paints the initial deck")
+    }
+
+    /// Ruling C (merge half): when `preservePainted` is true, painted cards that
+    /// the server omitted (e.g. a card that settled since the deck was painted)
+    /// stay in their exact painted slots until a pull-to-refresh.
+    func testMergeWithPreservePaintedKeepsOmittedCardsInTheirPaintedSlots11984() {
+        XCTAssertEqual(
+            DiscoverFeedReconcile.merge(
+                painted: ["a", "b", "c"],
+                incoming: ["c", "a", "d"],
+                preservePainted: true,
+                key: { $0 }),
+            ["a", "b", "c", "d"])
+    }
+
+    /// Ruling A (view-model half): a non-pull load over a published network feed
+    /// keeps the painted order and retains omitted cards, while a pull-to-refresh
+    /// (`mayReorder: true`) applies the newer edition's order.
+    @MainActor
+    func testNonPullLoadOnViewModelHoldsPaintedOrderUntilPull11984() async throws {
+        nonisolated final class ScriptedClient: DiscoverFeedProviding, @unchecked Sendable {
+            private let lock = NSLock()
+            private var pages: [FeedResponse]
+            init(_ pages: [FeedResponse]) { self.pages = pages }
+            nonisolated func fetchDiscoverFeed(
+                limit: Int, offset: Int, eventPct: Double?, cacheTTL: TimeInterval?
+            ) async throws -> FeedResponse {
+                lock.withLock { pages.removeFirst() }
+            }
+        }
+        func makePage(ids: [Int], edition: String) throws -> FeedResponse {
+            let items = ids.map { id in
+                """
+                {"type":"futures","score":90,"data":{"id":\(id),"name":"Market \(id)?","llm_sport_category":"economics","source":"kalshi","status":"open","top_outcomes":[{"id":\(id * 10),"name":"A","probability":0.55,"rank":1}],"outcome_count":1}}
+                """
+            }.joined(separator: ",")
+            let json = """
+            {"items":[\(items)],"total":\(ids.count),"limit":20,"offset":0,"has_more":false,"edition":"\(edition)"}
+            """
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(FeedResponse.self, from: Data(json.utf8))
+        }
+
+        let client = ScriptedClient([
+            try makePage(ids: [1, 2, 3, 4], edition: "ed-1"),
+            try makePage(ids: [4, 2, 5], edition: "ed-2"),
+            try makePage(ids: [4, 2, 5], edition: "ed-2"),
+        ])
+        let vm = DiscoverViewModel(client: client, lastGood: nil, telemetry: nil)
+        vm.openingEditionEnabled = false
+
+        await vm.load()
+        XCTAssertEqual(vm.items.compactMap(\.futures?.id), [1, 2, 3, 4])
+
+        // Non-pull update: order of [1, 2, 3, 4] holds still, omitted cards 1 & 3 stay, 5 appends.
+        await vm.load(mayReorder: false)
+        XCTAssertEqual(vm.items.compactMap(\.futures?.id), [1, 2, 3, 4, 5])
+
+        // Pull-to-refresh (`mayReorder: true`): the new edition's order and membership apply.
+        await vm.load(mayReorder: true)
+        XCTAssertEqual(vm.items.compactMap(\.futures?.id), [4, 2, 5])
+    }
+
+    /// Ruling A (view personalization half): recording mid-session card
+    /// interactions (open, like, share, expand) into the live profile while
+    /// `orderingProfile` stays frozen at the last pull leaves the 5-card windows
+    /// untouched until a pull-to-refresh snapshots the updated profile.
+    func testMidSessionInteractionsDoNotReorderWindowsUntilPullSnapshot11984() {
+        struct StubCard: Equatable {
+            let id: Int
+            let score: Int
+            let category: String
+        }
+        let deck = [
+            StubCard(id: 1, score: 95, category: "politics"),
+            StubCard(id: 2, score: 94, category: "economics"),
+            StubCard(id: 3, score: 93, category: "tech"),
+            // First 5-card window after the 3 pinned leads:
+            StubCard(id: 4, score: 80, category: "politics"),
+            StubCard(id: 5, score: 79, category: "tech"),
+            StubCard(id: 6, score: 78, category: "economics"),
+            StubCard(id: 7, score: 77, category: "culture"),
+            StubCard(id: 8, score: 76, category: "weather"),
+        ]
+
+        let orderingProfile = DiscoverInteractionProfile.forTesting(scores: [:], recordedAt: Date())
+        var liveProfile = orderingProfile
+
+        let initialOrder = DiscoverView.rankFiveCardWindows(
+            deck, profile: orderingProfile, score: \.score, category: \.category
+        ).map(\.id)
+        XCTAssertEqual(initialOrder, [1, 2, 3, 4, 5, 6, 7, 8])
+
+        // Reader taps/likes/shares "weather" cards mid-session; liveProfile updates,
+        // but orderingProfile stays frozen until pull-to-refresh.
+        for _ in 0..<5 {
+            liveProfile.record(category: "weather", action: .like, onSportsCard: false)
+            liveProfile.record(category: "weather", action: .detailOpen, onSportsCard: false)
+        }
+        let midSessionOrder = DiscoverView.rankFiveCardWindows(
+            deck, profile: orderingProfile, score: \.score, category: \.category
+        ).map(\.id)
+        XCTAssertEqual(midSessionOrder, initialOrder, "mid-session interactions must not reshuffle the window under the reader")
+
+        // On pull-to-refresh, orderingProfile snapshots liveProfile and the boosted card moves up.
+        let afterPullOrder = DiscoverView.rankFiveCardWindows(
+            deck, profile: liveProfile, score: \.score, category: \.category
+        ).map(\.id)
+        XCTAssertEqual(afterPullOrder.firstIndex(of: 8), 3, "after pull-to-refresh, boosted card 8 leads the window")
+    }
+
+    /// Ruling C (view staleness half): a card admitted when the deck was painted
+    /// that settles mid-session stays in place with its settled result until a
+    /// pull-to-refresh clears `retainingIds`.
+    func testAdmittedCardThatSettlesMidSessionStaysInPlaceWithResultUntilPull11984() throws {
+        let now = ISO8601DateFormatter().date(from: "2026-11-06T20:00:00Z")!
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        func decodeItem(_ json: String) throws -> FeedItem {
+            try decoder.decode(FeedItem.self, from: Data(json.utf8))
+        }
+
+        let liveEvent = try decodeItem("""
+        {"type":"event","score":90,"data":{"id":100,"sport":"basketball_nba","home_team":"Celtics","away_team":"Lakers","status":"live","commence_time":"2026-11-06T10:00:00Z","home_score":98,"away_score":97}}
+        """)
+        let openMarket = try decodeItem("""
+        {"type":"futures","score":88,"data":{"id":200,"name":"Will rate cut happen?","llm_sport_category":"economics","source":"kalshi","status":"open","top_outcomes":[{"id":2000,"name":"Yes","probability":0.62,"rank":1}],"outcome_count":1}}
+        """)
+
+        let initialEligible = DiscoverView.eligibleItems([liveEvent, openMarket], now: now)
+        let admittedIds = DiscoverView.admittedItemIds(in: initialEligible)
+        XCTAssertEqual(admittedIds, ["event-100", "futures-200"])
+
+        // Mid-session: the game finishes (>8h after kickoff, with FINAL score 104-99)
+        // and the futures market resolves.
+        let settledEvent = try decodeItem("""
+        {"type":"event","score":90,"data":{"id":100,"sport":"basketball_nba","home_team":"Celtics","away_team":"Lakers","status":"completed","commence_time":"2026-11-06T10:00:00Z","ended_at":"2026-11-06T11:30:00Z","home_score":104,"away_score":99}}
+        """)
+        let settledMarket = try decodeItem("""
+        {"type":"futures","score":88,"data":{"id":200,"name":"Will rate cut happen?","llm_sport_category":"economics","source":"kalshi","status":"resolved","winner":"Yes","top_outcomes":[{"id":2000,"name":"Yes","probability":1.0,"rank":1}],"outcome_count":1}}
+        """)
+
+        // Without retainingIds (i.e. on a fresh pull), both are stale and dropped.
+        XCTAssertTrue(DiscoverView.isStaleItem(settledEvent, now: now))
+        XCTAssertTrue(DiscoverView.isStaleItem(settledMarket, now: now))
+
+        // Before a pull (with `retainingIds: admittedIds`), both stay in place in their exact order with their settled results!
+        let keptDuringSession = DiscoverView.eligibleItems(
+            [settledEvent, settledMarket], now: now, retainingIds: admittedIds
+        )
+        XCTAssertEqual(keptDuringSession.map(DiscoverView.feedItemId), ["event-100", "futures-200"])
+        XCTAssertEqual(keptDuringSession[0].event?.status, "completed")
+        XCTAssertEqual(keptDuringSession[0].event?.homeScore, 104)
+        XCTAssertEqual(keptDuringSession[1].futures?.status, "resolved")
+
+        // On pull-to-refresh (`retainingIds` reset to `[]`), settled cards leave the feed.
+        let afterPull = DiscoverView.eligibleItems(
+            [settledEvent, settledMarket], now: now, retainingIds: []
+        )
+        XCTAssertTrue(afterPull.isEmpty)
+    }
+
+    /// Ruling A (recovery + Retry over cached seed): when a deck is already painted
+    /// (including a cached seed before `hasPublishedNetworkFeed`), both a recovery
+    /// attempt (`isRecoveryAttempt: true, mayReorder: false`) and a Retry tap
+    /// (`mayReorder: false`) hold the painted order still.
+    @MainActor
+    func testRecoveryAndRetryOverSeededDeckHoldPaintedOrder11984() async throws {
+        nonisolated final class ScriptedClient: DiscoverFeedProviding, @unchecked Sendable {
+            private let lock = NSLock()
+            private var pages: [Result<FeedResponse, Error>]
+            init(_ pages: [Result<FeedResponse, Error>]) { self.pages = pages }
+            nonisolated func fetchDiscoverFeed(
+                limit: Int, offset: Int, eventPct: Double?, cacheTTL: TimeInterval?
+            ) async throws -> FeedResponse {
+                try lock.withLock { pages.removeFirst() }.get()
+            }
+        }
+        func makePage(ids: [Int], edition: String) throws -> FeedResponse {
+            let items = ids.map { id in
+                """
+                {"type":"futures","score":90,"data":{"id":\(id),"name":"Market \(id)?","llm_sport_category":"economics","source":"kalshi","status":"open","top_outcomes":[{"id":\(id * 10),"name":"A","probability":0.55,"rank":1}],"outcome_count":1}}
+                """
+            }.joined(separator: ",")
+            let json = """
+            {"items":[\(items)],"total":\(ids.count),"limit":20,"offset":0,"has_more":false,"edition":"\(edition)"}
+            """
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(FeedResponse.self, from: Data(json.utf8))
+        }
+
+        let seedPage = try makePage(ids: [10, 20, 30], edition: "ed-seed")
+        let recoveryPage = try makePage(ids: [30, 10, 40], edition: "ed-recovery")
+        let retryPage = try makePage(ids: [40, 30, 50], edition: "ed-retry")
+        let pullPage = try makePage(ids: [50, 40, 10], edition: "ed-pull")
+
+        let client = ScriptedClient([
+            .success(seedPage),
+            .success(recoveryPage),
+            .success(retryPage),
+            .success(pullPage),
+        ])
+        let vm = DiscoverViewModel(client: client, lastGood: nil, telemetry: nil)
+        vm.openingEditionEnabled = false
+
+        await vm.load()
+        XCTAssertEqual(vm.items.compactMap(\.futures?.id), [10, 20, 30])
+
+        // Recovery ladder attempt (`isRecoveryAttempt: true, mayReorder: false`) keeps painted order:
+        await vm.load(isRecoveryAttempt: true, mayReorder: false)
+        XCTAssertEqual(vm.items.compactMap(\.futures?.id), [10, 20, 30, 40])
+
+        // Retry button (`mayReorder: false`) keeps painted order:
+        await vm.load(mayReorder: false)
+        XCTAssertEqual(vm.items.compactMap(\.futures?.id), [10, 20, 30, 40, 50])
+
+        // Pull-to-refresh (`mayReorder: true`) applies the incoming order:
+        await vm.load(mayReorder: true)
+        XCTAssertEqual(vm.items.compactMap(\.futures?.id), [50, 40, 10])
+    }
+
+    /// Ruling A (call-site wiring guard): both Retry buttons in `DiscoverView.swift`
+    /// pass `mayReorder: false`, the recovery ladder in `DiscoverViewModel.swift`
+    /// passes `isRecoveryAttempt: true, mayReorder: false`, and pull-to-refresh
+    /// passes `mayReorder: true`.
+    func testNonPullLoadCallSitesPassMayReorderFalse11984() throws {
+        let testFile = URL(fileURLWithPath: #filePath)
+        let root = testFile
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck")
+        let viewSource = try String(
+            contentsOf: root.appendingPathComponent("Views/DiscoverView.swift"),
+            encoding: .utf8
+        )
+        let vmSource = try String(
+            contentsOf: root.appendingPathComponent("ViewModels/DiscoverViewModel.swift"),
+            encoding: .utf8
+        )
+
+        let retryMatches = viewSource.components(separatedBy: "Task { await vm.load(mayReorder: false) }").count - 1
+        XCTAssertEqual(retryMatches, 2, "Both Retry buttons in DiscoverView must pass mayReorder: false")
+        XCTAssertFalse(
+            viewSource.contains("Task { await vm.load() }"),
+            "No Retry button in DiscoverView may call vm.load() with default mayReorder"
+        )
+        XCTAssertTrue(
+            viewSource.contains("let outcome = await Task { @MainActor in await vm.load() }.value"),
+            "Pull-to-refresh is the sole DiscoverView caller using the pull default (mayReorder == true)"
+        )
+        XCTAssertTrue(
+            vmSource.contains("await self.load(isRecoveryAttempt: true, mayReorder: false)"),
+            "Recovery ladder must pass isRecoveryAttempt: true, mayReorder: false"
+        )
+        XCTAssertTrue(
+            vmSource.contains("let allowReorder = (mayReorder && !isRecoveryAttempt) || items.isEmpty"),
+            "DiscoverViewModel.load must forbid reorder whenever mayReorder is false or isRecoveryAttempt is true over a non-empty deck"
+        )
+    }
+
+    /// Ruling C (`MemoizedPresentation<GroupedPresentation>` retention across `pullEpoch`):
+    /// non-pull rebuilds at the same `pullEpoch` retain `admittedIds` in `presentationCache`
+    /// so settled cards stay in place, and bumping `pullEpoch` clears `retainedItemIds`
+    /// so settled cards leave on pull-to-refresh.
+    func testMemoizedPresentationRetainsAdmittedIdsUntilPullEpochBumps11984() throws {
+        let now = ISO8601DateFormatter().date(from: "2026-11-06T20:00:00Z")!
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        func decodeItem(_ json: String) throws -> FeedItem {
+            try decoder.decode(FeedItem.self, from: Data(json.utf8))
+        }
+
+        let liveEvent = try decodeItem("""
+        {"type":"event","score":90,"data":{"id":100,"sport":"basketball_nba","home_team":"Celtics","away_team":"Lakers","status":"live","commence_time":"2026-11-06T10:00:00Z","home_score":98,"away_score":97}}
+        """)
+        let openMarket = try decodeItem("""
+        {"type":"futures","score":88,"data":{"id":200,"name":"Will rate cut happen?","llm_sport_category":"economics","source":"kalshi","status":"open","top_outcomes":[{"id":2000,"name":"Yes","probability":0.62,"rank":1}],"outcome_count":1}}
+        """)
+        let settledEvent = try decodeItem("""
+        {"type":"event","score":90,"data":{"id":100,"sport":"basketball_nba","home_team":"Celtics","away_team":"Lakers","status":"completed","commence_time":"2026-11-06T10:00:00Z","ended_at":"2026-11-06T11:30:00Z","home_score":104,"away_score":99}}
+        """)
+
+        let cache = MemoizedPresentation<DiscoverView.GroupedPresentation>()
+
+        // 1. Initial paint at pullEpoch = 0 admits event-100 and futures-200.
+        let initial = DiscoverView.evaluatePresentationRetention(
+            [liveEvent, openMarket],
+            in: cache,
+            signature: "v1|0|0|0|",
+            pullEpoch: 0,
+            now: now
+        )
+        XCTAssertEqual(initial.map(DiscoverView.feedItemId), ["event-100", "futures-200"])
+        XCTAssertEqual(DiscoverView.retainedItemIds(from: cache, pullEpoch: 0), ["event-100", "futures-200"])
+
+        // 2. Non-pull rebuild (itemsVersion bumps to v2, pullEpoch stays 0): event-100 is now settled,
+        //    and cache retains admittedIds so event-100 stays in place with its final score.
+        let nonPull = DiscoverView.evaluatePresentationRetention(
+            [settledEvent, openMarket],
+            in: cache,
+            signature: "v2|0|0|0|",
+            pullEpoch: 0,
+            now: now
+        )
+        XCTAssertEqual(nonPull.map(DiscoverView.feedItemId), ["event-100", "futures-200"])
+        XCTAssertEqual(nonPull.first?.event?.status, "completed")
+        XCTAssertEqual(nonPull.first?.event?.homeScore, 104)
+
+        // 3. Pull-to-refresh bumps pullEpoch to 1: retainedItemIds(from: cache, pullEpoch: 1) is empty,
+        //    so settled event-100 is dropped and only open futures-200 remains.
+        XCTAssertTrue(DiscoverView.retainedItemIds(from: cache, pullEpoch: 1).isEmpty)
+        let afterPull = DiscoverView.evaluatePresentationRetention(
+            [settledEvent, openMarket],
+            in: cache,
+            signature: "v3|0|0|1|",
+            pullEpoch: 1,
+            now: now
+        )
+        XCTAssertEqual(afterPull.map(DiscoverView.feedItemId), ["futures-200"])
+    }
 }

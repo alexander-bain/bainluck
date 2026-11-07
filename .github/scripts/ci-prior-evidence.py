@@ -368,6 +368,7 @@ def membership(text):
             "frontend-build",
             "e2e-contract",
             "search-recall",
+            "native-backend-readers",
         }
         == {v[0] for v in expected.values()},
         "unreviewed job set",
@@ -406,12 +407,18 @@ def expected_steps(kind, value, count, block):
         "needs.change-scope.outputs.scope == 'frontend' || needs.change-scope.outputs.live == 'true'",
         "needs.change-scope.outputs.live == 'true'",
         "github.event_name == 'push' && github.ref == 'refs/heads/master'",
+        "needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'",
     }
+    # #10708: a push run is never native, so `scope != 'native'` beside
+    # `scope != 'frontend'` executes exactly where the frontend clause alone did.
+    native_clause = f"{scope} && needs.change-scope.outputs.scope != 'native'"
     required = []
     for definition in re.split(r"^      - ", block, flags=re.M)[1:]:
         match = re.match(r"name: (.+)\n", definition)
         condition = re.search(r"^        if: (.+)$", definition, re.M)
         expression = condition.group(1) if condition else None
+        if expression:
+            expression = expression.replace(native_clause, scope)
         if kind == "database-integration":
             continuation = re.fullmatch(r"\$\{\{ !cancelled\(\) && \((.+)\) \}\}", expression or "")
             if continuation:
@@ -465,6 +472,14 @@ def validate_jobs(jobs, expected):
     )
     for name, (kind, value, count, block) in expected.items():
         job = actual[name]
+        if kind == "native-backend-readers":
+            # #10708: runs only for a pure-ios/ PULL REQUEST. A push run that
+            # executed it was classified native, which push runs never are.
+            require(
+                job["status"] == "completed" and job["conclusion"] == "skipped",
+                f"native job ran on a push run: {name}",
+            )
+            continue
         require(
             job["status"] == "completed" and job["conclusion"] == "success",
             f"unpaid job {name}",
