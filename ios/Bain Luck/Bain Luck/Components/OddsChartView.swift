@@ -1170,7 +1170,9 @@ struct OddsChartView: View {
                             sides: axis.sides,
                             includesOpening: drawnRange == .all,
                             homeName: homeTeamName ?? homeShort,
-                            primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: history.winProbSources ?? [:])
+                            primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: history.winProbSources ?? [:]),
+                            homeScore: homeScore,
+                            awayScore: awayScore
                         )
                     }
                     // #9517 — no readout row here at rest: the hero above says it.
@@ -2443,7 +2445,9 @@ struct OddsChartView: View {
                         status: status,
                         sides: axis.sides,
                         includesOpening: drawnRange == .all,
-                        primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: sources)
+                        primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
+                        homeScore: homeScore,
+                        awayScore: awayScore
                     )
                 }
                 // #925 — the scrub. `chartXSelection` lost the touch to the

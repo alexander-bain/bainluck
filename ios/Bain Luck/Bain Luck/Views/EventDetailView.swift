@@ -432,7 +432,11 @@ struct EventDetailView: View {
             // or a reconnect moves no input, so it cannot beat.
             .onChange(of: ekgObservation, initial: true) { _, observation in
                 guard let observation else { return }
-                ekgTracker = ekgTracker.stepped(observation, now: displayNow())
+                ekgTracker = EventAtlasLivePath11666.stepEkgTracker(
+                    ekgTracker,
+                    observation: observation,
+                    now: displayNow()
+                )
             }
             .onDisappear {
                 // #11703 — the freshness details belong to this page. Its
@@ -2233,6 +2237,7 @@ struct EventDetailView: View {
                     event: event,
                     observedAt: vm.displayedProbabilityObservedAt(event),
                     confirmedAtShown: vm.confirmedAtCoveringShown(event),
+                    preview: vm.blendPreview,
                     liveStatus: vm.liveUpdateStatus,
                     ekgTracker: ekgTracker,
                     asOf: displayAsOf)
