@@ -1,5 +1,7 @@
 """ci.yml's workflow-level concurrency: a superseded PR sha stops holding runners,
-and NOTHING about master, reruns, the job set or release serialization changes.
+and (Decide 76) a newer push to a ref displaces that ref's older PENDING run while
+an in-progress push run is never cancelled; the job set and release
+serialization do not change.
 
 Evaluates the actual `${{ }}` expressions in ci.yml against the four event shapes
 (pull_request sync, push to master / merge, rerun, push+PR on one sha) rather
@@ -112,23 +114,31 @@ def test_two_different_prs_never_touch_each_other():
     assert _slot(_pr(6744, "d9359dc", 1))[0] != _slot(_pr(6745, "fb76de7", 2))[0]
 
 
-def test_master_pushes_are_never_cancelled_and_never_share_a_group():
-    # A group holds ONE pending run and drops the rest - it is not a FIFO queue. Two merges
-    # three minutes apart (95bd39868, 10740513e) must therefore not share one.
+def test_master_pushes_share_one_group_and_an_in_progress_run_is_never_cancelled():
+    """Decide 76 (Alex, Nov 6): one group per pushed ref, cancel-in-progress OFF.
+
+    A group holds ONE pending run: a newer master push displaces an older run
+    still waiting for a runner, which is the point — the newest master head
+    contains every earlier merge, and `ci-deploy-base.sh` widens its range back to
+    the last deployed commit. An IN-PROGRESS master run is never cancelled.
+    (Before 76 each master run had its own group, and on Nov 6 eight queued
+    master runs each waited to deploy a commit the newest one already carried.)
+    """
     a, b = _slot(_push("95bd398", 10)), _slot(_push("1074051", 11))
-    assert (
-        a[0] != b[0]
-    ), "master runs share a concurrency group: a third merge would drop the second's tests"
-    assert a[1] is False and b[1] is False, "a master run became cancellable"
+    assert a[0] == b[0] == "ci-push-refs/heads/master", (a, b)
+    assert a[1] is False and b[1] is False, "a master run became cancellable in progress"
 
 
-def test_a_rerun_of_a_master_run_is_alone_in_its_group():
+def test_a_rerun_of_a_master_run_rejoins_the_master_group__known_and_operational():
+    """The hazard 76 accepts, pinned: re-running an OLDER master run re-queues it
+    into the master group, where it displaces the newest pending master run. The
+    rule is operational and stated in ci.yml: re-run the NEWEST master run."""
     first, rerun, other = (
         _slot(_push("95bd398", 10)),
         _slot(_push("95bd398", 10)),
         _slot(_push("1074051", 11)),
     )
-    assert first == rerun and rerun[0] != other[0] and rerun[1] is False
+    assert first == rerun and rerun[0] == other[0] and rerun[1] is False
 
 
 def test_rerunning_an_OLD_pr_sha_cancels_that_prs_head_run__known_and_fail_closed():
@@ -210,7 +220,12 @@ if __name__ == "__main__":
 def test_compose_pushes_are_independent_and_cannot_release():
     a, b = _push("one", 30), _push("two", 31)
     a["ref"] = b["ref"] = "refs/heads/integrator/compose-example"
-    assert _slot(a)[0] != _slot(b)[0]
+    # Decide 76: pushes group by ref, so one compose branch supersedes its own
+    # pending run, and never touches master's or another compose branch's.
+    c = _push("three", 32)
+    c["ref"] = "refs/heads/integrator/compose-other"
+    assert _slot(a)[0] == _slot(b)[0] == "ci-push-refs/heads/integrator/compose-example"
+    assert _slot(a)[0] != _slot(c)[0] != _slot(_push("four", 33))[0]
     assert _slot(a)[1] is False
     for name in ("release-required", "deploy"):
         assert "github.ref == 'refs/heads/master'" in _workflow()["jobs"][name]["if"]
