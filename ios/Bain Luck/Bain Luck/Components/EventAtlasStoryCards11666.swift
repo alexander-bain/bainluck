@@ -291,9 +291,8 @@ nonisolated enum EventAtlasStoryCards11666 {
     }
 
     /// Resolves a reader details sheet (`NFLCardReader9483`) for a given `rowID`
-    /// when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active. Returns nil
-    /// for MLB final cards so their existing `MLBOriginalDetails11284` sheet runs
-    /// until Step E6a.
+    /// when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active, including MLB
+    /// story card originals (`#11666` Step E6a).
     static func readerDetailsModel(
         rowID: String,
         cards: [NFLEventCard9483],
@@ -301,8 +300,8 @@ nonisolated enum EventAtlasStoryCards11666 {
         awayName: String,
         homeName: String
     ) -> EventAtlasDetailsSheetModel11666? {
-        if MLBFinalDeck11284.original(rowID, in: cards) != nil {
-            return nil
+        if let mlbOriginal = MLBFinalDeck11284.original(rowID, in: cards) {
+            return EventAtlasMlbCards11666.detailsModel(for: mlbOriginal)
         }
         if rowID == "finish" {
             for card in cards {
