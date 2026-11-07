@@ -1,6 +1,8 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  dedupeCandidatesBySource,
+  matchTennisPlayerSide,
   tennisCards,
   tennisCardsApply,
   type TennisExactScoreCard,
@@ -721,5 +723,290 @@ describe("#11974 Step E6d — Tennis story cards", () => {
     expect(sheetProps?.isSettled).toBe(false);
     expect(sheetProps?.settledResult).toBeNull();
     expect(sheetProps?.source).toBeNull();
+  });
+
+  it("matches tennis player sides across 4 tiers, rejects <3 char substrings and shared-surname ambiguity, and respects explicit side overrides", () => {
+    // 1. Exact full-name match + accent/whitespace normalization
+    expect(
+      matchTennisPlayerSide(
+        "  Carlos   Alcaráz ",
+        "Carlos Alcaraz",
+        "Jannik Sinner",
+        "Alcaraz",
+        "Sinner",
+      ),
+    ).toBe("home");
+
+    // 2. Exact short-name match
+    expect(
+      matchTennisPlayerSide(
+        "Sinner",
+        "Carlos Alcaraz",
+        "Jannik Sinner",
+        "Alcaraz",
+        "Sinner",
+      ),
+    ).toBe("away");
+
+    // 3. Full-name substring match (>= 3 chars succeeds, < 3 chars rejected)
+    expect(
+      matchTennisPlayerSide(
+        "Carlos Alcaraz Garfia",
+        "Carlos Alcaraz",
+        "Jannik Sinner",
+        "Alcaraz",
+        "Sinner",
+      ),
+    ).toBe("home");
+    expect(
+      matchTennisPlayerSide(
+        "Al",
+        "Carlos Alcaraz",
+        "Jannik Sinner",
+        "Alcaraz",
+        "Sinner",
+      ),
+    ).toBeNull();
+
+    // 4. Token / surname match + shared-surname ambiguity returning null
+    expect(
+      matchTennisPlayerSide(
+        "J. Sinner",
+        "Carlos Alcaraz",
+        "Jannik Sinner",
+        "Alcaraz",
+        "Sinner",
+      ),
+    ).toBe("away");
+    expect(
+      matchTennisPlayerSide(
+        "Williams",
+        "Venus Williams",
+        "Serena Williams",
+        "V. Williams",
+        "S. Williams",
+      ),
+    ).toBeNull();
+
+    // Shared-surname ambiguity omits the unresolvable outcome while explicit rawOpt.side wins
+    const cards = tennisCards({
+      sportKey: "tennis_wta",
+      atlasMode: true,
+      status: "scheduled",
+      commenceTime: "2026-11-08T18:00:00Z",
+      homeTeam: "Venus Williams",
+      awayTeam: "Serena Williams",
+      homeShort: "V. Williams",
+      awayShort: "S. Williams",
+      homeScore: null,
+      awayScore: null,
+      nowMs: Date.parse("2026-11-08T12:00:00Z"),
+      questionMatrix: {
+        contract: "10238.v1",
+        display_scope: "game",
+        questions: [
+          {
+            question_key: "m:9001",
+            kind: "named_options",
+            label: "Set 1 Winner",
+            market_name: "Set 1 Winner",
+            source_array: "other",
+            options: [
+              // Ambiguous "Williams" with explicit side="home" -> resolves via explicit side override
+              {
+                option_key: "o:9001-home",
+                label: "Williams",
+                side: "home",
+                published: {
+                  value: 0.44,
+                  value_state: "quoted",
+                  basis: "recent_quote",
+                  source: "kalshi",
+                  observed_at: "2026-11-08T11:55:00Z",
+                },
+                result: { state: "open", evidence_kind: "open_event" },
+              },
+              {
+                option_key: "o:9001-away",
+                label: "Serena Williams",
+                side: "away",
+                published: {
+                  value: 0.56,
+                  value_state: "quoted",
+                  basis: "recent_quote",
+                  source: "kalshi",
+                  observed_at: "2026-11-08T11:55:00Z",
+                },
+                result: { state: "open", evidence_kind: "open_event" },
+              },
+            ],
+          },
+          {
+            question_key: "m:9002",
+            kind: "named_options",
+            label: "Exact Match Score",
+            market_name: "Exact Match Score",
+            source_array: "other",
+            options: [
+              // Ambiguous "Williams wins 2-0" with no explicit home/away side -> omitted
+              {
+                option_key: "o:9002-ambig",
+                label: "Williams wins 2-0",
+                side: "category",
+                published: {
+                  value: 0.30,
+                  value_state: "quoted",
+                  basis: "recent_quote",
+                  source: "kalshi",
+                  observed_at: "2026-11-08T11:55:00Z",
+                },
+                result: { state: "open", evidence_kind: "open_event" },
+              },
+              {
+                option_key: "o:9002-venus",
+                label: "Venus Williams wins 2-0",
+                side: "category",
+                published: {
+                  value: 0.28,
+                  value_state: "quoted",
+                  basis: "recent_quote",
+                  source: "kalshi",
+                  observed_at: "2026-11-08T11:55:00Z",
+                },
+                result: { state: "open", evidence_kind: "open_event" },
+              },
+              {
+                option_key: "o:9002-serena",
+                label: "Serena Williams wins 2-1",
+                side: "category",
+                published: {
+                  value: 0.25,
+                  value_state: "quoted",
+                  basis: "recent_quote",
+                  source: "kalshi",
+                  observed_at: "2026-11-08T11:55:00Z",
+                },
+                result: { state: "open", evidence_kind: "open_event" },
+              },
+            ],
+          },
+        ],
+      },
+      gameMarkets: null,
+    });
+
+    const setsCard = cards.find((c) => c.id === "tennis:sets") as TennisSetsCard;
+    expect(setsCard?.sets[0]?.home.pregameProbability).toBeCloseTo(0.44, 5);
+    const exactCard = cards.find((c) => c.id === "tennis:exactScore") as TennisExactScoreCard;
+    expect(exactCard?.outcomes.map((o) => o.scoreLabel)).toEqual([
+      "V. Williams 2–0",
+      "S. Williams 2–1",
+    ]);
+  });
+
+  it("dedupes same-source candidate variants while preserving multi-source OptionDetail metadata on total-games ladders", () => {
+    const raw = [
+      { source: "Kalshi", prob: 0.61 },
+      { source: " kalshi ", prob: 0.61 },
+      { source: "Polymarket", prob: 0.58 },
+    ];
+    const deduped = dedupeCandidatesBySource(raw, (item) => item.source);
+    expect(deduped).toEqual([
+      { source: "Kalshi", prob: 0.61 },
+      { source: "Polymarket", prob: 0.58 },
+    ]);
+
+    const cards = tennisCards({
+      sportKey: "tennis_atp",
+      atlasMode: true,
+      status: "scheduled",
+      commenceTime: "2026-11-08T18:00:00Z",
+      homeTeam: "Novak Djokovic",
+      awayTeam: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      homeScore: null,
+      awayScore: null,
+      nowMs: Date.parse("2026-11-08T12:00:00Z"),
+      gameMarkets: {
+        totals: [
+          // 21.5 has duplicate rows from the SAME source (case/whitespace variants) -> prints 57%, sourceCount=1
+          {
+            market_name: "Match Total Games",
+            outcome_name: "Over 21.5",
+            threshold: 21.5,
+            over_probability: 0.57,
+            source: "Kalshi",
+            observed_at: "2026-11-08T11:55:00Z",
+          },
+          {
+            market_name: "Match Total Games",
+            outcome_name: "Over 21.5",
+            threshold: 21.5,
+            over_probability: 0.57,
+            source: " kalshi ",
+            observed_at: "2026-11-08T11:55:00Z",
+          },
+          // 22.5 has two distinct unblended sources ("kalshi" + "polymarket") -> chance=null, sourceCount=2, source=null
+          {
+            market_name: "Match Total Games",
+            outcome_name: "Over 22.5",
+            threshold: 22.5,
+            over_probability: 0.49,
+            source: "kalshi",
+            observed_at: "2026-11-08T11:55:00Z",
+          },
+          {
+            market_name: "Match Total Games",
+            outcome_name: "Over 22.5",
+            threshold: 22.5,
+            over_probability: 0.46,
+            source: "polymarket",
+            observed_at: "2026-11-08T11:55:00Z",
+          },
+          {
+            market_name: "Match Total Games",
+            outcome_name: "Over 23.5",
+            threshold: 23.5,
+            over_probability: 0.39,
+            source: "kalshi",
+            observed_at: "2026-11-08T11:55:00Z",
+          },
+        ],
+      },
+    });
+
+    const totalGames = cards.find((c) => c.kind === "ladder") as LadderCard;
+    expect(totalGames).toBeDefined();
+    const opt215 = totalGames.points.find((p) => p.x === 21.5);
+    const opt225 = totalGames.points.find((p) => p.x === 22.5);
+    expect(opt215?.chance).toBeCloseTo(0.57, 5);
+    expect(opt225?.chance).toBeNull();
+
+    const teams = {
+      homeName: "Novak Djokovic",
+      awayName: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      homeColor: "#1D4ED8",
+      awayColor: "#0F766E",
+    };
+    const sheet215 = buildStoryCardDetailsSheetProps({
+      card: totalGames,
+      rowId: opt215?.optionKey,
+      teams,
+    });
+    expect(sheet215?.sourceCount).toBe(1);
+    expect(sheet215?.source?.toLowerCase()).toBe("kalshi");
+
+    const sheet225 = buildStoryCardDetailsSheetProps({
+      card: totalGames,
+      rowId: opt225?.optionKey,
+      teams,
+    });
+    expect(sheet225?.sourceCount).toBe(2);
+    expect(sheet225?.source).toBeNull();
+    expect(sheet225?.openingProbability).toBeNull();
+    expect(sheet225?.lastProbability).toBeNull();
   });
 });

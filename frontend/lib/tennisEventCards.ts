@@ -244,7 +244,12 @@ export function tennisNameMatchesSide(
   const fullNorm = normalizePlayerPlain(playerName);
   if (!candNorm || !fullNorm) return false;
   if (candNorm === fullNorm) return true;
-  if (candNorm.includes(fullNorm) || fullNorm.includes(candNorm)) return true;
+  if (
+    candNorm.length >= 3 &&
+    (candNorm.includes(fullNorm) || fullNorm.includes(candNorm))
+  ) {
+    return true;
+  }
 
   const candTokens = normalizePlayerTokens(candidate);
   const playerTokens = normalizePlayerTokens(playerName);
@@ -288,12 +293,16 @@ export function matchTennisPlayerSide(
   if (shortHome !== shortAway) return shortHome ? "home" : "away";
   if (shortHome && shortAway) return null;
 
-  // 3. Full-name substring match
+  // 3. Full-name substring match (candNorm >= 3 chars to avoid short-string false positives)
   const subHome = Boolean(
-    homeNorm && (candNorm.includes(homeNorm) || homeNorm.includes(candNorm)),
+    candNorm.length >= 3 &&
+      homeNorm &&
+      (candNorm.includes(homeNorm) || homeNorm.includes(candNorm)),
   );
   const subAway = Boolean(
-    awayNorm && (candNorm.includes(awayNorm) || awayNorm.includes(candNorm)),
+    candNorm.length >= 3 &&
+      awayNorm &&
+      (candNorm.includes(awayNorm) || awayNorm.includes(candNorm)),
   );
   if (subHome !== subAway) return subHome ? "home" : "away";
   if (subHome && subAway) return null;
@@ -309,7 +318,7 @@ function normalizeSourceKey(source: string | null | undefined): string {
   return typeof source === "string" ? source.trim().toLowerCase() : "";
 }
 
-function dedupeCandidatesBySource<T>(
+export function dedupeCandidatesBySource<T>(
   candidates: T[],
   getSource: (item: T) => string | null | undefined,
 ): T[] {
