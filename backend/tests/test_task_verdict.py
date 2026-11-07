@@ -573,6 +573,10 @@ class TestEnforcementScope:
             # run stopped by its budget or a 429 is `partial`; neither is GREEN.
             # Terminal comes from `venue_history_backfill._terminal`.
             "venue_history_backfill",
+            # #12231: the grouping sentinel, enrolled from birth. `complete` only
+            # when this week's post is on #12221; a post that did not land is
+            # `failed`. Terminal comes from `grouping_sentinel._terminal`.
+            "grouping_sentinel",
         }
 
     def test_enforced_task_partial_blocks_success(self):
