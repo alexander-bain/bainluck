@@ -2435,6 +2435,15 @@ jobs:
         \ gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]19 passed([,[:space:]]|$)\" /tmp/roster11315.txt || {\n  echo \"::error::#11315 roster\
         \ lock gate did not run all nineteen cases\"\n  exit 1\n}\n"
 
+    - name: "#12252 shared tail \u2014 upload this attempt's 55-A retries for the flake sentinel"
+      id: db_flaky_retries_upload
+      if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: flaky-retries-${{ github.run_attempt }}
+        path: /tmp/flaky-retries.txt
+        if-no-files-found: ignore
+        retention-days: 8
     - name: Summarize database integration failures
       id: database_integration_summary
       if: ${{ !cancelled() }}
