@@ -2201,6 +2201,13 @@ struct EventDetailView: View {
                 LiveHeadlineForecast11296(
                     forecast: liveForecast, awayName: event.awayTeam, homeName: event.homeTeam)
             }
+            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                EventAtlasHeadlineControlRow11666(
+                    event: event,
+                    observedAt: vm.displayedProbabilityAgeClock(event),
+                    liveStatus: vm.liveUpdateStatus,
+                    asOf: displayAsOf)
+            }
         }
         // #9483 v476 — on the adopted pair the hero is the top of ONE card with
         // the chart (see the page body): no own backdrop or corners, a short

@@ -11,8 +11,17 @@ on:
   push:
     branches: [master, 'integrator/compose-**']
 
+# Decide 76 (Alex, Nov 6): a push shares ONE group per ref, so a newer master
+# push displaces an older run still waiting for a runner (a group holds one
+# pending run). The newest master head contains every earlier merge, and
+# `ci-deploy-base.sh` widens its range back to the last deployed commit, so
+# nothing a superseded run would have tested goes untested. An IN-PROGRESS push
+# run is never cancelled (`cancel-in-progress` is false for pushes). Re-run the
+# NEWEST master run, never an older one: an old run re-queued into the group
+# displaces the newest pending run. The deploy job's `heroku-deploy` group is
+# unchanged. Guarded by backend/tests/test_ci_supersede_concurrency.py.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-run-{0}', github.run_id) }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-push-{0}', github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -23,6 +32,9 @@ permissions:
 
 jobs:
   change-scope:
+    # 75-A / #12235: never-merge study inputs use the native reviewer directly.
+    # The approval policy always blocks eval-candidate, including after APPROVE.
+    if: github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'eval-candidate')
     permissions:
       contents: read
       actions: read
@@ -33,6 +45,7 @@ jobs:
     timeout-minutes: 2
     outputs:
       scope: ${{ steps.decide.outputs.scope }}
+      native_tests: ${{ steps.decide.outputs.native_tests }}
       reuse: ${{ steps.prior.outputs.reuse }}
       reuse_run: ${{ steps.prior.outputs.reuse_run }}
       reuse_attempt: ${{ steps.prior.outputs.reuse_attempt }}
@@ -86,11 +99,26 @@ jobs:
           # `|| echo full` is the last fail-safe: if the script cannot run at
           # all, we run everything.
           SCOPE="$(bash .github/scripts/ci-change-scope.sh "$BASE" "$HEAD" || echo full)"
+          NATIVE_TESTS=""
           case "$SCOPE" in
             full|frontend) ;;
+            native)
+              # #10708 (Alex 77: A). Push events are never native: master and
+              # compose runs feed the deploy path and always run everything.
+              if [ "${{ github.event_name }}" != "pull_request" ]; then
+                echo "native scope on a push — push runs are always full"; SCOPE=full
+              else
+                # The roster ∪ every backend test that names a native path. A
+                # refusal or an empty set falls back to full, never a partial list.
+                NATIVE_TESTS="$(cd backend && bash ../.github/scripts/ci-native-tests.sh)" || NATIVE_TESTS=""
+                if [ -z "$NATIVE_TESTS" ]; then
+                  echo "native test set failed or empty — defaulting to full"; SCOPE=full
+                fi
+              fi ;;
             *) echo "unparseable scope '$SCOPE' — defaulting to full"; SCOPE=full ;;
           esac
           echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
+          echo "native_tests=$NATIVE_TESTS" >> "$GITHUB_OUTPUT"
           echo "change scope: $SCOPE (base=$BASE head=$HEAD)"
 
       - name: Record compose checkout provenance
@@ -217,7 +245,15 @@ jobs:
           PYCODE
 
   backend-tests:
-    needs: [change-scope, fast-gate]
+    # #10708: `native-backend-readers` is in `needs` so that, on a native
+    # candidate, every leg (each a REQUIRED context) goes red when the native
+    # readers fail — see the native step below. That job is skipped on every
+    # other scope, and a skipped need fails the implicit success(), so this
+    # condition names what success() used to check: fast-gate passed (fast-gate
+    # itself needs change-scope). It never reads the scope, so the matrix always
+    # expands and the per-leg contexts always exist.
+    needs: [change-scope, fast-gate, native-backend-readers]
+    if: ${{ !cancelled() && needs.fast-gate.result == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       # Every shard runs even when one fails. With fail-fast the first red
@@ -259,19 +295,34 @@ jobs:
         working-directory: .
         run: echo "change scope is 'frontend'; shard ${{ matrix.shard }} intentionally ran nothing."
 
+      # #10708: a pure-ios/ candidate. The shard is replaced by the
+      # `native-backend-readers` job; this leg reports that job's result, so a
+      # red native reader is a red REQUIRED context, never a silent skip.
+      - name: Native candidate — the full shard is replaced by native-backend-readers
+        if: needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'
+        working-directory: .
+        env:
+          NATIVE_RESULT: ${{ needs.native-backend-readers.result }}
+        run: |
+          if [ "$NATIVE_RESULT" != "success" ]; then
+            echo "::error::change scope is 'native' and native-backend-readers is '$NATIVE_RESULT'"
+            exit 1
+          fi
+          echo "change scope is 'native'; native-backend-readers passed; shard ${{ matrix.shard }} intentionally ran nothing."
+
       - uses: actions/checkout@v6
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         with:
           fetch-depth: 0
           filter: blob:none
 
       - name: Record compose checkout provenance
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
         working-directory: .
         run: python3 .github/scripts/ci-prior-evidence.py --record "$RUNNER_TEMP/ci-provenance.json" --identity backend-tests-${{ matrix.shard }}
 
       - name: Publish compose checkout provenance
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
         uses: actions/upload-artifact@v4
         with:
           name: compose-source-provenance-${{ github.run_attempt }}-backend-tests-${{ matrix.shard }}
@@ -280,18 +331,18 @@ jobs:
           retention-days: 2
 
       - uses: actions/setup-python@v7
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         run: pip install -r requirements.txt
 
       - name: Private redis-server binary for the real-Redis publication controls (#10090)
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         run: |
           set -euo pipefail
           dir="$RUNNER_TEMP/redislite"
@@ -305,7 +356,7 @@ jobs:
           echo "EVENT_FRAME_REDIS_REQUIRED=1" >> "$GITHUB_ENV"
 
       - name: Run tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         run: |
           set -o pipefail
           FILES="$(python scripts/ci_shard.py --shard ${{ matrix.shard }} --of ${{ strategy.job-total }})"
@@ -317,11 +368,59 @@ jobs:
           echo "shard ${{ matrix.shard }}/${{ strategy.job-total }}: $(echo $FILES | wc -w) test files"
           python -m pytest $FILES -q --durations=0
 
+  native-backend-readers:
+    # #10708 (Alex 77: A). On a pure-ios/ pull request this ONE job replaces the
+    # eight shards, shard-completeness, golden-baseline-floor, the database
+    # integration groups, search-recall and frontend-build. It runs every backend
+    # test that can read a native path: the validated roster
+    # (.github/ci-native-backend-readers.txt) plus every tests/**/test_*.py that
+    # names `ios/`, a quoted "ios" segment or a native file name, computed in
+    # change-scope by .github/scripts/ci-native-tests.sh. Every backend-tests leg
+    # reports this job's result, so a red here is a red required context.
+    # Return to full: change `native)` in change-scope's decide step to set
+    # SCOPE=full (or revert this PR) — every other job then runs as before.
+    needs: [change-scope, fast-gate]
+    if: needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # test_mutation_guard and the residue scanner diff a range.
+          fetch-depth: 0
+          filter: blob:none
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the native backend readers
+        env:
+          NATIVE_TESTS: ${{ needs.change-scope.outputs.native_tests }}
+        run: |
+          set -o pipefail
+          if [ -z "$NATIVE_TESTS" ]; then
+            echo "::error::native scope with an EMPTY test set — change-scope should have chosen full"
+            exit 1
+          fi
+          echo "native-backend-readers: $(echo $NATIVE_TESTS | wc -w) test files"
+          python -m pytest $NATIVE_TESTS -q -rs 2>&1 | tee /tmp/native-readers.txt
+          COUNT="$(grep -oE '[0-9]+ passed' /tmp/native-readers.txt | tail -1)"
+          echo "native-backend-readers: ${COUNT:-0 passed}"
+
   shard-completeness:
     # #5007 — this proves the SHARD PARTITION is complete, so it is meaningful
     # only when the shards run. Skipped with them, never independently.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -361,7 +460,8 @@ jobs:
 
   golden-baseline-floor:
     needs: change-scope
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-'))
+    # #10708: a pure-ios/ candidate cannot move the golden baseline (backend).
+    if: needs.change-scope.outputs.scope != 'native' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')))
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -414,7 +514,7 @@ jobs:
     # #5007 — the recall rail exercises backend search. A candidate confined to
     # `frontend/` and touching no cross-tier path cannot change what it measures.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -4761,7 +4861,7 @@ jobs:
         run: "python - <<'SUMMARY'\nimport json\nimport os\nresults = json.loads(os.environ['STEP_RESULTS'])\nfailed = [name for name, result in results.items() if result.get('outcome') == 'failure']\nlines = ['## Database integration \u2014 ' + os.environ['INTEGRATION_GROUP'], '']\nif failed:\n    lines += ['Failed steps:', ''] + ['- `' + name + '`' for name in failed]\nelse:\n    lines += ['No failed steps.']\nwith open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:\n    output.write('\\n'.join(lines) + '\\n')\nSUMMARY\n"
   search-recall:
     needs: [change-scope, database-integration]
-    if: ${{ !cancelled() && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true' }}
+    if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Every database integration group passed
@@ -4777,7 +4877,8 @@ jobs:
 
   frontend-build:
     needs: [change-scope, fast-gate]
-    if: needs.change-scope.outputs.live != 'true'
+    # #10708: a pure-ios/ candidate cannot reach the frontend build.
+    if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'native'
     runs-on: ubuntu-latest
     defaults:
       run:
