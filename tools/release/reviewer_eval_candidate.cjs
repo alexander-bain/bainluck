@@ -27,10 +27,13 @@ function registeredBranch(number) {
 function eligible(pr, context, expectedHead) {
   if (!hasLabel(pr)) return false;
   const fullName = `${context.repo.owner}/${context.repo.repo}`;
-  if (context.eventName !== 'pull_request_target' ||
-      !['labeled', 'synchronize', 'reopened'].includes(context.payload.action) ||
-      (context.payload.action === 'labeled' && context.payload.label?.name !== LABEL) ||
-      fullName !== REPOSITORY || context.actor !== context.repo.owner ||
+  const run = context.payload.workflow_run;
+  if (context.eventName !== 'workflow_run' || context.payload.action !== 'completed' ||
+      run?.name !== 'CI' || run.path !== '.github/workflows/ci.yml' ||
+      run.event !== 'pull_request' || run.status !== 'completed' || run.conclusion !== 'skipped' ||
+      run.head_sha !== expectedHead || run.head_repository?.full_name !== fullName ||
+      run.actor?.login !== context.repo.owner || run.triggering_actor?.login !== context.repo.owner ||
+      fullName !== REPOSITORY ||
       pr.state !== 'open' || pr.draft !== true || pr.user?.login !== context.repo.owner ||
       pr.base?.ref !== 'master' || pr.head?.repo?.full_name !== fullName ||
       !registeredBranch(pr.number) || pr.head?.ref !== registeredBranch(pr.number) ||

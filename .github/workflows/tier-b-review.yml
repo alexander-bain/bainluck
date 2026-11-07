@@ -2,11 +2,9 @@ name: Tier-B review
 on:
   pull_request:
     types: [opened, reopened, synchronize, labeled, ready_for_review]
-  # Trusted default-branch code handles the frozen, never-merge study inputs.
-  # Ordinary PRs retain the pull_request + green-CI path below.
-  pull_request_target:
-    types: [labeled, synchronize, reopened]
-  # Native completion event frees the reviewer runner while CI is queued.
+  # Use the existing authenticated completion path for both green ordinary CI
+  # and the labelled study's zero-runner, skipped CI. Native action token
+  # exchange failed before model startup on the pull_request_target arm.
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -28,21 +26,18 @@ jobs:
        !contains(github.event.pull_request.labels.*.name, 'eval-candidate') &&
        github.event.pull_request.draft == false &&
        github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'pull_request_target' &&
-       contains(github.event.pull_request.labels.*.name, 'eval-candidate') &&
-       github.event.pull_request.base.ref == 'master' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor == github.repository_owner &&
-       (github.event.action != 'labeled' || github.event.label.name == 'eval-candidate')) ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event == 'pull_request' &&
-       github.event.workflow_run.conclusion == 'success' &&
+       (github.event.workflow_run.conclusion == 'success' ||
+        (github.event.workflow_run.conclusion == 'skipped' &&
+         github.event.workflow_run.actor.login == github.repository_owner &&
+         github.event.workflow_run.triggering_actor.login == github.repository_owner)) &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - name: Load trusted study admission rules
-        if: github.event_name == 'pull_request_target'
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'skipped'
         uses: actions/checkout@v6
         with:
           ref: ${{ github.workflow_sha }}
@@ -62,7 +57,7 @@ jobs:
               const run = context.payload.workflow_run;
               if (context.payload.action !== 'completed' || run?.name !== 'CI' ||
                   run.path !== '.github/workflows/ci.yml' || run.event !== 'pull_request' ||
-                  run.status !== 'completed' || run.conclusion !== 'success' ||
+                  run.status !== 'completed' || !['success', 'skipped'].includes(run.conclusion) ||
                   run.head_repository?.full_name !== fullName) return;
               head = run.head_sha;
               const associated = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit,
@@ -71,15 +66,18 @@ jobs:
                 pr.head.sha === head && pr.head.repo?.full_name === fullName);
               if (current.length !== 1) return;
               number = current[0].number;
-            } else if (['pull_request', 'pull_request_target'].includes(context.eventName)) {
+            } else if (context.eventName === 'pull_request') {
               number = context.payload.pull_request.number;
               head = context.payload.pull_request.head.sha;
             } else return;
             const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
-            const study = context.eventName === 'pull_request_target'
+            const skippedCI = context.eventName === 'workflow_run' &&
+              context.payload.workflow_run.conclusion === 'skipped';
+            if (skippedCI && !pr.labels.some(label => label.name === 'eval-candidate')) return;
+            const study = skippedCI
               ? require('./_review_admission/tools/release/reviewer_eval_candidate.cjs') : null;
             const isEval = study?.eligible(pr, context, head) === true;
-            if (context.eventName === 'pull_request_target' && !isEval) return;
+            if (skippedCI && !isEval) return;
             if (pr.state !== 'open' || (!isEval && pr.draft) || pr.head.sha !== head ||
                 pr.head.repo?.full_name !== fullName ||
                 !pr.labels.some(label => label.name === 'tier-b')) return;
@@ -122,7 +120,8 @@ jobs:
             while (Date.now() < deadline) {
               const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
               if (pr.state !== 'open' || pr.draft || pr.head.sha !== head ||
-                  !pr.labels.some(label => label.name === 'tier-b')) {
+                  !pr.labels.some(label => label.name === 'tier-b') ||
+                  pr.labels.some(label => label.name === 'eval-candidate')) {
                 core.notice('PR closed, became draft, lost tier-b, or moved head; no review.');
                 return;
               }
@@ -245,7 +244,7 @@ jobs:
       # evaluator, pinned to the trusted workflow commit, for this selected PR.
       - name: Load the trusted approval evaluator
         id: policy
-        if: always() && (github.event_name == 'workflow_run' || github.event_name == 'pull_request_target') && steps.ci.outputs.ready == 'true'
+        if: always() && github.event_name == 'workflow_run' && steps.ci.outputs.ready == 'true'
         uses: actions/checkout@v6
         with:
           ref: ${{ github.workflow_sha }}

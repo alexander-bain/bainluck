@@ -15,9 +15,9 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
         XCTAssertEqual(EventAtlasStates11666.loading, "Loading")
         XCTAssertEqual(EventAtlasStates11666.updateInterrupted, "Update interrupted")
         XCTAssertEqual(EventAtlasStates11666.postponed, "Postponed")
-        XCTAssertEqual(EventAtlasStates11666.voided, "Void")
+        XCTAssertEqual(EventAtlasStates11666.voided, EventState.venueClosedNoWinnerLabel)
         XCTAssertEqual(EventAtlasStates11666.noRecentPrice, "No recent probability")
-        XCTAssertEqual(EventAtlasStates11666.noPriceYet, "No price yet")
+        XCTAssertEqual(EventAtlasStates11666.noPriceYet, "No probability yet")
         XCTAssertEqual(EventAtlasStates11666.wonWithCheck, "✓ Won")
         XCTAssertEqual(EventAtlasStates11666.lostWithCross, "✗ Lost")
         XCTAssertEqual(EventAtlasStates11666.pending, "Pending")
@@ -48,8 +48,8 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
     }
 
     func testHeroStateLabelCoversPostponedVoidAndNoRecentProbability11666() {
-        // 1. Suspended & started with authority stoppage "Postponed" -> "Postponed"
-        XCTAssertEqual(
+        // 1. Suspended & started with authority stoppage "Postponed" -> nil (StatusBadge already prints "Postponed")
+        XCTAssertNil(
             EventAtlasStates11666.heroStateLabel(
                 status: "suspended",
                 commenceTime: pastKickoff,
@@ -58,11 +58,10 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
                 venueClosedNoWinner: false,
                 hasCurrentOdds: true,
                 now: now
-            ),
-            "Postponed"
+            )
         )
 
-        // 2. Suspended & started without authority stoppage label -> nil (never claims Postponed)
+        // 2. Suspended & started without authority stoppage label -> nil (StatusBadge already prints "No result reported")
         XCTAssertNil(
             EventAtlasStates11666.heroStateLabel(
                 status: "suspended",
@@ -75,8 +74,8 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
             )
         )
 
-        // 3. Venue closed with no winner -> "Void"
-        XCTAssertEqual(
+        // 3. Venue closed with no winner -> nil (StatusBadge already prints EventState.venueClosedNoWinnerLabel)
+        XCTAssertNil(
             EventAtlasStates11666.heroStateLabel(
                 status: "suspended",
                 commenceTime: pastKickoff,
@@ -85,8 +84,7 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
                 venueClosedNoWinner: true,
                 hasCurrentOdds: false,
                 now: now
-            ),
-            "Void"
+            )
         )
 
         // 4. Started game with no current odds -> "No recent probability"
@@ -103,7 +101,7 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
             "No recent probability"
         )
 
-        // 5. Pregame scheduled fixture with no current odds -> "No price yet"
+        // 5. Pregame scheduled fixture with no current odds -> "No probability yet"
         XCTAssertEqual(
             EventAtlasStates11666.heroStateLabel(
                 status: "scheduled",
@@ -114,7 +112,7 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
                 hasCurrentOdds: false,
                 now: now
             ),
-            "No price yet"
+            "No probability yet"
         )
 
         // 6. Settled or venue-settled event never claims "No recent probability"

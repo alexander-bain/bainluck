@@ -31,6 +31,7 @@ import pytest
 import yaml
 
 from tests.test_ci_matrix_required_contexts import (
+    JOB_IF,
     RUNS,
     LIVE,
     REUSE,
@@ -68,6 +69,11 @@ python -m pytest $FILES -q --durations=0
 
 # These are only reviewed workflow-defined keys, not a claim that runner,
 # installed-package, test and production environments are equivalent.
+# Decide 55-A: the ONE reviewed PYTEST_ADDOPTS — the shared tail re-runs a failed
+# test once and every other group gets nothing. Any other value (e.g. `-k`, which
+# would deselect tests) is still an unreviewed environment.
+RETRY_ONCE_ADDOPTS = "${{ matrix.group == 'shared-tail' && '--reruns 1 -rR' || '' }}"
+
 JOB_ENV_KEYS = {
     "database-integration": {"DATABASE_URL", "SEARCH_TEST_DATABASE_URL"},
     "deploy": {"HEROKU_API_KEY", "GH_TOKEN"},
@@ -138,6 +144,13 @@ STEP_ENV_KEYS[("change-scope", "Record the deployed gate for the watchdog")] = {
 STEP_ENV_KEYS[("fast-gate", "Python 3.11 syntax, smoke test and change-scope selected tests")] = {
     "SELECTED_TESTS",
 }
+
+# #10708: the native leg step reads the native job's result as data; the native
+# job reads change-scope's computed test list as data.
+STEP_ENV_KEYS[
+    ("backend-tests", "Native candidate — the full shard is replaced by native-backend-readers")
+] = {"NATIVE_RESULT"}
+STEP_ENV_KEYS[("native-backend-readers", "Run the native backend readers")] = {"NATIVE_TESTS"}
 
 # Receipt values are data, never workflow-expression interpolation in shell.
 for _receipt_job in (
@@ -211,8 +224,11 @@ def _validate_current_composed_promotion(
         workflow_env = _workflow().get("env", {})
     _allowed_environment(workflow_env, set(), "workflow")
     for name, job in jobs.items():
+        job_env = dict(job.get("env") or {})
+        if name == "database-integration" and job_env.get("PYTEST_ADDOPTS") == RETRY_ONCE_ADDOPTS:
+            job_env.pop("PYTEST_ADDOPTS")
         _allowed_environment(
-            job.get("env"), JOB_ENV_KEYS.get(name, set()), f"{name} job"
+            job_env, JOB_ENV_KEYS.get(name, set()), f"{name} job"
         )
         for step in job.get("steps", []):
             _allowed_environment(
@@ -235,7 +251,9 @@ def _validate_current_composed_promotion(
     deploy = jobs["deploy"]
     assert set(deploy["needs"]) == DEPLOY_NEEDS, "all broad gates precede promotion"
     assert deploy.get("if") == DEPLOY_IF, "only the guarded full or live promotion paths"
-    assert "if" not in jobs["backend-tests"], "backend matrix must expand"
+    # #10708: the one reviewed job condition never reads the scope, so the
+    # backend matrix always expands.
+    assert jobs["backend-tests"].get("if") == JOB_IF, "backend matrix must expand"
     for name in DEPLOY_NEEDS | {"change-scope", "database-integration", "deploy"}:
         job = jobs[name]
         assert "continue-on-error" not in job, f"{name} failure cannot be waived"
@@ -271,7 +289,7 @@ def _validate_current_composed_promotion(
     assert backend["steps"].index(_step(backend, "Install dependencies")) < backend[
         "steps"
     ].index(command)
-    assert len(backend["steps"]) == 10, "new source preparation needs review"
+    assert len(backend["steps"]) == 11, "new source preparation needs review"
     # #10090 attempt163, the one reviewed addition: a test binary supplied
     # outside the checkout. It runs no git and installs nothing, so it cannot
     # change the source, the dependencies or the test selection under test.
@@ -299,9 +317,9 @@ def _validate_current_composed_promotion(
     # 75-A: only the explicitly labelled never-merge study skips this runner.
     # Keep the ordinary scope/live predicates and every master promotion gate.
     assert aggregate["if"] == SEARCH_RECALL
-    for name in ("frontend-build", "e2e-contract", "release-required", "deploy"):
+    for name in ("frontend-build", "e2e-contract", "release-required", "deploy", "native-backend-readers"):
         _current_checkout(jobs[name])
-    assert jobs["frontend-build"].get("if") == LIVE
+    assert jobs["frontend-build"].get("if") == f"{LIVE} && needs.change-scope.outputs.scope != 'native'"
     assert jobs["e2e-contract"].get("if") is None
     assert len(deploy["steps"]) == 4, "no artifact substitution step"
     assert _current_checkout(deploy) is deploy["steps"][1]

@@ -62,7 +62,12 @@ nonisolated enum EventAtlasMlbCards11666 {
             if hr.entries.contains(where: { $0.finalCount != nil }) {
                 items.append(Item(glyph: .verticalBar, label: "Official final"))
             }
-            if hr.story == .homered {
+            let hasVenueWin = hr.entries.contains { entry in
+                entry.original.sections
+                    .flatMap(\.fields)
+                    .contains { $0.label.lowercased() == "venue settlement" && $0.value == "Won" }
+            }
+            if hasVenueWin {
                 items.append(Item(glyph: .wonCheck, label: EventAtlasStates11666.wonWithCheck))
             }
         case .strikeouts(let ks):
@@ -77,6 +82,10 @@ nonisolated enum EventAtlasMlbCards11666 {
                 items.append(Item(glyph: .hitMissVerdict, label: "✓ Won / ✗ Lost"))
             }
         case .extraInnings(let extra):
+            items = []
+            if extra.outcomes.contains(where: { $0.pregameChance != nil }) {
+                items.append(Item(glyph: .hollowCircle, label: "Pregame"))
+            }
             if extra.outcomes.contains(where: { $0.venueResult == .won || $0.venueResult == .lost }) {
                 items.append(Item(glyph: .hitMissVerdict, label: "✓ Won / ✗ Lost"))
             }
@@ -213,25 +222,27 @@ nonisolated enum EventAtlasMlbCards11666 {
                     ?? (sources.count <= 1 ? MLBOriginal11284.openChance(first.probability) : nil))
                 : nil
 
-            var verdicts = Set<OutcomeVerdict>()
-            for r in group {
-                if let v = OutcomeVerdict.verdict(
-                    isWinner: r.isWinner,
-                    resolutionSource: r.resolutionSource,
-                    marketResolved: finished
-                ) {
-                    verdicts.insert(v)
-                }
-            }
             let venueResult: MLBVenueResult11284
-            if verdicts.contains(.won) && verdicts.contains(.lost) {
-                venueResult = .pending
-            } else if verdicts.contains(.won) {
-                venueResult = .won
-            } else if verdicts.contains(.lost) {
-                venueResult = .lost
+            if !finished {
+                venueResult = .open
             } else {
-                venueResult = finished ? .pending : .open
+                let rowResults = Set(
+                    group.map {
+                        MLBVenueResult11284.venue(
+                            isWinner: $0.isWinner,
+                            resolutionSource: $0.resolutionSource
+                        )
+                    }
+                )
+                if rowResults.contains(.won) && rowResults.count > 1 {
+                    venueResult = .pending
+                } else if rowResults.contains(.won) {
+                    venueResult = .won
+                } else if rowResults.contains(.notConfirmed) {
+                    venueResult = .notConfirmed
+                } else {
+                    venueResult = .pending
+                }
             }
 
             let singleSource = blendedRow?.source ?? (sources.count == 1 ? sources.first : nil)
@@ -251,7 +262,7 @@ nonisolated enum EventAtlasMlbCards11666 {
         }
 
         let hasSignal = finished
-            ? entries.contains { $0.venueResult == .won || $0.venueResult == .lost || $0.pregameChance != nil }
+            ? !entries.isEmpty
             : entries.contains { $0.pregameChance != nil || $0.quotedChance != nil }
         return hasSignal ? entries : []
     }

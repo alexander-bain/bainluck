@@ -623,3 +623,186 @@ class TestPrimitivesInvariantsAndFolderLoading:
         )
         assert isinstance(res_no_db, RoundupRefusal)
         assert ("sport", "missing_db_session") in res_no_db.reasons
+
+    @pytest.mark.asyncio
+    async def test_spent_budget_logs_warning_and_per_producer_timeout_preserves_other_cards(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """#11936 / #12148 card half:
+        1. A spent budget (budget_seconds <= 0) logs a warning instead of skipping silently.
+        2. A slow/timed-out middle producer rolls back db and does not discard earlier
+           or later round-up cards (e.g. closest-games-tonight + golf-this-week).
+        3. Cacheable refusals are cached for 60s under CONTAINERS_READ_CACHE_ENABLED=true,
+           while transient source_unavailable refusals are never cached.
+        """
+        import asyncio
+        import logging
+        from app.utils.roundup_containers import (
+            RoundupProducer,
+            add_roundup_feed_items,
+        )
+
+        reset_roundup_cache_for_tests()
+        deck = [
+            {
+                "type": "futures",
+                "score": float(100 - idx),
+                "_rank_score": float(100 - idx),
+                "reason": f"Story {idx}",
+                "headline": f"Story {idx}",
+                "data": {"id": 80000 + idx, "name": f"Market {idx}"},
+            }
+            for idx in range(15)
+        ]
+
+        with caplog.at_level(logging.WARNING):
+            unchanged = await add_roundup_feed_items(
+                object(),
+                deck,
+                budget_seconds=0.0,
+            )
+        assert unchanged is deck
+        assert "Discover round-up stage skipped: feed budget exhausted" in caplog.text
+
+        # Now verify per-producer timeout isolation: producer 1 succeeds, producer 2 hangs
+        # past ROUNDUP_PRODUCER_TIMEOUT_SECONDS, producer 3 (golf-this-week) succeeds.
+        rollback_calls = 0
+
+        class _RollbackSession:
+            async def rollback(self) -> None:
+                nonlocal rollback_calls
+                rollback_calls += 1
+
+        tournaments = _make_live_golf_tournaments(toto_flat_placeholder=False)
+
+        def _fast_first(_db: Any) -> Any:
+            return RoundupMembers(
+                members=[
+                    {
+                        "id": 9101,
+                        "name": "Game 1",
+                        "top_outcomes": [{"name": "Celtics", "probability": 0.52}],
+                    }
+                ],
+                rows=[
+                    {
+                        "event_id": 9101,
+                        "label": "Knicks at Celtics: Celtics",
+                        "probability": 0.52,
+                        "observed_at": "2026-11-06T22:00:00Z",
+                    }
+                ],
+                footer="Combined probability · the 4 closest of 12 games tonight",
+            )
+
+        async def _hanging_middle(_db: Any) -> Any:
+            await asyncio.sleep(0.25)
+            return None
+
+        def _golf_third(_db: Any) -> Any:
+            return select_week_events(tournaments, now=NOW_NOV_6)
+
+        p1 = RoundupProducer(
+            slug="roundup-closest-games-tonight",
+            name="The closest games tonight",
+            kind="roundup",
+            category="sports",
+            section_title="The 4 closest games",
+            footer="Combined probability · the 4 closest of 12 games tonight",
+            produce=_fast_first,
+        )
+        p2 = RoundupProducer(
+            slug="roundup-cfp-picture",
+            name="The College Football Playoff picture",
+            kind="roundup",
+            category="ncaaf",
+            section_title="On the bubble",
+            footer="Playoff qualifiers",
+            produce=_hanging_middle,
+        )
+        p3 = RoundupProducer(
+            slug=GOLF_THIS_WEEK_SLUG,
+            name="This week's tournaments",
+            kind="roundup",
+            category="golf",
+            section_title="This week's tournaments",
+            footer="Each row is the leader in its own tournament.",
+            produce=_golf_third,
+            kicker="GOLF · THIS WEEK",
+        )
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ROUNDUP_PRODUCERS",
+            {p1.slug: p1, p2.slug: p2, p3.slug: p3},
+        )
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ROUNDUP_PRODUCER_TIMEOUT_SECONDS",
+            0.05,
+        )
+        monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            placed = await add_roundup_feed_items(
+                _RollbackSession(),
+                deck,
+                budget_seconds=1.5,
+                now=NOW_NOV_6,
+            )
+        assert rollback_calls == 1
+        assert "Discover round-up read failed for roundup-cfp-picture" in caplog.text
+        roundup_slugs = [
+            it["data"]["collection_ref"]["slug"]
+            for it in placed
+            if it.get("type") == "bundle" and it.get("data", {}).get("kind") == "roundup"
+        ]
+        assert roundup_slugs == [
+            "roundup-closest-games-tonight",
+            GOLF_THIS_WEEK_SLUG,
+        ]
+
+        # Verify cacheable vs transient refusal caching under CONTAINERS_READ_CACHE_ENABLED=true
+        monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+        reset_roundup_cache_for_tests()
+        data_refusal_calls = 0
+
+        def _data_refusal(_db: Any) -> Any:
+            nonlocal data_refusal_calls
+            data_refusal_calls += 1
+            return RoundupRefusal((("sport", "too_few_tournaments"),))
+
+        refusing_producer = RoundupProducer(
+            slug="roundup-refused-data",
+            name="Refused data",
+            kind="roundup",
+            category="golf",
+            section_title="Section",
+            footer="Footer",
+            produce=_data_refusal,
+        )
+        db_marker = object()
+        await evaluate_roundup_producer(refusing_producer, db_marker, now=1000.0)
+        await evaluate_roundup_producer(refusing_producer, db_marker, now=1010.0)
+        assert data_refusal_calls == 1
+
+        transient_calls = 0
+
+        def _transient_refusal(_db: Any) -> Any:
+            nonlocal transient_calls
+            transient_calls += 1
+            return RoundupRefusal((("sport", "source_unavailable"),))
+
+        transient_producer = RoundupProducer(
+            slug="roundup-refused-transient",
+            name="Refused transient",
+            kind="roundup",
+            category="golf",
+            section_title="Section",
+            footer="Footer",
+            produce=_transient_refusal,
+        )
+        await evaluate_roundup_producer(transient_producer, db_marker, now=1000.0)
+        await evaluate_roundup_producer(transient_producer, db_marker, now=1010.0)
+        assert transient_calls == 2
+

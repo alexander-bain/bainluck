@@ -557,9 +557,16 @@ struct MLBExtraInningsCardView11284: View {
     var expanded = false
 
     var body: some View {
+        let hasPregame = ReleaseSurfaces.isEventPageAtlasEnabled()
+            && card.outcomes.contains(where: { $0.pregameChance != nil })
         VStack(alignment: .leading, spacing: 10) {
-            MLBStoryHeading11284(kicker: "Extra innings · venue market", title: "Extra innings",
-                                 reason: "Pregame chance unavailable for this market")
+            MLBStoryHeading11284(
+                kicker: "Extra innings · venue market",
+                title: "Extra innings",
+                reason: hasPregame
+                    ? "Pregame chance and venue settlement for extra innings"
+                    : "Pregame chance unavailable for this market"
+            )
             ForEach(card.outcomes) { outcome in
                 if expanded {
                     Button { state.detailsRowID = outcome.original.id } label: { row(outcome) }
