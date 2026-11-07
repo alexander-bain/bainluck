@@ -308,6 +308,14 @@ nonisolated enum EventAtlasStoryCards11666 {
                let entry = scoring.entries.first(where: { $0.id == rowID || $0.rowId == rowID }) {
                 return EventAtlasNhlCards11666.detailsModel(for: entry, card: scoring)
             }
+            if case .soccerThreeWay(let threeWay) = card,
+               let leg = threeWay.legs.first(where: { $0.id == rowID }) {
+                return EventAtlasSoccerCards11666.detailsModel(for: leg, card: threeWay)
+            }
+            if case .soccerExactScore(let exactScore) = card,
+               let cell = exactScore.cells.first(where: { $0.id == rowID || $0.key == rowID }) {
+                return EventAtlasSoccerCards11666.detailsModel(for: cell, card: exactScore)
+            }
         }
         if rowID == "finish" {
             for card in cards {
