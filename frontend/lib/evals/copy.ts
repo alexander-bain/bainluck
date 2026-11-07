@@ -91,11 +91,14 @@ export const TOP_COPY = {
  * that needs the glossary and none of our internal names (`topScreen.test.tsx`).
  * The records behind every number sit in one fold at the bottom.
  *
- * The combining chapter states the weighting in `backend/app/utils/aggregation.py`:
- * betting 3.0, ESPN 1.5, our model 1.0, prediction markets 0.8 before a game;
- * in live play the two real-time markets carry betting's weight (Alex, Oct 31,
- * #10090 D); recency decay and a per-source share cap on top. Change the words
- * if those change.
+ * The combining chapter states the weighting in `backend/app/utils/aggregation.py`
+ * exactly (Fable on #12225, Nov 6): `SOURCE_WEIGHTS` before a game is betting 3.0,
+ * ESPN 1.5, our model 1.0, and the two prediction markets and MLB's model 0.8
+ * each; in live play the two real-time markets carry betting's weight
+ * (`LIVE_MARKET_SOURCES`, Alex, Oct 31, #10090 D). Recency decay applies only once
+ * play is under way (`_relative_decay_applies`), and the per-source share cap only
+ * with `MIN_SOURCES_FOR_WEIGHT_CAP` = 3 or more sources; with two, the heavier one
+ * decides. Change the words if those change.
  */
 export const STORY_COPY = {
   sources: {
@@ -117,7 +120,7 @@ export const STORY_COPY = {
     title: "One number instead of many",
     paragraphs: [
       "When several sources cover the same outcome, we combine them into one probability: the one you see on each card.",
-      "Before a game, betting sites count most, then sports forecasters, then our own statistical model, then the prediction markets. During a game the prediction markets, which update fastest, count as much as the betting sites. A reading that has gone old counts for less, and no single source can decide the number on its own.",
+      "Before a game, betting sites count most, then ESPN's forecast, then our own statistical model, and then, equally, the prediction markets and Major League Baseball's own forecast. During a game the prediction markets, which update fastest, count as much as the betting sites, and an older reading counts for less than a fresh one. When three or more sources cover the same outcome, no single one can decide the number on its own.",
       "We grade every source against what really happened, below. We don't yet grade the combined number itself; it's on our list of what we haven't tested.",
     ],
   },
