@@ -806,3 +806,110 @@ class TestPrimitivesInvariantsAndFolderLoading:
         await evaluate_roundup_producer(transient_producer, db_marker, now=1010.0)
         assert transient_calls == 2
 
+        # Verify a timed-out producer is cached as a refusal for the 60s TTL so
+        # subsequent builds skip it without paying the timeout again, and that
+        # stage_budget_seconds allows the prewarm call site to run past 2.5s.
+        reset_roundup_cache_for_tests()
+        hanging_calls = 0
+
+        async def _counted_hanging(_db: Any) -> Any:
+            nonlocal hanging_calls
+            hanging_calls += 1
+            await asyncio.sleep(0.25)
+            return None
+
+        p2_cached = RoundupProducer(
+            slug="roundup-cfp-picture",
+            name="The College Football Playoff picture",
+            kind="roundup",
+            category="ncaaf",
+            section_title="On the bubble",
+            footer="Playoff qualifiers",
+            produce=_counted_hanging,
+        )
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ROUNDUP_PRODUCERS",
+            {p1.slug: p1, p2_cached.slug: p2_cached, p3.slug: p3},
+        )
+        shared_session = _RollbackSession()
+        first_placed = await add_roundup_feed_items(
+            shared_session,
+            deck,
+            budget_seconds=10.0,
+            stage_budget_seconds=10.0,
+            now=NOW_NOV_6,
+        )
+        second_placed = await add_roundup_feed_items(
+            shared_session,
+            deck,
+            budget_seconds=2.5,
+            now=NOW_NOV_6,
+        )
+        assert hanging_calls == 1
+        for result_deck in (first_placed, second_placed):
+            slugs = [
+                it["data"]["collection_ref"]["slug"]
+                for it in result_deck
+                if it.get("type") == "bundle"
+                and it.get("data", {}).get("kind") == "roundup"
+            ]
+            assert slugs == ["roundup-closest-games-tonight", GOLF_THIS_WEEK_SLUG]
+
+        # Verify stage_budget_seconds caps default reader builds while allowing
+        # the prewarm call site to pass a larger stage budget.
+        reset_roundup_cache_for_tests()
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ROUNDUP_READ_BUDGET_SECONDS",
+            0.03,
+        )
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ROUNDUP_PRODUCER_TIMEOUT_SECONDS",
+            0.2,
+        )
+
+        async def _slow_first(_db: Any) -> Any:
+            await asyncio.sleep(0.05)
+            return _fast_first(_db)
+
+        p1_slow = RoundupProducer(
+            slug="roundup-closest-games-tonight",
+            name="The closest games tonight",
+            kind="roundup",
+            category="sports",
+            section_title="The 4 closest games",
+            footer="Combined probability · the 4 closest of 12 games tonight",
+            produce=_slow_first,
+        )
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ROUNDUP_PRODUCERS",
+            {p1_slow.slug: p1_slow, p3.slug: p3},
+        )
+        reader_deck = await add_roundup_feed_items(
+            object(),
+            deck,
+            budget_seconds=5.0,
+            now=NOW_NOV_6,
+        )
+        reader_slugs = [
+            it["data"]["collection_ref"]["slug"]
+            for it in reader_deck
+            if it.get("type") == "bundle" and it.get("data", {}).get("kind") == "roundup"
+        ]
+        assert reader_slugs == []
+
+        reset_roundup_cache_for_tests()
+        prewarm_deck = await add_roundup_feed_items(
+            object(),
+            deck,
+            budget_seconds=5.0,
+            stage_budget_seconds=1.0,
+            now=NOW_NOV_6,
+        )
+        prewarm_slugs = [
+            it["data"]["collection_ref"]["slug"]
+            for it in prewarm_deck
+            if it.get("type") == "bundle" and it.get("data", {}).get("kind") == "roundup"
+        ]
+        assert prewarm_slugs == ["roundup-closest-games-tonight", GOLF_THIS_WEEK_SLUG]
+
+

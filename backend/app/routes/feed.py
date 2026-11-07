@@ -6375,6 +6375,8 @@ async def get_feed(
                 _capture.abandon("theme_collection_refs")
 
         from app.utils.roundup_containers import (
+            ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS,
+            ROUNDUP_READ_BUDGET_SECONDS,
             add_roundup_feed_items,
             roundup_feed_enabled,
         )
@@ -6394,6 +6396,11 @@ async def get_feed(
                 feed_items,
                 page_window=DISCOVER_COMPOSITION_WINDOW,
                 budget_seconds=_feed_budget_remaining_s(),
+                stage_budget_seconds=(
+                    ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS
+                    if _prewarm_rebuild
+                    else ROUNDUP_READ_BUDGET_SECONDS
+                ),
                 now=now,
             )
             if _capture is not None and feed_items is not _before_roundups:
