@@ -68,6 +68,26 @@ LEADER_TIER_BUDGET_SECONDS = 70
 #: cannot reach the task's soft limit.
 MAJORS_TIER_BUDGET_SECONDS = 150
 
+#: How often the SCHEDULED run includes the majors tier (worker audit
+#: 2026-11-06 B-4). The beat stays every 5 minutes for the load-bearing leaders;
+#: the four golf majors — ~80% of a pass's cost (11-35 s each) — are rebuilt on
+#: the run that opens each half hour. Golf-major concept pages and their
+#: Discover leader cards can then be up to 30 minutes old instead of 5, until
+#: the majors return in April. A cold major still builds inline in the route.
+MAJORS_EVERY_MINUTES = 30
+#: The beat period the slot arithmetic assumes; mirrors `warm-event-concepts`.
+BEAT_PERIOD_MINUTES = 5
+
+
+def majors_due(now: float) -> bool:
+    """Whether the scheduled run starting at `now` (epoch seconds) warms the majors.
+
+    True for the beat slot that opens each `MAJORS_EVERY_MINUTES` window (the
+    :00 and :30 runs), so exactly one run in six takes the majors tier.
+    """
+    slot = int(now // (BEAT_PERIOD_MINUTES * 60))
+    return slot % (MAJORS_EVERY_MINUTES // BEAT_PERIOD_MINUTES) == 0
+
 
 async def _leader_population() -> tuple[str, ...]:
     """The unsettled concepts the feed will ask for a leader on (#1948).
@@ -186,8 +206,14 @@ async def _warm_event_concepts(keys: tuple[str, ...] | None = None) -> dict:
         leader_population = len(leader_keys)
         tiers = (
             ("leaders", leader_keys, LEADER_PER_KEY_TIMEOUT_SECONDS, LEADER_TIER_BUDGET_SECONDS),
-            ("majors", WARM_CONCEPT_KEYS, PER_KEY_TIMEOUT_SECONDS, MAJORS_TIER_BUDGET_SECONDS),
         )
+        # B-4: the majors ride one run in six. On the others they are not
+        # targets at all — not skipped, not budget-starved — so the summary's
+        # `total` describes what this run was for.
+        if majors_due(time.time()):
+            tiers += (
+                ("majors", WARM_CONCEPT_KEYS, PER_KEY_TIMEOUT_SECONDS, MAJORS_TIER_BUDGET_SECONDS),
+            )
 
     targets = tuple(k for _, tier_keys, _, _ in tiers for k in tier_keys)
     rc = get_client()
@@ -265,6 +291,8 @@ async def _warm_event_concepts(keys: tuple[str, ...] | None = None) -> dict:
         # explicit-keys run (the tier was not resolved); `0` means the
         # enumeration ran and found nothing, which is a different fact.
         "leader_population": leader_population,
+        # B-4: whether this run carried the majors tier.
+        "majors_tier": any(name == "majors" for name, _, _, _ in tiers),
     }
     logger.info(
         "warm_event_concepts: %d/%d accounted (%d built, %d absent, %d locked, "

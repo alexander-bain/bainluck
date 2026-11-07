@@ -1242,9 +1242,12 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     # merged with 7cf2c6561a printed explicit 102 implicit 40 total 142.
     # W-1: `warm-typeahead-gold-set` names background; census on the tree
     # merged with 8e7a2135ff printed explicit 103 implicit 40 total 143.
-    assert explicit == 103, f"explicitly-routed background beats moved: {explicit}"
-    assert implicit == 40, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 143
+    # C-1: `check-tier1-coverage` (default queue, B-7) and
+    # `backfill-kalshi-price-history` (background, B-12) retired; census on the
+    # tree merged with ce54f96e3c printed explicit 102 implicit 39 total 141.
+    assert explicit == 102, f"explicitly-routed background beats moved: {explicit}"
+    assert implicit == 39, f"default-queue fall-through moved: {implicit}"
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 141
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

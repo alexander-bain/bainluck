@@ -22,6 +22,7 @@ fires whenever absence gets confused with zero.
 from __future__ import annotations
 
 import pytest
+from unittest.mock import patch
 
 from app.routes import feed as feed_module
 from app.utils import tag_counts_cache
@@ -654,9 +655,17 @@ def test_the_period_is_derived_from_the_slots_own_ttl():
     from app.tasks import tag_counts_warm
     from app.utils.tag_counts_cache import FRESH_TTL_SECONDS
 
-    assert tag_counts_warm.warm_period_seconds() == FRESH_TTL_SECONDS // (
-        tag_counts_warm.MISSED_DELIVERY_ALLOWANCE + 1
-    )
+    # C-1 (2026-11-06): the derived period is rounded DOWN to an even `*/N`
+    # (4500 // 2 = 2250 s -> 1800 s). Never longer than the derivation, and it
+    # still moves when the TTL does.
+    raw = FRESH_TTL_SECONDS // (tag_counts_warm.MISSED_DELIVERY_ALLOWANCE + 1)
+    period = tag_counts_warm.warm_period_seconds()
+    assert period <= raw
+    assert period == 1800 and raw == 2250
+    # One lost delivery still leaves the slot servable.
+    assert (tag_counts_warm.MISSED_DELIVERY_ALLOWANCE + 1) * period <= FRESH_TTL_SECONDS
+    with patch("app.utils.tag_counts_cache.FRESH_TTL_SECONDS", 3600):
+        assert tag_counts_warm.warm_period_seconds() == 1800  # 3600 // 2, even
 
 
 def test_the_period_is_a_whole_number_of_minutes_that_divides_an_hour():
