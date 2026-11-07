@@ -1,0 +1,63 @@
+name: Deploy Staleness
+
+# #12252 item 4: notice — from a program — that merges have stopped reaching readers.
+# Reads /health's commit, master's tip and master's newest CI run; when production is more
+# than 2 h behind and that run is complete, files or updates ONE "Deploy stale: ..." issue
+# through reconcile_issue, naming the newest master run (re-run that one only). Posts nothing
+# while caught up. Never cancels, re-runs or deploys. Script: backend/scripts/deploy_staleness_alert.py
+on:
+  # Every completed master CI run re-checks, because GitHub's scheduler fires late in this
+  # repo (19-359 min, measured in heavy-sync.yml) and a 30-min cron alone could be hours late.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  schedule:
+    # Every 30 min; the script itself keeps to 8 AM-10 PM Pacific, so DST needs no cron edit.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the reading; write no issue"
+        type: boolean
+        default: false
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: deploy-staleness
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v6
+      # Standard library only: a caught-up run with no issue open stops after this step.
+      - name: Compare production with master
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/deploy_staleness_alert.py --plan
+      - uses: actions/setup-python@v7
+        if: steps.plan.outputs.act == 'true'
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        if: steps.plan.outputs.act == 'true'
+        run: pip install -r requirements.txt
+      - name: File, update or close the one Deploy stale issue
+        if: steps.plan.outputs.act == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: python scripts/deploy_staleness_alert.py $DRY_RUN
