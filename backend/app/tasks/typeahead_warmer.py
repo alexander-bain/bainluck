@@ -211,7 +211,14 @@ logger = logging.getLogger(__name__)
 #: top-of-distribution knee (top-50 covered 69% of logged volume) while keeping
 #: a warm run's total work small — every query after the first cycle is
 #: single-digit-to-low-hundreds of ms because the pages it needs are resident.
-DEFAULT_HEAD_SIZE = 40
+#:
+#: W-1 (worker audit 2026-11-06 B-1; Alex 53: A): 40 -> 8. The pass is now a
+#: RESIDENCY pass — enough terms to keep both trigram indexes' hot pages resident —
+#: not a cache for the top 40 (~13 real searches a month reached those entries). A
+#: term outside the 8 is computed on demand: the same fresh answer, ~50 ms if the
+#: index pages are resident and ~1.1 s if they were evicted. The pass working set
+#: is about a quarter of what it was on `worker-background`.
+DEFAULT_HEAD_SIZE = 8
 
 #: Bound on ONE query, not on the loop. Bounding only the loop boundary lets a
 #: single pathological query eat the whole budget and starve the rest of the
@@ -1192,6 +1199,23 @@ async def _warm_head_concurrently(sessions: list, head: list[str]) -> list[dict]
     # than in completion order — otherwise two identical passes would produce
     # differently-ordered evidence and diffing them would be noise.
     return [r for r in results if r is not None]
+
+
+def flow_sentinel_gold_terms() -> list[str]:
+    """The Flow Sentinel's gold-set queries, deduped, in its own order. W-1.
+
+    `GOLD_SET` (25 rows) and `GOLD_SET_TOP1` (8 rows) share `masters winner`, so
+    the 33 rows are 32 terms. Read from the sentinel rather than copied, so the
+    07:05 UTC pre-warm cannot drift from what the 07:10 sentinel searches.
+    """
+    from app.tasks.flow_sentinel import GOLD_SET, GOLD_SET_TOP1
+
+    out: list[str] = []
+    for q in [q for q, _ in GOLD_SET] + [q for q, _, _ in GOLD_SET_TOP1]:
+        q = q.strip().lower()
+        if q not in out:
+            out.append(q)
+    return out
 
 
 async def _warm_typeahead(

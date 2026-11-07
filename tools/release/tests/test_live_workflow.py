@@ -90,7 +90,8 @@ class WorkflowTests(unittest.TestCase):
         ci = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
         watch = yaml.safe_load((ROOT / '.github/workflows/live-path-watchdog.yml').read_text())['jobs']
         for name in ['backend-tests', 'shard-completeness', 'database-integration', 'search-recall', 'frontend-build', 'e2e-contract']:
-            commands = lambda job: [(step.get('uses'), step.get('run')) for step in job['steps'] if step.get('name') != "Require this run's change-scope attempt"]
+            # #10708: the native leg step runs only on a native PR; the watchdog is always full.
+            commands = lambda job: [(step.get('uses'), step.get('run')) for step in job['steps'] if step.get('name') != "Require this run's change-scope attempt" and not str(step.get('name', '')).startswith('Native candidate')]
             self.assertEqual(commands(ci[name]), commands(watch[name]), name + ' full-suite commands drifted')
         self.assertIn('scope=full', str(watch['change-scope']))
 

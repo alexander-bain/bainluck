@@ -171,8 +171,10 @@ RESPONSE_CACHE_TTL_S = 65
 MIN_PASS_PERIOD_S = 30
 
 #: The beat interval in force today. Mirrored from the `warm-typeahead` entry in
-#: `tasks/__init__.py` (`"schedule": 10.0`).
-CURRENT_BEAT_INTERVAL_S = 10.0
+#: `tasks/__init__.py` (`"schedule": 15.0`). W-1 (2026-11-06): 10 -> 15 s, which
+#: keeps the real-pass gap at or under 45 s on the 30 s floor; a 30 s beat on a
+#: 30 s floor would skip to 60 s whenever a pass started late.
+CURRENT_BEAT_INTERVAL_S = 15.0
 
 # ---------------------------------------------------------------------------
 # The measured pass wall. PROVENANCE, not folklore.
@@ -506,7 +508,10 @@ LOCK_TTL_S = 45
 #: rather than an open one. Same constant, same job, as
 #: `search_head_warmer.MAX_LIVE_MESSAGES`; the two beats differ in period so the
 #: seconds differ (12 x 10 s here, 9 x 20 s there).
-MAX_LIVE_MESSAGES = 12
+#:
+#: W-1 (2026-11-06): 12 -> 8 with the beat 10 -> 15 s, so the window a queued fire
+#: may wait stays the 120 s it was (8 x 15 s) and the broker holds fewer of them.
+MAX_LIVE_MESSAGES = 8
 
 
 def derive_message_expiry_s(
@@ -2107,16 +2112,22 @@ def free_background_slots(
 #: queue are unchanged (six an hour). W-1 #12222 writes against an older base:
 #: whichever merges after another re-runs the census, never adds one. The census
 #: RUN over the tree merged with `7cf2c6561a` printed `explicit 102 implicit 40 total 142`.
-#: 🔴 RE-DERIVED at speed (2026-11-06, C-1 over L-1 + B-5): 142 → 140,
-#: explicit 102 → 101, fall-through 40 → 39. Two beats retired: B-7's
+#: 🔴 RE-DERIVED at speed (2026-11-06, W-1 over L-1 + B-5): 142 → 143, explicit 102 → 103,
+#: fall-through UNMOVED at 40. `warm-typeahead-gold-set`
+#: (`crontab(hour=7, minute=5)`) names `background` explicitly. Cost: one fire a
+#: day, one typeahead pass over the Flow Sentinel's 32 gold-set terms (~the
+#: old 40-term pass, ~20 s) — against W-1 taking the every-15 s pass from 40
+#: terms to 8. The census RUN over the tree merged with `8e7a2135ff` (L-1 and
+#: B-5 both on master) printed `explicit 103 implicit 40 total 143`.
+#: 🔴 RE-DERIVED at speed (2026-11-06, C-1 over L-1 + B-5 + W-1): 143 → 141,
+#: explicit 103 → 102, fall-through 40 → 39. Two beats retired: B-7's
 #: `check-tier1-coverage` (hourly, default queue; its only output was one log
 #: line) and B-12's `backfill-kalshi-price-history` (the `resolved_zero` mode,
 #: explicit `background`; no watermark, so it cannot drain, and
-#: `kalshi-cliff-drain` covers its cohort hourly). ⚠️ W-1 #12222 writes against
-#: base 142: whichever merges after another re-runs the census, never adds or
-#: subtracts one. The census RUN over the tree merged with `8e7a2135ff` printed
-#: `explicit 101 implicit 39 total 140`.
-BACKGROUND_BEAT_COUNT = 140
+#: `kalshi-cliff-drain` covers its cohort hourly). The census RUN over the tree
+#: merged with `ce54f96e3c` (W-1 on master) printed `explicit 102 implicit 39
+#: total 141`.
+BACKGROUND_BEAT_COUNT = 141
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

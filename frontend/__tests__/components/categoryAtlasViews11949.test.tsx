@@ -25,6 +25,11 @@ import {
 } from "@/components/collections/MidtermsAtlasSection";
 import EconomicsAtlasView from "@/components/economics/EconomicsAtlasView";
 import EntertainmentAtlasView from "@/components/entertainment/EntertainmentAtlasView";
+import {
+  findBannedCopy,
+  JARGON_BANS,
+  visibleTextFromHtml,
+} from "@/lib/copyBans";
 
 describe("#11949 Category Atlas Views (Orders 8–11)", () => {
   afterEach(() => {
@@ -506,5 +511,90 @@ describe("#11949 Category Atlas Views (Orders 8–11)", () => {
     );
     expect(unpricedEconHtml).toContain(ATLAS_STATE_COPY.noRecentPrice);
     expect(unpricedEconHtml).not.toContain(">0%<");
+    expect(
+      findBannedCopy(visibleTextFromHtml(unpricedEconHtml), JARGON_BANS)
+    ).toEqual([]);
+  });
+
+  it("PoliticsAtlasView and MidtermsAtlasSection refuse blank outcome labels, keep missing source as null, and pass copyBans (#11949)", () => {
+    (globalThis as { __FORCE_ATLAS_SHEET_OPEN__?: boolean }).__FORCE_ATLAS_SHEET_OPEN__ =
+      true;
+
+    const html = renderToStaticMarkup(
+      React.createElement(
+        "div",
+        null,
+        React.createElement(PoliticsAtlasView, {
+          data: {
+            total_markets: 2,
+            updated_at: "2026-11-05T18:00:00Z",
+            themes: {
+              presidential: {
+                count: 1,
+                headline_q: "Who wins the 2028 presidential election?",
+                has_dual_source: false,
+                kalshi_market_id: null,
+                poly_market_id: null,
+                candidates: [
+                  { name: "   ", party: "R" as const, kalshi: 50, poly: null, merged: 50 },
+                  { name: "JD Vance", party: "R" as const, kalshi: 31, poly: 29, merged: 30 },
+                ],
+                side_markets: [],
+              },
+              congressional: {
+                count: 1,
+                chamber_control: null,
+                markets: [
+                  {
+                    market_id: 901,
+                    q: "Ohio Senate race",
+                    prob: 55,
+                    leader: "Candidate A (R)",
+                    src: "",
+                    status: "closed",
+                    top_outcomes: [
+                      { name: "", prob: 99, rendered_percent: 99 },
+                      { name: "Candidate A (R)", prob: 55, rendered_percent: 55 },
+                      { name: "Candidate B (D)", prob: 45, rendered_percent: 45 },
+                    ],
+                  },
+                ],
+              },
+            },
+          } as any,
+        }),
+        React.createElement(MidtermsAtlasMemberCard, {
+          sectionTitle: "Senate races",
+          member: {
+            key: "market:109777",
+            id: 109777,
+            destination: "/futures/109777",
+            item: {
+              type: "futures",
+              score: 1,
+              data: {
+                id: 109777,
+                name: "Closed but ungraded Senate race",
+                status: "closed",
+                source: "",
+                top_outcomes: [
+                  { id: 1, name: "   ", probability: 0.99 },
+                  { id: 2, name: "Jane Doe (D)", probability: 0.995 },
+                  { id: 3, name: "John Smith (R)", probability: 0.005 },
+                ],
+              },
+            },
+          } as any,
+        })
+      )
+    );
+
+    expect(html).toContain("JD Vance");
+    expect(html).toContain("Candidate A (R)");
+    expect(html).toContain("Jane Doe (D)");
+    expect(html).not.toContain("✓ Won");
+    expect(html).toContain("Published source");
+    expect(html).not.toContain(">Kalshi<");
+    expect(findBannedCopy(visibleTextFromHtml(html), JARGON_BANS)).toEqual([]);
   });
 });

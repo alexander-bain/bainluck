@@ -23,6 +23,20 @@ export function useAtlasPageOptIn(): boolean {
   return resolveAtlasOptIn(search);
 }
 
+export function cleanAtlasOutcomes(
+  outcomes: AtlasCategoryOutcome[] | undefined | null,
+): AtlasCategoryOutcome[] {
+  if (!Array.isArray(outcomes)) return [];
+  return outcomes.filter(
+    (o) => Boolean(o && typeof o.label === 'string' && o.label.trim().length > 0),
+  );
+}
+
+export function cleanAtlasSource(source?: string | null): string | null {
+  const s = (source || '').trim();
+  return s.length > 0 ? s : null;
+}
+
 export interface AtlasCategoryOutcome {
   id?: number | string;
   label: string;
@@ -350,15 +364,19 @@ export function FieldBoard({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
+  const validOutcomes = cleanAtlasOutcomes(outcomes);
   const heading = formatAtlasMarketHeading(meta.marketTitle);
-  const isSettled = outcomes.some(
+  const isSettled = validOutcomes.some(
     (o) => o.isWinner === true || o.settledResult === 'won',
   );
-  const shownOutcomes = expanded ? outcomes : outcomes.slice(0, previewCount);
-  const hiddenCount = Math.max(0, outcomes.length - shownOutcomes.length);
-  const lead = outcomes[0];
+  const shownOutcomes = expanded
+    ? validOutcomes
+    : validOutcomes.slice(0, previewCount);
+  const hiddenCount = Math.max(0, validOutcomes.length - shownOutcomes.length);
+  const lead = validOutcomes[0];
   const leadP01 = lead ? normalizeProb01(lead.probability, lead.renderedPercent) : null;
   const readingPT = formatAtlasTimestampPT(lead?.observedAt ?? meta.observedAt);
+  const normalizedSource = cleanAtlasSource(meta.source);
 
   return (
     <article
@@ -407,7 +425,7 @@ export function FieldBoard({
       )}
 
       <div className="mt-4 space-y-2.5">
-        {outcomes.length === 0 && meta.loading && (
+        {validOutcomes.length === 0 && meta.loading && (
           <div className="py-4 text-xs text-text-muted">{ATLAS_STATE_COPY.loading}</div>
         )}
         {shownOutcomes.map((o, idx) => {
@@ -502,7 +520,7 @@ export function FieldBoard({
         <span>
           {isSettled
             ? 'Settled field'
-            : `${outcomes.length} contenders · one winner`}
+            : `${validOutcomes.length} contenders · one winner`}
         </span>
         {readingPT && <span className="font-mono">reading {readingPT}</span>}
       </div>
@@ -530,7 +548,7 @@ export function FieldBoard({
         lastObservedAt={lead?.observedAt ?? meta.observedAt ?? null}
         resolutionDate={meta.resolutionDate ?? null}
         settledAt={meta.settledAt ?? null}
-        source={meta.source ?? null}
+        source={normalizedSource}
         sourceCount={meta.sourceCount ?? null}
         sourceLabels={meta.sourceLabels}
         externalId={meta.externalId ?? null}
@@ -551,7 +569,13 @@ export function BinaryRow({
   outcome: AtlasCategoryOutcome;
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
-  const heading = formatAtlasMarketHeading(meta.marketTitle || outcome.label);
+  const cleanLabel = (outcome?.label || '').trim();
+  const cleanTitle = (meta?.marketTitle || '').trim();
+  if (!cleanLabel && !cleanTitle) {
+    return null;
+  }
+  const heading = formatAtlasMarketHeading(cleanTitle || cleanLabel);
+  const normalizedSource = cleanAtlasSource(meta.source);
   const p01 = normalizeProb01(outcome.probability, outcome.renderedPercent);
   const pctLabel = formatOutcomePercent(outcome);
   const open01 = normalizeProb01(outcome.openingProbability, outcome.renderedOpening);
@@ -648,7 +672,7 @@ export function BinaryRow({
       <AtlasDetailsSheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
-        subjectName={outcome.label || heading}
+        subjectName={cleanLabel || heading}
         marketTitle={heading}
         isSettled={isSettled}
         settledResult={won ? 'won' : lost ? 'lost' : null}
@@ -660,7 +684,7 @@ export function BinaryRow({
         lastObservedAt={outcome.observedAt ?? meta.observedAt ?? null}
         resolutionDate={meta.resolutionDate ?? null}
         settledAt={meta.settledAt ?? null}
-        source={meta.source ?? null}
+        source={normalizedSource}
         sourceCount={meta.sourceCount ?? null}
         sourceLabels={meta.sourceLabels}
         externalId={meta.externalId ?? null}
@@ -683,9 +707,11 @@ export function ThresholdLadderCard({
   reportedActualLabel?: string | null;
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
+  const validRungs = cleanAtlasOutcomes(rungs);
   const heading = formatAtlasMarketHeading(meta.marketTitle);
-  const lead = rungs[0];
+  const lead = validRungs[0];
   const readingPT = formatAtlasTimestampPT(lead?.observedAt ?? meta.observedAt);
+  const normalizedSource = cleanAtlasSource(meta.source);
 
   return (
     <article
@@ -724,7 +750,7 @@ export function ThresholdLadderCard({
       </div>
 
       <div className="mt-4 space-y-2.5">
-        {rungs.map((r, idx) => {
+        {validRungs.map((r, idx) => {
           const p01 = normalizeProb01(r.probability, r.renderedPercent);
           const pctLabel = formatOutcomePercent(r);
           const won = r.isWinner === true || r.settledResult === 'won';
@@ -804,7 +830,7 @@ export function ThresholdLadderCard({
         lastObservedAt={lead?.observedAt ?? meta.observedAt ?? null}
         resolutionDate={meta.resolutionDate ?? null}
         settledAt={meta.settledAt ?? null}
-        source={meta.source ?? null}
+        source={normalizedSource}
         sourceCount={meta.sourceCount ?? null}
         sourceLabels={meta.sourceLabels}
         externalId={meta.externalId ?? null}
@@ -827,23 +853,26 @@ export function RaceCard({
   settledWinner?: string | null;
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
+  const validContenders = cleanAtlasOutcomes(contenders);
+  const cleanWinner = (settledWinner || '').trim() || null;
   const heading = formatAtlasMarketHeading(meta.marketTitle);
+  const normalizedSource = cleanAtlasSource(meta.source);
   const winnerOutcome =
-    contenders.find((c) => c.isWinner === true || c.settledResult === 'won') ??
-    (settledWinner
-      ? contenders.find(
-          (c) => c.label.trim().toLowerCase() === settledWinner.trim().toLowerCase(),
+    validContenders.find((c) => c.isWinner === true || c.settledResult === 'won') ??
+    (cleanWinner
+      ? validContenders.find(
+          (c) => c.label.trim().toLowerCase() === cleanWinner.toLowerCase(),
         ) ?? {
-          label: settledWinner,
+          label: cleanWinner,
           isWinner: true,
           settledResult: 'won' as const,
         }
       : null);
   const isSettled = Boolean(winnerOutcome);
-  const lead = winnerOutcome ?? contenders[0];
+  const lead = winnerOutcome ?? validContenders[0];
   const readingPT = formatAtlasTimestampPT(lead?.observedAt ?? meta.observedAt);
   const settledPT = formatAtlasTimestampPT(meta.settledAt);
-  const hasAnyPrice = contenders.some(
+  const hasAnyPrice = validContenders.some(
     (c) => normalizeProb01(c.probability, c.renderedPercent) !== null,
   );
 
@@ -930,7 +959,7 @@ export function RaceCard({
         </div>
       ) : (
         <div className="mt-3 space-y-2">
-          {contenders.map((c, idx) => {
+          {validContenders.map((c, idx) => {
             const p01 = normalizeProb01(c.probability, c.renderedPercent);
             const pctLabel = formatOutcomePercent(c);
             const open01 = normalizeProb01(c.openingProbability, c.renderedOpening);
@@ -1008,7 +1037,7 @@ export function RaceCard({
         lastObservedAt={lead?.observedAt ?? meta.observedAt ?? null}
         resolutionDate={meta.resolutionDate ?? null}
         settledAt={meta.settledAt ?? null}
-        source={meta.source ?? null}
+        source={normalizedSource}
         sourceCount={meta.sourceCount ?? null}
         sourceLabels={meta.sourceLabels}
         externalId={meta.externalId ?? null}
@@ -1036,8 +1065,10 @@ export function BucketDistribution({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [showAllRanges, setShowAllRanges] = useState(false);
 
+  const validBuckets = useMemo(() => cleanAtlasOutcomes(buckets), [buckets]);
   const heading = formatAtlasMarketHeading(meta.marketTitle);
-  const settledBucket = buckets.find(
+  const normalizedSource = cleanAtlasSource(meta.source);
+  const settledBucket = validBuckets.find(
     (b) => b.isWinner === true || b.settledResult === 'won',
   );
   const isSettled = Boolean(settledBucket);
@@ -1046,7 +1077,7 @@ export function BucketDistribution({
     if (guardFailed || isSettled) return null;
     let best: AtlasCategoryOutcome | null = null;
     let bestP = -1;
-    for (const b of buckets) {
+    for (const b of validBuckets) {
       const p = normalizeProb01(b.probability, b.renderedPercent);
       if (p !== null && p > bestP) {
         bestP = p;
@@ -1054,7 +1085,7 @@ export function BucketDistribution({
       }
     }
     return best;
-  }, [buckets, guardFailed, isSettled]);
+  }, [validBuckets, guardFailed, isSettled]);
 
   const peakPct = peakBucket ? formatOutcomePercent(peakBucket) : null;
   const readingPT = formatAtlasTimestampPT(
@@ -1062,9 +1093,9 @@ export function BucketDistribution({
   );
 
   // Split low-probability tail buckets (< 2%) when there are > 7 buckets and not expanded.
-  const canCollapseTail = !showAllRanges && !guardFailed && buckets.length > 7;
+  const canCollapseTail = !showAllRanges && !guardFailed && validBuckets.length > 7;
   const mainBuckets = canCollapseTail
-    ? buckets.filter((b) => {
+    ? validBuckets.filter((b) => {
         const p = normalizeProb01(b.probability, b.renderedPercent);
         return (
           b === peakBucket ||
@@ -1072,9 +1103,9 @@ export function BucketDistribution({
           (p !== null && p >= 0.02)
         );
       })
-    : buckets;
+    : validBuckets;
   const tailBuckets = canCollapseTail
-    ? buckets.filter((b) => !mainBuckets.includes(b))
+    ? validBuckets.filter((b) => !mainBuckets.includes(b))
     : [];
 
   return (
@@ -1126,7 +1157,7 @@ export function BucketDistribution({
       </div>
 
       <div className="mt-4 space-y-2">
-        {(mainBuckets.length > 0 ? mainBuckets : buckets).map((b, idx) => {
+        {(mainBuckets.length > 0 ? mainBuckets : validBuckets).map((b, idx) => {
           const p01 = normalizeProb01(b.probability, b.renderedPercent);
           const pctLabel = formatOutcomePercent(b);
           const won = b.isWinner === true || b.settledResult === 'won';
@@ -1200,7 +1231,7 @@ export function BucketDistribution({
       )}
 
       <div className="mt-3 flex items-center justify-between border-t border-surface-border pt-2.5 text-[11px] text-text-muted">
-        <span>{buckets.length} ranges · exactly one settles</span>
+        <span>{validBuckets.length} ranges · exactly one settles</span>
         {tailBuckets.length > 0 ? (
           <button
             type="button"
@@ -1235,7 +1266,7 @@ export function BucketDistribution({
         lastObservedAt={peakBucket?.observedAt ?? meta.observedAt ?? null}
         resolutionDate={meta.resolutionDate ?? null}
         settledAt={meta.settledAt ?? null}
-        source={meta.source ?? null}
+        source={normalizedSource}
         sourceCount={meta.sourceCount ?? null}
         sourceLabels={meta.sourceLabels}
         externalId={meta.externalId ?? null}
