@@ -2,7 +2,8 @@
 
 One assertion cluster per shape, plus the census mis-bucket fixes:
   * 2-outcome MX with named sides → duel (not claim)
-  * sub-2-outcome → unshaped (not claim)
+  * sub-2-outcome → unshaped (not claim), except a lone "Yes" (#12221 — Kalshi's
+    stored form of a whole yes/no market)
   * quantity keyed off numeric outcome structure, not question text
 """
 
@@ -144,11 +145,20 @@ def test_unshaped_zero_outcomes():
 
 
 def test_unshaped_one_outcome():
-    assert classify_market_shape(outcome_names=["Yes"]) == (SHAPE_UNSHAPED, None)
+    # One named leg of a field (a partial Polymarket ladder) has no shape of its own.
+    assert classify_market_shape(outcome_names=["UD Almería"]) == (SHAPE_UNSHAPED, None)
 
 
 def test_unshaped_ignores_blank_outcome_names():
-    assert shape(["Yes", "   ", ""]) == SHAPE_UNSHAPED
+    assert shape(["UD Almería", "   ", ""]) == SHAPE_UNSHAPED
+
+
+def test_lone_yes_is_a_claim_12221():
+    """Kalshi writes a single-market event as one outcome, "Yes" (#12221)."""
+    assert classify_market_shape(outcome_names=["Yes"]) == (SHAPE_CLAIM, "yes_no")
+    assert shape(["yes", "  "]) == SHAPE_CLAIM
+    # A lone "No" is not how any venue stores a market; it stays unshaped.
+    assert shape(["No"]) == SHAPE_UNSHAPED
 
 
 def test_none_outcome_names_is_unshaped():
