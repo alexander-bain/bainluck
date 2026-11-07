@@ -140,6 +140,7 @@
     "#2927 containers migration round trip (real Postgres)"
   ],
   "shared-tail": [
+    "#55-A shared tail — provision the pinned retry-once plugin",
     "#10703 shared tail — provision pg_trgm on the fresh database",
     "#2927 container assembly writes and re-writes (real Postgres)",
     "#9653 collection discovery offers only eligible published hubs (real Postgres)",

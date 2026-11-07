@@ -22,6 +22,10 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/ci.yml"
 MANIFEST = ROOT / ".github/ci-postgres-groups.json"
 TAIL_PROVISIONER = "#10703 shared tail — provision pg_trgm on the fresh database"
+# Decide 55-A: the shared tail's first step installs the pinned retry-once
+# plugin. It touches no database and runs no test, so the provisioning order
+# below is read without it.
+RETRY_PLUGIN = "#55-A shared tail — provision the pinned retry-once plugin"
 MIDDLE_PROVISIONER = "#10717 shared middle — provision pg_trgm on the fresh database"
 MIDDLE_FIRST_GATE = "#8466 a Polymarket leg resolves on its own date, and a re-ingest repairs it (real Postgres)"
 TAIL_FIRST_GATE = "#2927 container assembly writes and re-writes (real Postgres)"
@@ -73,13 +77,13 @@ def _validate_fresh_tail(worker, fixture_source):
     offloaded = _offloaded_suffix(worker)
     tail = [
         step for step in worker["steps"]
-        if step.get("if") == "matrix.group == 'shared-tail'"
+        if step.get("if") == "matrix.group == 'shared-tail'" and step.get("name") != RETRY_PLUGIN
     ]
     assert [step["name"] for step in tail[:2]] == [TAIL_PROVISIONER, TAIL_FIRST_GATE]
     original_shared = [
         step["name"] for step in worker["steps"]
         if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-tail'")
-        and step.get("name") not in (TAIL_PROVISIONER, MIDDLE_PROVISIONER)
+        and step.get("name") not in (TAIL_PROVISIONER, MIDDLE_PROVISIONER, RETRY_PLUGIN)
         and step.get("name") not in offloaded
     ]
     prefix = [
