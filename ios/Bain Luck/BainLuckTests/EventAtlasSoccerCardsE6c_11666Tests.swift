@@ -15,7 +15,7 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
     }
 
     @MainActor
-    func testRefusesTwoWayMarketAndPreservesRawThreeWayQuotesWithoutNormalization() throws {
+    func testRefusesTwoWayMarketAndScalesThreeWayFieldUnderRuling49A() throws {
         let now = try XCTUnwrap("2026-11-06T18:00:00Z".asDate)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -56,7 +56,9 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
             )
         )
 
-        // 2. Three-way market preserves raw quotes (e.g. 0.48 + 0.28 + 0.27 = 1.03) without normalizing
+        // 2. Ruling 49-A: three-way market with raw total >= 90% (0.48 + 0.28 + 0.27 = 1.03)
+        // scales legs to 100%, prints what the card is ("Home, draw and away are three real outcomes")
+        // rather than the overround sum, and keeps the raw sum in the details sheet's raw fields at most.
         let threeWayJSON = """
         [
             {
@@ -100,12 +102,97 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
             )
         )
         XCTAssertEqual(card.title, "A draw is a real third outcome")
+        XCTAssertEqual(card.reason, "Home, draw and away are three real outcomes")
+        XCTAssertFalse(card.reason.contains("%"))
+        XCTAssertFalse(card.reason.lowercased().contains("normalization"))
         XCTAssertEqual(card.legs.map(\.label), ["Arsenal", "Draw", "Chelsea"])
-        XCTAssertEqual(card.legs[0].quotedChance ?? 0, 0.48, accuracy: 1e-6)
-        XCTAssertEqual(card.legs[1].quotedChance ?? 0, 0.28, accuracy: 1e-6)
-        XCTAssertEqual(card.legs[2].quotedChance ?? 0, 0.27, accuracy: 1e-6)
+        XCTAssertEqual(card.legs[0].quotedChance ?? 0, 0.48 / 1.03, accuracy: 1e-6)
+        XCTAssertEqual(card.legs[1].quotedChance ?? 0, 0.28 / 1.03, accuracy: 1e-6)
+        XCTAssertEqual(card.legs[2].quotedChance ?? 0, 0.27 / 1.03, accuracy: 1e-6)
+        let scaledSum = card.legs.compactMap(\.quotedChance).reduce(0.0, +)
+        XCTAssertEqual(scaledSum, 1.0, accuracy: 1e-6)
         XCTAssertEqual(card.quotedSum ?? 0, 1.03, accuracy: 1e-6)
-        XCTAssertEqual(card.reason, "Recorded three-way quotes total 103% · no normalization or invented draw")
+        let sheet = EventAtlasSoccerCards11666.detailsModel(for: card.legs[0], card: card)
+        XCTAssertEqual(sheet.primaryReadingValue, "47%")
+        XCTAssertEqual(sheet.statusSummary, "Raw 3-way sum 103%")
+
+        // 3. Ruling 49-A scales both ways when raw total >= 90% and < 100% (0.45 + 0.25 + 0.25 = 0.95)
+        let under100JSON = """
+        [
+            {"_market_id": 503, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.45, "observed_at": "2026-11-06T17:55:00Z", "source": "kalshi"},
+            {"_market_id": 503, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.25, "observed_at": "2026-11-06T17:55:00Z", "source": "kalshi"},
+            {"_market_id": 503, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.25, "observed_at": "2026-11-06T17:55:00Z", "source": "kalshi"}
+        ]
+        """
+        let under100Rows = try decoder.decode([GameMarketOther].self, from: Data(under100JSON.utf8))
+        let under100Card = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildThreeWayCard(
+                matrix: nil,
+                otherMarkets: under100Rows,
+                status: "scheduled",
+                commenceTime: "2026-11-06T20:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: now
+            )
+        )
+        XCTAssertEqual(under100Card.legs[0].quotedChance ?? 0, 0.45 / 0.95, accuracy: 1e-6)
+        XCTAssertEqual(under100Card.legs[1].quotedChance ?? 0, 0.25 / 0.95, accuracy: 1e-6)
+        XCTAssertEqual(under100Card.legs[2].quotedChance ?? 0, 0.25 / 0.95, accuracy: 1e-6)
+
+        // 4. Ruling 49-A withholds all leg numbers when raw total < 90% (0.30 + 0.25 + 0.20 = 0.75)
+        // or when the field is partial (one leg stale/missing).
+        let below90JSON = """
+        [
+            {"_market_id": 504, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.30, "observed_at": "2026-11-06T17:55:00Z", "source": "kalshi"},
+            {"_market_id": 504, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.25, "observed_at": "2026-11-06T17:55:00Z", "source": "kalshi"},
+            {"_market_id": 504, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.20, "observed_at": "2026-11-06T17:55:00Z", "source": "kalshi"}
+        ]
+        """
+        let below90Rows = try decoder.decode([GameMarketOther].self, from: Data(below90JSON.utf8))
+        let below90Card = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildThreeWayCard(
+                matrix: nil,
+                otherMarkets: below90Rows,
+                status: "scheduled",
+                commenceTime: "2026-11-06T20:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: now
+            )
+        )
+        XCTAssertTrue(below90Card.legs.allSatisfy { $0.quotedChance == nil && $0.pregameChance == nil })
+        let withheldSheet = EventAtlasSoccerCards11666.detailsModel(for: below90Card.legs[0], card: below90Card)
+        XCTAssertEqual(withheldSheet.primaryReadingValue, "No recent price")
+        XCTAssertEqual(withheldSheet.statusSummary, "Raw 3-way sum 75%")
+
+        let partialJSON = """
+        [
+            {"_market_id": 505, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.50, "observed_at": "2026-11-06T17:55:00Z", "source": "kalshi"},
+            {"_market_id": 505, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.28, "observed_at": "2026-11-06T16:00:00Z", "source": "kalshi"},
+            {"_market_id": 505, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.25, "observed_at": "2026-11-06T17:55:00Z", "source": "kalshi"}
+        ]
+        """
+        let partialRows = try decoder.decode([GameMarketOther].self, from: Data(partialJSON.utf8))
+        let partialCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildThreeWayCard(
+                matrix: nil,
+                otherMarkets: partialRows,
+                status: "scheduled",
+                commenceTime: "2026-11-06T20:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: now
+            )
+        )
+        XCTAssertTrue(partialCard.legs.allSatisfy { $0.quotedChance == nil && $0.pregameChance == nil })
+        XCTAssertNil(partialCard.quotedSum)
     }
 
     @MainActor

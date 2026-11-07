@@ -6,8 +6,9 @@ import SwiftUI
 /// 1. Three-way match outcome (`ThreeWayCard`, `id: "soccer:threeWay"`):
 ///    Home / Draw / Away on a shared 0–100% probability scale (`"A draw is a real third outcome"`
 ///    before full-time; `"Full-time three-way result"` after). Refuses any market that does not
-///    explicitly supply all three legs — never invents a draw from `1 - home - away`, never
-///    normalizes quotes to 100%, and withholds unblended multi-source probabilities.
+///    explicitly supply all three legs — never invents a draw from `1 - home - away`. Under
+///    Ruling 49-A, complete one-winner fields scale both ways when the raw total is ≥ 90%,
+///    partial fields never scale, and unblended multi-source probabilities are withheld.
 /// 2. Exact-score landscape (`ExactScoreCard`, `id: "soccer:exactScore"`):
 ///    2D discrete score grid (`homeGoals` across × `awayGoals` down) built from supplied
 ///    Exact Score / Correct Score outcomes without inventing missing cells as 0% or normalizing.
@@ -26,6 +27,25 @@ nonisolated enum EventAtlasSoccerCards11666 {
     private static func openChance(_ value: Double?) -> Double? {
         guard let value, value.isFinite, value > 0, value < 1 else { return nil }
         return value
+    }
+
+    /// Ruling 49-A: one-winner fields scale both ways only when all three legs are present
+    /// and the raw total is >= 90%. Partial fields or fields totaling < 90% withhold all leg numbers.
+    static func scaleThreeWayField(
+        home: Double?,
+        draw: Double?,
+        away: Double?
+    ) -> (home: Double?, draw: Double?, away: Double?, rawSum: Double?) {
+        guard let h = openChance(home),
+              let d = openChance(draw),
+              let a = openChance(away) else {
+            return (nil, nil, nil, nil)
+        }
+        let sum = h + d + a
+        guard sum >= 0.90 else {
+            return (nil, nil, nil, sum)
+        }
+        return (h / sum, d / sum, a / sum, sum)
     }
 
     // MARK: - 1. Three-Way Match Outcome ("A draw is a real third outcome")
@@ -72,21 +92,17 @@ nonisolated enum EventAtlasSoccerCards11666 {
             if phase == .after {
                 return "90-minute Home, Draw, and Away outcomes graded independently"
             }
-            if let quotedSum {
-                let pct = Int((quotedSum * 100.0).rounded())
-                return "Recorded three-way quotes total \(pct)% · no normalization or invented draw"
-            }
-            return "Three supplied 90-minute outcomes · no normalization or invented draw"
+            return "Home, draw and away are three real outcomes"
         }
 
         func current(at now: Date) -> ThreeWayCard {
             guard phase != .after else { return self }
-            var changed = false
-            let aged = legs.map { leg -> ThreeWayLeg in
-                guard leg.quotedChance != nil,
-                      !NFLMilestoneCard9483.isRecent(leg.observedAt, now: now) else { return leg }
-                changed = true
-                return ThreeWayLeg(
+            let anyQuoteStale = legs.contains { leg in
+                leg.quotedChance != nil && !NFLMilestoneCard9483.isRecent(leg.observedAt, now: now)
+            }
+            guard anyQuoteStale else { return self }
+            let aged = legs.map { leg in
+                ThreeWayLeg(
                     role: leg.role,
                     label: leg.label,
                     rawOutcomeLabel: leg.rawOutcomeLabel,
@@ -98,18 +114,13 @@ nonisolated enum EventAtlasSoccerCards11666 {
                     source: leg.source
                 )
             }
-            guard changed else { return self }
-            let active = aged.map { $0.quotedChance ?? $0.pregameChance }
-            let sum: Double? = active.allSatisfy({ $0 != nil })
-                ? active.compactMap({ $0 }).reduce(0.0, +)
-                : nil
             return ThreeWayCard(
                 phase: phase,
                 legs: aged,
                 marketTitle: marketTitle,
                 source: source,
                 sourceCount: sourceCount,
-                quotedSum: sum
+                quotedSum: phase == .before ? nil : quotedSum
             )
         }
     }
@@ -394,6 +405,27 @@ nonisolated enum EventAtlasSoccerCards11666 {
 
         let sourceCount = blended != nil ? 1 : max(1, deduped.count)
         let rawLegs = [homeLeg, drawLeg, awayLeg]
+        let scaledQuoted = scaleThreeWayField(
+            home: homeLeg.quotedChance,
+            draw: drawLeg.quotedChance,
+            away: awayLeg.quotedChance
+        )
+        let scaledPregame = scaleThreeWayField(
+            home: homeLeg.pregameChance,
+            draw: drawLeg.pregameChance,
+            away: awayLeg.pregameChance
+        )
+
+        func scaledChance(
+            _ role: ThreeWayRole,
+            from tuple: (home: Double?, draw: Double?, away: Double?, rawSum: Double?)
+        ) -> Double? {
+            switch role {
+            case .home: return tuple.home
+            case .draw: return tuple.draw
+            case .away: return tuple.away
+            }
+        }
 
         let legs: [ThreeWayLeg] = multiUnblended
             ? rawLegs.map { leg in
@@ -418,20 +450,30 @@ nonisolated enum EventAtlasSoccerCards11666 {
                     source: nil
                 )
             }
-            : rawLegs
+            : rawLegs.map { leg in
+                ThreeWayLeg(
+                    role: leg.role,
+                    label: leg.label,
+                    rawOutcomeLabel: leg.rawOutcomeLabel,
+                    quotedChance: scaledChance(leg.role, from: scaledQuoted),
+                    pregameChance: scaledChance(leg.role, from: scaledPregame),
+                    observedAt: leg.observedAt,
+                    pregameObservedAt: leg.pregameObservedAt,
+                    result: leg.result,
+                    source: leg.source
+                )
+            }
 
         let anyCandidateSettled = deduped.contains { cand in
             [ThreeWayRole.home, .draw, .away].contains { cand.legsByRole[$0]?.result != nil }
         }
+        let anyRawPrice = rawLegs.contains { $0.quotedChance != nil || $0.pregameChance != nil }
         let hasAnySignal = finished
             ? (legs.contains { $0.result != nil || $0.pregameChance != nil } || (multiUnblended && anyCandidateSettled))
-            : legs.allSatisfy { ($0.quotedChance ?? $0.pregameChance) != nil }
+            : anyRawPrice
         guard hasAnySignal else { return nil }
 
-        let activeQuotes = legs.map { $0.quotedChance ?? $0.pregameChance }
-        let quotedSum: Double? = activeQuotes.allSatisfy({ $0 != nil })
-            ? activeQuotes.compactMap({ $0 }).reduce(0.0, +)
-            : nil
+        let quotedSum: Double? = multiUnblended ? nil : (scaledQuoted.rawSum ?? scaledPregame.rawSum)
 
         return ThreeWayCard(
             phase: currentPhase,
@@ -868,6 +910,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
                 sourceCount: nil
             )
         }
+        let rawSumText = card.quotedSum.map { "Raw 3-way sum \(Int(($0 * 100.0).rounded()))%" }
         return EventAtlasDetailsSheetModel11666(
             id: leg.id,
             outcomeTitle: leg.rawOutcomeLabel,
@@ -876,7 +919,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
             primaryReadingValue: primaryValue,
             pregameBaseline: pregameText,
             observedAtText: observedText,
-            statusSummary: nil,
+            statusSummary: rawSumText,
             sourceLabel: sourceLabel
         )
     }
