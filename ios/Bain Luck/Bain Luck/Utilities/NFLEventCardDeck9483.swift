@@ -22,6 +22,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
     case ladder(NBALadderCard9483)
     case mlb(MLBFinalCard11284)
     case nhlScoring(EventAtlasNhlCards11666.ScoringCard)
+    case soccerThreeWay(EventAtlasSoccerCards11666.ThreeWayCard)
+    case soccerExactScore(EventAtlasSoccerCards11666.ExactScoreCard)
 
     var id: String {
         switch self {
@@ -30,6 +32,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .ladder(let card): return card.id
         case .mlb(let card): return card.id
         case .nhlScoring(let card): return card.id
+        case .soccerThreeWay(let card): return card.id
+        case .soccerExactScore(let card): return card.id
         }
     }
 
@@ -40,6 +44,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .ladder(let card): return card.title
         case .mlb(let card): return card.title
         case .nhlScoring(let card): return card.title
+        case .soccerThreeWay(let card): return card.title
+        case .soccerExactScore(let card): return card.title
         }
     }
 
@@ -54,6 +60,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
         // nothing on these cards is a current quote that can expire.
         case .mlb: return self
         case .nhlScoring(let card): return .nhlScoring(card.current(at: now))
+        case .soccerThreeWay(let card): return .soccerThreeWay(card.current(at: now))
+        case .soccerExactScore: return self
         }
     }
 }

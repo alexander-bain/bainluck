@@ -2390,6 +2390,10 @@ struct EventDetailView: View {
         if EventAtlasNhlCards11666.applies(sportKey: event.sport) {
             return nhlAtlasCards(event)
         }
+        // #11666 Step E6c — native Soccer story cards when Atlas is enabled.
+        if EventAtlasSoccerCards11666.applies(sportKey: event.sport) {
+            return soccerAtlasCards(event)
+        }
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         // #9483 R2 — a finished page's card compares the final with the
         // headline's own qualified forecast, not an earlier history point.
@@ -2431,6 +2435,28 @@ struct EventDetailView: View {
             status: event.status, away: event.awayScore, home: event.homeScore)
         let names = nflNames(event)
         return EventAtlasNhlCards11666.cards(
+            sportKey: event.sport,
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            homeShort: names.home,
+            awayShort: names.away,
+            homeScore: hasScore ? event.homeScore : nil,
+            awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: gm,
+            now: displayNow()
+        )
+    }
+
+    /// #11666 Step E6c — Soccer story cards (`soccer_*`) from THIS event's
+    /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    private func soccerAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
+        guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let names = nflNames(event)
+        return EventAtlasSoccerCards11666.cards(
             sportKey: event.sport,
             status: event.status,
             commenceTime: event.commenceTime?.asDate,
