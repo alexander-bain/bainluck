@@ -6,16 +6,61 @@
     "quote": "Builder B — **Nov 6, 7:03 AM PST. Draft publication COMPLETE:** #12155–#12197 cover the43 exact authorized new refs; with #12132/#12150 all45 planned evaluations have a PR and frozen SHA."
   },
   "count": {
-    "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6692550759",
-    "posted_at": "2026-11-06T18:39:53Z",
-    "quote": "Builder B — Nov 6, 10:38 AM PST. **Full reviewer experiment remains incomplete: 1/45 recorded; five candidates are now admitted in the first resumed wave.**",
-    "controls_quote": "all 15 control reviews are still UNKNOWN, so false-alarm rate is UNKNOWN."
+    "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6693850129",
+    "posted_at": "2026-11-06T19:44:56Z",
+    "quote": "Builder B — Nov 6, 11:44 AM PST. **Wave 1 complete; full experiment 6/45 real reviews recorded, 39 remaining.**",
+    "defects_quote": "Observed defects: **4/4 caught**, 26/30 still UNKNOWN.",
+    "controls_quote": "Observed controls: **0/2 false alarms**, 13/15 still UNKNOWN; the overall rates are not established."
   },
   "results": [
     {
       "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6679966474",
       "posted_at": "2026-11-06T07:48:27Z",
       "quote": "Builder B — **Nov 5 11:48 PM PST. Full-set r02/pass1: CAUGHT, real exact-head CHANGES_REQUESTED.**"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6693850129",
+      "posted_at": "2026-11-06T19:44:56Z",
+      "quote": "| #12155 r01/P1 | CHANGES_REQUESTED: inflated field count |"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6693850129",
+      "posted_at": "2026-11-06T19:44:56Z",
+      "quote": "| #12160 r03/P1 | CHANGES_REQUESTED: silent hydration failure removes the closest game |"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6693850129",
+      "posted_at": "2026-11-06T19:44:56Z",
+      "quote": "| #12164 r04/P2 | CHANGES_REQUESTED: clock-only Kalshi settlement |"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6693850129",
+      "posted_at": "2026-11-06T19:44:56Z",
+      "quote": "| #12184 r12/P2 | APPROVED: healthy rename |",
+      "builder_case": "r12"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6693850129",
+      "posted_at": "2026-11-06T19:44:56Z",
+      "quote": "| #12186 r13/P1 | APPROVED: healthy rename |",
+      "builder_case": "r13"
     }
-  ]
+  ],
+  "study_ids": {
+    "_note": "Builder B's posts number the harmless changes differently from the study record (c01 to c05). Each mapping is read from the PR that carries the case: its branch names Builder B's id, and its diff is the change the study record describes, quoted from reviewer-study-2026-11-05.receipts.json.",
+    "r12": {
+      "maps_to": "c01",
+      "pr": 12184,
+      "branch": "codex/eval-reviewer-full-r12-p2-20261105",
+      "diff": "total_outcome_count -> field_outcome_count in backend/app/utils/field_band.py",
+      "study_quote": "field-count private parameter rename (17 checks)"
+    },
+    "r13": {
+      "maps_to": "c02",
+      "pr": 12186,
+      "branch": "codex/eval-reviewer-full-r13-p1-20261105",
+      "diff": "home_prob -> home_blend in backend/app/utils/window_events_closest.py",
+      "study_quote": "hero local rename (7)"
+    }
+  }
 }

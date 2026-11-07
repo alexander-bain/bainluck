@@ -33,6 +33,7 @@ jest.mock("@/lib/api", () => ({
 }));
 
 import EvalsPage from "@/app/evals/page";
+import TopScreen from "@/components/evals/TopScreen";
 import { fetchCalibration } from "@/lib/api";
 import { TERMS, TOP_COPY } from "@/lib/evals/copy";
 import { calibrationFixture } from "@/lib/evals/fixtures/calibration";
@@ -283,6 +284,22 @@ describe("each picture is drawn from its record", () => {
     expect(figures.map((f) => f.textContent)).toEqual([wholePercent(example!.said), wholePercent(example!.happened)]);
     expect(figures.map((f) => f.getAttribute("data-value"))).toEqual([String(example!.said), String(example!.happened)]);
     expect(card?.querySelector("[data-truth-example]")).not.toBeNull();
+  });
+
+  it("the reviewer sentence counts tries and the picture counts cases: three caught tries on one mistake read 3 of 3 above one green bug (Fable on #12217)", async () => {
+    const study = loadReviewerStudy()!;
+    const base = loadReviewerResults(study)!;
+    const results = {
+      ...base,
+      results: [1, 2, 3].map((pass) => ({ case: "r01", pass, outcome: "caught" as const, at: base.asOf, receipt: base.receipt })),
+    };
+    const page = await mount(<TopScreen forward={{ status: "loading" }} study={study} results={results} watchers={null} />);
+    const card = page.querySelector('[data-evals-top-card="reviewer"]');
+    const sentence = card?.querySelector('[data-review-kind="mistakes"]');
+    expect(Array.from(sentence?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.getAttribute("data-value"))).toEqual(["3", "3"]);
+    expect(sentence?.textContent).toContain(TOP_COPY.reviewerCaughtAfter);
+    expect(TOP_COPY.reviewerCaughtAfter).toMatch(/\btries\b/);
+    expect(card?.querySelectorAll('[data-review-marks="mistakes"] [data-review-mark="right"]')).toHaveLength(1);
   });
 
   it("the checks: one circle per check, and the count of working ones from the list", async () => {
