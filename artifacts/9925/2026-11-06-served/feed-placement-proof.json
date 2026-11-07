@@ -1,0 +1,83 @@
+[
+  {
+    "seat": 1,
+    "title": "AI",
+    "score": 98.0,
+    "member_ids": [
+      109596,
+      60607595,
+      60635344,
+      32127334
+    ],
+    "collection_ref": {
+      "slug": "ai",
+      "name": "AI",
+      "revision": 131,
+      "collection_count": 566
+    }
+  },
+  {
+    "seat": 2,
+    "id": 68871621,
+    "name": "GPT Astra 6.1+ released?",
+    "score": 86
+  },
+  {
+    "seat": 3,
+    "id": 62178322,
+    "name": "What will GPT Astra's output token price hit in 2026?",
+    "score": 86
+  },
+  {
+    "seat": 4,
+    "title": "Awards Season",
+    "score": 93.0,
+    "member_ids": [
+      6173044,
+      65966144,
+      58495124,
+      58492234,
+      58492236
+    ],
+    "collection_ref": {
+      "slug": "oscars-2027",
+      "name": "Oscars 2027",
+      "revision": 60,
+      "collection_count": 419
+    }
+  },
+  {
+    "seat": 5,
+    "id": 58492245,
+    "name": "Grammys 2027: Record of the Year Winner",
+    "score": 88
+  },
+  {
+    "seat": 6,
+    "title": "IPOs",
+    "score": 95.0,
+    "member_ids": [
+      30635376,
+      67722878,
+      30691373
+    ],
+    "collection_ref": {
+      "slug": "ai",
+      "name": "AI",
+      "revision": 131,
+      "collection_count": 566
+    }
+  },
+  {
+    "seat": 7,
+    "id": 60635342,
+    "name": "Will Kimi (Moonshot AI) IPO by March 31, 2027?",
+    "score": 86
+  },
+  {
+    "seat": 8,
+    "id": 115608,
+    "name": "Largest IPO by market cap in 2026?",
+    "score": 82
+  }
+]

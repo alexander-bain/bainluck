@@ -1,0 +1,68 @@
+{
+  "ai": {
+    "revision": 131,
+    "pages": 6,
+    "shown_count": 566,
+    "card_ids": [
+      109596,
+      60607595,
+      60635344,
+      32127334,
+      30635376,
+      67722878,
+      30691373
+    ],
+    "directly_shown": [
+      109596,
+      60607595,
+      60635344,
+      32127334,
+      30635376,
+      67722878,
+      30691373
+    ],
+    "not_directly_shown": [],
+    "counts": {
+      "shown_count": 566,
+      "eligible_count": 573,
+      "withheld_count": {
+        "low_quality": 0,
+        "public_source_disagreement": 0,
+        "row_missing": 0,
+        "suppressed": 3
+      },
+      "inventory_complete": true
+    }
+  },
+  "oscars-2027": {
+    "revision": 60,
+    "pages": 5,
+    "shown_count": 419,
+    "card_ids": [
+      6173044,
+      65966144,
+      58495124,
+      58492234,
+      58492236
+    ],
+    "directly_shown": [
+      6173044,
+      65966144,
+      58495124,
+      58492234,
+      58492236
+    ],
+    "not_directly_shown": [],
+    "counts": {
+      "shown_count": 419,
+      "eligible_count": 431,
+      "withheld_count": {
+        "low_quality": 0,
+        "public_source_disagreement": 0,
+        "row_missing": 0,
+        "suppressed": 0
+      },
+      "inventory_complete": true
+    }
+  }
+}
