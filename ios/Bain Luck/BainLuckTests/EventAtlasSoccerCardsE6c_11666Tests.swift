@@ -565,4 +565,38 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
             XCTFail("Expected third card in soccer deck to be the goals total ladder")
         }
     }
+
+    @MainActor
+    func testResolveSoccerSideDistinguishesSharedCityClubsManchesterUnitedAndManchesterCity() throws {
+        XCTAssertEqual(
+            EventAtlasSoccerCards11666.resolveSoccerSide(
+                candidate: "Manchester United",
+                homeTeam: "Manchester United",
+                awayTeam: "Manchester City",
+                homeShort: "Man United",
+                awayShort: "Man City"
+            ),
+            .home
+        )
+        XCTAssertEqual(
+            EventAtlasSoccerCards11666.resolveSoccerSide(
+                candidate: "Manchester City",
+                homeTeam: "Manchester United",
+                awayTeam: "Manchester City",
+                homeShort: "Man United",
+                awayShort: "Man City"
+            ),
+            .away
+        )
+        XCTAssertNil(
+            EventAtlasSoccerCards11666.resolveSoccerSide(
+                candidate: "Manchester",
+                homeTeam: "Manchester United",
+                awayTeam: "Manchester City",
+                homeShort: "Man United",
+                awayShort: "Man City"
+            ),
+            "Ambiguous shared-city token alone must return nil"
+        )
+    }
 }
