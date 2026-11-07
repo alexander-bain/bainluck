@@ -14,7 +14,7 @@ import EmbedGate from "@/components/EmbedGate";
 import DesktopNav from "@/components/DesktopNav";
 import Footer from "@/components/Footer";
 import EventOpenIntent from "@/components/event/EventOpenIntent";
-import { APP_STORE_URL } from "@/lib/brandCopy";
+import { APP_STORE_APP_ID } from "@/lib/brandCopy";
 import { BUILD_META_NAME, frontendCommitSha } from "@/lib/buildInfo";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { Suspense } from "react";
@@ -81,6 +81,7 @@ export const metadata: Metadata = {
   // see `lib/siteUrl.ts` for the measurement and for why the literal lives once.
   metadataBase: new URL(getSiteUrl()),
   alternates: { canonical: "/" },
+  itunes: { appId: APP_STORE_APP_ID },
   robots: { index: true, follow: true },
   openGraph: {
     type: "website",
@@ -229,25 +230,6 @@ export default function RootLayout({
                   </div>
                 </div>
               </header>
-              {/* #12028: "Get the app" line on phone widths, gated with the header
-                  so the native About embed stays clean. */}
-              <div
-                data-testid="phone-get-the-app-bar"
-                className="md:hidden border-b border-surface-border bg-surface-card/60"
-              >
-                <div className="max-w-content mx-auto px-4 py-1.5 flex items-center justify-between gap-2 text-micro">
-                  <span className="text-text-secondary">Bain Luck for iPhone</span>
-                  <a
-                    href={APP_STORE_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    data-testid="phone-get-the-app-link"
-                    className="font-semibold text-accent-brand hover:underline whitespace-nowrap"
-                  >
-                    Get the app
-                  </a>
-                </div>
-              </div>
               </EmbedGate>
 
               {/* Main Content */}
