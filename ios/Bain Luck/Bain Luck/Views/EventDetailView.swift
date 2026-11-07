@@ -2402,6 +2402,10 @@ struct EventDetailView: View {
         if MLBFinalPage11284.applies(sportKey: event.sport, status: event.status) {
             return mlbFinalCards(event).map { .mlb($0) }
         }
+        // #11666 Step E6b — native NHL story cards when Atlas is enabled.
+        if EventAtlasNhlCards11666.applies(sportKey: event.sport) {
+            return nhlAtlasCards(event)
+        }
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         // #9483 R2 — a finished page's card compares the final with the
         // headline's own qualified forecast, not an earlier history point.
@@ -2433,6 +2437,28 @@ struct EventDetailView: View {
             homeTeam: event.homeTeam, awayTeam: event.awayTeam,
             homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
             gameMarkets: vm.gameMarkets, relatedFutures: vm.relatedFutures))
+    }
+
+    /// #11666 Step E6b — NHL story cards (`icehockey_nhl`) from THIS event's
+    /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    private func nhlAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
+        guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let names = nflNames(event)
+        return EventAtlasNhlCards11666.cards(
+            sportKey: event.sport,
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            homeShort: names.home,
+            awayShort: names.away,
+            homeScore: hasScore ? event.homeScore : nil,
+            awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: gm,
+            now: displayNow()
+        )
     }
 
     /// #9483 NBA slice — the winning-margin and scoring ladders, from the

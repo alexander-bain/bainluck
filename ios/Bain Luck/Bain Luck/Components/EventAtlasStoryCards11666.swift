@@ -125,7 +125,7 @@ nonisolated enum EventAtlasStoryCards11666 {
         }
         var parts: [String] = []
         if point.chance != nil {
-            parts.append(card.phase == .before ? "Pregame chance" : "Before tip-off")
+            parts.append(card.phase == .before ? "Pregame chance" : "Before \(card.startWord)")
         } else if card.phase == .after && card.points.contains(where: { $0.chance != nil }) {
             parts.append("Pregame chance unavailable")
         }
@@ -302,6 +302,12 @@ nonisolated enum EventAtlasStoryCards11666 {
     ) -> EventAtlasDetailsSheetModel11666? {
         if let mlbOriginal = MLBFinalDeck11284.original(rowID, in: cards) {
             return EventAtlasMlbCards11666.detailsModel(for: mlbOriginal)
+        }
+        for card in cards {
+            if case .nhlScoring(let scoring) = card,
+               let entry = scoring.entries.first(where: { $0.id == rowID || $0.rowId == rowID }) {
+                return EventAtlasNhlCards11666.detailsModel(for: entry, card: scoring)
+            }
         }
         if rowID == "finish" {
             for card in cards {
