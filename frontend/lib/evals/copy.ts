@@ -69,18 +69,20 @@ export const TOP_COPY = {
   reviewerNoneChecked: "It has not tried any yet",
   reviewerHidBefore: "We hid",
   reviewerHidMiddle: "mistakes in real code changes, plus",
-  reviewerHidAfter: "harmless decoys, to see what it flags; grey ones are not checked yet.",
+  reviewerHidAfter: "harmless decoys; grey ones are not checked yet.",
   reviewerChartLabel:
     "One bug per hidden mistake, green when it was caught, red when it was missed, grey when not checked yet; one page per harmless decoy.",
-  watchersTitle: "Are our automatic checks working?",
+  // Alex, Nov 6: his son read the page and did not know what an "automatic
+  // check" was. The card says what one is: a program, watching, for problems.
+  watchersTitle: "Are our site watchers working?",
   watchersOf: "of",
   watchersWorkingAfter: "working",
-  watchersSentenceStart: "Each alarm is an automatic check on the live site",
+  watchersSentenceStart: "Each alarm is a program that watches the site",
   watchersProblems: "red found problems, now on our work list",
   watchersFixed: "green found its problem fixed",
   watchersStopped: "grey found problems it could not report",
   watchersUnknown: "? has no public record",
-  watchersChartLabel: "One alarm per automatic check, marked by what its newest run found.",
+  watchersChartLabel: "One alarm per program that watches the site, marked by what its newest run found.",
   fold: "Show the details",
 } as const;
 
@@ -141,8 +143,8 @@ export const STORY_COPY = {
   liveChecks: {
     title: "Watching the live site",
     paragraphs: [
-      "Some checks run on their own around the clock, like smoke alarms. One makes sure every game on each league's official schedule is on the site, another that every big event has its page before it starts, another that the main things a reader does, like search, still work. Whatever they find goes straight onto our work list.",
-      "A check that goes quiet is as bad as no check, so we show what each one last reported, and count a check with no public record as unknown, not fine.",
+      "Small programs watch the live site day and night, like smoke alarms, each looking for one kind of problem. One makes sure every game on each league's official schedule is on the site, another that every big event has its page before it starts, another that the main things a reader does, like search, still work. Whatever they find goes straight onto our work list.",
+      "A watcher that goes quiet is as bad as none, so we show what each one last reported, and count one with no public record as unknown, not fine.",
     ],
   },
   exampleLabel: "For example",
@@ -201,7 +203,7 @@ export const TOPIC_COPY = {
   },
   checks: {
     of: "of",
-    workingAfter: "checks are working: their latest run is on the record and they are still reporting",
+    workingAfter: "watchers are working: their latest run is on the record and they are still reporting",
     legend: {
       problems: "found problems, now on our work list",
       fixed: "re-checked a problem and found it fixed",

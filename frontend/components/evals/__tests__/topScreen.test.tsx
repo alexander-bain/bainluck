@@ -480,4 +480,14 @@ describe("each picture is drawn from its record", () => {
     expect(health.working + health.stopped + health.unknown).toBe(health.total);
     expect(card?.querySelector('[data-truth-chip][data-truth="reviewed"]')).not.toBeNull();
   });
+
+  it("the watchers card says what a watcher is: a program that watches the site (Alex's son, Nov 6)", async () => {
+    // Alex's son read the page and did not know what an "automatic check" was.
+    // The card names the thing in plain words and never uses the bare term.
+    const page = await mountPage();
+    const text = page.querySelector('[data-evals-top-card="watchers"]')?.textContent?.replace(/\s+/g, " ") ?? "";
+    expect(text).toContain(TOP_COPY.watchersSentenceStart);
+    expect(TOP_COPY.watchersSentenceStart).toMatch(/\ba program that watches\b/);
+    expect(text).not.toMatch(/automatic checks?/i);
+  });
 });
