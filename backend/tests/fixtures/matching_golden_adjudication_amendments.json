@@ -938,6 +938,23 @@
     "`SELECT id, event_id FROM futures_markets WHERE id = 59683704` returns event_id 15294081 — production has already moved this market onto the surviving row, so the amendment records a reconciliation that has happened rather than proposing one.",
     "The pair is class 'attached-correct' with artifact note 'eyeballed containment-ok': it was adjudicated as ALREADY CORRECTLY ATTACHED, so the adjudicated answer and the live attachment agreed then and agree now — only the row id changed underneath both."
    ]
+  },
+  {
+   "market_id": 59977706,
+   "was": 15299815,
+   "now": 15306137,
+   "on": "2026-11-07",
+   "by": "fable/12144",
+   "raised_by": "#12144 (matching-drift sentinel, fingerprint e6ec282d2e28); Builder B cause analysis 2026-11-06 12:48 PM PT",
+   "artifact_note": "eyeballed containment-ok",
+   "cause": "ADJUDICATED-EVENT-WAS-A-MARKET-BORN-TWIN-OF-THE-VENUE-NAMED-FIXTURE",
+   "why": "The artifact adjudicated this attached-correct pair onto event 15299815 \u2014 a soccer_other row with no outside id whose commence_time (2026-09-01 06:01:05Z) is, to the second, the Polymarket listing minute of the market itself: a row made FROM the market, not the fixture. The venue names the game: Polymarket event 946211 (slug es2-cdt-leg-2026-09-13-exact-score) is the Sep 13, 2026 Tenerife\u2013Legan\u00e9s Segunda Divisi\u00f3n game, and it settled 'Exact Score: CD Tenerife 2 - 0 CD Legan\u00e9s' YES. Event 15306137 is Tenerife v Legan\u00e9s, soccer_spain_segunda_division, 2026-09-13 19:01Z, completed 2\u20130, carrying an Odds API event id \u2014 the same game with the same final score. Production moved the market there on 2026-09-06 (phase15_revalidate, actor matcher_pass, detail.cause completed \u2014 Builder B's read of the durable attach log) and 15299815 now serves 410 ('removed from the schedule \u2014 a duplicate'). The golden check reads any changed positive id as 'regressed', so the stale row has accused this correction every 15 minutes since 2026-11-06: the regression was in the baseline, not the matcher. Re-pointing the pair keeps it on the POSITIVE arm of the ratchet (39 attached-correct pairs) and makes the sentinel's 'regressed' class mean a matcher regression again.",
+   "evidence": [
+    "GET https://gamma-api.polymarket.com/events/946211 on 2026-11-07: slug es2-cdt-leg-2026-09-13-exact-score, title 'CD Tenerife vs. CD Legan\u00e9s - Exact Score', endDate 2026-09-13T19:00:00Z, every child market gameStartTime 2026-09-13 19:00:00+00; the market 'Exact Score: CD Tenerife 2 - 0 CD Legan\u00e9s?' has outcomePrices [\"1\",\"0\"] (resolved YES) and all 16 other scores [\"0\",\"1\"].",
+    "GET https://api.bainluck.com/api/events/15306137 on 2026-11-07: home_team Tenerife, away_team Legan\u00e9s, sport soccer_spain_segunda_division, commence_time 2026-09-13T19:01:00+00:00, status completed, home_score 2, away_score 0, external_id eb07ad346d2b78840e289d11461cc2a1 (32-hex Odds API shape, so anchor_provenance() reads schedule_provider).",
+    "GET https://api.bainluck.com/api/events/15299815 on 2026-11-07: HTTP 410, detail 'This fixture was removed from the schedule \u2014 it was either a duplicate of another game or a game that will not be played.' The pair's frozen candidate row for it reads 'CD Tenerife v CD Legan\u00e9s', soccer_other, external_id null, commence_time 2026-09-01 06:01:05+00:00 \u2014 the market's own Gamma startDate.",
+    "#12144 body (2026-11-06 09:03Z) and every 'Still RED' comment through 2026-11-07 14:24Z: market 59977706 actual_event_id 15306137, expected_event_id 15299815, verdict regressed. Builder B (comment 2026-11-06 20:48Z): the move landed 2026-09-06 10:37 PM PT with durable phase15_revalidate / actor=matcher_pass / detail.cause=completed, and 15306137 also carries StatPal fixture 9547440 (a DB read; not on the public route)."
+   ]
   }
  ]
 }

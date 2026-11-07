@@ -501,21 +501,161 @@ def test_every_accepted_attachment_is_a_pair_the_audit_said_belongs_nowhere():
         assert isinstance(event_id, int)
 
 
-def test_the_accepted_attachments_are_the_five_adjudicated_on_2026_09_03():
+def test_the_accepted_attachments_are_the_five_from_2026_09_03_and_the_23_from_12144():
     """A tripwire on the map's exact contents.
 
     Each entry is a human's judgement recorded in the module comment above it
     (unique team pair, and for the Kalshi rows a ticker-derived date equal to
-    the event's). Growing the map is fine; growing it WITHOUT saying so in a
-    diff is how a promotion path quietly widens back into ``IS NOT NULL``.
+    the event's; for the 2026-11-07 rows, the venue's own event page and the
+    served event agreeing on clubs, competition and date). Growing the map is
+    fine; growing it WITHOUT saying so in a diff is how a promotion path
+    quietly widens back into ``IS NOT NULL``.
     """
     assert mrec.ACCEPTED_ATTACHMENTS == {
+        # 2026-09-03
         59173320: 15294048,   # Campbell vs East Tennessee St. -> ETSU v Campbell
         59692113: 15297976,   # Vitória SC vs. Casa Pia AC     -> Vitória v Casa Pia
         59692121: 15299112,   # FC Alverca vs. SC Braga        -> Alverca v Braga
         59700394: 15291033,   # Hamburg vs Mainz               -> HSV v Mainz 05
         59700643: 15291104,   # Ipswich Town vs Liverpool      -> Ipswich v Liverpool
+        # 2026-11-07, #12144 — the sentinel's 22 ``unadjudicated`` rows, plus
+        # the adjudicated destination of its WRONG id-less row (#12275)
+        59173170: 15298814,   # Torino vs Monza (Coppa Italia) -> Torino v Monza
+        59173190: 15290734,   # Aston Villa vs Arsenal         -> Aston Villa v Arsenal
+        59173193: 15291116,   # Lecce vs Roma                  -> Lecce v AS Roma
+        59173215: 15291115,   # Cagliari vs Inter              -> Cagliari v Internazionale (#12275)
+        59173218: 15290723,   # Napoli vs Como                 -> Napoli v Como
+        59173221: 14970279,   # Augsburg vs Schalke            -> Augsburg v FC Schalke 04
+        59173227: 15290898,   # Sunderland vs Fulham           -> Sunderland v Fulham
+        59173229: 15290743,   # Chelsea vs Brighton            -> Chelsea v Brighton & Hove
+        59173338: 15290719,   # Sevilla vs Atletico            -> Sevilla v Atlético Madrid
+        59173356: 15291114,   # Sassuolo vs Torino             -> Sassuolo v Torino
+        59173357: 15291082,   # Monza vs Udinese               -> Monza v Udinese
+        59173358: 15291113,   # Fiorentina vs Frosinone        -> Fiorentina v Frosinone
+        59173359: 15290716,   # Tottenham vs Newcastle         -> Tottenham Hotspur v Newcastle Utd
+        59173370: 15290740,   # Bournemouth vs Everton         -> Bournemouth v Everton
+        59173374: 14970284,   # Mainz vs Paderborn             -> FSV Mainz 05 v SC Paderborn
+        59173375: 14970278,   # FC Köln vs Hoffenheim          -> 1. FC Köln v TSG Hoffenheim
+        59173376: 15290887,   # Liverpool vs Nottingham        -> Liverpool v Nottingham Forest
+        59173406: 15291055,   # Alaves vs Villarreal           -> Alavés v Villarreal
+        59173408: 15291112,   # Milan vs Venezia               -> AC Milan v Venezia
+        59173411: 15291054,   # Santander vs Elche             -> Racing Santander v Elche CF
+        59173709: 14959572,   # Bologna vs Lazio               -> Bologna v Lazio
+        59173714: 14968128,   # Verl vs Hamburg (DFB Pokal)    -> SC Verl v Hamburger SV
+        59173715: 15290654,   # Altglienicke vs Wolfsburg (DFB Pokal) -> Altglienicke v Wolfsburg
     }
+
+
+#: The 25 rows #12144 carried from 2026-11-06 09:03Z to the adjudication, as the
+#: sentinel reported them (``actual_event_id``) and as the served events read
+#: on 2026-11-07 (``external_id``). The two ``None`` ids are the id-less rows;
+#: 14970279's id is the one captured 2026-09-02 (the row now serves as its
+#: proven duplicate 15204696, #2263, whose id is a different 32-hex value).
+_ROWS_12144 = [
+    (59977706, 15306137, "eb07ad346d2b78840e289d11461cc2a1"),  # the positive
+    (59701031, 15297320, None),  # Raca vs 1914 Samorin — id-less, UNKNOWN
+    (59173215, 15298708, None),  # Cagliari vs Inter — id-less twin, WRONG
+    (59173709, 14959572, "c23c70e25e6253ea30f33add6c73d299"),
+    (59173715, 15290654, "9c38455237e91d888607e09268a54369"),
+    (59173714, 14968128, "cc557819bcfcd3c8fe84b9853b2a9d5b"),
+    (59173170, 15298814, "b593a5ed0c3a6b46e0291730e87a5590"),
+    (59173190, 15290734, "2c49e9d1ef855f62962b915e773f906d"),
+    (59173193, 15291116, "29ac78994462bce061f8d01e93c7b3f0"),
+    (59173218, 15290723, "c57fd532ff733bb6face677a55f41f09"),
+    (59173221, 14970279, "c9bfe9c077e1bfb343a6e228b903c6d6"),
+    (59173227, 15290898, "9becb395ad634de55caec620f9d713fa"),
+    (59173229, 15290743, "6a4c946a61ddb5ef4703eb4528ccdef1"),
+    (59173338, 15290719, "9f599c08f90decb5098348bddfdd3c8a"),
+    (59173356, 15291114, "0ef455b8f8559473cac7c4c9915904ab"),
+    (59173357, 15291082, "45f850a2ed2ff8cb8d6c58c282260227"),
+    (59173358, 15291113, "2a6ec924ac6f68e07904ba0e23bf8447"),
+    (59173359, 15290716, "7a8746a45dc76378359a7d9cc5474bc8"),
+    (59173370, 15290740, "ff4818bd73fa63c0a1e4c98e50c7a2e5"),
+    (59173374, 14970284, "fa5bd7399799a6c451cc4e6ca6145f11"),
+    (59173375, 14970278, "22ed1aaf03ab3966d098f7049715aada"),
+    (59173376, 15290887, "feafb731d0307bc91a58e18187aa2eab"),
+    (59173406, 15291055, "715b3a87491c67e056d3108b217ef4ea"),
+    (59173408, 15291112, "d0232ff2ec2fc373112664dc8a322910"),
+    (59173411, 15291054, "041971041ef890f73177da5a2957adf6"),
+]
+
+
+def test_the_12144_adjudication_reads_as_recorded_against_the_shipped_fixture():
+    """THE SHIPPED fixture and THE SHIPPED map, replayed over the 25 rows #12144
+    reported, with every other pair left exactly where the capture found it.
+
+    This is the adjudication's own receipt: the one ``regressed`` positive
+    becomes ``recovered`` (the amended answer is where production put it), the
+    22 ``unadjudicated`` negatives become ``baseline_stale`` (accepted, and
+    still provider-anchored), and the two id-less rows stay ``self_answered`` —
+    RED on purpose, because nothing outside the matcher can vouch for either
+    destination and one of them is a real twin defect (#12275). A map entry
+    cannot promote them even by mistake: provenance is checked before the map,
+    which is why 59173215's entry (its adjudicated destination 15291115) does
+    not move it out of RED while it sits on the twin, and is reported on the
+    row as ``accepted_event_id`` so the sentinel body says where it belongs.
+    """
+    pairs, _ = mrec.load_golden_baseline()
+    reported = {m: (e, x) for m, e, x in _ROWS_12144}
+    assert len(reported) == 25
+    rows = []
+    for p in pairs:
+        mid = int(p["market_id"])
+        if mid in reported:
+            event_id, external_id = reported[mid]
+            rows.append(_row(mid, event_id, external_id))
+        else:
+            rows.append(_row(mid, p["market"].get("event_id_at_capture")))
+    out = asyncio.run(mrec.check_golden_pairs(_Session([rows])))
+
+    assert out["regressed"] == 0
+    assert out["unadjudicated"] == 0
+    assert out["baseline_stale"] == 22
+    assert out["recovered"] == 1          # 59977706, onto 15306137
+    assert out["vanished"] == 0
+    assert out["self_answered"] == 2
+    assert out["by_provenance"] == {"schedule_provider": 22, "idless": 2}
+    by_row = {r["market_id"]: r for r in out["rows"]}
+    assert set(by_row) == {59173215, 59701031}
+    assert all(r["verdict"] == "self_answered" for r in by_row.values())
+    # Still RED — on exactly those two, and for the right reason.
+    assert out["red"] is True and out["count"] == 2
+    assert out["detail"].startswith(
+        "0 adjudicated pairs regressed, 2 negative pairs attached to an event "
+        "no outside provider corroborates (2 idless), and 0 attached to a "
+        "provider-anchored event nobody has adjudicated them onto, of 709 pairs "
+        "(22 sit on one of the 28 adjudicated-accepted fixtures"
+    )
+    # The decisions are recorded, not just implied. The wrong row names where
+    # it belongs and is RED anyway; the unknown row has no entry at all; the
+    # positive row's amended answer is the fixture's answer.
+    assert by_row[59173215]["accepted_event_id"] == 15291115
+    assert by_row[59173215]["actual_event_id"] == 15298708
+    assert 59701031 not in mrec.ACCEPTED_ATTACHMENTS
+    assert "accepted_event_id" not in by_row[59701031]
+    by_market = {int(p["market_id"]): p for p in pairs}
+    assert by_market[59977706]["correct_event_id"] == 15306137
+
+
+def test_the_wrong_idless_row_goes_green_only_by_landing_on_its_adjudicated_fixture():
+    """#12275's fix must not need a second baseline PR, and must not be
+    satisfiable by any OTHER provider-anchored destination either."""
+    pairs, _ = mrec.load_golden_baseline()
+    pair = next(p for p in pairs if int(p["market_id"]) == 59173215)
+    assert pair["correct_event_id"] is None and pair["market"]["event_id_at_capture"] is None
+    accepted = mrec.ACCEPTED_ATTACHMENTS[59173215]
+    assert accepted == 15291115
+
+    def run(event_id, external_id):
+        return _run_golden([_pair(59173215, None, None)], [_row(59173215, event_id, external_id)],
+                           accepted={59173215: accepted})
+
+    on_twin = run(15298708, None)
+    assert on_twin["red"] is True and on_twin["self_answered"] == 1
+    moved = run(15291115, "3e8cb1ccc68725b086d8e0af6bbc72ce")   # the fixture's real id
+    assert moved["red"] is False and moved["baseline_stale"] == 1
+    elsewhere = run(15290723, _ODDS_API_ID)                      # some other real fixture
+    assert elsewhere["red"] is True and elsewhere["unadjudicated"] == 1
 
 
 def test_a_market_that_no_longer_exists_is_counted_not_accused():
