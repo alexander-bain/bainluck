@@ -1011,3 +1011,38 @@ def test_a_mixed_ladder_is_not_read_as_a_date_ladder():
     bundles = [item for item in result if item["type"] == "bundle"]
     assert len(bundles) == 1
     assert sorted(bundles[0]["data"]["member_ids"]) == [1, 2, 3]
+
+
+def _awards_capacity_items_12096(count):
+    gid = "polymarket:awards-12096"
+    siblings = [
+        _award_member(i, f"Will nominee {i} win Best Picture?", gid, score=100 - i)
+        for i in range(2, count + 1)
+    ]
+    survivor = _award_survivor(
+        1, "Will nominee 1 win Best Picture?", gid, siblings, score=100
+    )
+    return [survivor, {"type": "event", "score": 30, "data": {"id": 12096}}]
+
+
+def test_awards_capacity_eight_remains_complete_12096():
+    items = _awards_capacity_items_12096(8)
+    result = assemble_awards_theme_bundles(items)
+    assert result[0]["type"] == "bundle"
+    assert result[0]["data"]["item_count"] == 8
+    assert result[0]["data"]["member_ids"] == list(range(1, 9))
+    assert result[1] is items[1]
+
+
+def test_awards_capacity_nine_refuses_partial_bundle_12096(caplog):
+    caplog.set_level(logging.INFO, logger="app.utils.discover_bundles")
+    items = _awards_capacity_items_12096(9)
+    result = assemble_awards_theme_bundles(items)
+    # Keep the original standalone card and stashed siblings for other
+    # consumers; the output never claims a truncated field is complete.
+    assert result is items
+    assert len(result[0]["_grouped_members"]) == 8
+    refusal = next(r for r in caplog.records if "awards field exceeds display capacity" in r.message)
+    assert refusal.member_count == 9
+    assert refusal.capacity == 8
+    assert refusal.group_id == "polymarket:awards-12096"
