@@ -2127,7 +2127,19 @@ def free_background_slots(
 #: `kalshi-cliff-drain` covers its cohort hourly). The census RUN over the tree
 #: merged with `ce54f96e3c` (W-1 on master) printed `explicit 102 implicit 39
 #: total 141`.
-BACKGROUND_BEAT_COUNT = 141
+#: 🔴 RE-DERIVED at Builder E (2026-11-07, #12231 over C-1): 141 → 142, explicit
+#: 102 → 103, fall-through UNMOVED at 39. `grouping-sentinel-weekly`
+#: (`crontab(minute=0, hour=16, day_of_week=4)`) names `background` explicitly.
+#: Fable's answer on #12231 said 144 against a base of 143; C-1 retired two beats
+#: before this landed, so the census was re-run, not offset. Cost: one fire a
+#: week. It pages the 59,249 open markets by primary key (12 pages of 5,000
+#: rows, ~4–5 s each, measured 2026-11-07), reads the graph twice, evaluates the 18
+#: round-up definitions live (each bounded at 60 s, all at 600 s), then one
+#: GitHub read and one comment, one Redis ZADD NX and one claim key. It holds a
+#: background slot for minutes once a week, inside an 840 s soft limit. The
+#: census RUN over the tree rebased onto `f3798ba3b0` (C-1 on master) printed
+#: `explicit 103 implicit 39 total 142`.
+BACKGROUND_BEAT_COUNT = 142
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

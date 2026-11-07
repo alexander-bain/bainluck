@@ -652,6 +652,14 @@ ENFORCED_TASKS = frozenset({
     # a venue 429 stopped it or a market failed (`errors`), `no_work` when the
     # cohort was empty, which must not bank a success.
     "venue_history_backfill",          # terminal + completed/total + errors
+    # #12231, enrolled from birth (#1884). The grouping sentinel's artifact is
+    # its weekly post on #12221: `complete` only when the counts were computed
+    # AND that post is on the issue (posted or already there) AND any filing due
+    # ran cleanly; `failed` when the population could not be read or the post
+    # did not land; `partial` when a definition failed to evaluate, its memory
+    # was unreadable or filing failed. A run that returned without posting
+    # must not read GREEN.
+    "grouping_sentinel",               # terminal + report.action + filing
 })
 
 
