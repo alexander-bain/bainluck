@@ -97,14 +97,15 @@ struct NBALadderCardView9483: View {
     }
 
     private func figure(_ label: String, value: Double) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let unitWord = value == 1 && card.unit == "goals" ? "goal" : card.unit
+        return VStack(alignment: .leading, spacing: 0) {
             // Wraps like its value at large sizes: "Pregame projection",
             // never "Pregame proje…".
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(card.words(value) + (isMargin ? "" : " points"))
+            Text(card.words(value) + (isMargin ? "" : " \(unitWord)"))
                 .font(.headline.monospacedDigit())
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -152,7 +153,7 @@ struct NBALadderCardView9483: View {
         if let result = point.result {
             parts.append(result ? "Hit" : "Miss")
         } else if point.chance != nil {
-            parts.append(card.phase == .before ? "Pregame chance" : "Before tip-off")
+            parts.append(card.phase == .before ? "Pregame chance" : "Before \(card.startWord)")
         }
         if let now = point.now { parts.append("now \(formatProbability(now))") }
         return (main, parts.joined(separator: " · "))
