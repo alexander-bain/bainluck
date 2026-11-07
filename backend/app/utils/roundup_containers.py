@@ -28,6 +28,7 @@ from app.utils.container_presentation import MEMBER_MARKET, market_destination
 __all__ = [
     "ROUNDUP_CACHE_TTL_S",
     "ROUNDUP_PRODUCERS",
+    "ROUNDUP_PRODUCER_TIMEOUT_SECONDS",
     "ROUNDUP_READ_BUDGET_SECONDS",
     "ROUNDUP_SEAT_FLOOR",
     "RoundupMembers",
@@ -50,7 +51,8 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 ROUNDUP_CACHE_TTL_S = 60.0
-ROUNDUP_READ_BUDGET_SECONDS = 0.5
+ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5
+ROUNDUP_READ_BUDGET_SECONDS = 2.5
 #: Oct 7–8 Discover opening ruling (#4080 / #5100 / #5105): seats 1–10 (indices
 #: 0–9) are the dated why-now opening ten. Standing round-ups sit in page one's
 #: back half starting at index 10 (seat 11), with no ranking change.
@@ -415,6 +417,67 @@ def reset_roundup_cache_for_tests() -> None:
     _roundup_local_cache.clear()
 
 
+_TRANSIENT_REFUSAL_TOKENS = (
+    "source_unavailable",
+    "hydrate_failed",
+    "missing_db_session",
+    "unsupported_session",
+)
+
+
+def _is_cacheable_refusal(reasons: Sequence[Any]) -> bool:
+    """Return False when a refusal reflects a transient loader/session error rather than data state."""
+    for item in reasons:
+        text = repr(item).lower()
+        if any(token in text for token in _TRANSIENT_REFUSAL_TOKENS):
+            return False
+    return True
+
+
+async def _store_roundup_cache_entry(
+    cache_key: tuple[str, Any],
+    slug: str,
+    ts: float,
+    feed_item: Optional[dict[str, Any]],
+    container_payload: Optional[dict[str, Any]],
+    db: Any,
+) -> None:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    _roundup_local_cache[cache_key] = (
+        ts,
+        copy.deepcopy(feed_item),
+        copy.deepcopy(container_payload),
+    )
+    if isinstance(db, AsyncSession):
+        try:
+            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+            encoded = json.dumps(
+                {
+                    "built_at": ts,
+                    "feed_item": feed_item,
+                    "container_payload": container_payload,
+                },
+                separators=(",", ":"),
+            )
+            client = await get_shared_async_redis()
+            await bounded_redis_call(
+                lambda: client.set(
+                    _redis_cache_key(slug),
+                    encoded,
+                    ex=int(ROUNDUP_CACHE_TTL_S),
+                ),
+                treat_none_as_miss=False,
+            )
+        except Exception:  # noqa: BLE001 — cache write is best-effort
+            logger.debug(
+                "roundup_containers: shared cache write failed for %s",
+                slug,
+                exc_info=True,
+            )
+
+
 async def evaluate_roundup_producer(
     producer: RoundupProducer,
     db: Any,
@@ -491,6 +554,10 @@ async def evaluate_roundup_producer(
             producer.slug,
             reasons,
         )
+        if use_cache and _is_cacheable_refusal(reasons):
+            await _store_roundup_cache_entry(
+                cache_key, producer.slug, ts, None, None, db
+            )
         return None, None
 
     if not isinstance(outcome, RoundupMembers):
@@ -499,41 +566,16 @@ async def evaluate_roundup_producer(
     container_payload = compose_roundup_container(producer, outcome)
     feed_item = compose_roundup_feed_item(producer, outcome)
     if container_payload is None or feed_item is None:
+        if use_cache:
+            await _store_roundup_cache_entry(
+                cache_key, producer.slug, ts, None, None, db
+            )
         return None, None
 
     if use_cache:
-        _roundup_local_cache[cache_key] = (
-            ts,
-            copy.deepcopy(feed_item),
-            copy.deepcopy(container_payload),
+        await _store_roundup_cache_entry(
+            cache_key, producer.slug, ts, feed_item, container_payload, db
         )
-        if isinstance(db, AsyncSession):
-            try:
-                from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
-
-                encoded = json.dumps(
-                    {
-                        "built_at": ts,
-                        "feed_item": feed_item,
-                        "container_payload": container_payload,
-                    },
-                    separators=(",", ":"),
-                )
-                client = await get_shared_async_redis()
-                await bounded_redis_call(
-                    lambda: client.set(
-                        _redis_cache_key(producer.slug),
-                        encoded,
-                        ex=int(ROUNDUP_CACHE_TTL_S),
-                    ),
-                    treat_none_as_miss=False,
-                )
-            except Exception:  # noqa: BLE001 — cache write is best-effort
-                logger.debug(
-                    "roundup_containers: shared cache write failed for %s",
-                    producer.slug,
-                    exc_info=True,
-                )
 
     return feed_item, container_payload
 
@@ -805,23 +847,53 @@ async def add_roundup_feed_items(
     now: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
     """Evaluate registered round-up producers and place their cards on Discover."""
-    if not items or len(items) < seat_floor or budget_seconds <= 0:
+    if not items or len(items) < seat_floor:
         return items
-    try:
-        produced = await asyncio.wait_for(
-            roundup_feed_items(db),
-            timeout=min(budget_seconds, ROUNDUP_READ_BUDGET_SECONDS),
-        )
-    except Exception:
-        if hasattr(db, "rollback") and callable(db.rollback):
-            try:
-                await db.rollback()
-            except Exception:  # noqa: BLE001
-                pass
+    if budget_seconds <= 0:
         logger.warning(
-            "Discover round-up read failed; keeping ordinary cards", exc_info=True
+            "Discover round-up stage skipped: feed budget exhausted (budget_seconds=%.3f)",
+            budget_seconds,
         )
         return items
+
+    stage_budget = min(float(budget_seconds), ROUNDUP_READ_BUDGET_SECONDS)
+    started = time.perf_counter()
+    producers = list(ROUNDUP_PRODUCERS.values())
+    produced: list[dict[str, Any]] = []
+    for idx, producer in enumerate(producers):
+        elapsed = time.perf_counter() - started
+        remaining = stage_budget - elapsed
+        if remaining <= 0:
+            logger.warning(
+                "Discover round-up stage budget exhausted after %d/%d producers "
+                "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d)",
+                idx,
+                len(producers),
+                budget_seconds,
+                stage_budget,
+                len(produced),
+            )
+            break
+        per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
+        try:
+            feed_item, container_payload = await asyncio.wait_for(
+                evaluate_roundup_producer(producer, db),
+                timeout=per_timeout,
+            )
+        except Exception:
+            if hasattr(db, "rollback") and callable(db.rollback):
+                try:
+                    await db.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+            logger.warning(
+                "Discover round-up read failed for %s; keeping ordinary cards",
+                producer.slug,
+                exc_info=True,
+            )
+            continue
+        if feed_item is not None and container_payload is not None:
+            produced.append(feed_item)
 
     if not produced:
         return items

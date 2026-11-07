@@ -28,7 +28,7 @@ import { watcherHealth, type WatcherList } from "@/lib/evals/watchers";
 /**
  * THE TOP SCREEN OF /evals (Alex, Nov 6): one plain answer, then three pictures
  * a reader takes in without reading a number — do our probabilities come true,
- * does the AI reviewer catch planted mistakes, are the automatic checks
+ * does the AI reviewer catch planted mistakes, are the site watchers
  * working — all on one phone screen. Every figure is still a `Figure` with its
  * label and its link, and every picture is an `Exhibit` under the label of the
  * record it draws; each card's label sits on its last line.
@@ -297,7 +297,7 @@ const DOT_WORDS: Record<Dot, string> = {
 const dotOf = (state: string | null): Dot =>
   state === "red_reporting" ? "problems" : state === "closed_fixed" ? "fixed" : state === "red_stopped" ? "stopped" : "unknown";
 
-/** One smoke alarm per check, or a question mark where there is no public record: the top screen's picture, and its topic's. */
+/** One smoke alarm per watcher, or a question mark where there is no public record: the top screen's picture, and its topic's. */
 export function WatcherAlarms({ list, large = false }: { list: WatcherList; large?: boolean }) {
   const truth: FigureTruth = { kind: "reviewed", asOf: list.reviewedAt, source: list.scheduleSource };
   const size = large ? "h-9 w-9" : "h-6 w-6";
@@ -318,7 +318,7 @@ export function WatcherAlarms({ list, large = false }: { list: WatcherList; larg
   );
 }
 
-/** "Are our automatic checks working?" — one circle per check, marked by what its newest run found. */
+/** "Are our site watchers working?" — one alarm per watcher, marked by what its newest run found. */
 function WatchersCard({ list }: { list: WatcherList }) {
   const health = watcherHealth(list);
   const truth: FigureTruth = { kind: "reviewed", asOf: list.reviewedAt, source: list.scheduleSource };
@@ -356,10 +356,11 @@ export default function TopScreen({
   watchers: WatcherList | null;
 }) {
   return (
-    <header data-evals-top="" className="space-y-2">
+    // On a phone the gaps are 6 px, not 8, for the same room as TRUTH_PLOT's height.
+    <header data-evals-top="" className="space-y-1.5 md:space-y-2">
       <h1 className="text-title-3 text-text-primary">{EVALS_PAGE_TITLE}</h1>
       <p className="text-body text-text-primary">{COPY.answer}</p>
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-1.5 md:gap-2 md:grid-cols-3">
         <TruthCard state={forward} />
         {results && study && <ReviewerCard results={results} study={study} />}
         {watchers && <WatchersCard list={watchers} />}

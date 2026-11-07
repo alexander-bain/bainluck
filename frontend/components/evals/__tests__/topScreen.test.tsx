@@ -43,7 +43,7 @@ jest.mock("@/lib/api", () => ({
 import EvalsPage from "@/app/evals/page";
 import TopScreen from "@/components/evals/TopScreen";
 import { fetchCalibration } from "@/lib/api";
-import { STORY_COPY, TERMS, TOPIC_COPY, TOP_COPY } from "@/lib/evals/copy";
+import { STORY_COPY, TERMS, TOPIC_COPY, TOP_COPY, WATCHERS_COPY } from "@/lib/evals/copy";
 import EXAM_RAW from "@/lib/evals/data/twin-exam-2026-11-05.json";
 import { EXAMPLE_AMERICAN_ODDS, EXAMPLE_CONTRACT_CENTS, americanOddsText, americanToPercent } from "@/lib/evals/example";
 import { calibrationFixture } from "@/lib/evals/fixtures/calibration";
@@ -479,5 +479,24 @@ describe("each picture is drawn from its record", () => {
     expect(card?.querySelector("[data-watchers-working]")?.getAttribute("data-watchers-working")).toBe(String(health.working));
     expect(health.working + health.stopped + health.unknown).toBe(health.total);
     expect(card?.querySelector('[data-truth-chip][data-truth="reviewed"]')).not.toBeNull();
+  });
+
+  it("the watchers card says what a watcher is: a program that watches the site (Alex's son, Nov 6)", async () => {
+    // Alex's son read the page and did not know what an "automatic check" was.
+    // The card names the thing in plain words and never uses the bare term.
+    const page = await mountPage();
+    const text = page.querySelector('[data-evals-top-card="watchers"]')?.textContent?.replace(/\s+/g, " ") ?? "";
+    expect(text).toContain(TOP_COPY.watchersSentenceStart);
+    expect(TOP_COPY.watchersSentenceStart).toMatch(/\ba program that watches\b/);
+    expect(text).not.toMatch(/automatic checks?/i);
+  });
+
+  it("the whole page, record and glossary included, calls them watchers and never automatic checks", async () => {
+    const page = await mountPage();
+    const text = page.textContent?.replace(/\s+/g, " ") ?? "";
+    expect(text).not.toMatch(/automatic checks?/i);
+    expect(page.querySelector("#watchers")?.textContent).toContain(WATCHERS_COPY.title);
+    expect(WATCHERS_COPY.title).toMatch(/\bwatchers\b/);
+    expect(TERMS.find((t) => t.term === "Sentinel")?.meaning).toMatch(/\bsite watcher\b/);
   });
 });

@@ -181,7 +181,7 @@ describe("Event-page Atlas Step E4 — shared state language (#11974)", () => {
         atlasMode
       />,
     );
-    expect(noRecentPregameHtml).toContain("No price yet");
+    expect(noRecentPregameHtml).toContain("No probability yet");
     expect(noRecentPregameHtml).not.toContain('data-testid="atlas-no-recent-probability"');
     expect(noRecentPregameHtml).not.toContain(ATLAS_STATE_COPY.noRecentPrice);
 

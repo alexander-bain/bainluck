@@ -208,6 +208,13 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
         liveStatus: LiveUpdateStatus
     ) -> EventAtlasDetailsSheetModel11666 {
         let isFinished = EventState.isFinished(event.status)
+        let venueSettledVerdict = EventState.showsVenueSettledVerdict(
+            event.status,
+            venueSettled: event.venueSettled,
+            commenceTime: event.commenceTime?.asDate,
+            now: observedAt ?? Date()
+        )
+        let isSettled = isFinished || venueSettledVerdict
         let isOpening = event.currentOdds.map {
             OpeningLineHero.resolve($0, for: event).isOpeningLine
         } ?? false
@@ -228,7 +235,7 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
 
         let primaryLabel: String
         let primaryValue: String
-        if isFinished {
+        if isSettled {
             primaryLabel = "Result"
             let badge = EventAtlasHeadline11666.settledBadge(
                 outcome: EventOutcome.resolve(
@@ -349,6 +356,34 @@ struct EventAtlasHeadlineControlRow11666: View {
         return "\(duel.home) \(reading.homeTenthsText)"
     }
 
+    /// Computes the live tenths overlay for the headline row, returning `nil`
+    /// when the event is finished, venue-settled (`EventState.showsVenueSettledVerdict`),
+    /// or displaying an opening line (`OpeningLineHero.isOpeningLine`).
+    static func rowOverlaidReading(
+        event: EventDetail,
+        preview: BlendPreviewState?,
+        now: Date
+    ) -> EventAtlasLivePath11666.OverlaidHeadlineReading? {
+        let isFinished = EventState.isFinished(event.status)
+        let venueSettledVerdict = EventState.showsVenueSettledVerdict(
+            event.status,
+            venueSettled: event.venueSettled,
+            commenceTime: event.commenceTime?.asDate,
+            now: now
+        )
+        let isOpening = event.currentOdds.map {
+            OpeningLineHero.resolve($0, for: event).isOpeningLine
+        } ?? false
+        if isFinished || venueSettledVerdict || isOpening {
+            return nil
+        }
+        return EventAtlasLivePath11666.overlaidHeadlineReading(
+            event: event,
+            preview: preview,
+            now: now.timeIntervalSince1970
+        )
+    }
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { context in
             rowContent(now: asOf ?? context.date)
@@ -358,16 +393,21 @@ struct EventAtlasHeadlineControlRow11666: View {
     @ViewBuilder
     private func rowContent(now: Date) -> some View {
         let isFinished = EventState.isFinished(event.status)
+        let venueSettledVerdict = EventState.showsVenueSettledVerdict(
+            event.status,
+            venueSettled: event.venueSettled,
+            commenceTime: event.commenceTime?.asDate,
+            now: now
+        )
+        let isSettled = isFinished || venueSettledVerdict
         let isOpening = event.currentOdds.map {
             OpeningLineHero.resolve($0, for: event).isOpeningLine
         } ?? false
-        let overlaidReading = isFinished
-            ? nil
-            : EventAtlasLivePath11666.overlaidHeadlineReading(
-                event: event,
-                preview: preview,
-                now: now.timeIntervalSince1970
-            )
+        let overlaidReading = Self.rowOverlaidReading(
+            event: event,
+            preview: preview,
+            now: now
+        )
         let effectiveObservedAt = EventAtlasLivePath11666.resolveHeadlineObservedAt(
             EventAtlasLivePath11666.HeadlineObservedAtInput(
                 acceptedPriceClock: overlaidReading?.observedAt ?? observedAt,
@@ -376,27 +416,23 @@ struct EventAtlasHeadlineControlRow11666: View {
                 currentOddsCapturedAt: event.currentOdds?.capturedAt?.asDate
             )
         )
-        let phase = EventHeadlinePhase9483.resolve(
-            status: event.status,
-            commenceTime: event.commenceTime?.asDate,
-            isOpeningLine: isOpening,
-            observedAt: effectiveObservedAt,
-            deliveryInterrupted: liveStatus == .interrupted,
-            now: now
-        )
-        let venueSettledVerdict = EventState.showsVenueSettledVerdict(
-            event.status,
-            venueSettled: event.venueSettled,
-            commenceTime: event.commenceTime?.asDate,
-            now: now
-        )
+        let phase = isSettled
+            ? nil
+            : EventHeadlinePhase9483.resolve(
+                status: event.status,
+                commenceTime: event.commenceTime?.asDate,
+                isOpeningLine: isOpening,
+                observedAt: effectiveObservedAt,
+                deliveryInterrupted: liveStatus == .interrupted,
+                now: now
+            )
         let showsEkg = EventAtlasLivePath11666.ekgDraws(
             eventStatus: event.status,
             finished: isFinished,
             venueSettledVerdict: venueSettledVerdict,
             isOpeningLine: isOpening
         )
-        let settledBadge: EventAtlasHeadline11666.SettledBadge? = isFinished
+        let settledBadge: EventAtlasHeadline11666.SettledBadge? = isSettled
             ? EventAtlasHeadline11666.settledBadge(
                 outcome: EventOutcome.resolve(
                     status: event.status,
