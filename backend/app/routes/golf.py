@@ -38,6 +38,7 @@ from app.utils.majors_calendar import _as_utc_date  # one parser for the calenda
 from app.utils.odds_math import probability_to_american
 from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 from app.utils.golf_event_format import (  # #7985
+    canonical_team_side_name,
     is_team_match_play_key,
     is_team_side_name,
     normalize_team_side_name,
@@ -2107,6 +2108,12 @@ def _fold_sponsor_split_tournaments(
 
 def _is_h2h_matchup(market) -> bool:
     """Check if a market is a head-to-head matchup (exactly 2 golfer outcomes summing to ~1.0)."""
+    if is_team_match_play_key(_normalize_tournament(getattr(market, "name", ""))) and any(
+        o.name.strip().lower() in ("tie", "field", "other", "the field")
+        for o in market.outcomes
+    ):
+        # A cup's third outcome belongs in its winner field and divisor.
+        return False
     valid = [
         o for o in market.outcomes
         if o.current_probability is not None
@@ -2521,7 +2528,7 @@ def _set_blend_movement(entry: dict) -> None:
 def _aggregate_golfer_outcome(
     outcome, source_label: str, golfer_data: dict[str, dict],
     prob_24h_ago: dict[int, float], prob_scale: float = 1.0,
-    *, include_overflow: bool = False, market=None,
+    *, include_overflow: bool = False, market=None, team_match_play: bool = False,
 ) -> None:
     """Aggregate a single outcome into golfer_data, tracking sources and movement.
 
@@ -2561,11 +2568,17 @@ def _aggregate_golfer_outcome(
     is_overflow = raw_name.lower() in ("tie", "field", "other", "the field")
     if is_overflow and not include_overflow:
         return
-    if _PROP_OUTCOME_RE.search(raw_name):
+    team_side = team_match_play and is_team_side_name(raw_name)
+    if _PROP_OUTCOME_RE.search(raw_name) and not team_side:
         return
 
-    display_name = raw_name if is_overflow else _normalize_golfer_name(raw_name)
-    key = f"overflow:{raw_name.casefold()}" if is_overflow else _match_key(raw_name)
+    display_name = raw_name if is_overflow or team_side else _normalize_golfer_name(raw_name)
+    if is_overflow:
+        key = f"overflow:{raw_name.casefold()}"
+    elif team_side:
+        key = f"team:{canonical_team_side_name(raw_name)}"
+    else:
+        key = _match_key(raw_name)
     if not key:
         return
 
@@ -2832,11 +2845,20 @@ def _promote_team_matchup_to_card(tournaments: list[dict]) -> int:
     both name teams, so this still cannot put a person at the top of the card.
     Where there is no pair, a lone team side is taken off the card
     (`_strip_lone_team_side`) — one team with no opponent is never a hero.
+    An existing winner field with both teams and overflow keeps its blend.
     Returns the number of cards led.
     """
     promoted = 0
     for t in tournaments:
         if not is_team_match_play_key(t.get("key")):
+            continue
+        field = t.get("golfers") or []
+        if (
+            t.get("overflow_outcomes")
+            and len(field) == 2
+            and all(is_team_side_name(row.get("name")) for row in field)
+        ):
+            # The winner pipeline already blended these sides with any Tie.
             continue
         matchup = select_team_side_matchup(t.get("h2h_matchups"))
         if not matchup:
@@ -3479,6 +3501,7 @@ async def get_golf(
         team_format_withheld = 0
         winner_field_exclusive = True
         winner_field_complete = True
+        team_match_play = is_team_match_play_key(tourn_key)
 
         source_best, dedup_candidates = _dedup_winner_markets(tourn_key, tourn_markets)
 
@@ -3614,7 +3637,10 @@ async def get_golf(
             winner_field_exclusive &= getattr(market, "mutually_exclusive", None) is True
             winner_field_complete &= all(
                 o.current_probability is not None and not _is_placeholder_price(o, source)
-                and not _PROP_OUTCOME_RE.search(o.name)
+                and (
+                    not _PROP_OUTCOME_RE.search(o.name)
+                    or (team_match_play and is_team_side_name(o.name))
+                )
                 for o in market.outcomes
             )
             withheld = 0
@@ -3637,6 +3663,7 @@ async def get_golf(
                     prob_scale=renorm_factor,
                     include_overflow=getattr(market, "mutually_exclusive", None) is True,
                     market=market,
+                    team_match_play=team_match_play,
                 )
             if withheld:
                 logger.debug(
