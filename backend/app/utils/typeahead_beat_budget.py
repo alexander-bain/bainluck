@@ -2100,7 +2100,14 @@ def free_background_slots(
 #: What changes is the order: the base no longer waits behind the warmers.
 #: The census RUN over the tree branched from `9247e7f5ca` printed
 #: `explicit 101 implicit 40 total 141`.
-BACKGROUND_BEAT_COUNT = 141
+#: 🔴 RE-DERIVED at speed (2026-11-06, B-5 over L-1): 141 → 142, explicit
+#: 101 → 102, fall-through UNMOVED at 40. `update-max-movement-heavy`
+#: (`crontab(minute=20)`) names `background` explicitly; it is the :20 run of
+#: `update_max_movement`, taken out of `update-max-movement`, so arrivals on the
+#: queue are unchanged (six an hour). W-1 #12222 writes against an older base:
+#: whichever merges after another re-runs the census, never adds one. The census
+#: RUN over the tree merged with `7cf2c6561a` printed `explicit 102 implicit 40 total 142`.
+BACKGROUND_BEAT_COUNT = 142
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

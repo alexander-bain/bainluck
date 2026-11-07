@@ -238,7 +238,13 @@ def test_the_datagolf_bank_takes_its_basis_inside_the_window_by_the_lead(sweep) 
     ) in sql, sql
     assert params["bank_lead_minutes"] == DATED_BASIS_BANK_LEAD_MINUTES
 
-    minutes = sorted(celery_app.conf.beat_schedule["update-max-movement"]["schedule"].minute)
+    # B-5: the banks run on the light AND the heavy entry, so the gap between
+    # two sweeps is over both entries' minutes.
+    beats = celery_app.conf.beat_schedule
+    minutes = sorted(
+        beats["update-max-movement"]["schedule"].minute
+        | beats["update-max-movement-heavy"]["schedule"].minute
+    )
     gap = max(b - a for a, b in zip(minutes, minutes[1:] + [minutes[0] + 60]))
     assert DATED_BASIS_BANK_LEAD_MINUTES >= 2 * gap, (gap, DATED_BASIS_BANK_LEAD_MINUTES)
     # Still a lead, not a second window: the basis stays at least half a day old.

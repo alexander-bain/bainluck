@@ -61,10 +61,12 @@ export const TOP_COPY = {
   truthChartLabel:
     "How often things happened against the probability we gave them, one dot per group of past markets, on a grey line where the two are equal.",
   reviewerTitle: "Does our AI reviewer spot mistakes?",
-  reviewerCaughtBefore: "Caught",
-  reviewerCaughtMiddle: "of the",
-  reviewerCaughtAfter: "it has checked so far",
-  reviewerNoneChecked: "It has not checked any yet",
+  // Counts tries, as the topic's legend does ("Every one gets 3 tries"), so a
+  // mistake caught on all three of its tries reads 3 of 3 above one green bug.
+  reviewerCaughtBefore: "Caught the hidden mistake in",
+  reviewerCaughtMiddle: "of",
+  reviewerCaughtAfter: "tries so far",
+  reviewerNoneChecked: "It has not tried any yet",
   reviewerHidBefore: "We hid",
   reviewerHidMiddle: "mistakes in real code changes, plus",
   reviewerHidAfter: "harmless decoys, to see what it flags; grey ones are not checked yet.",
