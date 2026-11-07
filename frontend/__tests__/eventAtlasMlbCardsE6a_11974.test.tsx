@@ -149,6 +149,80 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
     });
   });
 
+  it("grades MlbHomeRunCard rows strictly from venue_grade and never from finalCount when venue_grade is null", () => {
+    const homeredUngraded = buildMlbHomeRunCard({
+      afterPlayerProps: {
+        contract: AFTER_PROPS_CONTRACT,
+        actuals: [
+          { actual_key: "s:ohtani|home_runs|full_game", state: "final", value: 1, source_label: "ESPN final box" },
+        ],
+        questions: [
+          {
+            question_key: "q:ohtani|hr|1",
+            actual_key: "s:ohtani|home_runs|full_game",
+            subject: { key: "ohtani", label: "Shohei Ohtani", kind: "player" },
+            stat_key: "home_runs",
+            period_key: "full_game",
+            predicate: { kind: "count_at_least", count: 1, side: "over", label: "1+" },
+            expectation: {
+              state: "available",
+              probability: 0.28,
+              observed_at: "2026-10-19T23:55:00Z",
+              contributors: [{ source: "kalshi", probability: 0.28, observed_at: "2026-10-19T23:55:00Z" }],
+            },
+            venue_grade: null,
+            contributor_outcome_ids: [101],
+          },
+        ],
+      },
+      status: "completed",
+      commenceTime: "2026-10-20T00:08:00Z",
+      homeTeam: TEAMS.homeName,
+      awayTeam: TEAMS.awayName,
+      nowMs: NOW_MS,
+    });
+    expect(homeredUngraded).not.toBeNull();
+    expect(homeredUngraded?.entries[0].finalCount).toBe(1);
+    expect(homeredUngraded?.entries[0].venueResult).toBe("pending");
+    expect(homeredUngraded?.entries[0].venueResult).not.toBe("won");
+
+    const zeroHomersUngraded = buildMlbHomeRunCard({
+      afterPlayerProps: {
+        contract: AFTER_PROPS_CONTRACT,
+        actuals: [
+          { actual_key: "s:betts|home_runs|full_game", state: "final", value: 0, source_label: "ESPN final box" },
+        ],
+        questions: [
+          {
+            question_key: "q:betts|hr|1",
+            actual_key: "s:betts|home_runs|full_game",
+            subject: { key: "betts", label: "Mookie Betts", kind: "player" },
+            stat_key: "home_runs",
+            period_key: "full_game",
+            predicate: { kind: "count_at_least", count: 1, side: "over", label: "1+" },
+            expectation: {
+              state: "available",
+              probability: 0.19,
+              observed_at: "2026-10-19T23:55:00Z",
+              contributors: [{ source: "kalshi", probability: 0.19, observed_at: "2026-10-19T23:55:00Z" }],
+            },
+            venue_grade: null,
+            contributor_outcome_ids: [103],
+          },
+        ],
+      },
+      status: "completed",
+      commenceTime: "2026-10-20T00:08:00Z",
+      homeTeam: TEAMS.homeName,
+      awayTeam: TEAMS.awayName,
+      nowMs: NOW_MS,
+    });
+    expect(zeroHomersUngraded).not.toBeNull();
+    expect(zeroHomersUngraded?.entries[0].finalCount).toBe(0);
+    expect(zeroHomersUngraded?.entries[0].venueResult).toBe("pending");
+    expect(zeroHomersUngraded?.entries[0].venueResult).not.toBe("lost");
+  });
+
   it("builds strikeout milestone card, run totals ladder (unit='runs'), extra innings, and series card in fixed slot order", () => {
     const gameMarkets = {
       player_props: [

@@ -432,7 +432,11 @@ struct EventDetailView: View {
             // or a reconnect moves no input, so it cannot beat.
             .onChange(of: ekgObservation, initial: true) { _, observation in
                 guard let observation else { return }
-                ekgTracker = ekgTracker.stepped(observation, now: displayNow())
+                ekgTracker = EventAtlasLivePath11666.stepEkgTracker(
+                    ekgTracker,
+                    observation: observation,
+                    now: displayNow()
+                )
             }
             .onDisappear {
                 // #11703 — the freshness details belong to this page. Its
@@ -1892,7 +1896,7 @@ struct EventDetailView: View {
                                   venueSettled: event.venueSettled,
                                   venueClosedNoWinner: event.venueClosedNoWinner,
                                   commenceTime: event.commenceTime?.asDate,
-                                  now: displayNow(asOf: vm.lastUpdated)
+                                  now: displayNow()
                               ) {
                         // #11666 (Step E4) — StatusBadge three points above already
                         // prints `EventState.venueClosedNoWinnerLabel` ("Ended · no winner");
@@ -2103,7 +2107,7 @@ struct EventDetailView: View {
                         // is gone: it was a thumbnail of the full chart one card
                         // below, which since #8320 starts on the first screen.
                     } else {
-                        let heroNow = displayNow(asOf: vm.lastUpdated)
+                        let heroNow = displayNow()
                         if ReleaseSurfaces.isEventPageAtlasEnabled(),
                            let stateLabel = EventAtlasStates11666.heroStateLabel(
                                status: event.status,
@@ -2242,8 +2246,11 @@ struct EventDetailView: View {
             if ReleaseSurfaces.isEventPageAtlasEnabled() {
                 EventAtlasHeadlineControlRow11666(
                     event: event,
-                    observedAt: vm.displayedProbabilityAgeClock(event),
+                    observedAt: vm.displayedProbabilityObservedAt(event),
+                    confirmedAtShown: vm.confirmedAtCoveringShown(event),
+                    preview: vm.blendPreview,
                     liveStatus: vm.liveUpdateStatus,
+                    ekgTracker: ekgTracker,
                     asOf: displayAsOf)
             }
         }
@@ -2395,6 +2402,14 @@ struct EventDetailView: View {
         if MLBFinalPage11284.applies(sportKey: event.sport, status: event.status) {
             return mlbFinalCards(event).map { .mlb($0) }
         }
+        // #11666 Step E6b — native NHL story cards when Atlas is enabled.
+        if EventAtlasNhlCards11666.applies(sportKey: event.sport) {
+            return nhlAtlasCards(event)
+        }
+        // #11666 Step E6c — native Soccer story cards when Atlas is enabled.
+        if EventAtlasSoccerCards11666.applies(sportKey: event.sport) {
+            return soccerAtlasCards(event)
+        }
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         // #9483 R2 — a finished page's card compares the final with the
         // headline's own qualified forecast, not an earlier history point.
@@ -2426,6 +2441,50 @@ struct EventDetailView: View {
             homeTeam: event.homeTeam, awayTeam: event.awayTeam,
             homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
             gameMarkets: vm.gameMarkets, relatedFutures: vm.relatedFutures))
+    }
+
+    /// #11666 Step E6b — NHL story cards (`icehockey_nhl`) from THIS event's
+    /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    private func nhlAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
+        guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let names = nflNames(event)
+        return EventAtlasNhlCards11666.cards(
+            sportKey: event.sport,
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            homeShort: names.home,
+            awayShort: names.away,
+            homeScore: hasScore ? event.homeScore : nil,
+            awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: gm,
+            now: displayNow()
+        )
+    }
+
+    /// #11666 Step E6c — Soccer story cards (`soccer_*`) from THIS event's
+    /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    private func soccerAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
+        guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let names = nflNames(event)
+        return EventAtlasSoccerCards11666.cards(
+            sportKey: event.sport,
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            homeShort: names.home,
+            awayShort: names.away,
+            homeScore: hasScore ? event.homeScore : nil,
+            awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: gm,
+            now: displayNow()
+        )
     }
 
     /// #9483 NBA slice — the winning-margin and scoring ladders, from the

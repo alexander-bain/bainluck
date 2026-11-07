@@ -1,0 +1,4973 @@
+{
+  "generated_at": "2026-11-03T21:37:35Z",
+  "batch_id": "msgbatch_01PJJkwRU1easj8nnHAZQ6qa",
+  "model": "claude-sonnet-5-5",
+  "max_cost_usd": 60.0,
+  "estimated_cost_usd": 1.843,
+  "pairs_sent": 120,
+  "high_confidence_candidates": 0,
+  "medium_confidence_candidates": 3,
+  "low_confidence_candidates": 117,
+  "candidates": [
+    {
+      "custom_id": "pair-52755988-3814372",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "action",
+        "f1",
+        "year"
+      ],
+      "kalshi": {
+        "id": 52755988,
+        "external_id": null,
+        "name": "F1 Action of the Year Award Winner",
+        "category": "motorsports",
+        "resolution_date": "2026-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 3814372,
+        "external_id": null,
+        "name": "F1: Action of the Year",
+        "category": "motorsports",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "medium",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets appear to ask which driver or action wins the F1 Action of the Year award, and the visible outcomes (Verstappen, Antonelli, Leclerc) match."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Kalshi closes 2026-12-31 15:00 UTC and Polymarket 2027-01-01 04:59 UTC, which are about 14 hours apart and both fall at the end of the 2026 calendar year, so the settlement windows effectively coincide."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market provides a description or rules text, and the outcome counts differ (23 vs 33), so the outcome sets and settlement rules cannot be confirmed as identical."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Max Verstappen",
+          "polymarket": "Max Verstappen"
+        },
+        {
+          "kalshi": "Andrea Kimi Antonelli",
+          "polymarket": "Kimi Antonelli"
+        },
+        {
+          "kalshi": "Charles Leclerc",
+          "polymarket": "Charles Leclerc"
+        }
+      ],
+      "evidence": "Both markets cover the F1 Action of the Year award with matching leading outcomes and similar year-end deadlines, but the missing rules text and the 23 vs 33 outcome-count mismatch leave resolution equivalence unverified, so they are not confirmed twins."
+    },
+    {
+      "custom_id": "pair-56775571-58492246",
+      "lexical_score": 0.96,
+      "shared_tokens": [
+        "artist",
+        "best",
+        "grammy",
+        "new"
+      ],
+      "kalshi": {
+        "id": 56775571,
+        "external_id": null,
+        "name": "Grammy Winner: Best New Artist",
+        "category": "entertainment",
+        "resolution_date": "2027-02-09T04:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 58492246,
+        "external_id": null,
+        "name": "Grammys 2027: Best New Artist Winner",
+        "category": "entertainment",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "medium",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask which artist wins Best New Artist at the 2027 Grammys, and the leading outcomes (Ella Langley, SIENNA SPIRO) match."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market resolves 2027-02-09 while the Polymarket market runs to 2027-07-01, a gap of about five months in the settlement windows, even though both likely settle at the same ceremony."
+      },
+      "same_resolution_rule": {
+        "pass": true,
+        "reason": "Both markets appear to settle on the single official Best New Artist winner, but neither lists a description or rules text, so this is inferred, and the outcome lists differ (68 vs 30)."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Ella Langley",
+          "polymarket": "Ella Langley"
+        },
+        {
+          "kalshi": "SIENNA SPIRO",
+          "polymarket": "SIENNA SPIRO"
+        }
+      ],
+      "evidence": "Both the Kalshi and Polymarket markets cover the 2027 Grammy Best New Artist winner with matching top outcomes, but the listed resolution dates differ by about five months and neither market includes rules text, so this is not a high-confidence twin."
+    },
+    {
+      "custom_id": "pair-52755801-58495138",
+      "lexical_score": 0.9225,
+      "shared_tokens": [
+        "album",
+        "grammy",
+        "year"
+      ],
+      "kalshi": {
+        "id": 52755801,
+        "external_id": null,
+        "name": "Grammy winner: Album of the Year",
+        "category": "entertainment",
+        "resolution_date": "2027-02-08T04:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 58495138,
+        "external_id": null,
+        "name": "Grammys 2027: Album of the Year Winner",
+        "category": "entertainment",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "medium",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask which nominee wins Album of the Year at the 2027 Grammys, and the top outcomes are the same nominees and albums."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi's cutoff is 2027-02-08 while Polymarket's is 2027-07-01, so the settlement windows differ by about five months even though both likely resolve on the same ceremony."
+      },
+      "same_resolution_rule": {
+        "pass": true,
+        "reason": "Both markets appear to settle on the official Album of the Year winner, but neither provides rule text, and the outcome counts differ (12 vs 15), so the extra Polymarket outcomes are unverified."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "you seem pretty sad for a girl so in love",
+          "polymarket": "you seem pretty sad for a girl so in love - Olivia Rodrigo"
+        },
+        {
+          "kalshi": "Lux",
+          "polymarket": "Lux - Rosal\u00eda"
+        },
+        {
+          "kalshi": "The Art of Loving",
+          "polymarket": "The Art of Loving - Olivia Dean"
+        }
+      ],
+      "evidence": "Kalshi and Polymarket list the same Grammy Album of the Year market with matching leading nominees, but their resolution dates differ (Feb 2027 vs Jul 2027) and the outcome counts differ (12 vs 15), so the pair is not a verified high-confidence twin."
+    },
+    {
+      "custom_id": "pair-207-7448404",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "nl",
+        "rookie",
+        "year"
+      ],
+      "kalshi": {
+        "id": 207,
+        "external_id": null,
+        "name": "NL Rookie of the Year Winner",
+        "category": "baseball",
+        "resolution_date": "2026-12-08T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 7448404,
+        "external_id": null,
+        "name": "MLB: NL Rookie of the Year",
+        "category": "baseball",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-214-7448386",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "al",
+        "rookie",
+        "year"
+      ],
+      "kalshi": {
+        "id": 214,
+        "external_id": null,
+        "name": "AL Rookie of the Year Winner",
+        "category": "baseball",
+        "resolution_date": "2026-12-08T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 7448386,
+        "external_id": null,
+        "name": "MLB: AL Rookie of the Year",
+        "category": "baseball",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-230-113706",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "champion",
+        "constructors",
+        "f1"
+      ],
+      "kalshi": {
+        "id": 230,
+        "external_id": null,
+        "name": "F1 Constructors Champion",
+        "category": "motorsports",
+        "resolution_date": "2026-12-07T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 113706,
+        "external_id": null,
+        "name": "F1 Constructors' Champion",
+        "category": "motorsports",
+        "resolution_date": "2027-04-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask which constructor wins the Formula 1 Constructors' Championship, and the lead outcomes (Mercedes AMG Motorsport and Mercedes) match, though the season is not stated in either market."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2026-12-07 while Polymarket resolves 2027-04-01, a gap of about four months, so the settlement and cutoff windows differ."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market gives a description or rules, and the outcome counts differ (11 vs 12), so identical settlement criteria cannot be verified."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Mercedes AMG Motorsport",
+          "polymarket": "Mercedes"
+        },
+        {
+          "kalshi": "Cadillac",
+          "polymarket": "Cadillac"
+        }
+      ],
+      "evidence": "The Kalshi and Polymarket markets both cover the F1 Constructors' Champion with Mercedes near 99%, but the deadlines differ (2026-12-07 vs 2027-04-01), the outcome sets differ (11 vs 12), and neither market states rules, so they cannot be treated as verified twins."
+    },
+    {
+      "custom_id": "pair-109657-57574250",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "december",
+        "decision",
+        "fed",
+        "rate"
+      ],
+      "kalshi": {
+        "id": 109657,
+        "external_id": null,
+        "name": "Fed decision in Dec 2026?",
+        "category": "economics",
+        "resolution_date": "2026-12-09T18:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 57574250,
+        "external_id": null,
+        "name": "Fed Decision in December?",
+        "category": "economics",
+        "resolution_date": "2026-12-10T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-109719-63833708",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "october",
+        "rate",
+        "unemployment"
+      ],
+      "kalshi": {
+        "id": 109719,
+        "external_id": null,
+        "name": "Unemployment rate in Oct 2026?",
+        "category": "economics",
+        "resolution_date": "2026-11-06T13:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 63833708,
+        "external_id": null,
+        "name": "October Unemployment Rate",
+        "category": "economics",
+        "resolution_date": "2026-11-06T13:30:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-112816-114629",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2026",
+        "brazil",
+        "inflation"
+      ],
+      "kalshi": {
+        "id": 112816,
+        "external_id": null,
+        "name": "What will inflation in Brazil be in Dec 2026?",
+        "category": "economics",
+        "resolution_date": "2027-01-01T05:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 114629,
+        "external_id": null,
+        "name": "Brazil Annual Inflation 2026",
+        "category": "economics",
+        "resolution_date": "2027-01-13T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets appear to track Brazil's annual inflation rate for calendar year 2026 (December 2026 reading), though neither gives a description or names the index."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market lists a 2027-01-01 resolution date and the Polymarket market lists 2027-01-13, so the settlement windows differ by about 12 days."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market uses cumulative 'Above X%' thresholds, while the Polymarket market uses mutually exclusive bins such as 5.00-5.49%, so the rungs do not settle the same way."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market (cumulative 'Above X%' ladder, resolves 2027-01-01) and the Polymarket market (exclusive range bins, resolves 2027-01-13) cover the same Brazil 2026 inflation topic, but their outcome structures and cutoff dates differ, so no one-to-one outcome aliases exist and they should not be blended as twins."
+    },
+    {
+      "custom_id": "pair-1630482-113339",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2027",
+        "cut",
+        "fed",
+        "rate"
+      ],
+      "kalshi": {
+        "id": 1630482,
+        "external_id": null,
+        "name": "Fed rate cut before 2027?",
+        "category": "economics",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 113339,
+        "external_id": null,
+        "name": "Fed emergency rate cut before 2027?",
+        "category": "economics",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers any Fed rate cut before 2027, while the Polymarket market covers only an emergency (unscheduled) rate cut, which is a narrower event."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets share the identical resolution timestamp of 2027-01-01T04:59:00+00:00, so the cutoff windows match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market would settle Yes on any scheduled or emergency cut, whereas the Polymarket market settles Yes only on an emergency cut, so the settlement triggers differ and no descriptions confirm otherwise."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Yes",
+          "polymarket": "Yes"
+        }
+      ],
+      "evidence": "Not twins: the Kalshi market on any Fed rate cut before 2027 (2.65%) is broader than the Polymarket market on an emergency cut only (1.7%), despite matching deadlines, so the two should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-5398277-63624401",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "avengers",
+        "doomsday",
+        "rottentomatoes",
+        "rt",
+        "score"
+      ],
+      "kalshi": {
+        "id": 5398277,
+        "external_id": null,
+        "name": "Avengers: Doomsday: Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-12-21T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 63624401,
+        "external_id": null,
+        "name": "\"Avengers: Doomsday\" Rotten Tomatoes Score?",
+        "category": "entertainment",
+        "resolution_date": "2026-12-21T23:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-5602093-63624394",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "dune",
+        "part",
+        "rottentomatoes",
+        "rt",
+        "score",
+        "three"
+      ],
+      "kalshi": {
+        "id": 5602093,
+        "external_id": null,
+        "name": "Dune: Part Three: Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-12-21T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 63624394,
+        "external_id": null,
+        "name": "\"Dune: Part Three\" Rotten Tomatoes Score?",
+        "category": "entertainment",
+        "resolution_date": "2026-12-21T23:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-5602093-63640344",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "dune",
+        "part",
+        "rottentomatoes",
+        "rt",
+        "score",
+        "three"
+      ],
+      "kalshi": {
+        "id": 5602093,
+        "external_id": null,
+        "name": "Dune: Part Three: Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-12-21T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 63640344,
+        "external_id": null,
+        "name": "Will \"Dune: Part Three\" score at least 75 on the Rotten Tomatoes Tomatometer?",
+        "category": "entertainment",
+        "resolution_date": "2026-12-21T23:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "Both markets concern the Rotten Tomatoes score of Dune: Part Three, but the Kalshi market is a multi-rung ladder (shown rungs Above 45, 50, 55) while the Polymarket market is a single binary at 75 or higher, so no shown Kalshi rung matches the Polymarket threshold."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Both resolve on 2026-12-21, but the Kalshi cutoff is 15:00 UTC and the Polymarket cutoff is 23:59 UTC, so the settlement windows are not identical."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses strict 'Above X' rungs at 45/50/55 while Polymarket uses an inclusive 'at least 75' threshold, so the thresholds and inequality types differ."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market is a multi-rung Above-threshold ladder (45/50/55 shown) and the Polymarket market is a single at-least-75 binary with a later cutoff, so the two markets are not true twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-5869749-57368169",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "actor",
+        "best",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 5869749,
+        "external_id": null,
+        "name": "Oscar Winner: Best Actor",
+        "category": "entertainment",
+        "resolution_date": "2027-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 57368169,
+        "external_id": null,
+        "name": "Oscars 2027: Best Actor Winner",
+        "category": "entertainment",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-12572131-68169138",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2026",
+        "gdp",
+        "growth",
+        "q4",
+        "us"
+      ],
+      "kalshi": {
+        "id": 12572131,
+        "external_id": null,
+        "name": "US GDP growth in Q4 2026?",
+        "category": "economics",
+        "resolution_date": "2027-01-30T13:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 68169138,
+        "external_id": null,
+        "name": "US GDP growth in Q4 2026?",
+        "category": "economics",
+        "resolution_date": "2027-01-29T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets share the identical title 'US GDP growth in Q4 2026?' in the economics category, but neither gives a description naming the data series or the estimate (advance, second or third) used for settlement."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market resolves 2027-01-30 13:29 UTC and the Polymarket market 2027-01-29 04:59 UTC, so the cutoffs differ by about 32 hours and cannot be confirmed as the same settlement window."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market lists no outcomes or rungs and the Polymarket market shows only 3 of its 7 bins (e.g. '1.5% to 2.0%'), so threshold boundaries and inclusivity cannot be matched."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi and Polymarket markets share a title, but the deadlines differ by about a day and the Kalshi market has no outcome ladder or rules to compare with the Polymarket bins, so they should not be blended as twins yet."
+    },
+    {
+      "custom_id": "pair-52755650-66031970",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "mvp",
+        "nba"
+      ],
+      "kalshi": {
+        "id": 52755650,
+        "external_id": null,
+        "name": "Pro Basketball MVP Winner",
+        "category": "basketball",
+        "resolution_date": "2027-07-31T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 66031970,
+        "external_id": null,
+        "name": "NBA: 2026-27 MVP",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets appear to settle on the NBA MVP winner for the 2026-27 season, although the Kalshi market name omits the season and its description is null, so that is inferred from the 2027 resolution date and the matching top candidates."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi's market closes 2027-07-31 14:00 UTC while Polymarket's closes 2027-07-01 03:59 UTC, a gap of about 30 days, so the cutoff windows do not match exactly."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market provides a description or rules text, so the winner-determination source, tie handling and treatment of unlisted players cannot be verified, and the outcome counts differ (53 vs 34)."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Luka Doncic",
+          "polymarket": "Luka Doncic"
+        },
+        {
+          "kalshi": "Victor Wembanyama",
+          "polymarket": "Victor Wembanyama"
+        },
+        {
+          "kalshi": "Shai Gilgeous-Alexander",
+          "polymarket": "Shai Gilgeous-Alexander"
+        }
+      ],
+      "evidence": "The Kalshi market (Pro Basketball MVP Winner) and the Polymarket market (NBA: 2026-27 MVP) likely cover the same award with matching top outcome names, but the deadlines differ by about 30 days and neither market has rules text, so they are not verified twins for blending."
+    },
+    {
+      "custom_id": "pair-52755707-65677915",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "1",
+        "conference",
+        "nba",
+        "seed",
+        "western"
+      ],
+      "kalshi": {
+        "id": 52755707,
+        "external_id": null,
+        "name": "Pro Basketball Western Conference #1 Seed",
+        "category": "basketball",
+        "resolution_date": "2027-06-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677915,
+        "external_id": null,
+        "name": "NBA: 2026-27 Western Conference #1 Seed",
+        "category": "basketball",
+        "resolution_date": "2027-04-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-52755711-65677948",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "1",
+        "conference",
+        "eastern",
+        "nba",
+        "seed"
+      ],
+      "kalshi": {
+        "id": 52755711,
+        "external_id": null,
+        "name": "Pro Basketball Eastern Conference #1 Seed",
+        "category": "basketball",
+        "resolution_date": "2027-06-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677948,
+        "external_id": null,
+        "name": "NBA: 2026-27 Eastern Conference #1 Seed",
+        "category": "basketball",
+        "resolution_date": "2027-04-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask which team earns the Eastern Conference #1 seed, and Kalshi's 2027 resolution date implies the same 2026-27 NBA season, though its name does not state the season."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2027-06-01 while Polymarket resolves 2027-04-26, a gap of about five weeks, so the settlement and cutoff windows do not match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market includes a description, so tiebreaker handling, seed-finalization timing and treatment of unlisted teams cannot be verified, and the outcome counts differ (15 vs 16)."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Philadelphia",
+          "polymarket": "Philadelphia 76ers"
+        },
+        {
+          "kalshi": "Boston",
+          "polymarket": "Boston Celtics"
+        },
+        {
+          "kalshi": "Detroit",
+          "polymarket": "Detroit Pistons"
+        }
+      ],
+      "evidence": "Both markets cover the 2026-27 Eastern Conference #1 seed, but the resolution dates differ (2027-06-01 vs 2027-04-26), no rules text is available to confirm matching settlement, and the outcome lists differ in size (15 vs 16), so the pair is not safe to blend as a twin."
+    },
+    {
+      "custom_id": "pair-52755817-59249431",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2026",
+        "cup",
+        "nba"
+      ],
+      "kalshi": {
+        "id": 52755817,
+        "external_id": null,
+        "name": "2026 Pro Basketball Cup Champion",
+        "category": "basketball",
+        "resolution_date": "2027-01-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 59249431,
+        "external_id": null,
+        "name": "NBA: 2026 NBA Cup Winner",
+        "category": "basketball",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-52755987-3814372",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "action",
+        "f1",
+        "year"
+      ],
+      "kalshi": {
+        "id": 52755987,
+        "external_id": null,
+        "name": "F1 Action of the Year Award Winner",
+        "category": "motorsports",
+        "resolution_date": "2026-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 3814372,
+        "external_id": null,
+        "name": "F1: Action of the Year",
+        "category": "motorsports",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "Both markets concern an F1 Action of the Year award, but the Kalshi market has 23 outcomes and the Polymarket market has 33, and neither lists a description, so it is unconfirmed that they refer to the same award and candidate set (driver vs. moment/action)."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2026-12-31T15:00Z while Polymarket resolves 2027-01-01T04:59Z, a ~14-hour gap in the cutoff windows that is not confirmed to be equivalent."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market provides a description or rules, and the differing outcome counts (23 vs. 33) suggest different candidate sets, so settlement of the winner cannot be verified as identical."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Isack Hadjar",
+          "polymarket": "Isack Hadjar"
+        },
+        {
+          "kalshi": "Alexander Albon",
+          "polymarket": "Alexander Albon"
+        },
+        {
+          "kalshi": "Fernando Alonso",
+          "polymarket": "Fernando Alonso"
+        }
+      ],
+      "evidence": "The Kalshi market (23 outcomes, closes 2026-12-31 15:00 UTC) and the Polymarket market (33 outcomes, closes 2027-01-01 04:59 UTC) appear thematically related but lack rules text and differ in outcome sets and cutoffs, so they are not verified twins for blending."
+    },
+    {
+      "custom_id": "pair-52756057-65843299",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "core",
+        "cpi",
+        "october"
+      ],
+      "kalshi": {
+        "id": 52756057,
+        "external_id": null,
+        "name": "CPI core in October",
+        "category": "economics",
+        "resolution_date": "2026-11-10T13:25:00+00:00"
+      },
+      "polymarket": {
+        "id": 65843299,
+        "external_id": null,
+        "name": "Core CPI MoM - October 2026",
+        "category": "economics",
+        "resolution_date": "2026-11-11T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-55674213-65677945",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "nba",
+        "record",
+        "regular",
+        "season",
+        "worst"
+      ],
+      "kalshi": {
+        "id": 55674213,
+        "external_id": null,
+        "name": "Pro Basketball Worst Regular Season Record",
+        "category": "basketball",
+        "resolution_date": "2027-05-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677945,
+        "external_id": null,
+        "name": "NBA: 2026-27 Worst Regular Season Record",
+        "category": "basketball",
+        "resolution_date": "2027-04-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-55674241-60607676",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2027",
+        "afc",
+        "asian",
+        "cup"
+      ],
+      "kalshi": {
+        "id": 55674241,
+        "external_id": null,
+        "name": "2027 AFC Asian Cup Champion",
+        "category": "soccer",
+        "resolution_date": "2027-02-07T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 60607676,
+        "external_id": null,
+        "name": "AFC Asian Cup 2027 Winner",
+        "category": "soccer",
+        "resolution_date": "2027-02-06T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-56775503-60607659",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2027",
+        "cup",
+        "fifa",
+        "women",
+        "world"
+      ],
+      "kalshi": {
+        "id": 56775503,
+        "external_id": null,
+        "name": "2027 FIFA Women's World Cup Champion",
+        "category": "soccer",
+        "resolution_date": "2027-07-26T02:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 60607659,
+        "external_id": null,
+        "name": "FIFA Women's World Cup 2027 Winner",
+        "category": "soccer",
+        "resolution_date": "2027-07-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask which nation wins the 2027 FIFA Women's World Cup, a single-winner outright market."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets resolve on 2027-07-26, at 02:00 UTC for Kalshi and 03:59 UTC for Polymarket, so the roughly two-hour gap does not change the settlement date."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market includes a description or rules text, and the outcome sets differ (32 vs 18 outcomes), so identical settlement criteria such as a field-or-other bucket and the handling of cancellation or postponement cannot be confirmed."
+      },
+      "outcome_aliases": [],
+      "evidence": "Both markets target the 2027 Women's World Cup winner with a same-day cutoff, but the rules text is missing, the outcome lists differ (32 vs 18), and the visible outcomes do not overlap (Spain/USA/England vs Argentina/Brazil/Japan), so the pair is not verified as a blendable twin."
+    },
+    {
+      "custom_id": "pair-58015844-68169138",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2026",
+        "gdp",
+        "growth",
+        "q4",
+        "us"
+      ],
+      "kalshi": {
+        "id": 58015844,
+        "external_id": null,
+        "name": "US real GDP growth in Q4 2026?",
+        "category": "economics",
+        "resolution_date": "2027-01-28T13:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 68169138,
+        "external_id": null,
+        "name": "US GDP growth in Q4 2026?",
+        "category": "economics",
+        "resolution_date": "2027-01-29T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-59164796-59670249",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "4",
+        "finishers",
+        "serie",
+        "top"
+      ],
+      "kalshi": {
+        "id": 59164796,
+        "external_id": null,
+        "name": "Serie A Top 4 Finishers",
+        "category": "soccer",
+        "resolution_date": "2027-06-14T02:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 59670249,
+        "external_id": null,
+        "name": "Serie A Top 4 Finishers (2026-27)",
+        "category": "soccer",
+        "resolution_date": "2027-06-14T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-59164807-59670245",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "4",
+        "bundesliga",
+        "finishers",
+        "top"
+      ],
+      "kalshi": {
+        "id": 59164807,
+        "external_id": null,
+        "name": "Bundesliga Top 4 Finishers",
+        "category": "soccer",
+        "resolution_date": "2027-06-06T02:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 59670245,
+        "external_id": null,
+        "name": "Bundesliga Top 4 Finishers (2026-27)",
+        "category": "soccer",
+        "resolution_date": "2027-06-06T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-59164860-65682566",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "division",
+        "metropolitan",
+        "nhl"
+      ],
+      "kalshi": {
+        "id": 59164860,
+        "external_id": null,
+        "name": "NHL Metropolitan Division Winner",
+        "category": "hockey",
+        "resolution_date": "2027-04-17T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65682566,
+        "external_id": null,
+        "name": "NHL: 2026-27 Metropolitan Division Winner",
+        "category": "hockey",
+        "resolution_date": "2027-04-20T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask which team will win the NHL Metropolitan Division in the 2026-27 season, and the Kalshi market's April 2027 resolution date matches that season."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2027-04-17 14:00 UTC while Polymarket resolves 2027-04-20 03:59 UTC, a gap of about 2.5 days, so the settlement windows are not identical."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market provides a description, and the outcome counts differ (8 vs 9), so the field and any extra or other-team rungs may settle differently and the rule cannot be verified as equivalent."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Carolina Hurricanes",
+          "polymarket": "Carolina Hurricanes"
+        },
+        {
+          "kalshi": "New Jersey Devils",
+          "polymarket": "New Jersey Devils"
+        },
+        {
+          "kalshi": "Washington Capitals",
+          "polymarket": "Washington Capitals"
+        }
+      ],
+      "evidence": "Both markets cover the 2026-27 NHL Metropolitan Division winner with matching team names, but the settlement dates differ by about 2.5 days, the outcome counts differ (8 vs 9), and neither market has a description, so they are not confirmed twins for the explicit register."
+    },
+    {
+      "custom_id": "pair-59164862-65682569",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "atlantic",
+        "division",
+        "nhl"
+      ],
+      "kalshi": {
+        "id": 59164862,
+        "external_id": null,
+        "name": "NHL Atlantic Division Winner",
+        "category": "hockey",
+        "resolution_date": "2027-04-17T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65682569,
+        "external_id": null,
+        "name": "NHL: 2026-27 Atlantic Division Winner",
+        "category": "hockey",
+        "resolution_date": "2027-04-20T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-59165011-113340",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2026",
+        "gdp",
+        "growth"
+      ],
+      "kalshi": {
+        "id": 59165011,
+        "external_id": null,
+        "name": "US nominal GDP growth in 2026",
+        "category": "economics",
+        "resolution_date": "2027-01-28T13:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 113340,
+        "external_id": null,
+        "name": "GDP growth in 2026",
+        "category": "economics",
+        "resolution_date": "2027-01-29T00:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers US nominal GDP growth in 2026, while the Polymarket market says only 'GDP growth in 2026' with no description, so it is probably real (inflation-adjusted) GDP, and the roughly 2% probabilities on the Polymarket 2.0\u20132.5% and >2.5% rungs do not fit nominal growth."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2027-01-28T13:29 UTC and Polymarket 2027-01-29T00:00 UTC, which are close but not identical, and neither market states its data release or cutoff, so the settlement windows cannot be confirmed to match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative 'Above X%' threshold rungs in 0.5% steps, while Polymarket uses mutually exclusive bands (1.5\u20132.0%, 2.0\u20132.5%) plus an open-ended '>2.5%', so the rungs and settlement structure differ."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market on nominal GDP growth with cumulative above-threshold rungs and the Polymarket market on unspecified GDP growth with exclusive bands differ in measure and rung structure, so they are not confirmed twins for blending in the twin register."
+    },
+    {
+      "custom_id": "pair-60481101-60542255",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2026",
+        "brazil",
+        "gdp",
+        "growth",
+        "q3"
+      ],
+      "kalshi": {
+        "id": 60481101,
+        "external_id": null,
+        "name": "Brazil GDP growth YoY in Q3 2026",
+        "category": "economics",
+        "resolution_date": "2026-12-02T12:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 60542255,
+        "external_id": null,
+        "name": "Brazil GDP Growth in Q3 2026 (QoQ)?",
+        "category": "economics",
+        "resolution_date": "2026-12-02T00:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market tracks Brazil Q3 2026 GDP growth year-over-year, while the Polymarket market tracks quarter-over-quarter growth, which are different economic measures."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Both resolve around 2026-12-02, but Kalshi cuts off at 12:59 UTC while Polymarket uses 00:00 UTC, so the settlement windows are not identical."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative 'Above X%' threshold rungs on YoY growth, while Polymarket uses mutually exclusive QoQ range buckets, so the settlement structures and rungs differ."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market (YoY, cumulative above-threshold rungs) and the Polymarket market (QoQ, exclusive range buckets) measure different quantities with different outcome structures, so they are not true twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-60481116-64564200",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "horse",
+        "nine",
+        "rottentomatoes",
+        "rt",
+        "score",
+        "wild"
+      ],
+      "kalshi": {
+        "id": 60481116,
+        "external_id": null,
+        "name": "Wild Horse Nine \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 64564200,
+        "external_id": null,
+        "name": "\"Wild Horse Nine\" Rotten Tomatoes Score?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets forecast the Rotten Tomatoes score for the film 'Wild Horse Nine', so the underlying subject matches."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets show an identical resolution date and time of 2026-11-09T15:00:00+00:00, so the settlement windows match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market uses strict 'Above X' rungs (65, 50, 85) while the Polymarket market uses inclusive 'X+' rungs (87+, 90+, 92+), and the thresholds do not line up, so the settlement rules are not equivalent."
+      },
+      "outcome_aliases": [],
+      "evidence": "Both markets cover the Wild Horse Nine Rotten Tomatoes score with the same resolution date, but strict 'Above' rungs on Kalshi do not match inclusive '+' rungs on Polymarket, so no rung aliases exist and the pair should not be blended as twins."
+    },
+    {
+      "custom_id": "pair-60481116-64564201",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "horse",
+        "nine",
+        "rottentomatoes",
+        "rt",
+        "score",
+        "wild"
+      ],
+      "kalshi": {
+        "id": 60481116,
+        "external_id": null,
+        "name": "Wild Horse Nine \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 64564201,
+        "external_id": "0x6db3ca692b07fe4681f9fcf88297a841daa7d73f0940aa0329279cd7aeae116b",
+        "name": "Will \"Wild Horse Nine\" score at least 87 on the Rotten Tomatoes Tomatometer?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market is a multi-rung Rotten Tomatoes score ladder (Above 50, 65, 85 and others) for Wild Horse Nine, while the Polymarket market is a single binary on a score of at least 87, a threshold the visible Kalshi rungs do not match."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets show the identical resolution date and time of 2026-11-09T15:00:00+00:00."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles on strict 'Above X' rungs (visible ones are 50, 65, 85), while Polymarket settles on an inclusive 'at least 87' threshold, so no rung matches and the rules differ."
+      },
+      "outcome_aliases": [],
+      "evidence": "Kalshi market is a multi-rung 'Above X' Rotten Tomatoes ladder for Wild Horse Nine, while the Polymarket market is a single inclusive 87+ binary; the deadlines match but the thresholds do not, so the markets are not twins for the register."
+    },
+    {
+      "custom_id": "pair-61461622-62878223",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "nhl",
+        "presidents",
+        "trophy"
+      ],
+      "kalshi": {
+        "id": 61461622,
+        "external_id": null,
+        "name": "NHL Presidents' Trophy Winner",
+        "category": "hockey",
+        "resolution_date": "2027-04-11T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 62878223,
+        "external_id": null,
+        "name": "NHL Presidents' Trophy Winner",
+        "category": "hockey",
+        "resolution_date": "2027-04-20T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-61484909-67734797",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "play",
+        "rocky",
+        "rottentomatoes",
+        "rt",
+        "score"
+      ],
+      "kalshi": {
+        "id": 61484909,
+        "external_id": null,
+        "name": "I Play Rocky \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-23T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 67734797,
+        "external_id": null,
+        "name": "\"I Play Rocky\" Rotten Tomatoes Score?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-23T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask for the Rotten Tomatoes score of the film \"I Play Rocky\", so the underlying proposition is the same."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets share the identical resolution date and time of 2026-11-23T15:00:00+00:00."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles on strict 'Above X' rungs at 45, 50 and 55 across 13 outcomes, while Polymarket uses inclusive 'X+' rungs at 60, 70 and 75 across 5 outcomes, so the thresholds differ in both type and placement."
+      },
+      "outcome_aliases": [],
+      "evidence": "Both markets track the same film's Rotten Tomatoes score with the same resolution date, but strict 'Above X' rungs on Kalshi do not match inclusive 'X+' rungs on Polymarket and no shown rungs overlap, so the pair cannot be blended as a twin."
+    },
+    {
+      "custom_id": "pair-61484910-64783070",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "games",
+        "hunger",
+        "reaping",
+        "rottentomatoes",
+        "rt",
+        "score",
+        "sunrise"
+      ],
+      "kalshi": {
+        "id": 61484910,
+        "external_id": null,
+        "name": "The Hunger Games: Sunrise on the Reaping \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-23T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 64783070,
+        "external_id": null,
+        "name": "\"The Hunger Games: Sunrise on the Reaping\" Rotten Tomatoes Score?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-23T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask about the Rotten Tomatoes score of The Hunger Games: Sunrise on the Reaping, though descriptions are null so the exact score type (Tomatometer vs. audience) and snapshot timing are unconfirmed."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets list an identical resolution date and time of 2026-11-23T15:00:00+00:00, so the settlement windows match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses strict thresholds (Above 45/50/55) while Polymarket uses inclusive thresholds (50+/60+/70+), so the rungs differ and even the nearest pair, Above 50 vs 50+, differs at exactly 50."
+      },
+      "outcome_aliases": [],
+      "evidence": "Both markets cover the same film's Rotten Tomatoes score with the same resolution date, but the strict Kalshi rungs (Above 45/50/55) do not match the inclusive Polymarket rungs (50+/60+/70+), so they are not exact twins for an explicit twin register."
+    },
+    {
+      "custom_id": "pair-61484910-64793908",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "games",
+        "hunger",
+        "reaping",
+        "rottentomatoes",
+        "rt",
+        "score",
+        "sunrise"
+      ],
+      "kalshi": {
+        "id": 61484910,
+        "external_id": null,
+        "name": "The Hunger Games: Sunrise on the Reaping \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-23T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 64793908,
+        "external_id": null,
+        "name": "Will \"The Hunger Games: Sunrise on the Reaping\" score at least 50 on the Rotten Tomatoes Tomatometer?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-23T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-62383608-68064290",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "12",
+        "december",
+        "government",
+        "shutdown"
+      ],
+      "kalshi": {
+        "id": 62383608,
+        "external_id": null,
+        "name": "Government shutdown on Dec 12, 2026?",
+        "category": "politics",
+        "resolution_date": "2026-12-12T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 68064290,
+        "external_id": null,
+        "name": "Government shutdown by December 12?",
+        "category": "politics",
+        "resolution_date": "2026-12-13T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market asks whether a shutdown is in effect on Dec 12, 2026, while the Polymarket market asks whether a shutdown occurs at any point by Dec 12 (and doesn't state the year), so a shutdown that starts and ends earlier could resolve only the Polymarket market Yes."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market closes at 15:00 UTC on Dec 12, 2026, while the Polymarket market runs to 04:59 UTC on Dec 13, about 14 hours later, so the settlement windows differ."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market has a description, and the 'on date' (point-in-time status) versus 'by date' (cumulative event) wording implies different settlement conditions, which the different prices (0.375 vs 0.315 Yes) also suggest."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Yes",
+          "polymarket": "Yes"
+        }
+      ],
+      "evidence": "The Kalshi 'on Dec 12, 2026' market and the Polymarket 'by December 12' market differ in proposition wording, cutoff time and likely settlement rule, so they should not be blended as twins in the register."
+    },
+    {
+      "custom_id": "pair-62383659-65563521",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "godzilla",
+        "minus",
+        "rottentomatoes",
+        "rt",
+        "score",
+        "zero"
+      ],
+      "kalshi": {
+        "id": 62383659,
+        "external_id": null,
+        "name": "Godzilla Minus Zero \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65563521,
+        "external_id": null,
+        "name": "\"Godzilla Minus Zero\" Rotten Tomatoes Score?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask about the final Rotten Tomatoes score for Godzilla Minus Zero, so the underlying subject is the same."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets share an identical resolution date and time of 2026-11-09T15:00:00+00:00."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market uses strict 'Above X' rungs (45, 50, 65) while the Polymarket market uses inclusive 'X+' rungs (70+, 80+, 85+), so thresholds and rung sets do not align and no rung maps one-to-one."
+      },
+      "outcome_aliases": [],
+      "evidence": "Both markets track the Godzilla Minus Zero Rotten Tomatoes score with the same resolution date, but strict 'Above' rungs on Kalshi and inclusive '+' rungs on Polymarket have no matching thresholds, so they should not be blended as twins."
+    },
+    {
+      "custom_id": "pair-62383659-65563522",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "godzilla",
+        "minus",
+        "rottentomatoes",
+        "rt",
+        "score",
+        "zero"
+      ],
+      "kalshi": {
+        "id": 62383659,
+        "external_id": null,
+        "name": "Godzilla Minus Zero \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65563522,
+        "external_id": null,
+        "name": "Will \"Godzilla Minus Zero\" score at least 80 on the Rotten Tomatoes Tomatometer?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "Both markets concern the Rotten Tomatoes score for Godzilla Minus Zero, but the Kalshi market is a multi-rung ladder (shown rungs Above 45, 50, 65) while the Polymarket market is a single binary on a score of at least 80."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets list an identical resolution date and time of 2026-11-09T15:00:00+00:00."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi rungs use strict 'Above X' thresholds at 45, 50 and 65, none of which match Polymarket's inclusive 'at least 80' threshold, so no rung settles identically."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi ladder market (Above 45/50/65 shown, 13 outcomes) and the Polymarket binary market (at least 80) share a deadline but have no matching threshold, so they are not twins for the register."
+    },
+    {
+      "custom_id": "pair-63135159-60552214",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2026",
+        "finals",
+        "mvp",
+        "worlds"
+      ],
+      "kalshi": {
+        "id": 63135159,
+        "external_id": null,
+        "name": "Worlds 2026 Finals MVP",
+        "category": "esports",
+        "resolution_date": "2026-11-15T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 60552214,
+        "external_id": null,
+        "name": "Worlds 2026: Finals MVP",
+        "category": "esports",
+        "resolution_date": "2026-11-29T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask which player wins Finals MVP at the 2026 League of Legends World Championship, and the top outcomes (Chovy, Ruler) overlap."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi lists a resolution date of 2026-11-15 15:00 UTC while Polymarket lists 2026-11-29 04:59 UTC, a gap of about two weeks in the settlement windows."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market provides a description or rules text, and the outcome sets differ (59 vs 51 outcomes), so identical settlement of the winner and of any field, 'other' or no-award handling cannot be confirmed."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Chovy",
+          "polymarket": "Chovy"
+        },
+        {
+          "kalshi": "Ruler",
+          "polymarket": "Ruler"
+        }
+      ],
+      "evidence": "Both markets cover Worlds 2026 Finals MVP with matching leaders Chovy (0.165 vs 0.18) and Ruler (0.095 vs 0.1065), but the deadlines differ by two weeks, the outcome lists differ in size, and no rules text is available, so they should not be blended as twins."
+    },
+    {
+      "custom_id": "pair-65536534-67734803",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "ebenezer",
+        "rottentomatoes",
+        "rt",
+        "score"
+      ],
+      "kalshi": {
+        "id": 65536534,
+        "external_id": null,
+        "name": "Ebenezer \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-16T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 67734803,
+        "external_id": null,
+        "name": "\"Ebenezer\" Rotten Tomatoes Score?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-16T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask about the Rotten Tomatoes score for the film Ebenezer, though neither specifies Tomatometer versus audience score or the snapshot timing."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets have the identical resolution date and time of 2026-11-16T15:00:00+00:00, so the settlement windows match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi rungs are strict 'Above N' thresholds (20, 25, 30) while Polymarket rungs are inclusive 'N+' thresholds (20, 30, 40), so the cutoffs and rung ladders differ, and the prices diverge (Above 30 at 0.695 vs 30+ at 0.82)."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market uses strict 'Above' thresholds in steps of 5 and the Polymarket market uses inclusive 'N+' thresholds in steps of 10, so no rung is an exact equivalent and the two markets should not be blended in the twin register despite the matching film and deadline."
+    },
+    {
+      "custom_id": "pair-65536612-63833708",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "october",
+        "rate",
+        "unemployment"
+      ],
+      "kalshi": {
+        "id": 65536612,
+        "external_id": null,
+        "name": "Canada unemployment rate in October",
+        "category": "economics",
+        "resolution_date": "2026-11-06T13:25:00+00:00"
+      },
+      "polymarket": {
+        "id": 63833708,
+        "external_id": null,
+        "name": "October Unemployment Rate",
+        "category": "economics",
+        "resolution_date": "2026-11-06T13:30:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers Canada's unemployment rate (thresholds around 6.0-6.2%), while the Polymarket market appears to cover the US unemployment rate (outcomes around 4.1-4.3%), so they are different economic indicators."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Both markets resolve around 2026-11-06 (13:25 vs 13:30 UTC), but they track different national data releases, so the matching dates do not make the settlement windows equivalent."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative 'Above X%' threshold rungs on Canada's rate, while Polymarket uses exact-value bins on what looks like the US rate, so winners settle differently and the rungs do not align."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market (Canada unemployment, cumulative 'Above' thresholds near 6%) and the Polymarket market (apparently US unemployment, exact bins near 4.2%) cover different indicators and rung structures, so they are not twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-65536662-67734827",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "cat",
+        "hat",
+        "rottentomatoes",
+        "rt",
+        "score"
+      ],
+      "kalshi": {
+        "id": 65536662,
+        "external_id": null,
+        "name": "The Cat in the Hat \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 67734827,
+        "external_id": null,
+        "name": "\"The Cat in the Hat\" Rotten Tomatoes Score?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets settle on the Rotten Tomatoes score of The Cat in the Hat, so they appear to cover the same film and metric."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets list the same resolution date and time of 2026-11-09T15:00:00+00:00, so their settlement windows match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses strict 'Above 45/50/55' rungs while Polymarket uses inclusive '50+/60+/70+' rungs, so the thresholds differ (only 50 overlaps, and 'Above 50' is not the same as '50+'), and the rung ladders are not aligned."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi and Polymarket markets track the same Rotten Tomatoes score with the same deadline, but their strict versus inclusive and misaligned thresholds mean no rung is an exact match, so they should not be blended as twins."
+    },
+    {
+      "custom_id": "pair-67804800-65843299",
+      "lexical_score": 1.0,
+      "shared_tokens": [
+        "2026",
+        "core",
+        "cpi",
+        "mom",
+        "october"
+      ],
+      "kalshi": {
+        "id": 67804800,
+        "external_id": null,
+        "name": "October 2026 CPI MoM Combo \u00b7 Headline & Core",
+        "category": "economics",
+        "resolution_date": "2026-11-10T13:25:00+00:00"
+      },
+      "polymarket": {
+        "id": 65843299,
+        "external_id": null,
+        "name": "Core CPI MoM - October 2026",
+        "category": "economics",
+        "resolution_date": "2026-11-11T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market is a combined headline and core CPI MoM outcome for October 2026, while the Polymarket market covers core CPI MoM alone, so they are not the same proposition."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets settle on the October 2026 CPI release, with Kalshi resolving 2026-11-10 13:25 UTC and Polymarket 2026-11-11 04:59 UTC, which is a cutoff gap of about 15 hours around the same data release."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi rungs are joint headline-and-core combinations (e.g. Headline 0.2% and Core 0.3%), while Polymarket rungs are single core CPI buckets, so winners settle on different conditions."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market is a 16-outcome headline and core CPI combo, while the Polymarket market is a 7-outcome core-only CPI market, so the two should not be blended as twins in the register."
+    },
+    {
+      "custom_id": "pair-52755859-60166146",
+      "lexical_score": 0.9967,
+      "shared_tokens": [
+        "1",
+        "nfc",
+        "nfl",
+        "seed"
+      ],
+      "kalshi": {
+        "id": 52755859,
+        "external_id": null,
+        "name": "Pro Football: NFC #1 Seed",
+        "category": "football",
+        "resolution_date": "2027-01-11T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 60166146,
+        "external_id": null,
+        "name": "Pro Football: 2026-27 NFC #1 Seed",
+        "category": "football",
+        "resolution_date": "2027-01-10T23:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-52755860-60166145",
+      "lexical_score": 0.9967,
+      "shared_tokens": [
+        "1",
+        "afc",
+        "nfl",
+        "seed"
+      ],
+      "kalshi": {
+        "id": 52755860,
+        "external_id": null,
+        "name": "Pro Football: AFC #1 Seed",
+        "category": "football",
+        "resolution_date": "2027-01-11T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 60166145,
+        "external_id": null,
+        "name": "Pro Football: 2026-27 AFC #1 Seed",
+        "category": "football",
+        "resolution_date": "2027-01-10T23:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-65521911-114268",
+      "lexical_score": 0.9967,
+      "shared_tokens": [
+        "2026",
+        "inflation"
+      ],
+      "kalshi": {
+        "id": 65521911,
+        "external_id": null,
+        "name": "Grocery inflation at the end of 2026?",
+        "category": "economics",
+        "resolution_date": "2027-01-13T13:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 114268,
+        "external_id": null,
+        "name": "U.K. Annual Inflation 2026",
+        "category": "economics",
+        "resolution_date": "2027-01-21T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers grocery (food-at-home) inflation at the end of 2026, while the Polymarket market covers U.K. annual headline inflation in 2026, so the measures and jurisdictions differ."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi settles around 2027-01-13 and Polymarket around 2027-01-21, so the cutoff and settlement windows differ by about a week and are tied to different data releases."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative 'Above X%' thresholds (1.0%, 1.5%, 2.0%) while Polymarket uses mutually exclusive bins (3.0\u20133.4%, 3.5\u20133.9%, 4.0\u20134.4%), so the rungs cannot be mapped one-to-one."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi grocery inflation market and the Polymarket U.K. annual inflation market differ in underlying measure, region, settlement date and rung structure, so they are not true twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-108594-113340",
+      "lexical_score": 0.99,
+      "shared_tokens": [
+        "2026",
+        "gdp",
+        "growth"
+      ],
+      "kalshi": {
+        "id": 108594,
+        "external_id": null,
+        "name": "US real GDP growth in 2026?",
+        "category": "economics",
+        "resolution_date": "2027-02-28T13:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 113340,
+        "external_id": null,
+        "name": "GDP growth in 2026",
+        "category": "economics",
+        "resolution_date": "2027-01-29T00:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask about annual US real GDP growth for 2026, although the Polymarket description is unspecified and may use a different measure or release."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2027-02-28 while Polymarket resolves 2027-01-29, so the settlement windows differ by about a month and may use different GDP data releases (advance vs. later estimate)."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses 0.5-point bins (1.6-2.0%, 2.1-2.5%, 2.6-3.0%) with 14 rungs, while Polymarket uses 2.0-2.5%, >2.5% and 1.5-2.0% with 6 rungs, so the thresholds and boundaries do not align and the bins cannot be mapped one-to-one."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "2.1% to 2.5%",
+          "polymarket": "2.0\u20132.5%"
+        },
+        {
+          "kalshi": "1.6% to 2.0%",
+          "polymarket": "1.5\u20132.0%"
+        }
+      ],
+      "evidence": "The Kalshi and Polymarket markets both cover 2026 US GDP growth, but their bin boundaries, rung counts and settlement dates differ, and the prices diverge sharply (77.75% vs 49.5% for the central bin), so they are not safe twins for blending in the register."
+    },
+    {
+      "custom_id": "pair-67804700-60552214",
+      "lexical_score": 0.99,
+      "shared_tokens": [
+        "2026",
+        "finals",
+        "mvp",
+        "worlds"
+      ],
+      "kalshi": {
+        "id": 67804700,
+        "external_id": null,
+        "name": "Worlds 2026 Finals MVP Role",
+        "category": "esports",
+        "resolution_date": "2026-11-15T15:00:59+00:00"
+      },
+      "polymarket": {
+        "id": 60552214,
+        "external_id": null,
+        "name": "Worlds 2026: Finals MVP",
+        "category": "esports",
+        "resolution_date": "2026-11-29T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market asks which role (Top, Jungle, Mid, etc.) the Worlds 2026 Finals MVP plays, while the Polymarket market asks which individual player wins Finals MVP, so the outcome spaces differ."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2026-11-15 15:00 UTC while Polymarket resolves 2026-11-29 04:59 UTC, a gap of about two weeks in the settlement windows."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles on the winner's role category (5 outcomes) whereas Polymarket settles on the named player (51 outcomes), so a player market maps to a role only through external lookup and the rungs are not equivalent."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi role market and the Polymarket player market are related but not twins, since they differ in outcome granularity (role vs. player) and in resolution dates, so they should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-5398277-63624402",
+      "lexical_score": 0.9829,
+      "shared_tokens": [
+        "avengers",
+        "doomsday",
+        "rottentomatoes",
+        "rt",
+        "score"
+      ],
+      "kalshi": {
+        "id": 5398277,
+        "external_id": null,
+        "name": "Avengers: Doomsday: Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-12-21T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 63624402,
+        "external_id": null,
+        "name": "Will \"Avengers: Doomsday\" score at least 70 on the Rotten Tomatoes Tomatometer?",
+        "category": "entertainment",
+        "resolution_date": "2026-12-21T23:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "Both markets concern the Rotten Tomatoes score for Avengers: Doomsday, but the Kalshi market is a multi-rung score ladder (shown rungs Above 45, 50, 55) while the Polymarket market is a single binary on a score of at least 70."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets resolve on 2026-12-21, with Kalshi at 15:00 UTC and Polymarket at 23:59 UTC, so the dates match but the cutoff times differ by about nine hours."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles each rung on a strict 'Above X' threshold (45, 50, 55 shown), whereas Polymarket settles Yes on an inclusive 'at least 70' threshold, and no displayed Kalshi rung matches 70."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi Rotten Tomatoes ladder market (Above 45/50/55 shown) and the Polymarket 'at least 70' binary market share a film and date but have different thresholds and rung semantics, so they are not twins for blending."
+    },
+    {
+      "custom_id": "pair-61484909-67734798",
+      "lexical_score": 0.9829,
+      "shared_tokens": [
+        "play",
+        "rocky",
+        "rottentomatoes",
+        "rt",
+        "score"
+      ],
+      "kalshi": {
+        "id": 61484909,
+        "external_id": null,
+        "name": "I Play Rocky \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-23T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 67734798,
+        "external_id": null,
+        "name": "Will \"I Play Rocky\" score at least 60 on the Rotten Tomatoes Tomatometer?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-23T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "Both markets concern the Rotten Tomatoes score for I Play Rocky, but the Kalshi market is a multi-threshold ladder (shown rungs 45, 50, 55) while the Polymarket market is a single 'at least 60' threshold, and no matching 60 rung is visible."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets list an identical resolution date and time of 2026-11-23T15:00:00+00:00."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi rungs settle on strict 'Above X' thresholds (45/50/55 shown), whereas Polymarket settles Yes on an inclusive 'at least 60' Tomatometer score, so the thresholds and strict-versus-inclusive wording do not align."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market is a strict 'Above' ladder (45/50/55 shown) and the Polymarket market is a single inclusive 60+ binary; no visible rung matches, so the two markets are not verified twins despite the same resolution date."
+    },
+    {
+      "custom_id": "pair-65536662-67734828",
+      "lexical_score": 0.9829,
+      "shared_tokens": [
+        "cat",
+        "hat",
+        "rottentomatoes",
+        "rt",
+        "score"
+      ],
+      "kalshi": {
+        "id": 65536662,
+        "external_id": null,
+        "name": "The Cat in the Hat \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 67734828,
+        "external_id": null,
+        "name": "Will \"The Cat in the Hat\" score at least 50 on the Rotten Tomatoes Tomatometer?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-09T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets concern the Rotten Tomatoes Tomatometer score of The Cat in the Hat, but Kalshi is a multi-rung ladder and Polymarket is a single binary threshold."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets list the identical resolution date and time of 2026-11-09T15:00:00+00:00."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi's 'Above 50' rung is strict (greater than 50, so 51+ on integer scores) while Polymarket resolves Yes at 'at least 50' (50+), so the thresholds differ at 50 and the 64.5% vs 82.65% prices reflect this gap."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market's strict 'Above 50' rung does not match the Polymarket market's inclusive 'at least 50' threshold, so the two are not exact twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-40532-7585490",
+      "lexical_score": 0.9733,
+      "shared_tokens": [
+        "mvp"
+      ],
+      "kalshi": {
+        "id": 40532,
+        "external_id": null,
+        "name": "MVP Winner?",
+        "category": "football",
+        "resolution_date": "2027-03-14T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 7585490,
+        "external_id": null,
+        "name": "Pro Football: 2026 MVP Winner",
+        "category": "football",
+        "resolution_date": "2027-03-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-52756057-65843298",
+      "lexical_score": 0.96,
+      "shared_tokens": [
+        "core",
+        "cpi",
+        "october"
+      ],
+      "kalshi": {
+        "id": 52756057,
+        "external_id": null,
+        "name": "CPI core in October",
+        "category": "economics",
+        "resolution_date": "2026-11-10T13:25:00+00:00"
+      },
+      "polymarket": {
+        "id": 65843298,
+        "external_id": null,
+        "name": "Core CPI YoY - October 2026",
+        "category": "economics",
+        "resolution_date": "2026-11-11T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market appears to track the month-over-month change in core CPI (thresholds of 0.0%, 0.1%, 0.2%), while the Polymarket market tracks the year-over-year core CPI rate (2.4%, 2.6%, 2.7%), so they measure different quantities."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi settles on 2026-11-10 13:25 UTC and Polymarket on 2026-11-11 04:59 UTC, a gap of about 15.5 hours, and the sources do not show a shared release or cutoff window."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative 'Above X%' threshold rungs on MoM change, whereas Polymarket uses discrete exact-value YoY buckets, so the rungs cannot be mapped one to one."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market (core CPI MoM, cumulative 'Above' rungs) and the Polymarket market (core CPI YoY, exact-value buckets) differ in metric, rung structure and settlement time, so they are not twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-52755648-65677952",
+      "lexical_score": 0.9567,
+      "shared_tokens": [
+        "defensive",
+        "nba",
+        "player",
+        "year"
+      ],
+      "kalshi": {
+        "id": 52755648,
+        "external_id": null,
+        "name": "Pro Basketball Defensive Player of the Year Winner",
+        "category": "basketball",
+        "resolution_date": "2027-07-31T22:23:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677952,
+        "external_id": null,
+        "name": "NBA: 2026-27 Defensive Player of the Year",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-65536534-67734804",
+      "lexical_score": 0.9567,
+      "shared_tokens": [
+        "ebenezer",
+        "rottentomatoes",
+        "rt",
+        "score"
+      ],
+      "kalshi": {
+        "id": 65536534,
+        "external_id": null,
+        "name": "Ebenezer \u00b7 Rotten Tomatoes score",
+        "category": "entertainment",
+        "resolution_date": "2026-11-16T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 67734804,
+        "external_id": null,
+        "name": "Will \"Ebenezer\" score at least 20 on the Rotten Tomatoes Tomatometer?",
+        "category": "entertainment",
+        "resolution_date": "2026-11-16T15:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-55674241-60607666",
+      "lexical_score": 0.9467,
+      "shared_tokens": [
+        "2027",
+        "afc",
+        "asian",
+        "cup"
+      ],
+      "kalshi": {
+        "id": 55674241,
+        "external_id": null,
+        "name": "2027 AFC Asian Cup Champion",
+        "category": "soccer",
+        "resolution_date": "2027-02-07T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 60607666,
+        "external_id": null,
+        "name": "AFC Asian Cup 2027: Group F Winner",
+        "category": "soccer",
+        "resolution_date": "2027-02-06T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market settles on the overall 2027 AFC Asian Cup champion, while the Polymarket market settles on the Group F winner, which is a different event."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2027-02-07T15:00Z, around the final, while Polymarket cuts off 2027-02-06T04:59Z, so the windows differ and the Polymarket date does not fit a group-stage outcome."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles one winner among 24 teams for the tournament title, while Polymarket settles one winner among 4 teams in a single group, so the outcome sets and settlement conditions differ."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Japan",
+          "polymarket": "Japan"
+        }
+      ],
+      "evidence": "Kalshi tournament-champion market (24 outcomes) and Polymarket Group F winner market (4 outcomes) are different propositions with different outcome sets and cutoffs, so they are not twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-53662-56933331",
+      "lexical_score": 0.9457,
+      "shared_tokens": [
+        "offensive",
+        "player",
+        "year"
+      ],
+      "kalshi": {
+        "id": 53662,
+        "external_id": null,
+        "name": "Offensive Player of the Year Winner?",
+        "category": "football",
+        "resolution_date": "2027-03-10T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 56933331,
+        "external_id": null,
+        "name": "Pro Football: 2026-27 AP Offensive Player of the Year Winner",
+        "category": "football",
+        "resolution_date": "2027-03-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-53663-56947548",
+      "lexical_score": 0.9457,
+      "shared_tokens": [
+        "defensive",
+        "player",
+        "year"
+      ],
+      "kalshi": {
+        "id": 53663,
+        "external_id": null,
+        "name": "Defensive Player of the Year Winner?",
+        "category": "football",
+        "resolution_date": "2027-03-10T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 56947548,
+        "external_id": null,
+        "name": "Pro Football: 2026-27 AP Defensive Player of the Year Winner",
+        "category": "football",
+        "resolution_date": "2027-03-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-65521769-65677920",
+      "lexical_score": 0.9387,
+      "shared_tokens": [
+        "game",
+        "leader",
+        "nba",
+        "per",
+        "steals"
+      ],
+      "kalshi": {
+        "id": 65521769,
+        "external_id": null,
+        "name": "Pro Basketball Steals Per Game (SPG) Leader",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677920,
+        "external_id": null,
+        "name": "NBA: 2026-27 Steals Per Game Leader",
+        "category": "basketball",
+        "resolution_date": "2027-04-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask who will lead the league in steals per game, and the Polymarket market names the NBA 2026-27 season, which the Kalshi market's 2027 expiry and shared candidates (Dyson Daniels, Ausar Thompson) suggest it also covers."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market has a 2027-07-01 resolution date, while the Polymarket market has 2027-04-26, a gap of more than two months, so the settlement windows differ."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market has a description, so the rules for minimum games played, tie handling and the stats source cannot be confirmed as identical, and the different cutoffs suggest different settlement mechanics."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Dyson Daniels",
+          "polymarket": "Dyson Daniels"
+        },
+        {
+          "kalshi": "Ausar Thompson",
+          "polymarket": "Ausar Thompson"
+        }
+      ],
+      "evidence": "Both markets cover the NBA steals per game leader with 61 outcomes each and shared top candidates, but the resolution dates differ (2027-07-01 vs 2027-04-26) and neither market documents its settlement rules, so the pair is not a verified twin."
+    },
+    {
+      "custom_id": "pair-65521775-65677937",
+      "lexical_score": 0.9387,
+      "shared_tokens": [
+        "assists",
+        "game",
+        "leader",
+        "nba",
+        "per"
+      ],
+      "kalshi": {
+        "id": 65521775,
+        "external_id": null,
+        "name": "Pro Basketball Assists Per Game (APG) Leader",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677937,
+        "external_id": null,
+        "name": "NBA: 2026-27 Assists Per Game Leader",
+        "category": "basketball",
+        "resolution_date": "2027-04-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask which player leads the NBA in assists per game, and the 2027 resolution dates point to the 2026-27 season, though Kalshi's market name does not state the season."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi's market resolves 2027-07-01 while Polymarket's resolves 2027-04-26, a gap of about two months, so the settlement windows do not match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market has a description, so the qualification rules (minimum games played, regular season versus playoffs, tie handling) cannot be confirmed as identical."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Trae Young",
+          "polymarket": "Trae Young"
+        },
+        {
+          "kalshi": "Nikola Joki\u0107",
+          "polymarket": "Nikola Jokic"
+        },
+        {
+          "kalshi": "Tyrese Haliburton",
+          "polymarket": "Tyrese Haliburton"
+        }
+      ],
+      "evidence": "Both markets cover the NBA assists-per-game leader with matching top candidates, but the settlement dates differ (Kalshi 2027-07-01 vs Polymarket 2027-04-26) and neither market publishes rules text, so they cannot be treated as verified twins."
+    },
+    {
+      "custom_id": "pair-31615-129171",
+      "lexical_score": 0.935,
+      "shared_tokens": [
+        "champion",
+        "nfc"
+      ],
+      "kalshi": {
+        "id": 31615,
+        "external_id": null,
+        "name": "NFC Championship Winner",
+        "category": "football",
+        "resolution_date": "2027-02-08T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 129171,
+        "external_id": null,
+        "name": "Pro Football: 2027 NFC Champion",
+        "category": "football",
+        "resolution_date": "2027-04-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-31615-2279152",
+      "lexical_score": 0.935,
+      "shared_tokens": [
+        "champion",
+        "nfc"
+      ],
+      "kalshi": {
+        "id": 31615,
+        "external_id": null,
+        "name": "NFC Championship Winner",
+        "category": "football",
+        "resolution_date": "2027-02-08T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 2279152,
+        "external_id": null,
+        "name": "Pro Football: NFC West Champion",
+        "category": "football",
+        "resolution_date": "2027-01-18T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market settles on the NFC Championship winner (the conference title game), while the Polymarket market settles on the NFC West division champion, which is a different event."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market resolves around 2027-02-08, after the conference championship game, while the Polymarket market closes around 2027-01-18, so the settlement windows differ by about three weeks."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market has 16 conference-wide outcomes settled by the playoff championship game, while the Polymarket market has 5 outcomes settled by the NFC West regular-season division standing, so winners settle differently."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "San Francisco",
+          "polymarket": "San Francisco 49ers"
+        },
+        {
+          "kalshi": "Los Angeles R",
+          "polymarket": "Los Angeles Rams"
+        }
+      ],
+      "evidence": "The Kalshi NFC Championship Winner market and the Polymarket NFC West Champion market cover different propositions, deadlines, and settlement rules, so they are not true twins and should not be blended in the twin register despite overlapping team names."
+    },
+    {
+      "custom_id": "pair-31616-129172",
+      "lexical_score": 0.935,
+      "shared_tokens": [
+        "afc",
+        "champion"
+      ],
+      "kalshi": {
+        "id": 31616,
+        "external_id": null,
+        "name": "AFC Championship Winner",
+        "category": "football",
+        "resolution_date": "2027-02-08T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 129172,
+        "external_id": null,
+        "name": "Pro Football: 2027 AFC Champion",
+        "category": "football",
+        "resolution_date": "2027-04-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-5869747-58519933",
+      "lexical_score": 0.9325,
+      "shared_tokens": [
+        "best",
+        "director",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 5869747,
+        "external_id": null,
+        "name": "Oscar Winner: Best Director",
+        "category": "entertainment",
+        "resolution_date": "2027-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 58519933,
+        "external_id": null,
+        "name": "Oscars 2027: Best Director Winner",
+        "category": "entertainment",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-5869748-57366460",
+      "lexical_score": 0.9325,
+      "shared_tokens": [
+        "actress",
+        "best",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 5869748,
+        "external_id": null,
+        "name": "Oscar winner: Best Actress",
+        "category": "entertainment",
+        "resolution_date": "2027-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 57366460,
+        "external_id": null,
+        "name": "Oscars 2027: Best Actress Winner",
+        "category": "entertainment",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask who wins the Best Actress Oscar at the 2027 ceremony, and the lead outcomes (Julianne Moore, Inde Navarrette) match."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi lists a resolution date of 2027-12-31 while Polymarket lists 2027-07-01, so the settlement windows differ by about six months even though both likely track the same ceremony."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "No resolution descriptions are given for either market, and the outcome sets differ (19 vs 18 outcomes, with Zendaya listed on Kalshi and Sandra H\u00fcller on Polymarket), so identical settlement of every outcome cannot be verified."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Julianne Moore",
+          "polymarket": "Julianne Moore"
+        },
+        {
+          "kalshi": "Inde Navarrette",
+          "polymarket": "Inde Navarrette"
+        }
+      ],
+      "evidence": "Both markets cover the 2027 Oscars Best Actress winner with matching top outcomes, but the resolution dates differ (2027-12-31 vs 2027-07-01), outcome counts differ (19 vs 18), and no rules text is provided, so the pair is not confirmed as a true twin for blending."
+    },
+    {
+      "custom_id": "pair-6173044-57313556",
+      "lexical_score": 0.9325,
+      "shared_tokens": [
+        "best",
+        "oscar",
+        "picture"
+      ],
+      "kalshi": {
+        "id": 6173044,
+        "external_id": null,
+        "name": "Oscar Winner: Best Picture",
+        "category": "entertainment",
+        "resolution_date": "2027-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 57313556,
+        "external_id": null,
+        "name": "Oscars 2027: Best Picture Winner",
+        "category": "entertainment",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask which film wins Best Picture at the 2027 Academy Awards, and the top outcomes (The Odyssey, You Can See Everything, The Black Ball / La Bola Negra) line up."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi lists a resolution date of 2027-12-31 while Polymarket lists 2027-07-01, so the settlement cutoff windows differ by about six months even though both likely cover the same ceremony."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market provides a description or rules text, and the outcome counts differ (41 vs 27), so identical winner settlement and outcome-set coverage cannot be verified."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "The Odyssey",
+          "polymarket": "The Odyssey"
+        },
+        {
+          "kalshi": "You Can See Everything",
+          "polymarket": "You Can See Everything"
+        },
+        {
+          "kalshi": "The Black Ball",
+          "polymarket": "La Bola Negra"
+        }
+      ],
+      "evidence": "Both markets target the 2027 Oscars Best Picture winner with matching top outcomes, but the resolution dates differ (2027-12-31 vs 2027-07-01), outcome counts differ (41 vs 27) and no rules text is available, so the pair is not a verified twin."
+    },
+    {
+      "custom_id": "pair-5869749-27988786",
+      "lexical_score": 0.93,
+      "shared_tokens": [
+        "actor",
+        "best",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 5869749,
+        "external_id": null,
+        "name": "Oscar Winner: Best Actor",
+        "category": "entertainment",
+        "resolution_date": "2027-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 27988786,
+        "external_id": null,
+        "name": "Oscars 2027: Best Actor Nominations",
+        "category": "entertainment",
+        "resolution_date": "2027-03-15T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market settles on who wins Best Actor, while the Polymarket market settles on who is nominated for Best Actor, which are different events."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market has a 2027-12-31 resolution date, while the Polymarket market resolves around 2027-03-15, so their settlement windows differ by nearly nine months."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market resolves a single winner among the outcomes, while the Polymarket market resolves each outcome independently on whether it receives a nomination, so multiple outcomes can resolve yes."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "John Malkovich",
+          "polymarket": "John Malkovich"
+        },
+        {
+          "kalshi": "Matt Damon",
+          "polymarket": "Matt Damon"
+        },
+        {
+          "kalshi": "Andrew Scott",
+          "polymarket": "Andrew Scott"
+        }
+      ],
+      "evidence": "The Kalshi Best Actor winner market and the Polymarket Best Actor nominations market share candidate names but differ in proposition, deadline and resolution rule, so they are not twins and should not be blended."
+    },
+    {
+      "custom_id": "pair-60629715-65677953",
+      "lexical_score": 0.92,
+      "shared_tokens": [
+        "coach",
+        "nba",
+        "year"
+      ],
+      "kalshi": {
+        "id": 60629715,
+        "external_id": null,
+        "name": "Pro Basketball Coach of the Year Winner",
+        "category": "basketball",
+        "resolution_date": "2027-08-02T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677953,
+        "external_id": null,
+        "name": "NBA: 2026-27 Coach of the Year",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-67804666-68836676",
+      "lexical_score": 0.92,
+      "shared_tokens": [
+        "inflation",
+        "october",
+        "uk"
+      ],
+      "kalshi": {
+        "id": 67804666,
+        "external_id": null,
+        "name": "Will UK inflation be above Euro Area inflation in October?",
+        "category": "economics",
+        "resolution_date": "2026-11-18T06:55:00+00:00"
+      },
+      "polymarket": {
+        "id": 68836676,
+        "external_id": null,
+        "name": "October Inflation UK - Annual",
+        "category": "economics",
+        "resolution_date": "2026-11-18T11:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market asks whether UK October inflation will exceed Euro Area inflation (a relative comparison), while the Polymarket market asks for the UK annual inflation rate in a bracketed range, so they are different propositions."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Both resolve on 2026-11-18, but the cutoff times differ (06:55 UTC vs 11:59 UTC), and the Kalshi market also depends on the Euro Area data release, so the settlement windows are not clearly aligned."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles Yes/No on a UK vs Euro Area comparison, whereas Polymarket settles on which UK annual inflation bracket is realized, so the rungs and winner logic do not map."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market is a binary UK-versus-Euro-Area inflation comparison while the Polymarket market is a multi-bracket UK-only annual inflation market, so they are not true twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-65521776-65677935",
+      "lexical_score": 0.9187,
+      "shared_tokens": [
+        "game",
+        "leader",
+        "made",
+        "nba",
+        "per",
+        "pointers",
+        "three"
+      ],
+      "kalshi": {
+        "id": 65521776,
+        "external_id": null,
+        "name": "Pro Basketball Three-Pointers Made Per Game (3PM) Leader",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677935,
+        "external_id": null,
+        "name": "NBA: 2026-27 Three-Pointers Made Per Game Leader",
+        "category": "basketball",
+        "resolution_date": "2027-04-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-65521773-65677916",
+      "lexical_score": 0.9167,
+      "shared_tokens": [
+        "eff",
+        "efficiency",
+        "leader",
+        "nba"
+      ],
+      "kalshi": {
+        "id": 65521773,
+        "external_id": null,
+        "name": "Pro Basketball Efficiency (EFF) Leader",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677916,
+        "external_id": null,
+        "name": "NBA: 2026-27 Efficiency (EFF) Leader",
+        "category": "basketball",
+        "resolution_date": "2027-04-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-5388751-65809343",
+      "lexical_score": 0.9125,
+      "shared_tokens": [
+        "actress",
+        "best",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 5388751,
+        "external_id": null,
+        "name": "Oscar nominees: Best Actress",
+        "category": "entertainment",
+        "resolution_date": "2027-01-21T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65809343,
+        "external_id": null,
+        "name": "Oscars 2027: Best Actress Nominations",
+        "category": "entertainment",
+        "resolution_date": "2027-03-15T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-5388752-27988786",
+      "lexical_score": 0.9125,
+      "shared_tokens": [
+        "actor",
+        "best",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 5388752,
+        "external_id": null,
+        "name": "Oscar nominees: Best Actor",
+        "category": "entertainment",
+        "resolution_date": "2027-01-21T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 27988786,
+        "external_id": null,
+        "name": "Oscars 2027: Best Actor Nominations",
+        "category": "entertainment",
+        "resolution_date": "2027-03-15T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-61484908-61157158",
+      "lexical_score": 0.91,
+      "shared_tokens": [
+        "2026",
+        "abu",
+        "dhabi",
+        "f1",
+        "grand",
+        "place",
+        "prix",
+        "take"
+      ],
+      "kalshi": {
+        "id": 61484908,
+        "external_id": null,
+        "name": "Will an F1 Grand Prix race take place in Abu Dhabi before December 7, 2026?",
+        "category": "motorsports",
+        "resolution_date": "2026-12-07T04:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 61157158,
+        "external_id": null,
+        "name": "Will the 2026 F1 Abu Dhabi Grand Prix take place?",
+        "category": "motorsports",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "Both markets concern whether the 2026 Abu Dhabi F1 Grand Prix happens, but the Kalshi market asks if it occurs before December 7, 2026, while the Polymarket market asks if it takes place at all in 2026, so they are not the same event window."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi closes on 2026-12-07 04:59 UTC while Polymarket runs to 2027-01-01 04:59 UTC, a gap of about 25 days that could capture a race held between those dates."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market has a stated rule, and the Kalshi market requires the race before a cutoff while the Polymarket market only requires it to take place, so settlement conditions differ."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Yes",
+          "polymarket": "Yes"
+        }
+      ],
+      "evidence": "The Kalshi market (17.5% Yes, cutoff 2026-12-07) and the Polymarket market (54% Yes, cutoff 2027-01-01) differ in deadline and wording, and the large price gap suggests they are not true twins, so they should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-65536411-63501820",
+      "lexical_score": 0.9079,
+      "shared_tokens": [
+        "franchise",
+        "las",
+        "nba",
+        "price",
+        "vegas"
+      ],
+      "kalshi": {
+        "id": 65536411,
+        "external_id": null,
+        "name": "Las Vegas Pro Basketball Expansion Franchise Price",
+        "category": "basketball",
+        "resolution_date": "2027-01-01T04:59:59+00:00"
+      },
+      "polymarket": {
+        "id": 63501820,
+        "external_id": null,
+        "name": "Las Vegas NBA franchise and arena price?",
+        "category": "basketball",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market tracks the Las Vegas expansion franchise price using 'Above $X billion' thresholds, while the Polymarket market covers a combined 'franchise and arena' price, so the two may not measure the same quantity."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets resolve on 2027-01-01 (04:59:59 vs 04:59:00 UTC), a gap of about one second that does not change the settlement window."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative 'Above $X billion' rungs, while Polymarket uses discrete price bands ($13B-$14B, <$11B) with a gap between them and no shared thresholds, so the rungs do not align."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market uses cumulative above-threshold rungs for the franchise price, while the Polymarket market uses discrete bands for franchise and arena price with no matching thresholds and no probabilities, so the two markets are not verified twins and should not be blended."
+    },
+    {
+      "custom_id": "pair-109657-60084901",
+      "lexical_score": 0.9067,
+      "shared_tokens": [
+        "december",
+        "decision",
+        "fed",
+        "rate"
+      ],
+      "kalshi": {
+        "id": 109657,
+        "external_id": null,
+        "name": "Fed decision in Dec 2026?",
+        "category": "economics",
+        "resolution_date": "2026-12-09T18:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 60084901,
+        "external_id": null,
+        "name": "Fed decisions (Sep\u2013Dec)",
+        "category": "economics",
+        "resolution_date": "2026-12-09T23:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers only the December 2026 Fed decision, while the Polymarket market covers a multi-meeting Sep\u2013Dec sequence of decisions, so they are not the same proposition."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Both resolve on 2026-12-09, but Kalshi cuts off at 18:59 UTC and Polymarket at 23:59 UTC, a five-hour gap, and Polymarket's window spans several meetings."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles on a single-meeting outcome (hike 25bps, hold, hike >25bps), while Polymarket settles on a path combination across meetings (e.g. Hike\u2013Pause\u2013Hike), so the rungs are not equivalent."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Hike 25bps",
+          "polymarket": "Hike\u2013Pause\u2013Hike"
+        },
+        {
+          "kalshi": "Fed maintains rate",
+          "polymarket": "Hike\u2013Pause\u2013Pause"
+        }
+      ],
+      "evidence": "The Kalshi market is a single December 2026 meeting decision and the Polymarket market is a Sep\u2013Dec path combination, so the two are correlated but not true twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-8122711-56933332",
+      "lexical_score": 0.9057,
+      "shared_tokens": [
+        "defensive",
+        "rookie",
+        "year"
+      ],
+      "kalshi": {
+        "id": 8122711,
+        "external_id": null,
+        "name": "Defensive Rookie of the Year Winner?",
+        "category": "football",
+        "resolution_date": "2027-03-30T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 56933332,
+        "external_id": null,
+        "name": "Pro Football: 2026-27 AP Defensive Rookie of the Year Winner",
+        "category": "football",
+        "resolution_date": "2027-03-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-60608886-60542255",
+      "lexical_score": 0.9006,
+      "shared_tokens": [
+        "2026",
+        "gdp",
+        "growth",
+        "q3",
+        "qoq"
+      ],
+      "kalshi": {
+        "id": 60608886,
+        "external_id": null,
+        "name": "South Africa GDP growth rate QoQ for Q3 2026",
+        "category": "economics",
+        "resolution_date": "2026-12-01T10:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 60542255,
+        "external_id": null,
+        "name": "Brazil GDP Growth in Q3 2026 (QoQ)?",
+        "category": "economics",
+        "resolution_date": "2026-12-02T00:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers South Africa's Q3 2026 QoQ GDP growth while the Polymarket market covers Brazil's, so they concern different countries and different statistical releases."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2026-12-01 10:29 UTC and Polymarket 2026-12-02 00:00 UTC, so the cutoffs differ by about 14 hours, and each is tied to a different national statistics release."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative 'Above X%' threshold rungs (9 outcomes) while Polymarket uses discrete bucket ranges (7 outcomes such as '<-0.3%' and '-0.3% to -0.1%'), so the rungs and settlement structure are incompatible."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi South Africa Q3 2026 GDP QoQ market and the Polymarket Brazil Q3 2026 GDP QoQ market cover different countries with different rung structures (cumulative thresholds vs. buckets), so they are not twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-108599-113386",
+      "lexical_score": 0.8943,
+      "shared_tokens": [
+        "get",
+        "high",
+        "how",
+        "inflation"
+      ],
+      "kalshi": {
+        "id": 108599,
+        "external_id": null,
+        "name": "How high will inflation get this year?",
+        "category": "economics",
+        "resolution_date": "2027-02-14T13:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 113386,
+        "external_id": null,
+        "name": "How high will inflation get in 2026?",
+        "category": "economics",
+        "resolution_date": "2027-02-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets appear to ask for the peak inflation level reached during 2026, but neither lists the metric or source (e.g. CPI year-over-year) and the outcome counts differ (9 vs 8), so the match is unverified."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market resolves 2027-02-14 and the Polymarket market resolves 2027-02-01, so the settlement windows differ by about 13 days and could capture different data releases."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi rungs are inclusive ('At least X%') while Polymarket rungs are strict ('Above X%'), so a reading exactly at a threshold would settle the two markets differently."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "At least 4.0%",
+          "polymarket": "Above 4%"
+        },
+        {
+          "kalshi": "At least 3.5%",
+          "polymarket": "Above 3.5%"
+        },
+        {
+          "kalshi": "At least 3.0%",
+          "polymarket": "Above 3%"
+        }
+      ],
+      "evidence": "The Kalshi and Polymarket markets cover similar 2026 peak-inflation ladders, but they differ in inclusive vs strict thresholds, resolution dates (Feb 14 vs Feb 1, 2027) and rung counts (9 vs 8), so they should not be blended as exact twins."
+    },
+    {
+      "custom_id": "pair-109684-65843298",
+      "lexical_score": 0.8943,
+      "shared_tokens": [
+        "2026",
+        "core",
+        "cpi",
+        "october"
+      ],
+      "kalshi": {
+        "id": 109684,
+        "external_id": null,
+        "name": "CPI core year-over-year in Oct 2026?",
+        "category": "economics",
+        "resolution_date": "2026-11-10T13:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 65843298,
+        "external_id": null,
+        "name": "Core CPI YoY - October 2026",
+        "category": "economics",
+        "resolution_date": "2026-11-11T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-12924898-58605173",
+      "lexical_score": 0.8767,
+      "shared_tokens": [
+        "2027",
+        "recession"
+      ],
+      "kalshi": {
+        "id": 12924898,
+        "external_id": null,
+        "name": "Recession in 2027?",
+        "category": "economics",
+        "resolution_date": "2028-01-31T13:25:00+00:00"
+      },
+      "polymarket": {
+        "id": 58605173,
+        "external_id": null,
+        "name": "US recession by end of 2027?",
+        "category": "economics",
+        "resolution_date": "2027-12-31T23:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "Both markets concern a 2027 recession, but the Kalshi market does not specify a US scope or a definition (likely NBER or two quarters of negative GDP), and the Polymarket market asks about a US recession by end of 2027, so equivalence cannot be confirmed."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market resolves 2028-01-31 and the Polymarket market closes 2027-12-31 23:59 UTC, so the settlement windows differ by about a month, which matters if data releases or announcements arrive late."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market provides a description or rules, so the recession definition and settlement source (for example NBER declaration versus GDP prints, and whether the recession must start or be declared within 2027) cannot be verified as matching."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Yes",
+          "polymarket": "Yes"
+        }
+      ],
+      "evidence": "The Kalshi 'Recession in 2027?' market (21.5%) and the Polymarket 'US recession by end of 2027?' market (33%) are similar in topic, but their deadlines differ, their rules are missing, and the 11.5-point price gap suggests they are not confirmed twins, so they should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-67804643-66005465",
+      "lexical_score": 0.8725,
+      "shared_tokens": [
+        "argentina",
+        "inflation",
+        "october"
+      ],
+      "kalshi": {
+        "id": 67804643,
+        "external_id": null,
+        "name": "Argentina inflation rate MoM for October",
+        "category": "economics",
+        "resolution_date": "2026-11-12T19:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 66005465,
+        "external_id": null,
+        "name": "Argentina Monthly Inflation - October",
+        "category": "economics",
+        "resolution_date": "2026-11-12T19:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-108668-113386",
+      "lexical_score": 0.8667,
+      "shared_tokens": [
+        "2026",
+        "get",
+        "high",
+        "how"
+      ],
+      "kalshi": {
+        "id": 108668,
+        "external_id": null,
+        "name": "How high will unemployment get in 2026?",
+        "category": "economics",
+        "resolution_date": "2027-01-08T13:25:00+00:00"
+      },
+      "polymarket": {
+        "id": 113386,
+        "external_id": null,
+        "name": "How high will inflation get in 2026?",
+        "category": "economics",
+        "resolution_date": "2027-02-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market is about how high the unemployment rate gets in 2026, while the Polymarket market is about how high inflation gets in 2026, which are different economic variables."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market resolves 2027-01-08 and the Polymarket market resolves 2027-02-01, so the settlement windows differ by about three weeks."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The rungs differ in both measure and thresholds (unemployment above 4.5%/4.8%/5% versus inflation above 3%/3.5%/4%), and the Polymarket probabilities of 1.0 on every rung indicate a different or already-settled structure."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi unemployment market and the Polymarket inflation market cover different variables, thresholds and settlement dates, so they are not twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-209-132777",
+      "lexical_score": 0.865,
+      "shared_tokens": [
+        "mvp",
+        "nl"
+      ],
+      "kalshi": {
+        "id": 209,
+        "external_id": null,
+        "name": "NL MVP Winner",
+        "category": "baseball",
+        "resolution_date": "2026-12-08T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 132777,
+        "external_id": null,
+        "name": "MLB: 2026 NL MVP",
+        "category": "baseball",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-216-132768",
+      "lexical_score": 0.865,
+      "shared_tokens": [
+        "al",
+        "mvp"
+      ],
+      "kalshi": {
+        "id": 216,
+        "external_id": null,
+        "name": "AL MVP Winner",
+        "category": "baseball",
+        "resolution_date": "2026-12-08T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 132768,
+        "external_id": null,
+        "name": "MLB: 2026 AL MVP",
+        "category": "baseball",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-415-65677952",
+      "lexical_score": 0.865,
+      "shared_tokens": [
+        "defensive",
+        "player",
+        "year"
+      ],
+      "kalshi": {
+        "id": 415,
+        "external_id": null,
+        "name": "Defensive Player of the Year Winner",
+        "category": "basketball",
+        "resolution_date": "2027-04-12T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677952,
+        "external_id": null,
+        "name": "NBA: 2026-27 Defensive Player of the Year",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-31616-2248392",
+      "lexical_score": 0.865,
+      "shared_tokens": [
+        "afc",
+        "champion"
+      ],
+      "kalshi": {
+        "id": 31616,
+        "external_id": null,
+        "name": "AFC Championship Winner",
+        "category": "football",
+        "resolution_date": "2027-02-08T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 2248392,
+        "external_id": null,
+        "name": "Pro Football: AFC West Champion",
+        "category": "football",
+        "resolution_date": "2027-01-18T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market asks who wins the AFC Championship (conference title across 16 teams), while the Polymarket market asks who wins the AFC West division (5 outcomes), which are different propositions."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves around 2027-02-08 while Polymarket closes around 2027-01-18, about three weeks apart and tied to different events (conference title game vs. division race)."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market settles on the conference championship game winner, whereas the Polymarket market settles on the division title based on regular-season standings, so winners and settlement paths differ."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Kansas City",
+          "polymarket": "Kansas City Chiefs"
+        }
+      ],
+      "evidence": "The Kalshi AFC Championship market and the Polymarket AFC West Champion market cover different propositions, deadlines and settlement rules, so they are not cross-venue twins and should not be blended in the twin register despite the shared Kansas City outcome."
+    },
+    {
+      "custom_id": "pair-52755800-65677900",
+      "lexical_score": 0.865,
+      "shared_tokens": [
+        "nba",
+        "players",
+        "traded"
+      ],
+      "kalshi": {
+        "id": 52755800,
+        "external_id": null,
+        "name": "Pro Basketball Players Traded",
+        "category": "basketball",
+        "resolution_date": "2027-02-12T04:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677900,
+        "external_id": null,
+        "name": "NBA: Players to be Traded Before the 2027 Trade Deadline",
+        "category": "basketball",
+        "resolution_date": "2027-02-12T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers a broad set of 58 pro basketball players traded, with sample outcomes already at 1.0, while the Polymarket market covers a 5-outcome list of NBA players to be traded before the 2027 deadline, so the player sets and scope differ."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets list an identical resolution date of 2027-02-12T04:59:00+00:00, though the Kalshi cutoff is not explicitly tied to the trade deadline in the available data."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "No descriptions or rules are provided for either market, and the Kalshi outcomes at 1.0 suggest a different or already-settled trade criterion versus Polymarket's pending per-player trade-before-deadline outcomes, so settlement rules cannot be confirmed as equivalent."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market (58 outcomes, sample players Dort, Ingram, Leonard at 1.0) and the Polymarket market (5 outcomes, Thompson, Irving, Embiid) share a resolution date but have no overlapping listed players, scope, or documented rules, so they are not confirmed twins."
+    },
+    {
+      "custom_id": "pair-59693605-60087196",
+      "lexical_score": 0.8644,
+      "shared_tokens": [
+        "16",
+        "champion",
+        "league",
+        "round"
+      ],
+      "kalshi": {
+        "id": 59693605,
+        "external_id": null,
+        "name": "Champions League Round of 16 Qualifiers",
+        "category": "soccer",
+        "resolution_date": "2027-02-25T00:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 60087196,
+        "external_id": null,
+        "name": "UEFA Champions League: Team to advance to 2027 Round of 16",
+        "category": "soccer",
+        "resolution_date": "2027-02-28T23:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-65521770-65677936",
+      "lexical_score": 0.8587,
+      "shared_tokens": [
+        "game",
+        "leader",
+        "nba",
+        "per",
+        "rebounds"
+      ],
+      "kalshi": {
+        "id": 65521770,
+        "external_id": null,
+        "name": "Pro Basketball Rebounds Per Game (RPG) Leader",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677936,
+        "external_id": null,
+        "name": "NBA: 2026-27 Rebounds Per Game Leader",
+        "category": "basketball",
+        "resolution_date": "2027-04-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers a generic 'Pro Basketball' RPG leader with no season or league specified in the data, while the Polymarket market is explicitly the NBA 2026-27 season, so the scope cannot be confirmed as identical."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2027-07-01 while Polymarket's cutoff is 2027-04-26, a gap of about two months, so the settlement windows differ."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market provides a description, so there is no evidence of matching rules on qualifying games minimums, regular season versus playoffs, or tie-breaks, and the differing dates suggest different settlement mechanics."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Domantas Sabonis",
+          "polymarket": "Domantas Sabonis"
+        },
+        {
+          "kalshi": "Nikola Joki\u0107",
+          "polymarket": "Nikola Jokic"
+        }
+      ],
+      "evidence": "Both markets concern the RPG leader and share the Sabonis and Jokic outcomes, but the Kalshi market has an unspecified league scope, a different resolution date (2027-07-01 vs 2027-04-26) and no rules text, so they are not confirmed twins for the register."
+    },
+    {
+      "custom_id": "pair-65521774-65677933",
+      "lexical_score": 0.8587,
+      "shared_tokens": [
+        "blocks",
+        "game",
+        "leader",
+        "nba",
+        "per"
+      ],
+      "kalshi": {
+        "id": 65521774,
+        "external_id": null,
+        "name": "Pro Basketball Blocks Per Game (BPG) Leader",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677933,
+        "external_id": null,
+        "name": "NBA: 2026-27 Blocks Per Game Leader",
+        "category": "basketball",
+        "resolution_date": "2027-04-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "Kalshi covers a generic 'Pro Basketball' blocks per game leader with no season stated, while the Polymarket market is specifically the NBA 2026-27 season, so the scope and season are not confirmed to match."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2027-07-01 while Polymarket resolves 2027-04-26, a gap of about two months, so the settlement windows differ."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market gives a description, so the rules for qualifying thresholds (minimum games played), ties, and the data source cannot be confirmed as identical, and the differing end dates suggest different settlement timing."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Victor Wembanyama",
+          "polymarket": "Victor Wembanyama"
+        }
+      ],
+      "evidence": "Both markets are blocks-per-game leader markets with Victor Wembanyama as the favorite, but the Kalshi market is not season-specific, the settlement dates differ, and neither has stated rules, so they cannot be treated as verified twins."
+    },
+    {
+      "custom_id": "pair-109658-61085965",
+      "lexical_score": 0.8543,
+      "shared_tokens": [
+        "2026",
+        "december",
+        "fed",
+        "rate"
+      ],
+      "kalshi": {
+        "id": 109658,
+        "external_id": null,
+        "name": "Fed funds rate after Dec 2026 meeting?",
+        "category": "economics",
+        "resolution_date": "2026-12-09T18:55:00+00:00"
+      },
+      "polymarket": {
+        "id": 61085965,
+        "external_id": null,
+        "name": "ECB Interest Rates: December 2026",
+        "category": "economics",
+        "resolution_date": "2026-12-17T11:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers the US Federal Reserve federal funds rate after the Dec 2026 FOMC meeting, while the Polymarket market covers the ECB interest rate decision for December 2026, so the central banks and rates differ."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi settles around 2026-12-09 while Polymarket settles around 2026-12-17, so the cutoff windows differ by about 8 days and tie to different central bank meetings."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative strict 'Above X%' rate-level thresholds, whereas Polymarket uses mutually exclusive change buckets (25 bps increase, no change, 50+ bps increase), so the rungs and settlement structure are incompatible."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi Fed funds rate level market and the Polymarket ECB December 2026 rate change market reference different central banks, dates and outcome structures, so they are not twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-8122712-56933329",
+      "lexical_score": 0.8533,
+      "shared_tokens": [
+        "coach",
+        "year"
+      ],
+      "kalshi": {
+        "id": 8122712,
+        "external_id": null,
+        "name": "Coach of the Year Winner?",
+        "category": "football",
+        "resolution_date": "2027-03-30T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 56933329,
+        "external_id": null,
+        "name": "Pro Football: 2026-27 AP Coach of the Year Winner",
+        "category": "football",
+        "resolution_date": "2027-03-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets appear to cover the 2026-27 NFL Coach of the Year winner, with matching leading candidates (Harbaugh, Ben Johnson) and similar prices, although the Kalshi market does not name the AP award or the season."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market resolves 2027-03-30 while the Polymarket market resolves 2027-03-01, so the settlement windows differ by about a month."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market provides a description, and the Kalshi market does not state the AP award as its source, so identical settlement rules cannot be confirmed; the outcome sets also differ (33 vs 9)."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "John Harbaugh",
+          "polymarket": "John Harbaugh"
+        },
+        {
+          "kalshi": "Ben Johnson",
+          "polymarket": "Ben Johnson"
+        }
+      ],
+      "evidence": "The markets look like probable twins on the NFL Coach of the Year with matching top candidates and close prices, but the deadlines differ, the rules are unverified and the outcome counts differ, so they should not be blended as confirmed twins."
+    },
+    {
+      "custom_id": "pair-5869748-65809343",
+      "lexical_score": 0.85,
+      "shared_tokens": [
+        "actress",
+        "best",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 5869748,
+        "external_id": null,
+        "name": "Oscar winner: Best Actress",
+        "category": "entertainment",
+        "resolution_date": "2027-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65809343,
+        "external_id": null,
+        "name": "Oscars 2027: Best Actress Nominations",
+        "category": "entertainment",
+        "resolution_date": "2027-03-15T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market resolves on who wins Best Actress, while the Polymarket market resolves on who is nominated for Best Actress, which is a different event."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market has a cutoff of 2027-12-31 while the Polymarket market closes on 2027-03-15, so their settlement windows differ by about nine months."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles a single winner among mutually exclusive outcomes, while Polymarket settles each nominee independently as yes/no on nomination, so probabilities sum differently (0.725 vs 0.972 for the same name) and cannot be blended."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Julianne Moore",
+          "polymarket": "Julianne Moore"
+        },
+        {
+          "kalshi": "Inde Navarrette",
+          "polymarket": "Inde Navarrette"
+        }
+      ],
+      "evidence": "The Kalshi market covers the Best Actress winner with a late-2027 cutoff, while the Polymarket market covers Best Actress nominations closing in March 2027, so they are related but not twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-61461666-114268",
+      "lexical_score": 0.85,
+      "shared_tokens": [
+        "2026",
+        "inflation"
+      ],
+      "kalshi": {
+        "id": 61461666,
+        "external_id": null,
+        "name": "Inflation in December 2026 (CPI YoY)",
+        "category": "economics",
+        "resolution_date": "2027-01-13T13:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 114268,
+        "external_id": null,
+        "name": "U.K. Annual Inflation 2026",
+        "category": "economics",
+        "resolution_date": "2027-01-21T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers US CPI year-over-year inflation for December 2026, while the Polymarket market covers U.K. annual inflation in 2026, so they track different countries and indices."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2027-01-13 on the December 2026 CPI release, while Polymarket resolves 2027-01-21 and its reference period is not specified, so the settlement windows differ."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative strict 'Above X%' thresholds, while Polymarket uses mutually exclusive bracket ranges (e.g. 3.5\u20133.9%), so the rungs settle differently."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market (US CPI YoY, December 2026, cumulative above-threshold rungs) and the Polymarket market (U.K. annual inflation 2026, mutually exclusive brackets) differ in jurisdiction, deadline and rung structure, so they are not twins and should not be blended."
+    },
+    {
+      "custom_id": "pair-109551-27988771",
+      "lexical_score": 0.84,
+      "shared_tokens": [
+        "best",
+        "oscar",
+        "picture"
+      ],
+      "kalshi": {
+        "id": 109551,
+        "external_id": null,
+        "name": "Oscar for Best Picture?",
+        "category": "entertainment",
+        "resolution_date": "2026-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 27988771,
+        "external_id": null,
+        "name": "Oscars 2027: Best Picture Nominations",
+        "category": "entertainment",
+        "resolution_date": "2027-03-15T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market settles on which film wins the Oscar for Best Picture, while the Polymarket market settles on which films receive Best Picture nominations for the 2027 Oscars, so the two propositions differ."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi's cutoff is 2026-12-31, while Polymarket's is 2027-03-15, and the two cover different award cycles and events."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi resolves a single winner among mutually exclusive outcomes, while Polymarket resolves each film independently on whether it is nominated, so several outcomes can resolve Yes and the probabilities sum to far more than 1."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market covers the Best Picture winner (apparently the earlier ceremony, with films like One Battle After Another and Sinners), while the Polymarket market covers 2027 Best Picture nominations (The Odyssey and others), so the two are not twins and should not be blended."
+    },
+    {
+      "custom_id": "pair-109558-66118096",
+      "lexical_score": 0.84,
+      "shared_tokens": [
+        "best",
+        "director",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 109558,
+        "external_id": null,
+        "name": "Oscar for Best Director?",
+        "category": "entertainment",
+        "resolution_date": "2026-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 66118096,
+        "external_id": null,
+        "name": "Oscars 2027: Best Director Nominations",
+        "category": "entertainment",
+        "resolution_date": "2027-03-15T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market asks who wins the Oscar for Best Director, while the Polymarket market asks who is nominated for Best Director at the 2027 Oscars, so the two propositions differ."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi's cutoff is 2026-12-31 and Polymarket's is 2027-03-15, so the settlement windows differ and likely cover different ceremony years."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles a single winner, so probabilities sum to about 1, while Polymarket settles each candidate independently on nomination, so several can resolve Yes."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi Best Director winner market and the Polymarket Oscars 2027 Best Director nominations market differ in proposition, deadline and settlement rule, so they are not twins and should not be blended in a twin register."
+    },
+    {
+      "custom_id": "pair-57774278-63490289",
+      "lexical_score": 0.84,
+      "shared_tokens": [
+        "points",
+        "serie",
+        "team"
+      ],
+      "kalshi": {
+        "id": 57774278,
+        "external_id": null,
+        "name": "Serie A: Team Points",
+        "category": "soccer",
+        "resolution_date": "2027-05-31T02:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 63490289,
+        "external_id": null,
+        "name": "Serie A: 2026-27 Team Points",
+        "category": "soccer",
+        "resolution_date": "2027-06-14T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets appear to concern Serie A team points totals for the 2026-27 season, but the Polymarket market lists no outcomes or description, so the match is only inferred from the name."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2027-05-31T02:00Z while Polymarket resolves 2027-06-14T03:59Z, a gap of about two weeks, so the settlement windows do not match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles per-team inclusive point-threshold rungs (e.g. 'Lazio: 50+ Points'), while the Polymarket market has no outcomes or rules to confirm the same rungs or settlement method."
+      },
+      "outcome_aliases": [],
+      "evidence": "Kalshi Serie A Team Points market (80 team-threshold outcomes, resolves 2027-05-31) cannot be verified as a twin of the Polymarket 2026-27 Team Points market, which has no outcomes or rules and resolves 2027-06-14, so it is not registered as a twin."
+    },
+    {
+      "custom_id": "pair-57774294-63490288",
+      "lexical_score": 0.84,
+      "shared_tokens": [
+        "bundesliga",
+        "points",
+        "team"
+      ],
+      "kalshi": {
+        "id": 57774294,
+        "external_id": null,
+        "name": "Bundesliga: Team Points",
+        "category": "soccer",
+        "resolution_date": "2027-05-23T02:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 63490288,
+        "external_id": null,
+        "name": "Bundesliga: 2026-27 Team Points",
+        "category": "soccer",
+        "resolution_date": "2027-06-06T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "Both markets concern Bundesliga 2026-27 team points, but the Polymarket market lists no outcomes or description, so the same team-and-threshold propositions cannot be confirmed."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi settles around 2027-05-23 while Polymarket runs to 2027-06-06, a gap of about two weeks, so the cutoff windows do not match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses inclusive per-team thresholds such as 30+ points, while the Polymarket market shows no rungs or settlement rules, so rung-level settlement cannot be matched."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market has 72 team-points threshold outcomes, while the Polymarket market has no outcomes or rules and a different resolution date, so the pair cannot be verified as twins in the register."
+    },
+    {
+      "custom_id": "pair-5165726-27988771",
+      "lexical_score": 0.8325,
+      "shared_tokens": [
+        "best",
+        "oscar",
+        "picture"
+      ],
+      "kalshi": {
+        "id": 5165726,
+        "external_id": null,
+        "name": "Oscar nominees: Best Picture",
+        "category": "entertainment",
+        "resolution_date": "2027-01-21T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 27988771,
+        "external_id": null,
+        "name": "Oscars 2027: Best Picture Nominations",
+        "category": "entertainment",
+        "resolution_date": "2027-03-15T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-5601024-66118096",
+      "lexical_score": 0.8325,
+      "shared_tokens": [
+        "best",
+        "director",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 5601024,
+        "external_id": null,
+        "name": "Oscar nominees: Best Director",
+        "category": "entertainment",
+        "resolution_date": "2027-01-21T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 66118096,
+        "external_id": null,
+        "name": "Oscars 2027: Best Director Nominations",
+        "category": "entertainment",
+        "resolution_date": "2027-03-15T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-109628-114629",
+      "lexical_score": 0.825,
+      "shared_tokens": [
+        "2026",
+        "brazil",
+        "inflation"
+      ],
+      "kalshi": {
+        "id": 109628,
+        "external_id": null,
+        "name": "Will inflation in Brazil be below 4.00% in Dec 2026?",
+        "category": "economics",
+        "resolution_date": "2026-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 114629,
+        "external_id": null,
+        "name": "Brazil Annual Inflation 2026",
+        "category": "economics",
+        "resolution_date": "2027-01-13T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": ""
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": ""
+      },
+      "outcome_aliases": [],
+      "evidence": ""
+    },
+    {
+      "custom_id": "pair-52755817-65677910",
+      "lexical_score": 0.8243,
+      "shared_tokens": [
+        "2026",
+        "champion",
+        "cup",
+        "nba"
+      ],
+      "kalshi": {
+        "id": 52755817,
+        "external_id": null,
+        "name": "2026 Pro Basketball Cup Champion",
+        "category": "basketball",
+        "resolution_date": "2027-01-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677910,
+        "external_id": null,
+        "name": "NBA: Team to reach 2026 NBA Cup Championship Game",
+        "category": "basketball",
+        "resolution_date": "2026-12-24T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market resolves on which team wins the 2026 Pro Basketball Cup championship, while the Polymarket market resolves on which teams reach the championship game, which is a weaker, different event."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi has a cutoff of 2027-01-31 while Polymarket has a cutoff of 2026-12-24, so the settlement windows differ by about five weeks and the Polymarket market settles earlier."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi is a single-winner market (outcomes sum to about 100%) while Polymarket is a multi-select reach-the-final market (two teams qualify, so outcomes sum to about 200%), and the outcome counts also differ (30 vs 23)."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "San Antonio",
+          "polymarket": "San Antonio Spurs"
+        },
+        {
+          "kalshi": "Boston",
+          "polymarket": "Boston Celtics"
+        },
+        {
+          "kalshi": "Philadelphia",
+          "polymarket": "Philadelphia 76ers"
+        }
+      ],
+      "evidence": "Not twins: the Kalshi market prices the cup champion while the Polymarket market prices reaching the championship game, with different deadlines, settlement structures and outcome counts, so the two should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-60608886-58951130",
+      "lexical_score": 0.8206,
+      "shared_tokens": [
+        "2026",
+        "gdp",
+        "growth",
+        "q3",
+        "qoq"
+      ],
+      "kalshi": {
+        "id": 60608886,
+        "external_id": null,
+        "name": "South Africa GDP growth rate QoQ for Q3 2026",
+        "category": "economics",
+        "resolution_date": "2026-12-01T10:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 58951130,
+        "external_id": null,
+        "name": "UK GDP growth in Q3 2026 (QoQ)?",
+        "category": "economics",
+        "resolution_date": "2026-11-13T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers South Africa's Q3 2026 QoQ GDP growth while the Polymarket market covers the UK's, so the countries and underlying statistics differ."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2026-12-01 and Polymarket 2026-11-13, so the settlement windows differ by about 18 days and refer to different national statistical releases."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative 'Above X%' threshold rungs (-0.4%, -0.2%, 0.0%) while Polymarket uses discrete range buckets (0.4\u20130.5%, 0.6\u20130.7%, 0.8\u20130.9%), so the settlement structures are incompatible."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi South Africa GDP market and the Polymarket UK GDP market cover different countries, deadlines and rung structures, so they are not cross-venue twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-65521771-65677938",
+      "lexical_score": 0.8188,
+      "shared_tokens": [
+        "game",
+        "leader",
+        "nba",
+        "per",
+        "points"
+      ],
+      "kalshi": {
+        "id": 65521771,
+        "external_id": null,
+        "name": "Pro Basketball Points Per Game (PPG) Leader",
+        "category": "basketball",
+        "resolution_date": "2027-07-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65677938,
+        "external_id": null,
+        "name": "NBA: 2026-27 Points Per Game Leader",
+        "category": "basketball",
+        "resolution_date": "2027-04-26T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets appear to ask who will lead the league in points per game, with near-identical leader pricing (Luka Doncic about 72-73%), but the Kalshi market names neither the NBA nor the 2026-27 season."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market resolves 2027-07-01 while the Polymarket market resolves 2027-04-26, a gap of about two months, so the settlement windows do not match."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Both descriptions are null, so the rules for settling the winner (season scope, minimum games played, tie handling, data source) cannot be compared, and the differing resolution dates suggest different settlement timing."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Luka Don\u010di\u0107",
+          "polymarket": "Luka Doncic"
+        }
+      ],
+      "evidence": "The Kalshi and Polymarket PPG leader markets look like the same topic with matching 50-outcome lists and similar Luka Doncic pricing, but the resolution dates differ (2027-07-01 vs 2027-04-26) and neither market has a description, so they cannot be registered as verified twins."
+    },
+    {
+      "custom_id": "pair-5388752-57368169",
+      "lexical_score": 0.8175,
+      "shared_tokens": [
+        "actor",
+        "best",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 5388752,
+        "external_id": null,
+        "name": "Oscar nominees: Best Actor",
+        "category": "entertainment",
+        "resolution_date": "2027-01-21T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 57368169,
+        "external_id": null,
+        "name": "Oscars 2027: Best Actor Winner",
+        "category": "entertainment",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers Best Actor nominees (who gets nominated), while the Polymarket market covers the Best Actor winner, so the two propositions are different."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market has a cutoff of 2027-01-21 (around nomination announcements), while the Polymarket market runs to 2027-07-01 (after the ceremony), so the settlement windows differ."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market settles each outcome yes if the person is nominated, so many outcomes can resolve yes, while the Polymarket market settles a single winner, so only one outcome can resolve yes."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "John Malkovich",
+          "polymarket": "John Malkovich"
+        },
+        {
+          "kalshi": "Matt Damon",
+          "polymarket": "Matt Damon"
+        },
+        {
+          "kalshi": "Andrew Scott",
+          "polymarket": "Andrew Scott"
+        }
+      ],
+      "evidence": "The Kalshi market (Best Actor nominees, ~Jan 2027 cutoff, multi-yes) and the Polymarket market (Best Actor winner, ~Jul 2027 cutoff, single-winner) share candidate names but differ in proposition, deadline and resolution rule, so they are not twins and should not be blended."
+    },
+    {
+      "custom_id": "pair-109600-68056249",
+      "lexical_score": 0.81,
+      "shared_tokens": [
+        "government",
+        "shutdown"
+      ],
+      "kalshi": {
+        "id": 109600,
+        "external_id": null,
+        "name": "How long will the government shutdown last?",
+        "category": "politics",
+        "resolution_date": "2027-01-01T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 68056249,
+        "external_id": null,
+        "name": "Government shutdown by...?",
+        "category": "politics",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market asks how long a government shutdown will last (duration thresholds in days), while the Polymarket market asks whether a shutdown occurs by given calendar dates, so they are different propositions."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Both markets show roughly a 2027-01-01 resolution date (15:00 UTC vs 04:59 UTC), but the Kalshi market settles on shutdown duration with no fixed calendar cutoff while the Polymarket market uses date cutoffs such as December 12 and December 31, so the windows do not align."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi rungs are cumulative 'at least N days' duration thresholds across 32 outcomes, whereas Polymarket outcomes are calendar-date deadlines in a 2-outcome market, so the settlement rules are structurally different."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi shutdown-duration market (at least N days rungs) and the Polymarket shutdown-by-date market measure different things with different rung structures, so they are not true twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-12924898-68691945",
+      "lexical_score": 0.81,
+      "shared_tokens": [
+        "2027",
+        "recession"
+      ],
+      "kalshi": {
+        "id": 12924898,
+        "external_id": null,
+        "name": "Recession in 2027?",
+        "category": "economics",
+        "resolution_date": "2028-01-31T13:25:00+00:00"
+      },
+      "polymarket": {
+        "id": 68691945,
+        "external_id": null,
+        "name": "Dem sweep & US recession by end of 2027?",
+        "category": "economics",
+        "resolution_date": "2028-02-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market asks only whether a recession occurs in 2027, while the Polymarket market is a joint outcome of a Democratic sweep and a US recession, so the two are not the same proposition."
+      },
+      "same_deadline": {
+        "pass": true,
+        "reason": "Both markets cover the period through the end of 2027, and the resolution dates (2028-01-31 vs 2028-02-01 UTC) differ by less than a day, so the settlement windows are effectively aligned."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market settles on a single binary recession outcome, while the Polymarket market is a four-way combination of a sweep and a recession, so the Yes outcome would require summing the recession legs across both sweep states."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market is a standalone 2027 recession market, while the Polymarket market is a joint Dem sweep and recession market, so they are related but not true twins and should not be blended in the twin register without a derived marginal."
+    },
+    {
+      "custom_id": "pair-109603-114495",
+      "lexical_score": 0.8075,
+      "shared_tokens": [
+        "2026",
+        "gdp",
+        "uk"
+      ],
+      "kalshi": {
+        "id": 109603,
+        "external_id": null,
+        "name": "UK Nominal GDP in 2026",
+        "category": "economics",
+        "resolution_date": "2026-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 114495,
+        "external_id": null,
+        "name": "UK Annual GDP Growth 2026",
+        "category": "economics",
+        "resolution_date": "2027-02-13T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market settles on the level of UK nominal GDP in US dollars for 2026, while the Polymarket market settles on the UK annual GDP growth rate for 2026, which is a different measure."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market closes 2026-12-31 15:00 UTC and the Polymarket market closes 2027-02-13 04:59 UTC, so the settlement windows differ by about six weeks and the data releases may differ."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market uses cumulative 'Above $X trillion' dollar thresholds on nominal GDP, while the Polymarket market uses mutually exclusive percentage growth bins (e.g. 1-2%, 0-1%), so the rungs and settlement structure are incompatible."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market on UK nominal GDP in USD thresholds and the Polymarket market on UK annual GDP growth percentage bins measure different quantities with different deadlines and rung structures, so they are not twins and should not be blended."
+    },
+    {
+      "custom_id": "pair-1630482-113427",
+      "lexical_score": 0.8075,
+      "shared_tokens": [
+        "2027",
+        "fed",
+        "rate"
+      ],
+      "kalshi": {
+        "id": 1630482,
+        "external_id": null,
+        "name": "Fed rate cut before 2027?",
+        "category": "economics",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 113427,
+        "external_id": null,
+        "name": "What will Fed Rate hit before 2027?",
+        "category": "economics",
+        "resolution_date": "2026-12-31T17:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market is a single binary on whether the Fed cuts rates before 2027, while the Polymarket market is a multi-rung market on which Fed rate levels are hit before 2027, so the two are not the same proposition."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi closes 2027-01-01 04:59 UTC (midnight ET on Jan 1) and Polymarket closes 2026-12-31 17:59 UTC (noon ET on Dec 31), a gap of about 11 hours, so the cutoff windows are not identical."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles a single Yes/No on any cut, while Polymarket settles separate threshold rungs (for example down to 3.5% or up to 4.25%) that are not equivalent to a generic cut, and the rungs are partly priced inconsistently (a 1.0 probability on the 3.5% rung versus 0.0265 for a cut on Kalshi)."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi binary market on a Fed rate cut before 2027 does not match the Polymarket multi-rung market on rate levels hit before 2027, because the propositions, cutoff times and rung settlement rules differ, so the two should not be blended as twins."
+    },
+    {
+      "custom_id": "pair-65521856-63068098",
+      "lexical_score": 0.8057,
+      "shared_tokens": [
+        "nhl",
+        "regular",
+        "season"
+      ],
+      "kalshi": {
+        "id": 65521856,
+        "external_id": null,
+        "name": "NHL: Worst Regular Season Record",
+        "category": "hockey",
+        "resolution_date": "2027-05-01T14:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 63068098,
+        "external_id": null,
+        "name": "NHL: Fewest Regular Season Points",
+        "category": "hockey",
+        "resolution_date": "2027-04-30T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": true,
+        "reason": "Both markets ask which of the 32 NHL teams finishes the regular season at the bottom of the standings, with 'worst record' and 'fewest points' most likely meaning the same team."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi's market closes 2027-05-01 14:00 UTC and Polymarket's closes 2027-04-30 03:59 UTC, so the cutoffs differ by about 34 hours and neither is tied to a stated settlement trigger."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Neither market gives a description, so the tiebreaker for teams level on points (and whether 'record' means points, wins or points percentage) cannot be confirmed to match."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Vancouver Canucks",
+          "polymarket": "Vancouver Canucks"
+        },
+        {
+          "kalshi": "Chicago Blackhawks",
+          "polymarket": "Chicago Blackhawks"
+        }
+      ],
+      "evidence": "Both markets cover the 32-team NHL bottom-of-standings outcome and Vancouver and Chicago match, but the cutoffs differ by about 34 hours and the tiebreak rules are undocumented, so the pair is not registered as a verified twin."
+    },
+    {
+      "custom_id": "pair-108530-58492246",
+      "lexical_score": 0.7967,
+      "shared_tokens": [
+        "artist",
+        "best",
+        "grammy",
+        "new"
+      ],
+      "kalshi": {
+        "id": 108530,
+        "external_id": null,
+        "name": "Grammy nominees: Best New Artist",
+        "category": "entertainment",
+        "resolution_date": "2027-11-01T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 58492246,
+        "external_id": null,
+        "name": "Grammys 2027: Best New Artist Winner",
+        "category": "entertainment",
+        "resolution_date": "2027-07-01T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market asks who will be nominated for Best New Artist, while the Polymarket market asks who will win Best New Artist, so the events differ."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves around 2027-11-01 and Polymarket around 2027-07-01, which are different settlement windows."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles each nominee outcome independently as a nomination yes/no (probabilities sum well above 1 across 72 outcomes), whereas Polymarket settles a single-winner market across 30 outcomes."
+      },
+      "outcome_aliases": [
+        {
+          "kalshi": "Ella Langley",
+          "polymarket": "Ella Langley"
+        },
+        {
+          "kalshi": "SIENNA SPIRO",
+          "polymarket": "SIENNA SPIRO"
+        }
+      ],
+      "evidence": "The Kalshi nominee market and the Polymarket winner market share candidate names but differ in proposition, deadline and settlement structure, so they are not twins and should not be blended."
+    },
+    {
+      "custom_id": "pair-65521911-114144",
+      "lexical_score": 0.795,
+      "shared_tokens": [
+        "2026",
+        "inflation"
+      ],
+      "kalshi": {
+        "id": 65521911,
+        "external_id": null,
+        "name": "Grocery inflation at the end of 2026?",
+        "category": "economics",
+        "resolution_date": "2027-01-13T13:29:00+00:00"
+      },
+      "polymarket": {
+        "id": 114144,
+        "external_id": null,
+        "name": "Canada Annual Inflation 2026",
+        "category": "economics",
+        "resolution_date": "2027-01-19T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market tracks grocery (food-at-home) inflation at the end of 2026, while the Polymarket market tracks Canada's headline annual inflation for 2026, so they measure different indices and possibly different countries."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves 2027-01-13 13:29 UTC and Polymarket resolves 2027-01-19 04:59 UTC, a gap of about six days with different cutoff and settlement windows."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi uses cumulative 'Above X%' threshold rungs, while Polymarket uses mutually exclusive bucket ranges such as 3.0-3.4%, so the settlement structures and rungs do not line up."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi grocery inflation market (Above 1.0/1.5/2.0% rungs) and the Polymarket Canada annual inflation market (bucketed ranges) cover different measures, deadlines and settlement structures, so they are not true twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-109658-57574250",
+      "lexical_score": 0.7932,
+      "shared_tokens": [
+        "december",
+        "fed",
+        "rate"
+      ],
+      "kalshi": {
+        "id": 109658,
+        "external_id": null,
+        "name": "Fed funds rate after Dec 2026 meeting?",
+        "category": "economics",
+        "resolution_date": "2026-12-09T18:55:00+00:00"
+      },
+      "polymarket": {
+        "id": 57574250,
+        "external_id": null,
+        "name": "Fed Decision in December?",
+        "category": "economics",
+        "resolution_date": "2026-12-10T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers the level of the fed funds rate after the Dec 2026 meeting (threshold ladder), while the Polymarket market covers the size of the change decided at the December meeting, so they are related but not the same proposition."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi closes 2026-12-09 18:55 UTC and Polymarket 2026-12-10 04:59 UTC, a gap of roughly 10 hours that straddles the meeting announcement window, and the Polymarket market does not state a year."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles each rung on whether the post-meeting upper-bound rate is strictly above a fixed level, while Polymarket settles a single winner among change categories (25 bps increase, no change, 50+ bps increase), so the rungs and categories do not map one-to-one."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market on the fed funds rate level after the Dec 2026 meeting (strict above-threshold rungs) is not a true twin of the Polymarket market on the December Fed decision (change-size categories), given different structure, cutoff times, and a mismatch in what each market measures, so they should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-109610-66668457",
+      "lexical_score": 0.7925,
+      "shared_tokens": [
+        "2026",
+        "china",
+        "gdp"
+      ],
+      "kalshi": {
+        "id": 109610,
+        "external_id": null,
+        "name": "China Nominal GDP in 2026",
+        "category": "economics",
+        "resolution_date": "2026-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 66668457,
+        "external_id": null,
+        "name": "China GDP growth (Y/Y) in Q4 2026?",
+        "category": "economics",
+        "resolution_date": "2027-02-01T04:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market covers China's 2026 nominal GDP in USD trillions, while the Polymarket market covers China's Q4 2026 year-over-year real GDP growth percentage, which are different economic measures."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market resolves around 2026-12-31 while the Polymarket market resolves around 2027-02-01, so the settlement windows differ and the data releases are not aligned."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles cumulative 'Above $X trillion' threshold rungs on annual nominal GDP, while Polymarket settles mutually exclusive growth-rate range buckets for a single quarter, so the rung structures are incompatible."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market on 2026 nominal GDP in dollars and the Polymarket market on Q4 2026 Y/Y GDP growth differ in metric, period, deadline and outcome structure, so they are not twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-1629758-113427",
+      "lexical_score": 0.7925,
+      "shared_tokens": [
+        "2027",
+        "fed",
+        "rate"
+      ],
+      "kalshi": {
+        "id": 1629758,
+        "external_id": null,
+        "name": "Number of Fed rate changes before 2027",
+        "category": "economics",
+        "resolution_date": "2027-01-01T04:59:00+00:00"
+      },
+      "polymarket": {
+        "id": 113427,
+        "external_id": null,
+        "name": "What will Fed Rate hit before 2027?",
+        "category": "economics",
+        "resolution_date": "2026-12-31T17:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market counts the total number of Fed rate changes before 2027, while the Polymarket market asks which fed funds rate levels will be hit (touched) before 2027, so they measure different quantities."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi closes at 2027-01-01 04:59 UTC and Polymarket at 2026-12-31 17:59 UTC, which is about 11 hours earlier and may be a different cutoff or time zone basis."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "Kalshi settles on an exact count of rate changes (a single winning rung), whereas Polymarket settles on multiple non-exclusive rate-level touch thresholds (up/down), so rungs are not equivalent and cannot be mapped one-to-one."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi market on the number of Fed rate changes before 2027 is not a twin of the Polymarket market on which Fed rate levels will be hit before 2027, because the proposition, cutoff and settlement structure all differ, so the two should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-109551-27988772",
+      "lexical_score": 0.785,
+      "shared_tokens": [
+        "best",
+        "oscar",
+        "picture"
+      ],
+      "kalshi": {
+        "id": 109551,
+        "external_id": null,
+        "name": "Oscar for Best Picture?",
+        "category": "entertainment",
+        "resolution_date": "2026-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 27988772,
+        "external_id": null,
+        "name": "Will \"Fjord\" be nominated for Best Picture at the 99th Academy Awards?",
+        "category": "entertainment",
+        "resolution_date": "2027-01-21T00:00:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market asks which film wins the Oscar for Best Picture, while the Polymarket market asks whether the film Fjord is nominated for Best Picture at the 99th Academy Awards, so they cover different events (win versus nomination) and different ceremonies are possible."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "Kalshi resolves by 2026-12-31 while Polymarket resolves by 2027-01-21, so the settlement windows differ and the Polymarket cutoff falls after the Kalshi one."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market is a multi-outcome winner market settled by the single Best Picture winner, whereas the Polymarket market is a binary Yes/No market settled by whether one film receives a nomination."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi Best Picture winner market and the Polymarket Fjord nomination market differ in proposition, deadline and resolution rule, so they are not twins and should not be blended in the twin register."
+    },
+    {
+      "custom_id": "pair-109565-65814231",
+      "lexical_score": 0.785,
+      "shared_tokens": [
+        "actress",
+        "best",
+        "oscar"
+      ],
+      "kalshi": {
+        "id": 109565,
+        "external_id": null,
+        "name": "Oscar for Best Actress?",
+        "category": "entertainment",
+        "resolution_date": "2026-12-31T15:00:00+00:00"
+      },
+      "polymarket": {
+        "id": 65814231,
+        "external_id": null,
+        "name": "Oscars 2027: Best Supporting Actress Nominations",
+        "category": "entertainment",
+        "resolution_date": "2027-03-15T03:59:00+00:00"
+      },
+      "confidence": "low",
+      "same_proposition": {
+        "pass": false,
+        "reason": "The Kalshi market settles on the Best Actress winner, while the Polymarket market settles on Best Supporting Actress nominations, which are a different category and a different stage of the awards."
+      },
+      "same_deadline": {
+        "pass": false,
+        "reason": "The Kalshi market has a 2026-12-31 resolution date and the Polymarket market has a 2027-03-15 date, so their settlement windows differ and the Polymarket market appears to cover a different Oscars cycle."
+      },
+      "same_resolution_rule": {
+        "pass": false,
+        "reason": "The Kalshi market picks a single winner among mutually exclusive outcomes, whereas the Polymarket market lets several nominees resolve Yes independently (the probabilities sum well above 1), so the rungs settle differently."
+      },
+      "outcome_aliases": [],
+      "evidence": "The Kalshi Best Actress winner market and the Polymarket Best Supporting Actress nominations market differ in category, stage, deadline and settlement structure, and the outcome names do not overlap, so they are not twins and should not be blended."
+    }
+  ]
+}

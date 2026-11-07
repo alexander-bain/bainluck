@@ -813,6 +813,14 @@ struct NFLEventCardView9483: View {
             case .mlb(let mlb):
                 MLBFinalCardView11284(card: mlb, awayColor: awayColor, homeColor: homeColor,
                                       state: state, expanded: expanded)
+            case .nhlScoring(let nhl):
+                EventAtlasNhlScoringCardView11666(card: nhl, awayColor: awayColor, homeColor: homeColor,
+                                                  state: state, expanded: expanded)
+            case .soccerThreeWay(let threeWay):
+                EventAtlasSoccerThreeWayCardView11666(card: threeWay, awayColor: awayColor, homeColor: homeColor,
+                                                      state: state, expanded: expanded)
+            case .soccerExactScore(let exactScore):
+                EventAtlasSoccerExactScoreCardView11666(card: exactScore, state: state, expanded: expanded)
             }
         }
         .padding(16)

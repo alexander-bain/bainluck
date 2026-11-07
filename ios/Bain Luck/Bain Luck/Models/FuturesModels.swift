@@ -134,6 +134,7 @@ nonisolated struct GameMarketOther: Decodable, Equatable, Identifiable, Sendable
     /// snapshot is served `null`, and `SourceAge` answers "not stale" for a
     /// stamp it cannot read rather than inventing a fresh one.
     let observedAt: String?
+    var pregameMark: Double? = nil
 }
 
 /// Live scoring pace context for totals and in-game markets.

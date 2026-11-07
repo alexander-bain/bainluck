@@ -682,3 +682,117 @@ class TestReusableProducerKindAndFeedIntegration:
             "On the bubble",
             "Title contenders",
         ]
+
+    @pytest.mark.asyncio
+    async def test_load_markets_from_db_binds_leading_source_column_for_uq_index_12255(
+        self,
+    ) -> None:
+        """#12255: ``_load_markets_from_db`` must constrain ``FuturesMarket.source``
+        alongside ``FuturesMarket.external_id`` so PostgreSQL probes the leading
+        column of ``uq_futures_source_external (source, external_id)`` instead of
+        scanning all 32,597 index pages (~3.84s > 500ms timeout), and must never
+        emit an unbounded ``LIKE`` / ``ILIKE`` scan.
+        """
+        from types import SimpleNamespace
+        from sqlalchemy.dialects import postgresql
+        from app.utils.field_band import _load_markets_from_db
+
+        captured_statements: list[Any] = []
+
+        qualifiers_dict = _make_cfp_qualifiers_market()
+        title_dict = _make_cfp_title_market()
+
+        def _dict_to_orm_stub(d: dict[str, Any]) -> SimpleNamespace:
+            return SimpleNamespace(
+                id=d["id"],
+                name=d["name"],
+                source=d["source"],
+                external_id=d["external_id"],
+                status=d["status"],
+                mutually_exclusive=d["mutually_exclusive"],
+                market_tier=d["market_tier"],
+                market_type=d["market_type"],
+                sport=SimpleNamespace(key=d["sport"], name=d["sport_name"]),
+                category=d["category"],
+                llm_sport_category=d["llm_sport_category"],
+                resolution_date=None,
+                updated_at=None,
+                prices_updated_at=d["prices_updated_at"],
+                outcomes=[
+                    SimpleNamespace(
+                        id=o["id"],
+                        external_id=f"{d['external_id']}-{o['id']}",
+                        name=o["name"],
+                        current_probability=o["probability"],
+                        probability_change_24h=o["movement"],
+                        last_updated=None,
+                        is_winner=o["is_winner"],
+                        resolution_source=o["resolution_source"],
+                    )
+                    for o in d["outcomes"]
+                ],
+            )
+
+        orm_rows = [_dict_to_orm_stub(title_dict), _dict_to_orm_stub(qualifiers_dict)]
+
+        class _FakeResult:
+            def scalars(self) -> Any:
+                return SimpleNamespace(all=lambda: orm_rows)
+
+        class _FakeDB:
+            async def execute(self, stmt: Any) -> _FakeResult:
+                captured_statements.append(stmt)
+                return _FakeResult()
+
+        result = await produce_field_band(
+            _FakeDB(),
+            definition=CFP_PICTURE_DEFINITION,
+        )
+        assert isinstance(result, RoundupMembers)
+        assert [r["label"] for r in result.rows] == [
+            "Penn State",
+            "Notre Dame",
+            "Alabama",
+            "Miami",
+        ]
+        assert len(captured_statements) == 1
+
+        compiled_sql = str(
+            captured_statements[0].compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        assert "futures_markets.id IN (227, 181)" in compiled_sql
+        assert "futures_markets.source = 'kalshi'" in compiled_sql
+        assert (
+            "futures_markets.external_id IN ('KXNCAAFPLAYOFF-26', 'KXNCAAF-27')"
+            in compiled_sql
+        )
+        assert (
+            "futures_markets.source = 'kalshi' AND futures_markets.external_id IN ('KXNCAAFPLAYOFF-26', 'KXNCAAF-27')"
+            in compiled_sql
+        )
+        assert " LIKE " not in compiled_sql.upper()
+        assert " ILIKE " not in compiled_sql.upper()
+
+        # Direct call without explicit sources still constrains source for KX* tickers
+        captured_statements.clear()
+        mapped, withheld = await _load_markets_from_db(
+            _FakeDB(),
+            [227, 181],
+            ["KXNCAAFPLAYOFF-26", "KXNCAAF-27"],
+        )
+        assert set(mapped.keys()) == {181, 227}
+        assert withheld == {}
+        direct_sql = str(
+            captured_statements[0].compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        assert (
+            "futures_markets.source = 'kalshi' AND futures_markets.external_id IN ('KXNCAAFPLAYOFF-26', 'KXNCAAF-27')"
+            in direct_sql
+        )
+

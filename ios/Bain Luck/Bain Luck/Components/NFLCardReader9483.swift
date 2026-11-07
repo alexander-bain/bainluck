@@ -207,17 +207,17 @@ struct NFLCardReader9483: View {
             // A prop line's original is in the held rows; an NBA ladder
             // line's original is frozen inside its held card, and so is a
             // final MLB story's (#11284).
-            if let original = MLBFinalDeck11284.original(item.id, in: heldCards.isEmpty ? liveCards : heldCards) {
-                MLBOriginalDetails11284(original: original)
-            } else if ReleaseSurfaces.isEventPageAtlasEnabled(),
-                      let atlasModel = EventAtlasStoryCards11666.readerDetailsModel(
-                        rowID: item.id,
-                        cards: heldCards.isEmpty ? liveCards : heldCards,
-                        rows: rows,
-                        awayName: awayName,
-                        homeName: homeName
-                      ) {
+            if ReleaseSurfaces.isEventPageAtlasEnabled(),
+               let atlasModel = EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: item.id,
+                cards: heldCards.isEmpty ? liveCards : heldCards,
+                rows: rows,
+                awayName: awayName,
+                homeName: homeName
+               ) {
                 EventAtlasDetailsSheet11666(model: atlasModel)
+            } else if let original = MLBFinalDeck11284.original(item.id, in: heldCards.isEmpty ? liveCards : heldCards) {
+                MLBOriginalDetails11284(original: original)
             } else if rows[item.id] == nil,
                let detail = NFLCardReaderHold9483.ladderDetail(item.id, in: heldCards.isEmpty ? liveCards : heldCards) {
                 NBAOptionDetails9483(detail: detail)
