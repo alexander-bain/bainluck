@@ -1228,11 +1228,17 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     # tree branched from b65d0573bf printed explicit 101 implicit 40 total 141.
     # #12095: `snapshot-ranking-slate-daily` names background; census on the
     # tree merged with 80b7a1605c printed explicit 102 implicit 40 total 142.
-    # C-1 / B-7: `check-tier1-coverage` (default queue) retired; census on the
-    # tree branched from 74bd37e869 printed explicit 102 implicit 39 total 141.
-    assert explicit == 102, f"explicitly-routed background beats moved: {explicit}"
+    # #12042 L-1: `precompute-discover-candidate-base` moved to its own
+    # `discover_base` lane; census on the tree branched from 9247e7f5ca printed
+    # explicit 101 implicit 40 total 141.
+    # B-5: `update-max-movement-heavy` names background; census on the tree
+    # merged with 7cf2c6561a printed explicit 102 implicit 40 total 142.
+    # C-1: `check-tier1-coverage` (default queue, B-7) and
+    # `backfill-kalshi-price-history` (background, B-12) retired; census on the
+    # tree merged with 8e7a2135ff printed explicit 101 implicit 39 total 140.
+    assert explicit == 101, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 39, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 141
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 140
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
