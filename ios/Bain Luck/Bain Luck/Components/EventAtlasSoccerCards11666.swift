@@ -737,11 +737,14 @@ nonisolated enum EventAtlasSoccerCards11666 {
         )
     }
 
-    // MARK: - 3. Goal Expectations Ladder (`unit: "goals"`)
+    // MARK: - 3. Goal Expectations Ladder (`unit: "goals"`, `startWord: "kickoff"`)
 
     @MainActor
     static func buildGoalTotalCard(_ input: NBALadderCard9483.Input) -> NBALadderCard9483? {
-        EventAtlasNhlCards11666.buildGoalTotalsCard(input)
+        guard var card = EventAtlasNhlCards11666.buildGoalTotalsCard(input) else { return nil }
+        card.unit = "goals"
+        card.startWord = "kickoff"
+        return card
     }
 
     // MARK: - Complete Soccer Deck in Fixed Slot Order
@@ -855,10 +858,16 @@ nonisolated enum EventAtlasSoccerCards11666 {
         }
 
         let observedText = SourceAge.preciseStamp(leg.observedAt ?? leg.pregameObservedAt)
-        let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: leg.source ?? card.source,
-            sourceCount: card.sourceCount
-        )
+        let resolvedSource = leg.source ?? card.source
+        let sourceLabel: String?
+        if resolvedSource == nil && card.sourceCount > 1 {
+            sourceLabel = "\(card.sourceCount) sources, not blended"
+        } else {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: resolvedSource,
+                sourceCount: nil
+            )
+        }
         return EventAtlasDetailsSheetModel11666(
             id: leg.id,
             outcomeTitle: leg.rawOutcomeLabel,
@@ -894,10 +903,16 @@ nonisolated enum EventAtlasSoccerCards11666 {
         }
 
         let observedText = SourceAge.preciseStamp(cell.observedAt)
-        let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: cell.source ?? card.source,
-            sourceCount: card.sourceCount
-        )
+        let resolvedSource = cell.source ?? card.source
+        let sourceLabel: String?
+        if resolvedSource == nil && card.sourceCount > 1 {
+            sourceLabel = "\(card.sourceCount) sources, not blended"
+        } else {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: resolvedSource,
+                sourceCount: nil
+            )
+        }
         return EventAtlasDetailsSheetModel11666(
             id: cell.id,
             outcomeTitle: "\(card.homeShort) \(cell.homeGoals) – \(cell.awayGoals) \(card.awayShort)",

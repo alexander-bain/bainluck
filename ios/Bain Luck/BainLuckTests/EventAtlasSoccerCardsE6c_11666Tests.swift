@@ -298,6 +298,74 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         let pendingSheet = EventAtlasSoccerCards11666.detailsModel(for: multiCard.legs[0], card: multiCard)
         XCTAssertEqual(pendingSheet.primaryReadingLabel, "Result")
         XCTAssertEqual(pendingSheet.primaryReadingValue, "Pending")
+        XCTAssertEqual(pendingSheet.sourceLabel, "2 sources, not blended")
+    }
+
+    @MainActor
+    func testSettledDrawAndLiveThreeWayAgingBehavior() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        // 1. Settled Draw: Draw leg is .won, home/away legs are .lost, title reflects finished level
+        let settledDrawJSON = """
+        [
+            {"_market_id": 720, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.01, "pregame_mark": 0.45, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
+            {"_market_id": 720, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.99, "pregame_mark": 0.28, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "official_score"},
+            {"_market_id": 720, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.01, "pregame_mark": 0.27, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"}
+        ]
+        """
+        let settledDrawRows = try decoder.decode([GameMarketOther].self, from: Data(settledDrawJSON.utf8))
+        let settledDrawCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildThreeWayCard(
+                matrix: nil,
+                otherMarkets: settledDrawRows,
+                status: "completed",
+                commenceTime: "2026-11-06T20:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: try XCTUnwrap("2026-11-06T22:00:00Z".asDate)
+            )
+        )
+        XCTAssertEqual(settledDrawCard.phase, .after)
+        XCTAssertEqual(settledDrawCard.title, "Finished level — a draw was the third outcome")
+        XCTAssertEqual(settledDrawCard.legs[0].result, .lost)
+        XCTAssertEqual(settledDrawCard.legs[1].result, .won)
+        XCTAssertEqual(settledDrawCard.legs[2].result, .lost)
+
+        // 2. Live (.during) three-way card with both pregameChance and quotedChance, plus current(at:) aging past 30m
+        let liveNow = try XCTUnwrap("2026-11-06T20:30:00Z".asDate)
+        let liveJSON = """
+        [
+            {"_market_id": 730, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.62, "pregame_mark": 0.48, "observed_at": "2026-11-06T20:25:00Z", "source": "kalshi"},
+            {"_market_id": 730, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.22, "pregame_mark": 0.27, "observed_at": "2026-11-06T20:25:00Z", "source": "kalshi"},
+            {"_market_id": 730, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.16, "pregame_mark": 0.25, "observed_at": "2026-11-06T20:25:00Z", "source": "kalshi"}
+        ]
+        """
+        let liveRows = try decoder.decode([GameMarketOther].self, from: Data(liveJSON.utf8))
+        let liveCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildThreeWayCard(
+                matrix: nil,
+                otherMarkets: liveRows,
+                status: "live",
+                commenceTime: "2026-11-06T20:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: liveNow
+            )
+        )
+        XCTAssertEqual(liveCard.phase, .during)
+        XCTAssertEqual(liveCard.legs[0].pregameChance ?? 0, 0.48, accuracy: 1e-6)
+        XCTAssertEqual(liveCard.legs[0].quotedChance ?? 0, 0.62, accuracy: 1e-6)
+
+        // Age past the 30-minute bound: quotedChance drops to nil while pregameChance stays pinned
+        let staleNow = try XCTUnwrap("2026-11-06T21:00:00Z".asDate)
+        let agedCard = liveCard.current(at: staleNow)
+        XCTAssertNil(agedCard.legs[0].quotedChance)
+        XCTAssertEqual(agedCard.legs[0].pregameChance ?? 0, 0.48, accuracy: 1e-6)
     }
 
     @MainActor
@@ -489,5 +557,12 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
             now: now
         )
         XCTAssertEqual(flagOnDeck.map(\.id), ["soccer:threeWay", "soccer:exactScore", "total"])
+        if case .ladder(let goalTotalLadder) = flagOnDeck[2] {
+            XCTAssertEqual(goalTotalLadder.unit, "goals")
+            XCTAssertEqual(goalTotalLadder.startWord, "kickoff")
+            XCTAssertEqual(goalTotalLadder.caption, "Chance before kickoff of finishing above each line")
+        } else {
+            XCTFail("Expected third card in soccer deck to be the goals total ladder")
+        }
     }
 }
