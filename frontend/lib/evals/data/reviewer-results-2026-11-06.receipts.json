@@ -6,11 +6,11 @@
     "quote": "Builder B — **Nov 6, 7:03 AM PST. Draft publication COMPLETE:** #12155–#12197 cover the43 exact authorized new refs; with #12132/#12150 all45 planned evaluations have a PR and frozen SHA."
   },
   "count": {
-    "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6693850129",
-    "posted_at": "2026-11-06T19:44:56Z",
-    "quote": "Builder B — Nov 6, 11:44 AM PST. **Wave 1 complete; full experiment 6/45 real reviews recorded, 39 remaining.**",
-    "defects_quote": "Observed defects: **4/4 caught**, 26/30 still UNKNOWN.",
-    "controls_quote": "Observed controls: **0/2 false alarms**, 13/15 still UNKNOWN; the overall rates are not established."
+    "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6698138744",
+    "posted_at": "2026-11-06T23:12:58Z",
+    "quote": "Builder B — Nov 6, 3:12 PM PT. **Wave 4 complete: 13/45 real reviews recorded.**",
+    "defects_quote": "Defects 9/9 caught, 21 UNKNOWN",
+    "controls_quote": "controls 0/4 false alarms, 11 UNKNOWN"
   },
   "results": [
     {
@@ -44,6 +44,43 @@
       "posted_at": "2026-11-06T19:44:56Z",
       "quote": "| #12186 r13/P1 | APPROVED: healthy rename |",
       "builder_case": "r13"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6694949790",
+      "posted_at": "2026-11-06T20:37:27Z",
+      "quote": "#12166 (r05/P1) at `9f7a436250ae353fe8b94058eb26fc14bfbef7da`: **CHANGES_REQUESTED**, exact-head review 5806593493"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6696481096",
+      "posted_at": "2026-11-06T21:43:18Z",
+      "quote": "#12156 r01/P2 at `bfa0a80e201df7b6db9f30a39c7759bdd0a893e8` submitted CHANGES_REQUESTED"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6697436278",
+      "posted_at": "2026-11-06T22:29:48Z",
+      "quote": "#12189 r14/P1 at 7d1f2ab9e29e7df3f9123927bb247aba9e1457e4: APPROVED by claude[bot], review 5807848190",
+      "builder_case": "r14"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6697509849",
+      "posted_at": "2026-11-06T22:34:15Z",
+      "quote": "#12192 r15/P1 at 8ebb7af15d6ef28d9bbdcbe1c09cf47da6f1798e: APPROVED, review 5807914584",
+      "builder_case": "r15"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6697744239",
+      "posted_at": "2026-11-06T22:49:03Z",
+      "quote": "#12157 r01/P3 at 9ebae433788b8f2cddcff65dd6eedbcec32d9ad5: CHANGES_REQUESTED, review 5808048529"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6698138744",
+      "posted_at": "2026-11-06T23:12:58Z",
+      "quote": "#12158 r02/P2 caught opening/final-unresolved/absent sources entering the blend-only leader"
+    },
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6698138744",
+      "posted_at": "2026-11-06T23:12:58Z",
+      "quote": "#12161 r03/P2 caught hydration errors silently removing games from the closest set"
     }
   ],
   "study_ids": {
@@ -61,6 +98,20 @@
       "branch": "codex/eval-reviewer-full-r13-p1-20261105",
       "diff": "home_prob -> home_blend in backend/app/utils/window_events_closest.py",
       "study_quote": "hero local rename (7)"
+    },
+    "r14": {
+      "maps_to": "c03",
+      "pr": 12189,
+      "branch": "codex/eval-reviewer-full-r14-p1-20261105",
+      "diff": "_failed -> hydration_failures in backend/app/utils/window_events_closest.py",
+      "study_quote": "hydration local rename (7)"
+    },
+    "r15": {
+      "maps_to": "c04",
+      "pr": 12192,
+      "branch": "codex/eval-reviewer-full-r15-p1-20261105",
+      "diff": "cardsSeen >= GAMES_UNLOCK_CARDS_SEEN named sawEnoughCards in frontend/lib/discoverFirstRun.ts",
+      "study_quote": "identical cards-seen expression factored (40)"
     }
   }
 }
