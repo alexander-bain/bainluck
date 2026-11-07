@@ -1452,6 +1452,145 @@ def normalized_field_comparisons(
     return result
 
 
+# A priced subset is not proof of a whole specialty field (#8334 / #12084).
+SPECIALTY_FIELD_MASS_MIN = 0.9
+
+
+def normalize_blended_field(
+    rows: list[dict],
+    members: Sequence[Sequence[tuple[Any, Any]]],
+    *,
+    mutually_exclusive: bool | None = True,
+    field_complete: bool = True,
+    now: datetime | None = None,
+) -> None:
+    """Normalize a specialty panel after its existing blend, including references.
+
+    Each group lists the exact market/outcome contributors to one printed row.
+    A reference uses the same contributors and mean as the current blend, then
+    its OWN full-field divisor. Every contributor must carry a valid observation
+    at one recorded instant; an incomplete reference withholds the comparison.
+    No source row, stored bank, timestamp, or blend weight is changed.
+    """
+    import math
+
+    from app.utils.field_opening_coherence import field_openings_publishable
+    from app.utils.outcome_display import normalize_display_probs
+
+    def probability(value):
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) and 0 <= value <= 1 else None
+
+    current = [probability(row.get("probability")) for row in rows]
+    field_complete = (
+        field_complete
+        and all(p is not None for p in current)
+        and (sum(p for p in current if p is not None) >= SPECIALTY_FIELD_MASS_MIN)
+    )
+    changed = normalize_display_probs(
+        rows, mutually_exclusive=mutually_exclusive, field_complete=field_complete
+    )
+    allocated = bool(rows) and all("rendered_percent" in row for row in rows)
+    if not changed and not allocated:
+        return
+    groups = members if len(members) == len(rows) else [[] for _ in rows]
+    reference_now = now or datetime.now(timezone.utc)
+    if reference_now.tzinfo is None:
+        reference_now = reference_now.replace(tzinfo=timezone.utc)
+
+    def reference(*, opening: bool) -> list[float] | None:
+        if not allocated:
+            return None
+        instants, values, checked_markets = set(), [], set()
+        for group in groups:
+            if not group:
+                return None
+            column = []
+            for market, outcome in group:
+                state = _instance_dict(outcome) or {}
+                oid = state.get("id")
+                if opening:
+                    value, at = state.get("opening_probability"), state.get(
+                        "opening_captured_at"
+                    )
+                    if oid in unpriced_opening_ids(market):
+                        return None
+                    if id(market) not in checked_markets:
+                        own = (_instance_dict(market) or {}).get("outcomes") or []
+                        source_openings = [
+                            probability(
+                                (_instance_dict(o) or {}).get("opening_probability")
+                            )
+                            for o in own
+                        ]
+                        if (
+                            not own
+                            or any(p is None for p in source_openings)
+                            or not field_openings_publishable(
+                                source_openings,
+                                mutually_exclusive=True,
+                            )
+                        ):
+                            return None
+                        checked_markets.add(id(market))
+                else:
+                    value, at = read_dated_basis_entry(
+                        dated_movement_basis(market).get(str(oid))
+                    )
+                value = probability(value)
+                if value is None or not isinstance(at, datetime):
+                    return None
+                if at.tzinfo is None:
+                    at = at.replace(tzinfo=timezone.utc)
+                if not opening:
+                    age = (reference_now - at).total_seconds() / 3600
+                    if not DATED_BASIS_MIN_AGE_HOURS <= age <= DATED_BASIS_WINDOW_HOURS:
+                        return None
+                instants.add(at)
+                column.append(value)
+            values.append(sum(column) / len(column))
+        if len(instants) != 1 or sum(values) < SPECIALTY_FIELD_MASS_MIN:
+            return None
+        field = [
+            {"name": row["name"], "probability": value}
+            for row, value in zip(rows, values)
+        ]
+        normalize_display_probs(field)
+        if any("rendered_percent" not in row for row in field):
+            return None
+        return [row["probability"] for row in field]
+
+    historical, opening = reference(opening=False), reference(opening=True)
+    for index, (row, group) in enumerate(zip(rows, groups)):
+        dated_claim = row.get("movement_24h") is not None and (
+            row.get("movement_is_dated") is True
+            or any(
+                dated_movement_points(
+                    market,
+                    (_instance_dict(outcome) or {}).get("id"),
+                    (_instance_dict(outcome) or {}).get("current_probability"),
+                    (_instance_dict(outcome) or {}).get("probability_change_24h"),
+                    now=reference_now,
+                )
+                is not None
+                for market, outcome in group
+            )
+        )
+        row["movement_24h"] = (
+            row["probability"] - historical[index]
+            if historical is not None and dated_claim
+            else None
+        )
+        row["opening_probability"] = opening[index] if opening is not None else None
+        if "movement_is_dated" in row:
+            row["movement_is_dated"] = row["movement_24h"] is not None
+
+
 def opening_baseline_stamp(market: Any) -> Any:
     """`opening_baseline_at` for a market on EITHER carrier shape (#4758).
 

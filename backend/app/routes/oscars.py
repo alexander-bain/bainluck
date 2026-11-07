@@ -322,6 +322,10 @@ async def build_oscars_payload(db: AsyncSession) -> dict:
     categories = []
 
     for cat_key, cat_markets in category_markets.items():
+        from app.utils.futures_market_snapshot import normalize_blended_field
+
+        field_exclusive = all(getattr(m, "mutually_exclusive", None) is True for m in cat_markets)
+        field_complete = all(o.current_probability is not None for m in cat_markets for o in m.outcomes)
         # Merge nominees across sources
         nominee_data: dict[str, dict] = {}  # match_key -> aggregated data
 
@@ -338,11 +342,13 @@ async def build_oscars_payload(db: AsyncSession) -> dict:
 
                 # Skip Kalshi entries at exactly 0.5 -- illiquid binary markets with no signal
                 if source == "kalshi" and prob == 0.5:
+                    field_complete = False
                     continue
 
                 # Skip "Tie" outcomes -- not useful for the landing page
                 raw_name = outcome.name.strip()
                 if raw_name.lower() == "tie":
+                    field_complete = False
                     continue
 
                 display_name = _normalize_nominee_name(raw_name)
@@ -356,14 +362,17 @@ async def build_oscars_payload(db: AsyncSession) -> dict:
                         "name": display_name,
                         "sources": {},
                         "probabilities": [],
+                        "comparison_members": [],
                         "movement_24h": None,
                         "opening_probability": None,
                         "is_winner": False,
+                        "resolution_source": None,
                         "last_updated": None,
                     }
 
                 nominee_data[key]["sources"][source] = round(prob, 3)
                 nominee_data[key]["probabilities"].append(prob)
+                nominee_data[key]["comparison_members"].append((market, outcome))
 
                 # Use the 24h movement from whichever source has it
                 if outcome.probability_change_24h is not None:
@@ -379,6 +388,8 @@ async def build_oscars_payload(db: AsyncSession) -> dict:
                 # Track winner status (any source marking it as winner)
                 if outcome.is_winner:
                     nominee_data[key]["is_winner"] = True
+                    if nominee_data[key]["resolution_source"] in (None, "ungradeable_result"):
+                        nominee_data[key]["resolution_source"] = getattr(outcome, "resolution_source", None)
 
                 # Track most recent last_updated
                 if outcome.last_updated is not None:
@@ -398,23 +409,22 @@ async def build_oscars_payload(db: AsyncSession) -> dict:
                 "sources": data["sources"],
                 "opening_probability": data["opening_probability"],
                 "is_winner": data["is_winner"],
+                "resolution_source": data["resolution_source"],
                 "last_updated": last_updated.isoformat() if last_updated else None,
             })
 
-        # Sort by probability descending, cap at max nominees
+        # Normalize the full blended field before the presentation cap (#11995).
+        normalize_blended_field(
+            nominees,
+            [data["comparison_members"] for data in nominee_data.values()],
+            mutually_exclusive=field_exclusive,
+            field_complete=field_complete,
+        )
         nominees.sort(key=lambda n: n["probability"], reverse=True)
+        nominee_count = len(nominees)
         nominees = nominees[:_MAX_NOMINEES]
-
-        # Normalize probabilities so they sum to ~100%
-        total_prob = sum(n["probability"] for n in nominees)
-        if total_prob > 0:
-            for nom in nominees:
-                nom["probability"] = round(nom["probability"] / total_prob, 3)
-                nom["american_odds"] = probability_to_american(nom["probability"])
-        else:
-            for nom in nominees:
-                nom["probability"] = round(nom["probability"], 3)
-                nom["american_odds"] = probability_to_american(nom["probability"])
+        for nom in nominees:
+            nom["american_odds"] = probability_to_american(nom["probability"])
 
         # Assign ranks
         for i, nom in enumerate(nominees):
@@ -430,6 +440,8 @@ async def build_oscars_payload(db: AsyncSession) -> dict:
             "is_major": cat_key in MAJOR_CATEGORIES,
             "market_ids": market_ids,
             "nominees": nominees,
+            "nominee_count": nominee_count,
+            "remaining_outcome_count": nominee_count - len(nominees),
         })
 
     # Sort categories by ceremony order

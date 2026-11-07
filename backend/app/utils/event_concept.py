@@ -458,7 +458,15 @@ def golf_live_deltas(
     matching the leaderboard endpoint's round-1 branch). No baseline at all → no
     field set (never fabricate a delta). Pure; mutates in place.
     """
+
     for c in competitors:
+        if c.get("rendered_percent") is not None:
+            # #11995: the raw DataGolf day column is not a historical BLEND.
+            # The panel's complete normalized opening remains usable when the
+            # existing opening fallback applies; the normalized24h move stays.
+            c.pop("prob_delta_live", None)
+            if baseline_by_name:
+                continue
         cur = c.get("probability")
         if not isinstance(cur, (int, float)):
             continue
@@ -1249,6 +1257,11 @@ def golf_detail_to_envelope(key: str, slug: str, data: dict) -> dict:
             "kind": "winner_field",  # golf is always a winner-field (leaderboard)
             "label": "Winner",
             "competitors": data.get("golfers", []) or [],
+            **(
+                {"overflow_outcomes": data["overflow_outcomes"]}
+                if data.get("overflow_outcomes")
+                else {}
+            ),
             "evolution_market_id": data.get("evolution_market_id"),
             # #5778 — the one adapter that cannot answer this. Golf maps
             # `routes/golf.py`'s already-serialized aggregation (the parity bar

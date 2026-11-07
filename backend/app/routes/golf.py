@@ -12,6 +12,10 @@ import sys
 import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.datagolf_api import DataGolfPlayer
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select, text, func as sqlfunc
@@ -920,6 +924,10 @@ def _golf_winner_renorm_factor(
 ) -> float | None:
     """Renormalization factor for a golf winner market, or None to skip it (#926).
 
+    #11995: an explicitly exclusive winner field supplies RAW inputs (factor
+    1); `_build_tournament_entry` normalizes its final complete blend. The
+    legacy bands below retain admission for the other fields.
+
     Kalshi tournament-WINNER markets are independent per-golfer binaries that sum
     well over 100% (gotcha #23). They represent a real field, so we renormalize
     them to sum 1.0 (factor = 1/sum) instead of dropping them at the >1.5
@@ -961,6 +969,11 @@ def _golf_winner_renorm_factor(
     is `true` AND sums 1.00-1.15 — under the 1.5 early return, so untouched by this
     gate either way. The only rows it moves are the two season-scope Kalshi markets.
     """
+    if mutually_exclusive is True and n_outcomes >= 2 and (
+        _WINNER_MARKET_RE.search(market_name) and not _NON_WINNER_MARKET_RE.search(market_name)
+    ):
+        # #11995: blend raw eligible inputs, then normalize the final full field.
+        return 1.0
     if prob_sum <= 1.5:
         return 1.0
     if mutually_exclusive is False:
@@ -1704,6 +1717,17 @@ def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
 
         # Merge sources and probabilities
         long["sources"].update(short["sources"])
+        comparison_members = long.setdefault("comparison_members", {})
+        for label in short["sources"]:
+            member = short.get("comparison_members", {}).get(label)
+            if member is None:
+                comparison_members.pop(label, None)
+            else:
+                comparison_members[label] = member
+        if short.get("is_winner") is True:
+            long["is_winner"] = True
+            if long.get("resolution_source") in (None, "ungradeable_result"):
+                long["resolution_source"] = short.get("resolution_source")
 
         # #3013 — the per-source moves merge exactly as `sources` just did (the
         # short entry's source wins, and brings its own dated delta or none),
@@ -2497,6 +2521,7 @@ def _set_blend_movement(entry: dict) -> None:
 def _aggregate_golfer_outcome(
     outcome, source_label: str, golfer_data: dict[str, dict],
     prob_24h_ago: dict[int, float], prob_scale: float = 1.0,
+    *, include_overflow: bool = False, market=None,
 ) -> None:
     """Aggregate a single outcome into golfer_data, tracking sources and movement.
 
@@ -2533,13 +2558,14 @@ def _aggregate_golfer_outcome(
     prob = float(outcome.current_probability) * prob_scale
     raw_name = outcome.name.strip()
 
-    if raw_name.lower() in ("tie", "field", "other", "the field"):
+    is_overflow = raw_name.lower() in ("tie", "field", "other", "the field")
+    if is_overflow and not include_overflow:
         return
     if _PROP_OUTCOME_RE.search(raw_name):
         return
 
-    display_name = _normalize_golfer_name(raw_name)
-    key = _match_key(raw_name)
+    display_name = raw_name if is_overflow else _normalize_golfer_name(raw_name)
+    key = f"overflow:{raw_name.casefold()}" if is_overflow else _match_key(raw_name)
     if not key:
         return
 
@@ -2547,6 +2573,7 @@ def _aggregate_golfer_outcome(
     if key not in golfer_data:
         golfer_data[key] = {
             "name": display_name,
+            "is_field": is_overflow,
             "name_from_datagolf": is_datagolf,
             "sources": {},
             "movement_24h": None,
@@ -2565,7 +2592,15 @@ def _aggregate_golfer_outcome(
         _pin_golfer_name(golfer_data[key], display_name, is_datagolf)
 
     entry = golfer_data[key]
-    entry["sources"][source_label] = round(prob, 3)
+    entry["sources"][source_label] = prob
+    if market is not None:
+        entry.setdefault("comparison_members", {})[source_label] = (market, outcome)
+    else:
+        entry.setdefault("comparison_members", {}).pop(source_label, None)
+    if getattr(outcome, "is_winner", None) is True:
+        entry["is_winner"] = True
+        if entry.get("resolution_source") in (None, "ungradeable_result"):
+            entry["resolution_source"] = getattr(outcome, "resolution_source", None)
 
     # Lockstep with the line above: `sources` is last-write-wins per source, so
     # the dated delta for that source must be THIS outcome's or none — never an
@@ -2603,6 +2638,7 @@ def _build_tournament_entry(
     golfer_data: dict[str, dict], prop_markets_list: list[dict],
     market_ids: list[int], market_sources: list[str],
     earliest_commence, latest_resolution,
+    *, mutually_exclusive: bool | None = None, field_complete: bool = True,
 ) -> dict | None:
     """Build a single tournament response dict from aggregated golfer data."""
     golfer_data = _merge_abbreviated_golfers(golfer_data)
@@ -2612,10 +2648,12 @@ def _build_tournament_entry(
     if has_datagolf:
         datagolf_keys = {k for k, v in golfer_data.items() if "datagolf_model" in v["sources"]}
         if datagolf_keys:
-            filtered_count = len(golfer_data) - len(datagolf_keys)
+            filtered_count = sum(k not in datagolf_keys and not v.get("is_field")
+                                 for k, v in golfer_data.items())
             if filtered_count > 0:
                 logger.info("Golf invitee filter: removed %d non-field golfers from %s", filtered_count, tourn_key)
-            golfer_data = {k: v for k, v in golfer_data.items() if k in datagolf_keys}
+            golfer_data = {k: v for k, v in golfer_data.items()
+                           if k in datagolf_keys or v.get("is_field")}
 
     golfers = []
     for data in golfer_data.values():
@@ -2623,6 +2661,7 @@ def _build_tournament_entry(
         avg_prob = sum(source_vals) / len(source_vals) if source_vals else 0
         golfers.append({
             "name": data["name"],
+            "is_field": bool(data.get("is_field")),
             "probability": avg_prob,
             "movement_24h": data["movement_24h"],
             # #7179 — whether `movement_24h` is a DATED day's move (a ~24h-ago
@@ -2634,8 +2673,29 @@ def _build_tournament_entry(
             "movement_is_dated": bool(data.get("movement_is_dated")),
             "sources": data["sources"],
             "opening_probability": data["opening_probability"],
+            "is_winner": data.get("is_winner"),
+            "resolution_source": data.get("resolution_source"),
         })
 
+    if mutually_exclusive is True:
+        from app.utils.futures_market_snapshot import normalize_blended_field
+
+        normalize_blended_field(
+            golfers,
+            [
+                list(data["comparison_members"].values())
+                if len(data.get("comparison_members", {})) == len(data["sources"])
+                else []
+                for data in golfer_data.values()
+            ],
+            field_complete=field_complete,
+        )
+    # A priced overflow contract participates in the same full-field allocation,
+    # but is not a golfer and must not acquire a player rank or profile link.
+    overflow_outcomes, named_golfers = [], []
+    for golfer in golfers:
+        (overflow_outcomes if golfer.pop("is_field") else named_golfers).append(golfer)
+    golfers = named_golfers
     golfers.sort(key=lambda g: g["probability"], reverse=True)
 
     if not golfers:
@@ -2657,7 +2717,8 @@ def _build_tournament_entry(
 
     all_golfers = golfers
     for g in all_golfers:
-        g["probability"] = round(g["probability"], 3)
+        if "rendered_percent" not in g:
+            g["probability"] = round(g["probability"], 3)
         g["american_odds"] = probability_to_american(g["probability"])
     for i, g in enumerate(all_golfers):
         g["rank"] = i + 1
@@ -2735,6 +2796,7 @@ def _build_tournament_entry(
         "golfers": golfers,
         "prop_markets": prop_markets_list,
         "_all_golfers": all_golfers,
+        **({"overflow_outcomes": overflow_outcomes} if overflow_outcomes else {}),
     }
 
 
@@ -3415,6 +3477,8 @@ async def get_golf(
         earliest_commence = None
         latest_resolution = None
         team_format_withheld = 0
+        winner_field_exclusive = True
+        winner_field_complete = True
 
         source_best, dedup_candidates = _dedup_winner_markets(tourn_key, tourn_markets)
 
@@ -3547,6 +3611,12 @@ async def get_golf(
                 )
 
             # Aggregate winner outcomes
+            winner_field_exclusive &= getattr(market, "mutually_exclusive", None) is True
+            winner_field_complete &= all(
+                o.current_probability is not None and not _is_placeholder_price(o, source)
+                and not _PROP_OUTCOME_RE.search(o.name)
+                for o in market.outcomes
+            )
             withheld = 0
             for outcome in market.outcomes:
                 if outcome.current_probability is None:
@@ -3565,6 +3635,8 @@ async def get_golf(
                 _aggregate_golfer_outcome(
                     outcome, source_label, golfer_data, market_basis,
                     prob_scale=renorm_factor,
+                    include_overflow=getattr(market, "mutually_exclusive", None) is True,
+                    market=market,
                 )
             if withheld:
                 logger.debug(
@@ -3583,6 +3655,7 @@ async def get_golf(
         entry = _build_tournament_entry(
             tourn_key, tourn_markets, golfer_data, prop_markets_list,
             market_ids, market_sources, earliest_commence, latest_resolution,
+            mutually_exclusive=winner_field_exclusive, field_complete=winner_field_complete,
         )
         if entry:
             tournaments.append(entry)
@@ -4998,6 +5071,7 @@ async def get_golf_tournament(
         },
         "golfers": golfers,
         "markets": sorted_groups,
+        **({"overflow_outcomes": tournament["overflow_outcomes"]} if tournament.get("overflow_outcomes") else {}),
         "related_futures": related_futures,
         "evolution_market_id": evolution_market_id,
         "biggest_movers": tournament_movers,
@@ -5008,6 +5082,70 @@ async def get_golf_tournament(
 
 # ============================================================================
 # Live leaderboard (ultra-low-data endpoint)
+
+
+def _allocate_live_win_field(
+    leaderboard: list[dict],
+    players: list["DataGolfPlayer"],
+    baseline: dict[str, dict],
+    *,
+    baseline_is_atomic: bool,
+) -> None:
+    """Use the shared full-field allocation, with an independently scaled day."""
+    from app.utils.outcome_display import normalize_display_probs
+    from app.utils.futures_market_snapshot import SPECIALTY_FIELD_MASS_MIN
+
+    names = [p.player_name.lower() for p in players]
+    rows = [{"name": p.player_name, "probability": p.win} for p in players]
+    normalize_display_probs(
+        rows,
+        field_complete=len(set(names)) == len(names)
+        and all(p.win is not None for p in players)
+        and sum(p.win for p in players if type(p.win) in (int, float))
+        >= SPECIALTY_FIELD_MASS_MIN,
+    )
+    if (
+        len(rows) != len(players)
+        or not rows
+        or any("rendered_percent" not in row for row in rows)
+    ):
+        return
+
+    reference = None
+    if baseline_is_atomic and set(baseline) == set(names):
+        reference = []
+        for p in players:
+            value = baseline[p.player_name.lower()].get("win_prob")
+            reference.append(
+                {
+                    "name": p.player_name,
+                    "probability": value / 100 if type(value) in (int, float) else None,
+                }
+            )
+        normalize_display_probs(
+            reference,
+            field_complete=sum(
+                r["probability"]
+                for r in reference
+                if type(r["probability"]) in (int, float)
+            )
+            >= SPECIALTY_FIELD_MASS_MIN,
+        )
+        if len(reference) != len(players) or any(
+            "rendered_percent" not in row for row in reference
+        ):
+            reference = None
+
+    for index, (entry, row) in enumerate(zip(leaderboard, rows)):
+        entry["win_prob"] = row["probability"] * 100
+        entry["rendered_percent"] = row["rendered_percent"]
+        entry["win_prob_change"] = (
+            round((row["probability"] - reference[index]["probability"]) * 100, 1)
+            if reference is not None
+            else None
+        )
+
+
 # ============================================================================
 
 # In-process cache for leaderboard (avoid hammering DataGolf on every refresh)
@@ -5102,6 +5240,7 @@ async def get_golf_leaderboard(
     # For subsequent rounds, use start-of-day leaderboard snapshot.
     # ----------------------------------------------------------------
     snapshot_lookup: dict[str, dict] = {}  # player_name -> {position, win_prob, ...}
+    baseline_is_atomic = False
     current_round = info.get("current_round")
     try:
         from app.models.models import GolfLeaderboardSnapshot
@@ -5127,7 +5266,13 @@ async def get_golf_leaderboard(
                     for entry in snapshot.data:
                         name = entry.get("player_name", "")
                         snapshot_lookup[name.lower()] = entry
-                    logger.info("Leaderboard: loaded %d-player start-of-day snapshot", len(snapshot_lookup))
+                    # One stored response is one observation, unlike independently
+                    # selected per-outcome snapshots in the Round1 arm below.
+                    baseline_is_atomic = len(snapshot_lookup) == len(snapshot.data)
+                    logger.info(
+                        "Leaderboard: loaded %d-player start-of-day snapshot",
+                        len(snapshot_lookup),
+                    )
         else:
             # Round 1: use last DataGolf snapshot from before today as baseline
             # (captures pre-tournament odds from close to midnight)
@@ -5182,7 +5327,17 @@ async def get_golf_leaderboard(
                             name = outcome_names.get(snap.outcome_id, "")
                             if name and snap.probability is not None:
                                 wp = round(float(snap.probability) * 100, 1)
-                                snapshot_lookup[name.lower()] = {"win_prob": wp}
+                                snapshot_lookup[name.lower()] = {
+                                    "win_prob": wp,
+                                    "_at": snap.captured_at,
+                                }
+
+                        instants = {entry["_at"] for entry in snapshot_lookup.values()}
+                        baseline_is_atomic = (
+                            len(instants) == 1
+                            and None not in instants
+                            and len(snapshot_lookup) == len(outcomes)
+                        )
 
                     logger.info("Leaderboard R1: loaded %d-player pre-round snapshot (cutoff=%s)",
                                 len(snapshot_lookup), cutoff.isoformat())
@@ -5268,6 +5423,11 @@ async def get_golf_leaderboard(
         win_probs
         and all(wp in (0.0, 100.0) for wp in win_probs)
     )
+
+    if not is_completed:
+        _allocate_live_win_field(
+            leaderboard, players, snapshot_lookup, baseline_is_atomic=baseline_is_atomic
+        )
 
     result = {
         "status": "completed" if is_completed else "live",
