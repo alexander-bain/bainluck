@@ -37,3 +37,36 @@ it("keeps cup-card boundary markers around server allocations", () => {
   const value=text(<TournamentCard tournament={tournament} />);
   expect(value).toContain("<1%");expect(value).toContain(">99%");
 });
+
+it("renders the cup's allocated Tie beside its two teams", () => {
+  const tournament = {
+    name: "Ryder Cup",
+    key: "ryder_cup",
+    golfers: [
+      { name: "Team Europe", probability: 0.525 / 1.008, rendered_percent: 52, sources: {} },
+      { name: "Team USA", probability: 0.43 / 1.008, rendered_percent: 43, sources: {} },
+    ],
+    overflow_outcomes: [{ name: "Tie", probability: 0.053 / 1.008, rendered_percent: 5 }],
+  } as unknown as GolfTournament;
+  const container = document.createElement("div");
+  container.innerHTML = renderToStaticMarkup(<TournamentCard tournament={tournament} />);
+  expect(container.textContent).toContain("Tie5%");
+  expect(container.querySelectorAll("a")).toHaveLength(1);
+  expect(container.querySelector("a")?.getAttribute("href")).toBe("/event/golf/ryder-cup");
+  const widths = [...container.querySelectorAll<HTMLElement>("div[style]")].map(row => row.style.width);
+  expect(widths).toEqual(expect.arrayContaining(["52%", "43%", "5%"]));
+});
+
+it("renders a settled Tie as its result", () => {
+  const tournament = {
+    name: "Ryder Cup",
+    key: "ryder_cup",
+    champion: "Tie",
+    golfers: [
+      { name: "Team Europe", probability: 0.525, sources: {} },
+      { name: "Team USA", probability: 0.43, sources: {} },
+    ],
+    overflow_outcomes: [{ name: "Tie", probability: 0.053 }],
+  } as unknown as GolfTournament;
+  expect(text(<TournamentCard tournament={tournament} />)).toContain("TieWon");
+});

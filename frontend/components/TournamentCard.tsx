@@ -329,12 +329,28 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
             </div>
           </div>
 
-          {/* Probability bar. Widths are the printed figures to one decimal, not
-              the raw product: `0.145 * 100` emits `14.499999999999998%`. */}
+          {/* Bar widths follow the server allocation or the printed decimal fallback. */}
           <div className="flex h-2 rounded-full overflow-hidden">
-            <div className={`${colorA.bar} transition-all`} style={{ width: `${probA.toFixed(1)}%` }} />
-            <div className={`${colorB.bar} transition-all`} style={{ width: `${probB.toFixed(1)}%` }} />
+            <div className={`${colorA.bar} transition-all`} style={{ width: `${teamA.rendered_percent ?? probA.toFixed(1)}%` }} />
+            <div className={`${colorB.bar} transition-all`} style={{ width: `${teamB.rendered_percent ?? probB.toFixed(1)}%` }} />
+            {!decided && tournament.overflow_outcomes?.map(outcome => (
+              <div
+                key={outcome.name}
+                className="bg-surface-border transition-all"
+                style={{ width: `${outcome.rendered_percent ?? (outcome.probability * 100).toFixed(1)}%` }}
+              />
+            ))}
           </div>
+          {tournament.overflow_outcomes?.map(outcome => (
+            <div key={outcome.name} className="flex justify-between mt-1.5 text-xs text-text-secondary">
+              <span>{outcome.name}</span>
+              <span className="font-semibold tabular-nums">
+                {decided
+                  ? (normalizeCupSideName(outcome.name) === champion ? "Won" : "Lost")
+                  : formatProbability(outcome.probability, { rendered: outcome.rendered_percent })}
+              </span>
+            </div>
+          ))}
 
           {/* Prop markets below */}
           {tournament.prop_markets && tournament.prop_markets.length > 0 && (

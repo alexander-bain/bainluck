@@ -114,6 +114,15 @@ TEAM_SIDE_NAMES: Final[frozenset[str]] = frozenset({
     "great britain and ireland", "gb and i",
 })
 
+_TEAM_SIDE_ALIASES: Final[dict[str, str]] = {
+    "us": "usa",
+    "united states": "usa",
+    "america": "usa",
+    "world": "international",
+    "rest of the world": "international",
+    "gb and i": "great britain and ireland",
+}
+
 
 def is_team_match_play_key(tournament_key: str | None) -> bool:
     """True when a `routes/golf.py` tournament key names a team match-play event."""
@@ -134,6 +143,12 @@ def normalize_team_side_name(name: str | None) -> str:
     folded = name.strip().lower().replace(".", "").replace("&", " and ")
     folded = _TEAM_SIDE_PREFIX_RE.sub("", folded)
     return re.sub(r"\s+", " ", folded).strip()
+
+
+def canonical_team_side_name(name: str | None) -> str:
+    """One identity across the aliases of an already recognized cup side."""
+    folded = normalize_team_side_name(name)
+    return _TEAM_SIDE_ALIASES.get(folded, folded)
 
 
 def is_team_side_name(name: str | None) -> bool:
