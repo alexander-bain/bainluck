@@ -43,7 +43,7 @@ jest.mock("@/lib/api", () => ({
 import EvalsPage from "@/app/evals/page";
 import TopScreen from "@/components/evals/TopScreen";
 import { fetchCalibration } from "@/lib/api";
-import { STORY_COPY, TERMS, TOPIC_COPY, TOP_COPY } from "@/lib/evals/copy";
+import { STORY_COPY, TERMS, TOPIC_COPY, TOP_COPY, WATCHERS_COPY } from "@/lib/evals/copy";
 import EXAM_RAW from "@/lib/evals/data/twin-exam-2026-11-05.json";
 import { EXAMPLE_AMERICAN_ODDS, EXAMPLE_CONTRACT_CENTS, americanOddsText, americanToPercent } from "@/lib/evals/example";
 import { calibrationFixture } from "@/lib/evals/fixtures/calibration";
@@ -489,5 +489,14 @@ describe("each picture is drawn from its record", () => {
     expect(text).toContain(TOP_COPY.watchersSentenceStart);
     expect(TOP_COPY.watchersSentenceStart).toMatch(/\ba program that watches\b/);
     expect(text).not.toMatch(/automatic checks?/i);
+  });
+
+  it("the whole page, record and glossary included, calls them watchers and never automatic checks", async () => {
+    const page = await mountPage();
+    const text = page.textContent?.replace(/\s+/g, " ") ?? "";
+    expect(text).not.toMatch(/automatic checks?/i);
+    expect(page.querySelector("#watchers")?.textContent).toContain(WATCHERS_COPY.title);
+    expect(WATCHERS_COPY.title).toMatch(/\bwatchers\b/);
+    expect(TERMS.find((t) => t.term === "Sentinel")?.meaning).toMatch(/\bsite watcher\b/);
   });
 });

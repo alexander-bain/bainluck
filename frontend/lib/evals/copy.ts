@@ -346,11 +346,12 @@ export const TESTS_FOR_TESTS_COPY = {
 } as const;
 
 export const WATCHERS_COPY = {
-  title: "Checks that run on their own",
+  // One name for one thing: the top card and the story call them watchers.
+  title: "The site watchers, one by one",
   lead:
-    "Some checks run by themselves, like smoke detectors. Each one looks for one kind of problem on the live site and files it on our work list when it finds one.",
+    "Each watcher is a small program that runs by itself, like a smoke alarm. It looks for one kind of problem on the live site and files it on our work list when it finds one.",
   detail:
-    "An audit found a third state between working and stopped: a check that finds problems but cannot report them. We mark that “found problems, not reported”, and show it wherever the record says so.",
+    "An audit found a third state between working and stopped: a watcher that finds problems but cannot report them. We mark that “found problems, not reported”, and show it wherever the record says so.",
   timesNote: "Times are Pacific, worked out in your browser from the schedule's UTC times.",
   dayGroup: "Through the day",
   nightGroup: "Every night",
@@ -375,7 +376,7 @@ export const WATCHERS_COPY = {
   fixBefore: "A fix for its reporting has merged since:",
   unknown: "No public record of its last result.",
   alerts: "See every open alert",
-  code: "The check's code",
+  code: "The watcher's code",
 } as const;
 
 export const GAPS_COPY = {
@@ -514,12 +515,12 @@ export const TERMS: readonly { term: string; meaning: string }[] = [
   {
     term: "Sentinel",
     meaning:
-      "Our records' name for an automatic check that runs on a schedule against the live site and puts what it finds on our work list.",
+      "Our records' name for a site watcher: a program that runs on a schedule against the live site and puts what it finds on our work list.",
   },
   {
     term: "Running red, reporting stopped",
     meaning:
-      "Our records' name for a check that keeps finding problems but cannot report them, so nobody sees them until someone looks. This page says “found problems, not reported”.",
+      "Our records' name for a watcher that keeps finding problems but cannot report them, so nobody sees them until someone looks. This page says “found problems, not reported”.",
   },
   {
     term: "Receipt",
