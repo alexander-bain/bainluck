@@ -9,6 +9,7 @@ import {
   buildMlbSeriesCard,
   buildMlbStrikeoutMilestoneCard,
   mlbCardsApply,
+  resolveMlbRowVenueResult,
 } from "@/lib/mlbEventCards";
 import { MATRIX_CONTRACT } from "@/lib/nbaEventCards";
 import {
@@ -57,7 +58,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
             observed_at: "2026-10-19T23:55:00Z",
             contributors: [{ source: "kalshi", probability: 0.28, observed_at: "2026-10-19T23:55:00Z" }],
           },
-          venue_grade: { is_winner: true, resolution_source: "kalshi" },
+          venue_grade: { is_winner: true, resolution_source: "api_settlement" },
           contributor_outcome_ids: [101],
         },
         {
@@ -73,7 +74,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
             observed_at: "2026-10-19T23:55:00Z",
             contributors: [{ source: "kalshi", probability: 0.09, observed_at: "2026-10-19T23:55:00Z" }],
           },
-          venue_grade: { is_winner: true, resolution_source: "kalshi" },
+          venue_grade: { is_winner: true, resolution_source: "api_settlement" },
           contributor_outcome_ids: [102],
         },
         {
@@ -221,6 +222,16 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
     expect(zeroHomersUngraded?.entries[0].finalCount).toBe(0);
     expect(zeroHomersUngraded?.entries[0].venueResult).toBe("pending");
     expect(zeroHomersUngraded?.entries[0].venueResult).not.toBe("lost");
+
+    // Decide 80 / #11284 rule: a non-authoritative or served `is_winner: false`
+    // is `"not_confirmed"`, never `"lost"`; only an authoritative tier-3 win is `"won"`.
+    expect(resolveMlbRowVenueResult(true, "api_settlement", "after")).toBe("won");
+    expect(resolveMlbRowVenueResult(true, "clob_authoritative", "after")).toBe("won");
+    expect(resolveMlbRowVenueResult(true, "kalshi", "after")).toBe("not_confirmed");
+    expect(resolveMlbRowVenueResult(false, "api_settlement", "after")).toBe("not_confirmed");
+    expect(resolveMlbRowVenueResult(false, null, "after")).toBe("not_confirmed");
+    expect(resolveMlbRowVenueResult(null, null, "after")).toBe("pending");
+    expect(resolveMlbRowVenueResult(false, "api_settlement", "during")).toBe("open");
   });
 
   it("builds strikeout milestone card, run totals ladder (unit='runs'), extra innings, and series card in fixed slot order", () => {
@@ -311,7 +322,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-19T23:50:00Z",
           source: "kalshi",
           is_winner: false,
-          resolution_source: "kalshi",
+          resolution_source: "api_settlement",
         },
         {
           market_name: "MIL at LAD: Extra Innings",
@@ -320,7 +331,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-19T23:50:00Z",
           source: "kalshi",
           is_winner: true,
-          resolution_source: "kalshi",
+          resolution_source: "api_settlement",
         },
       ],
     };
@@ -448,9 +459,9 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
     );
     expect(extraHtml).toContain("data-testid=\"mlb-extra-innings-card\"");
     expect(extraHtml).toContain("✓ Won");
-    expect(extraHtml).toContain("✗ Lost");
+    expect(extraHtml).toContain("Not confirmed");
+    expect(extraHtml).not.toContain("✗ Lost");
     expect(extraHtml).not.toContain("Venue result");
-    expect(extraHtml).not.toContain("Not confirmed");
     expect(extraHtml).not.toContain("kalshi");
 
     const seriesCard = buildMlbSeriesCard(relatedFutures.series_question_matrix);
@@ -480,7 +491,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-19T23:45:00Z",
           source: "kalshi",
           is_winner: false,
-          resolution_source: "kalshi",
+          resolution_source: "api_settlement",
         },
         {
           market_name: "MIL at LAD: Extra Innings",
@@ -489,7 +500,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-19T23:55:00Z",
           source: "polymarket",
           is_winner: false,
-          resolution_source: "polymarket",
+          resolution_source: "clob_authoritative",
         },
         {
           market_name: "MIL at LAD: Extra Innings",
@@ -498,7 +509,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-19T23:45:00Z",
           source: "kalshi",
           is_winner: true,
-          resolution_source: "kalshi",
+          resolution_source: "api_settlement",
         },
         {
           market_name: "MIL at LAD: Extra Innings",
@@ -507,7 +518,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-19T23:55:00Z",
           source: "polymarket",
           is_winner: true,
-          resolution_source: "polymarket",
+          resolution_source: "clob_authoritative",
         },
       ],
       status: "completed",
@@ -523,7 +534,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
       label: "Yes",
       sourceCount: 2,
       pregameChance: null,
-      venueResult: "lost",
+      venueResult: "not_confirmed",
     });
     expect(extraCard?.outcomes[1]).toMatchObject({
       label: "No",
@@ -549,14 +560,14 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
     expect(html).not.toContain("86% pregame");
     expect(html).not.toContain("88% pregame");
     expect(html).toContain("Pregame chance unavailable for this market");
-    expect(html).toContain("✗ Lost");
+    expect(html).toContain("Not confirmed");
+    expect(html).not.toContain("✗ Lost");
     expect(html).toContain("✓ Won");
     expect(html).not.toContain("kalshi");
     expect(html).not.toContain("polymarket");
     expect(html).not.toContain("Venue");
-    expect(html).not.toContain("Not confirmed");
 
-    // During/after game without pregame_mark + venue disagreement + resolution_source === null
+    // During/after game without pregame_mark + venue disagreement + ungraded outcome
     const disagreementCard = buildMlbExtraInningsCard({
       other: [
         {
@@ -567,7 +578,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-20T03:00:00Z",
           source: "kalshi",
           is_winner: true,
-          resolution_source: "kalshi",
+          resolution_source: "api_settlement",
         },
         {
           market_name: "MIL at LAD: Extra Innings",
@@ -577,7 +588,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-20T03:00:00Z",
           source: "polymarket",
           is_winner: false,
-          resolution_source: "polymarket",
+          resolution_source: "clob_authoritative",
         },
         {
           market_name: "MIL at LAD: Extra Innings",
@@ -586,8 +597,8 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           pregame_mark: null,
           observed_at: "2026-10-20T03:00:00Z",
           source: "kalshi",
-          is_winner: false,
-          resolution_source: null, // outcomeRowVerdict refuses null resolution_source
+          is_winner: null,
+          resolution_source: null,
         },
       ],
       status: "completed",
@@ -632,7 +643,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
         observed_at: "2026-10-19T23:50:00Z",
         source: "kalshi",
         is_winner: false,
-        resolution_source: "kalshi",
+        resolution_source: "api_settlement",
       },
       {
         market_name: "MIL at LAD: Extra Innings",
@@ -642,7 +653,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
         observed_at: "2026-10-19T23:50:00Z",
         source: "kalshi",
         is_winner: true,
-        resolution_source: "kalshi",
+        resolution_source: "api_settlement",
       },
     ];
 
@@ -671,7 +682,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
       nowMs: NOW_MS,
     });
     expect(settledCard).not.toBeNull();
-    expect(settledCard?.outcomes.map((o) => o.venueResult)).toEqual(["lost", "won"]);
+    expect(settledCard?.outcomes.map((o) => o.venueResult)).toEqual(["not_confirmed", "won"]);
   });
 
   it("after the final, MLB run-totals ladder reads only admitted pregame_reading and never falls back to comparison.baseline (#11125 contract)", () => {

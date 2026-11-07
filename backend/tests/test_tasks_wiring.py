@@ -401,6 +401,8 @@ class TestBeatScheduleCompleteness:
         "mlb-schedule-coverage-daily",
         "flow-sentinel-daily",
         "grid-sentinel-daily",
+        # #12231 — weekly grouping sentinel, report-only on #12221 until Nov 26.
+        "grouping-sentinel-weekly",
         "grid-register-sentinel-daily",
         "tournament-register-sentinel-daily",
         # UX-P139 — targeted re-price of register-pinned tournament markets.
