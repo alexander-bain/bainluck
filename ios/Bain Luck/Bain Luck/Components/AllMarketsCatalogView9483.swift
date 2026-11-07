@@ -90,13 +90,17 @@ struct AllMarketsCatalogView9483: View, Equatable {
     }
 
     /// What an outcome prints in the price column.
-    static func priceText(_ outcome: QuestionCatalog9483.Outcome, status: String?) -> String? {
+    static func priceText(
+        _ outcome: QuestionCatalog9483.Outcome,
+        status: String?,
+        atlasEnabled: Bool = ReleaseSurfaces.isEventPageAtlasEnabled()
+    ) -> String? {
         if let p = outcome.probability { return formatProbability(p) }
         if SettledQuote.isSettled(status) { return nil }
         switch outcome.absence {
         case .settled: return nil
         case .periodFinished: return periodFinished
-        case .stale: return noRecentPrice
+        case .stale: return atlasEnabled ? EventAtlasStates11666.noRecentPrice : noRecentPrice
         case .unavailable, nil: return unavailablePrice
         }
     }

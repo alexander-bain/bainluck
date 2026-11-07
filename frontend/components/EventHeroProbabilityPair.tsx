@@ -489,7 +489,7 @@ export default function EventHeroProbabilityPair({
                   {ATLAS_STATE_COPY.noRecentPrice}
                 </span>
               ) : (
-                "No price yet"
+                "No probability yet"
               )}
             </span>
           ) : null

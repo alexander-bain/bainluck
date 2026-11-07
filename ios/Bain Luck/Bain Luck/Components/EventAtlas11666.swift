@@ -275,7 +275,7 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
             primaryReadingValue: primaryValue,
             pregameBaseline: pregameText,
             observedAtText: observedText,
-            statusSummary: liveStatus == .hidden ? nil : liveStatus.title,
+            statusSummary: EventAtlasStates11666.connectionStatusLabel(for: liveStatus),
             sourceLabel: sourceLabel
         )
     }
