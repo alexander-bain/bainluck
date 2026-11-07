@@ -6,8 +6,10 @@ import SwiftUI
 ///
 /// Key guarantees:
 /// 1. Settled games show `✓ Won` (`✗ Lost` on paired side, `Draw` on ties) with
-///    the hollow pregame mark `○` (`"Upset · X% pregame"` when the winner's
-///    pregame chance was `< 45%`, otherwise `"X% pregame"`).
+///    the hollow pregame mark `○` (`"Upset · X% pregame"` when the winner was
+///    priced below the side it beat on the same reading via
+///    `PrematchReading.winnerWasUnderdog(homeWon:awayWon:pricesADraw:)`, #9490;
+///    otherwise `"X% pregame"`).
 /// 2. Live and upcoming games show the phase label (`"Current win chance"` vs
 ///    `"Last recorded win chance"` on the 30-minute staleness bound,
 ///    interrupted delivery, or started-and-not-live) and the hollow pregame
@@ -71,16 +73,25 @@ nonisolated enum EventAtlasHeadline11666 {
         }
 
         let homeWon = outcome == .home
+        let awayWon = outcome == .away
+        let pricesADraw = DrawPricedWinner.sportPricesADraw(sportKey)
         let duel = TeamShortName.shortPair(away: awayTeam, home: homeTeam, sportKey: sportKey)
         let winnerName = homeWon ? duel.home : duel.away
 
         var pregameMarkText: String?
         var isUpset = false
-        if let pregame, let pair = pregamePair {
-            let winnerProb: Double? = homeWon ? pair.home : pair.away
+        if let pregame {
+            let winnerProb: Double? = homeWon
+                ? pregame.homeProbability
+                : ((pricesADraw && pregame.awayIsComplement) ? nil : pregame.awayProbability)
             if let prob = winnerProb {
-                let pct = Int((prob * 100).rounded())
-                isUpset = pct < 45
+                // #9490 — against the side it beat on the same reading, not a
+                // fixed cut: on a three-way board 39.5% can be the favourite.
+                isUpset = pregame.winnerWasUnderdog(
+                    homeWon: homeWon,
+                    awayWon: awayWon,
+                    pricesADraw: pricesADraw
+                )
                 let formatted = formatProbability(
                     prob,
                     renderedPercent: homeWon ? pregame.percents[1] : pregame.percents[0]
@@ -97,6 +108,27 @@ nonisolated enum EventAtlasHeadline11666 {
             systemImage: "checkmark",
             pregameMarkText: pregameMarkText,
             isUpset: isUpset
+        )
+    }
+
+    /// Resolves the live/scheduled headline phase label against the supplied
+    /// clock (`now`), honouring the 30-minute staleness bound and delivery state.
+    static func resolvePhase(
+        event: EventDetail,
+        observedAt: Date?,
+        liveStatus: LiveUpdateStatus,
+        now: Date = Date()
+    ) -> EventHeadlinePhase9483? {
+        let isOpening = event.currentOdds.map {
+            OpeningLineHero.resolve($0, for: event).isOpeningLine
+        } ?? false
+        return EventHeadlinePhase9483.resolve(
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            isOpeningLine: isOpening,
+            observedAt: observedAt,
+            deliveryInterrupted: liveStatus == .interrupted,
+            now: now
         )
     }
 
@@ -176,18 +208,23 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
         liveStatus: LiveUpdateStatus
     ) -> EventAtlasDetailsSheetModel11666 {
         let isFinished = EventState.isFinished(event.status)
+        let isOpening = event.currentOdds.map {
+            OpeningLineHero.resolve($0, for: event).isOpeningLine
+        } ?? false
         let duel = TeamShortName.shortPair(
             away: event.awayTeam,
             home: event.homeTeam,
             sportKey: event.sport
         )
-        let pregameText = EventHeadlinePhase9483.baselineText(
-            prematch: event.prematchOdds,
-            opening: event.openingOdds,
-            sport: event.sport,
-            awayTeam: event.awayTeam,
-            homeTeam: event.homeTeam
-        )
+        let pregameText = isOpening
+            ? nil
+            : EventHeadlinePhase9483.baselineText(
+                prematch: event.prematchOdds,
+                opening: event.openingOdds,
+                sport: event.sport,
+                awayTeam: event.awayTeam,
+                homeTeam: event.homeTeam
+            )
 
         let primaryLabel: String
         let primaryValue: String
@@ -208,17 +245,33 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
             )
             primaryValue = badge.winnerLabel
         } else if let odds = event.currentOdds,
+                  case let shown = OpeningLineHero.resolve(odds, for: event),
                   let pair = DrawPricedWinner.printablePair(
-                    away: odds.awayProbability,
-                    home: odds.homeProbability,
+                    away: shown.awayProbability,
+                    home: shown.homeProbability,
                     sport: event.sport
                   ) {
-            primaryLabel = phase?.label ?? "Win chance"
+            primaryLabel = shown.isOpeningLine ? OpeningLineHero.caption : (phase?.label ?? "Win chance")
             if let away = pair.away {
-                let printed = EventAtlasLivePath11666.tenthsPair(home: pair.home, away: away)
-                primaryValue = "\(duel.away) \(printed.away ?? "") · \(duel.home) \(printed.home)"
+                if shown.isOpeningLine {
+                    let openDuel = duelPercents(
+                        away: away,
+                        home: pair.home,
+                        servedAway: shown.awayRenderedPercent,
+                        servedHome: shown.homeRenderedPercent
+                    )
+                    primaryValue = "\(duel.away) \(formatProbability(away, renderedPercent: openDuel[0])) · \(duel.home) \(formatProbability(pair.home, renderedPercent: openDuel[1]))"
+                } else {
+                    let printed = EventAtlasLivePath11666.tenthsPair(home: pair.home, away: away)
+                    primaryValue = "\(duel.away) \(printed.away ?? "") · \(duel.home) \(printed.home)"
+                }
             } else {
-                primaryValue = "\(duel.home) \(formatProbability(pair.home))"
+                if shown.isOpeningLine {
+                    primaryValue = "\(duel.home) \(formatProbability(pair.home))"
+                } else {
+                    let printed = EventAtlasLivePath11666.tenthsPair(home: pair.home, away: nil)
+                    primaryValue = "\(duel.home) \(printed.home)"
+                }
             }
         } else {
             primaryLabel = phase?.label ?? "Win chance"
@@ -297,7 +350,13 @@ struct EventAtlasHeadlineControlRow11666: View {
     }
 
     var body: some View {
-        let now = asOf ?? Date()
+        TimelineView(.periodic(from: .now, by: 15)) { context in
+            rowContent(now: asOf ?? context.date)
+        }
+    }
+
+    @ViewBuilder
+    private func rowContent(now: Date) -> some View {
         let isFinished = EventState.isFinished(event.status)
         let isOpening = event.currentOdds.map {
             OpeningLineHero.resolve($0, for: event).isOpeningLine

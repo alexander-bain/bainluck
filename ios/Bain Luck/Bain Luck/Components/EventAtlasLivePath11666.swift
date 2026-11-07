@@ -52,7 +52,7 @@ nonisolated enum EventAtlasLivePath11666 {
     /// Extracts the freshest `updatedAt` timestamp across `winProbabilitySources`.
     static func freshestSourceTimestamp(in sources: [String: WinProbSource]?) -> Date? {
         guard let sources else { return nil }
-        return sources.values.compactMap { $0.updatedAt.flatMap(ISO8601Stamp.date) }.max()
+        return sources.values.compactMap { $0.updatedAt?.asDate }.max()
     }
 
     /// Formats a complement probability pair in tenths of a point summing to
@@ -62,8 +62,9 @@ nonisolated enum EventAtlasLivePath11666 {
     }
 
     /// Overlays an optional one-stream `BlendPreviewState` onto `event` and
-    /// computes the resulting tenths headline pair, observation clock, and
-    /// whether the preview is actively displayed.
+    /// computes the resulting tenths headline pair (withholding the away
+    /// complement on draw-priced sports via `DrawPricedWinner.printablePair`),
+    /// observation clock, and whether the preview is actively displayed.
     static func overlaidHeadlineReading(
         event: EventDetail,
         preview: BlendPreviewState?,
@@ -71,21 +72,25 @@ nonisolated enum EventAtlasLivePath11666 {
     ) -> OverlaidHeadlineReading? {
         let isPreview = BlendPreview.displayed(preview, held: event, now: now) != nil
         let overlaid = BlendPreview.overlay(event, preview, now: now)
-        guard let homeProb = overlaid.heroProbability ?? overlaid.currentOdds?.homeProbability,
-              homeProb.isFinite else {
+        let rawHome = overlaid.heroProbability ?? overlaid.currentOdds?.homeProbability
+        let rawAway = overlaid.heroProbabilityAway ?? overlaid.currentOdds?.awayProbability
+        guard let printable = DrawPricedWinner.printablePair(
+            away: rawAway,
+            home: rawHome,
+            sport: event.sport
+        ), printable.home.isFinite else {
             return nil
         }
-        let awayProb = overlaid.heroProbabilityAway ?? overlaid.currentOdds?.awayProbability
-        let pair = tenthsPair(home: homeProb, away: awayProb)
+        let pair = tenthsPair(home: printable.home, away: printable.away)
         let observedAt = BlendPreview.displayedObservedAt(
             preview,
             held: event,
             now: now,
-            committed: event.heroProbabilityObservedAt.flatMap(ISO8601Stamp.date)
+            committed: event.heroProbabilityObservedAt?.asDate
         )
         return OverlaidHeadlineReading(
-            homeProbability: homeProb,
-            awayProbability: awayProb,
+            homeProbability: printable.home,
+            awayProbability: printable.away,
             homeTenthsText: pair.home,
             awayTenthsText: pair.away,
             observedAt: observedAt,
