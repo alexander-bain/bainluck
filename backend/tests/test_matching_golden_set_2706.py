@@ -504,7 +504,16 @@ CAPTURE_CANDIDATE_CAP = _capture_candidate_cap()
 
 #: Measured 2026-09-06 on the re-captured `matching_golden_inputs.json`, at
 #: CAPTURE_CANDIDATE_CAP. Each may only FALL.
-POSITIVES_WITH_AN_APPENDED_ANSWER = 44
+#:
+#: 44 -> 45 on 2026-11-07 (#12144): the amendment re-pointing market 59977706
+#: onto event 15306137 adds one appended answer BY CONSTRUCTION, not by a loss
+#: of capture fidelity. The capture's search window is +/-6 days around the
+#: market's ``commence_time``, which for this Polymarket prop is its listing
+#: minute (2026-09-01 06:01Z, window 08-26 -> 09-07); the venue's game is
+#: 2026-09-13 19:01Z, so no capture at that window can surface the correct
+#: answer — it can only be supplied, as for the other 44. The replay still
+#: PASSES the pair at its own decision clock, so the answer is reachable.
+POSITIVES_WITH_AN_APPENDED_ANSWER = 45
 PAIRS_AT_THE_CAPTURE_CAP = 189
 TRUNCATED_PAIRS_THE_WINDOW_OUTLASTS = 65
 
