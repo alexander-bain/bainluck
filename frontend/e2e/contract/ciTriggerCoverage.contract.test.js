@@ -147,6 +147,21 @@ describe("CI trap #2: every pull request gets a CI run, whatever its base", () =
     );
   });
 
+  it("only events that change the commit run CI: no labeled, unlabeled or edited (#12252)", () => {
+    // A label or an edit created a run on an UNCHANGED commit, and a skipped job is a
+    // passing required check, so such a run could land a skipped result on top of a
+    // real red one. Without the trigger there is no run object at all. The cost is
+    // the #1943 retarget: it needs a commit or a close+reopen (docs/github-workflow.md).
+    const pr = nestedBlock(topLevelBlock(readWorkflow(), "on"), "pull_request");
+    const types = pr.find((l) => /^\s+types:/.test(l));
+    assert.ok(types, "ci.yml's pull_request trigger lost its explicit types list.");
+    assert.equal(
+      types.trim(),
+      "types: [opened, synchronize, reopened]",
+      `ci.yml's pull_request types changed: "${types.trim()}". labeled/unlabeled/edited re-run an unchanged commit (#12252).`
+    );
+  });
+
   it("push admits only master and dedicated compose branches; lane branches remain PR-only", () => {
     const on = topLevelBlock(readWorkflow(), "on");
     const push = nestedBlock(on, "push");
