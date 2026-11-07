@@ -576,7 +576,11 @@ struct MLBExtraInningsCardView11284: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(outcome.label).font(.headline)
-                if let venue = outcome.venue {
+                if ReleaseSurfaces.isEventPageAtlasEnabled(), let pregame = outcome.pregameChance {
+                    Text("Pregame \(formatProbability(pregame))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else if let venue = outcome.venue {
                     Text(venue).font(.caption2).foregroundStyle(.secondary)
                 }
             }

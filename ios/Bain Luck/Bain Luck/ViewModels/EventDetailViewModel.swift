@@ -1615,7 +1615,13 @@ final class EventDetailViewModel: ObservableObject {
     /// chart to draw (`BlendPreview.chartFrames`). Never stored.
     @MainActor
     func chartFrames(_ event: EventDetail) -> [LiveBlendPoint] {
-        BlendPreview.chartFrames(liveBlend, history: history, state: blendPreview, held: event, now: previewNow())
+        EventAtlasLivePath11666.overlaidChartFrames(
+            frames: liveBlend,
+            history: history,
+            preview: blendPreview,
+            event: event,
+            now: previewNow()
+        )
     }
 
     /// What the hero and chart print, for the timing seam's view marks

@@ -124,6 +124,10 @@ final class EventAtlasLivePathE5_11666Tests: XCTestCase {
         XCTAssertEqual(reading.homeTenthsText, "93.4%")
         XCTAssertEqual(reading.awayTenthsText, "6.6%")
         XCTAssertEqual(reading.observedAt, previewAt)
+        XCTAssertEqual(
+            EventAtlasHeadlineControlRow11666.tenthsSummary(for: reading, event: event),
+            "Celtics 6.6% · Warriors 93.4%"
+        )
 
         let baseFrames = [
             LiveBlendPoint(date: try XCTUnwrap("2026-11-06T04:30:00Z".asDate), homeProbability: 0.88),
@@ -262,13 +266,24 @@ final class EventAtlasLivePathE5_11666Tests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertTrue(atlasSource.contains("EventAtlasLivePath11666.resolveHeadlineObservedAt("))
+        XCTAssertTrue(atlasSource.contains("EventAtlasLivePath11666.overlaidHeadlineReading("))
+        XCTAssertTrue(atlasSource.contains("EventAtlasLivePath11666.tenthsPair("))
         XCTAssertTrue(atlasSource.contains("EventAtlasLivePath11666.ekgDraws("))
+        XCTAssertTrue(atlasSource.contains("Self.tenthsSummary(for: reading, event: event)"))
 
         let viewSource = try String(
             contentsOf: root.appendingPathComponent("Views/EventDetailView.swift"),
             encoding: .utf8
         )
         XCTAssertTrue(viewSource.contains("confirmedAtShown: vm.confirmedAtCoveringShown(event)"))
+        XCTAssertTrue(viewSource.contains("preview: vm.blendPreview"))
         XCTAssertTrue(viewSource.contains("ekgTracker: ekgTracker"))
+        XCTAssertTrue(viewSource.contains("EventAtlasLivePath11666.stepEkgTracker("))
+
+        let vmSource = try String(
+            contentsOf: root.appendingPathComponent("ViewModels/EventDetailViewModel.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(vmSource.contains("EventAtlasLivePath11666.overlaidChartFrames("))
     }
 }

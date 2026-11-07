@@ -198,5 +198,11 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertTrue(storyCardsSource.contains("EventAtlasMlbCards11666.detailsModel(for: mlbOriginal)"))
+
+        let mlbReaderSource = try String(
+            contentsOf: root.appendingPathComponent("Utilities/MLBFinalReader11284.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(mlbReaderSource.contains("EventAtlasMlbCards11666.buildExtraInningsEntries("))
     }
 }

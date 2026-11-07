@@ -194,6 +194,102 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
         )
     }
 
+    func testSettledResultPrefersPageScoreboardAndServedResultOverStaleHistoryAndTennisGames() throws {
+        let t0 = makeDate("2026-11-06T20:00:00Z")
+        let t1 = makeDate("2026-11-06T22:00:00Z")
+
+        // Mid-game history snapshot has home leading 24-21, while final scoreboard is 24-28 (away won).
+        var midGamePoint = ChartDataPoint(date: t1, probability: 0.76, source: "aggregate")
+        midGamePoint.homeScore = 24
+        midGamePoint.awayScore = 21
+        let points = [
+            ChartDataPoint(date: t0, probability: 0.52, source: "aggregate"),
+            midGamePoint,
+        ]
+        let staleHistoryJSON = """
+        {
+          "event_id": 1,
+          "home_team": "Bears",
+          "away_team": "Eagles",
+          "commence_time": "2026-11-06T20:00:00Z",
+          "status": "completed",
+          "history": [],
+          "espn_history": [
+            {"timestamp": "2026-11-06T21:45:00Z", "home_win_prob": 0.76, "home_score": 24, "away_score": 21}
+          ]
+        }
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let staleHistory = try decoder.decode(EventHistoryResponse.self, from: staleHistoryJSON)
+
+        // Without scoreboard override, fallback reads history (home 24 > away 21 -> .won).
+        XCTAssertEqual(
+            EventAtlasChartMarks11666.settledResult(
+                dataPoints: points,
+                history: staleHistory,
+                status: "completed",
+                sides: .homeAndAway
+            ),
+            .won
+        )
+
+        // With the page's authoritative scoreboard (24-28), the scoreboard wins (.lost for home-favored ending point).
+        XCTAssertEqual(
+            EventAtlasChartMarks11666.settledResult(
+                dataPoints: points,
+                history: staleHistory,
+                status: "completed",
+                sides: .homeAndAway,
+                homeScoreOverride: 24,
+                awayScoreOverride: 28
+            ),
+            .lost
+        )
+
+        // Tennis sets case: history holds last-set games (4-6), while the page scoreboard holds sets (2-1) and servedSettledResult = "home".
+        let tennisHistoryJSON = """
+        {
+          "event_id": 2,
+          "home_team": "Sabalenka",
+          "away_team": "Gauff",
+          "commence_time": "2026-11-06T20:00:00Z",
+          "status": "completed",
+          "history": [],
+          "espn_history": [
+            {"timestamp": "2026-11-06T21:55:00Z", "home_win_prob": 0.68, "home_score": 4, "away_score": 6}
+          ]
+        }
+        """.data(using: .utf8)!
+        let tennisHistory = try decoder.decode(EventHistoryResponse.self, from: tennisHistoryJSON)
+
+        XCTAssertEqual(
+            EventAtlasChartMarks11666.settledResult(
+                dataPoints: points,
+                history: tennisHistory,
+                status: "completed",
+                sides: .homeAndAway,
+                homeScoreOverride: 2,
+                awayScoreOverride: 1,
+                servedSettledResult: "home"
+            ),
+            .won
+        )
+
+        // Draw on settled game -> nil (neither ✓ Won nor ✗ Lost).
+        XCTAssertNil(
+            EventAtlasChartMarks11666.settledResult(
+                dataPoints: points,
+                history: staleHistory,
+                status: "completed",
+                sides: .homeOnly,
+                homeScoreOverride: 1,
+                awayScoreOverride: 1,
+                servedSettledResult: "draw"
+            )
+        )
+    }
+
     func testResultWordPlacementFlipsLeftNearPlotRightEdge() {
         let midPlot = EventAtlasChartMarks11666.resultWordPlacement(
             result: .won,
@@ -222,8 +318,9 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("Bain Luck/Components/OddsChartView.swift")
         let source = try String(contentsOf: chartURL, encoding: .utf8)
-        XCTAssertTrue(source.contains("EventAtlasChartHeaderView11666("))
-        XCTAssertTrue(source.contains("EventAtlasChartOverlay11666("))
-        XCTAssertTrue(source.contains("ReleaseSurfaces.isEventPageAtlasEnabled()"))
+        XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                        EventAtlasChartHeaderView11666("))
+        XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                    EventAtlasChartOverlay11666("))
+        XCTAssertTrue(source.contains("homeScore: homeScore,\n                            awayScore: awayScore"))
+        XCTAssertTrue(source.contains("homeScore: homeScore,\n                        awayScore: awayScore"))
     }
 }
