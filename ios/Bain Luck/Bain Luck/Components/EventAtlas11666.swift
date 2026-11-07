@@ -215,7 +215,7 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
                   ) {
             primaryLabel = phase?.label ?? "Win chance"
             if let away = pair.away {
-                let printed = EventHeadlineTenths10090.pair(home: pair.home, away: away)
+                let printed = EventAtlasLivePath11666.tenthsPair(home: pair.home, away: away)
                 primaryValue = "\(duel.away) \(printed.away ?? "") · \(duel.home) \(printed.home)"
             } else {
                 primaryValue = "\(duel.home) \(formatProbability(pair.home))"
@@ -274,11 +274,27 @@ struct EventAtlasHeadlineControlRow11666: View {
     let event: EventDetail
     let observedAt: Date?
     var confirmedAtShown: Date? = nil
+    var preview: BlendPreviewState? = nil
     let liveStatus: LiveUpdateStatus
     var ekgTracker: EkgTracker = .empty
     var asOf: Date? = nil
 
     @State private var activeSheet: EventAtlasDetailsSheetModel11666?
+
+    static func tenthsSummary(
+        for reading: EventAtlasLivePath11666.OverlaidHeadlineReading,
+        event: EventDetail
+    ) -> String {
+        let duel = TeamShortName.shortPair(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            sportKey: event.sport
+        )
+        if let awayText = reading.awayTenthsText {
+            return "\(duel.away) \(awayText) · \(duel.home) \(reading.homeTenthsText)"
+        }
+        return "\(duel.home) \(reading.homeTenthsText)"
+    }
 
     var body: some View {
         let now = asOf ?? Date()
@@ -286,9 +302,16 @@ struct EventAtlasHeadlineControlRow11666: View {
         let isOpening = event.currentOdds.map {
             OpeningLineHero.resolve($0, for: event).isOpeningLine
         } ?? false
+        let overlaidReading = isFinished
+            ? nil
+            : EventAtlasLivePath11666.overlaidHeadlineReading(
+                event: event,
+                preview: preview,
+                now: now.timeIntervalSince1970
+            )
         let effectiveObservedAt = EventAtlasLivePath11666.resolveHeadlineObservedAt(
             EventAtlasLivePath11666.HeadlineObservedAtInput(
-                acceptedPriceClock: observedAt,
+                acceptedPriceClock: overlaidReading?.observedAt ?? observedAt,
                 confirmedAtShown: confirmedAtShown,
                 freshestSourceStamp: EventAtlasLivePath11666.freshestSourceTimestamp(in: event.winProbabilitySources),
                 currentOddsCapturedAt: event.currentOdds?.capturedAt?.asDate
@@ -348,6 +371,12 @@ struct EventAtlasHeadlineControlRow11666: View {
                 Text(phase.label)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
+                if let reading = overlaidReading {
+                    Text(Self.tenthsSummary(for: reading, event: event))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("atlas-headline-tenths-11666")
+                }
                 if event.status == "live",
                    let baseline = EventHeadlinePhase9483.baselineText(
                     prematch: event.prematchOdds,
