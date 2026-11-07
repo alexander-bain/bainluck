@@ -14,7 +14,7 @@ on:
   # object at all, so no skipped check run can ever land on a commit after a
   # real result (a skipped job is a passing required check). Two costs, chosen
   # (Fable, Nov 7): a RETARGETED PR gets no run until its next commit or a
-  # close+reopen (#1943; AGENTS.md says so), and an `eval-candidate` label added
+  # close+reopen (#1943; docs/github-workflow.md says so), and an `eval-candidate` label added
   # after `opened` no longer cancels that first run (#12235's skip still holds
   # for every later event; the Tier-B policy still blocks the merge).
   # Guarded by backend/tests/test_ci_triggers_12252.py.
