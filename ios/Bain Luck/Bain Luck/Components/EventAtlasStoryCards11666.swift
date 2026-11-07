@@ -125,7 +125,7 @@ nonisolated enum EventAtlasStoryCards11666 {
         }
         var parts: [String] = []
         if point.chance != nil {
-            parts.append(card.phase == .before ? "Pregame chance" : "Before tip-off")
+            parts.append(card.phase == .before ? "Pregame chance" : "Before \(card.startWord)")
         } else if card.phase == .after && card.points.contains(where: { $0.chance != nil }) {
             parts.append("Pregame chance unavailable")
         }

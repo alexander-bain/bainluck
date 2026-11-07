@@ -445,7 +445,9 @@ nonisolated enum EventAtlasNhlCards11666 {
             actual: actual,
             forecast: nil,
             awayShort: input.awayShort,
-            homeShort: input.homeShort
+            homeShort: input.homeShort,
+            unit: "goals",
+            startWord: "puck drop"
         )
     }
 
@@ -497,7 +499,9 @@ nonisolated enum EventAtlasNhlCards11666 {
             actual: actual,
             forecast: nil,
             awayShort: input.awayShort,
-            homeShort: input.homeShort
+            homeShort: input.homeShort,
+            unit: "goals",
+            startWord: "puck drop"
         )
     }
 
@@ -687,10 +691,15 @@ nonisolated enum EventAtlasNhlCards11666 {
         }
 
         let observedText = SourceAge.preciseStamp(entry.observedAt)
-        let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: entry.source,
-            sourceCount: entry.sourceCount
-        )
+        let sourceLabel: String?
+        if entry.source == nil && entry.sourceCount > 1 {
+            sourceLabel = "\(entry.sourceCount) sources, not blended"
+        } else {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: entry.source,
+                sourceCount: nil
+            )
+        }
         return EventAtlasDetailsSheetModel11666(
             id: entry.id,
             outcomeTitle: "\(entry.player): 1+ goals",

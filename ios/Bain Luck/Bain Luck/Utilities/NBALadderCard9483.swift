@@ -105,6 +105,8 @@ nonisolated struct NBALadderCard9483: Equatable, Identifiable {
     let forecast: Double?
     let awayShort: String
     let homeShort: String
+    var unit: String = "points"
+    var startWord: String = "tip-off"
 
     var id: String { family.rawValue }
 
@@ -114,7 +116,7 @@ nonisolated struct NBALadderCard9483: Equatable, Identifiable {
     var caption: String {
         let what = family == .total ? "finishing above each line" : "winning by more than each margin"
         if phase == .before { return "Pregame chance of \(what)" }
-        if points.contains(where: { $0.chance != nil }) { return "Chance before tip-off of \(what)" }
+        if points.contains(where: { $0.chance != nil }) { return "Chance before \(startWord) of \(what)" }
         return "Pregame chance unavailable for these lines"
     }
 
@@ -170,7 +172,8 @@ nonisolated struct NBALadderCard9483: Equatable, Identifiable {
         }
         guard changed else { return self }
         return NBALadderCard9483(family: family, phase: phase, points: aged, actual: actual,
-                                 forecast: forecast, awayShort: awayShort, homeShort: homeShort)
+                                 forecast: forecast, awayShort: awayShort, homeShort: homeShort,
+                                 unit: unit, startWord: startWord)
     }
 
     // MARK: - Building

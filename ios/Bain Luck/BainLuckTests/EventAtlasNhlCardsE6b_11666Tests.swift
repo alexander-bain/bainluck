@@ -120,6 +120,13 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
         XCTAssertEqual(details.primaryReadingValue, "✓ Won · 2 goals")
         XCTAssertEqual(details.pregameBaseline, "44%")
         XCTAssertEqual(details.sourceLabel, "Kalshi")
+
+        // Verify withheld multi-source entry never calls itself "Blended"
+        let pastrnakDetails = EventAtlasNhlCards11666.detailsModel(
+            for: card.entries[2],
+            card: card
+        )
+        XCTAssertEqual(pastrnakDetails.sourceLabel, "2 sources, not blended")
     }
 
     @MainActor
@@ -234,6 +241,12 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
         )
         let totals = try XCTUnwrap(EventAtlasNhlCards11666.buildGoalTotalsCard(input))
         XCTAssertEqual(totals.family, .total)
+        XCTAssertEqual(totals.unit, "goals")
+        XCTAssertEqual(totals.startWord, "puck drop")
+        XCTAssertEqual(totals.caption, "Chance before puck drop of finishing above each line")
+        XCTAssertTrue(
+            EventAtlasStoryCards11666.ladderReadout(totals, totals.points[0]).sub.contains("Before puck drop")
+        )
         XCTAssertEqual(totals.points.map(\.label), ["Over 5.5 goals", "Over 6.5 goals", "Over 7.5 goals"])
         XCTAssertEqual(totals.points[0].chance ?? 0, 0.62, accuracy: 1e-6)
         XCTAssertEqual(totals.points[0].result, true)
