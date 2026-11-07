@@ -1896,7 +1896,7 @@ struct EventDetailView: View {
                                   venueSettled: event.venueSettled,
                                   venueClosedNoWinner: event.venueClosedNoWinner,
                                   commenceTime: event.commenceTime?.asDate,
-                                  now: displayNow(asOf: vm.lastUpdated)
+                                  now: displayNow()
                               ) {
                         // #11666 (Step E4) — StatusBadge three points above already
                         // prints `EventState.venueClosedNoWinnerLabel` ("Ended · no winner");
@@ -2107,7 +2107,7 @@ struct EventDetailView: View {
                         // is gone: it was a thumbnail of the full chart one card
                         // below, which since #8320 starts on the first screen.
                     } else {
-                        let heroNow = displayNow(asOf: vm.lastUpdated)
+                        let heroNow = displayNow()
                         if ReleaseSurfaces.isEventPageAtlasEnabled(),
                            let stateLabel = EventAtlasStates11666.heroStateLabel(
                                status: event.status,
