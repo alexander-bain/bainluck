@@ -43,6 +43,8 @@ LIVE = "needs.change-scope.outputs.live != 'true'"
 # 75-A: only explicitly labelled never-merge study inputs skip this runner.
 SEARCH_RECALL = (
     "${{ !cancelled() && "
+    # #12252: a no-op run skips change-scope; the aggregate follows, never red.
+    "needs.change-scope.result != 'skipped' && "
     "!contains(github.event.pull_request.labels.*.name, 'eval-candidate') && "
     f"{SCOPE_RUNS} && {LIVE} }}}}"
 )

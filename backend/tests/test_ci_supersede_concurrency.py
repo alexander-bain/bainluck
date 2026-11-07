@@ -56,6 +56,7 @@ def _evaluate(expr, github: dict):
     m = re.fullmatch(r"\s*\$\{\{(.*)\}\}\s*", str(expr), re.S)
     assert m, f"expected a ${{{{ }}}} expression or a bool, got {expr!r}"
     src = m.group(1).replace("&&", " and ").replace("||", " or ")
+    src = re.sub(r"!(?!=)", " not ", src)  # #12252: the no-op predicate negates
 
     def ctx(match):
         node = github

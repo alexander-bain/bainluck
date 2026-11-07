@@ -147,6 +147,21 @@ describe("CI trap #2: every pull request gets a CI run, whatever its base", () =
     );
   });
 
+  it("a retarget still schedules a run: `edited` stays a trigger and a base change is never a no-op (#12252)", () => {
+    // #12252 made title/body edits and labels no-op runs. The #1943 retarget is
+    // also an `edited` event, so the trigger stays and the no-op predicate must
+    // exempt `changes.base`, or a retargeted PR is back to no real run.
+    const text = readWorkflow();
+    const pr = nestedBlock(topLevelBlock(text, "on"), "pull_request");
+    const types = pr.find((l) => /^\s+types:/.test(l));
+    assert.ok(types && /\bedited\b/.test(types), `ci.yml's pull_request types no longer include \`edited\`: "${types && types.trim()}".`);
+    assert.ok(!/\bunlabeled\b/.test(types), "`unlabeled` is back in ci.yml's pull_request types; it re-runs an unchanged commit (#12252).");
+    assert.ok(
+      codeOf(text).includes("github.event.action == 'edited' && !github.event.changes.base"),
+      "ci.yml's no-op predicate no longer exempts a base change, so a retarget would run nothing (#1943)."
+    );
+  });
+
   it("push admits only master and dedicated compose branches; lane branches remain PR-only", () => {
     const on = topLevelBlock(readWorkflow(), "on");
     const push = nestedBlock(on, "push");
