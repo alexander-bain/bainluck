@@ -2387,7 +2387,7 @@ struct DiscoverView: View {
         // both route to this tab, and Discover never read `pendingRoute` either —
         // so a shared challenge invite switched to Discover and showed the ordinary
         // feed. The issue named Browse as the only unreachable tab; it was two.
-        .onChange(of: navCoordinator.pendingRoute) { _, _ in
+        .onChange(of: navCoordinator.pendingRoute, initial: true) { _, _ in
             if navCoordinator.selectedTab == .discover,
                let route = navCoordinator.consumeRoute() {
                 navigationPath.append(route)

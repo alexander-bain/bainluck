@@ -154,7 +154,7 @@ struct LeaguesView: View {
             // both switched to this tab and then silently dropped their route,
             // because nothing here ever read `pendingRoute`. Feed, Search and My
             // Stuff have always had this observer; Browse never did.
-            .onChange(of: navCoordinator.pendingRoute) { _, _ in
+            .onChange(of: navCoordinator.pendingRoute, initial: true) { _, _ in
                 if navCoordinator.selectedTab == .leagues,
                    let route = navCoordinator.consumeRoute() {
                     path.append(route)
