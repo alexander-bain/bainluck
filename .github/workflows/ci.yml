@@ -6,8 +6,20 @@ on:
   # Deploy remains restricted to master pushes by its own job condition.
   # Compose pushes serve Integrator; they do not replace lane PR validation.
   # Guard: frontend/e2e/contract/ciTriggerCoverage.contract.test.js.
+  #
+  # #12252 (79-B part A): a run tests a COMMIT, so only events that change the
+  # commit run CI. `labeled`, `unlabeled` and `edited` are not triggers: they
+  # created runs on an unchanged commit (169 of 360 PR runs on Nov 6), and a
+  # label or a description edit cancelled the run in flight. They create no run
+  # object at all, so no skipped check run can ever land on a commit after a
+  # real result (a skipped job is a passing required check). Two costs, chosen
+  # (Fable, Nov 7): a RETARGETED PR gets no run until its next commit or a
+  # close+reopen (#1943; AGENTS.md says so), and an `eval-candidate` label added
+  # after `opened` no longer cancels that first run (#12235's skip still holds
+  # for every later event; the Tier-B policy still blocks the merge).
+  # Guarded by backend/tests/test_ci_triggers_12252.py.
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+    types: [opened, synchronize, reopened]
   push:
     branches: [master, 'integrator/compose-**']
 
