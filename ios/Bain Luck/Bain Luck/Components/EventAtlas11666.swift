@@ -268,26 +268,51 @@ struct EventAtlasPregameMarkView11666: View {
     }
 }
 
-/// Self-contained E1 Atlas headline row mounted in `EventDetailView.heroSection`
+/// Self-contained E1/E5 Atlas headline row mounted in `EventDetailView.heroSection`
 /// when `ReleaseSurfaces.isEventPageAtlasEnabled()` is true.
 struct EventAtlasHeadlineControlRow11666: View {
     let event: EventDetail
     let observedAt: Date?
+    var confirmedAtShown: Date? = nil
     let liveStatus: LiveUpdateStatus
+    var ekgTracker: EkgTracker = .empty
+    var asOf: Date? = nil
 
     @State private var activeSheet: EventAtlasDetailsSheetModel11666?
 
     var body: some View {
+        let now = asOf ?? Date()
         let isFinished = EventState.isFinished(event.status)
         let isOpening = event.currentOdds.map {
             OpeningLineHero.resolve($0, for: event).isOpeningLine
         } ?? false
+        let effectiveObservedAt = EventAtlasLivePath11666.resolveHeadlineObservedAt(
+            EventAtlasLivePath11666.HeadlineObservedAtInput(
+                acceptedPriceClock: observedAt,
+                confirmedAtShown: confirmedAtShown,
+                freshestSourceStamp: EventAtlasLivePath11666.freshestSourceTimestamp(in: event.winProbabilitySources),
+                currentOddsCapturedAt: event.currentOdds?.capturedAt?.asDate
+            )
+        )
         let phase = EventHeadlinePhase9483.resolve(
             status: event.status,
             commenceTime: event.commenceTime?.asDate,
             isOpeningLine: isOpening,
-            observedAt: observedAt,
-            deliveryInterrupted: liveStatus == .interrupted
+            observedAt: effectiveObservedAt,
+            deliveryInterrupted: liveStatus == .interrupted,
+            now: now
+        )
+        let venueSettledVerdict = EventState.showsVenueSettledVerdict(
+            event.status,
+            venueSettled: event.venueSettled,
+            commenceTime: event.commenceTime?.asDate,
+            now: now
+        )
+        let showsEkg = EventAtlasLivePath11666.ekgDraws(
+            eventStatus: event.status,
+            finished: isFinished,
+            venueSettledVerdict: venueSettledVerdict,
+            isOpeningLine: isOpening
         )
         let settledBadge: EventAtlasHeadline11666.SettledBadge? = isFinished
             ? EventAtlasHeadline11666.settledBadge(
@@ -335,11 +360,19 @@ struct EventAtlasHeadlineControlRow11666: View {
                 }
             }
             Spacer(minLength: 0)
+            if showsEkg {
+                let presentation = EkgHeartbeat.present(ekgTracker, status: liveStatus, now: now)
+                Circle()
+                    .fill(EkgHeartbeatView.tone(presentation.mode))
+                    .frame(width: 6, height: 6)
+                    .accessibilityLabel(presentation.label)
+                    .accessibilityIdentifier("atlas-ekg-indicator-11666")
+            }
             Button {
                 activeSheet = EventAtlasDetailsSheetModel11666.fromHeadline(
                     event: event,
                     phase: phase,
-                    observedAt: observedAt,
+                    observedAt: effectiveObservedAt,
                     liveStatus: liveStatus
                 )
             } label: {

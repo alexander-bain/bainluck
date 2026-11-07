@@ -2231,8 +2231,11 @@ struct EventDetailView: View {
             if ReleaseSurfaces.isEventPageAtlasEnabled() {
                 EventAtlasHeadlineControlRow11666(
                     event: event,
-                    observedAt: vm.displayedProbabilityAgeClock(event),
-                    liveStatus: vm.liveUpdateStatus)
+                    observedAt: vm.displayedProbabilityObservedAt(event),
+                    confirmedAtShown: vm.confirmedAtCoveringShown(event),
+                    liveStatus: vm.liveUpdateStatus,
+                    ekgTracker: ekgTracker,
+                    asOf: displayAsOf)
             }
         }
         // #9483 v476 — on the adopted pair the hero is the top of ONE card with
