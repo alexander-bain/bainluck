@@ -235,16 +235,11 @@ export function buildMlbHomeRunCard(opts: {
       const contributors = Array.isArray(expectation.contributors) ? expectation.contributors : [];
       const sourceCount = Math.max(1, contributors.length);
       const venueGrade = asObj(q.venue_grade);
-      const venueResult: MlbVenueResult =
-        finalCount !== null
-          ? finalCount >= 1
-            ? "won"
-            : "lost"
-          : resolveMlbRowVenueResult(
-              typeof venueGrade?.is_winner === "boolean" ? venueGrade.is_winner : null,
-              asStr(venueGrade?.resolution_source),
-              phase,
-            );
+      const venueResult: MlbVenueResult = resolveMlbRowVenueResult(
+        typeof venueGrade?.is_winner === "boolean" ? venueGrade.is_winner : null,
+        asStr(venueGrade?.resolution_source),
+        phase,
+      );
 
       entries.push({
         id: `mlb-hr:${questionKey}`,

@@ -46,8 +46,10 @@ BACKEND_TESTS = REPO / "backend" / "tests"
 ROSTER = REPO / ".github" / "ci-native-backend-readers.txt"
 ROSTER_SCRIPT = REPO / ".github" / "scripts" / "ci-native-backend-readers.sh"
 
-# #10708 is INACTIVE: workflow normalization retains full backend/DB coverage.
-# Direct text signals are an aid, not a complete reader/dependency boundary.
+# #10708 is ACTIVE for pure-ios/ pull requests (Alex 77: A). Direct text signals
+# are an aid, not a complete reader/dependency boundary: these three holds are the
+# residue 77-A accepted, which is why anything the roster and the text scan
+# cannot attribute is the reason to add a roster entry, and push runs stay full.
 NATIVE_ACTIVATION_HOLDS = (
     "transitive test/helper/conftest/script and unresolved dynamic readers",
     "indirect database target dependencies",
@@ -502,9 +504,13 @@ class TestNativeInactivePreparation:
         assert "tests/test_ci_cross_tier_manifest.py" in _roster_paths()
         assert len(NATIVE_ACTIVATION_HOLDS) == 3
 
-    def test_workflow_still_normalizes_native_to_full(self):
+    def test_workflow_accepts_native_only_for_a_pull_request_with_a_test_set(self):
+        # #10708: the executed contract is in test_ci_native_scope_10708.py; this
+        # pins the three fall-backs to full in the decide step's text.
         workflow = (REPO / ".github/workflows/ci.yml").read_text()
-        assert "full|frontend) ;;" in workflow
+        assert "full|frontend) ;;" in workflow and "            native)\n" in workflow
+        assert "push runs are always full\"; SCOPE=full" in workflow
+        assert "native test set failed or empty — defaulting to full\"; SCOPE=full" in workflow
         assert "unparseable scope" in workflow and "SCOPE=full ;;" in workflow
 
     def test_required_reviewed_native_inputs_and_glob_are_present(self):

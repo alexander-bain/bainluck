@@ -17,6 +17,25 @@ def pytest_collection_finish(session):
     gc.freeze()
 
 
+def rerun_annotation(report) -> str | None:
+    """Decide 55-A: the GitHub annotation for a test the shared tail re-ran once.
+
+    `pytest-rerunfailures` (installed only in CI's shared-tail group) reports a
+    failed first attempt with outcome "rerun". A pass on the retry would
+    otherwise read as a clean green, so each retry becomes a ::warning:: on the
+    run's summary page: the flake stays visible, and a second failure still fails.
+    """
+    if getattr(report, "outcome", None) != "rerun":
+        return None
+    return f"::warning title=Retried once (55-A)::{report.nodeid} failed and was re-run once"
+
+
+def pytest_runtest_logreport(report):
+    line = rerun_annotation(report)
+    if line:
+        print("\n" + line, flush=True)
+
+
 @pytest.fixture
 def offline_redis_no_retry_sleep(monkeypatch):
     """Skip Redis jitter only in explicitly opted-in offline route contracts.

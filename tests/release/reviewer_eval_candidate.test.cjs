@@ -13,9 +13,14 @@ function pr(number = 12169) {
     base: {ref: 'master'}, labels: [{name: 'tier-b'}, {name: study.LABEL}],
     head: {sha: head, ref: study.registeredBranch(number), repo: {full_name: study.REPOSITORY}}};
 }
-function context(candidate = pr(), eventName = 'pull_request_target') {
+function context(candidate = pr(), eventName = 'workflow_run') {
   return {repo, actor: repo.owner, eventName,
-    payload: {action: 'labeled', label: {name: study.LABEL}, pull_request: candidate}};
+    payload: {action: 'completed', pull_request: candidate, workflow_run: {
+      name: 'CI', path: '.github/workflows/ci.yml', event: 'pull_request',
+      status: 'completed', conclusion: 'skipped', head_sha: head,
+      head_repository: {full_name: study.REPOSITORY},
+      actor: {login: repo.owner}, triggering_actor: {login: repo.owner},
+    }}};
 }
 
 test('exactly the 45 planned case/pass branches are registered, with no answer key', () => {
@@ -40,8 +45,22 @@ test('unlabelled production PRs do not enter the study exception', () => {
 
 test('wrong author, head, branch, base, repo, state or event fails before qualification', () => {
   for (const mutate of [
-    (p, c) => c.actor = 'someone-else', (p, c) => c.eventName = 'pull_request',
-    (p, c) => c.payload.action = 'edited', (p, c) => c.payload.label.name = 'other',
+    (p, c) => c.payload.workflow_run.actor.login = 'someone-else',
+    (p, c) => c.payload.workflow_run.triggering_actor.login = 'someone-else',
+    (p, c) => delete c.payload.workflow_run.actor,
+    (p, c) => delete c.payload.workflow_run.triggering_actor,
+    (p, c) => c.eventName = 'pull_request',
+    (p, c) => c.eventName = 'pull_request_target',
+    (p, c) => c.payload.action = 'requested',
+    (p, c) => c.payload.workflow_run.name = 'other',
+    (p, c) => c.payload.workflow_run.path = '.github/workflows/other.yml',
+    (p, c) => c.payload.workflow_run.event = 'push',
+    (p, c) => c.payload.workflow_run.status = 'in_progress',
+    (p, c) => c.payload.workflow_run.conclusion = 'success',
+    (p, c) => c.payload.workflow_run.conclusion = 'failure',
+    (p, c) => c.payload.workflow_run.conclusion = 'cancelled',
+    (p, c) => c.payload.workflow_run.head_sha = 'b'.repeat(40),
+    (p, c) => c.payload.workflow_run.head_repository.full_name = 'fork/bainluck',
     (p, c) => c.repo = {...repo, owner: 'fork-owner'},
     p => p.state = 'closed', p => p.draft = false, p => p.user.login = 'other',
     p => p.base.ref = 'another-branch', p => p.head.repo.full_name = 'fork/bainluck',
@@ -74,14 +93,18 @@ function workflowScript(name) {
     .map(line => line.slice(12)).join('\n');
 }
 const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
-async function runStep(name, candidate, c, ciState = 'success', reviews = []) {
+async function runStep(name, candidate, c, ciState = 'success', reviews = [], options = {}) {
   const output = {}, calls = [], failures = [], notices = [];
   const core = {setOutput: (k, v) => output[k] = v, setFailed: text => failures.push(text),
     notice: text => notices.push(text), info: () => {}};
   const github = {rest: {pulls: {get: async () => {calls.push('pr'); return {data: candidate};},
     listReviews: () => {}}, actions: {listWorkflowRunsForRepo: () => {}},
-    checks: {listForRef: () => {}}, repos: {listCommitStatusesForRef: () => {}}}};
+    checks: {listForRef: () => {}}, repos: {listCommitStatusesForRef: () => {},
+      listPullRequestsAssociatedWithCommit: () => {}}}};
   github.paginate = async fn => {
+    if (fn === github.rest.repos.listPullRequestsAssociatedWithCommit) {
+      calls.push('associated-prs'); return [candidate];
+    }
     if (fn === github.rest.pulls.listReviews) {calls.push('reviews'); return reviews;}
     if (fn === github.rest.actions.listWorkflowRunsForRepo) {calls.push('ci-runs'); return [{id: 1, path: '.github/workflows/ci.yml', check_suite_id: 10}];}
     if (fn === github.rest.checks.listForRef) {calls.push('ci-checks'); return [{id: 2, name: 'backend-tests', status: ciState === 'pending' ? 'queued' : 'completed', conclusion: ciState, check_suite: {id: 10}}];}
@@ -101,7 +124,7 @@ async function runStep(name, candidate, c, ciState = 'success', reviews = []) {
   };
   await new AsyncFunction('github', 'context', 'core', 'require', 'process', workflowScript(name))(
     github, c, core, trustedRequire, {env: {REVIEW_PR: String(candidate.number), REVIEW_HEAD: head,
-      EVAL_CANDIDATE: study.hasLabel(candidate) ? 'true' : 'false'}});
+      EVAL_CANDIDATE: options.evalCandidate ?? (study.hasLabel(candidate) ? 'true' : 'false')}});
   return {output, calls, failures, notices};
 }
 
@@ -113,6 +136,47 @@ test('the installed selector and qualification step admit a registered draft wit
   assert.equal(qualified.output.ready, 'true');
   assert.deepEqual(qualified.calls, ['trusted-study-policy', 'pr', 'reviews']);
   assert.match(qualified.notices[0], /bypassed under 75-A.*\$0\.40/);
+});
+
+test('a skipped CI completion without the study label never selects a reviewer', async () => {
+  const candidate = pr(12235); candidate.draft = false;
+  candidate.labels = [{name: 'tier-b'}];
+  const selected = await runStep('Resolve the current eligible PR', candidate, context(candidate));
+  assert.deepEqual(selected.output, {});
+  assert.ok(!selected.calls.includes('trusted-study-policy'));
+  assert.ok(!selected.calls.includes('required-ci-policy'));
+});
+
+test('a successful completion cannot use the labelled CI exception', async () => {
+  const candidate = pr(), c = context(candidate);
+  c.payload.workflow_run.conclusion = 'success';
+  const selected = await runStep('Resolve the current eligible PR', candidate, c);
+  assert.deepEqual(selected.output, {});
+  assert.ok(!selected.calls.includes('trusted-study-policy'));
+});
+
+test('revoking the label after selection stops the paid qualification', async () => {
+  const candidate = pr(), c = context(candidate);
+  const selected = await runStep('Resolve the current eligible PR', candidate, c);
+  assert.equal(selected.output.eval_candidate, 'true');
+  candidate.labels = [{name: 'tier-b'}];
+  const qualified = await runStep('Wait for green CI at this head', candidate, c,
+    'success', [], {evalCandidate: selected.output.eval_candidate});
+  assert.equal(qualified.output.ready, undefined);
+  assert.ok(!qualified.calls.includes('required-ci-policy'));
+});
+
+test('adding the label after ordinary selection cannot waive the normal CI gate', async () => {
+  const candidate = pr(12235); candidate.draft = false;
+  candidate.labels = [{name: 'tier-b'}];
+  const c = context(candidate, 'pull_request');
+  const selected = await runStep('Resolve the current eligible PR', candidate, c);
+  assert.equal(selected.output.eval_candidate, undefined);
+  candidate.labels.push({name: study.LABEL});
+  const qualified = await runStep('Wait for green CI at this head', candidate, c,
+    'success', [], {evalCandidate: 'false'});
+  assert.equal(qualified.output.ready, undefined);
+  assert.ok(!qualified.calls.includes('required-ci-policy'));
 });
 
 test('duplicate or changed study inputs cannot start the paid action through the real steps', async () => {
@@ -149,14 +213,19 @@ test('an APPROVE on a labelled input cannot satisfy the actual merge-policy publ
   const github = {rest: {pulls: {get: async () => ({data: candidate}), listReviews: () => {}},
     checks: {listForRef: () => {}, create: async result => published.push(result)}},
     paginate: async fn => fn === github.rest.pulls.listReviews ? approved : []};
-  await evaluate(github, {...context(candidate), payload: {pull_request: {number: candidate.number}}});
+  await evaluate(github, {...context(candidate, 'pull_request_target'),
+    payload: {pull_request: {number: candidate.number}}});
   assert.equal(published.at(-1).conclusion, 'failure');
 });
 
 test('native cap, trusted policy, exact checkout and CI skip are wired in the workflows', () => {
   const review = fs.readFileSync(path.join(root, '.github/workflows/tier-b-review.yml'), 'utf8');
   const ci = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');
-  assert.match(review, /pull_request_target:\n\s+types: \[labeled, synchronize, reopened\]/);
+  assert.doesNotMatch(review, /^  pull_request_target:/m);
+  assert.match(review, /workflow_run:\n\s+workflows: \[CI\]\n\s+types: \[completed\]/);
+  assert.match(review, /if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'skipped'/);
+  assert.match(review, /github.event.workflow_run.actor.login == github.repository_owner/);
+  assert.match(review, /github.event.workflow_run.triggering_actor.login == github.repository_owner/);
   assert.match(review, /ref: \$\{\{ github.workflow_sha \}\}\n\s+path: _review_admission/);
   assert.match(review, /ref: \$\{\{ steps.select.outputs.head \}\}/);
   assert.match(review, /--model claude-sonnet-5-5/);

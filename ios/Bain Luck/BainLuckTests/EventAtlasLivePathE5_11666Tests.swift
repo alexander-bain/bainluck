@@ -331,6 +331,61 @@ final class EventAtlasLivePathE5_11666Tests: XCTestCase {
         XCTAssertEqual(sheet.primaryReadingLabel, "Opening line")
         XCTAssertEqual(sheet.primaryReadingValue, "Packers 40% · Bears 60%")
         XCTAssertNil(sheet.pregameBaseline, "opening line compared with itself says nothing")
+
+        let now = try XCTUnwrap("2026-11-06T05:00:00Z".asDate)
+        XCTAssertNil(
+            EventAtlasHeadlineControlRow11666.rowOverlaidReading(
+                event: openingEvent,
+                preview: nil,
+                now: now
+            ),
+            "opening-line headline row withholds tenths overlay so row and details sheet agree"
+        )
+    }
+
+    func testVenueSettledHeadlineRowWithholdsTenthsOverlayAndShowsSettledResult() throws {
+        let venueSettledJSON = """
+        {
+            "id": 15342999,
+            "sport": "americanfootball_nfl",
+            "away_team": "Cincinnati Bengals",
+            "home_team": "Baltimore Ravens",
+            "commence_time": "2026-11-06T01:15:00Z",
+            "status": "live",
+            "venue_settled": true,
+            "hero_settled_result": "home",
+            "hero_probability_source": "blend",
+            "hero_probability": 0.99,
+            "hero_probability_away": 0.01,
+            "hero_probability_observed_at": "2026-11-06T04:55:00Z",
+            "current_odds": {
+                "home_probability": 0.99,
+                "away_probability": 0.01,
+                "captured_at": "2026-11-06T04:55:00Z"
+            }
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let venueSettledEvent = try decoder.decode(EventDetail.self, from: Data(venueSettledJSON.utf8))
+        let now = try XCTUnwrap("2026-11-06T05:00:00Z".asDate)
+
+        XCTAssertNil(
+            EventAtlasHeadlineControlRow11666.rowOverlaidReading(
+                event: venueSettledEvent,
+                preview: nil,
+                now: now
+            ),
+            "venue-settled event withholds live tenths win-chance overlay"
+        )
+        let sheet = EventAtlasDetailsSheetModel11666.fromHeadline(
+            event: venueSettledEvent,
+            phase: nil,
+            observedAt: now,
+            liveStatus: .live
+        )
+        XCTAssertEqual(sheet.primaryReadingLabel, "Result")
+        XCTAssertEqual(sheet.primaryReadingValue, "Ravens Won")
     }
 
     func testWiresResolveHeadlineObservedAtAndEkgInEventAtlasAndEventDetailView() throws {
