@@ -33,6 +33,10 @@ The rail centralizes these so no sentinel re-implements (and re-breaks) them:
     UNKNOWN no-op (``dedup_unknown_no_op``) — it never files or closes blind. Create
     is serialized per fingerprint with a Redis idempotency claim plus a final
     re-read so a beat+manual overlap cannot file the same fingerprint twice.
+  * ``post_report`` — the report path (#12231): one comment per period on a
+    NAMED issue (a sentinel's report-only weeks), never a filing. Idempotent by
+    a marker line read back from the issue's own comments plus a Redis claim;
+    an unreadable comment list is an explicit no-op, never a blind post.
 
 Filing defaults to ``priority:p2``. A sentinel that wants P1/P0 passes it in its
 ``labels`` with threshold evidence in the body; the rail NEVER edits the labels of
@@ -576,3 +580,135 @@ def reconcile_many(
         kwargs.setdefault("open_issues", open_issues)
         out.append(reconcile_issue(**kwargs))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Report path — a periodic count on a NAMED issue, never a filing (#12231).
+# ---------------------------------------------------------------------------
+#: Pages of an issue's comments read back for a period's marker. With ``since``
+#: set to the period's start, a weekly report reads one page.
+_REPORT_COMMENT_MAX_PAGES = 10
+
+
+def report_marker_line(marker_key: str, period_key: str) -> str:
+    """The line that makes "one post per period" provable from the issue itself.
+
+    Same shape as a fingerprint declaration but a different annotation, so
+    ``declared_fingerprints`` never reads a report as owning an alert.
+    """
+    return f"`{marker_key}:{period_key}`  (report period — one post per period)"
+
+
+def _report_already_posted(
+    issue: int, marker_line: str, since: str | None
+) -> tuple[bool | None, str | None]:
+    """Whether a comment on ``issue`` already carries ``marker_line``.
+
+    ``(True, url)`` when one does; ``(False, None)`` when every comment was read
+    and none does; ``(None, error)`` when the list could not be read in full.
+    The third is never the second: a truncated or failed read cannot prove the
+    week has no post (the C37 P1 "empty list means both" lesson, applied here).
+    """
+    from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    params: dict[str, Any] = {"per_page": _PER_PAGE}
+    if since:
+        params["since"] = since
+    try:
+        for page in range(1, _REPORT_COMMENT_MAX_PAGES + 1):
+            resp = httpx.get(
+                f"https://api.github.com/repos/{REPO}/issues/{issue}/comments",
+                headers=headers,
+                params={**params, "page": page},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            batch = resp.json()
+            if not isinstance(batch, list):
+                return None, "comment list was not a list"
+            for comment in batch:
+                body = (comment or {}).get("body") or ""
+                if any(line.strip() == marker_line for line in body.splitlines()):
+                    return True, comment.get("html_url")
+            if len(batch) < _PER_PAGE:
+                return False, None
+    except Exception as exc:
+        logger.warning("sentinel_filing: report read-back failed on #%d: %s", issue, exc)
+        return None, f"comment list failed: {str(exc)[:160]}"
+    return None, f"comment list truncated at {_REPORT_COMMENT_MAX_PAGES} pages"
+
+
+def post_report(
+    *,
+    issue: int,
+    marker_key: str,
+    period_key: str,
+    body: str,
+    since: str | None = None,
+) -> dict:
+    """Post one periodic report as a comment on a named issue: the rail's report path.
+
+    #12231 (Fable's answer 1: A, Nov 6, 9:28 PM). A sentinel in its report-only
+    weeks posts counts once per period on a named issue (the grouping sentinel
+    posts on #12221) and **files nothing**. This function never creates, closes,
+    relabels or edits an issue.
+
+    One post per period, proven three ways:
+
+    * the issue's own comments are read back for ``report_marker_line`` (since
+      ``since``, the period's start, when given). A re-run, a manual run, or a
+      run after a Redis flush finds the earlier post and returns
+      ``already_posted``;
+    * a Redis claim (the rail's ``_claim_fingerprint``, keyed ``report:<marker>``)
+      serializes two runs that start together. The loser returns ``claim_lost``;
+    * the winner re-reads before posting. A failed re-read falls back to the
+      first read rather than abort a legitimate post, as ``reconcile_issue``
+      does for a create.
+
+    A comment list that cannot be read in full returns ``read_unknown_no_op``.
+    It never posts blind. The marker line is appended when the body lacks it.
+
+    Returns a dict; ``action`` ∈ {``posted``, ``already_posted``, ``claim_lost``,
+    ``read_unknown_no_op``, ``skipped_no_token``, ``comment_failed``}.
+    """
+    from app.tasks import bug_report_github as gh
+
+    result: dict[str, Any] = {"issue": issue, "marker": marker_key, "period": period_key}
+    if not gh.GITHUB_TOKEN:
+        result["action"] = "skipped_no_token"
+        return result
+
+    line = report_marker_line(marker_key, period_key)
+    text = body if any(ln.strip() == line for ln in body.splitlines()) else f"{body.rstrip()}\n\n{line}\n"
+
+    posted, info = _report_already_posted(issue, line, since)
+    if posted is None:
+        result.update(action="read_unknown_no_op", error=info)
+        return result
+    if posted:
+        result.update(action="already_posted", url=info)
+        return result
+
+    claim = _claim_fingerprint(f"report:{marker_key}", period_key)
+    if claim == "lost":
+        result.update(action="claim_lost", note="another run holds this period's report claim")
+        return result
+    if claim == "won":
+        again, again_info = _report_already_posted(issue, line, since)
+        if again:
+            result.update(action="already_posted", url=again_info)
+            return result
+
+    try:
+        gh.comment_on_issue(issue, text)
+    except Exception as exc:
+        logger.warning("sentinel_filing: report post failed on #%d: %s", issue, exc)
+        result.update(action="comment_failed", error=str(exc)[:200])
+        return result
+    result["action"] = "posted"
+    return result
