@@ -2106,12 +2106,28 @@ def _fold_sponsor_split_tournaments(
     return folded, aliases
 
 
+def _is_three_way_team_winner(market) -> bool:
+    """An exclusive cup winner field names two distinct teams and Tie."""
+    names = [o.name.strip() for o in market.outcomes]
+    return (
+        getattr(market, "mutually_exclusive", None) is True
+        and len(names) == 3
+        and "tie" in {name.lower() for name in names}
+        and is_team_match_play_key(_normalize_tournament(getattr(market, "name", "")))
+        and len(
+            {
+                canonical_team_side_name(name)
+                for name in names
+                if is_team_side_name(name)
+            }
+        )
+        == 2
+    )
+
+
 def _is_h2h_matchup(market) -> bool:
     """Check if a market is a head-to-head matchup (exactly 2 golfer outcomes summing to ~1.0)."""
-    if is_team_match_play_key(_normalize_tournament(getattr(market, "name", ""))) and any(
-        o.name.strip().lower() in ("tie", "field", "other", "the field")
-        for o in market.outcomes
-    ):
+    if _is_three_way_team_winner(market):
         # A cup's third outcome belongs in its winner field and divisor.
         return False
     valid = [
@@ -2378,9 +2394,17 @@ def _dedup_winner_markets(tourn_key: str, tourn_markets: list) -> tuple[dict[str
     """
     source_groups: dict[str, list[tuple[int, int]]] = defaultdict(list)
     dedup_candidates: set[int] = set()
+    team_winner_ids = {m.id for m in tourn_markets if _is_three_way_team_winner(m)}
 
     for m in tourn_markets:
         if _NON_WINNER_MARKET_RE.search(m.name):
+            continue
+        dedup_candidates.add(m.id)
+        if team_winner_ids and m.id not in team_winner_ids:
+            logger.info(
+                "Golf cup %s: winner market %s withheld: incompatible_outcome_set",
+                tourn_key, m.id,
+            )
             continue
         src = m.source or "unknown"
         golfer_count = sum(
@@ -2390,7 +2414,6 @@ def _dedup_winner_markets(tourn_key: str, tourn_markets: list) -> tuple[dict[str
             and not _PROP_OUTCOME_RE.search(o.name.strip())
         )
         source_groups[src].append((m.id, golfer_count))
-        dedup_candidates.add(m.id)
 
     source_best: dict[str, int] = {}
     for src, candidates in source_groups.items():
@@ -3501,7 +3524,6 @@ async def get_golf(
         team_format_withheld = 0
         winner_field_exclusive = True
         winner_field_complete = True
-        team_match_play = is_team_match_play_key(tourn_key)
 
         source_best, dedup_candidates = _dedup_winner_markets(tourn_key, tourn_markets)
 
@@ -3634,6 +3656,7 @@ async def get_golf(
                 )
 
             # Aggregate winner outcomes
+            team_match_play = _is_three_way_team_winner(market)
             winner_field_exclusive &= getattr(market, "mutually_exclusive", None) is True
             winner_field_complete &= all(
                 o.current_probability is not None and not _is_placeholder_price(o, source)
