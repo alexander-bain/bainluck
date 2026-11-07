@@ -183,8 +183,9 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
             AllMarketsCatalogView9483.priceText(stale, status: "final", atlasEnabled: true)
         )
 
-        // Settled rows with an authoritative OutcomeVerdict print "✓ Won" / "✗ Lost" under Atlas,
-        // while remaining nil when Atlas is off or when no authoritative verdict exists.
+        // Decide 80 (A): settled catalog rows ask OutcomeVerdict as for an open market
+        // (marketResolved: false) and print "✓ Won" only on a provable authoritative win,
+        // leaving unconfirmed or false-graded rows nil (never "✗ Lost").
         let settledWon = QuestionCatalog9483.Outcome(
             label: "Over 47.5",
             threshold: 47.5,
@@ -205,13 +206,77 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
             AllMarketsCatalogView9483.priceText(settledWon, status: "final", atlasEnabled: true),
             "✓ Won"
         )
-        XCTAssertEqual(
-            AllMarketsCatalogView9483.priceText(settledLost, status: "final", atlasEnabled: true),
-            "✗ Lost"
+        XCTAssertNil(
+            AllMarketsCatalogView9483.priceText(settledLost, status: "final", atlasEnabled: true)
         )
         XCTAssertNil(
             AllMarketsCatalogView9483.priceText(settledWon, status: "final", atlasEnabled: false)
         )
+
+        let payload: [String: Any] = [
+            "event_id": 11666,
+            "home_team": "BOS",
+            "away_team": "NYY",
+            "status": "completed",
+            "totals": [], "player_props": [], "team_totals": [], "spreads": [],
+            "period_markets": [], "matchups": [],
+            "other": [
+                [
+                    "is_winner": true,
+                    "resolution_source": "api_settlement",
+                    "market_name": "Will there be extra innings?",
+                    "outcome_name": "Yes",
+                    "probability": 0.12,
+                    "source": "kalshi",
+                ],
+                [
+                    "is_winner": false,
+                    "resolution_source": "clob_never_graded",
+                    "market_name": "Will there be extra innings?",
+                    "outcome_name": "No",
+                    "probability": 0.88,
+                    "source": "kalshi",
+                ],
+                [
+                    "is_winner": false,
+                    "resolution_source": "api_settlement",
+                    "market_name": "Will there be extra innings?",
+                    "outcome_name": "Alt No",
+                    "probability": 0.88,
+                    "source": "kalshi",
+                ],
+            ],
+        ]
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let decodedMarkets = try? decoder.decode(
+            GameMarketsResponse.self,
+            from: JSONSerialization.data(withJSONObject: payload)
+        ) else {
+            XCTFail("Failed to decode GameMarketsResponse fixture")
+            return
+        }
+        let catalogGroups = QuestionCatalog9483.build(
+            decodedMarkets,
+            status: "completed"
+        )
+        let builtOutcomes = catalogGroups.first?.outcomes ?? []
+        XCTAssertEqual(builtOutcomes.count, 3)
+        if builtOutcomes.count == 3 {
+            XCTAssertEqual(builtOutcomes[0].verdict, OutcomeVerdict.won)
+            XCTAssertEqual(
+                AllMarketsCatalogView9483.priceText(builtOutcomes[0], status: "completed", atlasEnabled: true),
+                "✓ Won"
+            )
+            XCTAssertNil(builtOutcomes[1].verdict)
+            XCTAssertNil(
+                AllMarketsCatalogView9483.priceText(builtOutcomes[1], status: "completed", atlasEnabled: true)
+            )
+            XCTAssertNil(builtOutcomes[2].verdict)
+            XCTAssertNil(
+                AllMarketsCatalogView9483.priceText(builtOutcomes[2], status: "completed", atlasEnabled: true)
+            )
+        }
     }
 
     func testVerdictLabelsAndVenueDisagreementPending11666() {

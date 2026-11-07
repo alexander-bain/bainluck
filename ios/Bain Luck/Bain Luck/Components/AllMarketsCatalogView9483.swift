@@ -97,15 +97,15 @@ struct AllMarketsCatalogView9483: View, Equatable {
     ) -> String? {
         if let p = outcome.probability { return formatProbability(p) }
         if SettledQuote.isSettled(status) {
-            if atlasEnabled, let v = outcome.verdict {
-                return EventAtlasStates11666.verdictLabel(v, atlasEnabled: true)
+            if atlasEnabled, outcome.verdict == .won {
+                return EventAtlasStates11666.verdictLabel(.won, atlasEnabled: true)
             }
             return nil
         }
         switch outcome.absence {
         case .settled:
-            if atlasEnabled, let v = outcome.verdict {
-                return EventAtlasStates11666.verdictLabel(v, atlasEnabled: true)
+            if atlasEnabled, outcome.verdict == .won {
+                return EventAtlasStates11666.verdictLabel(.won, atlasEnabled: true)
             }
             return nil
         case .periodFinished: return periodFinished

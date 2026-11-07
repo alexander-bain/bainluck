@@ -212,11 +212,15 @@ nonisolated enum QuestionCatalog9483 {
                                     venue: SourceLabels.label(for: row.source),
                                     period: row.period, outcomes: [])
             }
+            // Decide 80 (A): a market-level resolution status is not served beside
+            // catalog rows, so ask OutcomeVerdict as for an open market
+            // (marketResolved: false): only a provable authoritative win is .won;
+            // never mint .lost from a row grade alone.
             let verdict = settled
                 ? OutcomeVerdict.verdict(
                     isWinner: row.isWinner,
                     resolutionSource: row.resolutionSource,
-                    marketResolved: true
+                    marketResolved: false
                 )
                 : nil
             groups[key]?.outcomes.append(Outcome(
