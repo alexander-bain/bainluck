@@ -63,11 +63,13 @@ def test_a_complete_answer_keeps_the_ruled_ceiling(state):
 def test_a_warmer_rebuild_keeps_the_full_ttl_even_when_thin(state):
     """The head is rebuilt every pass, and `residency_invariant()` needs 160 s of
     life. A 30 s head entry would re-open D81's hole for exactly the head terms
-    that are always thin (`f1 winner`)."""
+    that are always thin (`f1 winner`). W-1 (2026-11-06): the warmer's full life
+    is `SEARCH_HEAD_WARMER_TTL_SECONDS` (600 s); readers keep 180 s."""
     from app.tasks.search_head_warmer import residency_invariant
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
     ttl = search_response_ttl_seconds(state, warmer_rebuild=True)
-    assert ttl == SEARCH_RESPONSE_TTL_SECONDS
+    assert ttl == SEARCH_HEAD_WARMER_TTL_SECONDS
     ok, why = residency_invariant(ttl_s=ttl)
     assert ok, why
 

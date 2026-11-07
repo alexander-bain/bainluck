@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import EvalsSection from "@/components/evals/EvalsSection";
 import Figure from "@/components/evals/Figure";
 import ResultChip from "@/components/evals/ResultChip";
@@ -12,14 +14,16 @@ const REPO = "https://github.com/alexander-bain/bainluck";
 
 /**
  * "The test library" — the scoreboard's families in plain words, with the
- * recorded run's time and commit, and the golden set's count and floor.
+ * recorded run's time and commit, and the answer key's count and floor.
+ * `children` render last, inside the section: the page puts the planted-change
+ * meter there, since it grades this library's own cases.
  *
  * A family's recorded run shows passed and failed always (skipped only when
  * there are skips), and how many of its checks have no recorded run, so a
  * family that is mostly unrecorded never reads as all green. A failure would
  * also put a FAIL chip beside its name.
  */
-export default function TestLibrary({ board }: { board: Scoreboard }) {
+export default function TestLibrary({ board, children }: { board: Scoreboard; children?: ReactNode }) {
   const truth = libraryTruth(board);
   const golden: MeasuredTruth = { ...truth, source: sourceLink("golden-baseline") };
   const day = pacificDayLabel(truth.asOf);
@@ -120,6 +124,7 @@ export default function TestLibrary({ board }: { board: Scoreboard }) {
             {LIBRARY_COPY.floorAfter}
           </p>
         </div>
+        {children}
       </div>
     </EvalsSection>
   );

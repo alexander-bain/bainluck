@@ -53,9 +53,11 @@ def test_both_arms_complete_keeps_the_ceiling(split, outcome):
 @pytest.mark.parametrize("split", _THIN + _COMPLETE)
 def test_the_warmer_keeps_the_full_ttl_even_with_a_thin_split_arm(split):
     from app.tasks.search_head_warmer import residency_invariant
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
+    # W-1 (2026-11-06): the warmer's full life is 600 s; readers keep 180 s.
     ttl = search_response_ttl_seconds("budget_exceeded", warmer_rebuild=True, futures_split_arm=split)
-    assert ttl == SEARCH_RESPONSE_TTL_SECONDS
+    assert ttl == SEARCH_HEAD_WARMER_TTL_SECONDS
     ok, why = residency_invariant(ttl_s=ttl)
     assert ok, why
 

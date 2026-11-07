@@ -40,6 +40,12 @@ SCOPE_RUNS = (
 )
 REUSE = "needs.change-scope.outputs.reuse != 'true'"
 LIVE = "needs.change-scope.outputs.live != 'true'"
+# 75-A: only explicitly labelled never-merge study inputs skip this runner.
+SEARCH_RECALL = (
+    "${{ !cancelled() && "
+    "!contains(github.event.pull_request.labels.*.name, 'eval-candidate') && "
+    f"{SCOPE_RUNS} && {LIVE} }}}}"
+)
 RUNS = f"{SCOPE_RUNS} && {REUSE} && {LIVE}"
 REUSED = "needs.change-scope.outputs.reuse == 'true'"
 COMPOSE_RECORD = (
@@ -202,9 +208,7 @@ def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
             "matrix"
         ), f"{name} became a matrix job; a job-level skip would then drop its required contexts"
         expected = (
-            f"${{{{ !cancelled() && {SCOPE_RUNS} && {LIVE} }}}}"
-            if name == "search-recall"
-            else f"{SCOPE_RUNS} && {LIVE}"
+            SEARCH_RECALL if name == "search-recall" else f"{SCOPE_RUNS} && {LIVE}"
         )
         assert job.get("if") == expected, (name, job.get("if"))
 
