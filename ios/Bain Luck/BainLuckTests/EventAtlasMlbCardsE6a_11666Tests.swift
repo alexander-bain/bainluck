@@ -66,6 +66,37 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
         let keyItems = EventAtlasMlbCards11666.markKey(for: wrapped)
         XCTAssertEqual(keyItems.map(\.label), ["Pregame", "Official final", "✓ Won"])
 
+        // When Venue settlement is Pending (market still open after the game), markKey never mints "✓ Won" from finalCount >= 1
+        let pendingOriginal = MLBOriginal11284(
+            id: "mlb-o:15330459:after:q:edman|hr|1",
+            title: "Tommy Edman · 1+ home runs",
+            sections: [
+                .init(
+                    title: "After the final",
+                    fields: [
+                        .init(label: "Official final", value: "1 home run"),
+                        .init(label: "Venue settlement", value: "Pending"),
+                    ]
+                )
+            ]
+        )
+        let pendingHrCard = MLBHomeRunCard11284(
+            eventID: 15330459,
+            story: .homered,
+            entries: [
+                .init(
+                    questionKey: "q:edman|hr|1",
+                    player: "Tommy Edman",
+                    saved: 0.09,
+                    finalCount: 1,
+                    side: .home,
+                    original: pendingOriginal
+                )
+            ]
+        )
+        let pendingKeyItems = EventAtlasMlbCards11666.markKey(for: .homeRuns(pendingHrCard))
+        XCTAssertEqual(pendingKeyItems.map(\.label), ["Pregame", "Official final"])
+
         let details = try XCTUnwrap(
             EventAtlasStoryCards11666.readerDetailsModel(
                 rowID: original.id,
@@ -125,7 +156,7 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
         XCTAssertEqual(singleEntries.count, 2)
         XCTAssertEqual(singleEntries[0].label, "Yes")
         XCTAssertEqual(singleEntries[0].pregameChance ?? 0, 0.11, accuracy: 1e-6)
-        XCTAssertEqual(singleEntries[0].venueResult, .lost)
+        XCTAssertEqual(singleEntries[0].venueResult, .notConfirmed, "Non-winning other row follows #11284 MLBVenueResult11284.venue (.notConfirmed)")
         XCTAssertEqual(singleEntries[1].label, "No")
         XCTAssertEqual(singleEntries[1].pregameChance ?? 0, 0.89, accuracy: 1e-6)
         XCTAssertEqual(singleEntries[1].venueResult, .won)
