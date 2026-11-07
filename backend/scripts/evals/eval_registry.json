@@ -280,6 +280,16 @@
           "name": "staged_calibration_convergence_contract",
           "relation": "extends",
           "target": "calibration_population_integrity"
+        },
+        {
+          "name": "blend_replay_export",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
+        },
+        {
+          "name": "blend_scorer",
+          "relation": "extends",
+          "target": "calibration_population_integrity"
         }
       ]
     },
