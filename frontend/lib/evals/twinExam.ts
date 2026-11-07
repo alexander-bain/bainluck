@@ -39,7 +39,7 @@ export type Relation = (typeof RELATIONS)[number];
 
 /** Plain words for each relation the exam grades. */
 export const RELATION_WORDS: Record<Relation, string> = {
-  twin: "Twins",
+  twin: "Same market",
   same_number: "Same number",
   implies: "One implies the other",
   path_step: "Path and step",
@@ -63,28 +63,28 @@ export const RELATION_WORDS: Record<Relation, string> = {
  */
 export const GATE_WORDS: Record<string, { name: string; checks: string; units: Record<string, string>; scope?: string }> = {
   twin_detection: {
-    name: "Finds twins",
-    checks: "On held-out pairs, it finds the twins and calls nothing else a twin.",
-    units: { recall: "twins found", false_twins: "non-twins called twins" },
+    name: "Finds the same market",
+    checks: "On pairs it has never seen, it finds every pair that is the same market, and calls no other pair the same market.",
+    units: { recall: "same-market pairs found", false_twins: "other pairs called the same market" },
   },
   same_number_detection: {
     name: "Finds same-number pairs",
-    checks: "On held-out pairs, it finds the pairs whose markets measure the same number.",
+    checks: "On pairs it has never seen, it finds the pairs whose markets measure the same number.",
     units: { count: "found" },
   },
   safe_relation_labels: {
     name: "Related, unrelated or can't check",
-    checks: "On held-out pairs that must not be combined, it gives the right one of these three labels.",
+    checks: "On never-seen pairs that must not be combined, it gives the right one of these three answers.",
     units: { count: "right" },
   },
   wrong_merges: {
-    name: "No wrong combining",
-    checks: "On held-out pairs, it never treats two markets as one when they must stay apart.",
-    units: { count: "wrongly combined" },
+    name: "No wrong matches",
+    checks: "On pairs it has never seen, it never treats two markets as one when they must stay apart.",
+    units: { count: "wrongly matched" },
   },
   correct_abstention: {
     name: "Says when it can't check",
-    checks: "When one side's data cannot settle a held-out pair, it says it cannot check instead of guessing.",
+    checks: "When one side's data cannot settle a never-seen pair, it says it cannot check instead of guessing.",
     units: { count: "caught" },
   },
   unreadable_outputs: {
@@ -98,10 +98,10 @@ export const GATE_WORDS: Record<string, { name: string; checks: string; units: R
     units: { count: "cut off" },
   },
   three_pass_stability: {
-    name: "Same label every pass",
-    checks: "Asked three times, it gives each pair the same label every time.",
-    units: { count: "with the same label in all three passes" },
-    scope: "Every pair, development pairs included",
+    name: "Same answer every try",
+    checks: "Asked three times, it gives each pair the same answer every time.",
+    units: { count: "with the same answer on all three tries" },
+    scope: "Every pair, including the ones used to tune it",
   },
   nonverbatim_quotes: {
     name: "Word-for-word quotes",
@@ -296,7 +296,7 @@ export function loadExam(raw: unknown = EXAM): TwinExam | null {
 }
 
 export function examTruth(exam: TwinExam): MeasuredTruth {
-  return { kind: "last_run", asOf: exam.recordedAt, source: { label: "Twin exam receipt", href: exam.receipt } };
+  return { kind: "last_run", asOf: exam.recordedAt, source: { label: "Matcher exam results", href: exam.receipt } };
 }
 
 /** The lowest and highest of a figure across the three passes. */

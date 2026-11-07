@@ -604,3 +604,59 @@ async def test_registered_twin_failing_outcome_check_reports_register_mismatch_w
     assert report_by_id[109082]["twin_state"] == "register_mismatch"
     assert report_by_id[109082]["polymarket_twin_ids"] == [113095]
     assert twins == {}
+
+
+def test_blend_card_carries_12126_and_12128_guards_11949():
+    """#11949: blend_card requires mutually_exclusive=True & mass >= 0.9, refuses blank labels, and keeps missing source as None."""
+    from app.utils.midterms_collection import blend_card
+
+    # 1. Missing source stays None (never 'kalshi' or '') and blank labels are refused
+    no_source_card = {
+        "id": 109085,
+        "name": "Kansas Senate winner?",
+        "source": None,
+        "status": "open",
+        "mutually_exclusive": True,
+        "outcome_count": 3,
+        "top_outcomes": [
+            {"name": "   ", "probability": 0.20},
+            {"name": "Roger Marshall", "probability": 0.60},
+            {"name": "Adam Hamilton", "probability": 0.50},
+        ],
+    }
+    blended_no_src = blend_card(no_source_card, [no_source_card])
+    assert blended_no_src["source"] is None
+    assert blended_no_src["sources"] == []
+    assert blended_no_src["source_count"] == 0
+    assert [o["name"] for o in blended_no_src["top_outcomes"]] == [
+        "Roger Marshall",
+        "Adam Hamilton",
+    ]
+    # Because a blank outcome was dropped, field_complete is False -> stays raw
+    assert [o["probability"] for o in blended_no_src["top_outcomes"]] == [0.60, 0.50]
+
+    # 2. mutually_exclusive=None (not True) -> not normalized even when sum > 1.05
+    non_excl_card = {
+        "id": 109085,
+        "name": "Kansas Senate winner?",
+        "source": "kalshi",
+        "status": "open",
+        "mutually_exclusive": None,
+        "outcome_count": 2,
+        "top_outcomes": [
+            {"name": "Roger Marshall", "probability": 0.60},
+            {"name": "Adam Hamilton", "probability": 0.50},
+        ],
+    }
+    blended_non_excl = blend_card(non_excl_card, [non_excl_card])
+    assert [o["probability"] for o in blended_non_excl["top_outcomes"]] == [0.60, 0.50]
+
+    # 3. mutually_exclusive=True and complete field with mass >= 0.9 -> normalized
+    excl_card = {
+        **non_excl_card,
+        "mutually_exclusive": True,
+    }
+    blended_excl = blend_card(excl_card, [excl_card])
+    total = sum(o["probability"] for o in blended_excl["top_outcomes"])
+    assert abs(total - 1.0) < 0.01
+

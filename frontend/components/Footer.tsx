@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
-import { BRAND_TAGLINE } from "@/lib/brandCopy";
+import { APP_STORE_URL, BRAND_TAGLINE } from "@/lib/brandCopy";
 
 const FOOTER_LINKS: { heading: string; links: { label: string; href: string }[] }[] = [
   {
@@ -57,6 +57,24 @@ export default function Footer() {
   return (
     <footer className="border-t border-surface-border bg-surface-card/40 mt-8">
       <div className="max-w-content mx-auto px-4 md:px-6 py-10 pb-28 md:pb-10">
+        {/* #12028: "Get the app" line on phone widths */}
+        <div
+          data-testid="footer-phone-get-the-app-row"
+          className="md:hidden mb-6 pb-4 border-b border-surface-border flex items-center justify-between gap-2 text-caption"
+        >
+          <span className="text-text-secondary">Bain Luck for iPhone</span>
+          <a
+            href={APP_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => onClick("/app-store")}
+            data-testid="footer-phone-get-the-app"
+            className="font-semibold text-accent-brand hover:underline whitespace-nowrap"
+          >
+            Get the app
+          </a>
+        </div>
+
         <div className="grid gap-8 sm:grid-cols-2 md:grid-cols-4">
           {/* Brand + one-liner */}
           <div className="space-y-3 md:col-span-1">
@@ -69,6 +87,18 @@ export default function Footer() {
             <p className="text-micro text-text-muted leading-relaxed max-w-[16rem]">
               {BRAND_TAGLINE}
             </p>
+            <div className="pt-1">
+              <a
+                href={APP_STORE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => onClick("/app-store")}
+                data-testid="footer-app-store-badge"
+                className="inline-flex items-center rounded-lg border border-surface-border bg-surface-elevated px-3 py-1.5 text-caption font-medium text-text-primary hover:border-accent-brand/40 hover:text-accent-brand transition-colors"
+              >
+                Download on the App Store
+              </a>
+            </div>
           </div>
 
           {FOOTER_LINKS.map((col) => (

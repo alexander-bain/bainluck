@@ -27,6 +27,13 @@ five write-gaps over the TTL in 604 s, worst 267.7 s.
 (3) is the half a reader is most likely to miss, and it is why this is not a
 one-line test: the repair and its side effect live in different functions, and
 the side effect is invisible from the page it would make slow.
+
+**W-1 amendment (2026-11-06, worker audit B-2; Alex 53: A).** The warmer's
+entries now live `SEARCH_HEAD_WARMER_TTL_SECONDS` (600 s; readers keep 180 s),
+on a 300 s floor and a 60 s beat (budget still 70 s). Every relation below is
+unchanged and is now asserted against the WARMER's entry life; the named inputs
+are re-derived at those constants (window for the lock: above the 70 s budget,
+below 600 - 60 - 70 = 470 s; derived 270 s).
 """
 
 import math
@@ -35,20 +42,25 @@ import pytest
 from redis.exceptions import DataError
 
 from app.tasks import search_head_warmer as warmer
-from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
 #: The literal this repair removed. Written here so the regression input has a
 #: name: restoring it is a one-character-class edit that reads like tidying.
 SHIPPED_LITERAL_BEFORE_3655 = 180
+
+#: The SHAPE of that literal at W-1's constants: a lock exactly as long as the
+#: entry it protects. 180 itself sits inside the new window, so the regression
+#: this file refuses by name is now the equality, not the number.
+LOCK_AS_LONG_AS_THE_ENTRY = SEARCH_HEAD_WARMER_TTL_SECONDS
 
 
 class TestAResidualLockDiesBeforeTheEntry:
     def test_the_recovery_from_a_lost_release_fits_inside_one_entry_life(self):
         """The whole claim, in the two numbers it is a comparison between."""
         recovery = warmer.residual_lock_recovery_s()
-        assert recovery < SEARCH_RESPONSE_TTL_SECONDS, (
+        assert recovery < SEARCH_HEAD_WARMER_TTL_SECONDS, (
             f"a lost release keeps a query cold for {recovery}s against a "
-            f"{SEARCH_RESPONSE_TTL_SECONDS}s entry life — the entry dies before the "
+            f"{SEARCH_HEAD_WARMER_TTL_SECONDS}s entry life — the entry dies before the "
             f"warmer is allowed to rewrite it and /search serves the cold path"
         )
 
@@ -58,25 +70,25 @@ class TestAResidualLockDiesBeforeTheEntry:
         The value is not merely unfashionable, it is refused, and the refusal
         names the reader's symptom rather than an inequality.
         """
-        ok, why = warmer.residency_invariant(lock_ttl_s=SHIPPED_LITERAL_BEFORE_3655)
+        ok, why = warmer.residency_invariant(lock_ttl_s=LOCK_AS_LONG_AS_THE_ENTRY)
         assert not ok, (
-            f"180s — the pre-#3655 literal, and the exact life of the entry — is "
+            f"{LOCK_AS_LONG_AS_THE_ENTRY}s — the exact life of the entry, the pre-#3655 shape — is "
             f"accepted by the invariant: {why}"
         )
         assert "RESIDUAL LOCK OUTLIVES THE ENTRY" in why
         assert "cold path" in why
 
     def test_the_clause_is_not_the_naive_comparison_with_the_ttl(self):
-        """120s is under the 180s entry life and is still a hole. **The separator.**
+        """500s is under the 600s entry life and is still a hole. **The separator.**
 
         A clause written as `lock_ttl < ttl` would pass this input, and passing it
         is the defect: after the key expires a fire still has to arrive (one beat)
         and the rebuild still has to reach THIS query (the budget, since a
-        re-ranked pass can write it last — clause (4)'s argument). 120 + 20 + 70 =
-        210 against 180.
+        re-ranked pass can write it last — clause (4)'s argument). 500 + 60 + 70 =
+        630 against 600 (W-1; was 120 + 20 + 70 = 210 against 180).
         """
-        ok, why = warmer.residency_invariant(lock_ttl_s=120)
-        assert not ok, "a 120s lock leaves a 30s hole and the invariant accepted it"
+        ok, why = warmer.residency_invariant(lock_ttl_s=500)
+        assert not ok, "a 500s lock leaves a 30s hole and the invariant accepted it"
         assert "RESIDUAL LOCK OUTLIVES THE ENTRY" in why
 
     def test_the_recovery_is_the_sum_and_not_the_ttl(self):
@@ -100,32 +112,32 @@ class TestTheTtlIsSolvedForRatherThanPicked:
 
         #3539 contemplated moving the response TTL; at 300s the lock must follow,
         and the direction is the one the arithmetic gives, not the one that keeps
-        the old number.
+        the old number. (W-1: at the 60 s beat, (300 - 60) / 2 = 120.)
         """
-        assert warmer.derive_lock_ttl_s(ttl_s=300) == 140
+        assert warmer.derive_lock_ttl_s(ttl_s=300) == 120
         assert warmer.derive_lock_ttl_s(ttl_s=300) != warmer.derive_lock_ttl_s()
 
     def test_both_ends_of_the_window_are_enforced(self):
         """Clause (6) below, clause (8) above — two defects, not two readings.
 
-        Named inputs: a 60s lock is overtaken by its own 70s-budget pass; a 100s
-        lock recovers in 190s against a 180s life.
+        Named inputs: a 60s lock is overtaken by its own 70s-budget pass; a 480s
+        lock recovers in 610s against a 600s life (W-1; was 100s -> 190s vs 180s).
         """
         ok_low, why_low = warmer.residency_invariant(lock_ttl_s=60)
         assert not ok_low and "OUTRUNS ITS OWN LOCK" in why_low
-        ok_high, why_high = warmer.residency_invariant(lock_ttl_s=100)
+        ok_high, why_high = warmer.residency_invariant(lock_ttl_s=480)
         assert not ok_high and "RESIDUAL LOCK OUTLIVES THE ENTRY" in why_high
         # And the derived value is strictly inside that window.
-        assert 70 < warmer._LOCK_TTL_SECONDS < 90
+        assert 70 < warmer._LOCK_TTL_SECONDS < 470
 
     def test_an_empty_window_is_refused_rather_than_clamped(self):
-        """A budget of 80s at a 180s life leaves nothing: (80, 80).
+        """A budget of 270s at a 600s life leaves nothing: (270, 270). (W-1; was 80s at 180s.)
 
         A derivation that returned the nearest plausible number here would ship a
         lock that is wrong at one end and say nothing about it.
         """
         with pytest.raises(ValueError, match="window is empty"):
-            warmer.derive_lock_ttl_s(budget_s=80)
+            warmer.derive_lock_ttl_s(budget_s=270)
         with pytest.raises(ValueError, match="window is empty"):
             warmer.derive_lock_ttl_s(ttl_s=100)
         for bad in ({"ttl_s": 0}, {"beat_s": -20.0}, {"budget_s": 0}):
@@ -141,8 +153,8 @@ class TestTheTtlIsSolvedForRatherThanPicked:
     def test_the_rounding_spends_the_fraction_on_the_readers_side(self):
         """Floor, not round: below the midpoint costs duplicate warming, above it
         costs a reader a cold page."""
-        mid_is_fractional = warmer.derive_lock_ttl_s(ttl_s=181.0)
-        assert mid_is_fractional == math.floor((181.0 - 20.0) / 2.0) == 80
+        mid_is_fractional = warmer.derive_lock_ttl_s(ttl_s=601.0)
+        assert mid_is_fractional == math.floor((601.0 - 60.0) / 2.0) == 270
 
 
 class TestWhatRedisIsActuallyGiven:
@@ -184,7 +196,7 @@ class TestWhatRedisIsActuallyGiven:
         sent_ttl = client.sets[0][2]
         assert (
             warmer.residual_lock_recovery_s(lock_ttl_s=sent_ttl)
-            < SEARCH_RESPONSE_TTL_SECONDS
+            < SEARCH_HEAD_WARMER_TTL_SECONDS
         ), f"the acquire installs a {sent_ttl}s lock, which outlives the entry"
 
     def test_a_float_ttl_would_have_been_caught_here(self, monkeypatch):
@@ -207,14 +219,14 @@ class TestTheBeatsDeliveryBoundDidNotMoveWithIt:
     """
 
     def test_the_expiry_derives_from_the_entry_life_not_the_lock(self):
-        assert warmer.derive_message_expiry_s() == float(SEARCH_RESPONSE_TTL_SECONDS)
+        assert warmer.derive_message_expiry_s() == float(SEARCH_HEAD_WARMER_TTL_SECONDS)
         assert warmer.derive_message_expiry_s() != float(warmer._LOCK_TTL_SECONDS)
 
     def test_the_wired_beat_bound_did_not_move(self):
-        """The value is unchanged at 180; only what it is a fact ABOUT changed."""
+        """The value tracks the warmer's ENTRY life (600 since W-1), never the lock."""
         from app.tasks import _EXPIRING_WARMER_BEATS
 
-        assert _EXPIRING_WARMER_BEATS["warm-search-head"] == 180
+        assert _EXPIRING_WARMER_BEATS["warm-search-head"] == 600
         assert _EXPIRING_WARMER_BEATS["warm-search-head"] == (
             warmer.derive_message_expiry_s()
         )

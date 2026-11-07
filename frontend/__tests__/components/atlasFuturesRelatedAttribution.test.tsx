@@ -270,7 +270,7 @@ describe('Step F4 — RelatedByTag and attribution restyle (#883)', () => {
     }
   });
 
-  it('places Final Results / All Outcomes above Keep exploring under ?atlas=1 per the atlas section order', async () => {
+  it('places the body slot (two-sided dial) above Keep exploring and removes the duplicate Final Results table under ?atlas=1 per Decide 47: E', async () => {
     searchParamsStr = 'atlas=1';
     futuresMarketPayload = {
       id: 109085,
@@ -310,12 +310,15 @@ describe('Step F4 — RelatedByTag and attribution restyle (#883)', () => {
     const html = renderHtml(<FuturesDetailPage params={{ id: '109085' }} />);
     searchParamsStr = '';
 
-    const finalResultsIdx = html.indexOf('Final Results');
+    const heroIdx = html.indexOf('data-testid="atlas-futures-hero"');
+    const dialBodyIdx = html.indexOf('data-testid="atlas-duel-body"');
     const keepExploringIdx = html.indexOf('Keep exploring');
     const attributionIdx = html.indexOf('data-testid="atlas-attribution-footer"');
 
-    expect(finalResultsIdx).toBeGreaterThan(-1);
-    expect(keepExploringIdx).toBeGreaterThan(finalResultsIdx);
+    expect(heroIdx).toBeGreaterThan(-1);
+    expect(dialBodyIdx).toBeGreaterThan(heroIdx);
+    expect(keepExploringIdx).toBeGreaterThan(dialBodyIdx);
     expect(attributionIdx).toBeGreaterThan(keepExploringIdx);
+    expect(html).not.toContain('Final Results');
   });
 });
