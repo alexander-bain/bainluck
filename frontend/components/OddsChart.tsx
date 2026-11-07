@@ -641,6 +641,37 @@ export function intraMinuteRanges(
   return byMinute;
 }
 
+/**
+ * #12298 — the within-minute stroke is the CURRENT minute's, and only its.
+ *
+ * #10093 asked for the excursion "within the current minute": the headline just
+ * printed 55% and a flat line said 43%. Drawn for EVERY minute the window has
+ * watched, the strokes piled up behind the live edge — on Yale–Brown (Nov 7) a
+ * window kept open grew one every minute or two, each a thin-book midpoint that
+ * quoted for a few seconds (Holy Cross–Georgetown, recorded: Kalshi and
+ * Polymarket 6¢ → 18¢ → 6¢ inside 40 s, the blend 24.5 → 32.9 → 24.7 in one
+ * minute). History holds one value a minute, so a reload drew none of them: the
+ * open window showed swings the chart itself never keeps. A closed minute is
+ * its last published value — the line already passes through it, and history
+ * draws the same shape — so only the minute holding the newest observation
+ * keeps its range.
+ */
+export function currentMinuteRange(
+  points: ReadonlyArray<{ timestamp: string; home_probability: number | null }>,
+): Map<string, { lo: number; hi: number }> {
+  let newest = -Infinity;
+  let key: string | null = null;
+  for (const point of points) {
+    const at = Date.parse(point.timestamp);
+    if (typeof point.home_probability !== "number" || !Number.isFinite(point.home_probability) ||
+        !Number.isFinite(at) || at <= newest) continue;
+    newest = at;
+    key = toMinuteKey(point.timestamp);
+  }
+  const range = key === null ? undefined : intraMinuteRanges(points).get(key);
+  return key !== null && range ? new Map([[key, range]]) : new Map();
+}
+
 /** What recharts hands a `<Customized>` child: its own render state, the bits read here. */
 interface ChartRenderState {
   formattedGraphicalItems?: Array<{
@@ -2560,17 +2591,19 @@ export default function OddsChart({
   // #9906: each series' LAST value is passed as `mustShow`, so the end of every
   // drawn line — the callout's number, and a settled chart's result — is inside
   // the axis even when the percentile zoom would treat it as an outlier.
-  // #10093 — the primary line's within-minute ranges, while the game is live.
+  // #10093 — the primary line's within-minute range, while the game is live
+  // (#12298: the current minute's only).
   // Read off the SAME input series `chartData` wrote the primary key from, so a
   // range is never wider than what that line's own observations covered. Only
   // live: the held tail is where push frames land several to a minute, and a
   // settled chart's ending (#9906) is not this change's to redraw.
   const primaryMinuteRanges = useMemo((): Map<string, { lo: number; hi: number }> => {
     if (!isLive || isClosed) return new Map();
-    if (primarySeriesKey === "bainLuckDelta") return intraMinuteRanges(filteredAggregateLine);
-    if (primarySeriesKey === "homeDelta") return intraMinuteRanges(filteredHistory);
+    // #12298: the current minute only — a closed minute is its last value.
+    if (primarySeriesKey === "bainLuckDelta") return currentMinuteRange(filteredAggregateLine);
+    if (primarySeriesKey === "homeDelta") return currentMinuteRange(filteredHistory);
     const source = nonBettingSources.find((s) => s.dataKey === primarySeriesKey);
-    return source ? intraMinuteRanges(filteredWinProbHistory[source.key] ?? []) : new Map();
+    return source ? currentMinuteRange(filteredWinProbHistory[source.key] ?? []) : new Map();
   }, [isLive, isClosed, primarySeriesKey, filteredAggregateLine, filteredHistory, nonBettingSources, filteredWinProbHistory]);
 
   // Stamped onto the chartData points, the same way `crossingDelta` and

@@ -91,7 +91,7 @@ def fixture():
     jobs.extend(
         [
             {**success(name), "conclusion": "skipped", "steps": []}
-            for name in ("deploy", "release-required")
+            for name in ("deploy", "release-required", "flaky-canary")
         ]
     )
     checks = [

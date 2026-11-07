@@ -28672,7 +28672,7 @@ async def _build_game_markets(
     # writer as one reached through a request. Two writers for one tier is
     # LAT-P001's defect and it is not being rebuilt here.
     response.update(game_market_stream_envelope(
-        market_ids, outcomes, _observed_at_by_outcome
+        market_ids, outcomes, _observed_at_by_outcome, markets
     ))
     from app.utils.final_game_winner_quote import final_game_winner_quotes
     from app.utils.outcome_display import normalize_display_probs

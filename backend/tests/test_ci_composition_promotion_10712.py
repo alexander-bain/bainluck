@@ -74,8 +74,13 @@ python -m pytest $FILES -q --durations=0
 # would deselect tests) is still an unreviewed environment.
 RETRY_ONCE_ADDOPTS = "${{ matrix.group == 'shared-tail' && '--reruns 1 -rR' || '' }}"
 
+# #12252 item 2: the quarantine list and the retry file are admitted ONLY at these exact
+# reviewed values (data from change-scope, a fixed path); any other value is unreviewed.
+QUARANTINE_ENV = ("CI_QUARANTINE", "${{ needs.change-scope.outputs.quarantine }}")
+RETRIES_FILE_ENV = ("FLAKY_RETRIES_FILE", "/tmp/flaky-retries.txt")
 JOB_ENV_KEYS = {
     "database-integration": {"DATABASE_URL", "SEARCH_TEST_DATABASE_URL"},
+    "flaky-canary": {"DATABASE_URL", "SEARCH_TEST_DATABASE_URL"},
     "deploy": {"HEROKU_API_KEY", "GH_TOKEN"},
 }
 STEP_ENV_KEYS = {
@@ -141,6 +146,7 @@ STEP_ENV_KEYS[("change-scope", "Extend change-scope with impacted tests for live
     "GH_TOKEN", "RELEASE_LOOP_FAST_ENABLED", "PR_NUMBER", "PR_BASE", "PR_HEAD", "PUSH_BASE",
 }
 STEP_ENV_KEYS[("change-scope", "Record the deployed gate for the watchdog")] = {"LIVE_MODE"}
+STEP_ENV_KEYS[("change-scope", "Flaky quarantine (#12252)")] = {"GH_TOKEN"}
 STEP_ENV_KEYS[("fast-gate", "Python 3.11 syntax, smoke test and change-scope selected tests")] = {
     "SELECTED_TESTS",
 }
@@ -227,6 +233,9 @@ def _validate_current_composed_promotion(
         job_env = dict(job.get("env") or {})
         if name == "database-integration" and job_env.get("PYTEST_ADDOPTS") == RETRY_ONCE_ADDOPTS:
             job_env.pop("PYTEST_ADDOPTS")
+        for key, value in (QUARANTINE_ENV, RETRIES_FILE_ENV):
+            if job_env.get(key) == value:
+                job_env.pop(key)
         _allowed_environment(
             job_env, JOB_ENV_KEYS.get(name, set()), f"{name} job"
         )
@@ -267,6 +276,15 @@ def _validate_current_composed_promotion(
                 and (step.get("name") == "Publish compose checkout provenance"
                      or (name == "change-scope" and step.get("with", {}).get("name")
                          == "release-loop-mode-${{ github.run_id }}-${{ github.run_attempt }}"))
+            ) or (
+                # #12252 item 2: the shared tail's 55-A retry list, read by the flake
+                # sentinel only; nothing downloads it as evidence for a commit.
+                name == "database-integration"
+                and step.get("uses") == "actions/upload-artifact@v4"
+                and step.get("id") == "db_flaky_retries_upload"
+                and step.get("with") == {"name": "flaky-retries-${{ github.run_attempt }}",
+                                         "path": "/tmp/flaky-retries.txt",
+                                         "if-no-files-found": "ignore", "retention-days": 8}
             ), "only explicit compose test-provenance upload; no build artifact credit"
     for name in ("backend-tests", "shard-completeness", "database-integration"):
         job = jobs[name]
