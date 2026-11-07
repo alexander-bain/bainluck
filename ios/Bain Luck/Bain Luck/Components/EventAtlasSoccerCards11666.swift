@@ -920,6 +920,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
             pregameBaseline: pregameText,
             observedAtText: observedText,
             statusSummary: rawSumText,
+            statusLabel: "Raw quotes",
             sourceLabel: sourceLabel
         )
     }

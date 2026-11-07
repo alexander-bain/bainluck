@@ -113,7 +113,70 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
         XCTAssertEqual(details.pregameBaseline, "9%")
         XCTAssertEqual(details.observedAtText, "Oct 19, 4:55 PM PT")
         XCTAssertEqual(details.statusSummary, "Reached 1+")
+        XCTAssertEqual(details.statusLabel, "Comparison")
         XCTAssertEqual(details.sourceLabel, "Kalshi")
+        XCTAssertEqual(details.originalSections.count, 2)
+
+        // Strikeout target original ("Pregame mark · Over") preserves pregameBaseline,
+        // Pending venue result, and all frozen original sections (Over, Under, count).
+        let strikeoutOriginal = MLBOriginal11284(
+            id: "mlb-o:15330459:target:glasnow-7+",
+            title: "Tyler Glasnow · 7+ strikeouts",
+            sections: [
+                .init(
+                    title: "Over · Tyler Glasnow: Strikeouts O/U 6.5",
+                    fields: [
+                        .init(label: "Original side", value: "Over"),
+                        .init(label: "Line", value: "6.5"),
+                        .init(label: "Venue", value: "Kalshi"),
+                        .init(label: "Pregame mark · Over", value: "58%"),
+                        .init(label: "Venue result", value: "Pending"),
+                    ]
+                ),
+                .init(
+                    title: "Under · Tyler Glasnow: Strikeouts O/U 6.5",
+                    fields: [
+                        .init(label: "Original side", value: "Under"),
+                    ]
+                ),
+                .init(
+                    title: "7+ strikeouts",
+                    fields: [
+                        .init(label: "Official final", value: "Unavailable"),
+                        .init(label: "Against 7+", value: "Final result unavailable"),
+                    ]
+                ),
+            ]
+        )
+        let strikeoutDetails = EventAtlasMlbCards11666.detailsModel(for: strikeoutOriginal)
+        XCTAssertEqual(strikeoutDetails.pregameBaseline, "58%")
+        XCTAssertEqual(strikeoutDetails.primaryReadingLabel, "Venue result")
+        XCTAssertEqual(strikeoutDetails.primaryReadingValue, "Pending")
+        XCTAssertEqual(strikeoutDetails.statusLabel, "Comparison")
+        XCTAssertEqual(strikeoutDetails.originalSections.count, 3)
+
+        // Extra-innings markKey says "✓ Won" (never "✓ Won / ✗ Lost", since ✗ Lost cannot occur under #11284)
+        let extraCard = MLBExtraInningsCard11284(
+            eventID: 15330459,
+            outcomes: [
+                .init(
+                    label: "Yes",
+                    venue: "Kalshi",
+                    venueResult: .notConfirmed,
+                    original: original,
+                    pregameChance: 0.11
+                ),
+                .init(
+                    label: "No",
+                    venue: "Kalshi",
+                    venueResult: .won,
+                    original: original,
+                    pregameChance: 0.89
+                ),
+            ]
+        )
+        let extraKeyItems = EventAtlasMlbCards11666.markKey(for: .extraInnings(extraCard))
+        XCTAssertEqual(extraKeyItems.map(\.label), ["Pregame", "✓ Won"])
     }
 
     func testExtraInningsUsesSingleVenueOrBlendedPregameMarkAndWithholdsUnblendedMultiSource() throws {
@@ -142,7 +205,7 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
                 "observed_at": "2026-10-20T03:25:00Z",
                 "source": "kalshi",
                 "is_winner": true,
-                "resolution_source": "kalshi"
+                "resolution_source": "api_settlement"
             }
         ]
         """
@@ -162,38 +225,38 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
         XCTAssertEqual(singleEntries[1].venueResult, .won)
 
         // 2. Multiple unblended sources without a blended row -> withholds pregameChance (never averages)
-        // and conflicting venue grades -> .pending
+        // and conflicting venue grades -> .pending, while case variants ("no", "YES") canonicalize and sort Yes first.
         let multiUnblendedJSON = """
         [
             {
                 "market_name": "MIL at LAD: Extra Innings",
-                "outcome_name": "Yes",
-                "probability": 0.10,
-                "pregame_mark": 0.10,
-                "observed_at": "2026-10-20T03:25:00Z",
-                "source": "kalshi",
-                "is_winner": true,
-                "resolution_source": "kalshi"
-            },
-            {
-                "market_name": "MIL at LAD: Extra Innings",
-                "outcome_name": "Yes",
-                "probability": 0.14,
-                "pregame_mark": 0.14,
-                "observed_at": "2026-10-20T03:25:00Z",
-                "source": "polymarket",
-                "is_winner": false,
-                "resolution_source": "polymarket"
-            },
-            {
-                "market_name": "MIL at LAD: Extra Innings",
-                "outcome_name": "No",
+                "outcome_name": "no",
                 "probability": 0.90,
                 "pregame_mark": 0.90,
                 "observed_at": "2026-10-20T03:25:00Z",
                 "source": "kalshi",
                 "is_winner": true,
-                "resolution_source": "kalshi"
+                "resolution_source": "api_settlement"
+            },
+            {
+                "market_name": "MIL at LAD: Extra Innings",
+                "outcome_name": "YES",
+                "probability": 0.10,
+                "pregame_mark": 0.10,
+                "observed_at": "2026-10-20T03:25:00Z",
+                "source": "kalshi",
+                "is_winner": true,
+                "resolution_source": "api_settlement"
+            },
+            {
+                "market_name": "MIL at LAD: Extra Innings",
+                "outcome_name": "yes",
+                "probability": 0.14,
+                "pregame_mark": 0.14,
+                "observed_at": "2026-10-20T03:25:00Z",
+                "source": "polymarket",
+                "is_winner": false,
+                "resolution_source": "clob_authoritative"
             }
         ]
         """
@@ -205,6 +268,8 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
             now: now
         )
         XCTAssertEqual(multiEntries.count, 2)
+        XCTAssertEqual(multiEntries.map(\.label), ["Yes", "No"])
+        XCTAssertEqual(multiEntries.map(\.id), ["mlb-extra:yes", "mlb-extra:no"])
         XCTAssertNil(multiEntries[0].pregameChance, "Unblended multi-source pregameChance must be withheld, never averaged")
         XCTAssertNil(multiEntries[0].source)
         XCTAssertEqual(multiEntries[0].sourceCount, 2)

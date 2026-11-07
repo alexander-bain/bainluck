@@ -68,14 +68,17 @@ nonisolated enum QuestionCatalog9483 {
         let observedAt: String?
         /// Why `probability` is nil; nil exactly when it prints.
         let absence: Absence?
+        /// Authoritative settled verdict (`OutcomeVerdict`) when the event is settled.
+        let verdict: OutcomeVerdict?
 
         nonisolated init(label: String, threshold: Double?, probability: Double?, observedAt: String?,
-                         absence: Absence = .unavailable) {
+                         absence: Absence = .unavailable, verdict: OutcomeVerdict? = nil) {
             self.label = label
             self.threshold = threshold
             self.probability = probability
             self.observedAt = observedAt
             self.absence = probability == nil ? absence : nil
+            self.verdict = verdict
         }
     }
 
@@ -107,6 +110,8 @@ nonisolated enum QuestionCatalog9483 {
         var marketId: Int? = nil
         /// A `closed_period_markets` row that says `window_closed: true`.
         var windowClosed: Bool = false
+        var isWinner: Bool? = nil
+        var resolutionSource: String? = nil
     }
 
     enum Side: Equatable { case over, under, unreadable }
@@ -171,23 +176,27 @@ nonisolated enum QuestionCatalog9483 {
         Row(marketName: o.marketName, outcomeName: o.outcomeName, threshold: o.threshold,
             probability: o.probability, pricesOutcome: false, overProbability: o.overProbability,
             source: o.source, period: o.period, observedAt: o.observedAt,
-            inverted: o._inverted == true, marketId: o._marketId)
+            inverted: o._inverted == true, marketId: o._marketId,
+            isWinner: o.isWinner, resolutionSource: o.resolutionSource)
     }
 
     static func row(_ p: GameMarketPlayerProp) -> Row {
         Row(marketName: p.marketName, outcomeName: p.outcomeName, threshold: p.threshold,
             pricesOutcome: false, overProbability: p.overProbability, source: p.source,
-            observedAt: p.observedAt, inverted: p._inverted == true, marketId: p._marketId)
+            observedAt: p.observedAt, inverted: p._inverted == true, marketId: p._marketId,
+            isWinner: p.isWinner, resolutionSource: p.resolutionSource)
     }
 
     static func row(_ o: GameMarketOther) -> Row {
         Row(marketName: o.marketName, outcomeName: o.outcomeName, probability: o.probability,
-            pricesOutcome: true, source: o.source, observedAt: o.observedAt, marketId: o._marketId)
+            pricesOutcome: true, source: o.source, observedAt: o.observedAt, marketId: o._marketId,
+            isWinner: o.isWinner, resolutionSource: o.resolutionSource)
     }
 
     static func build(_ data: GameMarketsResponse, status: String?, now: Date = Date()) -> [Group] {
         var order: [String] = []
         var groups: [String: Group] = [:]
+        let settled = SettledQuote.isSettled(status)
 
         func add(_ family: Family, _ row: Row,
                  _ reading: (probability: Double?, absence: Absence?), _ label: String) {
@@ -203,10 +212,21 @@ nonisolated enum QuestionCatalog9483 {
                                     venue: SourceLabels.label(for: row.source),
                                     period: row.period, outcomes: [])
             }
+            // Decide 80 (A): a market-level resolution status is not served beside
+            // catalog rows, so ask OutcomeVerdict as for an open market
+            // (marketResolved: false): only a provable authoritative win is .won;
+            // never mint .lost from a row grade alone.
+            let verdict = settled
+                ? OutcomeVerdict.verdict(
+                    isWinner: row.isWinner,
+                    resolutionSource: row.resolutionSource,
+                    marketResolved: false
+                )
+                : nil
             groups[key]?.outcomes.append(Outcome(
                 label: label, threshold: finite(row.threshold),
                 probability: reading.probability, observedAt: row.observedAt,
-                absence: reading.absence ?? .unavailable))
+                absence: reading.absence ?? .unavailable, verdict: verdict))
         }
 
         func addRows(_ family: Family, _ rows: [Row], closed: Bool = false) {
@@ -240,7 +260,8 @@ nonisolated enum QuestionCatalog9483 {
             for outcome in matchup.outcomes {
                 let r = Row(marketName: matchup.marketName, outcomeName: outcome.name,
                             probability: outcome.probability, pricesOutcome: true,
-                            source: matchup.source, observedAt: outcome.observedAt)
+                            source: matchup.source, observedAt: outcome.observedAt,
+                            isWinner: outcome.isWinner, resolutionSource: outcome.resolutionSource)
                 add(.matchups, r, reading(r, status: status, now: now), outcome.name)
             }
         }
