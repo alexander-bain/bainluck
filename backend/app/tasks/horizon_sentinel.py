@@ -20,8 +20,10 @@ with no concept adapter yet) are tracked in the scorecard as ``surface_tbd`` but
 never filed — the sentinel cries wolf on nothing.
 
 Modeled on the Flow/Grid sentinels: same mine -> evidence-pack -> auto-file rail
-(``bug_report_github``), same fingerprint dedup, same Redis scorecard, same admin
-``run``/``last`` pair. Read-only against production — it files work, never data.
+(``sentinel_filing.reconcile_issue`` since #12272, deduped on the body's
+fingerprint declaration over the REST list of open alert issues), same Redis
+scorecard, same admin ``run``/``last`` pair. Read-only against production — it
+files work, never data.
 """
 
 import hashlib
@@ -343,133 +345,83 @@ def build_horizon_issue_body(finding: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Filing + dedup (reuses the bug_report_github rail, per the flow/grid sentinels)
+# Filing + dedup — through the sentinel rail (#12272)
 # ---------------------------------------------------------------------------
-def _find_open_issue_by_fingerprint(fingerprint: str) -> int | None:
-    from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
-
-    if not GITHUB_TOKEN:
-        return None
-    q = f'repo:{REPO} in:body "horizon-sentinel-fingerprint:{fingerprint}" state:open'
-    try:
-        resp = httpx.get(
-            "https://api.github.com/search/issues",
-            headers={
-                "Authorization": f"Bearer {GITHUB_TOKEN}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            params={"q": q},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        return items[0]["number"] if items else None
-    except Exception as exc:
-        logger.warning("Horizon sentinel dedup search failed for %s: %s", fingerprint, exc)
-        return None
+#: The body declaration every Horizon issue carries; the rail matches on it.
+HORIZON_MARKER = "horizon-sentinel-fingerprint"
 
 
-def file_horizon_issue(finding: dict) -> dict:
-    """File OR update one issue per calendar-entry fingerprint (escalating phase)."""
-    from app.tasks.bug_report_github import (
-        GITHUB_TOKEN,
-        add_to_project_board,
-        comment_on_issue,
-        create_github_issue,
-    )
+def _filed(base: dict, res: dict, severity: str) -> dict:
+    """The rail's result in this sentinel's summary shape."""
+    out = {**base, "fingerprint": res.get("fingerprint"), "action": res.get("action")}
+    for key in ("issue", "error"):
+        if res.get(key) is not None:
+            out[key] = res[key]
+    if out["action"] == "filed":
+        out["severity"] = severity
+    return out
+
+
+def file_horizon_issue(finding: dict, open_issues: Any = None) -> dict:
+    """File OR comment one issue per calendar-entry fingerprint (escalating phase).
+
+    Through ``sentinel_filing.reconcile_issue`` (#12272). This sentinel used to
+    dedupe through GitHub's /search index, which is eventually consistent (the
+    rail's own r252 lesson): on the night of Nov 6 every lookup came back empty
+    and all eight open conditions were filed a second time (#12259–#12266), and a
+    match could land on any issue that merely quoted the fingerprint. The rail
+    reads the open ``alert-intake`` issues through the REST list, matches the
+    body's declaration only, comments on the lowest-numbered match, and files
+    nothing when the list cannot be read. ``open_issues`` is the run's one
+    snapshot (``fetch_open_alert_issues()``); ``None`` lets the rail fetch.
+    """
+    from app.tasks.sentinel_filing import reconcile_issue
 
     slug = finding["slug"]
     fp = horizon_fingerprint(slug)
-    if not GITHUB_TOKEN:
-        return {"slug": slug, "fingerprint": fp, "action": "skipped_no_token"}
-
-    existing = _find_open_issue_by_fingerprint(fp)
-    if existing:
-        try:
-            comment_on_issue(
-                existing,
-                f"Horizon Sentinel re-observed: **{finding['name']}** is now in phase "
-                f"`{finding['phase']}` ({finding['severity'].upper()}) — still no page "
-                f"at `{finding['concept_key']}` (fingerprint `{fp}`).",
-            )
-        except Exception as exc:
-            logger.warning("Horizon sentinel comment failed on #%d: %s", existing, exc)
-        return {"slug": slug, "fingerprint": fp, "action": "commented", "issue": existing}
-
-    labels = [
-        "alert-intake",
-        "needs-agent",
-        _AREA_LABEL,
-        f"priority:{finding['severity']}",
-    ]
-    title = build_horizon_issue_title(finding)
-    body = build_horizon_issue_body(finding)
-    try:
-        number, node_id = create_github_issue(title, body, labels)
-    except Exception as exc:
-        logger.error("Horizon sentinel issue creation failed (%s): %s", fp, exc)
-        return {"slug": slug, "fingerprint": fp, "action": "error", "error": str(exc)[:200]}
-    try:
-        add_to_project_board(node_id)
-    except Exception:
-        logger.warning("Horizon sentinel: add issue #%d to board failed (non-fatal)", number, exc_info=True)
-    return {"slug": slug, "fingerprint": fp, "action": "filed", "issue": number, "severity": finding["severity"]}
-
-
-def file_exhaustion_issue(finding: dict) -> dict:
-    """File OR update one issue per competition whose calendar is running out.
-
-    Same deduped rail as :func:`file_horizon_issue` — a separate fingerprint
-    namespace so an exhaustion notice never collides with, or silently reuses,
-    the needs-page issue for one of that competition's editions.
-    """
-    from app.tasks.bug_report_github import (
-        GITHUB_TOKEN,
-        add_to_project_board,
-        comment_on_issue,
-        create_github_issue,
+    res = reconcile_issue(
+        red=True,
+        fingerprint=fp,
+        marker_key=HORIZON_MARKER,
+        labels=["alert-intake", "needs-agent", _AREA_LABEL, f"priority:{finding['severity']}"],
+        title=build_horizon_issue_title(finding),
+        body=build_horizon_issue_body(finding),
+        red_comment=(
+            f"Horizon Sentinel re-observed: **{finding['name']}** is now in phase "
+            f"`{finding['phase']}` ({finding['severity'].upper()}) — still no page "
+            f"at `{finding['concept_key']}` (fingerprint `{fp}`)."
+        ),
+        open_issues=open_issues,
     )
+    return _filed({"slug": slug}, res, finding["severity"])
+
+
+def file_exhaustion_issue(finding: dict, open_issues: Any = None) -> dict:
+    """File OR comment one issue per competition whose calendar is running out.
+
+    Same rail as :func:`file_horizon_issue` — a separate fingerprint namespace
+    so an exhaustion notice never collides with, or silently reuses, the
+    needs-page issue for one of that competition's editions.
+    """
+    from app.tasks.sentinel_filing import reconcile_issue
 
     comp = finding["competition"]
     fp = exhaustion_fingerprint(comp)
-    if not GITHUB_TOKEN:
-        return {"competition": comp, "fingerprint": fp, "action": "skipped_no_token"}
-
-    existing = _find_open_issue_by_fingerprint(fp)
-    if existing:
-        try:
-            comment_on_issue(
-                existing,
-                f"Horizon Sentinel re-observed: **{comp}** still has no edition after "
-                f"{finding['last_edition_end']} ({finding['days_left']} day(s) left) "
-                f"— fingerprint `{fp}`.",
-            )
-        except Exception as exc:
-            logger.warning("Horizon exhaustion comment failed on #%d: %s", existing, exc)
-        return {"competition": comp, "fingerprint": fp, "action": "commented", "issue": existing}
-
-    labels = ["alert-intake", "needs-agent", _AREA_LABEL, f"priority:{finding['severity']}"]
-    try:
-        number, node_id = create_github_issue(
-            build_exhaustion_issue_title(finding),
-            build_exhaustion_issue_body(finding),
-            labels,
-        )
-    except Exception as exc:
-        logger.error("Horizon exhaustion issue creation failed (%s): %s", fp, exc)
-        return {"competition": comp, "fingerprint": fp, "action": "error", "error": str(exc)[:200]}
-    try:
-        add_to_project_board(node_id)
-    except Exception:
-        logger.warning("Horizon exhaustion: add #%d to board failed (non-fatal)", number, exc_info=True)
-    return {
-        "competition": comp,
-        "fingerprint": fp,
-        "action": "filed",
-        "issue": number,
-        "severity": finding["severity"],
-    }
+    res = reconcile_issue(
+        red=True,
+        fingerprint=fp,
+        marker_key=HORIZON_MARKER,
+        labels=["alert-intake", "needs-agent", _AREA_LABEL, f"priority:{finding['severity']}"],
+        title=build_exhaustion_issue_title(finding),
+        body=build_exhaustion_issue_body(finding),
+        red_comment=(
+            f"Horizon Sentinel re-observed: **{comp}** still has no edition after "
+            f"{finding['last_edition_end']} ({finding['days_left']} day(s) left) "
+            f"— fingerprint `{fp}`."
+        ),
+        open_issues=open_issues,
+    )
+    return _filed({"competition": comp}, res, finding["severity"])
 
 
 # ---------------------------------------------------------------------------
@@ -553,11 +505,16 @@ async def _run_horizon_sentinel(
     exhausted = competitions_running_out(entries, today)
 
     filed: list[dict] = []
-    if file_issues:
+    if file_issues and (findings or exhausted):
+        # One snapshot of the open alert issues for the whole run (#12272): an
+        # unreadable list makes every filing below a ``dedup_unknown_no_op``.
+        from app.tasks.sentinel_filing import fetch_open_alert_issues
+
+        open_issues = fetch_open_alert_issues()
         for f in findings:
-            filed.append(file_horizon_issue(f))
+            filed.append(file_horizon_issue(f, open_issues))
         for f in exhausted:
-            filed.append(file_exhaustion_issue(f))
+            filed.append(file_exhaustion_issue(f, open_issues))
 
     stats: dict[str, Any] = {
         "mode": "live" if file_issues else "detect_only",
