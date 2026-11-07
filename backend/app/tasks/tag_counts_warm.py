@@ -126,9 +126,9 @@ _EVEN_MINUTE_PERIODS = (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60)
 def warm_period_seconds() -> int:
     """The beat period, derived from the slot's own freshness TTL.
 
-    ``ttl / (allowance + 1)``: at a 3600 s TTL and four permitted misses, a
-    rebuild every 12 minutes means the slot is at most 5 x 12 = 60 minutes old
-    when the fifth delivery in a row fails — the exact edge of servable.
+    ``ttl / (allowance + 1)``: at the 4500 s TTL and one permitted miss (C-1),
+    2250 s rounds down to a 30-minute rebuild, so the slot is at most 2 x 30 =
+    60 minutes old when the second delivery in a row fails — inside servable.
 
     Derived at call time rather than frozen into a constant so a queue editing
     ``FRESH_TTL_SECONDS`` moves this too. #2236 is the incident where a period

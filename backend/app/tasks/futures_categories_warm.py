@@ -27,7 +27,7 @@ reads are the SAME payload (``created_at`` 00:41:37 on each), which is the point
 WHY A WARMER AND NOT A CHEAPER QUERY. The statement reads 39,014 shared blocks
 because the two negated ``ILIKE``s are unindexable; LAT-P122 measured it and
 said so, and this ship does not make it faster either. What changes is WHO runs
-it: a background beat, every 5 minutes, instead of whichever person happened to
+it: a background beat (every 12 minutes since C-1), instead of whichever person happened to
 open Search after a quiet half hour.
 
 🔴 THE PERIOD IS DERIVED FROM THE TIER'S OWN CEILING, NOT CHOSEN. A literal 300
@@ -115,10 +115,10 @@ _EVEN_MINUTE_PERIODS = (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60)
 def warm_period_seconds() -> int:
     """The beat period, derived from the tier's own stale-serve ceiling.
 
-    ``ceiling / (allowance + 1)``: with the ceiling at 25 minutes and four
-    permitted misses, a rebuild every 5 minutes means the mirror is at most
-    5 x 5 = 25 minutes old when the fifth delivery in a row fails — the exact
-    edge of servable. Anything better than that worst case leaves the reader on
+    ``ceiling / (allowance + 1)``: with the ceiling at 25 minutes and one
+    permitted miss, a rebuild every 12 minutes means the mirror is at most
+    2 x 12 = 24 minutes old when the second delivery in a row fails — inside the
+    edge of servable. (Before C-1: four misses, every 5 minutes.) Anything better than that worst case leaves the reader on
     the mirror, which is a 28 ms Redis read.
 
     Derived at call time and not frozen into a module constant so that a queue

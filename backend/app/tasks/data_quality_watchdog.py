@@ -1148,6 +1148,16 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                 except Exception:
                     pass
 
+        # C-1 / B-8 (Fable, Nov 6): each check's bound is transaction-local
+        # (`set_config(..., true)`) and the loop never commits, so end the
+        # transaction here. Otherwise the link-rate and coverage snapshots below
+        # run under the LAST check's 15/50 s bound instead of the resting one,
+        # and one timeout there silences both drop alerts.
+        try:
+            await session.rollback()
+        except Exception:
+            logger.debug("Watchdog post-loop rollback failed", exc_info=True)
+
     # #1001: the watchdog must not fail SILENTLY. If any check raised an
     # exception (not merely failed a threshold), the monitor's "all clear" is
     # unreliable — surface it as a deduped P1 alert so a broken monitor is
@@ -1344,12 +1354,15 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                 "issue": r.get("issue"),
             }
             for name, r in stats["results"].items()
-            # A busy-db deferred check was not run; it is neither red nor green.
-            if not r.get("passed") and not r.get("deferred")
+            # A busy-db deferred check was not run, and a B-8 timed-out check
+            # produced no value; neither is red nor green.
+            if not r.get("passed") and not r.get("deferred") and not r.get("timed_out")
         ]
-        # ...so it keeps the verdict it last EARNED: a deferred census carries
-        # its previous failing entry forward instead of dropping out (#10090).
-        deferred = {n for n, r in stats["results"].items() if r.get("deferred")}
+        # ...so it keeps the verdict it last EARNED: a deferred or timed-out
+        # census carries its previous failing entry forward (#10090; C-1 B-8).
+        deferred = {
+            n for n, r in stats["results"].items() if r.get("deferred") or r.get("timed_out")
+        }
         if deferred:
             try:
                 prev = json.loads(get_redis_client().get("bainluck:data_quality_watchdog:last") or "{}")

@@ -99,7 +99,7 @@ def _majors_run(monkeypatch):
     """B-4 (2026-11-06): the scheduled run carries the majors one run in six.
     Every scheduled run in this file is pinned to a majors run, so these tests
     keep reading both tiers whatever the wall clock says (gotcha #44); the
-    off-slot run has its own tests in `test_warm_event_concepts.py`."""
+    off-slot run has its own tests in `test_c1_cadence_trims.py`."""
     from app.tasks import event_concept_warmer
 
     monkeypatch.setattr(event_concept_warmer, "majors_due", lambda now: True)

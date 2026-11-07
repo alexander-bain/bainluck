@@ -10336,7 +10336,7 @@ _EXPIRING_WARMER_BEATS = {
     "warm-futures-categories": _futures_categories_warm_minutes() * 60,
 
     # #4920. One period, so #1609's flat rule applies unamended: the pass is
-    # ~30 s of measurement against a 720 s beat, so a fire that could not start
+    # ~30 s of measurement against an 1800 s beat (C-1), so a fire that could not start
     # IS superseded by the next one — and superseded exactly, because the next
     # fire re-measures the same categories through the same route. DERIVED from
     # the period for the same reason the period is derived from the slot's TTL.

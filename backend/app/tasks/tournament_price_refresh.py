@@ -1168,10 +1168,10 @@ async def _sync_tournament_results(
     # that also carries whatever else is on that week. `is None`, not `or`, for
     # the reason given on the price rail: an explicit `[]` means nothing to sync
     # and has to be able to say so.
-    targets = (
-        [t for t in DEFAULT_RESULT_TARGETS if in_season(t[0])]
-        if tournaments is None else tournaments
-    )
+    # C-1 / B-7: NOT calendar-gated (Fable, Nov 6). This rail is the only
+    # writer of the results key (900 s) and its last-good copy (3600 s), so a
+    # finished hub's decided draw lapses to `unavailable` an hour after it stops.
+    targets = DEFAULT_RESULT_TARGETS if tournaments is None else tournaments
 
     stats: dict[str, Any] = {"tournaments": 0, "written": 0, "errors": []}
     if not targets:

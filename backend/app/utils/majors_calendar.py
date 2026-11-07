@@ -262,9 +262,11 @@ def marquee_pin_state(
 
 
 #: C-1 / B-7 (worker audit 2026-11-06): how long before a tournament's start and
-#: after its end its scheduled upkeep (prices, results, match links, register
-#: sentinel) keeps running. The US Open ended 2026-09-13; on 2026-11-06 its
-#: upkeep was still firing 32 times an hour for `resolved 0` / `no_work`.
+#: after its end its scheduled upkeep (prices and match links) keeps running.
+#: The results sync is NOT gated: it is the only writer of a finished hub's
+#: results key and last-good copy (Fable, Nov 6). The US Open ended 2026-09-13;
+#: on 2026-11-06 its upkeep was still firing 32 times an hour for `resolved 0`
+#: / `no_work`.
 UPKEEP_LEAD_DAYS = 7
 UPKEEP_TAIL_DAYS = 3
 
