@@ -1,9 +1,10 @@
-# #10708 INACTIVE native-reader preparation; ci.yml still maps native to full.
-# Known direct-signal readers and conservative over-inclusions, NOT a complete
-# transitive reader boundary. Before activation resolve test/helper/conftest/
-# script edges and DB reach, or retain full coverage for unresolved cases.
-# test_mutation_guard retains its origin/master...HEAD invocation, NOT the
-# classifier's caller-supplied BASE HEAD range. Pass B range remains a hold.
+# #10708 (Alex 77: A) native-reader roster, ACTIVE for pure-ios/ pull requests.
+# Known direct-signal readers and conservative over-inclusions. On a native PR,
+# CI runs this roster PLUS every tests/**/test_*.py that names a native path
+# (.github/scripts/ci-native-tests.sh). Readers the roster and the text scan
+# cannot attribute (transitive helpers, dynamic paths) are the accepted residue
+# of 77-A; add a test here when one is found. test_mutation_guard retains its
+# origin/master...HEAD invocation, NOT the classifier's BASE HEAD range.
 # Resolver emits nothing unless every normalized backend-relative path is valid.
 tests/test_cold_path_charter.py
 tests/test_ios_codable_nonisolated_1775.py
@@ -32,3 +33,4 @@ tests/test_watch_navigation_reveal.py
 tests/test_watch_rectangular_face_activation.py
 tests/test_watch_widget_arrival.py
 tests/test_entertainment_lead_outcomes_web_only_7382.py
+tests/test_ci_native_scope_10708.py

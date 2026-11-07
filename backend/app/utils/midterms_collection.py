@@ -215,6 +215,7 @@ def outcome_key(name: str, entry: MidtermsTwinEntry | None = None) -> str:
 #: A contributor-only outcome under this prints as 0% and is no blend, so the card
 #: drops it; at or above it the publisher refuses (`prepare_curated`).
 RESIDUAL_BELOW = 0.01
+SPECIALTY_FIELD_MASS_MIN = 0.9
 
 
 def is_residual(outcome: dict) -> bool:
@@ -224,9 +225,10 @@ def is_residual(outcome: dict) -> bool:
 
 def _official_result(card: dict) -> tuple[str, str] | None:
     winners = [
-        o["name"]
+        o["name"].strip()
         for o in card.get("top_outcomes", [])
-        if o.get("is_winner") is True
+        if (o.get("name") or "").strip()
+        and o.get("is_winner") is True
         and o.get("resolution_source") == VENUE_SETTLEMENT_SOURCE
     ]
     if len(winners) != 1:
@@ -240,12 +242,21 @@ def _official_result(card: dict) -> tuple[str, str] | None:
 def blend_card(primary: dict, contributors: list[dict]) -> dict:
     card = copy.deepcopy(primary)
     entry = MIDTERMS_TWIN_BY_KALSHI_ID.get(card.get("id"))
-    outcomes = {outcome_key(o["name"], entry): o for o in card.get("top_outcomes", [])}
+    raw_primary_outcomes = card.get("top_outcomes", [])
+    valid_primary_outcomes = [
+        o for o in raw_primary_outcomes if (o.get("name") or "").strip()
+    ]
+    has_blank_outcome = len(valid_primary_outcomes) < len(raw_primary_outcomes)
+    outcomes = {outcome_key(o["name"], entry): o for o in valid_primary_outcomes}
     primary_keys = set(outcomes)
     counts = []
     for contributor in contributors:
         dropped = 0
         for outcome in contributor.get("top_outcomes", []):
+            if not (outcome.get("name") or "").strip():
+                has_blank_outcome = True
+                dropped += 1
+                continue
             key = outcome_key(outcome["name"], entry)
             if key in primary_keys:
                 continue
@@ -258,11 +269,17 @@ def blend_card(primary: dict, contributors: list[dict]) -> dict:
         counts.append(contributor.get("outcome_count", 0) - dropped)
     card["top_outcomes"] = list(outcomes.values())
     card["outcome_count"] = max([len(outcomes), *counts])
-    sources = sorted({c["source"] for c in contributors})
+    sources = sorted(
+        {
+            str(c.get("source") or "").strip().lower()
+            for c in contributors
+            if str(c.get("source") or "").strip()
+        }
+    )
     card.update(
         sources=sources,
         source_count=len(sources),
-        source="both" if len(sources) > 1 else sources[0],
+        source="both" if len(sources) > 1 else (sources[0] if sources else None),
     )
     official = sorted(r for c in contributors if (r := _official_result(c)))
     if official:
@@ -288,26 +305,39 @@ def blend_card(primary: dict, contributors: list[dict]) -> dict:
     for outcome in card.get("top_outcomes", []):
         rows = []
         for c in contributors:
+            c_src = str(c.get("source") or "").strip().lower() or None
             matches = [
                 o
                 for o in c.get("top_outcomes", [])
-                if outcome_key(o["name"], entry) == outcome_key(outcome["name"], entry)
+                if (o.get("name") or "").strip()
+                and outcome_key(o["name"], entry) == outcome_key(outcome["name"], entry)
             ]
             if len(matches) == 1:
                 rows.append(
                     {
-                        "source": c["source"],
+                        "source": c_src,
                         "probability": matches[0].get("probability"),
                     }
                 )
         outcome["probability"] = blend_probabilities(rows)
     from app.utils.outcome_display import normalize_display_probs
 
-    normalize_display_probs(
-        card["top_outcomes"], mutually_exclusive=card.get("mutually_exclusive", False),
-        field_complete=len(card["top_outcomes"]) == card["outcome_count"],
-        question=card.get("name"),
+    raw_mass = sum(
+        float(o["probability"])
+        for o in card["top_outcomes"]
+        if o.get("probability") is not None
     )
+    if (
+        card.get("mutually_exclusive") is True
+        and not has_blank_outcome
+        and raw_mass + 1e-9 >= SPECIALTY_FIELD_MASS_MIN
+    ):
+        normalize_display_probs(
+            card["top_outcomes"],
+            mutually_exclusive=True,
+            field_complete=len(card["top_outcomes"]) == card["outcome_count"],
+            question=card.get("name"),
+        )
     return card
 
 

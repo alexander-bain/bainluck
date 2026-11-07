@@ -26,6 +26,12 @@ Every ranking change is scored against the family's grades before it ships.
 }
 ```
 
+Grades made on the `/grade` page (admin sign-in) land in the `ranking_grades`
+table; `python3 tools/ranking/grades.py export` writes them here in the same
+shape (`"source": "grade-page"`; a re-export refreshes its own file and never
+overwrites a hand-filled sheet). A kid's name typed on the page never leaves
+the database: export writes it as a pseudonym (`kid-<6 hex>`).
+
 `"expert"` must be `true` or `false`; `false` marks a kid's grades (pseudonymous
 grader id). They get their own NDCG line and never mix into the founder number.
 

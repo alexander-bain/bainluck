@@ -109,9 +109,13 @@ struct EventHeadlinePhaseLabel9483: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
             if let baseline {
-                Text(baseline)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                    EventAtlasPregameMarkView11666(text: baseline)
+                } else {
+                    Text(baseline)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .multilineTextAlignment(.center)

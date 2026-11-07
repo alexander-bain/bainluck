@@ -78,7 +78,9 @@ STALE_CACHE_KEY = f"{CACHE_KEY}:stale"
 #:
 #: 🔴 4500 IS CHOSEN SO THE DERIVED PERIOD CLEARS THE SETTLEMENT SWEEP.
 #: The producer's period is `FRESH_TTL_SECONDS // (MISSED_DELIVERY_ALLOWANCE +
-#: 1)` = 900 s = 15 min, and `*/15` fires at :00 :15 :30 :45 — none of which
+#: 1)`, rounded down to an even `*/N`. At the original allowance of 4 that was
+#: 900 s = 15 min; since C-1 (allowance 1) it is 2250 s -> 30 min, `*/30` at
+#: :00 :30, which clears the same window. At 15 min `*/15` fires at :00 :15 :30 :45 — none of which
 #: land in the settlement sweep's `:31`+13m window (:31–:44). That is not a
 #: nicety: at the first-draft 3600 the period was 12 min, `*/12` fired at :36
 #: INSIDE that window, and `test_the_run_window_does_not_sit_under_a_growing_pile`

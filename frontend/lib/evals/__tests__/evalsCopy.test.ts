@@ -13,9 +13,11 @@ import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy, type CopyBan } from
 import * as copy from "@/lib/evals/copy";
 import { EVALS_COPY_RULES } from "@/lib/evals/copyRules";
 import { GAPS } from "@/lib/evals/gaps";
+import { loadReviewerResults } from "@/lib/evals/reviewerResults";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
 import { FAMILY_WORDS } from "@/lib/evals/scoreboard";
+import { GATE_WORDS, RELATION_WORDS } from "@/lib/evals/twinExam";
 import { loadWatchers } from "@/lib/evals/watchers";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import { RESULT_WORD, ageLabel } from "@/lib/evals/truth";
@@ -40,6 +42,12 @@ function readerStrings(): string[] {
     ...Object.values(FAMILY_WORDS).flatMap((w) => [w.name, w.checks]),
     ...(loadReviewerStudy()?.cases ?? []).flatMap((c) => [c.label, c.text]),
     loadReviewerStudy()?.receipt.label ?? "",
+    ...(() => {
+      const r = loadReviewerResults(loadReviewerStudy());
+      return r ? [r.receipt.label, r.planReceipt.label, ...r.results.map((x) => x.receipt.label)] : [];
+    })(),
+    ...Object.values(GATE_WORDS).flatMap((g) => [g.name, g.checks, ...Object.values(g.units)]),
+    ...Object.values(RELATION_WORDS),
     ...(loadWatchers()?.watchers ?? []).flatMap((w) => [w.name, w.checks, w.verdict?.receipt.label ?? ""]),
     ...Object.values(RESULT_WORD),
     ageLabel(0),
@@ -58,7 +66,7 @@ describe("/evals copy passes the bans", () => {
 
   it("the sweep reads the strings it claims to — nested copy, gap rows and labels included", () => {
     const strings = readerStrings();
-    expect(strings).toContain(copy.HERO_COPY.detail);
+    expect(strings).toContain(copy.STORY_COPY.code.paragraphs[0]);
     expect(strings).toContain(copy.RESULT_CHIP_MEANING.fail);
     expect(strings).toContain(copy.TERMS[0].meaning);
     expect(strings).toContain(GAPS[0].text);
@@ -67,6 +75,8 @@ describe("/evals copy passes the bans", () => {
     expect(strings).toContain(FAMILY_WORDS.search_truth_closure_contract.checks);
     expect(strings).toContain(loadReviewerStudy()?.cases[0].text);
     expect(strings).toContain(copy.TESTS_FOR_TESTS_COPY.biteNoneReal);
+    expect(strings).toContain(GATE_WORDS.wrong_merges.checks);
+    expect(strings).toContain(copy.CONFUSION_COPY.heldOutNote);
     expect(strings).toContain(loadWatchers()?.watchers[0].checks);
     expect(strings).toContain(copy.WATCHERS_COPY.stateRedStopped);
     expect(strings.length).toBeGreaterThan(30);
@@ -93,13 +103,18 @@ describe("the rules stay out of the reader's bundle", () => {
 });
 
 describe("the page says what Decide 43 ruled", () => {
-  it("J1: the hero says plainly that AI agents write most of the code", () => {
-    expect(copy.HERO_COPY.detail).toMatch(/AI agents write most of the code/);
+  it("J1: the story's code chapter says plainly that AI agents write most of the code, and who checks the work", () => {
+    expect(copy.STORY_COPY.code.paragraphs[0]).toMatch(/^AI agents write most of this site's code/);
+    expect(copy.STORY_COPY.code.paragraphs[0]).toMatch(/other AI agents and Alex, who builds Bain Luck, check the work/);
   });
 
-  it("the hero names every label the page can show, LAST REVIEWED included", () => {
+  it("J1, on the top screen too: its plain answer opens with who writes the code", () => {
+    expect(copy.TOP_COPY.answer).toMatch(/^AI agents write most of (the|this site's) code/);
+  });
+
+  it("the line above the full record names every label the page can show, LAST REVIEWED included", () => {
     for (const label of ["LIVE", "LAST RUN", "PLANNED", "LAST REVIEWED"]) {
-      expect(copy.HERO_COPY.detail).toContain(label);
+      expect(copy.STORY_COPY.recordLead).toContain(label);
     }
   });
 

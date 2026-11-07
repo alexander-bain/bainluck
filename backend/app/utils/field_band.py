@@ -567,8 +567,15 @@ async def _load_markets_from_db(
     db: Any,
     market_ids: Sequence[int],
     external_ids: Sequence[str],
+    *,
+    sources: Sequence[str] = (),
 ) -> tuple[dict[int, dict[str, Any]], dict[int, set[int]]]:
-    """Query ORM ``FuturesMarket`` rows (with outcomes and withheld-price sets) and convert to mappings."""
+    """Query ORM ``FuturesMarket`` rows (with outcomes and withheld-price sets) and convert to mappings.
+
+    Always binds ``FuturesMarket.source`` alongside ``FuturesMarket.external_id``
+    so PostgreSQL probes the leading column of ``uq_futures_source_external``
+    ``(source, external_id)`` instead of scanning all 32,597 index pages (#12255).
+    """
     if isinstance(db, (list, tuple)):
         mapped_seq: dict[int, dict[str, Any]] = {}
         for item in db:
@@ -583,7 +590,7 @@ async def _load_markets_from_db(
     if not hasattr(db, "execute") or not callable(db.execute):
         return {}, {}
 
-    from sqlalchemy import or_, select
+    from sqlalchemy import and_, or_, select
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import selectinload
 
@@ -594,10 +601,32 @@ async def _load_markets_from_db(
     clauses = []
     clean_ids = [int(mid) for mid in market_ids if isinstance(mid, int) and mid > 0]
     clean_exts = [str(ext).strip() for ext in external_ids if str(ext or "").strip()]
+    clean_sources = list(
+        dict.fromkeys(
+            str(src).strip().lower()
+            for src in sources
+            if str(src or "").strip()
+        )
+    )
     if clean_ids:
         clauses.append(FuturesMarket.id.in_(clean_ids))
     if clean_exts:
-        clauses.append(FuturesMarket.external_id.in_(clean_exts))
+        if not clean_sources:
+            if all(ext.upper().startswith("KX") for ext in clean_exts):
+                clean_sources = ["kalshi"]
+            else:
+                clean_sources = ["kalshi", "polymarket", "odds_api"]
+        source_clause = (
+            FuturesMarket.source == clean_sources[0]
+            if len(clean_sources) == 1
+            else FuturesMarket.source.in_(clean_sources)
+        )
+        clauses.append(
+            and_(
+                source_clause,
+                FuturesMarket.external_id.in_(clean_exts),
+            )
+        )
     if not clauses:
         return {}, {}
 
@@ -721,7 +750,10 @@ async def produce_field_band(
 
     market_ids: list[int] = []
     external_ids: list[str] = []
-    _, spine_id, spine_token = parse_market_ref(field_spec)
+    sources: list[str] = []
+    spine_source, spine_id, spine_token = parse_market_ref(field_spec)
+    if spine_source:
+        sources.append(spine_source)
     if spine_id is not None:
         market_ids.append(spine_id)
     if field_external_id:
@@ -730,7 +762,9 @@ async def produce_field_band(
         external_ids.append(spine_token)
 
     if second_section_spec:
-        _, sec_id, sec_token = parse_market_ref(second_section_spec)
+        sec_source, sec_id, sec_token = parse_market_ref(second_section_spec)
+        if sec_source and sec_source not in sources:
+            sources.append(sec_source)
         if sec_id is not None:
             market_ids.append(sec_id)
         if second_section_external_id:
@@ -738,8 +772,12 @@ async def produce_field_band(
         elif sec_token:
             external_ids.append(sec_token)
 
-    loader = load_markets if load_markets is not None else _load_markets_from_db
-    loaded = loader(db, market_ids, external_ids)
+    if load_markets is not None:
+        loaded = load_markets(db, market_ids, external_ids)
+    else:
+        loaded = _load_markets_from_db(
+            db, market_ids, external_ids, sources=sources
+        )
     if inspect.isawaitable(loaded):
         loaded = await loaded
     markets_map, withheld_map = loaded

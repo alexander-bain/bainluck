@@ -10,7 +10,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import Figure, { PlannedItem, figureProblem } from "@/components/evals/Figure";
+import Figure, { Example, PlannedItem, figureProblem } from "@/components/evals/Figure";
 import GapList from "@/components/evals/GapList";
 import SourceList from "@/components/evals/SourceList";
 import { issueRef } from "@/lib/evals/truth";
@@ -71,6 +71,31 @@ describe("Figure", () => {
         )
       )
     ).toThrow(/a PLANNED item renders no figure/);
+  });
+
+  it("a figure inside a worked example fails the render: an illustration carries no measurement", () => {
+    expect(() =>
+      quietly(() =>
+        renderToStaticMarkup(
+          <Example caption="For example" label="An illustration">
+            <Figure truth={RECORD}>24 of 25</Figure>
+          </Example>
+        )
+      )
+    ).toThrow(/an example renders no measured figure/);
+    expect(figureProblem(false, RECORD, true)).toMatch(/example/);
+    expect(figureProblem(false, RECORD, false)).toBeNull();
+  });
+
+  it("a worked example with words and digits only renders, and always says For example", () => {
+    const html = renderToStaticMarkup(
+      <Example caption="For example" label="Odds of minus 150 mean a 60% chance">
+        <p>−150 → 60%</p>
+      </Example>
+    );
+    expect(html).toContain("data-evals-example");
+    expect(html).toContain("<figcaption");
+    expect(html).toContain("For example");
   });
 
   it("in production a refused figure is dropped rather than shown unlabelled, and nothing throws", () => {

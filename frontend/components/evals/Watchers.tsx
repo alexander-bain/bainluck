@@ -256,7 +256,7 @@ function WatcherRow({ watcher, now }: { watcher: Watcher; now: Date | null }) {
   );
 }
 
-/** "Checks that run on their own" — the watchers, their schedules in Pacific time, and their newest verdicts. */
+/** "The site watchers, one by one" — the watchers, their schedules in Pacific time, and their newest verdicts. */
 export default function Watchers({ list }: { list: WatcherList }) {
   const now = useNow();
   const truth: Truth = { kind: "reviewed", asOf: list.reviewedAt, source: list.scheduleSource };

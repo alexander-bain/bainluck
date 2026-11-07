@@ -8,7 +8,15 @@
  * as the plan on #11951 says.
  */
 
-export type EvalsSectionId = "timeline" | "forward-record" | "test-library" | "tests-for-tests" | "watchers" | "gaps";
+export type EvalsSectionId =
+  | "exam"
+  | "confusion"
+  | "timeline"
+  | "forward-record"
+  | "test-library"
+  | "tests-for-tests"
+  | "watchers"
+  | "gaps";
 
 const REPO = "https://github.com/alexander-bain/bainluck";
 
@@ -35,35 +43,49 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
   },
   {
     id: "exam-run-2-receipt",
-    label: "Twin exam, second run receipt",
+    label: "Matcher exam, second run results",
     date: "2026-11-05",
     href: `${REPO}/pull/11951#issuecomment-6674874973`,
     usedBy: ["timeline"],
   },
   {
     id: "exam-receipt",
-    label: "Twin exam receipt",
+    label: "Matcher exam results",
     date: "2026-11-05",
     href: `${REPO}/pull/11951#issuecomment-6673312127`,
-    usedBy: ["timeline"],
+    usedBy: ["exam", "confusion", "timeline"],
+  },
+  {
+    id: "exam-record",
+    label: "Matcher exam record, from the scoring script",
+    date: "2026-11-05",
+    href: `${REPO}/blob/1a600e1b17/frontend/lib/evals/data/twin-exam-2026-11-05.json`,
+    usedBy: ["exam", "confusion"],
+  },
+  {
+    id: "ruling-24a",
+    label: "The written decision that set the exam's pass marks",
+    date: "2026-11-04",
+    href: `${REPO}/pull/11951#issuecomment-6650890360`,
+    usedBy: ["exam"],
   },
   {
     id: "exam-brief",
-    label: "Twin exam brief, the first run's cost",
+    label: "Matcher exam brief, the first run's cost",
     date: "2026-11-04",
     href: `${REPO}/pull/11951#issuecomment-6650478138`,
     usedBy: ["timeline"],
   },
   {
     id: "calibration-exit-exam",
-    label: "Calibration exit exam",
+    label: "Checklist for the accuracy page",
     date: "2026-08-13",
     href: `${REPO}/blob/91ae8c8e1c/docs/CALIBRATION-EXIT-EXAM.md`,
     usedBy: ["timeline"],
   },
   {
     id: "discover-exit-exam",
-    label: "Discover exit exam, the interest baseline",
+    label: "Discover checklist, the first interest measure",
     date: "2026-08-10",
     href: `${REPO}/blob/3ae6db4fed/docs/DISCOVER-EXIT-EXAM.md`,
     usedBy: ["timeline"],
@@ -77,17 +99,17 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
   },
   {
     id: "golden-baseline",
-    label: "The golden set's recorded count",
+    label: "The answer key's recorded count",
     date: "2026-11-03",
     href: `${REPO}/blob/54470c89fd/backend/tests/fixtures/matching_golden_baseline.json`,
     usedBy: ["test-library"],
   },
   {
     id: "bite-audit",
-    label: "The bite audit's test",
+    label: "The planted-change audit's test",
     date: "2026-11-03",
     href: `${REPO}/blob/54470c89fd/backend/tests/evals/test_eval_bite_rate_audit.py`,
-    usedBy: ["tests-for-tests"],
+    usedBy: ["test-library"],
   },
   {
     id: "reviewer-study",
@@ -111,6 +133,20 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
     usedBy: ["tests-for-tests"],
   },
   {
+    id: "reviewer-study-plan",
+    label: "Reviewer study, the plan: every case, three tries",
+    date: "2026-11-06",
+    href: `${REPO}/pull/11951#issuecomment-6687948343`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
+    id: "reviewer-study-count",
+    label: "Reviewer study, the latest count",
+    date: "2026-11-06",
+    href: `${REPO}/pull/11951#issuecomment-6692550759`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
     id: "reviewer-dropped",
     label: "Why one planted bug was left out",
     date: "2026-11-05",
@@ -126,7 +162,7 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
   },
   {
     id: "quiet-evals-audit",
-    label: "Quiet-evals audit",
+    label: "Audit of checks that went quiet",
     date: "2026-11-03",
     href: `${REPO}/blob/82b61ab815/docs/evals/QUIET-EVALS-2026-11.md`,
     usedBy: ["watchers"],
@@ -155,14 +191,14 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
   },
   {
     id: "flow-sentinel-daily-newest-run",
-    label: "Flow sentinel, newest run on GitHub",
+    label: "Reader-flow check, newest run on GitHub",
     date: "2026-11-05",
     href: `${REPO}/issues/12071#issuecomment-6679506737`,
     usedBy: ["watchers"],
   },
   {
     id: "grid-sentinel-daily-newest-run",
-    label: "Grid sentinel, newest run on GitHub",
+    label: "Championship-grid check, newest run on GitHub",
     date: "2026-11-05",
     href: `${REPO}/issues/12074#issuecomment-6679867488`,
     usedBy: ["watchers"],
@@ -198,14 +234,14 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
   // End of the watchers' newest runs.
   {
     id: "flow-reporting-again",
-    label: "Flow sentinel, reporting again",
+    label: "Reader-flow check, reporting again",
     date: "2026-11-05",
     href: `${REPO}/issues/11960#issuecomment-6674619173`,
     usedBy: ["watchers"],
   },
   {
     id: "grid-reporting-again",
-    label: "Grid sentinel, reporting again",
+    label: "Championship-grid check, reporting again",
     date: "2026-11-05",
     href: `${REPO}/issues/11959#issuecomment-6674618887`,
     usedBy: ["watchers"],
@@ -219,14 +255,14 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
   },
   {
     id: "evals-story",
-    label: "Evals story, the gaps section",
+    label: "The plan for this page, its gaps section",
     date: "2026-11-03",
     href: `${REPO}/pull/11951`,
     usedBy: ["gaps"],
   },
   {
     id: "calibration-audit",
-    label: "Calibration audit",
+    label: "Accuracy audit",
     date: "2026-11-03",
     href: `${REPO}/pull/11956`,
     usedBy: ["timeline", "gaps"],

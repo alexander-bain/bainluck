@@ -27,7 +27,9 @@ from app.tasks.redis_state import get_redis_client
 logger = logging.getLogger(__name__)
 
 SENTRY_SNAPSHOT_KEY = "bainluck:sentry:top_24h"
-_TTL_SECONDS = 3600  # generous — the beat refreshes far more often
+# C-1 (2026-11-06): 3600 -> 7200 with the beat moving from */15 to hourly, so a
+# single late beat never leaves the ops snapshot empty.
+_TTL_SECONDS = 7200
 _TOP_N = 8
 _HTTP_TIMEOUT = 15.0
 
