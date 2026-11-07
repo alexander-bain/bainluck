@@ -12,6 +12,8 @@
  */
 
 import { generateMetadata } from "@/app/events/[id]/layout";
+import { APP_STORE_APP_ID } from "@/lib/brandCopy";
+import { buildShareUrl } from "@/lib/share";
 
 const SETTLED_PAYLOAD = {
   id: 15294037,
@@ -61,6 +63,17 @@ const asText = (v: unknown): string =>
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+it("opens the resolved game's canonical URL from the Safari banner", async () => {
+  stubFetch(SCHEDULED_PAYLOAD);
+  const meta = await generateMetadata({ params: Promise.resolve({ id: "0001" }) });
+
+  expect(meta.itunes).toEqual({
+    appId: APP_STORE_APP_ID,
+    appArgument: buildShareUrl("/events/1"),
+  });
+  expect(meta.itunes?.appArgument).toBe(meta.alternates?.canonical);
 });
 
 describe("generateMetadata on a settled event", () => {

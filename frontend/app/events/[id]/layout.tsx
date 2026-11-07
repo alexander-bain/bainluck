@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { EventDetailResponse } from "@/lib/types";
 import { buildShareUrl } from "@/lib/share";
+import { APP_STORE_APP_ID } from "@/lib/brandCopy";
 import {
   buildEventShareCopy,
   isFinishedForShare,
@@ -158,6 +159,7 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical: url },
+    itunes: { appId: APP_STORE_APP_ID, appArgument: url },
     openGraph: {
       title: socialTitle,
       description,

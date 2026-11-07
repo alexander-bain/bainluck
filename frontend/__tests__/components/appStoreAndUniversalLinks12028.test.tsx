@@ -61,26 +61,17 @@ describe("#12028 — App Store links on the website and Universal Links for both
     expect(phoneLinkMatch![1].trim()).toBe("Get the app");
   });
 
-  test("RootLayout includes the phone-only 'Get the app' bar inside EmbedGate", () => {
+  test("RootLayout uses Safari's banner and removes the custom top bar", () => {
     const layoutSource = fs.readFileSync(
       path.join(FRONTEND_ROOT, "app", "layout.tsx"),
       "utf8",
     );
 
-    const barAt = layoutSource.indexOf('data-testid="phone-get-the-app-bar"');
-    expect(barAt).toBeGreaterThan(-1);
-
-    // Must sit inside an <EmbedGate> so native /about?embed=1 hides it.
-    const before = layoutSource.slice(0, barAt);
-    const opens = (before.match(/<EmbedGate[\s>]/g) ?? []).length;
-    const closes = (before.match(/<\/EmbedGate>/g) ?? []).length;
-    expect(opens).toBeGreaterThan(closes);
-
-    // Must be phone-only (`md:hidden`) and link to APP_STORE_URL with "Get the app".
-    const barSlice = layoutSource.slice(barAt, barAt + 700);
-    expect(barSlice).toContain("md:hidden");
-    expect(barSlice).toContain("href={APP_STORE_URL}");
-    expect(barSlice).toContain("Get the app");
+    expect(layoutSource).not.toContain('data-testid="phone-get-the-app-bar"');
+    expect(layoutSource).not.toContain('data-testid="phone-get-the-app-link"');
+    // Per-page context is supplied by the covered route's own metadata.
+    // A root app-argument would be inherited by every other page.
+    expect(layoutSource).toContain("itunes: { appId: APP_STORE_APP_ID }");
   });
 
   test("both iOS and macOS entitlements claim applinks for bainluck.com and www.bainluck.com", () => {
