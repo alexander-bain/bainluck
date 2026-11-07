@@ -63,9 +63,19 @@ describe("the committed results", () => {
       expect(r.at).toBe(receipt.posted_at);
       expect(VERDICT[r.outcome]).toBeDefined();
       const id = receipt.builder_case ?? r.case;
-      const named = [`${id}/pass${r.pass}: ${WORD[r.outcome]}`, `${id}/P${r.pass} | ${VERDICT[r.outcome]}`];
-      expect(named.some((n) => receipt.quote.includes(n))).toBe(true);
-      expect(receipt.quote).toContain(VERDICT[r.outcome]);
+      const tag = `${id}/P${r.pass}`;
+      // The ways Builder B's posts have named a result: "r02/pass1: CAUGHT", a
+      // table row "r01/P1 | CHANGES_REQUESTED", a sentence naming the try and
+      // then its verdict ("r05/P1) at …: **CHANGES_REQUESTED**"), and, for a
+      // planted mistake, "r02/P2 caught". Each names the case, the try and the
+      // verdict or its own word for it.
+      const named = [
+        receipt.quote.includes(`${id}/pass${r.pass}: ${WORD[r.outcome]}`),
+        receipt.quote.includes(`${tag} | ${VERDICT[r.outcome]}`),
+        new RegExp(`\\b${tag}\\b[^|]*\\b${VERDICT[r.outcome]}\\b`).test(receipt.quote),
+        r.outcome === "caught" && receipt.quote.includes(`${tag} caught`),
+      ];
+      expect(named.some(Boolean)).toBe(true);
     });
   });
 
@@ -86,8 +96,9 @@ describe("the committed results", () => {
   });
 
   it("the tally is the latest post's own: mistakes caught of those reviewed, and false alarms among the harmless changes", () => {
-    const defects = /Observed defects: \*\*(\d+)\/(\d+) caught\*\*/.exec(RECEIPTS.count.defects_quote);
-    const controls = /Observed controls: \*\*(\d+)\/(\d+) false alarms\*\*/.exec(RECEIPTS.count.controls_quote);
+    // Builder B has written the tallies as "Observed defects: **4/4 caught**" and as "Defects 9/9 caught".
+    const defects = /(?:Observed )?[Dd]efects:? \**(\d+)\/(\d+) caught/.exec(RECEIPTS.count.defects_quote);
+    const controls = /(?:Observed )?[Cc]ontrols:? \**(\d+)\/(\d+) false alarms/.exec(RECEIPTS.count.controls_quote);
     expect(defects && controls).toBeTruthy();
     const tally = reviewerTally(loadReviewerResults(STUDY)!, STUDY!);
     expect([tally.mistakes.right, tally.mistakes.reviewed]).toEqual([Number(defects?.[1]), Number(defects?.[2])]);
