@@ -93,7 +93,7 @@ jobs:
             core.setOutput('number', String(number));
             core.setOutput('head', head);
             core.setOutput('branch', pr.head.ref);
-            core.setOutput('eval_candidate', isEval ? 'true' : 'false');
+            if (isEval) core.setOutput('eval_candidate', 'true');
       - name: Wait for green CI at this head
         id: ci
         if: steps.select.outputs.number != ''
@@ -240,7 +240,7 @@ jobs:
             Follow docs/release-loop/tier-b-review-brief.md for the semantic review, with the qualification instruction above controlling this run. End with exactly one review: approve or request changes.
           claude_args: >-
             --model claude-sonnet-5-5 --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(cd:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh run view:*),Bash(echo:*),Bash(tail:*)" --max-turns 60
-            ${{ (steps.select.outputs.eval_candidate == 'true' || startsWith(steps.select.outputs.branch, 'codex/eval-reviewer-')) && '--max-budget-usd 0.40' || '' }}
+            ${{ startsWith(steps.select.outputs.branch, 'codex/eval-reviewer-') && '--max-budget-usd 0.40' || '' }}
       # workflow_run has no PR association of its own. Use the same installed
       # evaluator, pinned to the trusted workflow commit, for this selected PR.
       - name: Load the trusted approval evaluator

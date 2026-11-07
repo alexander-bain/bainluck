@@ -22,6 +22,8 @@ test('exactly the 45 planned case/pass branches are registered, with no answer k
   const numbers = [12132, 12150, ...Array.from({length: 43}, (_, i) => 12155 + i)];
   const branches = numbers.map(study.registeredBranch);
   assert.equal(new Set(branches).size, 45);
+  assert.ok(branches.every(branch => branch.startsWith('codex/eval-reviewer-')),
+    'every admitted study branch must select the installed native budget cap');
   for (const n of numbers) assert.equal(study.eligible(pr(n), context(pr(n)), head), true);
   for (const n of [0, 12131, 12133, 12149, 12151, 12154, 12198, 12228]) {
     assert.equal(study.registeredBranch(n), null);
@@ -128,7 +130,7 @@ test('the unlabelled control still waits for its required CI, then gets the norm
   candidate.labels = [{name: 'tier-b'}];
   const c = context(candidate, 'pull_request');
   const selected = await runStep('Resolve the current eligible PR', candidate, c);
-  assert.equal(selected.output.eval_candidate, 'false');
+  assert.equal(selected.output.eval_candidate, undefined);
   for (const state of ['failure', 'pending', 'success']) {
     const result = await runStep('Wait for green CI at this head', candidate, c, state);
     assert.equal(result.output.ready, state === 'success' ? 'true' : undefined);
@@ -159,7 +161,7 @@ test('native cap, trusted policy, exact checkout and CI skip are wired in the wo
   assert.match(review, /ref: \$\{\{ steps.select.outputs.head \}\}/);
   assert.match(review, /--model claude-sonnet-5-5/);
   assert.match(review, /--max-turns 60/);
-  assert.match(review, /eval_candidate == 'true'.*--max-budget-usd 0\.40/);
+  assert.match(review, /startsWith\(steps.select.outputs.branch, 'codex\/eval-reviewer-'\) && '--max-budget-usd 0\.40'/);
   assert.match(review, /cancel-in-progress: false/);
   assert.match(ci, /change-scope:\n(?:\s+#.*\n)*\s+if:.*!contains\(github.event.pull_request.labels\.\*\.name, 'eval-candidate'\)/);
   assert.match(ci, /search-recall:\n\s+needs:.*\n\s+if:.*!contains\(github.event.pull_request.labels\.\*\.name, 'eval-candidate'\)/);
