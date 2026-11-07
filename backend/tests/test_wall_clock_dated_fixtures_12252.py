@@ -27,6 +27,11 @@ that writes a near date without a freeze.
 Fix a finding by freezing the clock in that file (the usual answer), or, when the date
 is genuinely data that no clock reads, add the file to the allowlist with its reason.
 A listed file that no longer exists fails, so the list cannot rot.
+
+**The coverage hole, said plainly:** a file already on the list that later gains a NEW
+near date without a freeze is not caught here. The backstop for those is the measurement
+itself: ``python3 scripts/timebomb_confirm.py --offsets 1,31,60 --whole-clock <files>``
+(tracked in this repo since #8835), run over the listed files on a sweep.
 """
 
 from __future__ import annotations
