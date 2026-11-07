@@ -230,6 +230,11 @@ test('native cap, trusted policy, exact checkout and CI skip are wired in the wo
   assert.match(review, /ref: \$\{\{ steps.select.outputs.head \}\}/);
   assert.match(review, /--model claude-sonnet-5-5/);
   assert.match(review, /--max-turns 60/);
+  const prompt = review.split('          prompt: |\n')[1].split('          claude_args:')[0];
+  assert.match(prompt, /Post exactly one GitHub pull-request review/);
+  for (const command of ['gh pr review', '--approve', '--request-changes', '--body']) {
+    assert.ok(prompt.includes(command), `missing GitHub verdict delivery ${command}`);
+  }
   assert.match(review, /startsWith\(steps.select.outputs.branch, 'codex\/eval-reviewer-'\) && '--max-budget-usd 0\.40'/);
   assert.match(review, /cancel-in-progress: false/);
   assert.match(ci, /change-scope:\n(?:\s+#.*\n)*\s+if:.*!contains\(github.event.pull_request.labels\.\*\.name, 'eval-candidate'\)/);
