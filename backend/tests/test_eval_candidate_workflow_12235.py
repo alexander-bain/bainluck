@@ -56,10 +56,12 @@ function queued(labels, eventName = 'pull_request') {
   return selected;
 }
 assert.deepEqual(queued(['tier-b', 'eval-candidate']), []);
-const ordinary = queued(['tier-b']);
-for (const name of ['change-scope', 'backend-tests', 'database-integration', 'frontend-build', 'search-recall'])
-  assert.ok(ordinary.includes(name), `${name} disappeared from ordinary PR CI`);
-assert.ok(!ordinary.includes('deploy'));
+for (const labels of [[], ['tier-b'], ['tier-b', 'eval-candidate-other']]) {
+  const ordinary = queued(labels);
+  for (const name of ['change-scope', 'backend-tests', 'database-integration', 'frontend-build', 'search-recall'])
+    assert.ok(ordinary.includes(name), `${name} disappeared from ordinary PR CI for ${labels}`);
+  assert.ok(!ordinary.includes('deploy'));
+}
 assert.ok(queued([], 'push').includes('deploy'), 'master pushes retain their release path');
 """
     result = subprocess.run(
