@@ -125,9 +125,24 @@ nonisolated enum EventAtlasNhlCards11666 {
         homeTeam: String,
         awayTeam: String
     ) -> (player: String, stat: String)? {
-        let parts = row.outcomeName.split(separator: ":", maxSplits: 1)
-        guard parts.count == 2 else { return nil }
-        let player = PropSubject.display(parts[0].trimmingCharacters(in: .whitespacesAndNewlines))
+        let outcome = row.outcomeName.split(separator: ":", maxSplits: 1)
+        let market = row.marketName.split(separator: ":", maxSplits: 1)
+        if outcome.count == 2, market.count == 2 {
+            let player = PropSubject.display(outcome[0].trimmingCharacters(in: .whitespacesAndNewlines))
+            let stat = market[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !player.isEmpty && !stat.isEmpty {
+                return (player, stat)
+            }
+        }
+        if outcome.count == 1, market.count == 2 {
+            let player = PropSubject.display(market[0].trimmingCharacters(in: .whitespacesAndNewlines))
+            let stat = PlayerPropsFamily.name(statLabel: String(market[1])).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !player.isEmpty && !stat.isEmpty {
+                return (player, stat)
+            }
+        }
+        guard outcome.count == 2 else { return nil }
+        let player = PropSubject.display(outcome[0].trimmingCharacters(in: .whitespacesAndNewlines))
         guard !player.isEmpty else { return nil }
         let rawStat = PlayerPropsStatLabel.display(
             marketName: row.marketName.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -269,7 +284,7 @@ nonisolated enum EventAtlasNhlCards11666 {
             .sorted { a, b in
                 let ga = a.actualGoals ?? 0
                 let gb = b.actualGoals ?? 0
-                if gb != ga { return gb > ga }
+                if ga != gb { return ga > gb }
                 let pa = a.pregameChance ?? 1.0
                 let pb = b.pregameChance ?? 1.0
                 if pa != pb { return pa < pb }
@@ -292,7 +307,7 @@ nonisolated enum EventAtlasNhlCards11666 {
                 .sorted { a, b in
                     let pa = a.pregameChance ?? 0.0
                     let pb = b.pregameChance ?? 0.0
-                    if pb != pa { return pb > pa }
+                    if pa != pb { return pa > pb }
                     return a.player < b.player
                 }
                 .prefix(maxScorers)

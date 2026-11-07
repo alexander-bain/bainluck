@@ -149,7 +149,7 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
                             "label": "Over 5.5 goals",
                             "side": "over",
                             "contributor_outcome_ids": [101],
-                            "published": { "state": "not_quoted", "source": "kalshi" },
+                            "published": { "value_state": "not_quoted", "source": "kalshi" },
                             "pregame_reading": {
                                 "state": "available",
                                 "basis": "pregame_pin",
@@ -157,7 +157,7 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
                                 "probability": 0.62,
                                 "observed_at": "2026-11-05T23:50:00Z"
                             },
-                            "result": { "state": "settled", "is_winner": true }
+                            "result": { "state": "won" }
                         }
                     ]
                 },
@@ -177,7 +177,7 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
                             "label": "Over 6.5 goals",
                             "side": "over",
                             "contributor_outcome_ids": [102],
-                            "published": { "state": "not_quoted", "source": "kalshi" },
+                            "published": { "value_state": "not_quoted", "source": "kalshi" },
                             "pregame_reading": {
                                 "state": "available",
                                 "basis": "pregame_pin",
@@ -185,7 +185,7 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
                                 "probability": 0.44,
                                 "observed_at": "2026-11-05T23:50:00Z"
                             },
-                            "result": { "state": "settled", "is_winner": false }
+                            "result": { "state": "lost" }
                         }
                     ]
                 },
@@ -205,7 +205,7 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
                             "label": "Over 7.5 goals",
                             "side": "over",
                             "contributor_outcome_ids": [103],
-                            "published": { "state": "not_quoted", "source": "kalshi" },
+                            "published": { "value_state": "not_quoted", "source": "kalshi" },
                             "pregame_reading": {
                                 "state": "available",
                                 "basis": "pregame_pin",
@@ -213,7 +213,7 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
                                 "probability": 0.24,
                                 "observed_at": "2026-11-05T23:50:00Z"
                             },
-                            "result": { "state": "settled", "is_winner": false }
+                            "result": { "state": "lost" }
                         }
                     ]
                 }
