@@ -259,7 +259,11 @@ def test_the_period_is_derived_from_the_tiers_stale_serve_ceiling():
     lost deliveries still leave the mirror servable."""
     ceiling = fcc.stale_serve_ceiling_seconds()
 
-    assert warm.warm_period_seconds() == ceiling // (warm.MISSED_DELIVERY_ALLOWANCE + 1)
+    # C-1 (2026-11-06): rounded DOWN to an even `*/N` (750 s -> 720 s), so the
+    # period is never longer than the derivation and the miss guarantee holds.
+    raw = ceiling // (warm.MISSED_DELIVERY_ALLOWANCE + 1)
+    assert warm.warm_period_seconds() <= raw
+    assert raw - warm.warm_period_seconds() < 300
     assert warm.warm_period_seconds() * (warm.MISSED_DELIVERY_ALLOWANCE + 1) <= ceiling
 
 

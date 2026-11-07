@@ -1,7 +1,38 @@
 import { formatProbability } from "@/lib/api";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
+import { priceAgeClock } from "@/lib/event/liveConnectionStatus";
 import { BOOKS_LABEL, BOOKS_SOURCE, prematchReading } from "@/lib/prematchReading";
 import type { FeedEventData } from "@/lib/types";
+
+export interface AtlasHeadlineObservedAtInput {
+  acceptedPriceClock: string | null | undefined;
+  confirmedAtShown: string | null | undefined;
+  freshestSourceStamp: string | null | undefined;
+  currentOddsCapturedAt: string | null | undefined;
+}
+
+/**
+ * #11974 Step E5 — selects the observed-at timestamp for the atlas headline
+ * phase (`"Current win chance"` vs `"Last recorded win chance"`).
+ *
+ * On a held live page, `priceAgeClock(acceptedPriceClock, confirmedAtShown)`
+ * advances the clock when the SSE stream confirms a steady displayed price or
+ * admits a one-stream blend preview, before falling back to `freshestSourceStamp`
+ * or `current_odds.captured_at`.
+ */
+export function resolveAtlasHeadlineObservedAt({
+  acceptedPriceClock,
+  confirmedAtShown,
+  freshestSourceStamp,
+  currentOddsCapturedAt,
+}: AtlasHeadlineObservedAtInput): string | null {
+  return (
+    priceAgeClock(acceptedPriceClock ?? null, confirmedAtShown ?? null) ??
+    freshestSourceStamp ??
+    currentOddsCapturedAt ??
+    null
+  );
+}
 
 export type EventHeadlinePhase = "current" | "last_recorded";
 

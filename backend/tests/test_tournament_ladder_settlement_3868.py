@@ -491,6 +491,8 @@ class TestTheRailAsksTheVenueForResults:
             stats["snapshots_written"] += 1
 
         monkeypatch.setattr(rail, "_write_refreshed_prices", _noop_writer)
+        # C-1 / B-7: the scheduled run is calendar-gated; pin it in season.
+        monkeypatch.setattr(rail, "in_season", lambda slug, now=None: True)
 
         await rail._refresh_registered_tournament_prices()
         assert asked["include_closed"] is True, (

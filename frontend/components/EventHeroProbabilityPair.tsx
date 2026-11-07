@@ -10,6 +10,7 @@ import {
 import { teamTextColor } from '../lib/teamColors';
 import { headlineDisplayAttributes, type HeadlineDisplayIdentity } from '../lib/displayIdentity';
 import { tenthsPair, type TenthsParts } from '../lib/tenthsOptIn';
+import { ATLAS_STATE_COPY } from './atlas/atlasStateCopy';
 
 /**
  * What one side prints this frame — the marker and the digits, separately.
@@ -176,6 +177,10 @@ interface EventHeroProbabilityPairProps {
    * whole-number pair. Defaults false, so every caller renders exactly as before.
    */
   tenths?: boolean;
+  /** #11974 Step E4 — shared atlas state copy when ?atlas=1 is active. */
+  atlasMode?: boolean;
+  voided?: boolean;
+  stoppageLabel?: string | null;
 }
 
 /**
@@ -352,6 +357,9 @@ export default function EventHeroProbabilityPair({
   stopped = false,
   displayIdentity = null,
   tenths: tenthsOn = false,
+  atlasMode = false,
+  voided = false,
+  stoppageLabel = null,
 }: EventHeroProbabilityPairProps) {
   // #5696 — THE BIGGEST NUMBER ON THE SITE, PAINTED WHITE ON A WHITE CARD.
   //
@@ -439,7 +447,16 @@ export default function EventHeroProbabilityPair({
         data-probability-source={probSourceLabel ?? ""}
         data-stopped="true"
         {...headlineDisplayAttributes(null)}
-      />
+      >
+        {atlasMode && stoppageLabel !== null && (
+          <span
+            data-testid="event-atlas-state-label"
+            className="text-lg font-semibold text-text-muted leading-none"
+          >
+            {stoppageLabel === "Postponed" ? ATLAS_STATE_COPY.postponed : stoppageLabel}
+          </span>
+        )}
+      </div>
     );
   }
 
@@ -454,10 +471,34 @@ export default function EventHeroProbabilityPair({
       >
         {/* #6438 — a graded contest says nothing here; the settled pill in this
             same card already carries the result. See the `venueSettled` prop. */}
-        {!venueSettled && (
-          <span className="text-lg font-semibold text-text-muted leading-none">
-            {started ? "No price" : "No price yet"}
-          </span>
+        {atlasMode ? (
+          voided ? (
+            <span
+              data-testid="event-atlas-state-label"
+              className="text-lg font-semibold text-text-muted leading-none"
+            >
+              {ATLAS_STATE_COPY.voided}
+            </span>
+          ) : !venueSettled ? (
+            <span
+              data-testid="event-atlas-state-label"
+              className="text-lg font-semibold text-text-muted leading-none"
+            >
+              {started ? (
+                <span data-testid="atlas-no-recent-probability">
+                  {ATLAS_STATE_COPY.noRecentPrice}
+                </span>
+              ) : (
+                "No probability yet"
+              )}
+            </span>
+          ) : null
+        ) : (
+          !venueSettled && (
+            <span className="text-lg font-semibold text-text-muted leading-none">
+              {started ? "No price" : "No price yet"}
+            </span>
+          )
         )}
       </div>
     );

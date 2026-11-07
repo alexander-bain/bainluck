@@ -63,6 +63,14 @@ def _rc() -> Any:
 
 
 __all__ = [
+    "ALCARAZ_SINNER_TWO_MAJORS_2027_DEFINITION",
+    "ALCARAZ_SINNER_TWO_MAJORS_2027_DEFINITION_PATH",
+    "ALCARAZ_SINNER_TWO_MAJORS_2027_ID",
+    "ALCARAZ_SINNER_TWO_MAJORS_2027_PRODUCER",
+    "ALCARAZ_SINNER_TWO_MAJORS_2027_SLUG",
+    "CONTAINERS_DATA_DIR",
+    "DEFAULT_SIBLING_LEVEL",
+    "DEFAULT_SIBLING_RELATIONS",
     "GTA_VI_ALBUM_FEATURES_DEFINITION",
     "GTA_VI_ALBUM_FEATURES_DEFINITION_PATH",
     "GTA_VI_ALBUM_FEATURES_ID",
@@ -72,44 +80,75 @@ __all__ = [
     "MIN_SHARED_TOKENS",
     "MAX_SUBJECT_RATIO",
     "PRODUCER_KIND_SIBLING_FAMILY",
+    "RT_SCORES_THIS_WEEK_DEFINITION",
+    "RT_SCORES_THIS_WEEK_DEFINITION_PATH",
+    "RT_SCORES_THIS_WEEK_ID",
+    "RT_SCORES_THIS_WEEK_PRODUCER",
+    "RT_SCORES_THIS_WEEK_SLUG",
     "SNOW_FIRST_FLAKES_2026_DEFINITION",
     "SNOW_FIRST_FLAKES_2026_DEFINITION_PATH",
     "SNOW_FIRST_FLAKES_2026_ID",
     "SNOW_FIRST_FLAKES_2026_PRODUCER",
     "SNOW_FIRST_FLAKES_2026_SLUG",
+    "WHO_ANNOUNCES_BEFORE_2027_DEFINITION",
+    "WHO_ANNOUNCES_BEFORE_2027_DEFINITION_PATH",
+    "WHO_ANNOUNCES_BEFORE_2027_ID",
+    "WHO_ANNOUNCES_BEFORE_2027_PRODUCER",
+    "WHO_ANNOUNCES_BEFORE_2027_SLUG",
+    "alcaraz_sinner_two_majors_2027",
     "build_sibling_family_producer",
     "detect_sibling_template_pair",
+    "find_sibling_family_candidates",
     "fold_template_key",
     "gta_vi_album_features",
     "load_sibling_family_definition",
+    "load_sibling_family_definitions_from_dir",
     "produce_sibling_family",
+    "rt_scores_this_week",
     "select_sibling_family",
     "sibling_family_enabled",
     "snow_first_flakes_2026",
+    "who_announces_before_2027",
 ]
 
 PRODUCER_KIND_SIBLING_FAMILY = "sibling_family"
 MEMBERSHIP_SIBLING_FAMILY = "sibling-family"
+DEFAULT_SIBLING_RELATIONS: tuple[str, ...] = ("same_measure", "same_window", "sibling")
+DEFAULT_SIBLING_LEVEL = "member"
 
 MIN_SHARED_TOKENS = 2
 MAX_SUBJECT_RATIO = 1.0
 
+CONTAINERS_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "containers"
+
 SNOW_FIRST_FLAKES_2026_SLUG = "snow-first-flakes-2026"
 SNOW_FIRST_FLAKES_2026_ID = "roundup:snow-first-flakes-2026"
 SNOW_FIRST_FLAKES_2026_DEFINITION_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "data"
-    / "containers"
-    / f"{SNOW_FIRST_FLAKES_2026_SLUG}.json"
+    CONTAINERS_DATA_DIR / f"{SNOW_FIRST_FLAKES_2026_SLUG}.json"
 )
 
 GTA_VI_ALBUM_FEATURES_SLUG = "gta-vi-album-features"
 GTA_VI_ALBUM_FEATURES_ID = "roundup:gta-vi-album-features"
 GTA_VI_ALBUM_FEATURES_DEFINITION_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "data"
-    / "containers"
-    / f"{GTA_VI_ALBUM_FEATURES_SLUG}.json"
+    CONTAINERS_DATA_DIR / f"{GTA_VI_ALBUM_FEATURES_SLUG}.json"
+)
+
+RT_SCORES_THIS_WEEK_SLUG = "rt-scores-this-week"
+RT_SCORES_THIS_WEEK_ID = "roundup:rt-scores-this-week"
+RT_SCORES_THIS_WEEK_DEFINITION_PATH = (
+    CONTAINERS_DATA_DIR / f"{RT_SCORES_THIS_WEEK_SLUG}.json"
+)
+
+WHO_ANNOUNCES_BEFORE_2027_SLUG = "who-announces-before-2027"
+WHO_ANNOUNCES_BEFORE_2027_ID = "roundup:who-announces-before-2027"
+WHO_ANNOUNCES_BEFORE_2027_DEFINITION_PATH = (
+    CONTAINERS_DATA_DIR / f"{WHO_ANNOUNCES_BEFORE_2027_SLUG}.json"
+)
+
+ALCARAZ_SINNER_TWO_MAJORS_2027_SLUG = "alcaraz-sinner-two-majors-2027"
+ALCARAZ_SINNER_TWO_MAJORS_2027_ID = "roundup:alcaraz-sinner-two-majors-2027"
+ALCARAZ_SINNER_TWO_MAJORS_2027_DEFINITION_PATH = (
+    CONTAINERS_DATA_DIR / f"{ALCARAZ_SINNER_TWO_MAJORS_2027_SLUG}.json"
 )
 
 _ET_ZONE = ZoneInfo("America/New_York")
@@ -586,7 +625,7 @@ def _extract_stated_deadline(title: str, default_year: int = 2026) -> _StatedDea
 
 def _clean_subject_display(raw_subject: str, *, strip_state_suffix: bool) -> str:
     """Format the extracted row subject from the market's own words."""
-    subj = str(raw_subject or "").strip().rstrip("?.!")
+    subj = str(raw_subject or "").strip().rstrip("?.!:")
     if strip_state_suffix:
         m = _STATE_SUFFIX_RE.match(subj)
         if m is not None and m.group("state") in _US_STATE_CODES:
@@ -920,11 +959,16 @@ def select_sibling_family(
     template: Optional[str] = None,
     title_template: Optional[str] = None,
     kicker_prefix: Optional[str] = None,
+    kicker_include_date: Optional[bool] = None,
     subject_unit: str = "",
     strip_state_suffix: bool = False,
     outcome_name: str = "Yes",
+    shared_rung_band: Optional[tuple[float, float]] = None,
+    strict_rungs_only: bool = False,
     lead_rule: str = "nearest_open_deadline",
+    closed_world: bool = False,
     min_numbered_members: int = 3,
+    max_members: Optional[int] = None,
     card_rows: int = 5,
     section_titles: Optional[Sequence[str]] = None,
     footer: str = "Each row is its own market. They don't add up to 100%.",
@@ -932,7 +976,7 @@ def select_sibling_family(
     now: Optional[datetime] = None,
     withheld_by_market: Optional[Mapping[int, set[int]]] = None,
 ) -> Any:
-    """Pure selector for ``sibling_family`` (§1.3).
+    """Pure selector for ``sibling_family`` (§1.3 and §1.7 ``closed_world: true``).
 
     The sibling template is discovered structurally from the candidate titles
     via ``detect_sibling_template_pair`` and ``fold_template_key`` (Ruling 145:
@@ -940,12 +984,41 @@ def select_sibling_family(
     When ``template`` is passed from a stored definition, it acts as a declared
     expectation checked against the structurally detected family key.
 
+    When ``closed_world=True`` (Ruling 143, §1.7 "Two rivals, one market"):
+    * ``max_members`` defaults to ``2`` and ``min_numbered_members`` defaults to ``2``.
+    * If more than ``max_members`` sibling markets exist under the template, refuses
+      with ``RoundupRefusal((("family", "closed_world_exceeded"),))``.
+    * If either leg has no open reading, refuses with
+      ``RoundupRefusal((("family", "unpriced_legs"), ("unpriced_legs", tuple(unpriced))))``
+      (CERT-430: no card while either leg has no reading).
+
     Returns ``RoundupMembers`` when the sibling family passes every check, or
     ``RoundupRefusal`` with structured reasons when any check fails.
     """
     rc = _rc()
     RoundupMembers = rc.RoundupMembers
     RoundupRefusal = rc.RoundupRefusal
+
+    effective_max_members = (
+        int(max_members)
+        if max_members is not None
+        else (2 if closed_world else None)
+    )
+    effective_min_numbered = (
+        int(min_numbered_members)
+        if not (closed_world and min_numbered_members == 3)
+        else 2
+    )
+    effective_card_rows = (
+        min(int(card_rows), effective_max_members)
+        if closed_world and effective_max_members is not None
+        else int(card_rows)
+    )
+    include_date_in_kicker = (
+        bool(kicker_include_date)
+        if kicker_include_date is not None
+        else (not closed_world)
+    )
 
     _validate_narrative_copy(
         footer,
@@ -995,6 +1068,14 @@ def select_sibling_family(
     venues: set[str] = set()
     for m in candidate_markets:
         src = str(m.get("source") or "").strip().lower()
+        if not src:
+            raw_srcs = m.get("sources")
+            if (
+                isinstance(raw_srcs, Sequence)
+                and not isinstance(raw_srcs, (str, bytes))
+                and len(raw_srcs) == 1
+            ):
+                src = str(raw_srcs[0] or "").strip().lower()
         if src:
             venues.add(src)
     if len(venues) > 1:
@@ -1060,6 +1141,8 @@ def select_sibling_family(
             folded_raw_hint = fold_template_key(template)
             if folded_raw_hint in family_groups:
                 chosen_key = folded_raw_hint
+        if chosen_key is None and closed_world:
+            return RoundupRefusal((("family", "no_template_family"),))
     if chosen_key is None:
         chosen_key = max(
             family_groups.keys(),
@@ -1067,8 +1150,106 @@ def select_sibling_family(
         )
 
     matched_subjects = family_groups[chosen_key]
+    if (
+        effective_max_members is not None
+        and len(matched_subjects) > effective_max_members
+    ):
+        return RoundupRefusal((("family", "closed_world_exceeded"),))
     by_id = {int(m["id"]): m for m in candidate_markets}
     target_outcome_folded = str(outcome_name or "Yes").strip().casefold()
+
+    if strict_rungs_only or target_outcome_folded == "auto_shared_rung":
+        from app.utils.ladder_monotonicity import DEC, parse_plus_bracket, parse_threshold
+
+        _NON_STRICT_RUNG_RE = re.compile(
+            r"(?:\bat\s+least\b|\bat\s+most\b|\bor\s+more\b|\bor\s+less\b|\bor\s+fewer\b|\bor\s+higher\b|\bor\s+lower\b|>=|<=|≥|≤)",
+            re.IGNORECASE,
+        )
+
+        def _is_non_strict_rung_label(label: str) -> bool:
+            if parse_plus_bracket(label) is not None:
+                return True
+            return bool(_NON_STRICT_RUNG_RE.search(label))
+
+        # Check strict_rungs_only across matched candidate markets.
+        if strict_rungs_only:
+            for mid in matched_subjects:
+                m = by_id[mid]
+                raw_outs = m.get("outcomes") or m.get("top_outcomes") or ()
+                for o in raw_outs:
+                    if not isinstance(o, Mapping):
+                        continue
+                    oname = str(o.get("name") or o.get("label") or "").strip()
+                    if not oname:
+                        continue
+                    if _is_non_strict_rung_label(oname):
+                        return RoundupRefusal((("family", f"non_strict_rung:{mid}"),))
+
+        if target_outcome_folded == "auto_shared_rung":
+            band_low, band_high = (
+                (float(shared_rung_band[0]), float(shared_rung_band[1]))
+                if shared_rung_band is not None and len(shared_rung_band) == 2
+                else (0.05, 0.95)
+            )
+            open_member_rungs: list[dict[str, tuple[float, float]]] = []
+            for mid in matched_subjects:
+                m = by_id[mid]
+                if str(m.get("status") or "open").strip().lower() != "open":
+                    continue
+                raw_outs = m.get("outcomes") or m.get("top_outcomes") or ()
+                rung_map: dict[str, tuple[float, float]] = {}
+                for o in raw_outs:
+                    if not isinstance(o, Mapping):
+                        continue
+                    if leg_is_graded(o.get("is_winner"), o.get("resolution_source")):
+                        continue
+                    oname = str(o.get("name") or o.get("label") or "").strip()
+                    pt = parse_threshold(oname)
+                    if (
+                        pt is None
+                        or pt[2] != DEC
+                        or (strict_rungs_only and _is_non_strict_rung_label(oname))
+                    ):
+                        continue
+                    p_raw = (
+                        o.get("probability")
+                        if "probability" in o
+                        else o.get("current_probability")
+                    )
+                    if p_raw is None or isinstance(p_raw, bool):
+                        continue
+                    try:
+                        p_val = float(p_raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if math.isfinite(p_val) and 0.0 < p_val < 1.0:
+                        rung_map[oname.casefold()] = (pt[1], p_val)
+                if rung_map:
+                    open_member_rungs.append(rung_map)
+
+            if len(open_member_rungs) < min_numbered_members:
+                return RoundupRefusal((("family", "too_few_numbered_members"),))
+
+            shared_keys = set(open_member_rungs[0].keys())
+            for rm in open_member_rungs[1:]:
+                shared_keys &= set(rm.keys())
+
+            qualifying_rungs: list[tuple[float, str]] = []
+            for r_key in shared_keys:
+                in_band = sum(
+                    1
+                    for rm in open_member_rungs
+                    if band_low <= rm[r_key][1] <= band_high
+                )
+                if in_band >= min_numbered_members:
+                    thresh_val = open_member_rungs[0][r_key][0]
+                    qualifying_rungs.append((thresh_val, r_key))
+
+            if not qualifying_rungs:
+                return RoundupRefusal((("family", "no_shared_rung_in_band"),))
+
+            qualifying_rungs.sort(key=lambda pair: (pair[0], pair[1]))
+            target_outcome_folded = qualifying_rungs[-1][1]
 
     # Build _SiblingMember objects and validate outcomes & resolution dates.
     parsed_members: list[_SiblingMember] = []
@@ -1086,9 +1267,14 @@ def select_sibling_family(
             else stored_res_date
         )
 
-        # Verify stored resolution_date agrees with the title's stated deadline (within 0..5 day settlement window).
+        # Verify stored resolution_date agrees with the title's stated deadline (within 0..5 day settlement window,
+        # or within the stated calendar year when the title specifies an 'in <YYYY>' season horizon).
         if stated.deadline_date is not None:
-            if (
+            is_in_year_season = (
+                stated.phrase == f"in {stated.deadline_date.year}"
+                and stored_res_date.year == stated.deadline_date.year
+            )
+            if not is_in_year_season and (
                 stored_res_date < stated.deadline_date
                 or stored_res_date > stated.deadline_date + timedelta(days=5)
             ):
@@ -1244,13 +1430,38 @@ def select_sibling_family(
     if lead_rule == "single_deadline" and len(open_cohort_dates) > 1:
         return RoundupRefusal((("family", "multiple_open_deadlines"),))
 
-    # Decision A: select the nearest open deadline with at least min_numbered_members that have a number.
+    if closed_world:
+        for d in open_cohort_dates:
+            cohort = cohorts_by_date[d]
+            if (
+                effective_max_members is not None
+                and len(cohort) > effective_max_members
+            ):
+                return RoundupRefusal((("family", "closed_world_exceeded"),))
+            if len(cohort) < effective_min_numbered:
+                return RoundupRefusal((("family", "too_few_numbered_members"),))
+            unpriced = [
+                pm.subject
+                for pm in sorted(
+                    cohort, key=lambda pm: (pm.subject.casefold(), pm.market_id)
+                )
+                if not pm.is_open or pm.probability is None
+            ]
+            if unpriced:
+                return RoundupRefusal(
+                    (
+                        ("family", "unpriced_legs"),
+                        ("unpriced_legs", tuple(unpriced)),
+                    )
+                )
+
+    # Decision A: select the nearest open deadline with at least effective_min_numbered members that have a number.
     leading_date: Optional[date] = None
     for d in open_cohort_dates:
         numbered_at_d = [
             pm for pm in cohorts_by_date[d] if pm.is_open and pm.probability is not None
         ]
-        if len(numbered_at_d) >= min_numbered_members:
+        if len(numbered_at_d) >= effective_min_numbered:
             leading_date = d
             break
 
@@ -1301,8 +1512,11 @@ def select_sibling_family(
             if section_titles and sec_idx < len(section_titles) and str(section_titles[sec_idx]).strip()
             else default_sec_title
         )
-        # If Leading deadline shifted (e.g. Nov 15 -> Nov 30), prefer the cohort's own stated date title.
-        if sample_stated.section_title:
+        # If Leading deadline shifted (e.g. Nov 15 -> Nov 30), prefer the cohort's own stated date title
+        # unless closed_world has an explicit section_title configured.
+        if closed_world and section_titles and sec_idx < len(section_titles) and str(section_titles[sec_idx]).strip():
+            sec_title = configured_sec_title
+        elif sample_stated.section_title:
             sec_title = sample_stated.section_title
         else:
             sec_title = configured_sec_title
@@ -1332,7 +1546,7 @@ def select_sibling_family(
         )
 
         if sec_idx == 0:
-            shown_numbered = numbered[:card_rows]
+            shown_numbered = numbered[:effective_card_rows]
             for pm in shown_numbered:
                 assert pm.probability is not None
                 leading_rows.append(
@@ -1366,7 +1580,10 @@ def select_sibling_family(
             if title_template:
                 leading_title = title_template.replace("{deadline}", deadline_phrase)
             if kicker_prefix:
-                leading_kicker = f"{kicker_prefix.strip().upper()} · {short_date}"
+                if include_date_in_kicker:
+                    leading_kicker = f"{kicker_prefix.strip().upper()} · {short_date}"
+                else:
+                    leading_kicker = kicker_prefix.strip().upper()
 
     return RoundupMembers(
         all_member_entries,
@@ -1385,6 +1602,8 @@ async def _load_markets_from_db(
     *,
     group_id: Optional[str] = None,
     candidate_ids: Sequence[int] = (),
+    title_ilike: Optional[str] = None,
+    expected_source: Optional[str] = None,
 ) -> tuple[dict[int, dict[str, Any]], dict[int, set[int]]]:
     """Load candidate ``FuturesMarket`` rows and their withheld outcome IDs in constant queries.
 
@@ -1395,7 +1614,7 @@ async def _load_markets_from_db(
     if not hasattr(db, "execute") or not callable(db.execute):
         return {}, {}
 
-    from sqlalchemy import or_, select
+    from sqlalchemy import and_, or_, select
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import selectinload
 
@@ -1403,6 +1622,8 @@ async def _load_markets_from_db(
     from app.routes.futures import withheld_price_outcome_ids_for_markets
 
     clean_group_id = str(group_id).strip() if group_id else None
+    clean_title_ilike = str(title_ilike).strip() if title_ilike else None
+    clean_expected_source = str(expected_source).strip().lower() if expected_source else None
     clean_candidate_ids = [
         int(x)
         for x in candidate_ids
@@ -1415,6 +1636,16 @@ async def _load_markets_from_db(
         filters.append(FuturesMarket.group_id == clean_group_id)
     if clean_candidate_ids:
         filters.append(FuturesMarket.id.in_(clean_candidate_ids))
+    if clean_title_ilike:
+        if clean_expected_source:
+            filters.append(
+                and_(
+                    FuturesMarket.source == clean_expected_source,
+                    FuturesMarket.name.ilike(clean_title_ilike),
+                )
+            )
+        else:
+            filters.append(FuturesMarket.name.ilike(clean_title_ilike))
     if not filters:
         return {}, {}
 
@@ -1462,7 +1693,8 @@ async def _load_markets_from_db(
             mid = int(raw_id)
             row_gid = str(m.get("group_id") or "").strip() or None
             if (
-                (clean_group_id or candidate_id_set)
+                not clean_title_ilike
+                and (clean_group_id or candidate_id_set)
                 and row_gid != clean_group_id
                 and mid not in candidate_id_set
             ):
@@ -1478,7 +1710,8 @@ async def _load_markets_from_db(
         mid = int(raw_mid)
         row_gid = str(getattr(m, "group_id", None) or "").strip() or None
         if (
-            (clean_group_id or candidate_id_set)
+            not clean_title_ilike
+            and (clean_group_id or candidate_id_set)
             and row_gid != clean_group_id
             and mid not in candidate_id_set
         ):
@@ -1604,17 +1837,40 @@ async def produce_sibling_family(
 
     expected_source = str(rule.get("source") or "").strip().lower() or None
     group_id = str(rule.get("group_id") or "").strip() or None
+    title_ilike = str(rule.get("title_ilike") or "").strip() or None
     template = str(rule.get("template") or "").strip() or None
     title_template = (
         str(rule.get("title_template") or definition.get("name") or "").strip() or None
     )
     kicker_prefix = str(rule.get("kicker_prefix") or "").strip() or None
+    kicker_include_date_raw = rule.get("kicker_include_date")
+    kicker_include_date: Optional[bool] = (
+        bool(kicker_include_date_raw)
+        if isinstance(kicker_include_date_raw, bool)
+        else None
+    )
     subject_unit = str(rule.get("subject_unit") or "").strip()
     strip_state_suffix = bool(rule.get("strip_state_suffix", False))
     outcome_name = str(rule.get("outcome_name") or "Yes").strip()
+    raw_band = rule.get("shared_rung_band")
+    shared_rung_band: Optional[tuple[float, float]] = (
+        (float(raw_band[0]), float(raw_band[1]))
+        if isinstance(raw_band, (list, tuple)) and len(raw_band) == 2
+        else None
+    )
+    strict_rungs_only = bool(rule.get("strict_rungs_only", False))
     lead_rule = str(rule.get("lead_rule") or "nearest_open_deadline").strip()
-    min_numbered_members = int(rule.get("min_numbered_members", 3))
-    card_rows = int(rule.get("card_rows", 5))
+    closed_world = bool(rule.get("closed_world", False))
+    min_numbered_members = int(
+        rule.get("min_numbered_members", 2 if closed_world else 3)
+    )
+    raw_max_members = rule.get("max_members")
+    max_members: Optional[int] = (
+        int(raw_max_members)
+        if isinstance(raw_max_members, int) and not isinstance(raw_max_members, bool)
+        else (2 if closed_world else None)
+    )
+    card_rows = int(rule.get("card_rows", 2 if closed_world else 5))
     footer = str(
         definition.get("footer")
         or "Each row is its own market. They don't add up to 100%."
@@ -1655,6 +1911,8 @@ async def produce_sibling_family(
             db,
             group_id=group_id,
             candidate_ids=candidate_ids,
+            title_ilike=title_ilike,
+            expected_source=expected_source,
         )
 
     return select_sibling_family(
@@ -1663,11 +1921,16 @@ async def produce_sibling_family(
         template=template,
         title_template=title_template,
         kicker_prefix=kicker_prefix,
+        kicker_include_date=kicker_include_date,
         subject_unit=subject_unit,
         strip_state_suffix=strip_state_suffix,
         outcome_name=outcome_name,
+        shared_rung_band=shared_rung_band,
+        strict_rungs_only=strict_rungs_only,
         lead_rule=lead_rule,
+        closed_world=closed_world,
         min_numbered_members=min_numbered_members,
+        max_members=max_members,
         card_rows=card_rows,
         section_titles=section_titles,
         footer=footer,
@@ -1694,6 +1957,13 @@ def load_sibling_family_definition(
         raise ValueError(
             f"Container definition {path} must declare rule.producer={PRODUCER_KIND_SIBLING_FAMILY!r}"
         )
+    relations_raw = (
+        data.get("relations") or rule.get("relations") or DEFAULT_SIBLING_RELATIONS
+    )
+    data["relations"] = [str(r) for r in relations_raw]
+    data["level"] = str(
+        data.get("level") or rule.get("level") or DEFAULT_SIBLING_LEVEL
+    )
     raw_sec = data.get("section_title") or ""
     sec_texts = (
         tuple(str(x) for x in raw_sec)
@@ -1707,6 +1977,200 @@ def load_sibling_family_definition(
         *sec_texts,
     )
     return data
+
+
+def load_sibling_family_definitions_from_dir(
+    directory: Path = CONTAINERS_DATA_DIR,
+) -> list[dict[str, Any]]:
+    """Scan ``backend/data/containers/*.json`` and load every ``sibling_family`` definition (Decide 60-A)."""
+    if not directory.exists():
+        return []
+    definitions: list[dict[str, Any]] = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(raw, Mapping):
+            continue
+        rule = raw.get("rule")
+        if isinstance(rule, Mapping) and rule.get("producer") == PRODUCER_KIND_SIBLING_FAMILY:
+            definitions.append(load_sibling_family_definition(path))
+    return definitions
+
+
+def find_sibling_family_candidates(
+    markets: Mapping[int, Mapping[str, Any]] | Sequence[Mapping[str, Any]],
+    *,
+    closed_world: bool = True,
+    outcome_name: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
+    """Finder listing every candidate card ``sibling_family`` could make from ``markets`` with refusal reasons (#12221 §4).
+
+    When ``closed_world=True`` (Decide 59-A: "Two rivals, one market", Ruling 143),
+    evaluates every structural template family with ``closed_world=True`` and ``max_members=2``
+    so the pair finder seeds Row 4 of #12221 while applying the exact same verdict and
+    refusal rules (including ``CERT-430: unpriced_legs``) as live serving.
+    """
+    from app.utils.week_events import export_roundup_card_words_390px
+
+    rc = _rc()
+    RoundupMembers = rc.RoundupMembers
+    RoundupRefusal = rc.RoundupRefusal
+
+    seq = markets.values() if isinstance(markets, Mapping) else markets
+    raw_list: list[Mapping[str, Any]] = []
+    seen_ids: set[int] = set()
+    for m in seq:
+        if not isinstance(m, Mapping):
+            continue
+        mid = m.get("id")
+        if isinstance(mid, int) and not isinstance(mid, bool) and mid > 0:
+            if int(mid) not in seen_ids:
+                seen_ids.add(int(mid))
+                raw_list.append(m)
+
+    # Group candidate markets by (source, structural_template_key).
+    by_source: dict[str, list[Mapping[str, Any]]] = {}
+    for m in raw_list:
+        src = str(m.get("source") or "").strip().lower()
+        if not src:
+            raw_srcs = m.get("sources")
+            if (
+                isinstance(raw_srcs, Sequence)
+                and not isinstance(raw_srcs, (str, bytes))
+                and raw_srcs
+            ):
+                src = str(raw_srcs[0] or "").strip().lower()
+        src = src or "polymarket"
+        by_source.setdefault(src, []).append(m)
+
+    families: list[tuple[str, str, list[Mapping[str, Any]], dict[int, str]]] = []
+    for src, src_markets in sorted(by_source.items()):
+        stems = {
+            int(m["id"]): _extract_stated_deadline(str(m.get("name") or "")).stem_text
+            for m in src_markets
+        }
+        by_id = {int(m["id"]): m for m in src_markets}
+        groups: dict[str, dict[int, str]] = {}
+        n = len(src_markets)
+        for i in range(n):
+            id_i = int(src_markets[i]["id"])
+            for j in range(i + 1, n):
+                id_j = int(src_markets[j]["id"])
+                res, _err = detect_sibling_template_pair(stems[id_i], stems[id_j])
+                if res is None:
+                    continue
+                t_key, subj_i, subj_j = res
+                bucket = groups.setdefault(t_key, {})
+                bucket.setdefault(id_i, subj_i)
+                bucket.setdefault(id_j, subj_j)
+        for t_key, subj_map in sorted(groups.items()):
+            member_list = [by_id[mid] for mid in sorted(subj_map.keys())]
+            families.append((src, t_key, member_list, subj_map))
+
+    candidates_out: list[dict[str, Any]] = []
+    for src, t_key, member_list, subj_map in families:
+        # Determine target outcome name if not explicitly provided:
+        effective_outcome = outcome_name
+        if not effective_outcome:
+            # Check if member markets are binary Yes/No or share a non-Yes/No rung
+            first_outs = member_list[0].get("outcomes") or member_list[0].get("top_outcomes") or ()
+            out_names = [
+                str(o.get("name") or o.get("label") or "").strip()
+                for o in first_outs
+                if isinstance(o, Mapping)
+            ]
+            if set(n.lower() for n in out_names if n) <= {"yes", "no"} or not out_names:
+                effective_outcome = "Yes"
+            else:
+                # Prefer "2+" rung if present (e.g. Grand Slam wins), else first outcome label
+                two_plus = next((n for n in out_names if "2+" in n), None)
+                effective_outcome = two_plus or out_names[0]
+
+        kicker_pref = "HEAD TO HEAD" if closed_world else "SIBLING FAMILY"
+        footer_text = (
+            "Each subject is their own market; both can happen."
+            if closed_world
+            else "Each row is its own market. They don't add up to 100%."
+        )
+        slug_base = re.sub(r"[^a-z0-9]+", "-", t_key).strip("-")[:48]
+        synth_def = {
+            "slug": f"{src}-{slug_base}",
+            "kicker": kicker_pref,
+            "name": t_key,
+            "category": str(member_list[0].get("category") or "other"),
+            "tag": str(member_list[0].get("category") or "OTHER").upper(),
+            "footer": footer_text,
+        }
+        verdict_obj = select_sibling_family(
+            member_list,
+            expected_source=src,
+            template=t_key,
+            title_template=t_key,
+            kicker_prefix=kicker_pref,
+            kicker_include_date=not closed_world,
+            outcome_name=effective_outcome,
+            lead_rule="single_deadline" if closed_world else "nearest_open_deadline",
+            closed_world=closed_world,
+            min_numbered_members=2 if closed_world else 3,
+            max_members=2 if closed_world else None,
+            card_rows=2 if closed_world else 5,
+            footer=footer_text,
+            now=now,
+        )
+        cleaned_subjects = [
+            _clean_subject_display(s, strip_state_suffix=False)
+            for _, s in sorted(subj_map.items())
+        ]
+        if isinstance(verdict_obj, RoundupMembers):
+            candidates_out.append(
+                {
+                    "template_key": t_key,
+                    "source": src,
+                    "outcome_name": effective_outcome,
+                    "member_ids": [int(m["id"]) for m in member_list],
+                    "subjects": cleaned_subjects,
+                    "relations": list(DEFAULT_SIBLING_RELATIONS),
+                    "level": DEFAULT_SIBLING_LEVEL,
+                    "closed_world": closed_world,
+                    "verdict": "serve",
+                    "refusal_reasons": [],
+                    "unpriced_legs": [],
+                    "card_words_390px": export_roundup_card_words_390px(
+                        verdict_obj, synth_def
+                    ),
+                }
+            )
+        else:
+            reasons_raw = (
+                list(verdict_obj.reasons)
+                if isinstance(verdict_obj, RoundupRefusal)
+                else []
+            )
+            reason_dict = dict(
+                r for r in reasons_raw if isinstance(r, tuple) and len(r) == 2
+            )
+            fam_reason = str(reason_dict.get("family") or "refused")
+            unpriced_legs = list(reason_dict.get("unpriced_legs") or ())
+            candidates_out.append(
+                {
+                    "template_key": t_key,
+                    "source": src,
+                    "outcome_name": effective_outcome,
+                    "member_ids": [int(m["id"]) for m in member_list],
+                    "subjects": cleaned_subjects,
+                    "relations": list(DEFAULT_SIBLING_RELATIONS),
+                    "level": DEFAULT_SIBLING_LEVEL,
+                    "closed_world": closed_world,
+                    "verdict": "refuse",
+                    "refusal_reasons": [fam_reason],
+                    "unpriced_legs": unpriced_legs,
+                    "card_words_390px": None,
+                }
+            )
+    return candidates_out
 
 
 def build_sibling_family_producer(
@@ -1760,6 +2224,18 @@ GTA_VI_ALBUM_FEATURES_DEFINITION: dict[str, Any] = load_sibling_family_definitio
     GTA_VI_ALBUM_FEATURES_DEFINITION_PATH
 )
 
+RT_SCORES_THIS_WEEK_DEFINITION: dict[str, Any] = load_sibling_family_definition(
+    RT_SCORES_THIS_WEEK_DEFINITION_PATH
+)
+
+WHO_ANNOUNCES_BEFORE_2027_DEFINITION: dict[str, Any] = load_sibling_family_definition(
+    WHO_ANNOUNCES_BEFORE_2027_DEFINITION_PATH
+)
+
+ALCARAZ_SINNER_TWO_MAJORS_2027_DEFINITION: dict[str, Any] = (
+    load_sibling_family_definition(ALCARAZ_SINNER_TWO_MAJORS_2027_DEFINITION_PATH)
+)
+
 
 async def snow_first_flakes_2026(
     db: Any, *, now: Optional[datetime] = None
@@ -1779,6 +2255,33 @@ async def gta_vi_album_features(
     )
 
 
+async def rt_scores_this_week(
+    db: Any, *, now: Optional[datetime] = None
+) -> Any:
+    """Produce ``RoundupMembers`` (or ``RoundupRefusal``) for ``rt-scores-this-week``."""
+    return await produce_sibling_family(
+        db, RT_SCORES_THIS_WEEK_DEFINITION, now=now
+    )
+
+
+async def who_announces_before_2027(
+    db: Any, *, now: Optional[datetime] = None
+) -> Any:
+    """Produce ``RoundupMembers`` (or ``RoundupRefusal``) for ``who-announces-before-2027``."""
+    return await produce_sibling_family(
+        db, WHO_ANNOUNCES_BEFORE_2027_DEFINITION, now=now
+    )
+
+
+async def alcaraz_sinner_two_majors_2027(
+    db: Any, *, now: Optional[datetime] = None
+) -> Any:
+    """Produce ``RoundupMembers`` (or ``RoundupRefusal``) for ``alcaraz-sinner-two-majors-2027``."""
+    return await produce_sibling_family(
+        db, ALCARAZ_SINNER_TWO_MAJORS_2027_DEFINITION, now=now
+    )
+
+
 SNOW_FIRST_FLAKES_2026_PRODUCER = build_sibling_family_producer(
     SNOW_FIRST_FLAKES_2026_DEFINITION
 )
@@ -1786,3 +2289,29 @@ SNOW_FIRST_FLAKES_2026_PRODUCER = build_sibling_family_producer(
 GTA_VI_ALBUM_FEATURES_PRODUCER = build_sibling_family_producer(
     GTA_VI_ALBUM_FEATURES_DEFINITION
 )
+
+RT_SCORES_THIS_WEEK_PRODUCER = build_sibling_family_producer(
+    RT_SCORES_THIS_WEEK_DEFINITION
+)
+
+WHO_ANNOUNCES_BEFORE_2027_PRODUCER = build_sibling_family_producer(
+    WHO_ANNOUNCES_BEFORE_2027_DEFINITION
+)
+
+ALCARAZ_SINNER_TWO_MAJORS_2027_PRODUCER = build_sibling_family_producer(
+    ALCARAZ_SINNER_TWO_MAJORS_2027_DEFINITION
+)
+
+_NAMED_SIBLING_PRODUCERS = {
+    SNOW_FIRST_FLAKES_2026_SLUG: SNOW_FIRST_FLAKES_2026_PRODUCER,
+    GTA_VI_ALBUM_FEATURES_SLUG: GTA_VI_ALBUM_FEATURES_PRODUCER,
+    RT_SCORES_THIS_WEEK_SLUG: RT_SCORES_THIS_WEEK_PRODUCER,
+    WHO_ANNOUNCES_BEFORE_2027_SLUG: WHO_ANNOUNCES_BEFORE_2027_PRODUCER,
+    ALCARAZ_SINNER_TWO_MAJORS_2027_SLUG: ALCARAZ_SINNER_TWO_MAJORS_2027_PRODUCER,
+}
+for _sf_def in load_sibling_family_definitions_from_dir():
+    _sf_slug = _sf_def["slug"]
+    _rc().register_roundup_producer(
+        _NAMED_SIBLING_PRODUCERS.get(_sf_slug)
+        or build_sibling_family_producer(_sf_def)
+    )

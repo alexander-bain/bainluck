@@ -65,22 +65,23 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "M1",
         "tolerate no missed delivery — the cadence stops covering background's jitter",
         WARM,
-        "MISSED_DELIVERY_ALLOWANCE = 4",
+        # C-1 / B-15 re-target: the allowance is 1 since the worker audit trim.
+        "MISSED_DELIVERY_ALLOWANCE = 1",
         "MISSED_DELIVERY_ALLOWANCE = 0",
     ),
     (
         "M2",
         "multiply by the allowance instead of dividing — a warmer slower than the ceiling",
         WARM,
-        "    return stale_serve_ceiling_seconds() // (MISSED_DELIVERY_ALLOWANCE + 1)",
-        "    return stale_serve_ceiling_seconds() * (MISSED_DELIVERY_ALLOWANCE + 1)",
+        "    raw_minutes = stale_serve_ceiling_seconds() // (MISSED_DELIVERY_ALLOWANCE + 1) // 60",
+        "    raw_minutes = stale_serve_ceiling_seconds() * (MISSED_DELIVERY_ALLOWANCE + 1) // 60",
     ),
     (
         "M3",
         "freeze the period as a literal — a tightened freshness contract sails past it",
         WARM,
         "    from app.utils.futures_categories_cache import stale_serve_ceiling_seconds\n\n"
-        "    return stale_serve_ceiling_seconds() // (MISSED_DELIVERY_ALLOWANCE + 1)",
+        "    raw_minutes = stale_serve_ceiling_seconds() // (MISSED_DELIVERY_ALLOWANCE + 1) // 60",
         "    return 300",
     ),
     (

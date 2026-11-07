@@ -54,7 +54,7 @@ import type {
   TeamData,
   RelatedGameListing,
 } from "./types";
-import { getDiscoverSessionId } from "./discoverInteractions";
+import { getDiscoverSessionId, noteDiscoverSlate } from "./discoverInteractions";
 import { VERIFIED_TITLE, sanitizeVerifiedTitleDetail } from "./verifiedTitleDetail";
 import { stampHistoryRequest } from "./futuresDetailStream";
 import {
@@ -1567,6 +1567,12 @@ export async function fetchFeed(
   const headers = sessionId ? { "x-session-id": sessionId } : undefined;
 
   const endpoint = `/api/feed${query ? `?${query}` : ""}`;
+  // #12095 — the Discover deck's own shape (no mode, filter or narrowing)
+  // names the slate its events carry; any other feed CLEARS it, so a swipe on
+  // a category page never carries the Discover slate.
+  const isDiscoverDeck =
+    !params?.mode && !params?.category && !params?.sport && !params?.tags?.length &&
+    !params?.my_teams_only && params?.include_futures !== false && params?.include_events !== false;
 
   // L2-189: measure client time-to-response and emit bounded, non-PII latency
   // telemetry from the exposed feed headers. All best-effort — never affects
@@ -1621,6 +1627,7 @@ export async function fetchFeed(
           } catch {
             /* telemetry must never change what the caller receives */
           }
+          noteDiscoverSlate(isDiscoverDeck ? parsed : null);
           return parsed;
         }
       } catch {
@@ -1631,7 +1638,7 @@ export async function fetchFeed(
     }
   }
 
-  return apiFetch<FeedResponse>(endpoint, {
+  const page = await apiFetch<FeedResponse>(endpoint, {
     headers,
     onResponse: (res, meta) => {
       const now =
@@ -1644,6 +1651,8 @@ export async function fetchFeed(
       });
     },
   });
+  noteDiscoverSlate(isDiscoverDeck ? page : null);
+  return page;
 }
 
 // ============================================================================
@@ -2489,6 +2498,8 @@ export interface ChamberControl {
   gop: number;
   dem: number;
   market_id: number;
+  source?: string;
+  winner?: string;
 }
 
 export interface PoliticsThemeCongressional {
@@ -2514,6 +2525,7 @@ export interface CrossSourceMatch {
   outcome?: string;
   kalshi: number;
   poly: number;
+  merged?: number;
   delta: number;
   category: string;
   kalshi_market_id: number;

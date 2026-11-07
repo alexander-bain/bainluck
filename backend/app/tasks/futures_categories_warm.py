@@ -27,7 +27,7 @@ reads are the SAME payload (``created_at`` 00:41:37 on each), which is the point
 WHY A WARMER AND NOT A CHEAPER QUERY. The statement reads 39,014 shared blocks
 because the two negated ``ILIKE``s are unindexable; LAT-P122 measured it and
 said so, and this ship does not make it faster either. What changes is WHO runs
-it: a background beat, every 5 minutes, instead of whichever person happened to
+it: a background beat (every 12 minutes since C-1), instead of whichever person happened to
 open Search after a quiet half hour.
 
 🔴 THE PERIOD IS DERIVED FROM THE TIER'S OWN CEILING, NOT CHOSEN. A literal 300
@@ -97,16 +97,28 @@ BUILD_TIMEOUT_SECONDS = 30
 #:
 #: It is stated as an ALLOWANCE rather than as a period because the allowance is
 #: the thing a reader of this file can judge. The period is arithmetic.
-MISSED_DELIVERY_ALLOWANCE = 4
+#:
+#: C-1 / B-15 (worker audit 2026-11-06): 4 -> 1. The census is 42 rows that
+#: cost a 305 MB buffer read twelve times an hour on `worker-background`. At one
+#: permitted miss the period is 12 minutes (25 min ceiling / 2, rounded down to
+#: an even `*/N`, see `warm_period_seconds`), five passes an hour instead of
+#: twelve. /search's empty-state categories can be up to 12 minutes old instead
+#: of 5. The audit asked for 20; 20 would need an allowance of 0, which
+#: `test_the_bounds_are_positive_numbers` refuses for this rail's delivery
+#: jitter, and a longer stale ceiling, which would make the page older still.
+MISSED_DELIVERY_ALLOWANCE = 1
+
+#: The periods a crontab `*/N` minute field spells evenly across an hour.
+_EVEN_MINUTE_PERIODS = (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60)
 
 
 def warm_period_seconds() -> int:
     """The beat period, derived from the tier's own stale-serve ceiling.
 
-    ``ceiling / (allowance + 1)``: with the ceiling at 25 minutes and four
-    permitted misses, a rebuild every 5 minutes means the mirror is at most
-    5 x 5 = 25 minutes old when the fifth delivery in a row fails — the exact
-    edge of servable. Anything better than that worst case leaves the reader on
+    ``ceiling / (allowance + 1)``: with the ceiling at 25 minutes and one
+    permitted miss, a rebuild every 12 minutes means the mirror is at most
+    2 x 12 = 24 minutes old when the second delivery in a row fails — inside the
+    edge of servable. (Before C-1: four misses, every 5 minutes.) Anything better than that worst case leaves the reader on
     the mirror, which is a 28 ms Redis read.
 
     Derived at call time and not frozen into a module constant so that a queue
@@ -115,10 +127,15 @@ def warm_period_seconds() -> int:
     that divides an hour, because the beat spells it ``*/N`` and a period like
     7 minutes would fire at :00 and :07 and then again at :00 — a silently
     uneven cadence that no assertion on the number itself would catch.
+
+    C-1: rounded DOWN to a period a `*/N` crontab spells evenly (12.5 min -> 12),
+    so rounding only ever shortens the period.
     """
     from app.utils.futures_categories_cache import stale_serve_ceiling_seconds
 
-    return stale_serve_ceiling_seconds() // (MISSED_DELIVERY_ALLOWANCE + 1)
+    raw_minutes = stale_serve_ceiling_seconds() // (MISSED_DELIVERY_ALLOWANCE + 1) // 60
+    even = max(p for p in _EVEN_MINUTE_PERIODS if p <= max(1, raw_minutes))
+    return even * 60
 
 
 def warm_period_minutes() -> int:

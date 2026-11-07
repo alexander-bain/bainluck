@@ -9,9 +9,9 @@ still fall back to computing inline on a cold cache or ``?bust=1``, so nothing
 depends on the task having run — the beat just keeps the cache warm.
 
 Redis keys / TTL are shared with the routes:
-- ``bainluck:admin:audit_all``        (ex=3600)
+- ``bainluck:admin:audit_all``        (ex=7200, C-1)
 - ``bainluck:admin:link_rate``        (ex=3600)
-- ``bainluck:admin:matured_linkage``  (ex=3600)  # Queue #220/221 Item 2
+- ``bainluck:admin:matured_linkage``  (ex=7200, C-1)  # Queue #220/221 Item 2
 - ``bainluck:admin:event_source_coverage:v1``     # #847, see the section at the end
 - ``bainluck:admin:schedule_accuracy:14d:v1``     # #847, the last section
 
@@ -34,6 +34,11 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _ADMIN_HEALTH_CACHE_TTL = 3600  # 1h — generous so a few skipped beats never empty it
+#: C-1 (2026-11-06): audit-all and matured-linkage moved from every 30 min to
+#: hourly, so their two keys live 2 h and one late beat never empties the tile.
+#: A separate constant on purpose: the retention windows below derive from
+#: `_ADMIN_HEALTH_CACHE_TTL` and must not move with this.
+_ADMIN_HOURLY_CACHE_TTL = 7200
 
 
 async def _precompute_admin_audit_all():
@@ -46,7 +51,7 @@ async def _precompute_admin_audit_all():
     rc.set(
         "bainluck:admin:audit_all",
         json.dumps(payload),
-        ex=_ADMIN_HEALTH_CACHE_TTL,
+        ex=_ADMIN_HOURLY_CACHE_TTL,
     )
     logger.info(
         "Cached admin audit/all in Redis (avg_score=%s)",
@@ -95,7 +100,7 @@ async def _precompute_admin_matured_linkage():
     rc.set(
         "bainluck:admin:matured_linkage",
         json.dumps(payload),
-        ex=_ADMIN_HEALTH_CACHE_TTL,
+        ex=_ADMIN_HOURLY_CACHE_TTL,
     )
     logger.info(
         "Cached admin matured-linkage in Redis (headline_pct=%s, phantom=%s, checkable=%s)",

@@ -431,7 +431,9 @@ describe("every writer call site sits under the page that registers the gate", (
         .filter((f) => pattern.test(strip(readFileSync(f, "utf8"))))
         .map((f) => relative(root, f))
         .sort();
-    expect(importers(/from "[^"]*\/DiscoverCard"/)).toEqual(["app/discover/page.tsx"]);
+    // #12095 Phase 2 — /grade draws the real card for graders, under a gate
+    // closed for the whole time it is mounted (asserted below).
+    expect(importers(/from "[^"]*\/DiscoverCard"/)).toEqual(["app/discover/page.tsx", "app/grade/page.tsx"]);
     expect(importers(/from "[^"]*\/(GroupCard|ThemeBundleCard)"/)).toEqual(["components/DiscoverCard.tsx"]);
     // #10357 — the round-up card carries the bundle actions too; it mounts only
     // under DiscoverCard, so the gate above still covers every write it makes.
@@ -443,6 +445,13 @@ describe("every writer call site sits under the page that registers the gate", (
       "components/discover/ThemeBundleCard.tsx",
       "components/discover/roundup/RoundupCard.tsx",
     ]);
+  });
+
+  it("the grading page closes the writers' gate while it is mounted", () => {
+    const page = strip(readFileSync(join(root, "app/grade/page.tsx"), "utf8"));
+    expect(page).toContain("setDiscoverLearningGate(() => false);");
+    expect(page).toContain("return () => setDiscoverLearningGate(null);");
+    expect(page).toContain("pointer-events-none");
   });
 
   it("the page registers the writers' gate from the current auth state and provides the attempt handler", () => {

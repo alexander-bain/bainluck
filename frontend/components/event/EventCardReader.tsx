@@ -39,7 +39,13 @@ import {
   type ReaderState,
 } from "@/lib/nflEventCardDeck";
 import type { OptionDetail } from "@/lib/nbaEventCards";
-import { EventCardView, type CardSelection, type CardTeams } from "./NFLEventCards";
+import AtlasDetailsSheet from "@/components/atlas/AtlasDetailsSheet";
+import {
+  buildStoryCardDetailsSheetProps,
+  EventCardView,
+  type CardSelection,
+  type CardTeams,
+} from "./NFLEventCards";
 
 /** Re-read the clock each minute so a held number past its validity leaves. */
 const TICK_MS = 60_000;
@@ -55,6 +61,7 @@ export default function EventCardReader({
   onSelect,
   onVisibleChange,
   onClose,
+  atlasMode = false,
 }: {
   openCardId: string;
   liveCards: NflEventCard[];
@@ -67,6 +74,7 @@ export default function EventCardReader({
   onVisibleChange?: (cardId: string | null) => void;
   /** Called with the reader's final state, so the page can choose the return target. */
   onClose: (state: ReaderState) => void;
+  atlasMode?: boolean;
 }) {
   const [state, dispatch] = useReducer(readerReducer, undefined, () =>
     openReader({ cardId: openCardId, live: liveCards, liveHeader, liveRows }),
@@ -166,6 +174,19 @@ export default function EventCardReader({
         .flatMap((c) => (c.kind === "ladder" ? c.points : []))
         .find((p) => p.optionKey === state.detailsRowId)?.detail)
     : undefined;
+  const activeCard = cards[position] ?? null;
+  const detailsLead = state.detailsRowId ? lineLead(cards, state.detailsRowId) : null;
+  const atlasSheetProps =
+    atlasMode && state.detailsRowId
+      ? buildStoryCardDetailsSheetProps({
+          card: activeCard,
+          rowId: state.detailsRowId,
+          row: detailsRow,
+          lead: detailsLead,
+          rows: state.heldRows,
+          teams,
+        })
+      : null;
 
   return (
     <div
@@ -243,16 +264,23 @@ export default function EventCardReader({
                         onSelect={onSelect}
                         onDetails={(rowId) => dispatch({ type: "details", rowId })}
                         expanded
+                        atlasMode={atlasMode}
                       />
                     </div>
                   </div>
                 );
               })}
             </div>
-            {detailsRow !== undefined || state.detailsRowId ? (
+            {atlasMode && atlasSheetProps ? (
+              <AtlasDetailsSheet
+                open
+                onClose={() => dispatch({ type: "details", rowId: null })}
+                {...atlasSheetProps}
+              />
+            ) : detailsRow !== undefined || state.detailsRowId ? (
               <LineDetails
                 row={detailsRow}
-                lead={state.detailsRowId ? lineLead(cards, state.detailsRowId) : null}
+                lead={detailsLead}
                 doneRef={detailsDoneRef}
                 onDone={() => dispatch({ type: "details", rowId: null })}
               />

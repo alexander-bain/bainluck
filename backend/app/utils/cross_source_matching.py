@@ -570,15 +570,29 @@ def align_on_shared_outcome(
 
 def _spotlight_match(kalshi_row: dict, poly_row: dict) -> dict | None:
     """Build one spotlight row, or None when the pair is not comparable."""
+    from app.utils.futures_source_merge import blend_probabilities
+
     aligned = align_on_shared_outcome(kalshi_row, poly_row)
     if aligned is None:
         return None
     outcome, kalshi_prob, poly_prob = aligned
+    blended = blend_probabilities(
+        [
+            {"source": "kalshi", "probability": kalshi_prob / 100.0},
+            {"source": "polymarket", "probability": poly_prob / 100.0},
+        ]
+    )
+    merged_prob = (
+        round(blended * 100.0, 1)
+        if blended is not None
+        else round((kalshi_prob + poly_prob) / 2.0, 1)
+    )
     return {
         "q": kalshi_row["q"],
         "outcome": outcome,
         "kalshi": kalshi_prob,
         "poly": poly_prob,
+        "merged": merged_prob,
         "delta": round(abs(kalshi_prob - poly_prob), 1),
         "category": kalshi_row.get("theme", ""),
         "kalshi_market_id": kalshi_row["market_id"],

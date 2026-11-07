@@ -77,7 +77,7 @@ from app.routes.economics import _ladder_rung, _oil_row
 
 def _market(name: str, outcomes: list[tuple[str, float | None]], *, mid: int = 1,
             source: str = "kalshi"):
-    market = FuturesMarket(id=mid, name=name, source=source)
+    market = FuturesMarket(id=mid, name=name, source=source, mutually_exclusive=True)
     market.outcomes = [
         FuturesOutcome(name=n, external_id=n, current_probability=p)
         for n, p in outcomes
@@ -136,7 +136,9 @@ class TestTheDefectTheseSpecimensReproduce:
     def test_the_rigs_ladder_rescaled_into_the_number_on_the_page(self):
         brackets = econ._brackets_from_outcomes(_rigs())
         _, prob, label = econ._modal_bracket(brackets)
-        assert (prob, label) == (12.5, "At least 370")  # rendered `Oil At least 370 — 13%`
+        # #12093: _brackets_from_outcomes now uses #11995 6-A (refuses cumulative
+        # ladders and >160% sums), leaving the 777.5% rigs ladder un-rescaled.
+        assert (prob, label) == (97.0, "At least 370")
         assert sum(b[0] for b in econ._brackets_from_outcomes(_rigs(), normalize=False)) == 777.5
 
     def test_the_contaminated_binary_rescaled_into_the_number_on_the_page(self):

@@ -145,3 +145,8 @@ frontend/components/TournamentCard.tsx
 # backend's baseball stoppage words to `AUTHORITY_STOPPAGE_WORDS` here, so a
 # word added on the web alone must still run the shard that compares them.
 frontend/lib/gameTimeLabel.ts
+
+# #12102 S0b reconciles the frozen aggregate and confusion exports. Only these
+# two data files are backend dependencies; other /evals data stays frontend-only.
+frontend/lib/evals/data/twin-exam-2026-11-05.json
+frontend/lib/evals/data/twin-confusion-2026-11-05.json

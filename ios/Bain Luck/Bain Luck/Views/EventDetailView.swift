@@ -432,7 +432,11 @@ struct EventDetailView: View {
             // or a reconnect moves no input, so it cannot beat.
             .onChange(of: ekgObservation, initial: true) { _, observation in
                 guard let observation else { return }
-                ekgTracker = ekgTracker.stepped(observation, now: displayNow())
+                ekgTracker = EventAtlasLivePath11666.stepEkgTracker(
+                    ekgTracker,
+                    observation: observation,
+                    now: displayNow()
+                )
             }
             .onDisappear {
                 // #11703 — the freshness details belong to this page. Its
@@ -455,7 +459,12 @@ struct EventDetailView: View {
     @ViewBuilder
     private var contentView: some View {
         if vm.loading {
-            ProgressView()
+            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                ProgressView(EventAtlasStates11666.loading)
+                    .accessibilityIdentifier("event-atlas-loading-11666")
+            } else {
+                ProgressView()
+            }
         } else if let error = vm.error, vm.event == nil {
             ContentUnavailableView(
                 "Error",
@@ -1881,6 +1890,18 @@ struct EventDetailView: View {
                             // that says nothing false.
                             EmptyView()
                         }
+                    } else if ReleaseSurfaces.isEventPageAtlasEnabled(),
+                              EventState.showsVenueClosedNoWinner(
+                                  event.status,
+                                  venueSettled: event.venueSettled,
+                                  venueClosedNoWinner: event.venueClosedNoWinner,
+                                  commenceTime: event.commenceTime?.asDate,
+                                  now: displayNow()
+                              ) {
+                        // #11666 (Step E4) — StatusBadge three points above already
+                        // prints `EventState.venueClosedNoWinnerLabel` ("Ended · no winner");
+                        // keep the middle slot empty so one card never wears two settled chips.
+                        EmptyView()
                     } else if let odds = event.currentOdds,
                               // #9470 — an `opening` hero prints the server's
                               // pair and is named as an opening line.
@@ -2086,10 +2107,31 @@ struct EventDetailView: View {
                         // is gone: it was a thumbnail of the full chart one card
                         // below, which since #8320 starts on the first screen.
                     } else {
-                        Text("vs")
-                            .font(.title2)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.secondary)
+                        let heroNow = displayNow()
+                        if ReleaseSurfaces.isEventPageAtlasEnabled(),
+                           let stateLabel = EventAtlasStates11666.heroStateLabel(
+                               status: event.status,
+                               commenceTime: event.commenceTime?.asDate,
+                               authorityPeriod: event.espn?.period,
+                               venueSettled: event.venueSettled,
+                               venueClosedNoWinner: event.venueClosedNoWinner,
+                               hasCurrentOdds: false,
+                               now: heroNow
+                           ) {
+                            EventAtlasHeroStateLabelView11666(label: stateLabel)
+                        } else if ReleaseSurfaces.isEventPageAtlasEnabled(),
+                                  EventState.isSuspendedAndStarted(
+                                      event.status,
+                                      commenceTime: event.commenceTime?.asDate,
+                                      now: heroNow
+                                  ) {
+                            EmptyView()
+                        } else {
+                            Text("vs")
+                                .font(.title2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.secondary)
+                        }
                         if priceStreamingEligible { probabilityDetails(confidenceTier: nil) }
                     }
                     // Projected final score.
@@ -2200,6 +2242,16 @@ struct EventDetailView: View {
             if let liveForecast = genericLiveForecast11296(event, hasScore: hasScore) {
                 LiveHeadlineForecast11296(
                     forecast: liveForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+            }
+            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                EventAtlasHeadlineControlRow11666(
+                    event: event,
+                    observedAt: vm.displayedProbabilityObservedAt(event),
+                    confirmedAtShown: vm.confirmedAtCoveringShown(event),
+                    preview: vm.blendPreview,
+                    liveStatus: vm.liveUpdateStatus,
+                    ekgTracker: ekgTracker,
+                    asOf: displayAsOf)
             }
         }
         // #9483 v476 — on the adopted pair the hero is the top of ONE card with
@@ -2350,6 +2402,10 @@ struct EventDetailView: View {
         if MLBFinalPage11284.applies(sportKey: event.sport, status: event.status) {
             return mlbFinalCards(event).map { .mlb($0) }
         }
+        // #11666 Step E6b — native NHL story cards when Atlas is enabled.
+        if EventAtlasNhlCards11666.applies(sportKey: event.sport) {
+            return nhlAtlasCards(event)
+        }
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         // #9483 R2 — a finished page's card compares the final with the
         // headline's own qualified forecast, not an earlier history point.
@@ -2381,6 +2437,28 @@ struct EventDetailView: View {
             homeTeam: event.homeTeam, awayTeam: event.awayTeam,
             homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
             gameMarkets: vm.gameMarkets, relatedFutures: vm.relatedFutures))
+    }
+
+    /// #11666 Step E6b — NHL story cards (`icehockey_nhl`) from THIS event's
+    /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    private func nhlAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
+        guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let names = nflNames(event)
+        return EventAtlasNhlCards11666.cards(
+            sportKey: event.sport,
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            homeShort: names.home,
+            awayShort: names.away,
+            homeScore: hasScore ? event.homeScore : nil,
+            awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: gm,
+            now: displayNow()
+        )
     }
 
     /// #9483 NBA slice — the winning-margin and scoring ladders, from the

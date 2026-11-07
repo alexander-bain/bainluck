@@ -38,6 +38,7 @@
  */
 
 import type { LiveStreamStatus } from '@/hooks/useLiveEventStream';
+import { ATLAS_STATE_COPY } from '@/components/atlas/atlasStateCopy';
 import { parseFoldRevision, type FoldRevision } from '@/lib/foldRevision';
 
 /** How long a receipt ("Updated", "No change", "Updates resumed") is shown. */
@@ -180,6 +181,8 @@ export interface ConnectionPresentationInput {
   priceMayBeOld: boolean;
   /** The same answer when the oldest visible fact is the score. */
   scoreMayBeOld: boolean;
+  /** #11974 Step E4 — shared atlas state copy when ?atlas=1 is active. */
+  atlasMode?: boolean;
 }
 
 const BASE: Record<LiveStreamStatus, { label: string; tone: ConnectionTone; breathes: boolean }> = {
@@ -207,6 +210,24 @@ export function presentConnectionStatus(
 ): ConnectionPresentation {
   if (input.terminalLabel) {
     return { label: input.terminalLabel, tone: 'neutral', breathes: false, announcement: input.terminalLabel };
+  }
+  if (input.atlasMode) {
+    if (input.priceMayBeOld || input.scoreMayBeOld || input.status === 'retrying') {
+      return {
+        label: ATLAS_STATE_COPY.updateInterrupted,
+        tone: 'attention',
+        breathes: false,
+        announcement: ATLAS_STATE_COPY.updateInterrupted,
+      };
+    }
+    if (input.status === 'connecting' || input.status === 'rollover') {
+      return {
+        label: ATLAS_STATE_COPY.loading,
+        tone: 'neutral',
+        breathes: false,
+        announcement: '',
+      };
+    }
   }
   // A healthy socket never hides old evidence: the warnings outrank every
   // connection word, in the neutral styling the header badge's stale branch uses.

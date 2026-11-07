@@ -6,7 +6,7 @@ const path = require('node:path');
 const workflow = fs.readFileSync(path.resolve(__dirname, '../../../.github/workflows/tier-b-review.yml'), 'utf8');
 const source = workflow.match(/      - name: Wait for green CI at this head[\s\S]*?          script: \|\n([\s\S]*?)(?=      - uses:)/)[1];
 const wait = new (Object.getPrototypeOf(async function(){}).constructor)(
-  'github', 'context', 'core', 'Date', 'setTimeout', source);
+  'github', 'context', 'core', 'Date', 'setTimeout', 'process', source);
 const app = {databaseId: 15368};
 const requirement = context => ({context, app});
 let nextId = 1;
@@ -61,9 +61,9 @@ async function run(options = {}) {
       return fn(args);
     },
   };
-  await wait(github, {repo: {owner: 'owner', repo: 'repo'}, payload: {pull_request: {number: 61, head: {sha: 'head'}}}},
+  await wait(github, {eventName: options.eventName || 'workflow_run', repo: {owner: 'owner', repo: 'repo'}, payload: {pull_request: {number: 61, head: {sha: 'head'}}}},
     {notice() {}, info() {}, setOutput: (key, value) => ready.push([key, value]), setFailed: text => failures.push(text)},
-    {now: () => now}, callback => {now += 60000; callback();});
+    {now: () => now}, callback => {now += 60000; callback();}, {env: {REVIEW_PR: '61', REVIEW_HEAD: 'head'}});
   return {ready, failures, queries, polls, elapsed: now};
 }
 
@@ -73,6 +73,31 @@ test('all eight required shards pass despite failed optional Watch and pending a
     check('review', 'failure'), check('Tier-B approval', 'failure')]});
   assert.deepEqual(result.ready, [['ready', 'true']]);
   assert.deepEqual(result.failures, []);
+});
+
+test('a PR event with pending CI frees its runner without polling', async () => {
+  const pending = required.map(r => check(r.context));
+  pending[7].status = 'in_progress';
+  const result = await run({eventName: 'pull_request', checks: pending});
+  assert.deepEqual(result.ready, []);
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.elapsed, 0);
+  assert.equal(result.polls, 1);
+});
+
+test('completion events allow at most five minutes for trailing checks', async () => {
+  const pending = required.map(r => check(r.context));
+  pending[7].status = 'in_progress';
+  const result = await run({checks: pending});
+  assert.deepEqual(result.ready, []);
+  assert.match(result.failures[0], /Timed out after 5 minutes/);
+  assert.equal(result.elapsed, 5 * 60 * 1000);
+});
+
+test('the job keeps time for setup and review after the short tail', () => {
+  assert.match(workflow, /timeout-minutes: 40/);
+  assert.match(workflow, /workflows: \[CI\]/);
+  assert.match(workflow, /types: \[completed\]/);
 });
 
 test('any one of eight required shards failing prevents the reviewer', async () => {
@@ -165,7 +190,7 @@ test('closed, draft and unlabeled PRs stop before querying checks', async () => 
 
 test('the installed action is gated and pytest uses separate narrow executable permissions', () => {
   assert.match(workflow, /actions: read/);
-  assert.match(workflow, /checks: read/);
+  assert.match(workflow, /checks: write/);
   assert.match(workflow, /anthropics\/claude-code-action@v1\n        if: steps.ci.outputs.ready == 'true'/);
   for (const command of ['cd:*', 'python -m pytest:*', 'python3 -m pytest:*', 'echo:*', 'tail:*']) {
     assert.ok(workflow.includes(`Bash(${command})`), command);
@@ -186,4 +211,103 @@ test('native non-admin required-check discovery reads later pages before approvi
 test('truncated and repeating required-check pages refuse without reviewing', async () => {
   await assert.rejects(run({pageInfo: {hasNextPage: true, endCursor: null}}), /incomplete/);
   await assert.rejects(run({pageInfo: {hasNextPage: true, endCursor: 'same'}}), /repeated/);
+});
+
+const selectSource = workflow.match(/      - name: Resolve the current eligible PR[\s\S]*?          script: \|\n([\s\S]*?)(?=      - name: Wait)/)[1];
+const select = new (Object.getPrototypeOf(async function(){}).constructor)('github', 'context', 'core', selectSource);
+async function resolve(options = {}) {
+  const output = {}, calls = [];
+  const pr = {number: 61, state: 'open', draft: false, labels: [{name: 'tier-b'}],
+    head: {sha: 'head', ref: 'codex/example', repo: {full_name: 'owner/repo'}}, ...options.pr};
+  const run = {name: 'CI', path: '.github/workflows/ci.yml', event: 'pull_request',
+    status: 'completed', conclusion: 'success', head_sha: 'head',
+    head_repository: {full_name: 'owner/repo'}, ...options.run};
+  const api = {repos: {listPullRequestsAssociatedWithCommit: async () => {
+    calls.push('associated'); return options.associated || [pr];
+  }}, pulls: {get: async () => ({data: pr}), listReviews: async () => {
+    calls.push('reviews'); return options.reviews || [];
+  }}};
+  await select({rest: api, paginate: (fn, args) => fn(args)},
+    {repo: {owner: 'owner', repo: 'repo'}, eventName: options.eventName || 'workflow_run',
+      payload: {action: 'completed', workflow_run: run, pull_request: {number: 61, head: {sha: 'head'}}}},
+    {setOutput: (k, v) => {output[k] = v;}});
+  return {output, calls};
+}
+
+test('completed trusted CI resolves the current PR by its exact head', async () => {
+  assert.deepEqual((await resolve()).output, {number: '61', head: 'head', branch: 'codex/example'});
+  assert.equal((await resolve({eventName: 'pull_request'})).output.head, 'head');
+});
+
+test('forks, drafts, non-tier-b and moved heads never reach the action', async () => {
+  for (const pr of [{draft: true}, {labels: []}, {state: 'closed'},
+    {head: {sha: 'head', repo: {full_name: 'fork/repo'}}},
+    {head: {sha: 'new', repo: {full_name: 'owner/repo'}}}]) {
+    const result = await resolve({pr});
+    assert.deepEqual(result.output, {});
+    assert.ok(!result.calls.includes('reviews'));
+  }
+  assert.deepEqual((await resolve({run: {head_repository: {full_name: 'fork/repo'}}})).calls, []);
+});
+
+test('unrelated, unsuccessful, incomplete and ambiguous CI cannot invoke review', async () => {
+  for (const run of [{name: 'other'}, {path: 'other.yml'}, {event: 'push'},
+    {conclusion: 'failure'}, {status: 'in_progress'}]) {
+    assert.deepEqual((await resolve({run})).output, {});
+  }
+  assert.deepEqual((await resolve({associated: []})).output, {});
+});
+
+test('a submitted exact-head bot verdict suppresses duplicate paid review', async () => {
+  for (const state of ['APPROVED', 'CHANGES_REQUESTED']) {
+    assert.deepEqual((await resolve({reviews: [{user: {login: 'claude[bot]'}, commit_id: 'head', state}]})).output, {});
+  }
+  assert.equal((await resolve({reviews: [{user: {login: 'claude[bot]'}, commit_id: 'old', state: 'APPROVED'}]})).output.head, 'head');
+});
+
+test('completion review preserves the native cap and trusted current-head policy publication', () => {
+  assert.match(workflow, /startsWith\(steps.select.outputs.branch, 'codex\/eval-reviewer-'\) && '--max-budget-usd 0.40'/);
+  assert.match(workflow, /ref: \$\{\{ github.workflow_sha \}\}/);
+  assert.match(workflow, /path: _tier_b_policy/);
+  assert.match(workflow, /Publish the current-head approval verdict\n        if: always\(\) && steps.policy.conclusion == 'success'/);
+  assert.match(workflow, /require\('\.\/_tier_b_policy\/tools\/release\/tier_b.cjs'\)\.evaluate/);
+  const policy = fs.readFileSync(path.resolve(__dirname, '../../../.github/workflows/tier-b.yml'), 'utf8');
+  assert.match(policy, /github.event_name != 'workflow_run' \|\| github.event.workflow_run.event == 'pull_request'/);
+});
+
+test('completion publication retains the repository supplied by the Context prototype', async () => {
+  const publicationSource = workflow.match(/      - name: Publish the current-head approval verdict[\s\S]*?          script: \|\n([\s\S]*)$/)[1];
+  const publication = new (Object.getPrototypeOf(async function(){}).constructor)(
+    'github', 'context', 'process', 'require', publicationSource);
+  const repository = {owner: 'owner', repo: 'repo'};
+  const context = Object.assign(Object.create({get repo() { return repository; }}), {
+    eventName: 'workflow_run', payload: {workflow_run: {name: 'CI'}},
+  });
+  const pr = {number: 61, state: 'open', labels: [], head: {sha: 'head'}, user: {login: 'author'}};
+  const published = [];
+  let reads = 0;
+  const github = {
+    rest: {
+      pulls: {get: async args => {
+        assert.deepEqual(args, {...repository, pull_number: 61});
+        reads++;
+        return {data: pr};
+      }},
+      checks: {
+        listForRef: async () => [],
+        create: async args => { published.push(args); },
+      },
+    },
+    paginate: (fn, args) => fn(args),
+  };
+  await publication(github, context, {env: {REVIEW_PR: '61'}}, name => {
+    assert.equal(name, './_tier_b_policy/tools/release/tier_b.cjs');
+    return require('../../../tools/release/tier_b.cjs');
+  });
+  assert.equal(reads, 2);
+  assert.equal(published.length, 1);
+  assert.equal(published[0].owner, repository.owner);
+  assert.equal(published[0].repo, repository.repo);
+  assert.equal(published[0].head_sha, 'head');
+  assert.equal(published[0].conclusion, 'success');
 });

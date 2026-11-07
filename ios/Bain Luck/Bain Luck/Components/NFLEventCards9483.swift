@@ -271,10 +271,20 @@ struct NFLFinishCardView9483: View {
             Text(card.headline(awayName: awayName, homeName: homeName))
                 .font(.title3.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
+            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                EventAtlasStoryCardMarkKeyView11666(items: EventAtlasStoryCards11666.finishMarkKey(for: card))
+            }
             Chart {
                 ForEach([false, true], id: \.self) { isHome in
                     let name = isHome ? homeName : awayName
                     let color = isHome ? homeColor : awayColor
+                    if ReleaseSurfaces.isEventPageAtlasEnabled(), let later {
+                        RuleMark(xStart: .value("Start", isHome ? card.pregame.home : card.pregame.away),
+                                 xEnd: .value("Points", isHome ? later.home : later.away),
+                                 y: .value("Team", name))
+                            .foregroundStyle(color.opacity(0.55))
+                            .lineStyle(StrokeStyle(lineWidth: 1.75))
+                    }
                     PointMark(x: .value("Points", isHome ? card.pregame.home : card.pregame.away),
                               y: .value("Team", name))
                         .symbol { Rectangle().stroke(color, lineWidth: 2).frame(width: 9, height: 9) }
@@ -363,14 +373,30 @@ struct NFLFinishCardView9483: View {
         Array(stride(from: domain.lowerBound, through: domain.upperBound, by: card.tickStep))
     }
 
+    @ViewBuilder
     private func teamName(isHome: Bool) -> some View {
-        Text(isHome ? homeName : awayName)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(isHome ? homeColor : awayColor)
-            // #11285 — a one-word name too wide for its own line at the
-            // largest sizes ("Command…" at AX5) shrinks to fit, never broken.
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
+        if ReleaseSurfaces.isEventPageAtlasEnabled(),
+           let badge = EventAtlasStoryCards11666.finishWinnerBadge(for: card, isHome: isHome) {
+            HStack(spacing: 6) {
+                Text(isHome ? homeName : awayName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(isHome ? homeColor : awayColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(badge)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.green)
+                    .accessibilityIdentifier("finish-card-winner-badge-11666")
+            }
+        } else {
+            Text(isHome ? homeName : awayName)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(isHome ? homeColor : awayColor)
+                // #11285 — a one-word name too wide for its own line at the
+                // largest sizes ("Command…" at AX5) shrinks to fit, never broken.
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
     }
 
     private func number(_ value: Double, label: String,
@@ -479,13 +505,16 @@ struct NFLMilestoneCardView9483: View {
             Text(card.caption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                EventAtlasStoryCardMarkKeyView11666(items: EventAtlasStoryCards11666.milestoneMarkKey(for: card))
+            }
             if let profile = card.profile {
                 chart(profile, selected: rung)
             }
             if card.profile == nil {
                 // Every price on the card has stopped being observed: the
                 // lines stay, the shape does not.
-                Text("No recent probability updates")
+                Text(ReleaseSurfaces.isEventPageAtlasEnabled() ? "No recent probability" : "No recent probability updates")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: expanded ? 120 : 60)
@@ -571,10 +600,16 @@ struct NFLMilestoneCardView9483: View {
     /// What a line with no number says, by basis: a quote that stopped being
     /// observed, or a line the server served no pregame mark for.
     private var noChance: String {
-        card.basis == .pregamePrice ? "No recent probability update" : "No pregame chance"
+        if ReleaseSurfaces.isEventPageAtlasEnabled() {
+            return EventAtlasStoryCards11666.milestoneNoChanceLabel(basis: card.basis)
+        }
+        return card.basis == .pregamePrice ? "No recent probability update" : "No pregame chance"
     }
 
     private func verdict(_ rung: NFLMilestoneCard9483.Rung) -> String {
+        if ReleaseSurfaces.isEventPageAtlasEnabled() {
+            return EventAtlasStoryCards11666.milestoneVerdict(rung, basis: card.basis, expanded: expanded)
+        }
         let more = expanded ? " · details" : ""
         switch rung.hit {
         case true?: return "Reached" + more
@@ -778,6 +813,9 @@ struct NFLEventCardView9483: View {
             case .mlb(let mlb):
                 MLBFinalCardView11284(card: mlb, awayColor: awayColor, homeColor: homeColor,
                                       state: state, expanded: expanded)
+            case .nhlScoring(let nhl):
+                EventAtlasNhlScoringCardView11666(card: nhl, awayColor: awayColor, homeColor: homeColor,
+                                                  state: state, expanded: expanded)
             }
         }
         .padding(16)

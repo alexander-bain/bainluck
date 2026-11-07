@@ -1,0 +1,141 @@
+{
+  "schema": "evals-reviewer-study/1",
+  "as_of": "2026-11-06T00:36:46Z",
+  "receipt": {
+    "label": "Reviewer study receipt",
+    "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524"
+  },
+  "full_study": {
+    "first_result_at": "2026-11-06T07:48:27Z",
+    "receipt": {
+      "label": "The full study's first result",
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6679966474"
+    }
+  },
+  "dropped": {
+    "issue": 12096,
+    "decided": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673535640"
+  },
+  "cases": [
+    {
+      "id": "r01",
+      "kind": "defect",
+      "label": "Field count",
+      "text": "A field's count adds the outcomes still in play twice.",
+      "our_tests": "caught",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "r02",
+      "kind": "defect",
+      "label": "Old reading as current",
+      "text": "An opening reading, or a final one with no result yet, is shown as the current combined probability.",
+      "our_tests": "caught",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "r03",
+      "kind": "defect",
+      "label": "Shrinking list",
+      "text": "When loading fails, a list of the closest markets quietly gets shorter instead of saying so.",
+      "our_tests": "caught",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "r04",
+      "kind": "defect",
+      "label": "Settled by our clock",
+      "text": "A market is marked settled by our own clock before its venue has graded it.",
+      "our_tests": "caught",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "r05",
+      "kind": "defect",
+      "label": "Midterms preview",
+      "text": "The midterms preview changes the probabilities it shows, or drops markets that have one.",
+      "our_tests": "caught",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "r06",
+      "kind": "defect",
+      "label": "Redone work",
+      "text": "A change in which markets belong to a group makes the accuracy record redo work it had already saved.",
+      "our_tests": "caught",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "r07",
+      "kind": "defect",
+      "label": "Desktop unlock",
+      "text": "On desktop, a game unlocks before the reader has scrolled to it.",
+      "our_tests": "caught",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "r08",
+      "kind": "defect",
+      "label": "Invented prop result",
+      "text": "A general settlement source makes up a result for a prop.",
+      "our_tests": "caught",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "r09",
+      "kind": "defect",
+      "label": "Even split, no trades",
+      "text": "A market nobody has traded shows an even split, as if it had a probability.",
+      "our_tests": "caught",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "r10",
+      "kind": "defect",
+      "label": "Someone else's lock",
+      "text": "A process that does not hold a refresh lock can delete it.",
+      "our_tests": "caught",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "c01",
+      "kind": "control",
+      "label": "Field count rename",
+      "text": "An internal setting in the field-count code gets a new name. Nothing a reader sees changes.",
+      "our_tests": "pass",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "c02",
+      "kind": "control",
+      "label": "Headline rename",
+      "text": "A name inside the code behind a page's headline probability is changed. Nothing a reader sees changes.",
+      "our_tests": "pass",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "c03",
+      "kind": "control",
+      "label": "Loading rename",
+      "text": "A name inside the loading code is changed. Nothing a reader sees changes.",
+      "our_tests": "pass",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "c04",
+      "kind": "control",
+      "label": "One expression, one place",
+      "text": "An expression repeated in the cards-seen code is written once and reused. Nothing a reader sees changes.",
+      "our_tests": "pass",
+      "reviewer": "not_run"
+    },
+    {
+      "id": "c05",
+      "kind": "control",
+      "label": "Result kept",
+      "text": "A result is stored before it is turned into a yes or no. Nothing a reader sees changes.",
+      "our_tests": "pass",
+      "reviewer": "not_run"
+    }
+  ]
+}

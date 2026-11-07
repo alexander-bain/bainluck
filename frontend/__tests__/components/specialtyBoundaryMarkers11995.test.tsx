@@ -1,11 +1,23 @@
+/**
+ * @jest-environment jsdom
+ * @jest-environment-options {"customExportConditions": ["node", "node-addons"]}
+ */
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ChampionshipOdds from "@/components/MarchMadness/ChampionshipOdds";
 import TournamentCard from "@/components/TournamentCard";
 import type { MarchMadnessTeam, GolfTournament } from "@/lib/types";
 
-const text = (value: React.ReactElement) => renderToStaticMarkup(value)
-  .replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+function text(value: React.ReactElement): string {
+  const container = document.createElement("div");
+  container.innerHTML = renderToStaticMarkup(value);
+  return container.textContent ?? "";
+}
+
+it("reads escaped label text alongside literal boundary markers", () => {
+  expect(text(<span>{"A & B <1% >99% <script>"}</span>))
+    .toBe("A & B <1% >99% <script>");
+});
 
 it("keeps tiny and near-certain allocated March Madness probabilities honest", () => {
   const teams = [

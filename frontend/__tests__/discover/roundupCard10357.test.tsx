@@ -396,6 +396,76 @@ describe("#10357 round-up model", () => {
     ]);
   });
 
+  it("accepts two-row HEAD TO HEAD and 2-4 row THIS WEEK cards (#11936)", () => {
+    const headToHeadContract: FeedRoundupContract = {
+      kicker: "HEAD TO HEAD",
+      tag: "TENNIS",
+      footer: "Each player is their own market; both can win 2+.",
+      rows: [
+        {
+          market_id: 66937562,
+          outcome_id: 669375622,
+          label: "Carlos Alcaraz",
+          probability: 0.42,
+          rendered_percent: 42,
+          observed_at: FRESH,
+        },
+        {
+          market_id: 66937563,
+          outcome_id: 669375632,
+          label: "Jannik Sinner",
+          probability: 0.38,
+          rendered_percent: 38,
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const h2h = buildRoundupCardModel(
+      "Who wins 2+ Grand Slams in 2027?",
+      headToHeadContract,
+      NOW_MS,
+    );
+    expect(h2h.refusal).toBeNull();
+    expect(h2h.model!.kicker).toBe("HEAD TO HEAD");
+    expect(h2h.model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "42% Carlos Alcaraz",
+      "38% Jannik Sinner",
+    ]);
+
+    const golfWeekContract: FeedRoundupContract = {
+      kicker: "GOLF · THIS WEEK",
+      tag: "GOLF",
+      footer: "Each row is the leader in its own tournament.",
+      rows: [
+        {
+          market_id: 28862743,
+          label: "World Wide Technology Championship · Nov 5–8 · Ben James",
+          probability: 0.313,
+          rendered_percent: 31,
+          observed_at: FRESH,
+        },
+        {
+          market_id: 28862742,
+          label: "Abu Dhabi Aldar Championship · Nov 5–8 · Rory McIlroy",
+          probability: 0.19125,
+          rendered_percent: 19,
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const golf = buildRoundupCardModel(
+      "Two tournaments",
+      golfWeekContract,
+      NOW_MS,
+    );
+    expect(golf.refusal).toBeNull();
+    expect(golf.model!.kicker).toBe("GOLF · THIS WEEK");
+    expect(golf.model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "31% World Wide Technology Championship · Nov 5–8 · Ben James",
+      "19% Abu Dhabi Aldar Championship · Nov 5–8 · Rory McIlroy",
+    ]);
+  });
+
   it("ages event_id rows on the 30-minute live cadence while market_id rows keep the 6-hour futures cadence", () => {
     const twoHoursOld = "2026-10-06T19:41:00Z";
     const eventContract: FeedRoundupContract = {
@@ -542,5 +612,69 @@ describe("#10357 round-up card render", () => {
     expect(html).not.toContain('data-testid="bundle-eyebrow"');
     expect(html).not.toContain("aria-expanded");
     expect(html).toContain('data-testid="bundle-action-bar"');
+  });
+
+  it("#11949 Order 6: renders two-bar awards rows (Nominated % alongside Wins %) and refuses invalid secondary probabilities", () => {
+    const awardsContract: FeedRoundupContract = {
+      kicker: "GOLDEN GLOBES",
+      tag: "ENTERTAINMENT",
+      footer: "Several nominees are nominated; one wins.",
+      rows: [
+        {
+          market_id: 9100,
+          outcome_id: 91001,
+          label: "One Battle After Another",
+          probability: 0.42,
+          rendered_percent: 42,
+          secondary_probability: 0.88,
+          secondary_rendered_percent: 88,
+          primary_bar_label: "Wins",
+          secondary_bar_label: "Nominated",
+          observed_at: FRESH,
+        },
+        {
+          market_id: 9100,
+          outcome_id: 91002,
+          label: "Sinners",
+          probability: 0.31,
+          rendered_percent: 31,
+          secondary_probability: 0.79,
+          secondary_rendered_percent: 79,
+          primary_bar_label: "Wins",
+          secondary_bar_label: "Nominated",
+          observed_at: FRESH,
+        },
+        {
+          market_id: 9100,
+          outcome_id: 91003,
+          label: "Hamnet",
+          probability: 0.27,
+          rendered_percent: 27,
+          secondary_probability: 0.74,
+          secondary_rendered_percent: 74,
+          primary_bar_label: "Wins",
+          secondary_bar_label: "Nominated",
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const html = render(awardsContract, { title: "Best Picture: who's nominated, who wins" });
+    expect(html).toContain('data-testid="roundup-row-secondary"');
+    expect(html).toContain("Nominated 88% · Wins 42%");
+    expect(html).toContain("Nominated 79% · Wins 31%");
+    expect(html).toContain("Nominated 74% · Wins 27%");
+
+    const invalidAwards: FeedRoundupContract = {
+      ...awardsContract,
+      rows: [
+        awardsContract.rows[0],
+        awardsContract.rows[1],
+        { ...awardsContract.rows[2], secondary_probability: 1.2 },
+      ],
+    };
+    expect(buildRoundupCardModel("Best Picture", invalidAwards, NOW_MS)).toEqual({
+      model: null,
+      refusal: "bad_row",
+    });
   });
 });
