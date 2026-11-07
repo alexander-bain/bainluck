@@ -257,6 +257,11 @@ def build_families(atoms: Iterable[Atom]) -> Grouping:
         key = primary_key(atom)
         if key is not None:
             by_key[key].append(atom)
+    # Members in market-id order: an event's title (when no member carries the
+    # event title), its outcome sample and every label read the first members,
+    # so this is what keeps a family the same whatever order atoms arrive in.
+    for members in by_key.values():
+        members.sort(key=lambda a: a.market_id)
 
     events = {k[1]: v for k, v in by_key.items() if k[0] == KIND_POLYMARKET_EVENT}
     blocks, unblocked = _blocks(_event_items(events))

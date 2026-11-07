@@ -190,3 +190,28 @@ def test_the_key_is_not_the_detectors_last_pair():
     )
     (template,) = [f for f in gf.build_families(atoms).families if f.kind == gf.KIND_TITLE_TEMPLATE]
     assert template.key == "nhl players to record {}"
+
+
+def test_events_with_no_event_title_do_not_depend_on_read_order():
+    # 99 open Polymarket events (52 with 2+ markets) had no member carrying the
+    # event title on Nov 7, so their title, outcome sample and label come from
+    # their members. Those must be read in one order whatever order atoms come in.
+    def untitled(event_id, titles, outcomes):
+        return [
+            Atom(next(_ids), "polymarket", f"0x{event_id}{i}", f"polymarket:{event_id}", t, None, tuple(o), T0)
+            for i, (t, o) in enumerate(zip(titles, outcomes))
+        ]
+
+    many = [(f"Name {c}",) for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+    atoms = (
+        untitled(1, ["NHL: Players to Record 80+ Points", "NHL: Players to Record 90+ Points"], many[:2])
+        + untitled(2, ["NHL: Players to Record 100+ Points", "Something else entirely"], many[2:4])
+        + untitled(3, [f"Who wins round {i}?" for i in range(26)], many)
+    )
+    want = [(f.kind, f.key, f.label, f.member_ids) for f in gf.build_families(atoms).families]
+    rng = random.Random(1209)
+    for _ in range(8):
+        shuffled = atoms[:]
+        rng.shuffle(shuffled)
+        got = [(f.kind, f.key, f.label, f.member_ids) for f in gf.build_families(shuffled).families]
+        assert got == want
