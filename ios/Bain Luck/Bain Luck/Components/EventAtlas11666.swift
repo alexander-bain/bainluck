@@ -208,22 +208,34 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
         liveStatus: LiveUpdateStatus
     ) -> EventAtlasDetailsSheetModel11666 {
         let isFinished = EventState.isFinished(event.status)
+        let venueSettledVerdict = EventState.showsVenueSettledVerdict(
+            event.status,
+            venueSettled: event.venueSettled,
+            commenceTime: event.commenceTime?.asDate,
+            now: observedAt ?? Date()
+        )
+        let isSettled = isFinished || venueSettledVerdict
+        let isOpening = event.currentOdds.map {
+            OpeningLineHero.resolve($0, for: event).isOpeningLine
+        } ?? false
         let duel = TeamShortName.shortPair(
             away: event.awayTeam,
             home: event.homeTeam,
             sportKey: event.sport
         )
-        let pregameText = EventHeadlinePhase9483.baselineText(
-            prematch: event.prematchOdds,
-            opening: event.openingOdds,
-            sport: event.sport,
-            awayTeam: event.awayTeam,
-            homeTeam: event.homeTeam
-        )
+        let pregameText = isOpening
+            ? nil
+            : EventHeadlinePhase9483.baselineText(
+                prematch: event.prematchOdds,
+                opening: event.openingOdds,
+                sport: event.sport,
+                awayTeam: event.awayTeam,
+                homeTeam: event.homeTeam
+            )
 
         let primaryLabel: String
         let primaryValue: String
-        if isFinished {
+        if isSettled {
             primaryLabel = "Result"
             let badge = EventAtlasHeadline11666.settledBadge(
                 outcome: EventOutcome.resolve(
@@ -240,17 +252,33 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
             )
             primaryValue = badge.winnerLabel
         } else if let odds = event.currentOdds,
+                  case let shown = OpeningLineHero.resolve(odds, for: event),
                   let pair = DrawPricedWinner.printablePair(
-                    away: odds.awayProbability,
-                    home: odds.homeProbability,
+                    away: shown.awayProbability,
+                    home: shown.homeProbability,
                     sport: event.sport
                   ) {
-            primaryLabel = phase?.label ?? "Win chance"
+            primaryLabel = shown.isOpeningLine ? OpeningLineHero.caption : (phase?.label ?? "Win chance")
             if let away = pair.away {
-                let printed = EventHeadlineTenths10090.pair(home: pair.home, away: away)
-                primaryValue = "\(duel.away) \(printed.away ?? "") · \(duel.home) \(printed.home)"
+                if shown.isOpeningLine {
+                    let openDuel = duelPercents(
+                        away: away,
+                        home: pair.home,
+                        servedAway: shown.awayRenderedPercent,
+                        servedHome: shown.homeRenderedPercent
+                    )
+                    primaryValue = "\(duel.away) \(formatProbability(away, renderedPercent: openDuel[0])) · \(duel.home) \(formatProbability(pair.home, renderedPercent: openDuel[1]))"
+                } else {
+                    let printed = EventAtlasLivePath11666.tenthsPair(home: pair.home, away: away)
+                    primaryValue = "\(duel.away) \(printed.away ?? "") · \(duel.home) \(printed.home)"
+                }
             } else {
-                primaryValue = "\(duel.home) \(formatProbability(pair.home))"
+                if shown.isOpeningLine {
+                    primaryValue = "\(duel.home) \(formatProbability(pair.home))"
+                } else {
+                    let printed = EventAtlasLivePath11666.tenthsPair(home: pair.home, away: nil)
+                    primaryValue = "\(duel.home) \(printed.home)"
+                }
             }
         } else {
             primaryLabel = phase?.label ?? "Win chance"
@@ -300,15 +328,61 @@ struct EventAtlasPregameMarkView11666: View {
     }
 }
 
-/// Self-contained E1 Atlas headline row mounted in `EventDetailView.heroSection`
+/// Self-contained E1/E5 Atlas headline row mounted in `EventDetailView.heroSection`
 /// when `ReleaseSurfaces.isEventPageAtlasEnabled()` is true.
 struct EventAtlasHeadlineControlRow11666: View {
     let event: EventDetail
     let observedAt: Date?
+    var confirmedAtShown: Date? = nil
+    var preview: BlendPreviewState? = nil
     let liveStatus: LiveUpdateStatus
+    var ekgTracker: EkgTracker = .empty
     var asOf: Date? = nil
 
     @State private var activeSheet: EventAtlasDetailsSheetModel11666?
+
+    static func tenthsSummary(
+        for reading: EventAtlasLivePath11666.OverlaidHeadlineReading,
+        event: EventDetail
+    ) -> String {
+        let duel = TeamShortName.shortPair(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            sportKey: event.sport
+        )
+        if let awayText = reading.awayTenthsText {
+            return "\(duel.away) \(awayText) · \(duel.home) \(reading.homeTenthsText)"
+        }
+        return "\(duel.home) \(reading.homeTenthsText)"
+    }
+
+    /// Computes the live tenths overlay for the headline row, returning `nil`
+    /// when the event is finished, venue-settled (`EventState.showsVenueSettledVerdict`),
+    /// or displaying an opening line (`OpeningLineHero.isOpeningLine`).
+    static func rowOverlaidReading(
+        event: EventDetail,
+        preview: BlendPreviewState?,
+        now: Date
+    ) -> EventAtlasLivePath11666.OverlaidHeadlineReading? {
+        let isFinished = EventState.isFinished(event.status)
+        let venueSettledVerdict = EventState.showsVenueSettledVerdict(
+            event.status,
+            venueSettled: event.venueSettled,
+            commenceTime: event.commenceTime?.asDate,
+            now: now
+        )
+        let isOpening = event.currentOdds.map {
+            OpeningLineHero.resolve($0, for: event).isOpeningLine
+        } ?? false
+        if isFinished || venueSettledVerdict || isOpening {
+            return nil
+        }
+        return EventAtlasLivePath11666.overlaidHeadlineReading(
+            event: event,
+            preview: preview,
+            now: now.timeIntervalSince1970
+        )
+    }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { context in
@@ -319,13 +393,46 @@ struct EventAtlasHeadlineControlRow11666: View {
     @ViewBuilder
     private func rowContent(now: Date) -> some View {
         let isFinished = EventState.isFinished(event.status)
-        let phase = EventAtlasHeadline11666.resolvePhase(
-            event: event,
-            observedAt: observedAt,
-            liveStatus: liveStatus,
+        let venueSettledVerdict = EventState.showsVenueSettledVerdict(
+            event.status,
+            venueSettled: event.venueSettled,
+            commenceTime: event.commenceTime?.asDate,
             now: now
         )
-        let settledBadge: EventAtlasHeadline11666.SettledBadge? = isFinished
+        let isSettled = isFinished || venueSettledVerdict
+        let isOpening = event.currentOdds.map {
+            OpeningLineHero.resolve($0, for: event).isOpeningLine
+        } ?? false
+        let overlaidReading = Self.rowOverlaidReading(
+            event: event,
+            preview: preview,
+            now: now
+        )
+        let effectiveObservedAt = EventAtlasLivePath11666.resolveHeadlineObservedAt(
+            EventAtlasLivePath11666.HeadlineObservedAtInput(
+                acceptedPriceClock: overlaidReading?.observedAt ?? observedAt,
+                confirmedAtShown: confirmedAtShown,
+                freshestSourceStamp: EventAtlasLivePath11666.freshestSourceTimestamp(in: event.winProbabilitySources),
+                currentOddsCapturedAt: event.currentOdds?.capturedAt?.asDate
+            )
+        )
+        let phase = isSettled
+            ? nil
+            : EventHeadlinePhase9483.resolve(
+                status: event.status,
+                commenceTime: event.commenceTime?.asDate,
+                isOpeningLine: isOpening,
+                observedAt: effectiveObservedAt,
+                deliveryInterrupted: liveStatus == .interrupted,
+                now: now
+            )
+        let showsEkg = EventAtlasLivePath11666.ekgDraws(
+            eventStatus: event.status,
+            finished: isFinished,
+            venueSettledVerdict: venueSettledVerdict,
+            isOpeningLine: isOpening
+        )
+        let settledBadge: EventAtlasHeadline11666.SettledBadge? = isSettled
             ? EventAtlasHeadline11666.settledBadge(
                 outcome: EventOutcome.resolve(
                     status: event.status,
@@ -359,6 +466,12 @@ struct EventAtlasHeadlineControlRow11666: View {
                 Text(phase.label)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
+                if let reading = overlaidReading {
+                    Text(Self.tenthsSummary(for: reading, event: event))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("atlas-headline-tenths-11666")
+                }
                 if event.status == "live",
                    let baseline = EventHeadlinePhase9483.baselineText(
                     prematch: event.prematchOdds,
@@ -371,11 +484,19 @@ struct EventAtlasHeadlineControlRow11666: View {
                 }
             }
             Spacer(minLength: 0)
+            if showsEkg {
+                let presentation = EkgHeartbeat.present(ekgTracker, status: liveStatus, now: now)
+                Circle()
+                    .fill(EkgHeartbeatView.tone(presentation.mode))
+                    .frame(width: 6, height: 6)
+                    .accessibilityLabel(presentation.label)
+                    .accessibilityIdentifier("atlas-ekg-indicator-11666")
+            }
             Button {
                 activeSheet = EventAtlasDetailsSheetModel11666.fromHeadline(
                     event: event,
                     phase: phase,
-                    observedAt: observedAt,
+                    observedAt: effectiveObservedAt,
                     liveStatus: liveStatus
                 )
             } label: {
