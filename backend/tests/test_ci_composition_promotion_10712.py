@@ -69,6 +69,11 @@ python -m pytest $FILES -q --durations=0
 
 # These are only reviewed workflow-defined keys, not a claim that runner,
 # installed-package, test and production environments are equivalent.
+# Decide 55-A: the ONE reviewed PYTEST_ADDOPTS — the shared tail re-runs a failed
+# test once and every other group gets nothing. Any other value (e.g. `-k`, which
+# would deselect tests) is still an unreviewed environment.
+RETRY_ONCE_ADDOPTS = "${{ matrix.group == 'shared-tail' && '--reruns 1 -rR' || '' }}"
+
 JOB_ENV_KEYS = {
     "database-integration": {"DATABASE_URL", "SEARCH_TEST_DATABASE_URL"},
     "deploy": {"HEROKU_API_KEY", "GH_TOKEN"},
@@ -219,8 +224,11 @@ def _validate_current_composed_promotion(
         workflow_env = _workflow().get("env", {})
     _allowed_environment(workflow_env, set(), "workflow")
     for name, job in jobs.items():
+        job_env = dict(job.get("env") or {})
+        if name == "database-integration" and job_env.get("PYTEST_ADDOPTS") == RETRY_ONCE_ADDOPTS:
+            job_env.pop("PYTEST_ADDOPTS")
         _allowed_environment(
-            job.get("env"), JOB_ENV_KEYS.get(name, set()), f"{name} job"
+            job_env, JOB_ENV_KEYS.get(name, set()), f"{name} job"
         )
         for step in job.get("steps", []):
             _allowed_environment(

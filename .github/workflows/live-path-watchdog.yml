@@ -202,6 +202,7 @@ jobs:
     env:
       SEARCH_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
+      PYTEST_ADDOPTS: ${{ matrix.group == 'shared-tail' && '--reruns 1 -rR' || '' }}
     steps:
     - id: db_000_reused_exact_commit_test_evidence
       name: Reused exact-commit test evidence
@@ -234,6 +235,17 @@ jobs:
       if: ${{ !cancelled() && (needs.change-scope.outputs.reuse != 'true') }}
       run: "python -c \"\nimport os, sys\nurl = os.environ.get('SEARCH_TEST_DATABASE_URL')\nif not url:\n    sys.exit('SEARCH_TEST_DATABASE_URL\
         \ unset \u2014 the recall gate would silently SKIP')\nprint(f'recall gate armed against {url.rsplit(chr(64), 1)[-1]}')\n\"\n"
+    - id: db_004a_55a_shared_tail_retry_once_plugin
+      name: "#55-A shared tail \u2014 provision the pinned retry-once plugin"
+      if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/rerunfailures"
+        wheel=pytest_rerunfailures-16.7-py3-none-any.whl
+        pip download --no-deps --only-binary=:all: pytest-rerunfailures==16.7 -d "$dir"
+        echo "edf1886209c2b7dafe35b5bf1708d6ec40ccf6c6b357f0f02807efcec0204c99  $dir/$wheel" | sha256sum -c -
+        pip install --no-deps "$dir/$wheel"
+        python -c "import pytest_rerunfailures; print('retry-once plugin', pytest_rerunfailures.__file__)"
     - id: db_005_10703_shared_tail_provision_pg_trgm_on_t
       name: "#10703 shared tail \u2014 provision pg_trgm on the fresh database"
       if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
