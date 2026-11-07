@@ -2205,7 +2205,8 @@ struct EventDetailView: View {
                 EventAtlasHeadlineControlRow11666(
                     event: event,
                     observedAt: vm.displayedProbabilityAgeClock(event),
-                    liveStatus: vm.liveUpdateStatus)
+                    liveStatus: vm.liveUpdateStatus,
+                    asOf: displayAsOf)
             }
         }
         // #9483 v476 — on the adopted pair the hero is the top of ONE card with
