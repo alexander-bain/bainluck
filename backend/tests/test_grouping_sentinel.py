@@ -475,3 +475,141 @@ async def test_the_population_is_read_in_pages_and_every_page_is_counted(monkeyp
     stats = await gs._run_grouping_sentinel(post=False, now=NOW)
     assert stats["open_markets"] == 6
     assert stats["uncovered_families"] == 1
+
+
+# --- definitions are read live, never from Discover's cache ------------------------
+def _producer(slug, produce, enabled=None):
+    from app.utils.roundup_containers import RoundupProducer
+
+    return RoundupProducer(slug, slug, category="x", section_title="S", footer="f", produce=produce, enabled=enabled)
+
+
+def _members(*ids, rows=(), event_ids=()):
+    from app.utils.roundup_containers import RoundupMembers
+
+    members = [{"id": i, "title": f"m{i}"} for i in ids]
+    members += [
+        {"type": "event", "id": e, "destination": {"kind": "event", "id": e}, "card": {"id": e}}
+        for e in event_ids
+    ]
+    return RoundupMembers(members, rows)
+
+
+@pytest.fixture
+def producers(monkeypatch):
+    import app.utils.roundup_containers as rc
+
+    registry = {}
+    monkeypatch.setattr(rc, "ROUNDUP_PRODUCERS", registry)
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+
+    async def forbidden(*a, **k):
+        raise AssertionError("the sentinel must never write Discover's round-up cache")
+
+    monkeypatch.setattr(rc, "_store_roundup_cache_entry", forbidden)
+    rc.reset_roundup_cache_for_tests()
+    yield registry
+    rc.reset_roundup_cache_for_tests()
+
+
+async def test_a_cached_timeout_refusal_does_not_hide_a_definitions_members(producers):
+    # Since #12257 a Discover read that times out is cached as a refusal for
+    # 60 s. Read through that cache, this definition would cover nothing and
+    # its family would be reported uncovered.
+    import time
+
+    import app.utils.roundup_containers as rc
+
+    session = _Session([])
+    producers["d"] = _producer("d", lambda db: _members(11, 12))
+    rc._roundup_local_cache[("d", id(session))] = (time.time(), None, None)
+    covered, stats = await gs.definition_coverage(session)
+    assert covered == {11, 12}
+    assert stats["emitted"] == 1 and stats["refused"] == 0
+
+
+async def test_every_market_member_counts_not_only_the_cards_rows(producers):
+    rows = ({"market_id": 11, "label": "a", "pair": {"kalshi_market_id": 11, "polymarket_market_id": 91}},)
+    producers["d"] = _producer("d", lambda db: _members(11, 12, 13, rows=rows))
+    covered, _ = await gs.definition_coverage(_Session([]))
+    assert covered == {11, 12, 13, 91}
+
+
+async def test_an_event_member_is_never_read_as_a_market(producers):
+    # The closest-games round-up's members are events; an event id read as a
+    # market id would cover an unrelated market.
+    producers["d"] = _producer("d", lambda db: _members(11, event_ids=(12,)))
+    covered, _ = await gs.definition_coverage(_Session([]))
+    assert covered == {11}
+
+
+async def test_refused_failed_and_switched_off_definitions_cover_nothing(producers):
+    from app.utils.roundup_containers import RoundupRefusal
+
+    def boom(db):
+        raise RuntimeError("producer crashed")
+
+    producers["refuses"] = _producer("refuses", lambda db: RoundupRefusal(["too_few_members"]))
+    producers["crashes"] = _producer("crashes", boom)
+    producers["off"] = _producer("off", lambda db: _members(7), enabled=lambda: False)
+    producers["ok"] = _producer("ok", lambda db: _members(8))
+    covered, stats = await gs.definition_coverage(_Session([]))
+    assert covered == {8}
+    assert stats == {
+        **stats, "producers": 4, "emitted": 1, "refused": 1, "switched_off": 1, "failed": 1,
+        "failed_slugs": ["crashes"],
+    }
+
+
+async def test_a_definition_past_its_timeout_is_failed_not_refused(monkeypatch, producers):
+    import asyncio
+
+    async def slow(db):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(gs, "PRODUCER_TIMEOUT_SECONDS", 0.01)
+    producers["slow"] = _producer("slow", slow)
+    covered, stats = await gs.definition_coverage(_Session([]))
+    assert covered == set()
+    assert stats["failed"] == 1 and stats["failed_slugs"] == ["slow"] and stats["refused"] == 0
+
+
+def test_a_switched_off_definition_is_named_in_the_post():
+    c = counts(series("KXSNOW", 5))
+    assert "2 switched off" in compose(c, def_stats={**DEF_STATS, "switched_off": 2})
+    assert "switched off" not in compose(c)
+
+
+# --- wiring --------------------------------------------------------------------
+def test_the_beat_is_thursday_16_utc_on_background():
+    # Fable's answer on #12231: Thursdays 16:00 UTC (8 AM PT), background queue.
+    from app.tasks import celery_app
+
+    entry = celery_app.conf.beat_schedule["grouping-sentinel-weekly"]
+    assert entry["task"] == "app.tasks.grouping_sentinel"
+    assert entry["options"] == {"queue": "background"}
+    sched = entry["schedule"]
+    assert (sched.minute, sched.hour, sched.day_of_week) == ({0}, {16}, {4})
+    # And the scheduled fire is the week the period key names.
+    assert gs.period_key(datetime(2026, 11, 12, 16, 0, tzinfo=timezone.utc)) == "2026-11-12"
+
+
+def test_the_soft_limit_leaves_room_for_the_definitions_deadline_and_the_reads():
+    # #966: a run that outlives its soft limit is SIGKILLed untracked. Twelve
+    # pages at ~5 s each come before the 600 s definitions deadline.
+    from app.tasks import celery_app
+
+    task = celery_app.tasks["app.tasks.grouping_sentinel"]
+    assert gs.DEADLINE_SECONDS + 120 < task.soft_time_limit < task.time_limit
+
+
+def test_the_task_runs_the_sentinel_under_its_enforced_label(monkeypatch):
+    import app.tasks as tasks
+
+    seen = {}
+    monkeypatch.setattr(gs, "_run_grouping_sentinel", lambda **kw: ("run", kw))
+    monkeypatch.setattr(tasks, "_tracked_run", lambda label, run: seen.update(label=label, run=run) or {})
+    # By registered name: once the module is imported, ``app.tasks.grouping_sentinel``
+    # is the module, not the task (as with the flow and grid sentinels).
+    tasks.celery_app.tasks["app.tasks.grouping_sentinel"].run(post=False, file_issues=False)
+    assert seen == {"label": "grouping_sentinel", "run": ("run", {"post": False, "file_issues": False})}

@@ -37,7 +37,8 @@ The four counts:
 **Covered** means at least one member is:
 
 * in a **definition**: every registered round-up producer (the files in
-  ``backend/data/containers/``), evaluated, with members and cross-venue pairs;
+  ``backend/data/containers/``), evaluated live (never from Discover's 60 s
+  cache), with its container's market members and its card's cross-venue pairs;
 * in the **graph**: a container that is not cancelled contains it (matcher,
   theme_rule, venue_grouping and human edges);
 * in the **Midterms collection**: its manifest and its twin register;
@@ -54,6 +55,7 @@ sentinel's memory of family keys in Redis and, from Nov 26, alert issues.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time as _time
 from dataclasses import dataclass, field
@@ -447,7 +449,9 @@ def compose_report(
         (
             f"Covered this run, open markets: definitions {_n(cov.get('definitions', 0))} "
             f"({definition_stats.get('emitted', 0)} of {definition_stats.get('producers', 0)} producers emitted, "
-            f"{definition_stats.get('refused', 0)} refused, {definition_stats.get('failed', 0)} failed) · "
+            f"{definition_stats.get('refused', 0)} refused, {definition_stats.get('failed', 0)} failed"
+            + (f", {definition_stats['switched_off']} switched off" if definition_stats.get("switched_off") else "")
+            + ") · "
             f"graph {_n(cov.get('graph', 0))} · Midterms {_n(cov.get('midterms', 0))} · "
             f"event pages {_n(cov.get('event_pages', 0))}. Excluded by ruling (Discover hard-suppresses them): "
             f"{_n(counts.suppressed_markets)} markets, {_n(counts.excluded_families)} whole families."
@@ -641,21 +645,83 @@ def collection_ids() -> set[int]:
     return ids
 
 
-async def definition_coverage(session: Any) -> tuple[set[int], dict]:
-    """Members (and cross-venue pairs) of every registered round-up producer."""
+def definition_market_ids(container: Mapping[str, Any], feed_item: Mapping[str, Any]) -> set[int]:
+    """The markets one evaluated definition covers: every market member of its
+    container (the collection page shows them all, not only the card's rows) and
+    every row market and cross-venue pair on its Discover card.
+
+    Not ``_roundup_covered_market_ids``: its ``member_ids`` also carry the ids of
+    event members (the closest-games round-up's members are events), and an
+    event id read as a market id would cover an unrelated market."""
+    from app.utils.container_presentation import MEMBER_MARKET
+
+    def _id(value: Any) -> int | None:
+        return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+
+    ids: set[int] = set()
+    for section in container.get("sections") or ():
+        for member in (section.get("members") or ()) if isinstance(section, Mapping) else ():
+            if isinstance(member, Mapping) and member.get("type") == MEMBER_MARKET:
+                if (mid := _id(member.get("id"))) is not None:
+                    ids.add(mid)
+    data = feed_item.get("data")
+    roundup = data.get("roundup") if isinstance(data, Mapping) else None
+    for r in (roundup.get("rows") or ()) if isinstance(roundup, Mapping) else ():
+        if not isinstance(r, Mapping):
+            continue
+        if (mid := _id(r.get("market_id"))) is not None:
+            ids.add(mid)
+        pair = r.get("pair")
+        if isinstance(pair, Mapping):
+            for k in ("kalshi_market_id", "polymarket_market_id"):
+                if (pid := _id(pair.get(k))) is not None:
+                    ids.add(pid)
+    return ids
+
+
+async def evaluate_definition(producer: Any, session: Any) -> set[int] | None:
+    """One definition read live: ``evaluate_roundup_producer``'s path without its
+    60 s shared cache. Since #12257 a Discover read that times out is cached
+    there as a refusal, and a weekly count must not read a one-minute timeout as
+    "this definition covers nothing". Skipping the cache also means this
+    sentinel never writes Discover's. ``None`` is a refusal."""
     from app.utils.roundup_containers import (
-        ROUNDUP_PRODUCERS,
-        _roundup_covered_market_ids,
-        evaluate_roundup_producer,
+        RoundupMembers,
+        RoundupRefusal,
+        compose_roundup_container,
+        compose_roundup_feed_item,
     )
 
+    outcome = producer.produce(session)
+    if inspect.isawaitable(outcome):
+        outcome = await outcome
+    if outcome is None or isinstance(outcome, RoundupRefusal):
+        return None
+    if not isinstance(outcome, RoundupMembers):
+        outcome = RoundupMembers(outcome)
+    container = compose_roundup_container(producer, outcome)
+    feed_item = compose_roundup_feed_item(producer, outcome)
+    if container is None or feed_item is None:
+        return None
+    return definition_market_ids(container, feed_item)
+
+
+async def definition_coverage(session: Any) -> tuple[set[int], dict]:
+    """The markets every registered round-up producer covers, read live."""
+    from app.utils.roundup_containers import ROUNDUP_PRODUCERS
+
     covered: set[int] = set()
-    stats: dict[str, Any] = {"producers": 0, "emitted": 0, "refused": 0, "failed": 0, "failed_slugs": []}
+    stats: dict[str, Any] = {
+        "producers": 0, "emitted": 0, "refused": 0, "switched_off": 0, "failed": 0, "failed_slugs": [],
+    }
     for producer in list(ROUNDUP_PRODUCERS.values()):
         stats["producers"] += 1
+        if producer.enabled is not None and not producer.enabled():
+            stats["switched_off"] += 1
+            continue
         try:
-            feed_item, _payload = await asyncio.wait_for(
-                evaluate_roundup_producer(producer, session), timeout=PRODUCER_TIMEOUT_SECONDS
+            ids = await asyncio.wait_for(
+                evaluate_definition(producer, session), timeout=PRODUCER_TIMEOUT_SECONDS
             )
         except Exception:
             logger.warning("grouping sentinel: producer %s failed", producer.slug, exc_info=True)
@@ -666,11 +732,11 @@ async def definition_coverage(session: Any) -> tuple[set[int], dict]:
             except Exception:  # noqa: BLE001
                 pass
             continue
-        if feed_item is None:
+        if ids is None:
             stats["refused"] += 1
             continue
         stats["emitted"] += 1
-        covered |= _roundup_covered_market_ids(feed_item)
+        covered |= ids
     return covered, stats
 
 
