@@ -164,7 +164,9 @@ class Counts:
     shape_unclassified: int = 0
     graph_unclassified: int = 0
     frames_written: int = 0
-    frames_no_number: int = 0
+    #: ``"frame": null``: the writer stores null both when the title states no
+    #: number and when the model's number failed the title check (#12249).
+    frames_null: int = 0
     frames_never: int = 0
     covered_by: dict[str, int] = field(default_factory=dict)
     suppressed_markets: int = 0
@@ -228,7 +230,7 @@ class CountsBuilder:
         if frame_type == "object":
             c.frames_written += 1
         elif frame_type == "null":
-            c.frames_no_number += 1
+            c.frames_null += 1
         else:
             c.frames_never += 1
         if row.get("event_id") is not None:
@@ -440,7 +442,8 @@ def compose_report(
     )
     lines.append(
         f"**4. New measures: UNKNOWN**: nothing reads the frame yet (#12249). Frames on open markets: "
-        f"{_n(counts.frames_written)} written · {_n(counts.frames_no_number)} titles with no number · "
+        f"{_n(counts.frames_written)} written · {_n(counts.frames_null)} stored null (no number in the "
+        f"title, or one that failed the title check) · "
         f"{_n(counts.frames_never)} never written."
     )
     cov = counts.covered_by
