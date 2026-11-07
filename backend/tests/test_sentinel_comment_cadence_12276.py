@@ -96,11 +96,32 @@ def test_the_body_refresh_still_runs_when_the_comment_is_held(rail):
 
 def test_an_unchanged_finding_is_commented_again_after_a_day(rail):
     _red()
-    rail["now"] += sf.RED_COMMENT_MIN_INTERVAL_S - 1
+    rail["now"] += sf.RED_COMMENT_MIN_INTERVAL_S - sf.RED_COMMENT_DAILY_SLACK_S - 1
     assert _red()["action"] == "comment_skipped_unchanged"
     rail["now"] += 1
     again = _red()
     assert again["action"] == "commented" and again["comment_reason"] == "daily"
+    assert len(rail["comments"]) == 2
+
+
+def test_a_nightly_run_a_few_seconds_short_of_a_day_is_still_commented(rail):
+    """A daily sentinel's runs land seconds either side of 24 h apart; a strict
+    24 h would hold every other night's comment at random."""
+    _red()
+    rail["now"] += sf.RED_COMMENT_MIN_INTERVAL_S - 3
+    assert _red()["comment_reason"] == "daily"
+
+
+def test_the_matching_beat_comments_an_unchanged_finding_exactly_once_in_24_hours(rail):
+    """The 15-minute beat #12144's 96 comments came from: one comment, then the
+    95 cycles after it held, then the daily one at exactly 24 h."""
+    _red()
+    actions = []
+    for _ in range(96):
+        rail["now"] += 15 * 60
+        actions.append(_red()["action"])
+    assert actions[:95] == ["comment_skipped_unchanged"] * 95
+    assert actions[95] == "commented"
     assert len(rail["comments"]) == 2
 
 

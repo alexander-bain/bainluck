@@ -351,7 +351,19 @@ def _claim_fingerprint(marker_key: str, fingerprint: str) -> str:
 #: An open episode whose finding is unchanged is re-commented at most once per
 #: this many seconds. A changed finding is commented on the run that sees it.
 RED_COMMENT_MIN_INTERVAL_S = 24 * 3600
+#: How early inside the 24 h the daily comment may land. A daily sentinel's runs
+#: are a few seconds either side of 24 h apart, so a strict 24 h would hold every
+#: other night's comment at random; the 15-minute matching beat still lands at
+#: exactly 24 h (95 cycles is 23 h 45 m, short of 23 h 50 m).
+RED_COMMENT_DAILY_SLACK_S = 10 * 60
 _RED_COMMENT_STATE_TTL_S = 8 * 24 * 3600
+
+#: A date and time in a finding's text is when it was looked at — a run's own
+#: clock, a pass's last run, a matcher's last attempt — and moves every run, so
+#: the digest reads past it. A bare date is left in: at most it changes once a day.
+_DIGEST_MOMENT = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?"
+)
 
 
 def _red_comment_cadence_on() -> bool:
@@ -366,12 +378,17 @@ def _now() -> float:
     return _time.time()
 
 
-def red_finding_digest(red_comment: str | None, red_body: str | None) -> str:
+def red_finding_digest(
+    red_comment: str | None, red_body: str | None, basis: str | None = None
+) -> str:
     """What one RED re-observation says, as a digest: the comment line plus the
-    body the issue is refreshed to. Counts, rows or provenance moving change it;
-    the same finding seen again does not. Pure."""
-    raw = f"{red_comment or ''}\x00{red_body or ''}"
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    body the issue is refreshed to, read past every date and time in them.
+    Counts, rows or provenance moving change it; the same finding seen again does
+    not. ``basis``, when a caller gives one, replaces both: the caller's own
+    statement of what makes the finding the same finding, for text that carries
+    a measurement moving every run. Pure."""
+    raw = basis if basis is not None else f"{red_comment or ''}\x00{red_body or ''}"
+    return hashlib.sha1(_DIGEST_MOMENT.sub("<t>", raw).encode("utf-8")).hexdigest()[:16]
 
 
 def _red_comment_key(marker_key: str, fingerprint: str) -> str:
@@ -407,7 +424,7 @@ def _red_comment_due(
         age = now - float(last.get("at"))
     except (TypeError, ValueError):
         return True, "state_unreadable"
-    if age >= RED_COMMENT_MIN_INTERVAL_S:
+    if age >= RED_COMMENT_MIN_INTERVAL_S - RED_COMMENT_DAILY_SLACK_S:
         return True, "daily"
     return False, "unchanged"
 
@@ -446,6 +463,7 @@ def reconcile_issue(
     green_comment: str | None = None,
     open_issues: "list[dict] | OpenIssuesResult | None" = None,
     add_to_board: bool = True,
+    red_digest_basis: str | None = None,
 ) -> dict:
     """The one fingerprint lifecycle for RED and GREEN.
 
@@ -454,10 +472,11 @@ def reconcile_issue(
       supplied) refresh the body (no duplicate, no label edit, no state change);
       else create a new issue (default P2 labels) and add it to the board.
       The comment keeps a cadence (#12276): while the finding
-      (``red_finding_digest`` of ``red_comment`` + ``red_body``) is unchanged
-      since the episode's last comment, or since it was filed, the run is
-      ``comment_skipped_unchanged`` for 24 h (the body refresh still runs); a
-      changed finding, a new issue, or unreadable state comments at once.
+      (``red_finding_digest`` of ``red_comment`` + ``red_body``, or of
+      ``red_digest_basis`` when given) is unchanged since the episode's last
+      comment, or since it was filed, the run is ``comment_skipped_unchanged``
+      for 24 h (the body refresh still runs); a changed finding, a new issue, or
+      unreadable state comments at once.
       Create is serialized per fingerprint (Redis claim + final re-read) so a
       beat+manual overlap cannot both file.
     * ``red=False`` — resolve. If the fingerprint's canonical open issue exists,
@@ -522,7 +541,7 @@ def reconcile_issue(
         """Comment on an open episode — at most once a day while its finding is
         unchanged, at once when it changes (#12276) — then refresh its body."""
         now = _now()
-        digest = red_finding_digest(red_comment, red_body)
+        digest = red_finding_digest(red_comment, red_body, red_digest_basis)
         due, why = _red_comment_due(marker_key, fingerprint, issue, digest, now)
         if not due:
             result.update(
@@ -631,7 +650,8 @@ def reconcile_issue(
         # The new issue's body carries this finding, so the next run's "Still RED"
         # waits for a change or a day, like any other comment (#12276).
         _record_red_comment(
-            marker_key, fingerprint, number, red_finding_digest(red_comment, red_body), _now()
+            marker_key, fingerprint, number,
+            red_finding_digest(red_comment, red_body, red_digest_basis), _now(),
         )
         return result
 
