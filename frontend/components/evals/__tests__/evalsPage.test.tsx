@@ -13,7 +13,10 @@
  * and commit render, the bite meter shows both of its numbers, and all fifteen
  * reviewer squares read NOT RUN with no zero-filling. S5's: every watcher row
  * has a source link, its times are worked out in Pacific on the reader's date,
- * and each verdict is the newest on the record. Each rule has a negative
+ * and each verdict is the newest on the record. S2's: the exam banner and its
+ * hero tile read FAIL, the gate grid's verdicts are the record's (four passed,
+ * five failed), licenses are HELD / FAIL / NOT ELIGIBLE as stored, and 0/0
+ * renders as "—". Each rule has a negative
  * control, so a scanner that silently stopped reading would fail rather than
  * pass.
  *
@@ -60,6 +63,8 @@ import { GAPS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
 import { familyView, loadScoreboard, type Scoreboard } from "@/lib/evals/scoreboard";
+import EXAM_RAW from "@/lib/evals/data/twin-exam-2026-11-05.json";
+import { RELATIONS, loadExam } from "@/lib/evals/twinExam";
 import { loadWatchers, type WatcherList } from "@/lib/evals/watchers";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import { pacificDayLabel, type MeasuredTruth } from "@/lib/evals/truth";
@@ -163,6 +168,8 @@ describe("/evals S1 renders the shell", () => {
       s.getAttribute("data-evals-section")
     );
     expect(sections).toEqual([
+      "exam",
+      "confusion",
       "timeline",
       "forward-record",
       "test-library",
@@ -218,7 +225,7 @@ describe("/evals S1 renders the shell", () => {
     const listed = Array.from(page.querySelectorAll("[data-source-id]")).map((s) =>
       s.getAttribute("data-source-id")
     );
-    const onPage = ["timeline", "forward-record", "test-library", "tests-for-tests", "watchers", "gaps"];
+    const onPage = ["exam", "confusion", "timeline", "forward-record", "test-library", "tests-for-tests", "watchers", "gaps"];
     expect(listed).toEqual(
       EVALS_SOURCES.filter((s) => s.usedBy.some((id) => onPage.includes(id))).map((s) => s.id)
     );
@@ -284,6 +291,132 @@ describe("the truth rules hold on the rendered page", () => {
       '<section data-truth-scope="last_run"><div data-planned-item="">' +
       '<span data-evals-figure="" data-truth="last_run">3</span></div></section>';
     expect(scanEvalsDom(el).figuresInPlanned).toEqual(["3"]);
+  });
+});
+
+describe("S2: the twin exam and its gates", () => {
+  const exam = loadExam();
+  type Cell = { k: number; n: number; result: string };
+  type RawGate = { id: string; by_pass?: Record<string, Cell & Record<string, unknown>>; observed?: Cell };
+  const rawGates = EXAM_RAW.gate_results as RawGate[];
+
+  it("the banner reads FAIL, says no license was granted, and lists what passed and what failed under it", async () => {
+    const page = await mountPage();
+    const banner = page.querySelector('[data-testid="evals-exam-banner"]');
+    expect(banner?.getAttribute("data-result")).toBe("fail");
+    expect(banner?.querySelector('[data-result="fail"]')?.textContent).toBe("FAIL");
+    expect(banner?.textContent).toContain("No license was granted");
+    expect(banner?.querySelector("[data-gates-passed]")?.getAttribute("data-gates-passed")).toBe("4");
+    expect(banner?.querySelector("[data-gates-failed]")?.getAttribute("data-gates-failed")).toBe("5");
+    const count = Array.from(page.querySelectorAll('[data-testid="evals-exam-count"] [data-evals-figure]')).map((f) => f.textContent);
+    expect(count).toEqual(["4", "5"]);
+  });
+
+  it("the grid's rows, cells and verdicts are the record's: a cell per pass, or one spanning cell", async () => {
+    const page = await mountPage();
+    const rows = Array.from(page.querySelectorAll("[data-gate]"));
+    expect(rows.map((r) => r.getAttribute("data-gate"))).toEqual(rawGates.map((g) => g.id));
+    expect(rows.filter((r) => r.getAttribute("data-result") === "pass")).toHaveLength(4);
+    expect(rows.filter((r) => r.getAttribute("data-result") === "fail")).toHaveLength(5);
+    for (const [i, row] of rows.entries()) {
+      const raw = rawGates[i];
+      const cells = Array.from(row.querySelectorAll("[data-gate-cell]"));
+      if (raw.by_pass) {
+        expect(cells.map((c) => c.getAttribute("data-gate-cell"))).toEqual(["pass", "pass", "pass"]);
+        expect(cells.map((c) => c.getAttribute("data-result")?.toUpperCase())).toEqual(
+          ["1", "2", "3"].map((p) => raw.by_pass?.[p].result)
+        );
+      } else {
+        expect(cells).toHaveLength(1);
+        expect(cells[0].getAttribute("colspan")).toBe("3");
+        expect(cells[0].getAttribute("data-result")?.toUpperCase()).toBe(raw.observed?.result);
+        expect(cells[0].querySelector("[data-evals-figure]")?.getAttribute("data-value")).toBe(
+          `${raw.observed?.k}/${raw.observed?.n}`
+        );
+      }
+    }
+    const twinPass1 = Array.from(
+      page.querySelectorAll('[data-gate="twin_detection"] [data-gate-cell]')[0].querySelectorAll("[data-evals-figure]")
+    ).map((f) => f.getAttribute("data-value"));
+    expect(twinPass1.sort()).toEqual(["0/35", "24/25"]);
+  });
+
+  it("the lead says most gates are on unseen pairs, each gate names what it counts, and spanning cells say they span (Fable on #12154)", async () => {
+    const page = await mountPage();
+    const section = page.querySelector('[data-evals-section="exam"]');
+    const text = section?.textContent?.replace(/\s+/g, " ") ?? "";
+    expect(text).toContain("it has to pass every gate. Most are scored on pairs it has never seen.");
+    expect(text).not.toContain("every gate on pairs it has never seen");
+    const scopeOf = (id: string) =>
+      section?.querySelector(`[data-gate="${id}"] th details span`)?.textContent?.replace(/\s+/g, " ") ?? "";
+    for (const g of rawGates.filter((x) => (x as { scope?: string }).scope === "test")) {
+      expect(scopeOf(g.id)).toMatch(/Held-out pairs\.$/);
+    }
+    expect(scopeOf("three_pass_stability")).toMatch(/Every pair, development pairs included\.$/);
+    for (const id of ["unreadable_outputs", "truncated_outputs", "nonverbatim_quotes"]) expect(scopeOf(id)).toMatch(/Every reply\.$/);
+    const across = Array.from(section?.querySelectorAll('[data-gate-cell="across"]') ?? []);
+    expect(across).toHaveLength(rawGates.filter((g) => !g.by_pass).length);
+    for (const cell of across) expect(cell.querySelector("[data-across-passes]")?.textContent).toBe("Across all three passes");
+    expect(section?.querySelectorAll('[data-gate-cell="pass"] [data-across-passes]')).toHaveLength(0);
+  });
+
+  it("licenses read HELD, FAIL and NOT ELIGIBLE as stored", async () => {
+    const page = await mountPage();
+    const chips = Object.fromEntries(
+      Array.from(page.querySelectorAll("[data-licence]")).map((li) => [li.getAttribute("data-licence"), li.getAttribute("data-result")])
+    );
+    expect(chips).toEqual(exam?.licences);
+    expect(page.querySelector('[data-licence="twin"] [data-result="held"]')?.textContent).toBe("HELD");
+    expect(page.querySelector('[data-licence="implies"] [data-result="not_eligible"]')?.textContent).toBe("NOT ELIGIBLE");
+  });
+
+  it("the report card opens on held-out pairs, first pass, with a lock and counts only", async () => {
+    const page = await mountPage();
+    const card = page.querySelector('[data-evals-section="confusion"]');
+    expect(card?.querySelector("[data-split]")?.getAttribute("data-split")).toBe("test");
+    expect(card?.querySelectorAll("[data-lock]")).toHaveLength(RELATIONS.length);
+    expect(card?.querySelector('[data-testid="evals-heldout-note"]')).not.toBeNull();
+    for (const r of RELATIONS) {
+      const raw = EXAM_RAW.per_pass["1"].test.per_relation[r];
+      const recall = card?.querySelector(`[data-relation="${r}"] [data-metric="recall"]`);
+      expect([recall?.getAttribute("data-k"), recall?.getAttribute("data-n")]).toEqual([String(raw.recall.k), String(raw.recall.n)]);
+    }
+    const twin = card?.querySelector('[data-relation="twin"] [data-metric="recall"]');
+    expect(twin?.textContent?.replace(/\s+/g, " ")).toContain("24/25 (80.5–99.3%)");
+  });
+
+  it("0/0 renders as —, never a zero and never a bar", async () => {
+    const page = await mountPage();
+    const none = page.querySelector('[data-relation="uncheckable"] [data-metric="precision"]');
+    expect([none?.getAttribute("data-k"), none?.getAttribute("data-n")]).toEqual(["0", "0"]);
+    expect(none?.querySelector("[data-none]")?.textContent).toBe("—");
+    expect(none?.querySelector("[data-evals-figure]")).toBeNull();
+  });
+
+  it("the toggles switch to development pairs and to another pass, and the lock goes with held-out", async () => {
+    const page = await mountPage();
+    const card = page.querySelector('[data-evals-section="confusion"]') as HTMLElement;
+    await act(async () => (card.querySelector('[data-testid="evals-confusion-pass"] [data-option="3"]') as HTMLButtonElement).click());
+    const p3 = card.querySelector('[data-relation="path_step"] [data-metric="precision"]');
+    expect([p3?.getAttribute("data-k"), p3?.getAttribute("data-n")]).toEqual(["0", "1"]);
+    await act(async () => (card.querySelector('[data-testid="evals-confusion-split"] [data-option="dev"]') as HTMLButtonElement).click());
+    expect(card.querySelector("[data-split]")?.getAttribute("data-split")).toBe("dev");
+    expect(card.querySelectorAll("[data-lock]")).toHaveLength(0);
+    expect(card.querySelector('[data-testid="evals-heldout-note"]')).toBeNull();
+    const devTwin = card.querySelector('[data-relation="twin"] [data-metric="recall"]');
+    expect(devTwin?.getAttribute("data-n")).toBe(String(EXAM_RAW.per_pass["3"].dev.per_relation.twin.recall.n));
+  });
+
+  it("the hero tile reads FAIL, under LAST RUN, with the held-out figures from the record", async () => {
+    const page = await mountPage();
+    const tile = page.querySelector('[data-hero-tile="exam"]');
+    expect(tile?.getAttribute("href")).toBe("#exam");
+    expect(tile?.getAttribute("data-truth-scope")).toBe("last_run");
+    expect(tile?.querySelector('[data-result="fail"]')?.textContent).toBe("FAIL");
+    expect(tile?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST RUN · NOV 5")).toBe(true);
+    expect(tile?.querySelector("a")).toBeNull();
+    const figures = Array.from(tile?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent);
+    expect(figures).toEqual(["24", "25", "2", "3", "60"]);
   });
 });
 
@@ -606,7 +739,7 @@ describe("S4: the tests for the tests", () => {
   });
 
   it("with no readable scoreboard, its tile is absent rather than empty", async () => {
-    const page = await mount(<HeroTiles forward={{ status: "loading" }} board={null} />);
+    const page = await mount(<HeroTiles exam={null} forward={{ status: "loading" }} board={null} />);
     expect(page.querySelector('[data-hero-tile="tests-for-tests"]')).toBeNull();
     expect(page.querySelector('[data-hero-tile="forward-record"]')).not.toBeNull();
   });

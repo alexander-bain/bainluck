@@ -8,7 +8,15 @@
  * as the plan on #11951 says.
  */
 
-export type EvalsSectionId = "timeline" | "forward-record" | "test-library" | "tests-for-tests" | "watchers" | "gaps";
+export type EvalsSectionId =
+  | "exam"
+  | "confusion"
+  | "timeline"
+  | "forward-record"
+  | "test-library"
+  | "tests-for-tests"
+  | "watchers"
+  | "gaps";
 
 const REPO = "https://github.com/alexander-bain/bainluck";
 
@@ -45,7 +53,21 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
     label: "Twin exam receipt",
     date: "2026-11-05",
     href: `${REPO}/pull/11951#issuecomment-6673312127`,
-    usedBy: ["timeline"],
+    usedBy: ["exam", "confusion", "timeline"],
+  },
+  {
+    id: "exam-record",
+    label: "Twin exam record, from the scorer",
+    date: "2026-11-05",
+    href: `${REPO}/blob/1a600e1b17/frontend/lib/evals/data/twin-exam-2026-11-05.json`,
+    usedBy: ["exam", "confusion"],
+  },
+  {
+    id: "ruling-24a",
+    label: "The ruling that set the exam's bars",
+    date: "2026-11-04",
+    href: `${REPO}/pull/11951#issuecomment-6650890360`,
+    usedBy: ["exam"],
   },
   {
     id: "exam-brief",
@@ -108,6 +130,20 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
     label: "Reviewer study, the full study's first result",
     date: "2026-11-05",
     href: `${REPO}/pull/11951#issuecomment-6679966474`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
+    id: "reviewer-study-plan",
+    label: "Reviewer study, the plan: every case, three tries",
+    date: "2026-11-06",
+    href: `${REPO}/pull/11951#issuecomment-6687948343`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
+    id: "reviewer-study-count",
+    label: "Reviewer study, the latest count",
+    date: "2026-11-06",
+    href: `${REPO}/pull/11951#issuecomment-6692550759`,
     usedBy: ["tests-for-tests"],
   },
   {

@@ -208,3 +208,32 @@ export function loadWatchers(raw: unknown = WATCHERS): WatcherList | null {
     }),
   };
 }
+
+/**
+ * The checks at a glance, counted from the list (the top screen's picture).
+ * A check is working when its newest run is on the public record and its
+ * reporting is not stopped. What it found is a second question: problems it
+ * reported, or the problem it had reported now fixed. A check with no public
+ * record is unknown, never working.
+ */
+export interface WatcherHealth {
+  total: number;
+  working: number;
+  foundProblems: number;
+  foundFixed: number;
+  stopped: number;
+  unknown: number;
+}
+
+export function watcherHealth(list: WatcherList): WatcherHealth {
+  const states = list.watchers.map((w) => w.verdict?.state ?? null);
+  const count = (s: VerdictState | null) => states.filter((x) => x === s).length;
+  return {
+    total: states.length,
+    working: count("red_reporting") + count("closed_fixed"),
+    foundProblems: count("red_reporting"),
+    foundFixed: count("closed_fixed"),
+    stopped: count("red_stopped"),
+    unknown: count(null),
+  };
+}

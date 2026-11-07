@@ -1,26 +1,37 @@
 "use client";
 
 import Figure from "@/components/evals/Figure";
+import ResultChip from "@/components/evals/ResultChip";
 import TruthChip from "@/components/evals/TruthChip";
 import type { ForwardRecordState } from "@/components/evals/useForwardRecord";
 import { HERO_TILE_COPY } from "@/lib/evals/copy";
 import { stalenessHeadline } from "@/lib/calibrationStaleness";
 import { biteTruth, type Scoreboard } from "@/lib/evals/scoreboard";
+import { acrossPasses, examTruth, type TwinExam } from "@/lib/evals/twinExam";
 
 const TILE =
   "block rounded-xl border border-surface-border bg-surface-card p-4 hover:bg-surface-elevated transition-colors";
 
 /**
  * The hero's tiles. Each jumps to its section and carries its own truth label;
- * a tile whose section is not on the page is absent. S3 brought the forward
- * record's and S4 the tests-for-the-tests'; the exam's arrives with S2.
+ * a tile whose section is not on the page is absent: the AI exam's (S2), the
+ * forward record's (S3) and the tests-for-the-tests' (S4).
  */
-export default function HeroTiles({ forward, board }: { forward: ForwardRecordState; board: Scoreboard | null }) {
+export default function HeroTiles({
+  exam,
+  forward,
+  board,
+}: {
+  exam: TwinExam | null;
+  forward: ForwardRecordState;
+  board: Scoreboard | null;
+}) {
   const ready = forward.status === "ready" ? forward : null;
   const proof = ready?.view.proof ?? null;
   const bite = board ? biteTruth(board) : null;
   return (
     <div className="grid gap-3 sm:grid-cols-3 text-left" data-testid="evals-hero-tiles">
+      {exam && <ExamTile exam={exam} />}
       <a href="#forward-record" data-hero-tile="forward-record" data-truth-scope={ready ? "live" : undefined} className={TILE}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-caption-strong text-text-primary">{HERO_TILE_COPY.forwardTitle}</span>
@@ -79,5 +90,43 @@ export default function HeroTiles({ forward, board }: { forward: ForwardRecordSt
         </a>
       )}
     </div>
+  );
+}
+
+/** The AI exam's verdict, FAIL as FAIL, with what it got right and what it got wrong on held-out pairs. */
+function ExamTile({ exam }: { exam: TwinExam }) {
+  const truth = examTruth(exam);
+  const [foundLo, foundHi] = acrossPasses(exam, (p) => p.test.perRelation.twin.recall.k);
+  const [mergedLo, mergedHi] = acrossPasses(exam, (p) => p.test.wrongMerges);
+  const twins = exam.perPass["1"].test.perRelation.twin.recall.n;
+  const heldOut = exam.perPass["1"].test.expected;
+  const n = (value: number, className = "") => (
+    <Figure truth={truth} value={String(value)} className={className}>
+      {value.toLocaleString("en-US")}
+    </Figure>
+  );
+  const range = (lo: number, hi: number, className = "") =>
+    lo === hi ? (
+      n(lo, className)
+    ) : (
+      <>
+        {n(lo, className)} {HERO_TILE_COPY.examTo} {n(hi, className)}
+      </>
+    );
+  return (
+    <a href="#exam" data-hero-tile="exam" data-truth-scope="last_run" className={TILE}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-caption-strong text-text-primary">
+          {HERO_TILE_COPY.examTitle}
+          <ResultChip result={exam.result} />
+        </span>
+        <TruthChip truth={truth} linked={false} />
+      </div>
+      <p className="mt-2 text-caption text-text-secondary">
+        {HERO_TILE_COPY.examFoundBefore} {range(foundLo, foundHi, "text-prob-sm text-text-primary")} {HERO_TILE_COPY.examOf}{" "}
+        {n(twins)} {HERO_TILE_COPY.examFoundAfter} {range(mergedLo, mergedHi, "text-prob-sm text-text-primary")}{" "}
+        {HERO_TILE_COPY.examOf} {n(heldOut)} {HERO_TILE_COPY.examCombinedAfter}
+      </p>
+    </a>
   );
 }
