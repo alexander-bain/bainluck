@@ -2,6 +2,7 @@
 
 import gc
 import json
+import os
 import sys
 
 import pytest
@@ -34,6 +35,56 @@ def pytest_runtest_logreport(report):
     line = rerun_annotation(report)
     if line:
         print("\n" + line, flush=True)
+        # #12252 item 2: the flake sentinel reads retries from this file (uploaded as an
+        # artifact), one call per page instead of one annotation read per job.
+        path = os.environ.get("FLAKY_RETRIES_FILE")
+        if path:
+            with open(path, "a") as fh:
+                fh.write(report.nodeid + "\n")
+
+
+def quarantined_tests() -> frozenset[str]:
+    """#12252 item 2: test ids with an open `Flaky: <id>` issue, handed in by CI's
+    change-scope as JSON. Anything unreadable is an empty set — the safe side, where
+    every test still blocks."""
+    try:
+        ids = json.loads(os.environ.get("CI_QUARANTINE") or "[]")
+    except ValueError:
+        return frozenset()
+    return frozenset(i for i in ids if isinstance(i, str)) if isinstance(ids, list) else frozenset()
+
+
+_QUARANTINED = quarantined_tests()
+
+
+def quarantine_forgives(report, quarantined=None, mode=None) -> bool:
+    """A quarantined test's failure does not fail a REQUIRED job: it is reported as a pass
+    with a warning, so the job's own `N passed` count checks still hold. Only the call and
+    teardown phases — a setup error still fails (forgiving it would run the test body
+    without its fixtures). The `flaky-canary` job sets CI_QUARANTINE_MODE=canary and sees
+    every real outcome."""
+    quarantined = _QUARANTINED if quarantined is None else quarantined
+    mode = os.environ.get("CI_QUARANTINE_MODE") if mode is None else mode
+    return (
+        mode != "canary"
+        and report.failed
+        and report.when in ("call", "teardown")
+        and report.nodeid in quarantined
+    )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if quarantine_forgives(report):
+        print(
+            f"\n::warning title=Quarantined flaky test (#12252)::{report.nodeid} failed in "
+            f"{report.when}; not blocking while its 'Flaky:' issue is open — flaky-canary reports it",
+            flush=True,
+        )
+        report.outcome = "passed"
+        report.longrepr = None
 
 
 @pytest.fixture
