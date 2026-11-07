@@ -269,13 +269,15 @@ async def test_a_mapped_key_whose_target_does_not_admit_the_preview_never_falls_
     assert reader.calls == []  # no step-4 read for a target that was never chosen
 
 
-async def test_a_mapped_target_that_misses_one_preview_member_has_no_link():
+async def test_the_page_wins_when_a_mapped_card_contains_an_unadmitted_market():
     ids = [*AI_IDS, 4242]  # 4242 has no ai edge
     out, _, _, _ = await _attach(
         [story_bundle("story:ai", ids)], edges=AI_EDGES, pub=published((AI_CID, 18))
     )
-    assert ref_of(out[0]) is None
-    assert reason_of(out[0]) == td.MAPPED_TARGET_ABSENT
+    assert ref_of(out[0])["slug"] == "ai"
+    assert out[0]["data"]["member_ids"] == AI_IDS
+    assert out[0]["data"]["item_count"] == len(AI_IDS)
+    assert out[1] == {"type": "futures", "data": {"id": 4242}}
 
 
 async def test_an_unmapped_key_admitted_by_two_containers_is_ambiguous():
@@ -401,23 +403,90 @@ async def test_a_partial_inventory_has_no_link():
     assert reason_of(out[0]) == tcr.SNAPSHOT_PARTIAL and ref_of(out[0]) is None
 
 
-async def test_a_withheld_preview_member_has_no_link():
+async def test_a_withheld_member_leaves_the_card_and_the_remaining_card_links():
     snaps = {(AI_CID, 18): snapshot(AI_CID, "ai", 18, AI_IDS[:2],
                                     withheld={"low_quality": [AI_IDS[2]]})}
     out, _, _, _ = await _attach(
         [story_bundle("story:ai", AI_IDS)], edges=AI_EDGES, pub=published((AI_CID, 18)),
         snaps=snaps,
     )
-    assert reason_of(out[0]) == tcr.PREVIEW_MEMBER_WITHHELD and ref_of(out[0]) is None
+    assert ref_of(out[0])["slug"] == "ai"
+    assert out[0]["data"]["member_ids"] == AI_IDS[:2]
+    assert out[1]["data"]["id"] == AI_IDS[2]
 
 
-async def test_a_preview_member_the_page_does_not_show_has_no_link():
+async def test_a_member_absent_from_the_page_leaves_the_card():
     snaps = {(AI_CID, 18): snapshot(AI_CID, "ai", 18, AI_IDS[:2])}
     out, _, _, _ = await _attach(
         [story_bundle("story:ai", AI_IDS)], edges=AI_EDGES, pub=published((AI_CID, 18)),
         snaps=snaps,
     )
-    assert reason_of(out[0]) == tcr.PREVIEW_MEMBER_NOT_ADMITTED and ref_of(out[0]) is None
+    assert ref_of(out[0])["slug"] == "ai"
+    assert out[0]["data"]["member_ids"] == AI_IDS[:2]
+    assert out[1]["data"]["id"] == AI_IDS[2]
+
+
+@pytest.mark.parametrize("shown", [[], AI_IDS[:1]])
+async def test_fewer_than_two_page_members_compete_as_singles(shown):
+    bundle = story_bundle("story:ai", AI_IDS)
+    before = copy.deepcopy(bundle)
+    snaps = {(AI_CID, 18): snapshot(AI_CID, "ai", 18, shown)}
+    out, report, _, _ = await _attach(
+        [bundle],
+        edges=AI_EDGES,
+        pub=published((AI_CID, 18)),
+        snaps=snaps,
+    )
+    assert out == bundle["data"]["items"]
+    assert report[bundle["data"]["id"]] == tcr.PAGE_MEMBERSHIP_TOO_SMALL
+    assert bundle == before
+
+
+async def test_a_projected_card_is_scored_by_its_remaining_members_and_never_mutates_the_cache():
+    bundle = story_bundle("story:ai", [*AI_IDS, 62178321])
+    for member, score in zip(bundle["data"]["items"], [40, 30, 20, 99]):
+        member["score"] = score
+    bundle["score"] = bundle["_rank_score"] = 99
+    before = copy.deepcopy(bundle)
+    out, _, _, _ = await _attach(
+        [bundle],
+        edges=AI_EDGES,
+        pub=published((AI_CID, 18)),
+    )
+    assert out[0]["score"] == out[0]["_rank_score"] == 40
+    assert out[1]["score"] == 99
+    assert out[0]["data"]["debug_bundles"]["member_ids"] == AI_IDS
+    assert bundle == before
+
+
+async def test_an_oscars_card_uses_only_its_edition_pages_members():
+    bundle = awards_bundle("polymarket:42", [*OSCAR_IDS, 5100001])
+    out, _, _, _ = await _attach(
+        [bundle],
+        edges=OSCAR_EDGES,
+        pub=published((OSCARS_CID, 7)),
+    )
+    assert ref_of(out[0])["slug"] == "oscars-2027"
+    assert out[0]["data"]["member_ids"] == OSCAR_IDS
+    assert out[0]["data"]["item_count"] == 2
+    assert out[1]["data"]["id"] == 5100001
+
+
+@pytest.mark.parametrize("ids,links", [(AI_IDS, True), ([*AI_IDS, 62178321], False)])
+async def test_search_keeps_its_whole_family_and_links_only_when_every_member_belongs(
+    ids, links
+):
+    families = [{"family_key": "story:ai", "markets": [{"id": mid} for mid in ids]}]
+    before = copy.deepcopy(families)
+    out = await tcr.attach_search_family_collection_refs(
+        families,
+        published=published((AI_CID, 18)),
+        read_snapshot=_Snapshots(SNAPS),
+        session_factory=factory(_Session(edges=AI_EDGES)),
+    )
+    assert out[0]["markets"] == before[0]["markets"]
+    assert (out[0].get("collection_ref") is not None) is links
+    assert families == before
 
 
 @pytest.mark.parametrize(

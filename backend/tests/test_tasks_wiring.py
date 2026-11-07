@@ -338,6 +338,8 @@ class TestBeatScheduleCompleteness:
         "backfill-espn-ids",
         "backfill-historical-links",
         "update-max-movement",
+        # B-5 (2026-11-06): the hour's one heavy run of the same task.
+        "update-max-movement-heavy",
         "export-engagement-nightly",
         "daily-challenge-push",
         "big-move-alerts",
@@ -362,6 +364,8 @@ class TestBeatScheduleCompleteness:
         "warm-tag-counts",
         "warm-prop-families",
         "warm-typeahead",
+        # W-1 (2026-11-06): the Flow Sentinel gold-set pre-warm, daily 07:05 UTC.
+        "warm-typeahead-gold-set",
         # Option D (#1866, LAT-P067) — the typeahead index builder + its D4
         # sentinel. Gotcha #12: this allowlist is the reason a new beat entry
         # cannot land silently.

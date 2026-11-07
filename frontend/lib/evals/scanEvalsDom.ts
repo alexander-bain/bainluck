@@ -11,8 +11,11 @@
  * make a test directory a build input (`e2e/contract/vercelIgnoreBuild…`).
  */
 
-/** Labels and identifiers, not figures: dates, ages, issue numbers. */
-const EXEMPT = "[data-evals-figure], [data-truth-chip], [data-evals-ref], time, script, style";
+/**
+ * Labels and identifiers, not figures: dates, ages, issue numbers; and worked
+ * examples, which say "For example" and may hold no figure (`Example`).
+ */
+const EXEMPT = "[data-evals-figure], [data-truth-chip], [data-evals-ref], [data-evals-example], time, script, style";
 
 export interface EvalsScan {
   /** Digits a reader sees outside a Figure, a truth chip, a date or an issue link. */

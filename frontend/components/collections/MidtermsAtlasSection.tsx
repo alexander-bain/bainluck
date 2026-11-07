@@ -85,7 +85,7 @@ export function MidtermsAtlasChamberControl({
           marketId: ctrl.market_id,
           kicker: `CHAMBER CONTROL · ${settledWinner ? "settled" : "open"}`,
           marketTitle: `${label} Control`,
-          source: ctrl.source ?? null,
+          source: ctrl.source && ctrl.source.trim() ? ctrl.source.trim() : null,
         }}
         settledWinner={settledWinner}
         contenders={[
@@ -136,12 +136,30 @@ export function MidtermsAtlasMemberCard({
     settled_winner?: string | null;
     status?: string | null;
   };
-  const topOutcomes = data.top_outcomes ?? [];
+  const topOutcomes = (data.top_outcomes ?? []).filter((o) =>
+    Boolean((o?.name || "").trim())
+  );
+  if (topOutcomes.length === 0) {
+    return null;
+  }
   const settledWinner =
-    data.settled_winner ??
-    topOutcomes.find(
-      (o) => (o as { result?: string | null }).result === "yes"
-    )?.name ??
+    (data.settled_winner && data.settled_winner.trim()) ||
+    topOutcomes
+      .find(
+        (o) =>
+          (
+            o as {
+              is_winner?: boolean | null;
+              resolution_source?: string | null;
+            }
+          ).is_winner === true &&
+          (o as { resolution_source?: string | null }).resolution_source ===
+            "venue_settlement"
+      )
+      ?.name?.trim() ||
+    topOutcomes
+      .find((o) => (o as { result?: string | null }).result === "yes")
+      ?.name?.trim() ||
     null;
 
   const numericItems = topOutcomes.map((o, idx) => ({
@@ -194,7 +212,7 @@ export function MidtermsAtlasMemberCard({
     marketId: member.id,
     kicker: sectionTitle ? sectionTitle.toUpperCase() : "MIDTERMS 2026",
     marketTitle: data.name,
-    source: data.source ?? null,
+    source: data.source && data.source.trim() ? data.source.trim() : null,
     resolutionDate: data.resolution_date ?? null,
   };
 

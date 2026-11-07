@@ -87,9 +87,14 @@ export function buildRoundupCardModel(
   const footer = text(contract.footer);
   if (!footer) return { model: null, refusal: "no_footer" };
   const served = Array.isArray(contract.rows) ? contract.rows : [];
-  const isYardstickPair = kicker.toUpperCase() === "FOR SCALE";
-  const minRows = isYardstickPair ? 2 : ROUNDUP_MIN_ROWS;
-  const maxRows = isYardstickPair ? 2 : ROUNDUP_MAX_ROWS;
+  const upperKicker = kicker.toUpperCase();
+  const isYardstickPair = upperKicker === "FOR SCALE";
+  const isTwoRowPair =
+    isYardstickPair || upperKicker.startsWith("HEAD TO HEAD");
+  const isWeekEvents =
+    upperKicker.endsWith("THIS WEEK") || upperKicker.endsWith("THIS WEEKEND");
+  const minRows = isTwoRowPair || isWeekEvents ? 2 : ROUNDUP_MIN_ROWS;
+  const maxRows = isTwoRowPair ? 2 : isWeekEvents ? 4 : ROUNDUP_MAX_ROWS;
   if (served.length < minRows || served.length > maxRows) {
     return { model: null, refusal: "row_count" };
   }
