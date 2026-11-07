@@ -204,5 +204,17 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertTrue(mlbReaderSource.contains("EventAtlasMlbCards11666.buildExtraInningsEntries("))
+
+        let cardReaderSource = try String(
+            contentsOf: root.appendingPathComponent("Components/NFLCardReader9483.swift"),
+            encoding: .utf8
+        )
+        let atlasRange = try XCTUnwrap(cardReaderSource.range(of: "EventAtlasStoryCards11666.readerDetailsModel("))
+        let legacyMlbRange = try XCTUnwrap(cardReaderSource.range(of: "MLBFinalDeck11284.original("))
+        XCTAssertLessThan(
+            atlasRange.lowerBound,
+            legacyMlbRange.lowerBound,
+            "Atlas readerDetailsModel branch must precede legacy MLBOriginalDetails11284 branch in NFLCardReader9483"
+        )
     }
 }
