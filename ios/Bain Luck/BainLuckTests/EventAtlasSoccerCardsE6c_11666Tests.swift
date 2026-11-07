@@ -167,7 +167,7 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         )
         XCTAssertTrue(below90Card.legs.allSatisfy { $0.quotedChance == nil && $0.pregameChance == nil })
         let withheldSheet = EventAtlasSoccerCards11666.detailsModel(for: below90Card.legs[0], card: below90Card)
-        XCTAssertEqual(withheldSheet.primaryReadingValue, "No recent price")
+        XCTAssertEqual(withheldSheet.primaryReadingValue, "No recent probability")
         XCTAssertEqual(withheldSheet.statusSummary, "Raw 3-way sum 75%")
 
         let partialJSON = """
