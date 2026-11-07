@@ -20,6 +20,7 @@ Fix-forward only: no existing row is touched and `is_winner` is never written.
 """
 
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from sqlalchemy import Delete, Insert, Update
@@ -31,6 +32,13 @@ from app.services.polymarket_api import PolymarketAPIService
 from app.tasks import polymarket as poly
 from app.utils.market_label_normalization import compute_market_tier
 from app.utils.odds_math import probability_to_american
+
+# #12252: the venue's end date must stay in the FUTURE for this market to be open.
+# It was the literal 2026-12-01, which the calendar reaches (timebomb_confirm: red
+# from +31 d on 2026-11-07). Derived from the clock: offset first, then truncate.
+OPEN_END_DATE = (datetime.now(timezone.utc) + timedelta(days=90)).replace(
+    hour=0, minute=0, second=0, microsecond=0
+).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── recording fake session ─────────────────────────────────────────────────
@@ -171,7 +179,7 @@ def _leg_market(idx, title, price, *, closed):
     return market
 
 
-def _neg_risk_field(*, detroit_closed, end_date="2026-12-01T00:00:00Z"):
+def _neg_risk_field(*, detroit_closed, end_date=OPEN_END_DATE):
     """An OPEN negRisk parent whose Detroit child the venue has closed."""
     return {
         "id": "199045",
@@ -192,7 +200,7 @@ def _neg_risk_field(*, detroit_closed, end_date="2026-12-01T00:00:00Z"):
 
 
 def _sole_child(*, price, child_closed, parent_closed=False,
-                end_date="2026-12-01T00:00:00Z"):
+                end_date=OPEN_END_DATE):
     """One sub-market naming both sides, so the writer emits two legs."""
     market = {
         "id": "m-698-sole",
