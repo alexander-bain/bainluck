@@ -481,6 +481,7 @@ export default function EventConceptPage() {
       {hasWinnerField && (
         <EventLeaderboard
           competitors={competitors}
+          overflowOutcomes={primary.overflow_outcomes}
           label={primary.label}
           showSparkline={SHOW_SPARKLINE}
           live={isLive}

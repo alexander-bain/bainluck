@@ -49,8 +49,9 @@ jest.mock("next/link", () => ({
   ),
 }));
 
-import { GolferRow } from "@/components/golf/GolferRow";
+import { GolferRow, GolfOverflowRows } from "@/components/golf/GolferRow";
 import TournamentCard from "@/components/TournamentCard";
+import EventLeaderboard from "@/components/event/EventLeaderboard";
 
 /** Rendered markup with the entities this rule's own output produces decoded. */
 function text(el: React.ReactElement): string {
@@ -58,6 +59,15 @@ function text(el: React.ReactElement): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
+}
+
+function stripMarkup(html: string): string {
+  let previous: string;
+  do {
+    previous = html;
+    html = html.replace(/<[^>]*>/g, "");
+  } while (html !== previous);
+  return html;
 }
 
 const golfer = (over: Partial<GolfGolfer> = {}): GolfGolfer => ({
@@ -81,6 +91,44 @@ const row = (g: GolfGolfer, showSourceBreakdown = false) =>
   );
 
 describe("UX-P161 — the golf field row honours the probability floor", () => {
+  it("#11995 carries the full allocation through the actual event-page leaderboard", () => {
+    const html = text(<EventLeaderboard label="Winner" initialView="full" competitors={[
+      { name: "Alice Smith", probability: 1 / 3, rendered_percent: 34 },
+      { name: "Bob Jones", probability: 1 / 3, rendered_percent: 33 },
+      { name: "Casey Reed", probability: 1 / 3, rendered_percent: 33 },
+    ]} />);
+    expect(html).toContain(">34%<");
+    expect(html.match(/>33%</g)).toHaveLength(2);
+    const overflow = text(<EventLeaderboard label="Winner" competitors={[
+      { name: "Alice Smith", probability: 0.8, rendered_percent: 80 },
+    ]} overflowOutcomes={[{ name: "Field", probability: 0.2, rendered_percent: 20 }]} />);
+    expect(overflow).toContain("Field");
+    expect(overflow).toContain(">20%<");
+  });
+  it("#11995 keeps priced overflow in the visible field without a golfer link", () => {
+    const html = text(<>
+      {[40, 20, 20].map((percent, index) => <GolferRow key={index}
+        golfer={golfer({ name: ["Alice Smith", "Bob Jones", "Casey Reed"][index], probability: percent / 100, rendered_percent: percent })}
+        tournamentKey="masters" />)}
+      <GolfOverflowRows outcomes={[{ name: "Field", probability: 0.2, rendered_percent: 20 }]} />
+    </>);
+    const visible = stripMarkup(html);
+    expect([...visible.matchAll(/(\d+)%/g)].reduce((sum, match) => sum + Number(match[1]), 0)).toBe(100);
+    const overflow = text(<GolfOverflowRows outcomes={[{ name: "Field", probability: 0.2, rendered_percent: 20 }]} />);
+    expect(overflow).toContain("Field");
+    expect(overflow).toContain(">20%<");
+    expect(overflow).not.toContain("<a");
+  });
+  it("#11995 keeps a nonzero overflow chance possible when its allocation rounds to zero", () => {
+    const html = text(<GolfOverflowRows outcomes={[{ name: "Other", probability: 0.004, rendered_percent: 0 }]} />);
+    expect(html).toContain("<1%");
+    expect(html).not.toContain(">0%<");
+  });
+  it("#11995 prints the server allocation instead of rounding this leg again", () => {
+    const html = row(golfer({ probability: 0.255, rendered_percent: 25 }));
+    expect(html).toContain(">25%<");
+    expect(html).not.toContain(">26%<");
+  });
   it("prints <1% for the exact production specimen, not 0%", () => {
     // Billy Andrade / K.J. Choi / Scott McCarron, Rogers Charity Classic,
     // 2026-08-29: probability 0.003, single Kalshi source.

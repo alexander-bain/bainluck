@@ -89,12 +89,22 @@ nonisolated struct TournamentHeroCard: View {
                                 .foregroundStyle(movement > 0 ? .green : .red)
                             }
                             Spacer()
-                            Text(String(format: "%.1f%%", golfer.probability * 100))
+                            Text(golfer.renderedPercent.map { formatProbability(golfer.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", golfer.probability * 100))
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .monospacedDigit()
                                 .foregroundStyle(index == 0 ? .blue : .secondary)
                         }
+                    }
+                    ForEach(tournament.overflowOutcomes) { outcome in
+                        HStack {
+                            Text(outcome.name)
+                            Spacer()
+                            Text(outcome.renderedPercent.map { formatProbability(outcome.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", outcome.probability * 100))
+                                .monospacedDigit()
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     }
                 }
             }

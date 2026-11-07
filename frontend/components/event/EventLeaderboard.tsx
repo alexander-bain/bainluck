@@ -17,7 +17,8 @@ import {
   partitionWinnerField,
   isEliminatedCompetitor,
 } from "@/lib/eventConceptDisplay";
-import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
+import type { EventConceptCompetitor, FuturesOutcomeHistory, GolfOverflowOutcome } from "@/lib/types";
+import { GolfOverflowRows } from "@/components/golf/GolferRow";
 import Sparkline from "@/components/Sparkline";
 import FreshnessChip from "./FreshnessChip";
 import { TeamCrest } from "./MatchupDuel";
@@ -25,6 +26,7 @@ import EntityImage from "@/components/EntityImage";
 
 interface EventLeaderboardProps {
   competitors: EventConceptCompetitor[];
+  overflowOutcomes?: GolfOverflowOutcome[];
   label: string;
   /** Shared history from the evolution market — powers per-row sparklines. */
   historyOutcomes?: FuturesOutcomeHistory[];
@@ -226,7 +228,7 @@ function GolfRow({
           </span>
         )}
         <span className="font-mono font-semibold text-text-primary tabular-nums">
-          {cut ? "—" : formatProbability(c.probability)}
+          {cut ? "—" : formatProbability(c.probability, { rendered: c.rendered_percent })}
         </span>
       </span>
       {finishColumns.length > 0 && (
@@ -368,7 +370,7 @@ function WinnerFieldRow({
 
       {/* Big probability — OUT rows never show a stale live % (reads 0%). */}
       <span className="font-mono text-base font-semibold text-text-primary tabular-nums shrink-0 w-14 text-right">
-        {formatProbability(out ? 0 : c.probability)}
+        {formatProbability(out ? 0 : c.probability, { rendered: out ? undefined : c.rendered_percent })}
       </span>
       {hasFinish && <FinishCells c={c} columns={finishColumns} muted={out} />}
     </div>
@@ -377,6 +379,7 @@ function WinnerFieldRow({
 
 export default function EventLeaderboard({
   competitors,
+  overflowOutcomes,
   label,
   historyOutcomes,
   showSparkline = true,
@@ -572,6 +575,7 @@ export default function EventLeaderboard({
                 </div>
               </details>
             )}
+            <GolfOverflowRows outcomes={overflowOutcomes} />
           </div>
         </div>
       </section>
@@ -667,6 +671,7 @@ export default function EventLeaderboard({
               />
             ))}
           </div>
+          <GolfOverflowRows outcomes={overflowOutcomes} />
         </div>
       </div>
     </section>

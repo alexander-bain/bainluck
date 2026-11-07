@@ -110,7 +110,7 @@ export default function CurrentEventBanner({
               {topGolfers[0].name}
             </p>
             <p className="text-[#006747] font-mono text-sm">
-              {formatProbability(topGolfers[0].probability)}
+              {formatProbability(topGolfers[0].probability, { rendered: topGolfers[0].rendered_percent })}
             </p>
           </div>
         )}

@@ -2089,6 +2089,7 @@ export interface FeedTournamentData {
   golfers: {
     name: string;
     probability: number;
+    rendered_percent?: number | null;
     rank: number;
     movement_24h: number | null;
     // #7226 — is `movement_24h` a dated 23-25h snapshot subtraction, or the
@@ -2515,6 +2516,7 @@ export interface SharedTeamFuturesResponse {
 export interface GolfGolfer {
   name: string;
   probability: number;
+  rendered_percent?: number | null;
   american_odds: number | null;
   opening_probability: number | null;
   movement_24h: number | null;
@@ -2535,6 +2537,8 @@ export interface GolfH2HMatchup {
   golfer_a: { name: string; probability: number };
   golfer_b: { name: string; probability: number };
 }
+
+export type GolfOverflowOutcome = Pick<GolfGolfer, "name" | "probability" | "rendered_percent">;
 
 export interface GolfTournament {
   key: string;
@@ -2557,6 +2561,7 @@ export interface GolfTournament {
   market_names?: string[];
   market_sources?: string[];
   golfers: GolfGolfer[];
+  overflow_outcomes?: GolfOverflowOutcome[];
   prop_markets?: GolfPropMarket[];
   /** #9212 — see `FeedTournamentData.champion`. */
   champion?: string | null;
@@ -2667,6 +2672,7 @@ export interface GolfTournamentDetailResponse {
     resolution_date: string | null;
   };
   golfers: GolfGolfer[];
+  overflow_outcomes?: GolfOverflowOutcome[];
   markets: GolfMarketGroup[];
   related_futures?: {
     market_id: number;
@@ -2712,6 +2718,7 @@ export interface GolfLeaderboardPlayer {
   thru: string;
   hole: string;
   win_prob: number;
+  rendered_percent?: number | null;
   win_prob_change: number | null;
   position_change: number | null;
   top_5_prob: number | null;
@@ -2758,6 +2765,8 @@ export interface ProgressionParticipant {
   seed: number | null;
   record: string | null;
   probabilities: Record<string, number | null>;
+  /** Complete-field server allocation, carried by the exact golf card receipt. */
+  rendered_percents?: Record<string, number | null>;
   changes_24h: Record<string, number | null>;
   /** null = live/trading. "missing"/"unavailable" come from the championship
    *  grid register cutover (Q295) and render as an honest empty cell. */
@@ -3085,6 +3094,7 @@ export interface ProbabilityTimelineResponse {
 export interface MarchMadnessTeam {
   team_name: string;
   probability: number;
+  rendered_percent?: number | null;
   movement_24h: number | null;
   opening_probability: number | null;
   sources: Record<string, number>;
@@ -3253,8 +3263,8 @@ export interface SportHierarchyListResponse {
 export interface EventConceptCompetitor {
   name: string;
   probability: number | null;
-  // #6816: the server's decided whole percent for a proven two-sided bout's hero
-  // (combat `co_equal_list`). Both-or-neither via `servedBoutPercents`.
+  // Server allocation for a complete one-winner field, or a proven two-sided
+  // bout's hero (#6816, both-or-neither via `servedBoutPercents`).
   rendered_percent?: number | null;
   // L2-81: authoritative settled winner flag (from resolution). When the event is
   // settled the leaderboard renders the champion as "Won" instead of a stale %.
@@ -3390,6 +3400,7 @@ export interface EventConceptResponse {
     kind: "winner_field" | "co_equal_list";
     label: string;
     competitors: EventConceptCompetitor[];
+    overflow_outcomes?: GolfOverflowOutcome[];
     evolution_market_id?: number | null;
   };
   sections: EventConceptSection[];

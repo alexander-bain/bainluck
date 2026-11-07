@@ -163,13 +163,14 @@ class TestTheSpecimen:
 
 
 class TestTheGateIsUnchanged:
-    async def test_CONTROL_an_oversumming_traded_field_is_still_scaled_down(self, golf_db):
-        """The fix changes WHICH sum scales, never whether a >1.5 field is scaled."""
+    async def test_CONTROL_a_withheld_tail_keeps_the_incomplete_field_raw(self, golf_db):
+        """#11995: refused offers are unknown mass, not a zero in the denominator."""
         body = await get_golf(golf_db)
         masters = _tournament(body, "Husqvarna")
         assert masters is not None
-        # By the traded sum 1.91, not the old 1.91 + 10 * 0.049 = 2.40.
-        assert _kalshi(masters)["Marco Penge"] == pytest.approx(0.55 / 1.91, abs=0.002)
+        assert _kalshi(masters)["Marco Penge"] == 0.55
+        assert masters["golfers"][0]["probability"] == 0.55
+        assert all("rendered_percent" not in g for g in masters["golfers"])
 
     async def test_CONTROL_the_four_winner_season_market_stays_refused(self, golf_db):
         """Summing survivors in the GATE would admit this (traded sum 1.0) and put

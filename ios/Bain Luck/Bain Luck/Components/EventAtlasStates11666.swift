@@ -51,7 +51,7 @@ nonisolated enum EventAtlasStates11666 {
         case .hidden:
             return nil
         case .awaitingUpdate:
-            return atlasEnabled ? loading : status.title
+            return status.title
         case .interrupted:
             return atlasEnabled ? updateInterrupted : status.title
         case .live, .autoRefresh:
