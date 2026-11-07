@@ -228,7 +228,7 @@ nonisolated enum EventAtlasStoryCards11666 {
         let rawObserved = prop?.observedAt ?? rung?.observedAt
         let observedText = rawObserved.flatMap { SourceAge.preciseStamp($0) }
         let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: prop?.source ?? "sportsbooks",
+            source: prop?.source,
             sourceCount: 1
         )
         return EventAtlasDetailsSheetModel11666(
@@ -274,7 +274,7 @@ nonisolated enum EventAtlasStoryCards11666 {
 
         let observedText = SourceAge.preciseStamp(detail.observedAt)
         let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: detail.source ?? "sportsbooks",
+            source: detail.source,
             sourceCount: 1
         )
         return EventAtlasDetailsSheetModel11666(
