@@ -207,6 +207,42 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
         XCTAssertNil(
             EventAtlasStates11666.verdictDisplay(verdicts: [], atlasEnabled: true)
         )
+
+        // SpecialEventMarketsView merges multiple venues sharing an outcome label and
+        // routes their grades through EventAtlasStates11666.verdictDisplay (#11666 Step E4).
+        let disagreeingMarkets: [GameMarketOther] = [
+            GameMarketOther(
+                isWinner: true,
+                resolutionSource: "api_settlement",
+                marketName: "Will there be overtime?",
+                outcomeName: "Yes",
+                probability: 0.12,
+                source: "kalshi",
+                observedAt: "2026-11-06T17:50:00Z"
+            ),
+            GameMarketOther(
+                isWinner: false,
+                resolutionSource: "api_settlement",
+                marketName: "Will there be overtime?",
+                outcomeName: "Yes",
+                probability: 0.14,
+                source: "polymarket",
+                observedAt: "2026-11-06T17:51:00Z"
+            ),
+        ]
+        let view = SpecialEventMarketsView(
+            markets: disagreeingMarkets,
+            eventStatus: "completed",
+            commenceTime: pastKickoff
+        )
+        let mergedEntry = try? XCTUnwrap(view.categories.first?.items.first?.outcomes.first)
+        XCTAssertNotNil(mergedEntry)
+        if let entry = mergedEntry, case .verdict(let v) = view.treatment(for: entry) {
+            XCTAssertEqual(view.resolvedVerdictText(for: entry, verdict: v, atlasEnabled: true), "Pending")
+            XCTAssertEqual(view.resolvedVerdictText(for: entry, verdict: v, atlasEnabled: false), "Won")
+        } else {
+            XCTFail("Expected merged settled outcome to resolve to .verdict")
+        }
     }
 
     func testEventDetailViewCatalogAndSpecialMarketsWireStepE4BehindFlag11666() throws {
@@ -233,6 +269,7 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
         XCTAssertTrue(detailSrc.contains("EventAtlasStates11666.heroStateLabel("))
         XCTAssertTrue(detailSrc.contains("EventAtlasHeroStateLabelView11666(label: stateLabel)"))
         XCTAssertTrue(catalogSrc.contains("case .stale: return atlasEnabled ? EventAtlasStates11666.noRecentPrice : noRecentPrice"))
-        XCTAssertTrue(specialSrc.contains("EventAtlasStates11666.verdictLabel(v)"))
+        XCTAssertTrue(specialSrc.contains("EventAtlasStates11666.verdictDisplay(verdicts: allVerdicts, atlasEnabled: true)"))
+        XCTAssertTrue(specialSrc.contains("resolvedVerdictText(for: o, verdict: v)"))
     }
 }

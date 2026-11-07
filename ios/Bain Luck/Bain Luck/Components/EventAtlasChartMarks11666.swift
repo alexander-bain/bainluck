@@ -181,6 +181,8 @@ nonisolated enum EventAtlasChartMarks11666 {
     }
 
     /// Determines whether the finished primary line ends on the winning or losing side (`✓ Won` or `✗ Lost`).
+    /// Prefers the page's authoritative `EventOutcome.resolve` (`servedSettledResult` + `homeScoreOverride`/`awayScoreOverride`),
+    /// using chart history scores only as a last resort when the page scoreboard is absent.
     /// Returns `nil` when the game is not finished, scores are tied/absent, or there is no primary reading.
     static func settledResult(
         dataPoints: [ChartDataPoint],
@@ -189,7 +191,8 @@ nonisolated enum EventAtlasChartMarks11666 {
         status: String?,
         sides: ChartProbabilityAxis9483.Sides,
         homeScoreOverride: Int? = nil,
-        awayScoreOverride: Int? = nil
+        awayScoreOverride: Int? = nil,
+        servedSettledResult: String? = nil
     ) -> EventAtlasSettledResult11666? {
         guard EventState.isFinished(status) else { return nil }
         guard let end = OddsChartView.finishedEnd9483(
@@ -200,31 +203,42 @@ nonisolated enum EventAtlasChartMarks11666 {
             return nil
         }
 
-        let resolvedScores: (home: Int, away: Int)? = {
-            if let h = homeScoreOverride, let a = awayScoreOverride {
-                return (h, a)
+        let resolvedOutcome: EventOutcome = {
+            let pageOutcome = EventOutcome.resolve(
+                status: status,
+                homeScore: homeScoreOverride,
+                awayScore: awayScoreOverride,
+                servedResult: servedSettledResult
+            )
+            if pageOutcome != .undecided {
+                return pageOutcome
             }
             if let espn = history?.espnHistory {
                 for entry in espn.reversed() {
                     if let h = entry.homeScore, let a = entry.awayScore {
-                        return (h, a)
+                        return EventOutcome.resolve(status: status, homeScore: h, awayScore: a)
                     }
                 }
             }
             for point in dataPoints.reversed() {
                 if let h = point.homeScore, let a = point.awayScore {
-                    return (h, a)
+                    return EventOutcome.resolve(status: status, homeScore: h, awayScore: a)
                 }
             }
-            return nil
+            return .undecided
         }()
 
-        guard let scores = resolvedScores, scores.home != scores.away else {
+        let homeWon: Bool
+        switch resolvedOutcome {
+        case .home:
+            homeWon = true
+        case .away:
+            homeWon = false
+        case .draw, .undecided:
             return nil
         }
 
         let endIsAway = sides == .homeAndAway && end.probability < 0.5
-        let homeWon = scores.home > scores.away
         let endSideWon = endIsAway ? !homeWon : homeWon
         return endSideWon ? .won : .lost
     }
@@ -264,6 +278,9 @@ struct EventAtlasChartHeaderView11666: View {
     let includesOpening: Bool
     let homeName: String
     let primaryColor: Color
+    var homeScore: Int? = nil
+    var awayScore: Int? = nil
+    var servedSettledResult: String? = nil
 
     var body: some View {
         let settled = EventAtlasChartMarks11666.settledResult(
@@ -271,7 +288,10 @@ struct EventAtlasChartHeaderView11666: View {
             checkpoints: checkpoints,
             history: history,
             status: status,
-            sides: sides
+            sides: sides,
+            homeScoreOverride: homeScore,
+            awayScoreOverride: awayScore,
+            servedSettledResult: servedSettledResult
         )
         let keyModel = EventAtlasChartMarkKeyModel11666(
             settledResult: settled,
@@ -407,6 +427,9 @@ struct EventAtlasChartOverlay11666: View {
     let sides: ChartProbabilityAxis9483.Sides
     let includesOpening: Bool
     let primaryColor: Color
+    var homeScore: Int? = nil
+    var awayScore: Int? = nil
+    var servedSettledResult: String? = nil
 
     var body: some View {
         let rows = EventAtlasChartMarks11666.observationRows(
@@ -420,7 +443,10 @@ struct EventAtlasChartOverlay11666: View {
             checkpoints: checkpoints,
             history: history,
             status: status,
-            sides: sides
+            sides: sides,
+            homeScoreOverride: homeScore,
+            awayScoreOverride: awayScore,
+            servedSettledResult: servedSettledResult
         )
         let finishedEnd = OddsChartView.finishedEnd9483(
             dataPoints: dataPoints,
