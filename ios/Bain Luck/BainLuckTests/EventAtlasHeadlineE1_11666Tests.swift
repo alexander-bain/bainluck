@@ -49,7 +49,7 @@ final class EventAtlasHeadlineE1_11666Tests: XCTestCase {
         XCTAssertEqual(badge.pregameMarkText, "62% pregame")
     }
 
-    func testSettledUnderdogWinnerFlagsUpsetBelow45Percent() throws {
+    func testSettledUnderdogWinnerFlagsUpsetViaPrematchReading9490() throws {
         let prematch = try decode(
             PrematchOdds.self,
             """
@@ -68,6 +68,98 @@ final class EventAtlasHeadlineE1_11666Tests: XCTestCase {
         XCTAssertEqual(badge.systemImage, "checkmark")
         XCTAssertTrue(badge.isUpset)
         XCTAssertEqual(badge.pregameMarkText, "Upset · 32% pregame")
+    }
+
+    func testDrawPricedFavouriteUnderFortyPercentIsNotAnUpset9490() throws {
+        // #9490 specimen 15304745: Turkey 32.5% v Italy 39.5% on a three-way board.
+        let awayFavPrematch = try decode(
+            PrematchOdds.self,
+            """
+            {
+              "home_probability": 0.325,
+              "away_probability": 0.395,
+              "home_rendered_percent": 33,
+              "away_rendered_percent": 40,
+              "source": "kalshi"
+            }
+            """
+        )
+        let awayFavBadge = EventAtlasHeadline11666.settledBadge(
+            outcome: .away,
+            awayTeam: "Italy",
+            homeTeam: "Turkey",
+            sportKey: "soccer_uefa_nations_league",
+            prematch: awayFavPrematch,
+            opening: nil
+        )
+        XCTAssertEqual(awayFavBadge.winnerLabel, "Italy Won")
+        XCTAssertFalse(awayFavBadge.isUpset, "39.5% beat 32.5% on a three-way board: favourite won")
+        XCTAssertEqual(awayFavBadge.pregameMarkText, "40% pregame")
+
+        // Mirror with the 39.5% favourite at home.
+        let homeFavPrematch = try decode(
+            PrematchOdds.self,
+            """
+            {"home_probability": 0.395, "away_probability": 0.325, "source": "kalshi"}
+            """
+        )
+        let homeFavBadge = EventAtlasHeadline11666.settledBadge(
+            outcome: .home,
+            awayTeam: "Turkey",
+            homeTeam: "Italy",
+            sportKey: "soccer_uefa_nations_league",
+            prematch: homeFavPrematch,
+            opening: nil
+        )
+        XCTAssertFalse(homeFavBadge.isUpset)
+        XCTAssertEqual(homeFavBadge.pregameMarkText, "40% pregame")
+
+        // Real three-way upset: 33.5% away beat 42.5% home.
+        let upsetPrematch = try decode(
+            PrematchOdds.self,
+            """
+            {"home_probability": 0.425, "away_probability": 0.335, "source": "kalshi"}
+            """
+        )
+        let upsetBadge = EventAtlasHeadline11666.settledBadge(
+            outcome: .away,
+            awayTeam: "Turkey",
+            homeTeam: "Italy",
+            sportKey: "soccer_uefa_nations_league",
+            prematch: upsetPrematch,
+            opening: nil
+        )
+        XCTAssertTrue(upsetBadge.isUpset)
+        XCTAssertEqual(upsetBadge.pregameMarkText, "Upset · 34% pregame")
+
+        // Complement-only three-way board withholds away and never invents an upset.
+        let complementOnly = try decode(
+            PrematchOdds.self,
+            """
+            {"home_probability": 0.35, "source": "kalshi"}
+            """
+        )
+        let homeComplementBadge = EventAtlasHeadline11666.settledBadge(
+            outcome: .home,
+            awayTeam: "Turkey",
+            homeTeam: "Italy",
+            sportKey: "soccer_uefa_nations_league",
+            prematch: complementOnly,
+            opening: nil
+        )
+        XCTAssertFalse(homeComplementBadge.isUpset)
+        XCTAssertEqual(homeComplementBadge.pregameMarkText, "35% pregame")
+
+        let awayComplementBadge = EventAtlasHeadline11666.settledBadge(
+            outcome: .away,
+            awayTeam: "Turkey",
+            homeTeam: "Italy",
+            sportKey: "soccer_uefa_nations_league",
+            prematch: complementOnly,
+            opening: nil
+        )
+        XCTAssertFalse(awayComplementBadge.isUpset)
+        XCTAssertNil(awayComplementBadge.pregameMarkText)
     }
 
     func testSettledDrawAndUndecidedOutcomes() throws {
@@ -190,6 +282,81 @@ final class EventAtlasHeadlineE1_11666Tests: XCTestCase {
         XCTAssertTrue(sheet.primaryReadingValue.contains("Chiefs"))
         XCTAssertEqual(sheet.pregameBaseline, "Pre-match 45% – 55%")
         XCTAssertEqual(sheet.sourceLabel, "Blended (Sportsbooks, Kalshi)")
+
+        let settledEvent = try decode(
+            EventDetail.self,
+            """
+            {
+              "id": 15341806,
+              "sport": "americanfootball_nfl",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Buffalo Bills",
+              "status": "completed",
+              "home_score": 27,
+              "away_score": 24,
+              "hero_settled_result": "home",
+              "hero_probability_source": "kalshi",
+              "prematch_odds": {"home_probability": 0.62, "away_probability": 0.38},
+              "win_probability_sources": {
+                "kalshi": {"value": 1.0, "display_name": "Kalshi"}
+              }
+            }
+            """
+        )
+        let settledSheet = EventAtlasDetailsSheetModel11666.fromHeadline(
+            event: settledEvent,
+            phase: nil,
+            observedAt: now,
+            liveStatus: .hidden
+        )
+        XCTAssertEqual(settledSheet.primaryReadingLabel, "Result")
+        XCTAssertEqual(settledSheet.primaryReadingValue, "Chiefs Won")
+        XCTAssertEqual(settledSheet.pregameBaseline, "Pre-match 38% – 62%")
+        XCTAssertEqual(settledSheet.sourceLabel, "Kalshi")
+        XCTAssertNil(settledSheet.statusSummary)
+    }
+
+    func testHeadlineRowClockShiftsToLastRecordedAfterThirtyMinutes() throws {
+        let liveEvent = try decode(
+            EventDetail.self,
+            """
+            {
+              "id": 15341806,
+              "sport": "americanfootball_nfl",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Buffalo Bills",
+              "status": "live",
+              "home_score": 14,
+              "away_score": 10,
+              "hero_probability_source": "blend",
+              "current_odds": {"home_probability": 0.642, "away_probability": 0.358}
+            }
+            """
+        )
+        let observed = Date(timeIntervalSince1970: 1_800_000_000)
+        let freshPhase = EventAtlasHeadline11666.resolvePhase(
+            event: liveEvent,
+            observedAt: observed,
+            liveStatus: .live,
+            now: observed.addingTimeInterval(5 * 60)
+        )
+        XCTAssertEqual(freshPhase, .current)
+
+        let stalePhase = EventAtlasHeadline11666.resolvePhase(
+            event: liveEvent,
+            observedAt: observed,
+            liveStatus: .live,
+            now: observed.addingTimeInterval(31 * 60)
+        )
+        XCTAssertEqual(stalePhase, .lastRecorded)
+
+        let interruptedPhase = EventAtlasHeadline11666.resolvePhase(
+            event: liveEvent,
+            observedAt: observed,
+            liveStatus: .interrupted,
+            now: observed.addingTimeInterval(2 * 60)
+        )
+        XCTAssertEqual(interruptedPhase, .lastRecorded)
     }
 
     // MARK: - Page & phase label gating

@@ -255,6 +255,84 @@ final class EventAtlasLivePathE5_11666Tests: XCTestCase {
         XCTAssertEqual(settledKey.settledWonWord, EventAtlasStates11666.wonWithCheck)
     }
 
+    func testDrawPricedSportWithholdsAwayComplementInTenthsHeadlineSummary() throws {
+        let soccerJSON = """
+        {
+            "id": 15342900,
+            "sport": "soccer_epl",
+            "away_team": "Arsenal",
+            "home_team": "Chelsea",
+            "commence_time": "2026-11-06T03:00:00Z",
+            "status": "live",
+            "hero_probability_source": "blend",
+            "hero_probability": 0.40,
+            "hero_probability_away": 0.60,
+            "hero_probability_observed_at": "2026-11-06T04:55:00Z",
+            "current_odds": {
+                "home_probability": 0.40,
+                "away_probability": 0.60,
+                "captured_at": "2026-11-06T04:55:00Z"
+            }
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let soccerEvent = try decoder.decode(EventDetail.self, from: Data(soccerJSON.utf8))
+        let now = try XCTUnwrap("2026-11-06T05:00:00Z".asDate).timeIntervalSince1970
+
+        let reading = try XCTUnwrap(
+            EventAtlasLivePath11666.overlaidHeadlineReading(
+                event: soccerEvent,
+                preview: nil,
+                now: now
+            )
+        )
+        XCTAssertNil(reading.awayProbability, "draw-priced sport withholds away complement")
+        XCTAssertNil(reading.awayTenthsText, "draw-priced sport withholds away tenths")
+        XCTAssertEqual(reading.homeTenthsText, "40.0%")
+        XCTAssertEqual(
+            EventAtlasHeadlineControlRow11666.tenthsSummary(for: reading, event: soccerEvent),
+            "Chelsea 40.0%"
+        )
+    }
+
+    func testOpeningLineDetailsSheetPrintsServerHeroPairAsOpeningLine() throws {
+        let openingJSON = """
+        {
+            "id": 14780556,
+            "sport": "americanfootball_nfl",
+            "away_team": "Green Bay Packers",
+            "home_team": "Chicago Bears",
+            "commence_time": "2026-11-15T18:00:00Z",
+            "status": "scheduled",
+            "hero_probability_source": "opening",
+            "hero_probability": 0.60,
+            "hero_probability_away": 0.40,
+            "current_odds": {
+                "home_probability": 0.54,
+                "away_probability": 0.46
+            },
+            "opening_odds": {
+                "home_probability": 0.60,
+                "away_probability": 0.40
+            }
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let openingEvent = try decoder.decode(EventDetail.self, from: Data(openingJSON.utf8))
+
+        let sheet = EventAtlasDetailsSheetModel11666.fromHeadline(
+            event: openingEvent,
+            phase: nil,
+            observedAt: nil,
+            liveStatus: .hidden
+        )
+        XCTAssertEqual(sheet.primaryReadingLabel, "Opening line")
+        XCTAssertEqual(sheet.primaryReadingValue, "Packers 40% · Bears 60%")
+        XCTAssertNil(sheet.pregameBaseline, "opening line compared with itself says nothing")
+    }
+
     func testWiresResolveHeadlineObservedAtAndEkgInEventAtlasAndEventDetailView() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
