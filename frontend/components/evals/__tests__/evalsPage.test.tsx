@@ -13,10 +13,12 @@
  * and commit render, the bite meter shows both of its numbers, and all fifteen
  * reviewer squares read NOT RUN with no zero-filling. S5's: every watcher row
  * has a source link, its times are worked out in Pacific on the reader's date,
- * and each verdict is the newest on the record. S2's: the exam banner and its
- * hero tile read FAIL, the gate grid's verdicts are the record's (four passed,
- * five failed), licenses are HELD / FAIL / NOT ELIGIBLE as stored, and 0/0
- * renders as "—". Each rule has a negative
+ * and each verdict is the newest on the record. S2's: the exam banner and the
+ * matching topic's picture read FAIL, the gate grid's verdicts are the record's
+ * (four passed, five failed), licenses are HELD / FAIL / NOT ELIGIBLE as stored,
+ * and 0/0 renders as "—". Since Alex's Nov 6 goal the words are plain (no
+ * "twin", no "license" on screen) and the summaries live in each topic's
+ * picture rather than in hero tiles. Each rule has a negative
  * control, so a scanner that silently stopped reading would fail rather than
  * pass.
  *
@@ -50,9 +52,9 @@ import EvalsPage from "@/app/evals/page";
 import { metadata } from "@/app/evals/layout";
 import EvalsSection from "@/components/evals/EvalsSection";
 import Figure from "@/components/evals/Figure";
-import HeroTiles from "@/components/evals/HeroTiles";
 import TestLibrary from "@/components/evals/TestLibrary";
 import TestsForTheTests from "@/components/evals/TestsForTheTests";
+import { BreakagesPicture } from "@/components/evals/Topics";
 import Watchers from "@/components/evals/Watchers";
 import { fetchCalibration } from "@/lib/api";
 import { compactOutcomeCount, proofCohortFigures } from "@/lib/calibrationProofFigures";
@@ -167,15 +169,16 @@ describe("/evals S1 renders the shell", () => {
     const sections = Array.from(page.querySelectorAll("[data-evals-section]")).map((s) =>
       s.getAttribute("data-evals-section")
     );
+    // The gaps close the story; every other section sits in the full record below them.
     expect(sections).toEqual([
+      "gaps",
+      "forward-record",
       "exam",
       "confusion",
       "timeline",
-      "forward-record",
-      "test-library",
       "tests-for-tests",
+      "test-library",
       "watchers",
-      "gaps",
       "how-to-read",
       "sources",
     ]);
@@ -202,7 +205,7 @@ describe("/evals S1 renders the shell", () => {
     expect(chip?.textContent?.startsWith(`LAST REVIEWED · ${REVIEWED_LABEL}`)).toBe(true);
     expect(chip?.querySelector("[data-age-days]")?.textContent).toBe("today");
     const planned = page.querySelector('[data-gap-id="ranking-grades"] [data-planned-item]');
-    expect(planned?.textContent).toMatch(/PLANNED\s*waiting on the ranking harness #12100/);
+    expect(planned?.textContent).toMatch(/PLANNED\s*waiting on the ranking scorer #12100/);
   });
 
   it("the gaps' age turns amber after two weeks without a review, and not before", async () => {
@@ -283,6 +286,16 @@ describe("the truth rules hold on the rendered page", () => {
     expect(scan.figuresOutsideScope).toEqual(["24 of 25"]);
   });
 
+  it("NEGATIVE CONTROL: digits in a worked example are skipped, and the same digits outside one are caught", () => {
+    const el = document.createElement("div");
+    el.innerHTML =
+      '<figure data-evals-example=""><figcaption>For example</figcaption><p>−150 means 60%</p></figure>' +
+      "<p>−150 means 60%</p>";
+    expect(scanEvalsDom(el).bareNumbers).toHaveLength(2);
+    el.querySelectorAll("p")[1].remove();
+    expect(scanEvalsDom(el).bareNumbers).toEqual([]);
+  });
+
   it("NEGATIVE CONTROL: the scanner sees a figure inside a PLANNED item in markup", () => {
     // Figure itself refuses to render there (figureRules.test.tsx); this proves
     // the scanner would still see one if markup ever put it there another way.
@@ -300,12 +313,12 @@ describe("S2: the twin exam and its gates", () => {
   type RawGate = { id: string; by_pass?: Record<string, Cell & Record<string, unknown>>; observed?: Cell };
   const rawGates = EXAM_RAW.gate_results as RawGate[];
 
-  it("the banner reads FAIL, says no license was granted, and lists what passed and what failed under it", async () => {
+  it("the banner reads FAIL, says it may not decide on its own yet, and lists what passed and what failed under it", async () => {
     const page = await mountPage();
     const banner = page.querySelector('[data-testid="evals-exam-banner"]');
     expect(banner?.getAttribute("data-result")).toBe("fail");
     expect(banner?.querySelector('[data-result="fail"]')?.textContent).toBe("FAIL");
-    expect(banner?.textContent).toContain("No license was granted");
+    expect(banner?.textContent).toContain("It may not decide on its own yet, so a person still checks every match.");
     expect(banner?.querySelector("[data-gates-passed]")?.getAttribute("data-gates-passed")).toBe("4");
     expect(banner?.querySelector("[data-gates-failed]")?.getAttribute("data-gates-failed")).toBe("5");
     const count = Array.from(page.querySelectorAll('[data-testid="evals-exam-count"] [data-evals-figure]')).map((f) => f.textContent);
@@ -345,18 +358,18 @@ describe("S2: the twin exam and its gates", () => {
     const page = await mountPage();
     const section = page.querySelector('[data-evals-section="exam"]');
     const text = section?.textContent?.replace(/\s+/g, " ") ?? "";
-    expect(text).toContain("it has to pass every gate. Most are scored on pairs it has never seen.");
-    expect(text).not.toContain("every gate on pairs it has never seen");
+    expect(text).toContain("it has to pass every test below. Most are scored on pairs it has never seen.");
+    expect(text).not.toContain("every test below on pairs it has never seen");
     const scopeOf = (id: string) =>
       section?.querySelector(`[data-gate="${id}"] th details span`)?.textContent?.replace(/\s+/g, " ") ?? "";
     for (const g of rawGates.filter((x) => (x as { scope?: string }).scope === "test")) {
-      expect(scopeOf(g.id)).toMatch(/Held-out pairs\.$/);
+      expect(scopeOf(g.id)).toMatch(/Pairs it had never seen\.$/);
     }
-    expect(scopeOf("three_pass_stability")).toMatch(/Every pair, development pairs included\.$/);
+    expect(scopeOf("three_pass_stability")).toMatch(/Every pair, including the ones used to tune it\.$/);
     for (const id of ["unreadable_outputs", "truncated_outputs", "nonverbatim_quotes"]) expect(scopeOf(id)).toMatch(/Every reply\.$/);
     const across = Array.from(section?.querySelectorAll('[data-gate-cell="across"]') ?? []);
     expect(across).toHaveLength(rawGates.filter((g) => !g.by_pass).length);
-    for (const cell of across) expect(cell.querySelector("[data-across-passes]")?.textContent).toBe("Across all three passes");
+    for (const cell of across) expect(cell.querySelector("[data-across-passes]")?.textContent).toBe("Across all three tries");
     expect(section?.querySelectorAll('[data-gate-cell="pass"] [data-across-passes]')).toHaveLength(0);
   });
 
@@ -407,16 +420,17 @@ describe("S2: the twin exam and its gates", () => {
     expect(devTwin?.getAttribute("data-n")).toBe(String(EXAM_RAW.per_pass["3"].dev.per_relation.twin.recall.n));
   });
 
-  it("the hero tile reads FAIL, under LAST RUN, with the held-out figures from the record", async () => {
+  it("the matching chapter's picture reads FAIL, under LAST RUN, with the never-seen figures from the record", async () => {
     const page = await mountPage();
-    const tile = page.querySelector('[data-hero-tile="exam"]');
-    expect(tile?.getAttribute("href")).toBe("#exam");
-    expect(tile?.getAttribute("data-truth-scope")).toBe("last_run");
-    expect(tile?.querySelector('[data-result="fail"]')?.textContent).toBe("FAIL");
-    expect(tile?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST RUN · NOV 5")).toBe(true);
-    expect(tile?.querySelector("a")).toBeNull();
-    const figures = Array.from(tile?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent);
-    expect(figures).toEqual(["24", "25", "2", "3", "60"]);
+    const picture = page.querySelector('[data-evals-chapter="matching"] [data-chapter-picture="exam"]');
+    expect(picture?.closest("details")).toBeNull();
+    expect(picture?.getAttribute("data-truth-scope")).toBe("last_run");
+    expect(picture?.querySelector('[data-result="fail"]')?.textContent).toBe("FAIL");
+    expect(picture?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST RUN · NOV 5")).toBe(true);
+    // The picture itself is an exhibit under the same label; the numbers are the figures inside it:
+    // the pairs shown in the tries line, then the green bar's line, then the red bar's.
+    const figures = Array.from(picture?.querySelectorAll("[data-evals-figure]:not([data-evals-exhibit])") ?? []).map((f) => f.textContent);
+    expect(figures).toEqual(["60", "24", "25", "2", "3"]);
   });
 });
 
@@ -433,16 +447,16 @@ describe("S3: the exams on the record", () => {
     }
   });
 
-  it("an AI run names its model and states its replies and its usage-rated cost; a hand-run exam says so", async () => {
+  it("an AI run names its model and states its replies and its cost at published rates; a hand-run exam says so", async () => {
     const page = await mountPage();
     const exam = page.querySelector('[data-run-id="twin-judge-exam-run-1"]');
     expect(exam?.querySelector('[data-model="claude-sonnet-5-5"]')?.textContent).toBe("Claude Sonnet 5.5");
     expect(exam?.textContent).toMatch(/360\s*replies/);
-    expect(exam?.textContent).toMatch(/\$6\.81\s*usage-rated, including the pilot/);
+    expect(exam?.textContent).toMatch(/\$6\.81\s*at published rates, including the trial run/);
     const repeat = page.querySelector('[data-run-id="twin-judge-exam-run-2"]');
     expect(repeat?.getAttribute("data-result")).toBe("fail");
-    expect(repeat?.textContent).toMatch(/\$7\.74\s*usage-rated/);
-    expect(repeat?.textContent).not.toMatch(/including the pilot/);
+    expect(repeat?.textContent).toMatch(/\$7\.74\s*at published rates/);
+    expect(repeat?.textContent).not.toMatch(/including the trial run/);
     expect(repeat?.textContent).toContain("not a fresh blind test");
     expect(page.querySelector('[data-run-id="calibration-exit-exam"]')?.textContent).toMatch(/By hand/);
   });
@@ -484,46 +498,22 @@ describe("S3: the forward record", () => {
     expect(chip?.textContent).toBe("LIVEas of Nov 5, 7:28 PM PT");
   });
 
-  it("the hero tile carries the staleness notice when the graded inputs are older than the curve", async () => {
-    // The payload shape Fable read at 10:17 PM PT: availability "stale",
-    // inputs staged ten days before generated_at, frozen over drift.
-    fetchCalibrationMock.mockResolvedValue(
-      calibrationFixture({
-        availability: "stale",
-        staged: {
-          ...(calibrationFixture().staged as Record<string, unknown>),
-          staged_at: "2026-10-27T03:28:13+00:00",
-          frozen_over_drift: true,
-        },
-      })
-    );
+  // The first screen's staleness notice is held by topScreen.test.tsx: the
+  // section's own words when the inputs are older, and none when fresh.
+  it("the first screen's probability card shows the section's figure, under LIVE", async () => {
     const page = await mountPage();
-    const notice = page.querySelector('[data-hero-tile="forward-record"] [data-testid="evals-hero-forward-staleness"]');
-    const section = page.querySelector('[data-testid="evals-forward-staleness"] strong');
-    expect(notice?.textContent).toBeTruthy();
-    expect(notice?.textContent).toBe(section?.textContent);
+    const card = page.querySelector('[data-evals-top-card="truth"]');
+    expect(card?.getAttribute("data-truth-scope")).toBe("live");
+    // Its footer holds exactly one figure, the section's own average miss; the
+    // traded-outcome count stays with the section (Fable on #12225, Nov 6).
+    const footer = Array.from(card?.querySelectorAll("[data-card-footer] [data-evals-figure]") ?? []).map((f) => f.textContent);
+    expect(footer).toEqual([about?.errorPp.toFixed(1)]);
   });
 
-  it("NEGATIVE CONTROL: a fresh payload puts no notice on the tile", async () => {
-    fetchCalibrationMock.mockResolvedValue(calibrationFixture({ availability: "fresh" }));
-    const page = await mountPage();
-    expect(page.querySelector('[data-testid="evals-hero-forward-staleness"]')).toBeNull();
-  });
-
-  it("the hero tile shows the same figure, linked to the section", async () => {
-    const page = await mountPage();
-    const tile = page.querySelector('[data-hero-tile="forward-record"]');
-    expect(tile?.getAttribute("href")).toBe("#forward-record");
-    expect(tile?.getAttribute("data-truth-scope")).toBe("live");
-    expect(tile?.querySelector("a")).toBeNull(); // no link nested in the tile's link
-    const figures = Array.from(tile?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent);
-    expect(figures).toEqual([about?.errorPp.toFixed(1), compactOutcomeCount(about?.outcomes)]);
-  });
-
-  it("the meter reads the scorecard: 24 of 53 categories inside the 3-point bar", async () => {
+  it("the meter reads the scorecard: 24 of 53 kinds of market within 3 points", async () => {
     const page = await mountPage();
     const meter = page.querySelector('[data-testid="evals-forward-categories"]');
-    expect(meter?.textContent).toMatch(/^24\s*of\s*53\s*categories are inside the\s*3-point bar\.$/);
+    expect(meter?.textContent).toMatch(/^24\s*of\s*53\s*kinds of market come within\s*3\s*points of what happened\.$/);
   });
 
   it("frozen inputs show the staleness sentence with the date the data was staged", async () => {
@@ -548,7 +538,7 @@ describe("S3: the forward record", () => {
     expect(exhibit?.querySelector("svg")).not.toBeNull();
   });
 
-  it("a failed read says Unavailable right now, in the section and the tile, with no number", async () => {
+  it("a failed read says Unavailable right now, in the section and on the first screen, with no number", async () => {
     fetchCalibrationMock.mockRejectedValue(new Error("network"));
     const page = await mountPage();
     const section = page.querySelector('[data-evals-section="forward-record"]');
@@ -557,9 +547,9 @@ describe("S3: the forward record", () => {
     );
     expect(section?.querySelector("[data-evals-figure]")).toBeNull();
     expect(section?.getAttribute("data-truth-scope")).toBeNull();
-    const tile = page.querySelector('[data-hero-tile="forward-record"]');
-    expect(tile?.textContent).toMatch(/Unavailable right now/);
-    expect(tile?.querySelector("[data-evals-figure]")).toBeNull();
+    const card = page.querySelector('[data-evals-top-card="truth"]');
+    expect(card?.textContent).toMatch(/Unavailable right now/);
+    expect(card?.querySelector("[data-evals-figure]")).toBeNull();
     expect(scanEvalsDom(page).bareNumbers).toEqual([]);
   });
 
@@ -728,20 +718,24 @@ describe("S4: the tests for the tests", () => {
     expect(link?.getAttribute("href")).toBe(`https://github.com/alexander-bain/bainluck/issues/${study?.dropped?.issue}`);
   });
 
-  it("the hero tile shows the same two numbers, LAST RUN, and jumps to its section", async () => {
+  it("the code chapter's picture shows the meter's caught count, LAST RUN, and its limit in words while none runs the site's own code", async () => {
     const page = await mountPage();
-    const tile = page.querySelector('[data-hero-tile="tests-for-tests"]');
-    expect(tile?.getAttribute("href")).toBe("#tests-for-tests");
-    expect(tile?.getAttribute("data-truth-scope")).toBe("last_run");
-    expect(tile?.querySelector("a")).toBeNull();
-    const figures = Array.from(tile?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent);
-    expect(figures).toEqual(["40", "40", "0", "40"]);
+    const picture = page.querySelector('[data-evals-chapter="code"] [data-chapter-picture="breakages"]');
+    expect(picture?.closest("details")).toBeNull();
+    expect(picture?.getAttribute("data-truth-scope")).toBe("last_run");
+    // The picture itself is an exhibit under the same label; the numbers are the figures inside it.
+    const figures = Array.from(picture?.querySelectorAll("[data-evals-figure]:not([data-evals-exhibit])") ?? []).map((f) => f.textContent);
+    expect(figures).toEqual(["40", "40"]);
+    expect(picture?.querySelectorAll('[data-breakage="caught"]')).toHaveLength(board.bite.caught);
+    expect(picture?.querySelector("[data-breakages-limit]")?.textContent).toContain("rather than the live code");
   });
 
-  it("with no readable scoreboard, its tile is absent rather than empty", async () => {
-    const page = await mount(<HeroTiles exam={null} forward={{ status: "loading" }} board={null} />);
-    expect(page.querySelector('[data-hero-tile="tests-for-tests"]')).toBeNull();
-    expect(page.querySelector('[data-hero-tile="forward-record"]')).not.toBeNull();
+  it("NEGATIVE CONTROL: once a case runs the site's own code, the picture counts them instead of saying none does", async () => {
+    const some: Scoreboard = { ...board, bite: { ...board.bite, realCode: 3 } };
+    const page = await mount(<BreakagesPicture board={some} />);
+    const limit = page.querySelector("[data-breakages-limit]");
+    expect(limit?.textContent).not.toContain("rather than the live code");
+    expect(Array.from(limit?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent)).toEqual(["3", "40"]);
   });
 });
 
@@ -814,9 +808,9 @@ describe("S5: checks that run on their own", () => {
       expect(r?.getAttribute("data-verdict-state")).toBe(v.state);
       expect(r?.querySelector("[data-verdict-chip]")?.textContent).toBe(
         {
-          red_reporting: "Running red, reporting",
-          red_stopped: "Running red, reporting stopped",
-          closed_fixed: "Closed as fixed",
+          red_reporting: "Found problems, reported",
+          red_stopped: "Found problems, not reported",
+          closed_fixed: "Found its problem fixed",
         }[v.state]
       );
       const day = (pacificDayLabel(v.runAt) as string).toUpperCase();
@@ -848,16 +842,16 @@ describe("S5: checks that run on their own", () => {
     expect(page.querySelector('[data-evals-section="watchers"] [data-result="pass"]')).toBeNull();
   });
 
-  it("NEGATIVE CONTROL: a run that could not post reads running red, reporting stopped", async () => {
+  it("NEGATIVE CONTROL: a run that could not post reads found problems, not reported", async () => {
     const stoppedList: WatcherList = JSON.parse(JSON.stringify(list));
     const first = stoppedList.watchers.find((w) => w.verdict)!;
     first.verdict = { ...first.verdict!, state: "red_stopped", issues: [11958], closed: [], earlier: null, fix: null };
     const page = await mount(<Watchers list={stoppedList} />);
     const r = page.querySelector(`[data-watcher="${first.id}"]`);
     expect(r?.getAttribute("data-verdict-state")).toBe("red_stopped");
-    expect(r?.querySelector("[data-verdict-chip]")?.textContent).toBe("Running red, reporting stopped");
+    expect(r?.querySelector("[data-verdict-chip]")?.textContent).toBe("Found problems, not reported");
     expect(r?.textContent?.replace(/\s+/g, " ")).toContain(
-      "found problems but could not file them. The stopped reporting is tracked in #11958."
+      "found problems but could not report them. The broken reporting is tracked in #11958."
     );
     expect(page.querySelectorAll('[data-verdict-state="red_stopped"]')).toHaveLength(1);
   });

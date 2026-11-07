@@ -122,6 +122,9 @@ class _RecordingSession:
         self.prepares: list[tuple[int, str, dict]] = []
         self.prepared_ids = {
             "A": [11], "A2": [12], "A4": [41, 42], "A5": [15], "A6": [16], "A7": [71],
+            # B-5: the full recompute's lock-free candidate read; one id keeps
+            # it to ONE chunk, so the phase-indexed controls still read B/C.
+            "RECOMPUTE": [21],
         }
         # Relative order of the two out-of-band kinds above.
         self.out_of_band: list[str] = []
@@ -162,7 +165,12 @@ class _RecordingSession:
         if self.fail_bank and "jsonb_object_agg" in sql:
             raise RuntimeError("bank failed")
         if "SET max_movement_24h" in sql:
-            targeted = bool((params or {}).get("market_ids"))
+            # B-5: the full recompute's chunks name themselves; they are the
+            # "full" unit and consume B/C's phase-indexed counts as before.
+            targeted = (
+                bool((params or {}).get("market_ids"))
+                and "movement recompute" not in sql
+            )
             unit = ("a7" if self.retirement_index == 7 else "core") if targeted else "full"
             if self.fail_maxima in (unit, f"core@{self.retirement_index}"):
                 raise RuntimeError("maxima failed")
@@ -203,7 +211,7 @@ def run_task(monkeypatch):
 
     def _run(
         rowcounts: list[int] | None = None, *, fail_bank: bool = False,
-        retired_ids=None, fail_maxima=None,
+        retired_ids=None, fail_maxima=None, heavy: bool = True,
     ) -> tuple[dict, _RecordingSession]:
         # Counter controls name the established A..A10/B/C phase order.
         # Execute A10 first, then A1-A7/B/C, then the four bank operations.
@@ -227,7 +235,7 @@ def run_task(monkeypatch):
 
         monkeypatch.setattr(warm_mod, "warm_futures_movers", _fake_warm)
 
-        result = update_max_movement.run()
+        result = update_max_movement.run(heavy=heavy)
         return result, session
 
     return _run
@@ -353,7 +361,8 @@ def test_only_actual_retirement_markets_are_recomputed_before_quote_locks_releas
     commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
     full_scan = session.events[commits[7] + 1:commits[8]]
     assert len(full_scan) == 2
-    assert all("SET max_movement_24h" in sql and "ANY(:market_ids)" not in sql
+    # B-5: the full recompute is its own marked unit over its candidates.
+    assert all("SET max_movement_24h" in sql and "movement recompute" in sql
                for sql in full_scan)
     assert not any("UPDATE futures_outcomes" in sql for sql in full_scan)
     # Six units retired something; each targeted pair answers (3, 2).
@@ -362,11 +371,15 @@ def test_only_actual_retirement_markets_are_recomputed_before_quote_locks_releas
 
 def test_no_retirements_skip_targeted_scan_but_keep_full_market_maintenance(run_task):
     _, session = run_task()
-    assert not any(p.get("market_ids") for _, p in session.calls)
+    # B-5: only the full recompute's own marked chunk carries market ids.
+    assert not any(
+        p.get("market_ids") for sql, p in session.calls
+        if "movement recompute" not in sql
+    )
     core = _movement_events(session)
     assert not any("SET max_movement_24h" in sql for sql in core)
     full = _max_movement_statements(session)
-    assert len(full) == 2 and all("ANY(:market_ids)" not in sql for sql in full)
+    assert len(full) == 2 and all("movement recompute" in sql for sql in full)
 
 
 def test_full_scan_failure_propagates_after_coherent_core_and_warms_it(run_task):
@@ -451,7 +464,8 @@ def test_snapshot_scans_run_before_any_outcome_lock(run_task):
         "PREPARE A", "LOCK BUDGET", "PREPARE A2", "LOCK BUDGET",
         "LOCK BUDGET", "LOCK BUDGET",
         "PREPARE A5", "LOCK BUDGET", "PREPARE A6", "LOCK BUDGET",
-        "LOCK BUDGET", "LOCK BUDGET",
+        # A7's chunk, then (B-5) the full recompute's read and its chunk.
+        "LOCK BUDGET", "PREPARE RECOMPUTE", "LOCK BUDGET",
     ], session.out_of_band
     assert [p[0] for p in session.prepares[:2]] == [commits[0] + 1] * 2
 
@@ -567,12 +581,19 @@ _RETIREMENTS = ("A", "A2", "A3", "A4", "A5", "A6", "A7")
 
 
 def _the_tail_ran(result: dict, session: _RecordingSession) -> None:
-    """The full B/C recompute, both dated banks and the warm all ran."""
+    """The full B/C recompute, both dated banks and the warm all ran.
+
+    B-5: the full recompute is B and C restricted to the candidates its
+    lock-free read returned (`prepared_ids["RECOMPUTE"]`), marked as its own.
+    """
     full = [
         params for sql, params in session.calls
-        if "SET max_movement_24h" in sql and not params.get("market_ids")
+        if "SET max_movement_24h" in sql and "movement recompute" in sql
     ]
-    assert len(full) == 2, session.calls  # B and C, unscoped
+    assert len(full) == 2, session.calls  # B and C, over the candidates
+    assert all(
+        p["market_ids"] == session.prepared_ids["RECOMPUTE"] for p in full
+    ), full
     assert len(_dated_basis_statements(session)) == 2, session.calls
     assert session.events[-1] == "COMMIT", session.events
     assert session.warm_snapshots, "the movers warm never ran"
@@ -593,7 +614,10 @@ def test_a_spent_retirement_budget_starts_no_retirement_but_still_runs_the_tail(
     monkeypatch.setattr(tasks_mod, "MOVEMENT_RETIRE_BUDGET_SECONDS", 0)
     result, session = run_task()
 
-    assert session.prepares == [], session.prepares
+    # B-5: the full recompute's read keeps its own, later deadline.
+    assert [sql.split(" */")[0] for _, sql, _ in session.prepares] == [
+        "/* movement prepare: RECOMPUTE"
+    ], session.prepares
     assert not [s for s in session.events if s.startswith("UPDATE futures_outcomes")]
     assert "unpriced_opening_ids" in session.events[0], session.events  # A10 still runs
     _the_tail_ran(result, session)
@@ -612,10 +636,11 @@ def test_the_retirement_budget_stops_between_chunks_and_reports_what_it_left(
 
     monkeypatch.setattr(tasks_mod, "MOVEMENT_RETIRE_CHUNK", 2)
     # Reads: run start, two per prepare (A4, A7, A), A's first chunk. The
-    # ninth read, before A's second chunk, is past the budget.
+    # ninth read, before A's second chunk, is past the budget — and (B-5) still
+    # inside `MOVEMENT_RECOMPUTE_DEADLINE_SECONDS`, so the full recompute runs.
     clock = iter([0.0] * 8)
     monkeypatch.setattr(
-        tasks_mod, "_movement_run_clock", lambda: next(clock, 1e6),
+        tasks_mod, "_movement_run_clock", lambda: next(clock, 80.0),
     )
     real_init = _RecordingSession.__init__
 
@@ -633,7 +658,7 @@ def test_the_retirement_budget_stops_between_chunks_and_reports_what_it_left(
     assert [w["prepared_ids"] for w in writes] == [[1, 2]], writes
     assert [label for _, sql, _ in session.prepares
             for label in re.findall(r"movement prepare: (\w+)", sql)] == [
-        "A4", "A7", "A",
+        "A4", "A7", "A", "RECOMPUTE",
     ]
     assert _units(session)[1][-1] == "COMMIT"  # the started chunk committed
     _the_tail_ran(result, session)
@@ -655,7 +680,10 @@ def test_the_budget_is_spent_at_exactly_its_constant(run_task, monkeypatch):
     )
     result, session = run_task()
 
-    assert session.prepares == [], session.prepares
+    # B-5: only the full recompute's read, whose deadline is later.
+    assert [sql.split(" */")[0] for _, sql, _ in session.prepares] == [
+        "/* movement prepare: RECOMPUTE"
+    ], session.prepares
     assert result["retire_deferred"] == dict.fromkeys(_RETIREMENTS), result
 
 
@@ -674,9 +702,15 @@ def test_each_prepare_read_is_bounded_by_the_budget_left_and_then_restored(
     monkeypatch.setattr(tasks_mod, "_movement_run_clock", lambda: next(clock, 30.0))
     _, session = run_task()
 
+    from app.tasks import MOVEMENT_RECOMPUTE_DEADLINE_SECONDS
+
     budget = f"{(MOVEMENT_RETIRE_BUDGET_SECONDS - 30) * 1000}ms"
-    assert len(session.prepares) == 6, session.prepares
-    assert session.statement_budgets == [budget, "30min"] * 6, session.statement_budgets
+    # B-5: the seventh read is the full recompute's, bounded by its own deadline.
+    recompute = f"{(MOVEMENT_RECOMPUTE_DEADLINE_SECONDS - 30) * 1000}ms"
+    assert len(session.prepares) == 7, session.prepares
+    assert session.statement_budgets == (
+        [budget, "30min"] * 6 + [recompute, "30min"]
+    ), session.statement_budgets
 
 
 def test_a_cancelled_prepare_read_is_deferred_and_the_run_goes_on(
@@ -2207,5 +2241,119 @@ def test_the_prepare_reads_bound_is_transaction_local_so_no_later_transaction_in
     monkeypatch.setattr(_RecordingSession, "execute", _execute)
     run_task()
 
-    assert len(seen) == 12, seen  # bound + restore, six prepare reads
+    # bound + restore, seven prepare reads (B-5 added the full recompute's)
+    assert len(seen) == 14, seen
     assert all(sql.endswith(", true)") for sql in seen), seen
+
+
+# ---------------------------------------------------------------------------
+# B-5 (worker audit 2026-11-06): five light runs an hour, one heavy run, and
+# the full recompute in chunks that a blocked market row cannot throw away.
+# ---------------------------------------------------------------------------
+
+
+class _LockNotAvailable(Exception):
+    """asyncpg's `LockNotAvailableError`, as `is_lock_timeout` reads it."""
+
+    sqlstate = "55P03"
+
+
+def test_a_light_run_skips_the_snapshot_scans_and_the_full_recompute(run_task):
+    result, session = run_task(heavy=False)
+
+    labels = [re.search(r"movement prepare: (\w+)", sql).group(1)
+              for _, sql, _ in session.prepares]
+    assert labels == ["A", "A2", "A5", "A6"], labels  # the cheap sweeps, in order
+    assert not [sql for sql in session.events if "movement recompute" in sql]
+    writes = [s for s in session.events if s.startswith("UPDATE futures_outcomes")]
+    assert len(writes) == 5, writes  # A, A2, A3, A5, A6 — never A4 or A7
+    assert not any("obs.lo" in s for s in writes), writes
+    assert "unpriced_opening_ids" in session.events[0], session.events  # A10 runs
+    assert len(_dated_basis_statements(session)) == 2, session.calls  # banks run
+    assert session.warm_snapshots, "the movers warm never ran"
+    assert result["heavy_pass"] is False
+    assert result["recompute_candidates"] == 0
+    assert result["recompute_lock_skipped"] == 0
+    assert result["unobserved_retired"] == 0 and result["contradicted_retired"] == 0
+    # Skipped by design, not stopped by the budget: nothing is deferred.
+    assert result["retire_deferred"] == {}, result
+
+
+def test_a_heavy_run_reports_itself_and_its_recompute_candidates(run_task):
+    result, _ = run_task()
+    assert result["heavy_pass"] is True
+    assert result["recompute_candidates"] == 1
+    assert result["recompute_lock_skipped"] == 0
+
+
+def test_the_full_recompute_commits_each_chunk_and_a_blocked_chunk_alone_waits(
+    run_task, monkeypatch,
+):
+    import app.tasks as tasks_mod
+
+    monkeypatch.setattr(tasks_mod, "MOVEMENT_RETIRE_CHUNK", 2)
+    real_init = _RecordingSession.__init__
+    real_execute = _RecordingSession.execute
+
+    def _init(self, *a, **k):
+        real_init(self, *a, **k)
+        self.prepared_ids = {label: ids[:1] for label, ids in self.prepared_ids.items()}
+        self.prepared_ids["RECOMPUTE"] = [21, 22, 23, 24, 25]
+
+    async def _execute(self, stmt, params=None):
+        sql = " ".join(str(stmt).split())
+        if "movement recompute" in sql and (params or {}).get("market_ids") == [23, 24]:
+            raise _LockNotAvailable("canceling statement due to lock timeout")
+        return await real_execute(self, stmt, params)
+
+    monkeypatch.setattr(_RecordingSession, "__init__", _init)
+    monkeypatch.setattr(_RecordingSession, "execute", _execute)
+    result, session = run_task()
+
+    chunks = [
+        p["market_ids"] for sql, p in session.calls
+        if "movement recompute" in sql and "= NULL" not in sql
+    ]
+    assert chunks == [[21, 22], [25]], chunks  # [23, 24] never reached the log
+    assert result["recompute_candidates"] == 5
+    assert result["recompute_lock_skipped"] == 2
+    # Each chunk is its own transaction under the 500 ms wait bound: the
+    # blocked one rolled back alone, and the run still banked and warmed.
+    assert "ROLLBACK" in session.events
+    assert len(_dated_basis_statements(session)) == 2, session.calls
+    assert session.warm_snapshots
+
+
+def test_the_full_recompute_starts_nothing_past_its_deadline(run_task, monkeypatch):
+    import app.tasks as tasks_mod
+
+    from app.tasks import MOVEMENT_RECOMPUTE_DEADLINE_SECONDS
+
+    clock = iter([0.0])
+    monkeypatch.setattr(
+        tasks_mod, "_movement_run_clock",
+        lambda: next(clock, float(MOVEMENT_RECOMPUTE_DEADLINE_SECONDS)),
+    )
+    result, session = run_task()
+
+    assert session.prepares == [], session.prepares
+    assert not [sql for sql in session.events if "movement recompute" in sql]
+    assert result["retire_deferred"]["RECOMPUTE"] is None, result
+    assert len(_dated_basis_statements(session)) == 2, session.calls
+    assert MOVEMENT_RECOMPUTE_DEADLINE_SECONDS < 120  # inside the soft limit
+
+
+def test_the_beat_runs_light_five_times_and_heavy_once_an_hour():
+    from app.tasks import MOVEMENT_HEAVY_MINUTE, celery_app
+
+    beats = celery_app.conf.beat_schedule
+    light, heavy = beats["update-max-movement"], beats["update-max-movement-heavy"]
+    assert light["task"] == heavy["task"] == "app.tasks.update_max_movement"
+    assert light["kwargs"] == {"heavy": False}
+    assert heavy["kwargs"] == {"heavy": True}
+    assert heavy["schedule"].minute == {MOVEMENT_HEAVY_MINUTE}
+    assert light["schedule"].minute == {0, 10, 30, 40, 50}
+    # Together still every ten minutes, and never both in one minute.
+    assert light["schedule"].minute | heavy["schedule"].minute == set(range(0, 60, 10))
+    assert not light["schedule"].minute & heavy["schedule"].minute
+    assert light["options"]["queue"] == heavy["options"]["queue"] == "background"

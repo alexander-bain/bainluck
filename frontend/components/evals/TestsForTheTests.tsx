@@ -21,7 +21,7 @@ function Meter({ part, whole, tone, testId }: { part: number; whole: number; ton
 }
 
 /** Two bars, never one: how many planted changes were caught, and how many of those cases run the site's own code. */
-function BiteMeter({ board }: { board: Scoreboard }) {
+export function BiteMeter({ board }: { board: Scoreboard }) {
   const truth = biteTruth(board);
   const { total, caught, realCode } = board.bite;
   const n = (value: number) => (
