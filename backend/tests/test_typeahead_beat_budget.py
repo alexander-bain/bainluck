@@ -1235,8 +1235,13 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     # tree branched from b65d0573bf printed explicit 101 implicit 40 total 141.
     # #12095: `snapshot-ranking-slate-daily` names background; census on the
     # tree merged with 80b7a1605c printed explicit 102 implicit 40 total 142.
+    # #12042 L-1: `precompute-discover-candidate-base` moved to its own
+    # `discover_base` lane; census on the tree branched from 9247e7f5ca printed
+    # explicit 101 implicit 40 total 141.
+    # B-5: `update-max-movement-heavy` names background; census on the tree
+    # merged with 7cf2c6561a printed explicit 102 implicit 40 total 142.
     # W-1: `warm-typeahead-gold-set` names background; census on the tree
-    # branched from 3c72a05363 printed explicit 103 implicit 40 total 143.
+    # merged with 8e7a2135ff printed explicit 103 implicit 40 total 143.
     assert explicit == 103, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 40, f"default-queue fall-through moved: {implicit}"
     assert explicit + implicit == BACKGROUND_BEAT_COUNT == 143

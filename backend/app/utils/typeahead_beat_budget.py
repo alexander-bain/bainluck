@@ -2097,15 +2097,28 @@ def free_background_slots(
 #: #142's 2:05 AM snapshot already runs, one primary-key market read and one
 #: insert. The census RUN over the tree merged with `80b7a1605c` printed
 #: `explicit 102 implicit 40 total 142`.
-#: 🔴 RE-DERIVED at speed (2026-11-06, W-1): 142 → 143, explicit 102 → 103,
+#: 🔴 RE-DERIVED at speed (2026-11-06, #12042 L-1): 142 → 141, explicit 102 →
+#: 101, fall-through UNMOVED at 40. `precompute-discover-candidate-base` left
+#: `background` for its own `discover_base` lane, which `worker-background`
+#: serves FIRST (`--queues=discover_base,background`, `queue_order_strategy=
+#: priority`). The same worker still runs it, so the slot count is unchanged.
+#: What changes is the order: the base no longer waits behind the warmers.
+#: The census RUN over the tree branched from `9247e7f5ca` printed
+#: `explicit 101 implicit 40 total 141`.
+#: 🔴 RE-DERIVED at speed (2026-11-06, B-5 over L-1): 141 → 142, explicit
+#: 101 → 102, fall-through UNMOVED at 40. `update-max-movement-heavy`
+#: (`crontab(minute=20)`) names `background` explicitly; it is the :20 run of
+#: `update_max_movement`, taken out of `update-max-movement`, so arrivals on the
+#: queue are unchanged (six an hour). W-1 #12222 writes against an older base:
+#: whichever merges after another re-runs the census, never adds one. The census
+#: RUN over the tree merged with `7cf2c6561a` printed `explicit 102 implicit 40 total 142`.
+#: 🔴 RE-DERIVED at speed (2026-11-06, W-1 over L-1 + B-5): 142 → 143, explicit 102 → 103,
 #: fall-through UNMOVED at 40. `warm-typeahead-gold-set`
 #: (`crontab(hour=7, minute=5)`) names `background` explicitly. Cost: one fire a
 #: day, one typeahead pass over the Flow Sentinel's 32 gold-set terms (~the
 #: old 40-term pass, ~20 s) — against W-1 taking the every-15 s pass from 40
-#: terms to 8. ⚠️ #12216 writes 141 (explicit 101) against the same base of 142:
-#: whichever merges second re-runs the census (142), never adds one. The census
-#: RUN over the tree branched from `3c72a05363` printed
-#: `explicit 103 implicit 40 total 143`.
+#: terms to 8. The census RUN over the tree merged with `8e7a2135ff` (L-1 and
+#: B-5 both on master) printed `explicit 103 implicit 40 total 143`.
 BACKGROUND_BEAT_COUNT = 143
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,

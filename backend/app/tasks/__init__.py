@@ -354,6 +354,13 @@ celery_config = {
         "socket_keepalive_options": _KEEPALIVE_OPTS,
         "health_check_interval": 25,
         "retry_on_timeout": True,
+        # #12042 L-1 (worker audit §7.1 step 1, Alex 52-A): a worker that
+        # consumes more than one queue BRPOPs them in its `--queues` order
+        # every time, instead of rotating the queue that just delivered to the
+        # back (kombu's default `round_robin`). Only `worker-background`
+        # consumes two (`discover_base,background`); every other worker reads
+        # one queue, so this changes nothing for them.
+        "queue_order_strategy": "priority",
     },
     "result_backend_transport_options": {
         "socket_keepalive": True,
@@ -710,15 +717,28 @@ except Exception:  # pragma: no cover - defensive
 
 from kombu import Queue
 
+#: #12042 L-1 (worker audit 2026-11-06 §7.1 step 1; Alex 52-A). Measured: 18 of
+#: 47 base fires expired on the shared `background` queue (the audit; 134 runs in
+#: 24 h against ~720 for a 2-minute beat, Speed's read). On its own lane, listed
+#: first in `worker-background`'s `--queues`, the simulation completes 714 of 720
+#: a day. It removes no load. The warmers it displaces served about 0 real
+#: searches in 60 minutes. Revert = route it back to `background`.
+DISCOVER_BASE_QUEUE = "discover_base"
+
 celery_app.conf.task_queues = [
     Queue("realtime", routing_key="realtime"),
     Queue("background", routing_key="background"),
     Queue("heavy", routing_key="heavy"),
+    # #12042 L-1: the Discover base rebuild's own lane, served FIRST by
+    # `worker-background` (see `queue_order_strategy` above and the Procfile).
+    Queue(DISCOVER_BASE_QUEUE, routing_key=DISCOVER_BASE_QUEUE),
 ]
 
 celery_app.conf.task_default_queue = "background"
 
 celery_app.conf.task_routes = {
+    # #12042 L-1: the Discover base rebuild runs on its own lane (above).
+    "app.tasks.precompute_discover_candidate_base": {"queue": DISCOVER_BASE_QUEUE},
     # --- Realtime: live game data (30s-120s cycle) ---
     "app.tasks.poll_all_odds": {"queue": "realtime"},
     "app.tasks.poll_datagolf_inplay": {"queue": "realtime"},
@@ -3860,6 +3880,24 @@ MOVEMENT_CHUNK_IDLE_TIMEOUT_MS = 5_000
 #: locked row already is. The other 50 s are the tail's.
 MOVEMENT_RETIRE_BUDGET_SECONDS = 70
 
+#: Seconds into a run after which the full B/C recompute starts no new chunk
+#: (worker audit 2026-11-06 B-5). Its candidate read is bounded by what is left
+#: of this, and each chunk commits alone, so a run stopped here keeps every chunk
+#: it wrote and the banks and the movers warm still run inside the 120 s
+#: `soft_time_limit`. The next heavy run reads the candidates again.
+MOVEMENT_RECOMPUTE_DEADLINE_SECONDS = 95
+
+#: The minute of the hour whose `update_max_movement` run is the HEAVY one
+#: (worker audit 2026-11-06 B-5). Only that run takes A4's and A7's snapshot
+#: LATERAL scans and the full B/C recompute; the other five runs an hour do the
+#: cheap sweeps (A10, A, A2, A3, A5, A6) and the banks with the whole retirement
+#: budget. Measured 2026-11-06: 1 of 9 runs finished, because the A4 prepare
+#: (48.9 s at its worst that day) spent the 70 s budget and the full recompute
+#: then hit a 500 ms lock timeout or the soft limit, so Discover's movement pool,
+#: /search movers and iOS movers served frozen deltas. :20 rather than :00 or :50,
+#: which are the queue's two crowded minutes in the same audit.
+MOVEMENT_HEAVY_MINUTE = 20
+
 
 def _movement_run_clock() -> float:
     """The clock `MOVEMENT_RETIRE_BUDGET_SECONDS` is measured on."""
@@ -3961,8 +3999,14 @@ def _opening_book_slice(epoch_seconds: float) -> int:
 
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
-def update_max_movement(self):
+def update_max_movement(self, heavy: bool = True):
     """Retire expired movement deltas, recompute max_movement_24h, publish movers.
+
+    ``heavy`` (worker audit 2026-11-06 B-5): the beat passes ``heavy=False`` on
+    five of its six runs an hour and ``True`` on the :20 run
+    (`MOVEMENT_HEAVY_MINUTE`). A light run skips A4's and A7's snapshot LATERAL
+    scans and the full B/C recompute; every other statement runs as before. A
+    direct call (the default) is a heavy run, which is what the task always was.
 
     LAT-P115: this task WRITES the column `/api/futures/movers` ranks by, so it
     is also the honest place to publish that answer. The warm runs AFTER the
@@ -4067,8 +4111,10 @@ def update_max_movement(self):
         # it left for the next run (None: its read never ran).
         retire_deferred = {}
 
-        def retire_budget_spent(label, unattempted=None):
-            if _movement_run_clock() - run_started < MOVEMENT_RETIRE_BUDGET_SECONDS:
+        def retire_budget_spent(
+            label, unattempted=None, deadline_s=MOVEMENT_RETIRE_BUDGET_SECONDS,
+        ):
+            if _movement_run_clock() - run_started < deadline_s:
                 return False
             retire_deferred[label] = unattempted
             return True
@@ -4103,7 +4149,11 @@ def update_max_movement(self):
         # imported from their owners so the sweep and the reader cannot drift.
         from app.utils.futures_highlights import MODERATE_SURPRISE_THRESHOLD
         from app.utils.futures_market_snapshot import UNPRICED_OPENING_METADATA_KEY
-        from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, lock_timeout_value
+        from app.utils.repair_lock_budget import (
+            SET_LOCK_TIMEOUT_SQL,
+            is_lock_timeout,
+            lock_timeout_value,
+        )
         from app.utils.statement_timeout import is_statement_timeout
 
         # 🔴 A4's two thresholds are bound as `Decimal`, and a `float` here is a
@@ -4237,16 +4287,20 @@ def update_max_movement(self):
 
             await session.commit()
 
-            async def bounded_prepare(label, statement, params):
+            async def bounded_prepare(
+                label, statement, params, deadline_s=MOVEMENT_RETIRE_BUDGET_SECONDS,
+            ):
                 # A prepare read still running when the retirement budget ends
                 # is cancelled there and deferred, so one slow scan cannot carry
                 # the run past its soft limit. The A4 read alone measured up to
                 # 96 s. Its bound is set for this read only, and the previous
                 # value comes back after it, so no chunk UPDATE inherits it.
-                if retire_budget_spent(label):
+                # `deadline_s`: the full recompute's read (B-5) is bounded by
+                # `MOVEMENT_RECOMPUTE_DEADLINE_SECONDS` instead.
+                if retire_budget_spent(label, deadline_s=deadline_s):
                     return []
                 remaining_ms = max(1, int(1000 * (
-                    MOVEMENT_RETIRE_BUDGET_SECONDS
+                    deadline_s
                     - (_movement_run_clock() - run_started)
                 )))
                 previous = (await session.execute(
@@ -4276,7 +4330,8 @@ def update_max_movement(self):
             # plain reads that take no row lock, so no quote row is held while
             # they run. The core re-checks the same predicate on these ids only.
             # See A4_UNOBSERVED_PREDICATE.
-            a4_prepared_ids = await bounded_prepare(
+            # B-5: light runs skip both scans; A4 and A7 then retire nothing.
+            a4_prepared_ids = [] if not heavy else await bounded_prepare(
                 "A4",
                 """
                     /* movement prepare: A4 */
@@ -4293,7 +4348,7 @@ def update_max_movement(self):
                     "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
                 },
             )
-            a7_prepared_ids = await bounded_prepare(
+            a7_prepared_ids = [] if not heavy else await bounded_prepare(
                 "A7",
                 """
                     /* movement prepare: A7 */
@@ -4340,9 +4395,10 @@ def update_max_movement(self):
                     logger.warning("update_max_movement: warm failed: %s", exc, exc_info=True)
                     warm = {"terminal": "failed", "completed": 0, "reason": "error"}
 
-            async def recompute_maxima(market_ids=None):
+            async def recompute_maxima(market_ids=None, marker=""):
                 # Restrict the aggregate's INPUT, not only the UPDATE target:
                 # core outcome locks must not wait behind an all-market scan.
+                # `marker` is a SQL comment naming the caller (B-5's chunks).
                 params = {} if market_ids is None else {"market_ids": market_ids}
                 outcome_scope = (
                     "" if market_ids is None else " AND fo.market_id = ANY(:market_ids)"
@@ -4350,7 +4406,7 @@ def update_max_movement(self):
                 market_scope = (
                     "" if market_ids is None else " AND fm.id = ANY(:market_ids)"
                 )
-                recomputed = await session.execute(text("""
+                recomputed = await session.execute(text(marker + """
                     UPDATE futures_markets fm
                     SET max_movement_24h = sub.max_mv
                     FROM (
@@ -4364,7 +4420,7 @@ def update_max_movement(self):
                       AND fm.status IN ('open', 'active')
                       AND (fm.max_movement_24h IS DISTINCT FROM sub.max_mv)
                 """), params)
-                emptied = await session.execute(text("""
+                emptied = await session.execute(text(marker + """
                     UPDATE futures_markets fm
                     SET max_movement_24h = NULL
                     WHERE fm.status IN ('open', 'active')
@@ -5021,16 +5077,75 @@ def update_max_movement(self):
                 )
 
                 # Preserve the original full B/C maintenance for markets whose
-                # prices changed independently of retirement. Its new transaction
-                # owns no outcome locks, and re-arms the same local wait budget.
-                await session.execute(
-                    SET_LOCK_TIMEOUT_SQL,
-                    {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
+                # prices changed independently of retirement — on the heavy run
+                # only (B-5), and in chunks. One lock-free read lists the markets
+                # whose maximum B would change or C would clear; each chunk of
+                # `MOVEMENT_RETIRE_CHUNK` of them then runs the targeted B/C
+                # (the same statements, input restricted to the chunk) in its
+                # own transaction under the same 500 ms wait bound, so the value
+                # written is computed when it is written. A chunk that hits the
+                # bound rolls back alone and waits for the next heavy run; before
+                # B-5 one blocked market row (2 of 9 runs on 2026-11-06) threw
+                # away the whole recompute.
+                updated, cleared_markets = core_updated, core_cleared
+                recompute_lock_skipped = 0
+                recompute_ids = [] if not heavy else await bounded_prepare(
+                    "RECOMPUTE",
+                    """
+                        /* movement prepare: RECOMPUTE */
+                        SELECT fm.id
+                        FROM (
+                            SELECT fo.market_id,
+                                   MAX(ABS(fo.probability_change_24h)) AS max_mv
+                            FROM futures_outcomes fo
+                            WHERE fo.probability_change_24h IS NOT NULL
+                            GROUP BY fo.market_id
+                        ) sub
+                        JOIN futures_markets fm ON fm.id = sub.market_id
+                        WHERE fm.status IN ('open', 'active')
+                          AND fm.max_movement_24h IS DISTINCT FROM sub.max_mv
+                        UNION
+                        SELECT fm.id
+                        FROM futures_markets fm
+                        WHERE fm.status IN ('open', 'active')
+                          AND fm.max_movement_24h IS NOT NULL
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM futures_outcomes fo
+                              WHERE fo.market_id = fm.id
+                                AND fo.probability_change_24h IS NOT NULL
+                          )
+                        ORDER BY 1
+                    """,
+                    {},
+                    deadline_s=MOVEMENT_RECOMPUTE_DEADLINE_SECONDS,
                 )
-                updated, cleared_markets = await recompute_maxima()
-                updated += core_updated
-                cleared_markets += core_cleared
-                await session.commit()
+                # The read took no lock, and its statement_timeout is already
+                # restored, so the first chunk's transaction may simply carry on.
+                for start in range(0, len(recompute_ids), MOVEMENT_RETIRE_CHUNK):
+                    if retire_budget_spent(
+                        "RECOMPUTE", len(recompute_ids) - start,
+                        deadline_s=MOVEMENT_RECOMPUTE_DEADLINE_SECONDS,
+                    ):
+                        break
+                    chunk = recompute_ids[start:start + MOVEMENT_RETIRE_CHUNK]
+                    try:
+                        await session.execute(
+                            SET_LOCK_TIMEOUT_SQL,
+                            {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
+                        )
+                        chunk_updated, chunk_cleared = await recompute_maxima(
+                            chunk, marker="/* movement recompute */ ",
+                        )
+                        await session.commit()
+                    except Exception as exc:
+                        await session.rollback()
+                        if not is_lock_timeout(exc):
+                            raise
+                        recompute_lock_skipped += len(chunk)
+                        continue
+                    updated += chunk_updated
+                    cleared_markets += chunk_cleared
 
                 # A8's carrier key, shared by A8-DG / A9-DG below.
                 bank_key = DATED_BASIS_METADATA_KEY
@@ -5589,6 +5704,13 @@ def update_max_movement(self):
                 # it left for the next run (None when its read never ran). Empty
                 # on a run that finished every statement.
                 "retire_deferred": retire_deferred,
+                # B-5. Whether this was the hour's heavy run (A4/A7 scans and the
+                # full recompute ran), how many markets the full recompute read
+                # as needing work, and how many of those a 500 ms lock wait sent
+                # to the next heavy run. A light run reads False / 0 / 0.
+                "heavy_pass": heavy,
+                "recompute_candidates": len(recompute_ids),
+                "recompute_lock_skipped": recompute_lock_skipped,
                 "window_hours": MOVEMENT_WINDOW_HOURS,
                 "movers_warm": warm,
             }
@@ -8708,8 +8830,9 @@ celery_app.conf.beat_schedule = {
         # freshness window (CANDIDATE_BASE_FRESH_SECONDS) enforces the "no looser
         # than the anon feed freshness contract" bound; the bounded last-good key
         # + request-path publish keep cold pages covered between beats.
+        # #12042 L-1: its own lane, which `worker-background` serves first.
         "schedule": crontab(minute="*/2"),
-        "options": {"queue": "background"},
+        "options": {"queue": DISCOVER_BASE_QUEUE},
     },
     "prewarm-live-feed-shapes": {
         "task": "app.tasks.prewarm_live_feed_shapes",
@@ -8787,7 +8910,19 @@ celery_app.conf.beat_schedule = {
     },
     "update-max-movement": {
         "task": "app.tasks.update_max_movement",
-        "schedule": crontab(minute="*/10"),  # Every 10 minutes
+        # B-5 (worker audit 2026-11-06): five LIGHT runs an hour — the cheap
+        # sweeps and the banks with the whole retirement budget. The :20 run is
+        # the heavy one, below; together they are still every 10 minutes.
+        "schedule": crontab(minute="0,10,30,40,50"),
+        "kwargs": {"heavy": False},
+        "options": {"queue": "background"},
+    },
+    "update-max-movement-heavy": {
+        "task": "app.tasks.update_max_movement",
+        # B-5: the hour's one HEAVY run (`MOVEMENT_HEAVY_MINUTE`): A4/A7's
+        # snapshot LATERAL scans and the chunked full B/C recompute as well.
+        "schedule": crontab(minute=MOVEMENT_HEAVY_MINUTE),
+        "kwargs": {"heavy": True},
         "options": {"queue": "background"},
     },
     "collapse-odds-snapshots-daily": {
