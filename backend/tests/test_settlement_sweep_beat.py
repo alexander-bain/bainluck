@@ -764,8 +764,12 @@ class TestG8TheFireMinuteIsClearOnItsOwnQueue:
         )
 
         full = set(_background_cofires_at(10, 10))
+        # #12042 L-1: `precompute-discover-candidate-base` (*/2) left
+        # `background` for its own `discover_base` lane, so it no longer
+        # co-fires here; the */5 and */10 entries below still prove the
+        # enumerator sees sub-hourly cadences.
+        assert "precompute-discover-candidate-base" not in full
         assert full >= {
-            "precompute-discover-candidate-base",
             "warm-event-concepts",
             "run-freshness-watchdog",
             "update-max-movement",

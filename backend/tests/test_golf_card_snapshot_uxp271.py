@@ -24,9 +24,11 @@ from app.utils.golf_card_snapshot import (
     SNAPSHOT_KEY_PREFIX,
     SNAPSHOT_TTL_S,
     card_win_map,
+    card_win_display_map,
     card_win_receipt,
     progression_name_key,
     resolve_snapshot,
+    resolve_card_snapshot,
     snapshot_body,
     snapshot_key,
     stamp_card_payload,
@@ -274,6 +276,7 @@ class TestThePrecomputeRegistersBeforeItPublishes:
     async def test_the_published_card_carries_its_receipts(self, monkeypatch):
         """The stamp must reach the bytes stored under the card key, or the page
         never learns the receipt to send."""
+
         from contextlib import asynccontextmanager
 
         import app.routes.golf as golf_routes
@@ -307,3 +310,122 @@ class TestThePrecomputeRegistersBeforeItPublishes:
         receipt = card["tournaments"][0][CARD_RECEIPT_FIELD]
         assert receipt
         assert snapshot_key(receipt) in stored
+
+
+class TestNormalizedCardDisplayIsPinned:
+    @pytest.mark.parametrize(
+        "display",
+        [
+            None,
+            [],
+            {"name:alice smith": {"rendered_percent": 34}},
+            {"name:ghost": {"rendered_percent": 34, "change_24h": None}},
+            {"name:alice smith": {"rendered_percent": 34, "change_24h": float("nan")}},
+        ],
+    )
+    def test_a_malformed_display_cannot_blank_the_table(self, display):
+        wins = {"name:alice smith": 1 / 3}
+        raw = json.dumps({"tournament": TOURNAMENT, "wins": wins, "display": display})
+        receipt = card_win_receipt(wins, display)
+        assert resolve_card_snapshot(raw, receipt, TOURNAMENT) is None
+
+    def allocated_entry(self):
+        from app.utils.outcome_display import normalize_display_probs
+
+        rows = [
+            {"name": name, "probability": 0.4}
+            for name in ("Alice Smith", "Bob Jones", "Casey Reed")
+        ]
+        normalize_display_probs(rows)
+        for row, change in zip(rows, (0.02, 0.0, None)):
+            row.update(movement_24h=change, movement_is_dated=change is not None)
+        return {"name": TOURNAMENT, "golfers": rows}
+
+    def test_the_existing_receipt_preserves_allocations_and_zero_movement(self):
+        entry = self.allocated_entry()
+        payload = {"tournaments": [entry]}
+        writes = stamp_card_payload(payload)
+        wins, display = resolve_card_snapshot(
+            writes[0][1], entry[CARD_RECEIPT_FIELD], TOURNAMENT
+        )
+        assert wins == card_win_map(entry)
+        assert sorted(v["rendered_percent"] for v in display.values()) == [33, 33, 34]
+        assert sum(v["rendered_percent"] for v in display.values()) == 100
+        assert display[progression_name_key("Bob Jones")]["change_24h"] == 0
+        assert display[progression_name_key("Casey Reed")]["change_24h"] is None
+
+    def test_identical_floats_with_a_different_server_integer_have_distinct_receipts(
+        self,
+    ):
+        entry = self.allocated_entry()
+        wins, display = card_win_map(entry), card_win_display_map(entry)
+        first = card_win_receipt(wins, display)
+        display[progression_name_key("Alice Smith")]["rendered_percent"] += 1
+        assert card_win_receipt(wins, display) != first
+        assert (
+            resolve_card_snapshot(
+                snapshot_body(TOURNAMENT, wins, display), first, TOURNAMENT
+            )
+            is None
+        )
+
+    def test_an_undated_move_does_not_survive_as_a_normalized_day_comparison(self):
+        entry = self.allocated_entry()
+        entry["golfers"][0].update(movement_24h=0.4, movement_is_dated=False)
+        display = card_win_display_map(entry)
+        assert display[progression_name_key("Alice Smith")]["change_24h"] is None
+        assert display[progression_name_key("Bob Jones")]["change_24h"] == 0
+
+    @pytest.mark.parametrize("rendered", [-1, 101, True, 33.5, "34"])
+    def test_malformed_allocations_are_not_registered_or_resolved(self, rendered):
+        entry = self.allocated_entry()
+        entry["golfers"][0]["rendered_percent"] = rendered
+        display = card_win_display_map(entry)
+        assert len(display) == 2
+        assert progression_name_key("Alice Smith") not in display
+        wins = card_win_map(entry)
+        bad = {
+            progression_name_key("Alice Smith"): {
+                "rendered_percent": rendered,
+                "change_24h": None,
+            }
+        }
+        assert (
+            resolve_card_snapshot(
+                snapshot_body(TOURNAMENT, wins, bad),
+                card_win_receipt(wins, bad),
+                TOURNAMENT,
+            )
+            is None
+        )
+
+    def test_unallocated_cards_keep_the_original_receipt_and_precision(self):
+        payload = _payload()
+        body = stamp_card_payload(payload)[0][1]
+        receipt = payload["tournaments"][0][CARD_RECEIPT_FIELD]
+        assert receipt == card_win_receipt(card_win_map(payload["tournaments"][0]))
+        assert resolve_card_snapshot(body, receipt, TOURNAMENT) == (
+            card_win_map(payload["tournaments"][0]),
+            {},
+        )
+
+
+def test_allocated_snapshot_carries_rows_below_the_fifteen_golfer_preview():
+    rows = [
+        {
+            "name": f"Player {i}",
+            "probability": 0.05,
+            "rendered_percent": 5,
+            "movement_is_dated": True,
+            "movement_24h": 0,
+        }
+        for i in range(20)
+    ]
+    entry = {"name": TOURNAMENT, "golfers": rows[:15], "_all_golfers": rows}
+    writes = stamp_card_payload({"tournaments": [entry]})
+    wins, display = resolve_card_snapshot(
+        writes[0][1], entry[CARD_RECEIPT_FIELD], TOURNAMENT
+    )
+    assert len(wins) == len(display) == 20
+    assert wins[progression_name_key("Player 19")] == 0.05
+    assert display[progression_name_key("Player 19")]["rendered_percent"] == 5

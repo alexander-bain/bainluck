@@ -20,6 +20,7 @@ from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from app.utils.container_presentation import MEMBER_EVENT, event_destination
+from app.utils.field_band import _validate_narrative_copy
 from app.utils.tonights_games import _is_eligible, _parse_dt
 
 
@@ -258,7 +259,7 @@ def select_closest_window_events(
     count: int = 4,
     minimum: int = 4,
     league: Optional[str] = None,
-    footer_template: str = "Bain Luck blend · the 4 closest of {n} games tonight",
+    footer_template: str = "Combined probability · the 4 closest of {n} games tonight",
 ) -> RoundupMembers | RoundupRefusal:
     """Pure selector for ``window_events_closest``.
 
@@ -268,6 +269,8 @@ def select_closest_window_events(
     ``RoundupRefusal`` otherwise), selects the ``count`` games with the lowest
     blended leader probability, and orders them highest leader first.
     """
+    if footer_template:
+        _validate_narrative_copy(footer_template)
     required = max(1, int(minimum), int(count))
     eligible: list[_CandidateGame] = []
     seen_ids: set[int] = set()
@@ -498,6 +501,12 @@ def load_container_definition(path: Path | str) -> dict[str, Any]:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"Container definition at {path} must be a JSON object")
+    _validate_narrative_copy(
+        str(raw.get("name") or ""),
+        str(raw.get("footer") or ""),
+        str(raw.get("kicker") or ""),
+        str(raw.get("section_title") or ""),
+    )
     return raw
 
 
@@ -521,6 +530,12 @@ def build_window_events_closest_producer(
     category = str(definition.get("category") or "sports")
     section_title = str(definition.get("section_title") or "The 4 closest games")
     footer = str(definition.get("footer") or "")
+    _validate_narrative_copy(
+        name,
+        footer,
+        str(definition.get("kicker") or ""),
+        section_title,
+    )
     tag = str(definition.get("tag") or category.upper())
     story_key = f"roundup:{slug.removeprefix('roundup-')}"
     frozen_def = dict(definition)

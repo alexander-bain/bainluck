@@ -72,6 +72,13 @@ export type Truth =
   | { kind: "reviewed"; asOf: string; source?: SourceLink }
   | { kind: "planned"; waitingOn: string; ref?: RepoRef };
 
+/**
+ * What a `Figure` may carry: a measured figure, or a count read off a list we
+ * keep by hand (LAST REVIEWED with its date). A counted figure needs its source
+ * like any other, so here `source` is required.
+ */
+export type FigureTruth = MeasuredTruth | { kind: "reviewed"; asOf: string; source: SourceLink };
+
 export type TruthKind = Truth["kind"];
 
 export const TRUTH_KINDS: readonly TruthKind[] = ["live", "last_run", "reviewed", "planned"];
@@ -171,6 +178,20 @@ export function pacificClockLabel(asOf: string): string | null {
     minute: "2-digit",
   }).format(instant);
   return `${clock} PT`;
+}
+
+/**
+ * When a LIVE number is true as of: the clock on the reader's own Pacific day,
+ * and the day too when it is not today ("Nov 5, 9:31 PM PT"), so a payload
+ * built yesterday never reads as tonight's. Without a clock (prerender) only
+ * the time prints.
+ */
+export function liveStamp(asOf: string, now: Date | null): string | null {
+  const clock = pacificClockLabel(asOf);
+  if (!clock) return null;
+  if (!now) return clock;
+  const day = asOfCalendarDate(asOf);
+  return day && day !== pacificCalendarDate(now) ? `${pacificDayLabel(asOf)}, ${clock}` : clock;
 }
 
 /**

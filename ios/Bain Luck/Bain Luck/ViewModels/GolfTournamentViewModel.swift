@@ -62,6 +62,7 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
 
     /// The field, ranked, favourite first.
     let field: [GolfTournamentFieldRow]
+    let overflowOutcomes: [GolfGolferData]
 
     /// How many of `field` to draw before the reader asks for the rest.
     static let initiallyShown = 12
@@ -74,6 +75,7 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
         dateRange = formatDateRange(start: t.startDate, end: t.endDate)
         isMajor = t.isMajor == true
         tourLabel = t.tourLabel
+        overflowOutcomes = response.overflowOutcomes
 
         // ORDERED HERE, NOT TRUSTED FROM THE WIRE. The server sends rank 1..n
         // today, but a field sorted by anything else would print a 6.1%
@@ -97,7 +99,8 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
                     // server's `rank`: showing a "3" beside the second row is
                     // the disagreement this whole sort exists to prevent.
                     position: index + 1,
-                    movement24h: golfer.movement24h
+                    movement24h: golfer.movement24h,
+                    renderedPercent: golfer.renderedPercent
                 )
             }
     }
@@ -108,6 +111,11 @@ nonisolated struct GolfTournamentFieldRow: Equatable, Identifiable, Sendable {
     let probability: Double
     let position: Int
     let movement24h: Double?
+    var renderedPercent: Int? = nil
+
+    var probabilityLabel: String {
+        renderedPercent.map { formatProbability(probability, renderedPercent: $0) } ?? String(format: "%.1f%%", probability * 100)
+    }
 
     var id: String { name }
 

@@ -12,6 +12,8 @@ import EconomicsSkeleton from "@/components/skeletons/EconomicsSkeleton";
 import { fetchEconomics } from "@/lib/api";
 import { heatmapMinWidth, ratePathHeading } from "@/lib/fedRatePath";
 import type { EconData, EconDistribution } from "@/lib/api";
+import EconomicsAtlasView from "@/components/economics/EconomicsAtlasView";
+import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 
 // ---------------------------------------------------------------------------
 // Fed Heatmap Section
@@ -172,6 +174,8 @@ export default function EconomicsPage() {
   useScrollDepth({ pageType: "economics" });
   useEngagementTime({ pageType: "economics" });
 
+  const atlasEnabled = useAtlasPageOptIn();
+
   const { data, error } = useSWR("economics-data", fetchEconomics, { refreshInterval: 60000 });
 
   if (error || (data as { error?: string } | undefined)?.error) return (
@@ -185,6 +189,22 @@ export default function EconomicsPage() {
       <EconomicsSkeleton />
     </div>
   );
+
+  if (atlasEnabled) {
+    return (
+      <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
+        <div className="-mx-3 md:-mx-6 -mt-4 bg-surface-deep">
+          <EconomicsAtlasView data={data} />
+          <footer className="border-t border-surface-border bg-surface-card">
+            <div className="max-w-7xl mx-auto px-4 md:px-6 py-7 flex items-center justify-between flex-wrap gap-3 text-xs text-text-muted">
+              <span>Prediction market data · Not financial advice.</span>
+              <span className="font-mono">bainluck.com/economics</span>
+            </div>
+          </footer>
+        </div>
+      </ErrorBoundary>
+    );
+  }
 
   const t = data.themes;
 

@@ -265,6 +265,14 @@ from app.utils.feed_cache import (
     render_feed_page_from_base,
     warm_rail_max_shared_artifact_age_s,
 )
+from app.utils.ranking_eval import (
+    RANKER_VERSION_FIELD,
+    RANKER_VERSION_MAX,
+    SLATE_ID_MAX,
+    clip_event_field,
+    ranker_version,
+    ranking_snapshots_enabled,
+)
 from app.utils.feed_editions import (
     EDITION_LEASE_SECONDS,
     EDITION_STATUS_PINNED,
@@ -585,6 +593,11 @@ class DiscoverInteractionIn(BaseModel):
     surface: str = Field("unknown", max_length=20)
     source: str | None = Field(None, max_length=50)
     market_type: str | None = Field(None, max_length=20)
+    # #12095: the feed response's `edition` and `ranker_version` the card came
+    # from. No length limit on purpose — an oversize value is clipped at the
+    # write, never a 422 that would drop the whole batch.
+    slate_id: str | None = None
+    ranker_version: str | None = None
 
 
 class DiscoverInteractionBatch(BaseModel):
@@ -987,6 +1000,9 @@ async def record_discover_interactions(
         raw_prov = getattr(body, "provenance", None)  # type: ignore[attr-defined]
     provenance = normalize_provenance(raw_prov)
 
+    # #12095: slate fields are stored only while the harness switch is on;
+    # off, the row (and its INSERT) is exactly as before.
+    store_slate_fields = ranking_snapshots_enabled()
     rows = []
     for event in body.interactions:
         action = _normalize_discover_value(
@@ -1025,6 +1041,16 @@ async def record_discover_interactions(
                 source=event.source[:50] if event.source else None,
                 market_type=market_type,
                 provenance=provenance,
+                **(
+                    {
+                        "slate_id": clip_event_field(event.slate_id, SLATE_ID_MAX),
+                        "ranker_version": clip_event_field(
+                            event.ranker_version, RANKER_VERSION_MAX
+                        ),
+                    }
+                    if store_slate_fields
+                    else {}
+                ),
             )
         )
 
@@ -6283,6 +6309,36 @@ async def get_feed(
         if _capture is not None:
             _capture.record_chain_exit(feed_items, _chain_meta)
 
+        # #12091 (Decide 32-A): movement orders the concept cards. Dark unless
+        # DISCOVER_CONCEPT_MOVEMENT is on; Discover deck only. A permutation of
+        # the theme-bundle seats on the full deck, before collections, round-ups
+        # and the opening seating — which keeps the bundles' relative order.
+        from app.utils.concept_movement import (
+            apply_concept_movement,
+            concept_movement_enabled,
+        )
+
+        if concept_movement_enabled() and _feed_is_discover_deck(
+            mode=mode,
+            sport=sport,
+            category=category,
+            tags=tags,
+            my_teams_only=my_teams_only,
+            include_events=include_events,
+            include_futures=include_futures,
+        ):
+            _before_concepts = feed_items
+            # No `db`: the read runs on its own session, so a slow read can
+            # never leave this request's session dirty (#10530).
+            feed_items = await apply_concept_movement(
+                feed_items,
+                now=now,
+                budget_s=min(1.0, _feed_budget_remaining_s()),
+            )
+            if _capture is not None and feed_items is not _before_concepts:
+                # The offline replay does not run this stage.
+                _capture.abandon("concept_movement")
+
         if exclude_reviewed:
             reviewed_filter = {
                 "enabled": True,
@@ -6319,6 +6375,8 @@ async def get_feed(
                 _capture.abandon("theme_collection_refs")
 
         from app.utils.roundup_containers import (
+            ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS,
+            ROUNDUP_READ_BUDGET_SECONDS,
             add_roundup_feed_items,
             roundup_feed_enabled,
         )
@@ -6338,6 +6396,11 @@ async def get_feed(
                 feed_items,
                 page_window=DISCOVER_COMPOSITION_WINDOW,
                 budget_seconds=_feed_budget_remaining_s(),
+                stage_budget_seconds=(
+                    ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS
+                    if _prewarm_rebuild
+                    else ROUNDUP_READ_BUDGET_SECONDS
+                ),
                 now=now,
             )
             if _capture is not None and feed_items is not _before_roundups:
@@ -7534,6 +7597,29 @@ def _feed_opening_seating_policy(
     )
 
 
+def _feed_is_discover_deck(
+    *,
+    mode: Optional[str],
+    sport: Optional[str],
+    category: Optional[str],
+    tags: Optional[str],
+    my_teams_only: bool,
+    include_events: bool,
+    include_futures: bool,
+) -> bool:
+    """The Discover deck itself (#12091) — the request shape
+    ``_feed_opening_seating_policy`` seats, without its served switch."""
+    return bool(
+        (mode or "discover").lower() == "discover"
+        and sport is None
+        and category is None
+        and tags is None
+        and not my_teams_only
+        and include_events
+        and include_futures
+    )
+
+
 def _apply_opening_envelope(page: dict, outcome: Any, *, requested: bool) -> dict:
     """Stamp one usable ``compose_opening_edition`` outcome onto a page (#5105).
 
@@ -7906,6 +7992,11 @@ def _feed_page_payload(
         payload[FEED_EDITION_FIELD] = _edition
     if edition_status is not None:
         payload[FEED_EDITION_STATUS_FIELD] = edition_status
+    # #12095: the deploy that ranked this deck, beside its edition, so an event
+    # can carry both. A whole-deck fact like the edition (the page base carries
+    # it to every page). Absent while `RANKING_SNAPSHOTS` is off.
+    if ranking_snapshots_enabled():
+        payload[RANKER_VERSION_FIELD] = ranker_version()
     return payload
 
 
@@ -16656,7 +16747,9 @@ async def _score_golf_tournaments(
 
         # Build the reason text
         leader = golfers[0]
-        leader_pct = round(leader["probability"] * 100, 1)
+        leader_pct = leader.get("rendered_percent")
+        if leader_pct is None:
+            leader_pct = round(leader["probability"] * 100, 1)
         champion = t.get("champion")
         # `or`, not a .get() default: UX-P185 lets `tour_label` be present-and-None
         # for a tournament whose tour we cannot evidence, and a .get() default only
@@ -16764,6 +16857,8 @@ async def _score_golf_tournaments(
                 {
                     "name": g["name"],
                     "probability": g["probability"],
+                    **({"rendered_percent": g["rendered_percent"]}
+                       if g.get("rendered_percent") is not None else {}),
                     "rank": g["rank"],
                     "movement_24h": g.get("movement_24h"),
                     # #7226 — the flag the `reason` gate 50 lines above already

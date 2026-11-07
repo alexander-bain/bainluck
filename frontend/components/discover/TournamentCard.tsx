@@ -91,7 +91,7 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
               </>
             ) : (
               <>
-                <AnimatedProbability value={Math.round((leader.probability ?? 0) * 100)} className="text-5xl font-black text-white tabular-nums drop-shadow-lg" />
+                <AnimatedProbability value={leader.rendered_percent ?? Math.round((leader.probability ?? 0) * 100)} className="text-5xl font-black text-white tabular-nums drop-shadow-lg" />
                 <div className="text-white/70 text-sm mt-1">{leader.name}</div>
                 {/* #7226 — this badge's own accessible label is "Up N points in
                     the last 24h", so it may only render when the server says

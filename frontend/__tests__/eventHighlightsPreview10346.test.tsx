@@ -339,7 +339,7 @@ describe("#10346 one tap to the full catalogue", () => {
   it("the event page wraps the catalogue in that anchor and gates the mount", () => {
     const src = readFileSync(join(__dirname, "..", "app", "events", "[id]", "page.tsx"), "utf8");
     expect(src).toMatch(
-      /<div id=\{ALL_MARKETS_ANCHOR_ID\}[^>]*>\s*<QuestionCatalog data=\{gameMarkets\} status=\{event\.status\} \/>\s*<\/div>/,
+      /<div id=\{ALL_MARKETS_ANCHOR_ID\}[^>]*>\s*<QuestionCatalog data=\{gameMarkets\} status=\{event\.status\}(?: atlasMode=\{atlasOptIn\})? \/>\s*<\/div>/,
     );
     expect(src).toContain(
       "highlightsPreviewFor(event?.id, event?.status, searchParams.get(HIGHLIGHTS_PREVIEW_PARAM))",

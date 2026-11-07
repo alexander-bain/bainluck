@@ -99,28 +99,30 @@ def _production_rows():
 
 
 class TestTheLiveCardLeadsWithBothTeams:
-    async def test_the_specimen_reproduces_before_the_promotion(self, serve, monkeypatch):
-        """The vacuity guard: without the promotion, the replay IS the filing.
-
-        If this ever stops reading "USA first, International absent", the rows
-        below no longer reproduce the defect and every other assertion here
-        passes for a reason that has nothing to do with the fix.
-        """
+    async def test_the_full_field_survives_without_the_legacy_promotion(self, serve, monkeypatch):
+        """#11995 keeps the three-outcome winner upstream of the fallback."""
         monkeypatch.setattr(golf_route, "_promote_team_matchup_to_card", lambda _t: 0)
         card = _card(await serve(_production_rows()), "Presidents Cup")
 
         names = [g["name"] for g in card["golfers"]]
-        assert names[0] == "USA"
-        assert "International" not in names
-        assert "Hideki Matsuyama" in names
+        assert names == ["Team International", "Team USA"]
+        assert "Hideki Matsuyama" not in names
+        tie, = card["overflow_outcomes"]
+        assert tie["name"] == "Tie"
+        assert [g["rendered_percent"] for g in card["golfers"]] == [49, 42]
+        assert tie["rendered_percent"] == 9
 
     async def test_the_hero_is_the_team_market_with_the_larger_side_first(self, serve):
         """What the reader should see: International ahead, as both venues say."""
         card = _card(await serve(_production_rows()), "Presidents Cup")
 
         assert [g["name"] for g in card["golfers"]] == ["Team International", "Team USA"]
-        assert card["golfers"][0]["probability"] == pytest.approx(0.495)
-        assert card["golfers"][1]["probability"] == pytest.approx(0.425)
+        assert card["golfers"][0]["probability"] == pytest.approx(0.495 / 1.005)
+        assert card["golfers"][1]["probability"] == pytest.approx(0.425 / 1.005)
+        assert card["golfers"][0]["sources"] == {"kalshi": 0.495}
+        tie, = card["overflow_outcomes"]
+        assert tie["probability"] == pytest.approx(0.085 / 1.005)
+        assert sum(g["rendered_percent"] for g in [*card["golfers"], tie]) == 100
         assert [g["rank"] for g in card["golfers"]] == [1, 2]
 
     async def test_no_individual_player_is_left_under_the_team_hero(self, serve):

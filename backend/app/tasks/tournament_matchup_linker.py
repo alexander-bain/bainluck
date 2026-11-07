@@ -379,8 +379,15 @@ async def _link_tournament_matchups(
     from app.tasks.base import get_task_session
 
     started = _time.monotonic()
-    entries = WATCHED if watched is None else tuple(watched)
     now = _now()
+    if watched is None:
+        # C-1 / B-7: the scheduled run links only tournaments in their upkeep
+        # window (`tournament_price_refresh.in_season`); explicit lists always run.
+        from app.tasks.tournament_price_refresh import in_season
+
+        entries = tuple(e for e in WATCHED if in_season(e["tournament"], now))
+    else:
+        entries = tuple(watched)
 
     stats: dict[str, Any] = {
         "tournaments": 0,

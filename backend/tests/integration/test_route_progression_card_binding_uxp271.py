@@ -724,3 +724,58 @@ class TestTheCardRouteIssuesTheReceipt:
 
         assert body["golf_card_receipt"] == issued
         assert _renders(_win_of(body, "Matt Wallace")) == _renders(OLD_WALLACE)
+
+
+class TestNormalizedCardAllocation11995:
+    @pytest.mark.parametrize("pinned", [True, False])
+    async def test_card_integer_and_comparison_reach_the_win_column(
+        self, client, mock_db, monkeypatch, pinned
+    ):
+        from app.utils.golf_card_snapshot import stamp_card_payload
+        from app.utils.outcome_display import normalize_display_probs
+
+        rows = _golfers(0.4, 0.4, 0.4, 0.0)
+        normalize_display_probs(rows)
+        for row, change in zip(rows, (0.02, None, 0.0, None)):
+            row.update(movement_24h=change, movement_is_dated=change is not None)
+        payload = {"tournaments": [_entry(rows)]}
+        key, body = stamp_card_payload(payload)[0]
+        receipt = payload["tournaments"][0][CARD_RECEIPT_FIELD]
+        mapping = {
+            key: body,
+            CARD_KEY: json.dumps(_card_payload(NEW_GOLFERS) if pinned else payload),
+        }
+        reads = _install_redis(monkeypatch, mapping)
+        _wire_two_source(mock_db)
+
+        result = await _get(client, receipt=receipt if pinned else None)
+        assert result["golf_card_receipt"] == receipt
+        expected = {r["name"]: r for r in rows}
+        served = {p["name"]: p for p in result["participants"]}
+        for name in (
+            "Ryan Gerard",
+            "Matt Wallace",
+            "Nicolai Hojgaard",
+            "Eugenio Chacarra",
+        ):
+            card_name = "Nicolai Højgaard" if name == "Nicolai Hojgaard" else name
+            row = expected[card_name]
+            assert served[name]["probabilities"]["win"] == row["probability"]
+            assert served[name]["rendered_percents"]["win"] == row["rendered_percent"]
+            assert served[name]["changes_24h"].get("win") == row["movement_24h"]
+        assert (
+            sum(
+                served[n]["rendered_percents"]["win"]
+                for n in served
+                if n
+                in {
+                    "Ryan Gerard",
+                    "Matt Wallace",
+                    "Nicolai Hojgaard",
+                    "Eugenio Chacarra",
+                }
+            )
+            == 100
+        )
+        assert CARD_KEY not in reads.keys if pinned else reads.keys == [CARD_KEY]
+        assert _stage_of(result, "Ryan Gerard", "top_5") is not None

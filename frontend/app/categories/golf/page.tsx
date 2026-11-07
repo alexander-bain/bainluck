@@ -32,7 +32,7 @@ import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionViewWithFallback } from "@/components/golf/GolfWinnerEvolutionChart";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import TournamentCard from "@/components/TournamentCard";
-import { GolferRow } from "@/components/golf/GolferRow";
+import { GolferRow, GolfOverflowRows } from "@/components/golf/GolferRow";
 import UpcomingTournaments from "@/components/golf/UpcomingTournaments";
 // UX-P274 (#2672): lifted out of this file so a render test can reach it.
 import { MoversStrip } from "@/components/golf/MoversStrip";
@@ -788,6 +788,7 @@ function TournamentModal({
               showSourceBreakdown
             />
           ))}
+          <GolfOverflowRows outcomes={tournament.overflow_outcomes} />
         </div>
 
         {/* Footer */}
