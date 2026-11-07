@@ -176,6 +176,7 @@ nonisolated enum EventAtlasStoryCards11666 {
             pregameBaseline: pregameText,
             observedAtText: observedText,
             statusSummary: finish.missingCurrentNote,
+            statusLabel: "Delivery",
             sourceLabel: nil
         )
     }

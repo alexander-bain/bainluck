@@ -198,7 +198,9 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
     let pregameBaseline: String?
     let observedAtText: String?
     let statusSummary: String?
+    var statusLabel: String = "Context"
     let sourceLabel: String?
+    var originalSections: [MLBOriginal11284.Section] = []
 
     /// Builds the headline details sheet model from an `EventDetail` payload.
     static func fromHeadline(
@@ -304,6 +306,7 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
             pregameBaseline: pregameText,
             observedAtText: observedText,
             statusSummary: EventAtlasStates11666.connectionStatusLabel(for: liveStatus),
+            statusLabel: "Delivery",
             sourceLabel: sourceLabel
         )
     }
@@ -552,12 +555,30 @@ struct EventAtlasDetailsSheet11666: View {
                 }
 
                 if model.sourceLabel != nil || model.statusSummary != nil {
-                    Section("Source & Delivery") {
+                    Section(model.statusLabel == "Delivery" ? "Source & Delivery" : "Source & Context") {
                         if let source = model.sourceLabel {
                             LabeledContent("Source", value: source)
                         }
                         if let status = model.statusSummary {
-                            LabeledContent("Delivery", value: status)
+                            LabeledContent(model.statusLabel, value: status)
+                        }
+                    }
+                }
+
+                ForEach(Array(model.originalSections.enumerated()), id: \.offset) { _, section in
+                    if !section.fields.isEmpty {
+                        Section {
+                            ForEach(Array(section.fields.enumerated()), id: \.offset) { _, field in
+                                LabeledContent(field.label) {
+                                    Text(field.value)
+                                        .multilineTextAlignment(.trailing)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        } header: {
+                            if let title = section.title {
+                                Text(title)
+                            }
                         }
                     }
                 }

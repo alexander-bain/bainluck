@@ -24,7 +24,7 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
 
         XCTAssertEqual(
             EventAtlasStates11666.connectionStatusLabel(for: .awaitingUpdate, atlasEnabled: true),
-            "Loading"
+            LiveUpdateStatus.awaitingUpdate.title
         )
         XCTAssertEqual(
             EventAtlasStates11666.connectionStatusLabel(for: .awaitingUpdate, atlasEnabled: false),
@@ -182,6 +182,36 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
         XCTAssertNil(
             AllMarketsCatalogView9483.priceText(stale, status: "final", atlasEnabled: true)
         )
+
+        // Settled rows with an authoritative OutcomeVerdict print "✓ Won" / "✗ Lost" under Atlas,
+        // while remaining nil when Atlas is off or when no authoritative verdict exists.
+        let settledWon = QuestionCatalog9483.Outcome(
+            label: "Over 47.5",
+            threshold: 47.5,
+            probability: nil,
+            observedAt: nil,
+            absence: .settled,
+            verdict: .won
+        )
+        let settledLost = QuestionCatalog9483.Outcome(
+            label: "Under 47.5",
+            threshold: 47.5,
+            probability: nil,
+            observedAt: nil,
+            absence: .settled,
+            verdict: .lost
+        )
+        XCTAssertEqual(
+            AllMarketsCatalogView9483.priceText(settledWon, status: "final", atlasEnabled: true),
+            "✓ Won"
+        )
+        XCTAssertEqual(
+            AllMarketsCatalogView9483.priceText(settledLost, status: "final", atlasEnabled: true),
+            "✗ Lost"
+        )
+        XCTAssertNil(
+            AllMarketsCatalogView9483.priceText(settledWon, status: "final", atlasEnabled: false)
+        )
     }
 
     func testVerdictLabelsAndVenueDisagreementPending11666() {
@@ -237,7 +267,12 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
         XCTAssertNotNil(mergedEntry)
         if let entry = mergedEntry, case .verdict(let v) = view.treatment(for: entry) {
             XCTAssertEqual(view.resolvedVerdictText(for: entry, verdict: v, atlasEnabled: true), "Pending")
+            XCTAssertFalse(
+                view.verdictIsWonHighlight(for: entry, verdict: v, atlasEnabled: true),
+                "Disagreeing venue verdicts ('Pending') must never inherit the first venue's bold emerald styling"
+            )
             XCTAssertEqual(view.resolvedVerdictText(for: entry, verdict: v, atlasEnabled: false), "Won")
+            XCTAssertTrue(view.verdictIsWonHighlight(for: entry, verdict: v, atlasEnabled: false))
         } else {
             XCTFail("Expected merged settled outcome to resolve to .verdict")
         }
@@ -268,6 +303,7 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
         XCTAssertTrue(detailSrc.contains("EventAtlasHeroStateLabelView11666(label: stateLabel)"))
         XCTAssertTrue(catalogSrc.contains("case .stale: return atlasEnabled ? EventAtlasStates11666.noRecentPrice : noRecentPrice"))
         XCTAssertTrue(specialSrc.contains("EventAtlasStates11666.verdictDisplay(verdicts: allVerdicts, atlasEnabled: true)"))
-        XCTAssertTrue(specialSrc.contains("resolvedVerdictText(for: o, verdict: v)"))
+        XCTAssertTrue(specialSrc.contains("resolvedVerdictText(for: o, verdict: v"))
+        XCTAssertTrue(specialSrc.contains("verdictIsWonHighlight(for: o, verdict: v"))
     }
 }

@@ -100,13 +100,13 @@ enum MLBVenueResult11284: Hashable {
 /// Details show what was on screen until Refresh. Every value is named for
 /// what it is — saved chance, last recorded quote, final count, venue
 /// result — and none is merged into another.
-struct MLBOriginal11284: Equatable, Identifiable {
-    struct Field: Equatable {
+struct MLBOriginal11284: Equatable, Identifiable, Sendable {
+    struct Field: Equatable, Sendable {
         let label: String
         let value: String
     }
 
-    struct Section: Equatable {
+    struct Section: Equatable, Sendable {
         let title: String?
         let fields: [Field]
     }
@@ -718,12 +718,13 @@ struct MLBExtraInningsCard11284: Equatable {
         return stat == "extra innings"
     }
 
-    static func build(_ rows: [GameMarketOther], eventID: Int) -> MLBExtraInningsCard11284? {
+    static func build(_ rows: [GameMarketOther], eventID: Int, now: Date = Date()) -> MLBExtraInningsCard11284? {
         if ReleaseSurfaces.isEventPageAtlasEnabled() {
             let entries = EventAtlasMlbCards11666.buildExtraInningsEntries(
                 rows: rows,
                 finished: true,
-                isBefore: false
+                isBefore: false,
+                now: now
             )
             let outcomes = entries.map { entry in
                 var fields: [MLBOriginal11284.Field] = [

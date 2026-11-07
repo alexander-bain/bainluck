@@ -96,9 +96,18 @@ struct AllMarketsCatalogView9483: View, Equatable {
         atlasEnabled: Bool = ReleaseSurfaces.isEventPageAtlasEnabled()
     ) -> String? {
         if let p = outcome.probability { return formatProbability(p) }
-        if SettledQuote.isSettled(status) { return nil }
+        if SettledQuote.isSettled(status) {
+            if atlasEnabled, let v = outcome.verdict {
+                return EventAtlasStates11666.verdictLabel(v, atlasEnabled: true)
+            }
+            return nil
+        }
         switch outcome.absence {
-        case .settled: return nil
+        case .settled:
+            if atlasEnabled, let v = outcome.verdict {
+                return EventAtlasStates11666.verdictLabel(v, atlasEnabled: true)
+            }
+            return nil
         case .periodFinished: return periodFinished
         case .stale: return atlasEnabled ? EventAtlasStates11666.noRecentPrice : noRecentPrice
         case .unavailable, nil: return unavailablePrice
