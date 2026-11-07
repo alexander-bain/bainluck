@@ -220,4 +220,274 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         XCTAssertEqual(details.pregameBaseline, "12%")
         XCTAssertEqual(details.sourceLabel, "Kalshi")
     }
+
+    @MainActor
+    func testThreeWayBlendedPreferenceAndMultiSourceWithholdingWithDisagreementPending() throws {
+        let now = try XCTUnwrap("2026-11-06T22:00:00Z".asDate)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        // 1. Blended row is preferred over single-venue rows when present
+        let blendedJSON = """
+        [
+            {"_market_id": 701, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.50, "pregame_mark": 0.50, "observed_at": "2026-11-06T21:55:00Z", "source": "kalshi"},
+            {"_market_id": 701, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.25, "pregame_mark": 0.25, "observed_at": "2026-11-06T21:55:00Z", "source": "kalshi"},
+            {"_market_id": 701, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.25, "pregame_mark": 0.25, "observed_at": "2026-11-06T21:55:00Z", "source": "kalshi"},
+            {"_market_id": 702, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.54, "pregame_mark": 0.54, "observed_at": "2026-11-06T21:55:00Z", "source": "blended"},
+            {"_market_id": 702, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.24, "pregame_mark": 0.24, "observed_at": "2026-11-06T21:55:00Z", "source": "blended"},
+            {"_market_id": 702, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.22, "pregame_mark": 0.22, "observed_at": "2026-11-06T21:55:00Z", "source": "blended"}
+        ]
+        """
+        let blendedRows = try decoder.decode([GameMarketOther].self, from: Data(blendedJSON.utf8))
+        let blendedCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildThreeWayCard(
+                matrix: nil,
+                otherMarkets: blendedRows,
+                status: "scheduled",
+                commenceTime: "2026-11-06T23:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: now
+            )
+        )
+        XCTAssertEqual(blendedCard.source, "blended")
+        XCTAssertEqual(blendedCard.sourceCount, 1)
+        XCTAssertEqual(blendedCard.legs[0].quotedChance ?? 0, 0.54, accuracy: 1e-6)
+        let blendedSheet = EventAtlasSoccerCards11666.detailsModel(for: blendedCard.legs[0], card: blendedCard)
+        XCTAssertEqual(blendedSheet.sourceLabel, "Blended")
+
+        // 2. Multiple unblended sources without a blended row withhold probabilities and grade disagreement as Pending
+        let multiDisagreeJSON = """
+        [
+            {"_market_id": 710, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.50, "pregame_mark": 0.50, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "kalshi"},
+            {"_market_id": 710, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.25, "pregame_mark": 0.25, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "kalshi"},
+            {"_market_id": 710, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.25, "pregame_mark": 0.25, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "kalshi"},
+            {"_market_id": 711, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.56, "pregame_mark": 0.56, "observed_at": "2026-11-06T19:55:00Z", "source": "polymarket", "is_winner": false, "resolution_source": "polymarket"},
+            {"_market_id": 711, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.22, "pregame_mark": 0.22, "observed_at": "2026-11-06T19:55:00Z", "source": "polymarket", "is_winner": true, "resolution_source": "polymarket"},
+            {"_market_id": 711, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.22, "pregame_mark": 0.22, "observed_at": "2026-11-06T19:55:00Z", "source": "polymarket", "is_winner": false, "resolution_source": "polymarket"}
+        ]
+        """
+        let multiDisagreeRows = try decoder.decode([GameMarketOther].self, from: Data(multiDisagreeJSON.utf8))
+        let multiCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildThreeWayCard(
+                matrix: nil,
+                otherMarkets: multiDisagreeRows,
+                status: "completed",
+                commenceTime: "2026-11-06T20:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: now
+            )
+        )
+        XCTAssertNil(multiCard.source)
+        XCTAssertEqual(multiCard.sourceCount, 2)
+        for leg in multiCard.legs {
+            XCTAssertNil(leg.pregameChance, "Unblended multi-source probabilities must be withheld")
+            XCTAssertNil(leg.quotedChance)
+        }
+        // Arsenal and Draw had disagreeing verdicts across Kalshi and Polymarket -> nil result -> "Pending" in sheet
+        XCTAssertNil(multiCard.legs[0].result)
+        XCTAssertNil(multiCard.legs[1].result)
+        // Chelsea was agreed .lost across both venues
+        XCTAssertEqual(multiCard.legs[2].result, .lost)
+
+        let pendingSheet = EventAtlasSoccerCards11666.detailsModel(for: multiCard.legs[0], card: multiCard)
+        XCTAssertEqual(pendingSheet.primaryReadingLabel, "Result")
+        XCTAssertEqual(pendingSheet.primaryReadingValue, "Pending")
+    }
+
+    @MainActor
+    func testExactScore49CellGridKeepsWinningCellAndHighestProbabilityCellsVisible() throws {
+        let now = try XCTUnwrap("2026-11-06T22:00:00Z".asDate)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        var jsonItems: [String] = []
+        for h in 0...6 {
+            for a in 0...6 {
+                let isWinner = (h == 3 && a == 2)
+                let pregame: Double
+                if h == 1 && a == 1 {
+                    pregame = 0.16
+                } else if h == 2 && a == 1 {
+                    pregame = 0.14
+                } else if h == 3 && a == 2 {
+                    pregame = 0.04
+                } else {
+                    pregame = 0.01
+                }
+                let outcomeName = h == a
+                    ? "Draw \(h)-\(a)"
+                    : (h > a ? "Arsenal wins \(h)-\(a)" : "Chelsea wins \(a)-\(h)")
+                jsonItems.append("""
+                {
+                    "_market_id": 801,
+                    "market_name": "Exact Score",
+                    "outcome_name": "\(outcomeName)",
+                    "probability": \(isWinner ? 0.99 : 0.01),
+                    "pregame_mark": \(pregame),
+                    "observed_at": "2026-11-06T19:55:00Z",
+                    "source": "kalshi",
+                    "is_winner": \(isWinner ? "true" : "false"),
+                    "resolution_source": "official_score"
+                }
+                """)
+            }
+        }
+        let rows = try decoder.decode([GameMarketOther].self, from: Data("[\(jsonItems.joined(separator: ","))]".utf8))
+        let card = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildExactScoreCard(
+                matrix: nil,
+                otherMarkets: rows,
+                status: "completed",
+                commenceTime: "2026-11-06T20:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: now
+            )
+        )
+        XCTAssertEqual(card.cells.count, 49)
+        XCTAssertEqual(card.defaultSelectedKey, "3-2")
+        let visible12 = Array(card.cells.prefix(12))
+        XCTAssertEqual(visible12[0].key, "3-2", "Winning cell 3-2 must sit first in the visible 12-cell slice")
+        XCTAssertEqual(visible12[0].result, .won)
+        XCTAssertEqual(visible12[1].key, "1-1", "Highest-probability cell 1-1 must follow immediately")
+        XCTAssertEqual(visible12[2].key, "2-1", "Second-highest-probability cell 2-1 must follow next")
+    }
+
+    @MainActor
+    func testCardsDeckBuilderSlotOrderAndFlagOffNoOp() throws {
+        let now = try XCTUnwrap("2026-11-06T22:00:00Z".asDate)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        let gmJSON = """
+        {
+            "event_id": 15305495,
+            "spread": [],
+            "totals": [],
+            "player_props": [],
+            "game_question_matrix": {
+                "contract": "10238.v1",
+                "display_scope": "game",
+                "questions": [
+                    {
+                        "question_key": "q:goals:1.5",
+                        "label": "Total Goals O/U 1.5",
+                        "market_name": "Total Goals",
+                        "typing": {"state": "typed"},
+                        "kind": "count_threshold",
+                        "period": {"key": "full_game"},
+                        "subject": {"side": "game"},
+                        "quantity": {"key": "goals"},
+                        "predicate": {"relation": "ge", "line": 1.5},
+                        "options": [
+                            {
+                                "option_key": "over:1.5",
+                                "label": "Over 1.5 goals",
+                                "side": "over",
+                                "contributor_outcome_ids": [9100],
+                                "published": {"value_state": "not_quoted", "source": "kalshi"},
+                                "pregame_reading": {"state": "available", "basis": "pregame_pin", "outcome_id": 9100, "probability": 0.78, "observed_at": "2026-11-06T19:50:00Z"},
+                                "result": {"state": "won"}
+                            }
+                        ]
+                    },
+                    {
+                        "question_key": "q:goals:2.5",
+                        "label": "Total Goals O/U 2.5",
+                        "market_name": "Total Goals",
+                        "typing": {"state": "typed"},
+                        "kind": "count_threshold",
+                        "period": {"key": "full_game"},
+                        "subject": {"side": "game"},
+                        "quantity": {"key": "goals"},
+                        "predicate": {"relation": "ge", "line": 2.5},
+                        "options": [
+                            {
+                                "option_key": "over:2.5",
+                                "label": "Over 2.5 goals",
+                                "side": "over",
+                                "contributor_outcome_ids": [9101],
+                                "published": {"value_state": "not_quoted", "source": "kalshi"},
+                                "pregame_reading": {"state": "available", "basis": "pregame_pin", "outcome_id": 9101, "probability": 0.58, "observed_at": "2026-11-06T19:50:00Z"},
+                                "result": {"state": "won"}
+                            }
+                        ]
+                    },
+                    {
+                        "question_key": "q:goals:3.5",
+                        "label": "Total Goals O/U 3.5",
+                        "market_name": "Total Goals",
+                        "typing": {"state": "typed"},
+                        "kind": "count_threshold",
+                        "period": {"key": "full_game"},
+                        "subject": {"side": "game"},
+                        "quantity": {"key": "goals"},
+                        "predicate": {"relation": "ge", "line": 3.5},
+                        "options": [
+                            {
+                                "option_key": "over:3.5",
+                                "label": "Over 3.5 goals",
+                                "side": "over",
+                                "contributor_outcome_ids": [9102],
+                                "published": {"value_state": "not_quoted", "source": "kalshi"},
+                                "pregame_reading": {"state": "available", "basis": "pregame_pin", "outcome_id": 9102, "probability": 0.34, "observed_at": "2026-11-06T19:50:00Z"},
+                                "result": {"state": "lost"}
+                            }
+                        ]
+                    }
+                ]
+            },
+            "other": [
+                {"_market_id": 901, "market_name": "Match Winner", "outcome_name": "Arsenal FC", "probability": 0.99, "pregame_mark": 0.52, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "official_score"},
+                {"_market_id": 901, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.01, "pregame_mark": 0.26, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
+                {"_market_id": 901, "market_name": "Match Winner", "outcome_name": "Chelsea FC", "probability": 0.01, "pregame_mark": 0.22, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
+                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Draw 0-0", "probability": 0.01, "pregame_mark": 0.09, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
+                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Arsenal wins 1-0", "probability": 0.01, "pregame_mark": 0.14, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
+                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Draw 1-1", "probability": 0.01, "pregame_mark": 0.12, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
+                {"_market_id": 902, "market_name": "Exact Score", "outcome_name": "Arsenal wins 2-1", "probability": 0.99, "pregame_mark": 0.11, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "official_score"}
+            ]
+        }
+        """
+        let gm = try decoder.decode(GameMarketsResponse.self, from: Data(gmJSON.utf8))
+
+        let flagOffDeck = EventAtlasSoccerCards11666.cards(
+            sportKey: "soccer_epl",
+            atlasEnabled: false,
+            status: "completed",
+            commenceTime: "2026-11-06T20:00:00Z".asDate,
+            homeTeam: "Arsenal FC",
+            awayTeam: "Chelsea FC",
+            homeShort: "Arsenal",
+            awayShort: "Chelsea",
+            homeScore: 2,
+            awayScore: 1,
+            gameMarkets: gm,
+            now: now
+        )
+        XCTAssertTrue(flagOffDeck.isEmpty, "Flag-off soccer deck must return empty")
+
+        let flagOnDeck = EventAtlasSoccerCards11666.cards(
+            sportKey: "soccer_epl",
+            atlasEnabled: true,
+            status: "completed",
+            commenceTime: "2026-11-06T20:00:00Z".asDate,
+            homeTeam: "Arsenal FC",
+            awayTeam: "Chelsea FC",
+            homeShort: "Arsenal",
+            awayShort: "Chelsea",
+            homeScore: 2,
+            awayScore: 1,
+            gameMarkets: gm,
+            now: now
+        )
+        XCTAssertEqual(flagOnDeck.map(\.id), ["soccer:threeWay", "soccer:exactScore", "total"])
+    }
 }
