@@ -691,7 +691,8 @@ def authority_write(
       say *the authority reports this match in progress, so the close was
       wrong.*  It is safe precisely because ``in_progress`` here has lane1/054's
       ``play_refutes_upcoming`` folded in — a game on the board, not an inferred
-      clock.
+      clock.  ESPN's ``in`` flag with no game on the board and ESPN's own start
+      still ahead writes nothing (#12258).
     * ``decided`` -> ``status='completed'``, and only when the row is not
       already settled **and the format does not refute the result** (#5987 —
       :func:`result_refuted_by_format`; a best-of-five cannot be won in two
@@ -732,7 +733,9 @@ def authority_write(
     (midnight ET, ESPN's stand-in for "some time that day") is never written,
     and a correction that would push the start PAST a recorded completion is
     refused, because that inversion is gotcha #46 and manufacturing it here
-    would trip the audit that hunts for it.
+    would trip the audit that hunts for it.  And a match ESPN reports in play or
+    decided is never given a start still in the future (#12258): it has begun,
+    so that date is a later session or a listed time it beat.
 
     ═══ THE CORRECTION CARRIES ITS OWN PROVENANCE (#5971) ═══
 
@@ -774,6 +777,15 @@ def authority_write(
     changes: dict[str, Any] = {}
 
     if state == "in_progress":
+        # IN PLAY BY ESPN'S FLAG ALONE, BEFORE ESPN'S OWN START (#12258). With no
+        # game on the board and its own clock still ahead, the board contradicts
+        # itself, and the flag is not play: nothing is written until a game is on
+        # the board or that start has passed. A game on the board is play
+        # whatever the clock says (lane1/054), and is not held here.
+        if competition.get("sets_with_play") == 0 and espn_clock_says_not_started(
+            competition, now
+        ):
+            return {}
         if our_status != "live":
             changes["status"] = "live"
         if our_completed_at is not None:
@@ -870,7 +882,18 @@ def authority_write(
             # a correction that is no longer an inversion.
             completion = changes.get("completed_at", our_completed_at)
             inverts = completion is not None and espn_start > completion
-            if moved and not inverts:
+            # A MATCH ESPN SCORES HAS BEGUN, SO A DATE OF ITS STILL AHEAD IS NOT
+            # ITS START (#12258). ESPN moves the rest of a suspended match to the
+            # session it resumes in: Kabbaj v Blinkova (15342993) and Andreescu v
+            # Tubello (15343148) were the only matches of their round not played
+            # on Nov 6, and ESPN dated both to the next day. And a listed time can
+            # sit hours behind a match already under way (lane1/054's Taberner v
+            # Bergs). Writing either onto a row in play made it live before its
+            # own start, and the Flow Sentinel found both at 07:31Z on Nov 7,
+            # 2.5 h and 7.5 h ahead. Once that date has passed it is a time the
+            # match was being played at, and the correction proceeds as before.
+            ahead_of_play = state in SCORED_STATES and now is not None and espn_start > now
+            if moved and not inverts and not ahead_of_play:
                 changes["commence_time"] = espn_start
                 # NEVER WITHOUT THE VALUE, AND NEVER THE VALUE WITHOUT IT
                 # (#5971). Emitted from the same branch for the same reason
