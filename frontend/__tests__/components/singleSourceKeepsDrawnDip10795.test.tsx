@@ -110,14 +110,18 @@ describe("#10795 the dip drawn on a single-source live chart survives the next h
     expect(ranges(html)).toEqual(["51%-58%"]);
   });
 
-  it("hist3 (sparse REST refresh): the same dip stays, and the line still ends on the current reading", () => {
+  it("hist3 (sparse REST refresh): the dip's readings stay in the series, and the line still ends on the current reading", () => {
     const merged = page(HIST3, [...CAPTURED, REV_245]);
     const series = merged.win_prob_history!.polymarket;
     expect(DIP.map(ts => at(series, ts))).toEqual([0.525, 0.51, 0.565]);
     // The endpoint is untouched: the served row and edge, in place, last.
     expect(series.slice(-2)).toEqual(HIST3.win_prob_history!.polymarket.slice(-2));
     const html = render(merged);
-    expect(ranges(html)).toEqual(["51%-58%"]);
+    // #12298: once 20:19 holds the newest reading, 20:18 is a CLOSED minute and
+    // is drawn as its last value; only the current minute keeps a stroke (a
+    // window kept open grew one in every minute it watched). The readings are
+    // kept above, so nothing is erased from the data.
+    expect(ranges(html)).toEqual([]);
     expect(callout(html)).toBe("58%");
   });
 
