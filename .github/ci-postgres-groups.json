@@ -212,7 +212,8 @@
     "#9859 'sf giants' cards the San Francisco Giants and leads with their game (real Postgres)",
     "'oscars' lists no fighter named Oscar as a game, on the page or the dropdown (real Postgres)",
     "#9897 'chicago' puts Sunday's Bears game with the week's games (real Postgres)",
-    "#9940 'new york' leads with this week's games, not the city-twice ones (real Postgres)"
+    "#9940 'new york' leads with this week's games, not the city-twice ones (real Postgres)",
+    "#12252 shared tail — upload this attempt's 55-A retries for the flake sentinel"
   ],
   "isolated": [
     "#10702 exact Kalshi trace commit and rollback controls (real Postgres)",

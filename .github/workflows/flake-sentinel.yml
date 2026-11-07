@@ -1,0 +1,49 @@
+name: Flake Sentinel
+
+# #12252 item 2: once a day, read the last 7 days of CI from the Actions API and file one
+# `Flaky: <test id>` issue (through the sentinel rail's reconcile_issue) for every test that
+# failed and then passed on the same commit twice or more. While that issue is open, CI's
+# required jobs do not fail on the test and the non-required flaky-canary job runs it.
+# The script is backend/scripts/flake_sentinel.py; its report lands on the run's summary page.
+on:
+  schedule:
+    # 7:40 AM PST (15:40 UTC). GitHub's scheduler fires late in this repo (19-359 min,
+    # measured in heavy-sync.yml), so this is "once a day, in the morning", not 7:40 sharp.
+    - cron: "40 15 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report only; write no issues"
+        type: boolean
+        default: false
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: flake-sentinel
+  cancel-in-progress: false
+
+jobs:
+  sentinel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Read 7 days of CI and file flaky tests
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: python scripts/flake_sentinel.py $DRY_RUN
