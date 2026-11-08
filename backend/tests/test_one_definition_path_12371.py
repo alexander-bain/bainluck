@@ -437,3 +437,47 @@ class TestRottenTomatoesSelectorAndReleaseWindow:
         assert member_ids == [60481116, 66999001, 62383659, 65536662]
         assert 61251665 not in member_ids
         assert 66855794 not in member_ids
+
+
+class TestKindModuleFirstImport:
+    """Importing any round-up kind module first in a fresh Python interpreter must exit 0."""
+
+    @pytest.mark.parametrize(
+        "module_name",
+        [
+            "app.utils.awards_category_roundup",
+            "app.utils.discover_bundles",
+            "app.utils.field_band",
+            "app.utils.field_leaders",
+            "app.utils.register_closest",
+            "app.utils.roundup_containers",
+            "app.utils.same_deadline_board",
+            "app.utils.sibling_family",
+            "app.utils.week_events",
+            "app.utils.window_events_closest",
+            "app.utils.yardstick_pair",
+        ],
+    )
+    def test_importing_kind_module_first_exits_zero(
+        self, module_name: str
+    ) -> None:
+        import subprocess
+        import sys
+
+        backend_root = str(Path(__file__).resolve().parents[1])
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                f"import {module_name}; from app.utils.roundup_containers import ROUNDUP_PRODUCERS; assert len(ROUNDUP_PRODUCERS) >= 19",
+            ],
+            cwd=backend_root,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        assert proc.returncode == 0, (
+            f"Importing {module_name} first failed with code {proc.returncode}:\n"
+            f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+        )

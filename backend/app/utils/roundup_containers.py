@@ -1225,59 +1225,63 @@ def load_roundup_definitions_from_dir(
     return definitions
 
 
+_KIND_TO_MODULE_BUILDER: dict[str, tuple[str, str]] = {
+    "sibling_family": (
+        "app.utils.sibling_family",
+        "build_sibling_family_producer",
+    ),
+    "same_deadline_board": (
+        "app.utils.same_deadline_board",
+        "build_same_deadline_board_producer",
+    ),
+    "yardstick_pair": (
+        "app.utils.yardstick_pair",
+        "build_yardstick_pair_producer",
+    ),
+    "field_leaders": (
+        "app.utils.field_leaders",
+        "build_field_leaders_producer",
+    ),
+    "field_band": (
+        "app.utils.field_band",
+        "build_field_band_producer",
+    ),
+    "week_events": (
+        "app.utils.week_events",
+        "build_week_events_producer",
+    ),
+    "window_events_closest": (
+        "app.utils.window_events_closest",
+        "build_window_events_closest_producer",
+    ),
+    "register_closest": (
+        "app.utils.register_closest",
+        "build_register_closest_producer",
+    ),
+    "awards_category_roundup": (
+        "app.utils.awards_category_roundup",
+        "build_awards_category_producer",
+    ),
+}
+
+
 def build_roundup_producer_from_definition(
     definition: Mapping[str, Any],
 ) -> RoundupProducer:
     """Build a ``RoundupProducer`` for any supported ``rule.producer`` kind (60-A)."""
+    import importlib
+
     validated = validate_roundup_definition(definition)
     producer_kind = str(validated["rule"]["producer"])
-
-    if producer_kind == "sibling_family":
-        from app.utils.sibling_family import build_sibling_family_producer
-
-        return build_sibling_family_producer(validated)
-    if producer_kind == "same_deadline_board":
-        from app.utils.same_deadline_board import (
-            build_same_deadline_board_producer,
+    target = _KIND_TO_MODULE_BUILDER.get(producer_kind)
+    if target is None:
+        raise ValueError(
+            f"Unsupported round-up producer kind {producer_kind!r} in definition {validated['slug']!r}"
         )
-
-        return build_same_deadline_board_producer(validated)
-    if producer_kind == "yardstick_pair":
-        from app.utils.yardstick_pair import build_yardstick_pair_producer
-
-        return build_yardstick_pair_producer(validated)
-    if producer_kind == "field_leaders":
-        from app.utils.field_leaders import build_field_leaders_producer
-
-        return build_field_leaders_producer(validated)
-    if producer_kind == "field_band":
-        from app.utils.field_band import build_field_band_producer
-
-        return build_field_band_producer(validated)
-    if producer_kind == "week_events":
-        from app.utils.week_events import build_week_events_producer
-
-        return build_week_events_producer(validated)
-    if producer_kind == "window_events_closest":
-        from app.utils.window_events_closest import (
-            build_window_events_closest_producer,
-        )
-
-        return build_window_events_closest_producer(validated)
-    if producer_kind == "register_closest":
-        from app.utils.register_closest import build_register_closest_producer
-
-        return build_register_closest_producer(validated)
-    if producer_kind == "awards_category_roundup":
-        from app.utils.awards_category_roundup import (
-            build_awards_category_producer,
-        )
-
-        return build_awards_category_producer(validated)
-
-    raise ValueError(
-        f"Unsupported round-up producer kind {producer_kind!r} in definition {validated['slug']!r}"
-    )
+    mod_name, builder_name = target
+    mod = importlib.import_module(mod_name)
+    builder = getattr(mod, builder_name)
+    return builder(validated)
 
 
 _BUILTIN_SLUG_TO_MODULE_ATTR: dict[str, tuple[str, str]] = {
@@ -1360,6 +1364,16 @@ _BUILTIN_SLUG_TO_MODULE_ATTR: dict[str, tuple[str, str]] = {
 }
 
 
+def _yardstick_blocked_by_initializing_deadline_board() -> bool:
+    import sys
+
+    sdb_mod = sys.modules.get("app.utils.same_deadline_board")
+    return (
+        sdb_mod is not None
+        and getattr(sdb_mod, "BY_DECEMBER_31_PRODUCER", None) is None
+    )
+
+
 def register_roundup_definitions_from_dir(
     directory: Path | str = CONTAINERS_DATA_DIR,
     *,
@@ -1367,6 +1381,7 @@ def register_roundup_definitions_from_dir(
 ) -> dict[str, RoundupProducer]:
     """Load, validate, build, and register every ``*.json`` definition in ``directory`` (60-A)."""
     import importlib
+    import sys
 
     dir_path = Path(directory)
     definitions = load_roundup_definitions_from_dir(dir_path)
@@ -1383,11 +1398,36 @@ def register_roundup_definitions_from_dir(
             continue
         if not replace and is_canonical_dir and slug in _BUILTIN_SLUG_TO_MODULE_ATTR:
             mod_name, attr_name = _BUILTIN_SLUG_TO_MODULE_ATTR[slug]
-            mod = importlib.import_module(mod_name)
+            if (
+                mod_name == "app.utils.yardstick_pair"
+                and _yardstick_blocked_by_initializing_deadline_board()
+            ):
+                continue
+            mod = sys.modules.get(mod_name)
+            if mod is None:
+                mod = importlib.import_module(mod_name)
             named_producer = getattr(mod, attr_name, None)
             if named_producer is not None:
                 register_roundup_producer(named_producer)
                 registered[slug] = named_producer
+            # Never fall through to build_roundup_producer_from_definition when
+            # the module is still mid-import: its own bottom-of-file
+            # register_roundup_producer call completes registration.
+            continue
+        producer_kind = str(defn["rule"]["producer"])
+        target = _KIND_TO_MODULE_BUILDER.get(producer_kind)
+        if not replace and target is not None:
+            mod_name, builder_name = target
+            if (
+                mod_name == "app.utils.yardstick_pair"
+                and _yardstick_blocked_by_initializing_deadline_board()
+            ):
+                continue
+            existing_mod = sys.modules.get(mod_name)
+            if (
+                existing_mod is not None
+                and getattr(existing_mod, builder_name, None) is None
+            ):
                 continue
         producer = build_roundup_producer_from_definition(defn)
         register_roundup_producer(producer)
@@ -1397,9 +1437,17 @@ def register_roundup_definitions_from_dir(
 
 def _register_builtin_producers() -> None:
     import importlib
+    import sys
 
     for _slug, (mod_name, attr_name) in _BUILTIN_SLUG_TO_MODULE_ATTR.items():
-        mod = importlib.import_module(mod_name)
+        if (
+            mod_name == "app.utils.yardstick_pair"
+            and _yardstick_blocked_by_initializing_deadline_board()
+        ):
+            continue
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            mod = importlib.import_module(mod_name)
         named_producer = getattr(mod, attr_name, None)
         if named_producer is not None:
             register_roundup_producer(named_producer)

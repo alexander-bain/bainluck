@@ -1353,6 +1353,7 @@ BY_DECEMBER_31_PRODUCER: Any = build_same_deadline_board_producer(
     enabled=by_december_31_enabled,
 )
 _rc().register_roundup_producer(BY_DECEMBER_31_PRODUCER)
+_rc()._register_builtin_producers()
 
 
 async def by_november_30(
