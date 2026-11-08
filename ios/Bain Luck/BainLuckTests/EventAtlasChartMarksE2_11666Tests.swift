@@ -119,7 +119,7 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
             includesOpening: true
         )
         XCTAssertEqual(openingReadout?.outcomeName, "Celtics")
-        XCTAssertEqual(openingReadout?.badgeText, "Opening")
+        XCTAssertEqual(openingReadout?.badgeText, "Pregame")
         XCTAssertEqual(openingReadout?.probabilityText, "61%")
         XCTAssertEqual(openingReadout?.timestampTextPT, "Nov 6, 12:05:09 PM PT")
         XCTAssertEqual(openingReadout?.isOpening, true)
@@ -130,8 +130,48 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
             outcomeName: "Celtics",
             includesOpening: false
         )
-        XCTAssertEqual(sinceStartReadout?.badgeText, "Recorded", "Since Start range never badges a point as Opening")
+        XCTAssertEqual(sinceStartReadout?.badgeText, "Recorded", "Since Start range never badges a point as Pregame")
         XCTAssertEqual(sinceStartReadout?.isOpening, false)
+    }
+
+    func testObservationRowsChecksGameStartForOpeningAndBoundsSelectionSnapDistance() {
+        let kickoff = makeDate("2026-11-06T20:00:00Z")
+        let afterKickoff = makeDate("2026-11-06T20:15:00Z")
+        let later = makeDate("2026-11-06T21:00:00Z")
+        let farOutside = makeDate("2026-11-07T02:00:00Z")
+
+        let points = [
+            ChartDataPoint(date: afterKickoff, probability: 0.55, source: "aggregate"),
+            ChartDataPoint(date: later, probability: 0.68, source: "aggregate"),
+        ]
+
+        // First observation is after kickoff -> not marked as a pregame opening dot.
+        let rowsWithGameStart = EventAtlasChartMarks11666.observationRows(
+            dataPoints: points,
+            includesOpening: true,
+            selectedDate: nil,
+            gameStart: kickoff
+        )
+        XCTAssertEqual(rowsWithGameStart.count, 2)
+        XCTAssertFalse(rowsWithGameStart[0].isOpening)
+        XCTAssertTrue(rowsWithGameStart[0].isVisibleSolid)
+
+        // Selection far outside the series span does not snap across a multi-hour gap.
+        let farSelectionRows = EventAtlasChartMarks11666.observationRows(
+            dataPoints: points,
+            includesOpening: true,
+            selectedDate: farOutside,
+            gameStart: kickoff
+        )
+        XCTAssertFalse(farSelectionRows.contains(where: \.isSelected))
+        XCTAssertNil(
+            EventAtlasChartMarks11666.selectedReading(
+                rows: rowsWithGameStart,
+                selectedDate: farOutside,
+                outcomeName: "Celtics",
+                includesOpening: true
+            )
+        )
     }
 
     func testSettledResultComputesWonOrLostForEndingSideWithoutInventing100PercentSpike() {
@@ -151,7 +191,9 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
             EventAtlasChartMarks11666.settledResult(
                 dataPoints: homeWonPoints,
                 status: "completed",
-                sides: .homeAndAway
+                sides: .homeAndAway,
+                homeScoreOverride: 110,
+                awayScoreOverride: 102
             ),
             .won
         )
@@ -189,12 +231,14 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
             EventAtlasChartMarks11666.settledResult(
                 dataPoints: homeWonPoints,
                 status: "live",
-                sides: .homeAndAway
+                sides: .homeAndAway,
+                homeScoreOverride: 110,
+                awayScoreOverride: 102
             )
         )
     }
 
-    func testSettledResultPrefersPageScoreboardAndServedResultOverStaleHistoryAndTennisGames() throws {
+    func testSettledResultReliesStrictlyOnEventOutcomeResolveAndWithholdsOnFinalUnresolvedOrMissingScoreboard() throws {
         let t0 = makeDate("2026-11-06T20:00:00Z")
         let t1 = makeDate("2026-11-06T22:00:00Z")
 
@@ -223,15 +267,26 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let staleHistory = try decoder.decode(EventHistoryResponse.self, from: staleHistoryJSON)
 
-        // Without scoreboard override, fallback reads history (home 24 > away 21 -> .won).
-        XCTAssertEqual(
+        // Without confirmed page scoreboard or servedSettledResult, settledResult returns nil (never falls back to history scores).
+        XCTAssertNil(
             EventAtlasChartMarks11666.settledResult(
                 dataPoints: points,
                 history: staleHistory,
                 status: "completed",
                 sides: .homeAndAway
-            ),
-            .won
+            )
+        )
+
+        // On final_unresolved, settledResult returns nil even when scores are present (matching the hero's "Final").
+        XCTAssertNil(
+            EventAtlasChartMarks11666.settledResult(
+                dataPoints: points,
+                history: staleHistory,
+                status: "final_unresolved",
+                sides: .homeAndAway,
+                homeScoreOverride: 24,
+                awayScoreOverride: 28
+            )
         )
 
         // With the page's authoritative scoreboard (24-28), the scoreboard wins (.lost for home-favored ending point).
@@ -320,7 +375,8 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
         let source = try String(contentsOf: chartURL, encoding: .utf8)
         XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                        EventAtlasChartHeaderView11666("))
         XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                    EventAtlasChartOverlay11666("))
-        XCTAssertTrue(source.contains("homeScore: homeScore,\n                            awayScore: awayScore"))
-        XCTAssertTrue(source.contains("homeScore: homeScore,\n                        awayScore: awayScore"))
+        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                            gameStart: kickoffDate"))
+        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                        gameStart: kickoffDate"))
+        XCTAssertTrue(source.contains("if let finishedEnd, !hasAtlasSettledWord"))
     }
 }

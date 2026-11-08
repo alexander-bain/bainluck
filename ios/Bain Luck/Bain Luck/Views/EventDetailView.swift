@@ -537,6 +537,7 @@ struct EventDetailView: View {
                                      // for the full-size header's result line.
                                      homeScore: event.homeScore,
                                      awayScore: event.awayScore,
+                                     servedSettledResult: event.heroSettledResult,
                                      // #8320 — the page's one decision, so the
                                      // fullscreen dot cannot claim a push the
                                      // toolbar does not.

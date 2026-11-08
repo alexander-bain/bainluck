@@ -93,14 +93,29 @@ nonisolated enum EventAtlasChartMarks11666 {
         return max(1, Int(ceil(Double(pointCount) / 28.0)))
     }
 
-    /// Formats a date as an exact PT timestamp with seconds (e.g. `"Nov 6, 4:15:30 PM PT"`),
-    /// matching web `formatAtlasTimestampPT(ts, { includeSeconds: true })`.
-    static func formatExactTimestampPT(_ date: Date) -> String {
+    private static let exactTimestampFormatterPT: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
         formatter.dateFormat = "MMM d, h:mm:ss a"
-        return "\(formatter.string(from: date)) PT"
+        return formatter
+    }()
+
+    private static let exactTimestampLock = NSLock()
+
+    /// Formats a date as an exact PT timestamp with seconds (e.g. `"Nov 6, 4:15:30 PM PT"`),
+    /// matching web `formatAtlasTimestampPT(ts, { includeSeconds: true })`.
+    static func formatExactTimestampPT(_ date: Date) -> String {
+        exactTimestampLock.lock()
+        defer { exactTimestampLock.unlock() }
+        return "\(exactTimestampFormatterPT.string(from: date)) PT"
+    }
+
+    /// Maximum scrub-to-observation snap distance when a series spans at least two points.
+    /// Prevents a touch across an empty gap from selecting a distant change-point.
+    static func maxSelectionSnapSeconds(first: Date, last: Date) -> TimeInterval {
+        let span = max(0, last.timeIntervalSince(first))
+        return max(3600, span * 0.5)
     }
 
     /// Extracts real primary-series observations (`!isLiveEdge`, finite probability),
@@ -109,7 +124,8 @@ nonisolated enum EventAtlasChartMarks11666 {
         dataPoints: [ChartDataPoint],
         checkpoints: PublicationCheckpointMount4974? = nil,
         includesOpening: Bool,
-        selectedDate: Date? = nil
+        selectedDate: Date? = nil,
+        gameStart: Date? = nil
     ) -> [EventAtlasObservationRow11666] {
         let primarySource = OddsChartView.primarySource(in: dataPoints)
         let baseSeries: [ChartDataPoint] = (checkpoints?.survivors ?? dataPoints.filter { $0.source == primarySource })
@@ -136,18 +152,12 @@ nonisolated enum EventAtlasChartMarks11666 {
 
         guard !rawObservations.isEmpty else { return [] }
 
-        let selectedIndex: Int? = {
-            guard let selectedDate else { return nil }
-            return rawObservations.enumerated().min(by: {
-                abs($0.element.date.timeIntervalSince(selectedDate)) < abs($1.element.date.timeIntervalSince(selectedDate))
-            })?.offset
-        }()
-
+        let selectedIndex = resolveSelectedIndex(in: rawObservations, selectedDate: selectedDate)
         let count = rawObservations.count
         let stride = solidMarkStride(pointCount: count)
 
         return rawObservations.enumerated().map { index, obs in
-            let isOpening = includesOpening && index == 0
+            let isOpening = includesOpening && index == 0 && (gameStart == nil || obs.date <= gameStart!)
             let isLast = index == count - 1
             let isSelected = selectedIndex == index
             let isVisibleSolid = !isOpening && (isLast || isSelected || index % stride == 0)
@@ -162,18 +172,72 @@ nonisolated enum EventAtlasChartMarks11666 {
         }
     }
 
+    /// Resolves the nearest observation index within the snap bound for `selectedDate`.
+    static func resolveSelectedIndex(
+        in observations: [(date: Date, probability: Double)],
+        selectedDate: Date?
+    ) -> Int? {
+        guard let selectedDate, let first = observations.first, let last = observations.last else {
+            return nil
+        }
+        guard let nearest = observations.enumerated().min(by: {
+            abs($0.element.date.timeIntervalSince(selectedDate)) < abs($1.element.date.timeIntervalSince(selectedDate))
+        }) else {
+            return nil
+        }
+        if observations.count >= 2 {
+            let distance = abs(nearest.element.date.timeIntervalSince(selectedDate))
+            if distance > maxSelectionSnapSeconds(first: first.date, last: last.date) {
+                return nil
+            }
+        }
+        return nearest.offset
+    }
+
+    /// Applies `selectedDate` to pre-computed base rows (`selectedDate == nil`) without re-filtering `dataPoints`.
+    static func applyingSelection(
+        to baseRows: [EventAtlasObservationRow11666],
+        selectedDate: Date?
+    ) -> [EventAtlasObservationRow11666] {
+        guard let selectedDate, !baseRows.isEmpty else { return baseRows }
+        let tuples = baseRows.map { (date: $0.date, probability: $0.probability) }
+        guard let selectedIndex = resolveSelectedIndex(in: tuples, selectedDate: selectedDate) else {
+            return baseRows
+        }
+        let count = baseRows.count
+        let stride = solidMarkStride(pointCount: count)
+        return baseRows.map { row in
+            let isSelected = row.index == selectedIndex
+            guard isSelected != row.isSelected else { return row }
+            let isLast = row.index == count - 1
+            let isVisibleSolid = !row.isOpening && (isLast || isSelected || row.index % stride == 0)
+            return EventAtlasObservationRow11666(
+                index: row.index,
+                date: row.date,
+                probability: row.probability,
+                isOpening: row.isOpening,
+                isVisibleSolid: isVisibleSolid,
+                isSelected: isSelected
+            )
+        }
+    }
+
     /// Builds the selected reading readout model for the observation nearest `selectedDate`.
     static func selectedReading(
         rows: [EventAtlasObservationRow11666],
         selectedDate: Date?,
         outcomeName: String,
-        includesOpening: Bool
+        includesOpening: Bool,
+        openingLabel: String = "Pregame"
     ) -> EventAtlasSelectedReadingModel11666? {
-        guard selectedDate != nil, let row = rows.first(where: \.isSelected) else { return nil }
+        let resolvedRows = rows.contains(where: \.isSelected)
+            ? rows
+            : applyingSelection(to: rows, selectedDate: selectedDate)
+        guard selectedDate != nil, let row = resolvedRows.first(where: \.isSelected) else { return nil }
         let effectiveOpening = includesOpening && row.isOpening
         return EventAtlasSelectedReadingModel11666(
             outcomeName: outcomeName,
-            badgeText: effectiveOpening ? "Opening" : "Recorded",
+            badgeText: effectiveOpening ? openingLabel : "Recorded",
             probabilityText: formatProbability(row.probability),
             timestampTextPT: formatExactTimestampPT(row.date),
             isOpening: effectiveOpening
@@ -181,8 +245,9 @@ nonisolated enum EventAtlasChartMarks11666 {
     }
 
     /// Determines whether the finished primary line ends on the winning or losing side (`✓ Won` or `✗ Lost`).
-    /// Prefers the page's authoritative `EventOutcome.resolve` (`servedSettledResult` + `homeScoreOverride`/`awayScoreOverride`),
-    /// using chart history scores only as a last resort when the page scoreboard is absent.
+    /// Relies strictly on the page's authoritative `EventOutcome.resolve` (`servedSettledResult` +
+    /// `homeScoreOverride`/`awayScoreOverride`), never guessing a winner from mid-game history rows
+    /// when the page is `final_unresolved` or lacks confirmed scores.
     /// Returns `nil` when the game is not finished, scores are tied/absent, or there is no primary reading.
     static func settledResult(
         dataPoints: [ChartDataPoint],
@@ -203,30 +268,12 @@ nonisolated enum EventAtlasChartMarks11666 {
             return nil
         }
 
-        let resolvedOutcome: EventOutcome = {
-            let pageOutcome = EventOutcome.resolve(
-                status: status,
-                homeScore: homeScoreOverride,
-                awayScore: awayScoreOverride,
-                servedResult: servedSettledResult
-            )
-            if pageOutcome != .undecided {
-                return pageOutcome
-            }
-            if let espn = history?.espnHistory {
-                for entry in espn.reversed() {
-                    if let h = entry.homeScore, let a = entry.awayScore {
-                        return EventOutcome.resolve(status: status, homeScore: h, awayScore: a)
-                    }
-                }
-            }
-            for point in dataPoints.reversed() {
-                if let h = point.homeScore, let a = point.awayScore {
-                    return EventOutcome.resolve(status: status, homeScore: h, awayScore: a)
-                }
-            }
-            return .undecided
-        }()
+        let resolvedOutcome = EventOutcome.resolve(
+            status: status,
+            homeScore: homeScoreOverride,
+            awayScore: awayScoreOverride,
+            servedResult: servedSettledResult
+        )
 
         let homeWon: Bool
         switch resolvedOutcome {
@@ -267,9 +314,14 @@ nonisolated enum EventAtlasChartMarks11666 {
 
 // MARK: - SwiftUI Views (#11666 Step E2)
 
-/// Header above the native chart plot rendering the Atlas mark-grammar key and selected reading readout (#11666 Step E2).
+/// Header above the native chart plot rendering the Atlas mark-grammar key and a fixed-height
+/// selected reading readout slot (#11666 Step E2).
+///
+/// `selection` is observed only by `EventAtlasSelectedReadingSlot11666` (`#8651`), so scrubbing
+/// never rebuilds the static mark-grammar key, and the readout slot keeps a stable height so
+/// the chart plot below never jumps under the reader's finger.
 struct EventAtlasChartHeaderView11666: View {
-    @ObservedObject var selection: OddsChartSelection
+    let selection: OddsChartSelection
     let dataPoints: [ChartDataPoint]
     let checkpoints: PublicationCheckpointMount4974?
     let history: EventHistoryResponse?
@@ -281,6 +333,7 @@ struct EventAtlasChartHeaderView11666: View {
     var homeScore: Int? = nil
     var awayScore: Int? = nil
     var servedSettledResult: String? = nil
+    var gameStart: Date? = nil
 
     var body: some View {
         let settled = EventAtlasChartMarks11666.settledResult(
@@ -297,17 +350,12 @@ struct EventAtlasChartHeaderView11666: View {
             settledResult: settled,
             includesOpening: includesOpening
         )
-        let rows = EventAtlasChartMarks11666.observationRows(
+        let baseRows = EventAtlasChartMarks11666.observationRows(
             dataPoints: dataPoints,
             checkpoints: checkpoints,
             includesOpening: includesOpening,
-            selectedDate: selection.date
-        )
-        let selectedModel = EventAtlasChartMarks11666.selectedReading(
-            rows: rows,
-            selectedDate: selection.date,
-            outcomeName: homeName,
-            includesOpening: includesOpening
+            selectedDate: nil,
+            gameStart: gameStart
         )
 
         VStack(alignment: .leading, spacing: 6) {
@@ -356,68 +404,158 @@ struct EventAtlasChartHeaderView11666: View {
                     }
                     .accessibilityIdentifier("event.atlas.chartKeyResultWord")
                 }
-                Text(keyModel.tapHint)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("event.atlas.chartMarkKey")
 
-            if let selectedModel {
-                HStack(spacing: 6) {
-                    if selectedModel.isOpening {
-                        Circle()
-                            .strokeBorder(primaryColor, lineWidth: 2)
-                            .background(Circle().fill(Color.systemBackground))
-                            .frame(width: 8, height: 8)
-                    } else {
-                        Circle()
-                            .fill(primaryColor)
-                            .frame(width: 8, height: 8)
-                    }
-                    Text(selectedModel.outcomeName)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Text(selectedModel.badgeText.uppercased())
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
-                    Text(selectedModel.probabilityText)
-                        .font(.caption2.monospacedDigit().weight(.bold))
-                        .foregroundStyle(.primary)
-                    Text("·")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Text(selectedModel.timestampTextPT)
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    Button("Clear") {
-                        selection.end()
-                    }
-                    .font(.caption2.weight(.semibold))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("event.atlas.selectedReading")
-            }
+            EventAtlasSelectedReadingSlot11666(
+                selection: selection,
+                baseRows: baseRows,
+                outcomeName: homeName,
+                includesOpening: includesOpening,
+                openingLabel: keyModel.openingLabel,
+                tapHint: keyModel.tapHint,
+                primaryColor: primaryColor
+            )
         }
         .padding(.bottom, 2)
     }
 }
 
+/// Fixed-height readout slot that observes `selection` without shifting the chart plot vertically.
+private struct EventAtlasSelectedReadingSlot11666: View {
+    @ObservedObject var selection: OddsChartSelection
+    let baseRows: [EventAtlasObservationRow11666]
+    let outcomeName: String
+    let includesOpening: Bool
+    let openingLabel: String
+    let tapHint: String
+    let primaryColor: Color
+
+    var body: some View {
+        let selectedModel = EventAtlasChartMarks11666.selectedReading(
+            rows: baseRows,
+            selectedDate: selection.date,
+            outcomeName: outcomeName,
+            includesOpening: includesOpening,
+            openingLabel: openingLabel
+        )
+
+        Group {
+            if let selectedModel {
+                ViewThatFits(in: .horizontal) {
+                    singleLineReadout(selectedModel)
+                    twoLineReadout(selectedModel)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("event.atlas.selectedReading")
+            } else {
+                HStack(spacing: 6) {
+                    Text(tapHint)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 2)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .accessibilityIdentifier("event.atlas.selectedReadingPrompt")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func markDot(isOpening: Bool) -> some View {
+        if isOpening {
+            Circle()
+                .strokeBorder(primaryColor, lineWidth: 2)
+                .background(Circle().fill(Color.systemBackground))
+                .frame(width: 8, height: 8)
+        } else {
+            Circle()
+                .fill(primaryColor)
+                .frame(width: 8, height: 8)
+        }
+    }
+
+    private func singleLineReadout(_ selectedModel: EventAtlasSelectedReadingModel11666) -> some View {
+        HStack(spacing: 6) {
+            markDot(isOpening: selectedModel.isOpening)
+            Text(selectedModel.outcomeName)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: true, vertical: false)
+            Text(selectedModel.badgeText.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1.5)
+                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                .fixedSize(horizontal: true, vertical: false)
+            Text(selectedModel.probabilityText)
+                .font(.caption2.monospacedDigit().weight(.bold))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: true, vertical: false)
+            Text("·")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Text(selectedModel.timestampTextPT)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: 4)
+            Button("Clear") {
+                selection.end()
+            }
+            .font(.caption2.weight(.semibold))
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private func twoLineReadout(_ selectedModel: EventAtlasSelectedReadingModel11666) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                markDot(isOpening: selectedModel.isOpening)
+                Text(selectedModel.outcomeName)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(selectedModel.badgeText.uppercased())
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                Text(selectedModel.probabilityText)
+                    .font(.caption2.monospacedDigit().weight(.bold))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 4)
+                Button("Clear") {
+                    selection.end()
+                }
+                .font(.caption2.weight(.semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            Text(selectedModel.timestampTextPT)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 /// Chart plot overlay rendering the hollow opening mark (`○`), solid recorded marks (`●`),
 /// selected ring, and settled result word (`✓ Won` / `✗ Lost`) (#11666 Step E2).
+///
+/// Static marks are drawn without observing `selection`; only `EventAtlasSelectedMarkOverlay11666`
+/// subscribes to `selection`, preserving `#8651`'s scrub isolation.
 struct EventAtlasChartOverlay11666: View {
-    @ObservedObject var selection: OddsChartSelection
+    let selection: OddsChartSelection
     let proxy: ChartProxy
     let plotFrame: CGRect
     let dataPoints: [ChartDataPoint]
@@ -430,13 +568,15 @@ struct EventAtlasChartOverlay11666: View {
     var homeScore: Int? = nil
     var awayScore: Int? = nil
     var servedSettledResult: String? = nil
+    var gameStart: Date? = nil
 
     var body: some View {
-        let rows = EventAtlasChartMarks11666.observationRows(
+        let baseRows = EventAtlasChartMarks11666.observationRows(
             dataPoints: dataPoints,
             checkpoints: checkpoints,
             includesOpening: includesOpening,
-            selectedDate: selection.date
+            selectedDate: nil,
+            gameStart: gameStart
         )
         let settled = EventAtlasChartMarks11666.settledResult(
             dataPoints: dataPoints,
@@ -455,7 +595,7 @@ struct EventAtlasChartOverlay11666: View {
         )
 
         ZStack {
-            ForEach(rows) { row in
+            ForEach(baseRows) { row in
                 if let x = proxy.position(forX: row.date),
                    let y = proxy.position(forY: row.probability),
                    x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
@@ -467,29 +607,26 @@ struct EventAtlasChartOverlay11666: View {
                             .fill(Color.systemBackground)
                             .overlay(
                                 Circle()
-                                    .stroke(primaryColor, lineWidth: row.isSelected ? 2.5 : 2)
+                                    .stroke(primaryColor, lineWidth: 2)
                             )
-                            .frame(width: row.isSelected ? 10 : 8, height: row.isSelected ? 10 : 8)
+                            .frame(width: 8, height: 8)
                             .position(x: screenX, y: screenY)
                     } else if row.isVisibleSolid {
                         Circle()
                             .fill(primaryColor)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.systemBackground, lineWidth: row.isSelected ? 1.5 : 0)
-                            )
-                            .frame(width: row.isSelected ? 9 : 6, height: row.isSelected ? 9 : 6)
-                            .position(x: screenX, y: screenY)
-                    }
-
-                    if row.isSelected {
-                        Circle()
-                            .stroke(primaryColor.opacity(0.6), lineWidth: 1.5)
-                            .frame(width: 14, height: 14)
+                            .frame(width: 6, height: 6)
                             .position(x: screenX, y: screenY)
                     }
                 }
             }
+
+            EventAtlasSelectedMarkOverlay11666(
+                selection: selection,
+                baseRows: baseRows,
+                proxy: proxy,
+                plotFrame: plotFrame,
+                primaryColor: primaryColor
+            )
 
             if let settled, let end = finishedEnd,
                let x = proxy.position(forX: end.date),
@@ -516,5 +653,51 @@ struct EventAtlasChartOverlay11666: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// Lightweight selection ring overlay that observes `selection` without rebuilding static marks.
+private struct EventAtlasSelectedMarkOverlay11666: View {
+    @ObservedObject var selection: OddsChartSelection
+    let baseRows: [EventAtlasObservationRow11666]
+    let proxy: ChartProxy
+    let plotFrame: CGRect
+    let primaryColor: Color
+
+    var body: some View {
+        let rows = EventAtlasChartMarks11666.applyingSelection(to: baseRows, selectedDate: selection.date)
+        if let row = rows.first(where: \.isSelected),
+           let x = proxy.position(forX: row.date),
+           let y = proxy.position(forY: row.probability),
+           x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
+            let screenX = plotFrame.minX + x
+            let screenY = plotFrame.minY + y
+
+            ZStack {
+                if row.isOpening {
+                    Circle()
+                        .fill(Color.systemBackground)
+                        .overlay(
+                            Circle()
+                                .stroke(primaryColor, lineWidth: 2.5)
+                        )
+                        .frame(width: 10, height: 10)
+                        .position(x: screenX, y: screenY)
+                } else {
+                    Circle()
+                        .fill(primaryColor)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.systemBackground, lineWidth: 1.5)
+                        )
+                        .frame(width: 9, height: 9)
+                        .position(x: screenX, y: screenY)
+                }
+                Circle()
+                    .stroke(primaryColor.opacity(0.6), lineWidth: 1.5)
+                    .frame(width: 14, height: 14)
+                    .position(x: screenX, y: screenY)
+            }
+        }
     }
 }
