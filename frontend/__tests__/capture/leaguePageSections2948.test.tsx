@@ -214,11 +214,28 @@ describe("ux/1058 · SYNTHETIC — the live arm the corpus cannot supply", () =>
   });
 
   test("a suspended match is live, never Finished", () => {
-    const events = [...REAL_EVENTS, { ...live[0], id: 901, status: "suspended" }];
+    // #3016 — with a last score: the match stopped mid-play, which still heads
+    // the page. The scoreless row is the next test.
+    const events = [
+      ...REAL_EVENTS,
+      { ...live[0], id: 901, status: "suspended", home_score: 3, away_score: 2 },
+    ];
     const sections = sectionsWithIds(render(events));
     expect(sections[0].title).toBe("Live & Paused");
     expect(sections[0].ids).toEqual([901]);
     expect(sections[2].ids).not.toContain(901);
+  });
+
+  test("#3016: a suspended match with nothing to show renders below Upcoming, never Finished", () => {
+    // `/sports/soccer_other`, 2026-11-08 05:07Z, opened on 13 of these. On the
+    // parent this row heads the page under "Live & Paused".
+    const events = [...REAL_EVENTS, { ...live[0], id: 902, status: "suspended" }];
+    const sections = sectionsWithIds(render(events));
+    expect(sections.map((s) => s.title)).toEqual(["Upcoming", "No result reported", "Finished"]);
+    expect(sections[1].ids).toEqual([902]);
+    const ids = renderedIds(render(events), events.length);
+    expect(ids[0]).not.toBe(902);
+    expect(statusOf.get(ids[0])).toBe("scheduled");
   });
 });
 

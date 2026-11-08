@@ -258,6 +258,7 @@ from app.utils.search_match_class import (
     query_resolves_team,
 )
 from app.utils.blank_event_cards import not_a_blank_card
+from app.utils.event_list_order import in_reader_order
 from app.utils.feed_market_quality import (
     FEED_MIN_REAL_PROBABILITY,
     has_no_real_price,
@@ -18800,8 +18801,12 @@ async def list_events(
     for _formatted in formatted:
         attach_pregame_projection(_formatted, _projections.get(_formatted.get("id")))
 
+    # #3016: the games on now, then the games still to play, then the games
+    # behind us. Read off the SERVED rows, after the venue pass, and after the
+    # `limit`, so the page holds the same rows it always did. Only the order
+    # changes; `app/utils/event_list_order.py` says why not in SQL.
     return {
-        "events": formatted,
+        "events": in_reader_order(formatted),
         "count": len(events),
     }
 

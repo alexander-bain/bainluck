@@ -66,14 +66,43 @@
  * what the league did.
  *
  * PURE and NON-MUTATING — the caller's array is never sorted in place.
+ *
+ * ═══ #3016 — A ROW THAT SAYS NOTHING ABOUT THE GAME SITS BELOW UPCOMING ═══
+ *
+ * The ladder files a match that kicked off and reported nothing under "live",
+ * and it is right to: "upcoming" would claim it has not started and "finished"
+ * would claim a result. But the page rendered that bucket first, so the cards
+ * a reader met first were cards with nothing in them. Production 2026-11-08
+ * 05:07Z, `/sports/soccer_other`: the page opened on `Live & Paused 24`. Its
+ * first 13 cards were two club names and "No result reported", for games that
+ * kicked off 3-5 hours earlier. The 11 games actually being played came after
+ * them, and Upcoming after those.
+ *
+ * So the live bucket is split by what its card can show, not by status. A row
+ * with no reported result AND no score
+ * ({@link startedWithNothingToShow}) renders in its own section, titled in the
+ * card's own words (`SUSPENDED_LABEL`), after Upcoming and before Finished. The
+ * BUCKET is unchanged: the row is still the ladder's live row, never filed
+ * Finished and never Upcoming, so `leagueHorizon` still reads it as the league
+ * playing. Only where the page draws it moves.
+ *
+ * A paused match that HAS a score stays at the top: its card prints
+ * `No result reported · last score 3-2`, it is the rain delay `live/048` made
+ * the state for, and #3016 itself says real suspended rows must not be hidden.
+ * The discriminator is emptiness, not status.
  */
 
 import type { Event } from "@/lib/types";
-import { eventSectionKey, hasNoReportedResult, liveSectionTitle } from "@/lib/eventState";
+import {
+  eventSectionKey,
+  hasNoReportedResult,
+  liveSectionTitle,
+  SUSPENDED_LABEL,
+} from "@/lib/eventState";
 import { authorityStoppageLabel } from "@/lib/gameTimeLabel";
 
-/** The three buckets, in the order they are rendered. */
-export type LeagueSectionKey = "live" | "upcoming" | "finished";
+/** The four buckets, in the order they are rendered. */
+export type LeagueSectionKey = "live" | "upcoming" | "unreported" | "finished";
 
 export interface LeagueSection {
   key: LeagueSectionKey;
@@ -153,12 +182,33 @@ export function leagueSectionKey(
 }
 
 /**
+ * #3016 — a row whose card can say nothing about the game: no result reported
+ * and no score. See the module docblock.
+ *
+ * `hasNoReportedResult` with the served `started_without_result` is the card's
+ * own test for printing "No result reported" (`EventCard`'s `isSuspended`), so
+ * this cannot disagree with the sentence on the card. The score test is
+ * `suspendedSummary`'s: a missing side means the card prints the bare label.
+ */
+export function startedWithNothingToShow(
+  event: Event,
+  now: number = Date.now(),
+): boolean {
+  return (
+    hasNoReportedResult(event.status, event.commence_time, now, event.started_without_result) &&
+    (event.home_score == null || event.away_score == null)
+  );
+}
+
+/**
  * Split a league's events into the sections the page renders.
  *
  * Live keeps payload order — there is no "sooner" among games already being
  * played. Upcoming runs soonest-first; Finished runs most-recent-first. Both
  * match `app/my-stuff/page.tsx`, which is the closest sibling that partitions a
- * list of events on a page rather than sectioning a feed.
+ * list of events on a page rather than sectioning a feed. #3016's unreported
+ * rows run most-recent-kickoff-first, as Finished does: the game that just
+ * happened is the one a reader is most likely looking for.
  *
  * An empty bucket emits no section, so a league with only scheduled games gets
  * exactly one heading rather than two empty ones.
@@ -171,6 +221,7 @@ export function buildLeagueSections(
 ): LeagueSection[] {
   const live: Event[] = [];
   const upcoming: Event[] = [];
+  const unreported: Event[] = [];
   const finished: Event[] = [];
 
   for (const event of events) {
@@ -184,13 +235,18 @@ export function buildLeagueSections(
     // the ladder reads the two raw keys itself; a boolean computed here would
     // be the second predicate whose drift from the card's is this issue.
     const section = leagueSectionKey(event, now);
-    if (section === "live") live.push(event);
+    // #3016 — still the ladder's live row; only where the page draws it moves.
+    if (section === "live" && startedWithNothingToShow(event, now)) unreported.push(event);
+    else if (section === "live") live.push(event);
     else if (section === "finished") finished.push(event);
     else upcoming.push(event);
   }
 
   const upcomingSorted = [...upcoming].sort((a, b) =>
     compareNullsLast(timeOf(a.commence_time), timeOf(b.commence_time), 1),
+  );
+  const unreportedSorted = [...unreported].sort((a, b) =>
+    compareNullsLast(timeOf(a.commence_time), timeOf(b.commence_time), -1),
   );
   const finishedSorted = [...finished].sort((a, b) =>
     compareNullsLast(finishedAt(a), finishedAt(b), -1),
@@ -212,6 +268,9 @@ export function buildLeagueSections(
   }
   if (upcomingSorted.length > 0) {
     sections.push({ key: "upcoming", title: "Upcoming", events: upcomingSorted });
+  }
+  if (unreportedSorted.length > 0) {
+    sections.push({ key: "unreported", title: SUSPENDED_LABEL, events: unreportedSorted });
   }
   if (finishedSorted.length > 0) {
     sections.push({ key: "finished", title: "Finished", events: finishedSorted });
