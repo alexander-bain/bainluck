@@ -17,6 +17,7 @@ final class GolfTournamentViewModel: ObservableObject {
     }
 
     @Published private(set) var state: State = .loading
+    @Published private(set) var atlasData: EventAtlasGolfTournament11666.TournamentAtlasData = .init()
 
     let slug: String
 
@@ -32,7 +33,11 @@ final class GolfTournamentViewModel: ObservableObject {
 
         do {
             let response = try await APIClient.shared.fetchGolfTournament(slug: slug)
-            state = .loaded(GolfTournamentPresentation(response: response))
+            let presentation = GolfTournamentPresentation(response: response)
+            state = .loaded(presentation)
+            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                atlasData = await Self.loadAtlasData(for: response)
+            }
             logger.info("Golf tournament \(self.slug, privacy: .public) loaded")
         } catch {
             if case .loaded = state {
@@ -44,6 +49,56 @@ final class GolfTournamentViewModel: ObservableObject {
                 logger.error("Golf tournament \(self.slug, privacy: .public) error: \(error)")
             }
         }
+    }
+
+    private static func loadAtlasData(
+        for response: GolfTournamentDetailResponse
+    ) async -> EventAtlasGolfTournament11666.TournamentAtlasData {
+        var out = EventAtlasGolfTournament11666.TournamentAtlasData()
+        let winnerId = response.evolutionMarketId
+            ?? response.markets.first(where: { $0.type == "winner" })?.marketIds.first
+        let top5Id = response.markets.first(where: { $0.type == "top_5" })?.marketIds.first
+        let top10Id = response.markets.first(where: { $0.type == "top_10" })?.marketIds.first
+        let top20Id = response.markets.first(where: { $0.type == "top_20" })?.marketIds.first
+        let makeCutId = response.markets.first(where: { $0.type == "make_cut" })?.marketIds.first
+
+        async let winnerDetail: FuturesMarketDetail? = {
+            guard let id = winnerId else { return nil }
+            return try? await APIClient.shared.fetchFuturesDetail(id: id)
+        }()
+        async let winnerTimeline: ProbabilityTimelineResponse? = {
+            guard let id = winnerId else { return nil }
+            return try? await APIClient.shared.fetchProbabilityTimeline(
+                marketId: id,
+                top: 20,
+                hours: 168,
+                fullRange: true
+            )
+        }()
+        async let top5Detail: FuturesMarketDetail? = {
+            guard let id = top5Id else { return nil }
+            return try? await APIClient.shared.fetchFuturesDetail(id: id)
+        }()
+        async let top10Detail: FuturesMarketDetail? = {
+            guard let id = top10Id else { return nil }
+            return try? await APIClient.shared.fetchFuturesDetail(id: id)
+        }()
+        async let top20Detail: FuturesMarketDetail? = {
+            guard let id = top20Id else { return nil }
+            return try? await APIClient.shared.fetchFuturesDetail(id: id)
+        }()
+        async let makeCutDetail: FuturesMarketDetail? = {
+            guard let id = makeCutId else { return nil }
+            return try? await APIClient.shared.fetchFuturesDetail(id: id)
+        }()
+
+        out.winnerMarket = await winnerDetail
+        out.winnerTimeline = await winnerTimeline
+        out.top5Market = await top5Detail
+        out.top10Market = await top10Detail
+        out.top20Market = await top20Detail
+        out.makeCutMarket = await makeCutDetail
+        return out
     }
 }
 
@@ -59,6 +114,11 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
     let dateRange: String?
     let isMajor: Bool
     let tourLabel: String?
+    var scheduleStatus: String? = nil
+    var commenceTime: String? = nil
+    var evolutionMarketId: Int? = nil
+    var markets: [GolfTournamentMarketGroup] = []
+    var roundTopGroups: [GolfRoundTopGroup] = []
 
     /// The field, ranked, favourite first.
     let field: [GolfTournamentFieldRow]
@@ -75,6 +135,11 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
         dateRange = formatDateRange(start: t.startDate, end: t.endDate)
         isMajor = t.isMajor == true
         tourLabel = t.tourLabel
+        scheduleStatus = t.scheduleStatus
+        commenceTime = t.commenceTime ?? t.startDate
+        evolutionMarketId = response.evolutionMarketId
+        markets = response.markets
+        roundTopGroups = response.roundTopGroups
         overflowOutcomes = response.overflowOutcomes
 
         // ORDERED HERE, NOT TRUSTED FROM THE WIRE. The server sends rank 1..n
@@ -100,7 +165,9 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
                     // the disagreement this whole sort exists to prevent.
                     position: index + 1,
                     movement24h: golfer.movement24h,
-                    renderedPercent: golfer.renderedPercent
+                    renderedPercent: golfer.renderedPercent,
+                    openingProbability: golfer.openingProbability,
+                    isWinner: (golfer.isWinner == true) || (golfer.won == true) ? true : golfer.isWinner
                 )
             }
     }
@@ -112,6 +179,8 @@ nonisolated struct GolfTournamentFieldRow: Equatable, Identifiable, Sendable {
     let position: Int
     let movement24h: Double?
     var renderedPercent: Int? = nil
+    var openingProbability: Double? = nil
+    var isWinner: Bool? = nil
 
     var probabilityLabel: String {
         renderedPercent.map { formatProbability(probability, renderedPercent: $0) } ?? String(format: "%.1f%%", probability * 100)

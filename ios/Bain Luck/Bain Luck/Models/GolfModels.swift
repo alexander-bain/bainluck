@@ -135,8 +135,32 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable, Equatable 
     let movement24h: Double?
     let openingProbability: Double?
     let americanOdds: Int?
+    var isWinner: Bool? = nil
+    var won: Bool? = nil
 
     var id: String { name }
+
+    init(
+        name: String,
+        probability: Double,
+        renderedPercent: Int? = nil,
+        rank: Int? = nil,
+        movement24h: Double? = nil,
+        openingProbability: Double? = nil,
+        americanOdds: Int? = nil,
+        isWinner: Bool? = nil,
+        won: Bool? = nil
+    ) {
+        self.name = name
+        self.probability = probability
+        self.renderedPercent = renderedPercent
+        self.rank = rank
+        self.movement24h = movement24h
+        self.openingProbability = openingProbability
+        self.americanOdds = americanOdds
+        self.isWinner = isWinner
+        self.won = won
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -149,12 +173,15 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable, Equatable 
         movement24h = try? container.decodeIfPresent(Double.self, forKey: .movement24h)
         openingProbability = try container.decodeIfPresent(Double.self, forKey: .openingProbability)
         americanOdds = try container.decodeIfPresent(Int.self, forKey: .americanOdds)
+        isWinner = try? container.decodeIfPresent(Bool.self, forKey: .isWinner)
+        won = try? container.decodeIfPresent(Bool.self, forKey: .won)
     }
 
     private enum CodingKeys: String, CodingKey {
         // `movement_24h` converts to the key `movement24H`, not `movement24h` —
         // the previous raw value here matched nothing. See `TolerantNumeric`.
         case name, probability, renderedPercent, rank, movement24h = "movement24H", openingProbability, americanOdds
+        case isWinner, won
     }
 }
 
@@ -238,11 +265,81 @@ nonisolated struct GolfScheduleEntry: Decodable, Sendable, Identifiable {
 /// `tournament.golfers` is empty here and the field is read from `golfers`.
 /// Do not "tidy" that by reaching for `tournament.golfers`; it is the shape the
 /// server sends.
+nonisolated struct GolfTournamentMarketGroup: Decodable, Equatable, Sendable {
+    let type: String
+    let label: String
+    let marketIds: [Int]
+    let marketNames: [String]
+
+    init(type: String, label: String, marketIds: [Int], marketNames: [String] = []) {
+        self.type = type
+        self.label = label
+        self.marketIds = marketIds
+        self.marketNames = marketNames
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(String.self, forKey: .type)
+        label = (try? container.decodeIfPresent(String.self, forKey: .label)) ?? type
+        marketIds = (try? container.decodeIfPresent([Int].self, forKey: .marketIds)) ?? []
+        marketNames = (try? container.decodeIfPresent([String].self, forKey: .marketNames)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, label, marketIds, marketNames
+    }
+}
+
+nonisolated struct GolfRoundTopOutcome: Decodable, Equatable, Identifiable, Sendable {
+    let name: String
+    let probability: Double
+    let openingProbability: Double?
+
+    var id: String { name }
+}
+
+nonisolated struct GolfRoundTopGroup: Decodable, Equatable, Identifiable, Sendable {
+    let marketId: Int
+    let marketName: String
+    let round: Int?
+    let topN: Int?
+    let kind: String
+    let label: String
+    let source: String?
+    let outcomes: [GolfRoundTopOutcome]
+    let settled: Bool?
+    let gradedWinner: String?
+
+    var id: Int { marketId }
+}
+
 nonisolated struct GolfTournamentDetailResponse: Decodable, Sendable {
     let tournament: GolfTournamentData
     let golfers: [GolfGolferData]
     let overflowOutcomes: [GolfGolferData]
     let biggestMovers: [GolfMoverData]
+    let evolutionMarketId: Int?
+    let markets: [GolfTournamentMarketGroup]
+    let roundTopGroups: [GolfRoundTopGroup]
+
+    init(
+        tournament: GolfTournamentData,
+        golfers: [GolfGolferData],
+        overflowOutcomes: [GolfGolferData] = [],
+        biggestMovers: [GolfMoverData] = [],
+        evolutionMarketId: Int? = nil,
+        markets: [GolfTournamentMarketGroup] = [],
+        roundTopGroups: [GolfRoundTopGroup] = []
+    ) {
+        self.tournament = tournament
+        self.golfers = golfers
+        self.overflowOutcomes = overflowOutcomes
+        self.biggestMovers = biggestMovers
+        self.evolutionMarketId = evolutionMarketId
+        self.markets = markets
+        self.roundTopGroups = roundTopGroups
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -253,9 +350,13 @@ nonisolated struct GolfTournamentDetailResponse: Decodable, Sendable {
         golfers = (try? container.decodeIfPresent([GolfGolferData].self, forKey: .golfers)) ?? []
         overflowOutcomes = try container.decodeIfPresent([GolfGolferData].self, forKey: .overflowOutcomes) ?? []
         biggestMovers = (try? container.decodeIfPresent([GolfMoverData].self, forKey: .biggestMovers)) ?? []
+        evolutionMarketId = try? container.decodeIfPresent(Int.self, forKey: .evolutionMarketId)
+        markets = (try? container.decodeIfPresent([GolfTournamentMarketGroup].self, forKey: .markets)) ?? []
+        roundTopGroups = (try? container.decodeIfPresent([GolfRoundTopGroup].self, forKey: .roundTopGroups)) ?? []
     }
 
     private enum CodingKeys: String, CodingKey {
         case tournament, golfers, overflowOutcomes, biggestMovers
+        case evolutionMarketId, markets, roundTopGroups
     }
 }
