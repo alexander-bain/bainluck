@@ -8,11 +8,10 @@ The Search consumer of ``app.services.container_discovery``. It adds ONE
 optional top-level key to the ``GET /api/events/search`` payload, and nothing
 else in that payload moves:
 
-* ``collections`` — at most ``SEARCH_COLLECTIONS_CAP`` producer cards, exactly
-  as ``discover_collections`` emits them, most-matched first. It is present only
-  when there is at least one card, so with the flags off, with no matching hub,
-  or when the read fails or overruns, the payload is byte-identical to the one
-  released clients already decode ("missing field = no collections").
+* ``collections`` — at most ``SEARCH_COLLECTIONS_CAP`` producer cards. It is
+  present only when there is at least one card. With the flags off or with no
+  matching hub, the ordinary payload is unchanged. Failed or unfinished query
+  reads add ``degraded=["collections"]`` and retain completed matches.
 
 Relevance comes from the query's title/member matches and the games already
 shown (``results[].id``). Computed sets use the same licensed round-up
@@ -321,7 +320,7 @@ async def _roundup_matches_sport(db: Any, page: dict, sport_key: str) -> bool | 
             if member.get("type") in ids:
                 ids[member["type"]].add(member["id"])
     try:
-        result = await db.execute(
+        scope_result = await db.execute(
             text(
                 "SELECT EXISTS (SELECT 1 FROM events e JOIN sports s ON s.id = e.sport_id "
                 "WHERE e.id = ANY(:event_ids) AND s.key = :sport_key) "
@@ -340,7 +339,7 @@ async def _roundup_matches_sport(db: Any, page: dict, sport_key: str) -> bool | 
         )
         await db.rollback()
         return None
-    return bool(result.scalar())
+    return bool(scope_result.scalar())
 
 
 async def attach_typeahead_collections(db: Any, payload: dict) -> dict:
