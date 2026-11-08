@@ -160,6 +160,19 @@ def order_classes(present: set) -> list:
     return ordered + extras + tail
 
 
+def _reference_pool_has_room() -> bool:
+    from app.services.database import engine
+
+    try:
+        return engine.pool.checkedout() < engine.pool.size()
+    except Exception:  # noqa: BLE001 — unavailable counters keep the sequential reader
+        logger.debug(
+            "container card references are sequential because pool counters could not be read",
+            exc_info=True,
+        )
+        return False
+
+
 async def _read_event_card_references(names: list[str]) -> tuple[dict, dict]:
     """Read the canonical EI/team references on one separate session."""
     from app.routes.events import _build_team_lookup, _load_gei_percentiles
@@ -177,8 +190,8 @@ async def _hydrate_event_cards(
     """``({event_id: card}, {("event", id): reason})`` in a constant query count.
 
     The card uses ``GET /api/events``' canonical data readers and formatter.
-    Compact reads overlap EI/team references with the bookmaker/fold reads,
-    using a separate session whose lifetime is joined by the task group. The
+    Compact reads overlap EI/team references with the bookmaker/fold reads
+    when the pool has room, using a session joined by the task group. The
     page-level duplicate drains of the list are deliberately NOT applied:
     membership was decided by assembly on the authority's ids, and a reader
     route that dropped members would be a second, unaudited membership rule.
@@ -200,7 +213,7 @@ async def _hydrate_event_cards(
     ).scalars().all()
     if not events:
         return {}, {}
-    if concurrent_references:
+    if concurrent_references and _reference_pool_has_room():
         names = sorted(
             {
                 name
