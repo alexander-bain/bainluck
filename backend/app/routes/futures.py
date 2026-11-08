@@ -5852,14 +5852,51 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
     return compose_outcomes(spec, members, boards, index, now)
 
 
+#: #12335 step 2: each title market's verdict, kept briefly and shared by every
+#: reader of it — the detail page, its chart's current column, and the Search
+#: card (`routes/events.py::_search_verified_titles`). Measured on production
+#: Nov 8 just after midnight PT, the page's composition read: 16.1 s cold, then
+#: 3.0, 1.2, 1.1 s — and every page view recomposed. ``{market id: (expires at
+#: monotonic, verdict)}``. PLAIN DATA ONLY (gotcha #6): a `Composition` or
+#: `Refusal` is frozen dataclasses of ids, floats, strings and lists, never an
+#: ORM row. A `resolver_error` is never kept — the next reader retries.
+_VERIFIED_TITLE_CACHE: dict[int, tuple[float, object]] = {}
+
+#: Bound on the map's size. Only title questions ever enter (the NFL title today:
+#: a handful of venue rows), so this is a backstop, never a working limit.
+_VERIFIED_TITLE_CACHE_MAX = 256
+
+
+def _verified_title_cache_seconds() -> float:
+    """``VERIFIED_TITLE_CACHE_SECONDS`` (default 60): how long one verdict serves.
+
+    60 s is the staleness #12335's ruling accepts for a futures title board — it
+    moves on venue polls measured in minutes — against a recompose that costs a
+    reader 1-16 s. ``0`` turns the cache off (the test default, see conftest).
+    """
+    try:
+        return max(0.0, float(os.getenv("VERIFIED_TITLE_CACHE_SECONDS", "60")))
+    except ValueError:
+        return 60.0
+
+
 async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
     """A `Composition`, or a `Refusal` naming why this response is source mode.
 
     Never raises: an opted-in reader whose identity cannot be proved gets the
-    source page, never an error page.
+    source page, never an error page. Served from `_VERIFIED_TITLE_CACHE` while
+    a verdict for this market is younger than `_verified_title_cache_seconds()`.
     """
+    import time as _time
+
+    ttl = _verified_title_cache_seconds()
+    key = getattr(market, "id", None)
+    if ttl > 0 and key is not None:
+        held = _VERIFIED_TITLE_CACHE.get(key)
+        if held is not None and held[0] > _time.monotonic():
+            return held[1]
     try:
-        return await _compose_verified_title(db, market)
+        verdict = await _compose_verified_title(db, market)
     except Exception:
         logger.warning(
             "verified_title resolver failed for market %s; serving source mode",
@@ -5867,6 +5904,15 @@ async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
             exc_info=True,
         )
         return Refusal("resolver_error")
+    if ttl > 0 and key is not None:
+        now = _time.monotonic()
+        if len(_VERIFIED_TITLE_CACHE) >= _VERIFIED_TITLE_CACHE_MAX:
+            for stale in [k for k, (exp, _v) in _VERIFIED_TITLE_CACHE.items() if exp <= now]:
+                del _VERIFIED_TITLE_CACHE[stale]
+            if len(_VERIFIED_TITLE_CACHE) >= _VERIFIED_TITLE_CACHE_MAX:
+                _VERIFIED_TITLE_CACHE.clear()
+        _VERIFIED_TITLE_CACHE[key] = (now + ttl, verdict)
+    return verdict
 
 
 def _stamp_representation(payload: dict, verdict) -> None:

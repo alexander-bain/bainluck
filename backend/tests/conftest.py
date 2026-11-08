@@ -211,6 +211,14 @@ def _llm_budget_ledger_in_memory():
 
 
 @pytest.fixture(autouse=True)
+def _verified_title_cache_off_unless_a_test_sets_it(monkeypatch):
+    """#12335 step 2: the verified-title verdict cache is OFF in tests unless a
+    test turns it on — rigs reuse market ids with different boards, and a verdict
+    kept from one test would be served to the next."""
+    monkeypatch.setenv("VERIFIED_TITLE_CACHE_SECONDS", "0")
+
+
+@pytest.fixture(autouse=True)
 def _prematch_reading_cache_process_tier_only(monkeypatch):
     """#10090: the pre-match reading cache's Redis tier is OFF in tests unless a
     test installs a fake client and turns it on — a developer's local Redis
