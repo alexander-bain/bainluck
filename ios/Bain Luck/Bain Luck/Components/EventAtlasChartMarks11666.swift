@@ -569,6 +569,7 @@ struct EventAtlasChartOverlay11666: View {
     var awayScore: Int? = nil
     var servedSettledResult: String? = nil
     var gameStart: Date? = nil
+    var settledResult: EventAtlasSettledResult11666? = nil
 
     var body: some View {
         let baseRows = EventAtlasChartMarks11666.observationRows(
@@ -578,7 +579,7 @@ struct EventAtlasChartOverlay11666: View {
             selectedDate: nil,
             gameStart: gameStart
         )
-        let settled = EventAtlasChartMarks11666.settledResult(
+        let settled = settledResult ?? EventAtlasChartMarks11666.settledResult(
             dataPoints: dataPoints,
             checkpoints: checkpoints,
             history: history,

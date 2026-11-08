@@ -1,4 +1,6 @@
 import XCTest
+import SwiftUI
+import UIKit
 @testable import Bain_Luck
 
 final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
@@ -376,7 +378,186 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
         XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                        EventAtlasChartHeaderView11666("))
         XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                    EventAtlasChartOverlay11666("))
         XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                            gameStart: kickoffDate"))
-        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                        gameStart: kickoffDate"))
-        XCTAssertTrue(source.contains("if let finishedEnd, !hasAtlasSettledWord"))
+        XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                        gameStart: kickoffDate,\n                        settledResult: atlasSettledResult"))
+        XCTAssertTrue(source.contains("if let finishedEnd, atlasSettledResult == nil"))
+    }
+
+    @MainActor
+    func testRendersE2ChartPolishStatesAt390Width() throws {
+        let kickoff = makeDate("2026-11-06T20:00:00Z")
+        let t0 = makeDate("2026-11-06T19:00:00Z")
+        let t1 = makeDate("2026-11-06T20:35:00Z")
+        let t2 = makeDate("2026-11-06T21:15:00Z")
+        let t3 = makeDate("2026-11-06T22:00:00Z")
+        let points = [
+            ChartDataPoint(date: t0, probability: 0.56, source: "aggregate"),
+            ChartDataPoint(date: t1, probability: 0.64, source: "aggregate"),
+            ChartDataPoint(date: t2, probability: 0.78, source: "aggregate"),
+            ChartDataPoint(date: t3, probability: 0.99, source: "aggregate"),
+        ]
+
+        let restSelection = OddsChartSelection()
+        let atRestView = VStack(alignment: .leading, spacing: 12) {
+            Text("Live chart header at rest (All tab)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            EventAtlasChartHeaderView11666(
+                selection: restSelection,
+                dataPoints: points,
+                checkpoints: nil,
+                history: nil,
+                status: "live",
+                sides: .homeAndAway,
+                includesOpening: true,
+                homeName: "Celtics",
+                primaryColor: .blue,
+                gameStart: kickoff
+            )
+            Divider()
+            Text("Settled chart header at rest")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            EventAtlasChartHeaderView11666(
+                selection: restSelection,
+                dataPoints: points,
+                checkpoints: nil,
+                history: nil,
+                status: "completed",
+                sides: .homeAndAway,
+                includesOpening: true,
+                homeName: "Celtics",
+                primaryColor: .blue,
+                homeScore: 112,
+                awayScore: 104,
+                servedSettledResult: "home",
+                gameStart: kickoff
+            )
+        }
+        .padding(16)
+        .frame(width: 390)
+        .background(Color(.systemBackground))
+        .environment(\.colorScheme, .light)
+
+        let scrubOpeningSelection = OddsChartSelection()
+        scrubOpeningSelection.hold(date: t0)
+        let scrubMidSelection = OddsChartSelection()
+        scrubMidSelection.hold(date: t2)
+
+        let scrubView = VStack(alignment: .leading, spacing: 12) {
+            Text("Scrubbing pregame opening mark (t <= kickoffDate)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            EventAtlasChartHeaderView11666(
+                selection: scrubOpeningSelection,
+                dataPoints: points,
+                checkpoints: nil,
+                history: nil,
+                status: "live",
+                sides: .homeAndAway,
+                includesOpening: true,
+                homeName: "Celtics",
+                primaryColor: .blue,
+                gameStart: kickoff
+            )
+            Divider()
+            Text("Scrubbing with a long outcome name (ViewThatFits two-line wrap)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            EventAtlasChartHeaderView11666(
+                selection: scrubMidSelection,
+                dataPoints: points,
+                checkpoints: nil,
+                history: nil,
+                status: "live",
+                sides: .homeAndAway,
+                includesOpening: true,
+                homeName: "Minnesota Timberwolves",
+                primaryColor: .blue,
+                gameStart: kickoff
+            )
+        }
+        .padding(16)
+        .frame(width: 390)
+        .background(Color(.systemBackground))
+        .environment(\.colorScheme, .light)
+
+        let settledTerminalView = VStack(alignment: .leading, spacing: 10) {
+            EventAtlasChartHeaderView11666(
+                selection: restSelection,
+                dataPoints: points,
+                checkpoints: nil,
+                history: nil,
+                status: "completed",
+                sides: .homeAndAway,
+                includesOpening: true,
+                homeName: "Celtics",
+                primaryColor: .blue,
+                homeScore: 112,
+                awayScore: 104,
+                servedSettledResult: "home",
+                gameStart: kickoff
+            )
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.secondary.opacity(0.05))
+                    .frame(width: 358, height: 140)
+                Path { path in
+                    path.move(to: CGPoint(x: 24, y: 82))
+                    path.addLine(to: CGPoint(x: 120, y: 66))
+                    path.addLine(to: CGPoint(x: 220, y: 42))
+                    path.addLine(to: CGPoint(x: 296, y: 18))
+                }
+                .stroke(Color.blue, lineWidth: 2)
+                Circle()
+                    .fill(Color(.systemBackground))
+                    .overlay(Circle().stroke(Color.blue, lineWidth: 2))
+                    .frame(width: 8, height: 8)
+                    .position(x: 24, y: 82)
+                Circle().fill(Color.blue).frame(width: 6, height: 6).position(x: 120, y: 66)
+                Circle().fill(Color.blue).frame(width: 6, height: 6).position(x: 220, y: 42)
+                Circle().fill(Color.blue).frame(width: 6, height: 6).position(x: 296, y: 18)
+                let placement = EventAtlasChartMarks11666.resultWordPlacement(
+                    result: .won,
+                    dotX: 296,
+                    dotY: 18,
+                    plotWidth: 358
+                )
+                Text(placement.word)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.green)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1.5)
+                    .background(Color(.systemBackground).opacity(0.88), in: RoundedRectangle(cornerRadius: 3))
+                    .position(x: placement.labelX, y: placement.labelY)
+            }
+            .frame(width: 358, height: 140)
+        }
+        .padding(16)
+        .frame(width: 390)
+        .background(Color(.systemBackground))
+        .environment(\.colorScheme, .light)
+
+        let r1 = ImageRenderer(content: atRestView)
+        r1.scale = 2.0
+        let img1 = try XCTUnwrap(r1.uiImage)
+        XCTAssertEqual(Int(img1.size.width), 390)
+
+        let r2 = ImageRenderer(content: scrubView)
+        r2.scale = 2.0
+        let img2 = try XCTUnwrap(r2.uiImage)
+        XCTAssertEqual(Int(img2.size.width), 390)
+
+        let r3 = ImageRenderer(content: settledTerminalView)
+        r3.scale = 2.0
+        let img3 = try XCTUnwrap(r3.uiImage)
+        XCTAssertEqual(Int(img3.size.width), 390)
+
+        if let outDir = ProcessInfo.processInfo.environment["ATLAS_E2_CHART_SCREENSHOT_DIR"], !outDir.isEmpty {
+            let dirURL = URL(fileURLWithPath: outDir)
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            try XCTUnwrap(img1.pngData()).write(to: dirURL.appendingPathComponent("e2-chart-header-at-rest-390px.png"))
+            try XCTUnwrap(img2.pngData()).write(to: dirURL.appendingPathComponent("e2-chart-header-scrub-wrapping-390px.png"))
+            try XCTUnwrap(img3.pngData()).write(to: dirURL.appendingPathComponent("e2-chart-settled-won-no-100pct-390px.png"))
+        }
     }
 }

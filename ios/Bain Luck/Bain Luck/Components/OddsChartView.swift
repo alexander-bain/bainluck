@@ -2362,6 +2362,18 @@ struct OddsChartView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
+                let atlasSettledResult: EventAtlasSettledResult11666? = ReleaseSurfaces.isEventPageAtlasEnabled()
+                    ? EventAtlasChartMarks11666.settledResult(
+                        dataPoints: dataPoints,
+                        checkpoints: checkpoints,
+                        history: vm.history,
+                        status: status,
+                        sides: axis.sides,
+                        homeScoreOverride: homeScore,
+                        awayScoreOverride: awayScore,
+                        servedSettledResult: servedSettledResult
+                    )
+                    : nil
                 if ReleaseSurfaces.isEventPageAtlasEnabled() {
                     EventAtlasChartOverlay11666(
                         selection: selection,
@@ -2377,7 +2389,8 @@ struct OddsChartView: View {
                         homeScore: homeScore,
                         awayScore: awayScore,
                         servedSettledResult: servedSettledResult,
-                        gameStart: kickoffDate
+                        gameStart: kickoffDate,
+                        settledResult: atlasSettledResult
                     )
                 }
                 if let liveSplit, let liveEdge {
@@ -2433,18 +2446,7 @@ struct OddsChartView: View {
                 // #11666 Step E2 — when the Atlas settled result word (`✓ Won` / `✗ Lost`)
                 // is drawn at the terminal point, suppress the percentage label so the two
                 // do not collide as `"✓ Won 100%"`.
-                let hasAtlasSettledWord = ReleaseSurfaces.isEventPageAtlasEnabled()
-                    && EventAtlasChartMarks11666.settledResult(
-                        dataPoints: dataPoints,
-                        checkpoints: checkpoints,
-                        history: vm.history,
-                        status: status,
-                        sides: axis.sides,
-                        homeScoreOverride: homeScore,
-                        awayScoreOverride: awayScore,
-                        servedSettledResult: servedSettledResult
-                    ) != nil
-                if let finishedEnd, !hasAtlasSettledWord {
+                if let finishedEnd, atlasSettledResult == nil {
                     finishedEndLabel9483(finishedEnd, line: endLine,
                                          ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
                                                                   gameStart: gameStartDate),
