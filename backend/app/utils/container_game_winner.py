@@ -40,6 +40,9 @@ from app.utils.market_shape import SHAPE_DUEL
 #: The ``excluded`` key both adapters report a game's own winner market under.
 EXCLUDED_GAME_WINNER_MARKET = "game_winner_is_the_game_card"
 
+# Mirrored by the web reader's RELATED_LINK_LIMIT (#5342).
+RELATED_LINK_LIMIT = 12
+
 
 def is_the_games_own_winner_market(
     market_type: Optional[str], name: Optional[str], external_id: Optional[str]
@@ -48,3 +51,20 @@ def is_the_games_own_winner_market(
     if market_type != SHAPE_DUEL:
         return False
     return classify_game_market_class(name or "", external_id) == "moneyline"
+
+
+def related_link_presentation(
+    market_type: Optional[str], name: Optional[str], external_id: Optional[str]
+) -> str:
+    """Where an attached market's title belongs on a collection (#12337).
+
+    The game's own winner is already represented by its card. Raw handicap
+    rungs and uncategorized contracts
+    remain reachable through an explicit disclosure in a short related list.
+    """
+    if is_the_games_own_winner_market(market_type, name, external_id):
+        return "game"
+    market_class = classify_game_market_class(name or "", external_id)
+    if market_class in {"spread", "other"}:
+        return "secondary"
+    return "inline"

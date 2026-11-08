@@ -121,7 +121,7 @@ struct FeedView: View {
         .onChange(of: vm.liveCount) { _, count in
             navCoordinator.liveGameCount = count
         }
-        .onChange(of: navCoordinator.pendingRoute) { _, _ in
+        .onChange(of: navCoordinator.pendingRoute, initial: true) { _, _ in
             if navCoordinator.selectedTab == .feed,
                let route = navCoordinator.consumeRoute() {
                 path.append(route)

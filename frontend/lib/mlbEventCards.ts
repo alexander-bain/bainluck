@@ -43,7 +43,7 @@ export function mlbCardsApply(sportKey: string | null | undefined, atlasMode = f
   return atlasMode && sportKey === MLB_SPORT_KEY;
 }
 
-export type MlbVenueResult = "won" | "lost" | "open" | "pending";
+export type MlbVenueResult = "won" | "lost" | "open" | "pending" | "not_confirmed";
 
 export function mlbVenueResultLabel(result: MlbVenueResult): string {
   switch (result) {
@@ -55,25 +55,33 @@ export function mlbVenueResultLabel(result: MlbVenueResult): string {
       return "Open";
     case "pending":
       return "Pending";
+    case "not_confirmed":
+      return "Not confirmed";
   }
 }
 
 /**
- * Resolves a row's settled/open status through the single settled-state rule
- * (`outcomeRowVerdict`, #4788) so ungraded or retracted rows never invent a result.
+ * Resolves a served row's own grade under #11284's rule (`MLBVenueResult11284.venue`):
+ * the market's resolution status is not served beside the row, so `outcomeRowVerdict`
+ * is asked as for an open market (`marketResolved = false`) — only a venue's
+ * authoritative WON crosses it (#6082), a row with no grade (`isWinner == null`
+ * and no `resolutionSource`) is `"pending"`, and any other grade (including a
+ * served `is_winner: false`, the column's default) is `"not_confirmed"`, never
+ * `"lost"`. Before the final (`phase !== "after"`), returns `"open"`.
  */
 export function resolveMlbRowVenueResult(
   isWinner: boolean | null | undefined,
   resolutionSource?: string | null | undefined,
   phase: LadderPhase = "after",
 ): MlbVenueResult {
+  if (phase !== "after") return "open";
+  const trimmedSource = typeof resolutionSource === "string" ? resolutionSource.trim() : "";
+  if (isWinner == null && !trimmedSource) return "pending";
   const verdict = outcomeRowVerdict(
     { is_winner: isWinner, resolution_source: resolutionSource },
-    phase === "after",
+    false,
   );
-  if (verdict === "won") return "won";
-  if (verdict === "lost") return "lost";
-  return phase === "after" ? "pending" : "open";
+  return verdict === "won" ? "won" : "not_confirmed";
 }
 
 export function resolveMlbProducerResult(state: string | null | undefined): MlbVenueResult {
@@ -235,16 +243,11 @@ export function buildMlbHomeRunCard(opts: {
       const contributors = Array.isArray(expectation.contributors) ? expectation.contributors : [];
       const sourceCount = Math.max(1, contributors.length);
       const venueGrade = asObj(q.venue_grade);
-      const venueResult: MlbVenueResult =
-        finalCount !== null
-          ? finalCount >= 1
-            ? "won"
-            : "lost"
-          : resolveMlbRowVenueResult(
-              typeof venueGrade?.is_winner === "boolean" ? venueGrade.is_winner : null,
-              asStr(venueGrade?.resolution_source),
-              phase,
-            );
+      const venueResult: MlbVenueResult = resolveMlbRowVenueResult(
+        typeof venueGrade?.is_winner === "boolean" ? venueGrade.is_winner : null,
+        asStr(venueGrade?.resolution_source),
+        phase,
+      );
 
       entries.push({
         id: `mlb-hr:${questionKey}`,
@@ -686,7 +689,6 @@ export function buildMlbExtraInningsCard(opts: {
       label: string;
       rows: (typeof rows)[number][];
       sources: Set<string>;
-      verdicts: Set<"won" | "lost">;
       marketName: string;
     }
   >();
@@ -694,26 +696,18 @@ export function buildMlbExtraInningsCard(opts: {
   for (const row of rows) {
     const label = canonicalExtraInningsLabel(row.outcome_name);
     const existing = byLabel.get(label);
-    const verdict = outcomeRowVerdict(
-      { is_winner: row.is_winner, resolution_source: row.resolution_source },
-      phase === "after",
-    );
     if (!existing) {
       const sources = new Set<string>();
       if (row.source) sources.add(row.source);
-      const verdicts = new Set<"won" | "lost">();
-      if (verdict) verdicts.add(verdict);
       byLabel.set(label, {
         label,
         rows: [row],
         sources,
-        verdicts,
         marketName: "Extra Innings",
       });
     } else {
       existing.rows.push(row);
       if (row.source) existing.sources.add(row.source);
-      if (verdict) existing.verdicts.add(verdict);
     }
   }
 
@@ -734,16 +728,25 @@ export function buildMlbExtraInningsCard(opts: {
       }
     }
 
-    // When venues disagree (`won` and `lost` both present), print `pending`, never a result.
+    // Grade each row with `resolveMlbRowVenueResult` (#11284's rule):
+    // a provable win is `"won"`, any other grade is `"not_confirmed"`, nothing graded is
+    // `"pending"`, a split between venues is `"pending"`, and `phase !== "after"` is `"open"`.
     let venueResult: MlbVenueResult;
-    if (group.verdicts.has("won") && group.verdicts.has("lost")) {
-      venueResult = "pending";
-    } else if (group.verdicts.has("won")) {
-      venueResult = "won";
-    } else if (group.verdicts.has("lost")) {
-      venueResult = "lost";
+    if (phase !== "after") {
+      venueResult = "open";
     } else {
-      venueResult = phase === "after" ? "pending" : "open";
+      const rowResults = new Set(
+        group.rows.map((r) => resolveMlbRowVenueResult(r.is_winner, r.resolution_source, phase)),
+      );
+      if (rowResults.has("won") && rowResults.size > 1) {
+        venueResult = "pending";
+      } else if (rowResults.has("won")) {
+        venueResult = "won";
+      } else if (rowResults.has("not_confirmed")) {
+        venueResult = "not_confirmed";
+      } else {
+        venueResult = "pending";
+      }
     }
     return {
       id: `mlb-extra:${group.label.toLowerCase()}`,

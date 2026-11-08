@@ -12,6 +12,8 @@ session from the #2027 file (ruling 102). Refused legs keep their current price;
 two controls prove the clause is not refusing everything.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.services.polymarket_api import PolymarketAPIService
@@ -20,6 +22,13 @@ from tests.test_polymarket_hindsight_opening_refused_2027 import (
     _legs_by_external_id,
     _run_batch,
 )
+
+# #12252: the venue's end date must stay in the FUTURE for this market to be open.
+# It was the literal 2026-12-01, which the calendar reaches (timebomb_confirm: red
+# from +31 d on 2026-11-07). Derived from the clock: offset first, then truncate.
+OPEN_END_DATE = (datetime.now(timezone.utc) + timedelta(days=90)).replace(
+    hour=0, minute=0, second=0, microsecond=0
+).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class TestOpeningBookIsEmpty:
@@ -79,7 +88,7 @@ def _venue_game_event(*, bid, ask, last_trade, price=0.475):
         "active": True,
         "closed": False,
         "archived": False,
-        "endDate": "2026-12-01T00:00:00Z",
+        "endDate": OPEN_END_DATE,
         "startDate": "2026-09-30T23:00:00Z",
         "negRisk": False,
         "markets": [

@@ -848,7 +848,11 @@ class TestFuturesRecallArmsAreUnionedNotOred:
         `nba champion` measured 6,387ms with the filters only on the outer query
         versus 701ms with them pushed into each arm.
         """
-        assert "select(FuturesMarket.id).where(arm, *_futures_open_now)" in SEARCH_CODE, (
+        # #4437: the builder takes the predicate as a parameter whose DEFAULT is
+        # the full `_futures_open_now`, so the ordered slice can push only the
+        # cheap two. Every other caller still pushes the full predicate.
+        assert "def _futures_candidates_in(arms, open_now=_futures_open_now):" in SEARCH_CODE
+        assert "select(FuturesMarket.id).where(arm, *open_now)" in SEARCH_CODE, (
             "the open/unresolved filters are no longer pushed into each UNION "
             "arm — measured 6,387ms -> 701ms on `nba champion`"
         )
@@ -856,7 +860,10 @@ class TestFuturesRecallArmsAreUnionedNotOred:
     def test_the_outer_query_still_carries_the_filters_too(self):
         """Deliberate redundancy: the predicate stays correct if the push-down
         is ever removed. Cheap, because the outer query sees only candidate ids."""
-        assert "*_futures_open_now," in SEARCH_CODE
+        # #4437: re-pointed with the builder's parameter; the default IS the full
+        # predicate, and only `_futures_slice_query` passes the cheap two.
+        assert "def _futures_window_query(candidate_filter, open_now=_futures_open_now):" in SEARCH_CODE
+        assert "*open_now," in SEARCH_CODE
 
     def test_the_ored_shape_would_fail_this_guard(self):
         """Mutation check — the guard must reject the shape it replaced.

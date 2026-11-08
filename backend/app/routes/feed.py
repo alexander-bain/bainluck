@@ -249,6 +249,7 @@ from app.utils.feed_cache import (
     FEED_PAGE_BASE_BUILT_AT_FIELD,
     base_from_last_good,
     build_feed_cache_metadata,
+    dumps_feed_cache,
     encode_base_last_good,
     feed_edition_token,
     feed_page_base_built_at,
@@ -5063,9 +5064,7 @@ async def get_feed(
                     # pins both halves so neither can be changed by accident.
                     if _inert_fresh_ttl > 0 and _inert_stale_ttl > 0:
                         try:
-                            _shared_json = _json_module.dumps(
-                                _shared_payload, default=str
-                            )
+                            _shared_json = dumps_feed_cache(_shared_payload)
 
                             async def _publish_inert_private(
                                 _client=_shared_redis,
@@ -5371,9 +5370,7 @@ async def get_feed(
                     and _base_opening.token != _base_body.get(FEED_EDITION_FIELD)
                 ):
                     try:
-                        _composed_json = _json_module.dumps(
-                            _base_opening.manifest, default=str
-                        )
+                        _composed_json = dumps_feed_cache(_base_opening.manifest)
 
                         async def _publish_composed_manifest(
                             _client=_shared_redis,
@@ -6375,6 +6372,8 @@ async def get_feed(
                 _capture.abandon("theme_collection_refs")
 
         from app.utils.roundup_containers import (
+            ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS,
+            ROUNDUP_READ_BUDGET_SECONDS,
             add_roundup_feed_items,
             roundup_feed_enabled,
         )
@@ -6394,6 +6393,11 @@ async def get_feed(
                 feed_items,
                 page_window=DISCOVER_COMPOSITION_WINDOW,
                 budget_seconds=_feed_budget_remaining_s(),
+                stage_budget_seconds=(
+                    ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS
+                    if _prewarm_rebuild
+                    else ROUNDUP_READ_BUDGET_SECONDS
+                ),
                 now=now,
             )
             if _capture is not None and feed_items is not _before_roundups:
@@ -6916,7 +6920,7 @@ async def get_feed(
         # publication entirely (guarded above).
         if _cache_key and not _is_degraded_build and _shared_redis is not None:
             try:
-                _payload_json = _json_module.dumps(payload, default=str)
+                _payload_json = dumps_feed_cache(payload)
 
                 async def _publish_feed_cache(
                     _client=_shared_redis,
@@ -6959,7 +6963,7 @@ async def get_feed(
                         built_at=time.time(),
                     )
                     if _manifest is not None:
-                        _manifest_json = _json_module.dumps(_manifest, default=str)
+                        _manifest_json = dumps_feed_cache(_manifest)
 
                         async def _publish_edition_manifest(
                             _client=_shared_redis,
@@ -7006,9 +7010,7 @@ async def get_feed(
                 and _shared_redis is not None
             ):
                 try:
-                    _seated_json = _json_module.dumps(
-                        _seated_mint.manifest, default=str
-                    )
+                    _seated_json = dumps_feed_cache(_seated_mint.manifest)
 
                     async def _publish_seated_manifest(
                         _client=_shared_redis,
@@ -7094,9 +7096,7 @@ async def get_feed(
                         oldest_artifact_age_s=_consumed_age_s,
                         strict_artifact_age_s=_strict_age_s,
                     )
-                    _page_base_json = _json_module.dumps(
-                        _page_base_body, default=str
-                    )
+                    _page_base_json = dumps_feed_cache(_page_base_body)
                     # #11259: the durable copy the incomplete-build terminals
                     # fall back to. Kept no longer than it may be served at —
                     # the bound is on content age, and the origin is never
@@ -16740,7 +16740,9 @@ async def _score_golf_tournaments(
 
         # Build the reason text
         leader = golfers[0]
-        leader_pct = round(leader["probability"] * 100, 1)
+        leader_pct = leader.get("rendered_percent")
+        if leader_pct is None:
+            leader_pct = round(leader["probability"] * 100, 1)
         champion = t.get("champion")
         # `or`, not a .get() default: UX-P185 lets `tour_label` be present-and-None
         # for a tournament whose tour we cannot evidence, and a .get() default only
@@ -16848,6 +16850,8 @@ async def _score_golf_tournaments(
                 {
                     "name": g["name"],
                     "probability": g["probability"],
+                    **({"rendered_percent": g["rendered_percent"]}
+                       if g.get("rendered_percent") is not None else {}),
                     "rank": g["rank"],
                     "movement_24h": g.get("movement_24h"),
                     # #7226 — the flag the `reason` gate 50 lines above already

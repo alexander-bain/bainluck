@@ -472,6 +472,56 @@ def twin_fold_key(event: Any, identities: Optional[dict] = None) -> Optional[tup
     )
 
 
+#: Two boards that list one game (#5774). An FBS team hosting an FCS team plays
+#: one game, and The Odds API can list it under both college-football keys with
+#: two event ids: Wake Forest v Merrimack on 2026-11-07 was `15340133`
+#: (`americanfootball_ncaaf`, ESPN-anchored) and `15343739`
+#: (`americanfootball_ncaaf_fcs`, created that morning), same minute, same 77–0,
+#: two cards. `league_identity` keeps the FCS key its own league on purpose
+#: (`sport_keys.ESPN_GROUP_SCOPED_BOARDS`: FCS records and teams must not fold
+#: into FBS), so the strict key put the pair in two groups. Measured on
+#: production 2026-11-08 over 120 days: that pair is the only one across the two
+#: keys sharing both squashed names and the minute, with no pair holding two
+#: scorelines or two `espn_id`s.
+CROSS_BOARD_TWIN_KEYS: dict[str, str] = {
+    "americanfootball_ncaaf_fcs": "americanfootball_ncaaf",
+}
+
+
+def cross_board_identity(sport_key: Optional[str]) -> Optional[str]:
+    """The league identity a row of ``sport_key`` may have a twin filed under on
+    another board (:data:`CROSS_BOARD_TWIN_KEYS`), or ``None``."""
+    target = CROSS_BOARD_TWIN_KEYS.get(sport_key or "")
+    return league_identity(target) if target else None
+
+
+def _espn_ids_conflict(members: list) -> bool:
+    """Two different ESPN ids in one group are two games, whatever the names say."""
+    return len({m.espn_id for m in members if getattr(m, "espn_id", None)}) > 1
+
+
+def _merge_cross_board_twins(groups: dict[tuple, list]) -> dict[tuple, list]:
+    """Merge a group on one board into its strict twin on the other (#5774).
+
+    Only element 0 of the key differs: the squashed clubs and the minute are the
+    strict key's own, so this never pairs rows the strict key would not have
+    paired within one league. No other pass sees the boards as one league.
+    """
+    aliases = {
+        league_identity(key): league_identity(target)
+        for key, target in CROSS_BOARD_TWIN_KEYS.items()
+    }
+    merged = dict(groups)
+    for key in list(groups):
+        target = aliases.get(key[0])
+        if target is None or key not in merged:
+            continue
+        twin_key = (target, *key[1:])
+        if twin_key in merged and not _espn_ids_conflict(merged[twin_key] + merged[key]):
+            merged[twin_key] = merged[twin_key] + merged.pop(key)
+    return merged
+
+
 def _source_count(event: Any) -> int:
     sources = getattr(event, "win_probability_sources", None)
     return len(sources) if sources else 0
@@ -722,6 +772,13 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
         # club name on the page a second time. Keyed on the PYTHON object for
         # the reason `keep` is: two hydrated rows can share a primary key.
         row_identities[id(event)] = key[1:]
+
+    # #5774 — the strict key's own groups, joined across the two college-football
+    # boards. First, so every pass below reads one group per game.
+    try:
+        groups = _merge_cross_board_twins(groups)
+    except Exception:  # noqa: BLE001 — gotcha #42; the strict groups are today's
+        logger.exception("twin fold: cross-board merge failed; serving strict groups")
 
     # #7915 — BEFORE the soccer pass, and on the dict rather than the clusters,
     # because it is the same SHAPE of step: the strict key's groups, merged where

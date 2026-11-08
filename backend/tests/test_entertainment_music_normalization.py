@@ -376,3 +376,62 @@ class TestBillboardThresholdGrouping12093:
         assert len(groups) == 1
         assert [t["label"] for t in groups[0]["thresholds"]] == ["≥60", "≥80", "≥90"]
 
+
+class TestEntertainmentAtlasGuards11949:
+    """#11949 Order 10 + #12126/#12128 guards on /entertainment."""
+
+    def test_one_winner_field_normalizes_only_when_exclusive_complete_and_at_least_90_pct(self):
+        from app.routes.entertainment import _market_row
+
+        m_norm = _spotify_market(
+            10,
+            "Best Picture Winner",
+            [
+                _outcome("Anora", 0.60),
+                _outcome("The Brutalist", 0.40),
+                _outcome("Conclave", 0.20),
+            ],
+        )
+        m_norm.mutually_exclusive = True
+        row_norm = _market_row(m_norm, max_outcomes=6)
+        assert row_norm["prob"] == 50.0
+        assert [o["prob"] for o in row_norm["top_outcomes"]] == [50.0, 33.3, 16.7]
+
+        # Non-exclusive stays raw
+        m_non_excl = _spotify_market(
+            11,
+            "Best Picture Nominees",
+            [
+                _outcome("Anora", 0.60),
+                _outcome("The Brutalist", 0.40),
+                _outcome("Conclave", 0.20),
+            ],
+        )
+        m_non_excl.mutually_exclusive = False
+        row_non_excl = _market_row(m_non_excl, max_outcomes=6)
+        assert row_non_excl["prob"] == 60.0
+        assert [o["prob"] for o in row_non_excl["top_outcomes"]] == [60.0, 40.0, 20.0]
+
+    def test_blank_outcome_label_refused_and_missing_source_stays_none(self):
+        from app.routes.entertainment import _market_row
+
+        m = _spotify_market(
+            12,
+            "Best Director Winner",
+            [
+                _outcome("   ", 0.80),
+                _outcome("Sean Baker", 0.55),
+                _outcome("Brady Corbet", 0.45),
+            ],
+        )
+        m.source = ""
+        m.external_id = ""
+        m.mutually_exclusive = True
+        row = _market_row(m, max_outcomes=6)
+        assert row is not None
+        assert row["src"] is None
+        assert [o["name"] for o in row["top_outcomes"]] == ["Sean Baker", "Brady Corbet"]
+        # Blank outcome marks field incomplete so raw probabilities are preserved
+        assert [o["prob"] for o in row["top_outcomes"]] == [55.0, 45.0]
+
+

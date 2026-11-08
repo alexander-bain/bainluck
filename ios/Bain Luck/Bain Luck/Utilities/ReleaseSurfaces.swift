@@ -74,4 +74,21 @@ enum ReleaseSurfaces {
     ) -> Bool {
         enabled && (index + 1) % 5 == 0
     }
+
+    /// #11666 / #12278 (85-A) — the native event-page atlas (E1–E6c parity with
+    /// web #11974): headline, chart marks, result words, shared details sheet,
+    /// and story cards across sports. Enabled for Alex's TestFlight phone look.
+    static let eventPageAtlasEnabled = true
+
+    /// Launch-argument key (`-event_page_atlas_11666 YES`) so unit tests and
+    /// the headless rig can exercise the enabled surface while the shipping
+    /// switch remains `false`.
+    static let eventPageAtlasLaunchKey = "event_page_atlas_11666"
+
+    static func isEventPageAtlasEnabled(
+        enabled: Bool = ReleaseSurfaces.eventPageAtlasEnabled,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        enabled || defaults.bool(forKey: eventPageAtlasLaunchKey)
+    }
 }

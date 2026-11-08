@@ -61,12 +61,19 @@ def fixture():
     }
     jobs = []
     for name, (kind, value, count, _) in evidence.membership(TEXT).items():
+        if kind == "native-backend-readers":
+            # #10708: a push run is never native, so this job is always skipped.
+            jobs.append({**success(name), "conclusion": "skipped", "steps": []})
+            continue
         steps = []
         for step in JOBS[kind]["steps"]:
             condition = step.get("if", "")
             if condition == "needs.change-scope.outputs.reuse == 'true'":
                 continue
-            if kind == "backend-tests" and "Frontend-only" in step.get("name", ""):
+            if kind == "backend-tests" and (
+                "Frontend-only" in step.get("name", "")
+                or step.get("name", "").startswith("Native candidate")
+            ):
                 continue
             if (
                 "matrix.group" in condition
@@ -84,7 +91,7 @@ def fixture():
     jobs.extend(
         [
             {**success(name), "conclusion": "skipped", "steps": []}
-            for name in ("deploy", "release-required")
+            for name in ("deploy", "release-required", "flaky-canary")
         ]
     )
     checks = [
@@ -428,7 +435,7 @@ def test_projection_matches_yaml_all_eight_shards_and_five_db_groups():
     )
     for name, (_, _, _, block) in projection.items():
         assert block
-    assert len(projection) == 20
+    assert len(projection) == 21  # #10708: + native-backend-readers
 
 
 @pytest.mark.parametrize("mutation", ["short", "changed_total", "duplicate"])
@@ -511,14 +518,15 @@ def test_reuse_conditions_are_an_explicit_addition_to_every_paid_step():
                 "name"
             ) == "Reused exact-commit test evidence" or "Frontend-only" in step.get(
                 "name", ""
-            ):
+            ) or step.get("name", "").startswith("Native candidate"):
                 continue
             if step.get("name") in (
                 "Record compose checkout provenance",
                 "Publish compose checkout provenance",
             ):
                 assert name == "backend-tests" and step["if"].startswith(
-                    "needs.change-scope.outputs.scope != 'frontend' && " + reuse
+                    "needs.change-scope.outputs.scope != 'frontend' && "
+                    "needs.change-scope.outputs.scope != 'native' && " + reuse
                 )
                 continue
             assert reuse in step.get("if", "").split(" && "), (name, step)

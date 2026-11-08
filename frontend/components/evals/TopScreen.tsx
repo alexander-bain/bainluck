@@ -28,7 +28,7 @@ import { watcherHealth, type WatcherList } from "@/lib/evals/watchers";
 /**
  * THE TOP SCREEN OF /evals (Alex, Nov 6): one plain answer, then three pictures
  * a reader takes in without reading a number — do our probabilities come true,
- * does the AI reviewer catch planted mistakes, are the automatic checks
+ * does the AI reviewer catch planted mistakes, are the site watchers
  * working — all on one phone screen. Every figure is still a `Figure` with its
  * label and its link, and every picture is an `Exhibit` under the label of the
  * record it draws; each card's label sits on its last line.
@@ -61,7 +61,11 @@ function Card({
         {title}
       </h2>
       {children}
-      {footer && <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-text-secondary">{footer}</div>}
+      {footer && (
+        <div data-card-footer="" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-text-secondary">
+          {footer}
+        </div>
+      )}
     </section>
   );
 }
@@ -104,7 +108,8 @@ function TruthCard({ state }: { state: ForwardRecordState }) {
       }
     >
       <Exhibit truth={truth} label={COPY.truthChartLabel}>
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" role="img" aria-label={COPY.truthChartLabel}>
+        {/* The exhibit around it carries the label, so the drawing itself is not announced twice. */}
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" aria-hidden="true">
           {[0, 100].map((t) => (
             <g key={t}>
               <text x={left - 4} y={plotY(t) + 3} textAnchor="end" className="fill-text-muted" fontSize={9}>
@@ -204,6 +209,41 @@ const MARK_TONE: Record<CaseMark, string> = {
   not_yet: "text-text-muted",
 };
 
+/**
+ * One bug per hidden mistake and one page per harmless decoy, coloured by what
+ * the reviewer did with each: the top screen's picture, and, larger, its topic's.
+ */
+export function ReviewerMarks({
+  results,
+  study,
+  large = false,
+}: {
+  results: ReviewerResults;
+  study: ReviewerStudy;
+  large?: boolean;
+}) {
+  const truth: FigureTruth = { kind: "last_run", asOf: results.asOf, source: results.receipt };
+  const bug = large ? "h-8 w-8" : "h-5 w-5";
+  const page = large ? "h-7 w-7" : "h-[18px] w-[18px]";
+  return (
+    <Exhibit truth={truth} label={COPY.reviewerChartLabel}>
+      <div className={`flex items-center ${large ? "flex-wrap gap-x-4 gap-y-2" : "gap-x-2.5"}`} aria-hidden="true">
+        {/* Large, the bugs sit in rows of five, so ten read as two even rows instead of nine and a straggler. */}
+        <span className={large ? "grid w-fit grid-cols-5 gap-1.5" : "flex gap-0.5"} data-review-marks="mistakes">
+          {caseMarks(results, study, "defect").map((m, i) => (
+            <Bug key={i} data-review-mark={m} className={`${bug} shrink-0 ${MARK_TONE[m]}`} strokeWidth={2.25} />
+          ))}
+        </span>
+        <span className={`flex items-center ${large ? "gap-1" : "gap-0.5"}`} data-review-marks="harmless">
+          {caseMarks(results, study, "control").map((m, i) => (
+            <FileCheck key={i} data-review-mark={m} className={`${page} shrink-0 ${MARK_TONE[m]}`} strokeWidth={2} />
+          ))}
+        </span>
+      </div>
+    </Exhibit>
+  );
+}
+
 /** "Does our AI reviewer spot mistakes?" — one bug per hidden mistake, coloured by what the reviewer did with it. */
 function ReviewerCard({ results, study }: { results: ReviewerResults; study: ReviewerStudy }) {
   const tally = reviewerTally(results, study);
@@ -229,20 +269,7 @@ function ReviewerCard({ results, study }: { results: ReviewerResults; study: Rev
           COPY.reviewerNoneChecked
         )}
       </p>
-      <Exhibit truth={truth} label={COPY.reviewerChartLabel}>
-        <div className="flex items-center gap-x-2.5" aria-hidden="true">
-          <span className="flex gap-0.5" data-review-marks="mistakes">
-            {bugs.map((m, i) => (
-              <Bug key={i} data-review-mark={m} className={`h-5 w-5 shrink-0 ${MARK_TONE[m]}`} strokeWidth={2.25} />
-            ))}
-          </span>
-          <span className="flex items-center gap-0.5" data-review-marks="harmless">
-            {decoys.map((m, i) => (
-              <FileCheck key={i} data-review-mark={m} className={`h-[18px] w-[18px] shrink-0 ${MARK_TONE[m]}`} strokeWidth={2} />
-            ))}
-          </span>
-        </div>
-      </Exhibit>
+      <ReviewerMarks results={results} study={study} />
       <p className="text-caption text-text-primary" data-review-kind="harmless">
         {COPY.reviewerHidBefore} {n(bugs.length, caseTruth)} {COPY.reviewerHidMiddle} {n(decoys.length, caseTruth)}{" "}
         {COPY.reviewerHidAfter}
@@ -251,9 +278,9 @@ function ReviewerCard({ results, study }: { results: ReviewerResults; study: Rev
   );
 }
 
-type Dot = "problems" | "fixed" | "stopped" | "unknown";
+export type Dot = "problems" | "fixed" | "stopped" | "unknown";
 
-const DOT_CLASS: Record<Dot, string> = {
+export const DOT_CLASS: Record<Dot, string> = {
   problems: "text-accent-danger",
   fixed: "text-accent-brand",
   stopped: "text-text-secondary",
@@ -267,7 +294,31 @@ const DOT_WORDS: Record<Dot, string> = {
   unknown: COPY.watchersUnknown,
 };
 
-/** "Are our automatic checks working?" — one circle per check, marked by what its newest run found. */
+const dotOf = (state: string | null): Dot =>
+  state === "red_reporting" ? "problems" : state === "closed_fixed" ? "fixed" : state === "red_stopped" ? "stopped" : "unknown";
+
+/** One smoke alarm per watcher, or a question mark where there is no public record: the top screen's picture, and its topic's. */
+export function WatcherAlarms({ list, large = false }: { list: WatcherList; large?: boolean }) {
+  const truth: FigureTruth = { kind: "reviewed", asOf: list.reviewedAt, source: list.scheduleSource };
+  const size = large ? "h-9 w-9" : "h-6 w-6";
+  return (
+    <Exhibit truth={truth} label={COPY.watchersChartLabel}>
+      {/* Large, the alarms sit in rows of six, so a dozen read as two even rows. */}
+      <div className={large ? "grid w-fit grid-cols-6 gap-2" : "flex gap-1"} aria-hidden="true">
+        {list.watchers.map((w) => {
+          const dot = dotOf(w.verdict?.state ?? null);
+          return dot === "unknown" ? (
+            <CircleHelp key={w.id} data-watcher-dot={dot} className={`${size} shrink-0 ${DOT_CLASS[dot]}`} strokeWidth={2} />
+          ) : (
+            <AlarmSmoke key={w.id} data-watcher-dot={dot} className={`${size} shrink-0 ${DOT_CLASS[dot]}`} strokeWidth={2.25} />
+          );
+        })}
+      </div>
+    </Exhibit>
+  );
+}
+
+/** "Are our site watchers working?" — one alarm per watcher, marked by what its newest run found. */
 function WatchersCard({ list }: { list: WatcherList }) {
   const health = watcherHealth(list);
   const truth: FigureTruth = { kind: "reviewed", asOf: list.reviewedAt, source: list.scheduleSource };
@@ -276,8 +327,6 @@ function WatchersCard({ list }: { list: WatcherList }) {
       {String(value)}
     </Figure>
   );
-  const dotOf = (state: string | null): Dot =>
-    state === "red_reporting" ? "problems" : state === "closed_fixed" ? "fixed" : state === "red_stopped" ? "stopped" : "unknown";
   const dots = list.watchers.map((w) => ({ id: w.id, dot: dotOf(w.verdict?.state ?? null) }));
   // The sentence names only the kinds of circle the picture has.
   const present = (["problems", "fixed", "stopped", "unknown"] as Dot[]).filter((k) => dots.some((d) => d.dot === k));
@@ -287,17 +336,7 @@ function WatchersCard({ list }: { list: WatcherList }) {
         <span className="text-title-3 text-text-primary">{n(health.working)}</span> {COPY.watchersOf}{" "}
         <span className="text-title-3 text-text-primary">{n(health.total)}</span> {COPY.watchersWorkingAfter}
       </p>
-      <Exhibit truth={truth} label={COPY.watchersChartLabel}>
-        <div className="flex gap-1" aria-hidden="true">
-          {dots.map((d) =>
-            d.dot === "unknown" ? (
-              <CircleHelp key={d.id} data-watcher-dot={d.dot} className={`h-6 w-6 shrink-0 ${DOT_CLASS[d.dot]}`} strokeWidth={2} />
-            ) : (
-              <AlarmSmoke key={d.id} data-watcher-dot={d.dot} className={`h-6 w-6 shrink-0 ${DOT_CLASS[d.dot]}`} strokeWidth={2.25} />
-            )
-          )}
-        </div>
-      </Exhibit>
+      <WatcherAlarms list={list} />
       <p className="text-caption text-text-primary">
         {COPY.watchersSentenceStart}: {present.map((k) => DOT_WORDS[k]).join("; ")}.
       </p>
@@ -317,10 +356,11 @@ export default function TopScreen({
   watchers: WatcherList | null;
 }) {
   return (
-    <header data-evals-top="" className="space-y-2">
+    // On a phone the gaps are 6 px, not 8, for the same room as TRUTH_PLOT's height.
+    <header data-evals-top="" className="space-y-1.5 md:space-y-2">
       <h1 className="text-title-3 text-text-primary">{EVALS_PAGE_TITLE}</h1>
       <p className="text-body text-text-primary">{COPY.answer}</p>
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-1.5 md:gap-2 md:grid-cols-3">
         <TruthCard state={forward} />
         {results && study && <ReviewerCard results={results} study={study} />}
         {watchers && <WatchersCard list={watchers} />}

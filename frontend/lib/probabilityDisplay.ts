@@ -115,10 +115,35 @@ export interface ProbabilityFormatOptions {
   rendered?: number | null;
 }
 
+/** A plain decimal numeral: digits, one optional point, an optional exponent. */
+const DECIMAL_NUMERAL = /^\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/;
+
+/**
+ * #12334 — a probability that reaches the client as TEXT is still a number.
+ *
+ * Discover cards printed `—` as their big number while the line under them read
+ * "7% chance": the cached `/api/feed` served `top_outcomes[].probability` as
+ * `"0.067500"` (a database `NUMERIC`, stored as its text by the feed cache), and
+ * `Number.isFinite("0.067500")` is false. The backend now stores numbers
+ * (`feed_cache.dumps_feed_cache`); this is the other end, so one stray `Decimal`
+ * can never blank a card again.
+ *
+ * Only a plain decimal numeral converts. An empty string is NOT zero
+ * (`Number("")` is `0`, which would print `0%` over a missing reading), and hex,
+ * `"Infinity"` or anything else stays not-a-number, so the caller prints `—`
+ * exactly as before.
+ */
+function probabilityValue(prob: number | string | null | undefined): number {
+  if (typeof prob === "number") return prob;
+  if (typeof prob === "string" && DECIMAL_NUMERAL.test(prob)) return Number(prob);
+  return NaN;
+}
+
 export function probabilityParts(
-  prob: number,
+  probability: number | string,
   options?: ProbabilityFormatOptions,
 ): ProbabilityParts {
+  const prob = probabilityValue(probability);
   if (!Number.isFinite(prob)) return { marker: null, digits: NO_READING };
 
   const override = options?.rendered;
@@ -140,7 +165,7 @@ export function probabilityParts(
 }
 
 export function formatProbabilityPercent(
-  prob: number,
+  prob: number | string,
   options?: ProbabilityFormatOptions,
 ): string {
   return joinParts(probabilityParts(prob, options));

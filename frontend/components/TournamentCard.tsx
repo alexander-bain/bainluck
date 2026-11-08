@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatProbability } from "@/lib/api";
-import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
+import { formatMovementPoints, isRenderedMove, probabilityParts } from "@/lib/probabilityDisplay";
 import { championRowIndex, isTournamentBeforeStart, isTournamentLive } from "@/lib/tournamentLive";
 import { normalizeCupSideName, resolveCupSideColors } from "@/lib/cupTeamSides";
 import { golfChaserLabels } from "@/lib/golfChaserLabels";
@@ -80,6 +80,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
   // Build leader + chasers from leaderboard (preferred) or golfers (fallback)
   const leader = _buildLeader(tournament, leaderboard);
   const chasers = _buildChasers(tournament, leaderboard);
+  const leaderDisplay = leader?.winProb != null && leader.renderedPercent != null
+    ? probabilityParts(leader.winProb / 100, { rendered: leader.renderedPercent })
+    : null;
   // #9750 — surnames, unless two chasers share one ("A. Kim" / "H. Kim"), or a
   // chaser shares the hero's ("Matt Fitzpatrick" above "A. Fitzpatrick").
   const chaserLabels = golfChaserLabels(chasers.map((c) => c.name), leader?.name);
@@ -128,7 +131,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                   beside someone else's name. */}
               {leader.winProb != null && (
                 <div className="text-[28px] font-extrabold tabular-nums tracking-tight">
-                  {leader.winProb.toFixed(1)}
+                  {leaderDisplay
+                    ? `${leaderDisplay.marker ?? ""}${leaderDisplay.digits}`
+                    : leader.winProb.toFixed(1)}
                   <span className="text-base font-semibold">%</span>
                 </div>
               )}
@@ -193,7 +198,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                     {chaserLabels[i]}
                   </div>
                   <div className="text-[15px] font-bold tabular-nums">
-                    {c.winProb.toFixed(1)}%
+                    {c.renderedPercent != null
+                      ? formatProbability(c.winProb / 100, { rendered: c.renderedPercent })
+                      : `${c.winProb.toFixed(1)}%`}
                   </div>
                   {(c.score || c.hole) && (
                     <div className="text-[10px] text-text-tertiary">
@@ -250,6 +257,8 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
   const wonB = !!champion && normalizeCupSideName(teamB.name) === champion;
   const probA = teamA.probability * 100;
   const probB = teamB.probability * 100;
+  const partsA = teamA.rendered_percent != null ? probabilityParts(teamA.probability, { rendered: teamA.rendered_percent }) : null;
+  const partsB = teamB.rendered_percent != null ? probabilityParts(teamB.probability, { rendered: teamB.rendered_percent }) : null;
 
   // #8028 — the two sides' colours, resolved TOGETHER so the bar's two segments
   // can never paint the same value. The map used to be keyed on the raw
@@ -301,7 +310,7 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
                 {wonA && <span className="ml-1.5 bg-accent-brand/15 text-accent-brand px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide">Won</span>}
               </div>
               <div className="text-[22px] font-extrabold tabular-nums tracking-tight">
-                {probA.toFixed(1)}<span className="text-sm font-semibold">%</span>
+                {partsA?.marker}{partsA?.digits ?? probA.toFixed(1)}<span className="text-sm font-semibold">%</span>
               </div>
             </div>
 
@@ -315,17 +324,33 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
                 {teamB.name}
               </div>
               <div className="text-[22px] font-extrabold tabular-nums tracking-tight">
-                {probB.toFixed(1)}<span className="text-sm font-semibold">%</span>
+                {partsB?.marker}{partsB?.digits ?? probB.toFixed(1)}<span className="text-sm font-semibold">%</span>
               </div>
             </div>
           </div>
 
-          {/* Probability bar. Widths are the printed figures to one decimal, not
-              the raw product: `0.145 * 100` emits `14.499999999999998%`. */}
+          {/* Bar widths follow the server allocation or the printed decimal fallback. */}
           <div className="flex h-2 rounded-full overflow-hidden">
-            <div className={`${colorA.bar} transition-all`} style={{ width: `${probA.toFixed(1)}%` }} />
-            <div className={`${colorB.bar} transition-all`} style={{ width: `${probB.toFixed(1)}%` }} />
+            <div className={`${colorA.bar} transition-all`} style={{ width: `${teamA.rendered_percent ?? probA.toFixed(1)}%` }} />
+            <div className={`${colorB.bar} transition-all`} style={{ width: `${teamB.rendered_percent ?? probB.toFixed(1)}%` }} />
+            {!decided && tournament.overflow_outcomes?.map(outcome => (
+              <div
+                key={outcome.name}
+                className="bg-surface-border transition-all"
+                style={{ width: `${outcome.rendered_percent ?? (outcome.probability * 100).toFixed(1)}%` }}
+              />
+            ))}
           </div>
+          {tournament.overflow_outcomes?.map(outcome => (
+            <div key={outcome.name} className="flex justify-between mt-1.5 text-xs text-text-secondary">
+              <span>{outcome.name}</span>
+              <span className="font-semibold tabular-nums">
+                {decided
+                  ? (normalizeCupSideName(outcome.name) === champion ? "Won" : "Lost")
+                  : formatProbability(outcome.probability, { rendered: outcome.rendered_percent })}
+              </span>
+            </div>
+          ))}
 
           {/* Prop markets below */}
           {tournament.prop_markets && tournament.prop_markets.length > 0 && (
@@ -360,6 +385,7 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
 // ============================================================================
 
 interface CardGolfer {
+  renderedPercent?: number | null;
   name: string;
   winProb: number;
   score?: string | null;
@@ -376,6 +402,7 @@ function _buildLeader(tournament: GolfTournament, leaderboard?: GolfLeaderboardP
     return {
       name: lb.name,
       winProb: lb.win_prob,
+      renderedPercent: lb.rendered_percent,
       // 🔴 #5713 — DO NOT DROP THESE TWO LINES AGAIN. #5690's fix replaced them
       // with the comment block below and shipped, so the live Amgen Irish Open
       // card read "Leader +32.4 pts today" where it had read
@@ -414,13 +441,14 @@ function _buildLeader(tournament: GolfTournament, leaderboard?: GolfLeaderboardP
     const i = championRowIndex(tournament.golfers, tournament.champion);
     if (i < 0) return { name: tournament.champion, winProb: null };
     const c = tournament.golfers[i];
-    return { name: c.name, winProb: c.probability * 100, movement: c.movement_24h };
+    return { name: c.name, winProb: c.probability * 100, renderedPercent: c.rendered_percent, movement: c.movement_24h };
   }
   const g = tournament.golfers[0];
   if (!g) return null;
   return {
     name: g.name,
     winProb: g.probability * 100,
+    renderedPercent: g.rendered_percent,
     movement: g.movement_24h,
   };
 }
@@ -430,6 +458,7 @@ function _buildChasers(tournament: GolfTournament, leaderboard?: GolfLeaderboard
     return leaderboard.slice(1, 5).map((lb) => ({
       name: lb.name,
       winProb: lb.win_prob,
+      renderedPercent: lb.rendered_percent,
       score: lb.score,
       hole: lb.thru && lb.thru !== "F" ? `H${lb.thru}` : (lb.thru === "F" ? "F" : undefined),
     }));
@@ -445,6 +474,7 @@ function _buildChasers(tournament: GolfTournament, leaderboard?: GolfLeaderboard
     .map((g) => ({
       name: g.name,
       winProb: g.probability * 100,
+      renderedPercent: g.rendered_percent,
     }));
 }
 

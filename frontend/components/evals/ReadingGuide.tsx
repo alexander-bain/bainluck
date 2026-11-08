@@ -52,7 +52,8 @@ export default function ReadingGuide() {
       </div>
       <div>
         <h3 className="text-caption-strong text-text-primary">{READING_COPY.termsHeading}</h3>
-        <div className="mt-2 divide-y divide-surface-border border-y border-surface-border">
+        {/* The one place our records' short names appear, each defined in plain words (`topScreen.test.tsx`). */}
+        <div className="mt-2 divide-y divide-surface-border border-y border-surface-border" data-evals-glossary="">
           {TERMS.map(({ term, meaning }) => (
             <details key={term} className="group py-2" data-term={term}>
               <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden text-caption-strong text-text-primary flex items-center justify-between">

@@ -2201,8 +2201,8 @@ def assemble_awards_theme_bundles(
     min_items: int = 2,
     max_items_per_bundle: int = 8,
 ) -> list[dict[str, Any]]:
-    """Cap-and-FOLD entertainment award/competition group_id clusters into one
-    expandable theme bundle.
+    """Fold complete entertainment award/competition group_id clusters into one
+    expandable theme bundle; refuse fields beyond its display capacity.
 
     Mirrors :func:`assemble_geopolitics_theme_bundles` but keys on ``group_id``
     (reconstructed from the dedupe-preserved ``_grouped_members``) and is scoped
@@ -2216,8 +2216,17 @@ def assemble_awards_theme_bundles(
         if members is None or len(members) < min_items:
             continue
         group_id = str(_futures_data(item).get("group_id"))
-        chosen = members[:max_items_per_bundle]
-        bundle_by_group[group_id] = _make_awards_bundle_item(group_id, chosen)
+        if len(members) > max_items_per_bundle:
+            logger.info(
+                "discover_bundle: awards field exceeds display capacity; refusing partial bundle",
+                extra={
+                    "group_id": group_id,
+                    "member_count": len(members),
+                    "capacity": max_items_per_bundle,
+                },
+            )
+            continue
+        bundle_by_group[group_id] = _make_awards_bundle_item(group_id, members)
         survivor_ids.add(_item_id(item))
 
     if not bundle_by_group:

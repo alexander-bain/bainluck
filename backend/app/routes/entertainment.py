@@ -47,10 +47,18 @@ from app.routes.futures import (
     _fleet_newest_observation,
     _withheld_price_outcome_ids,
 )
+from app.utils.outcome_display import (
+    display_probability_divisor,
+    normalize_display_probs,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# #12126 / #12128 / #11949 — normalize a mutually-exclusive field only when it
+# holds at least 90% of the probability mass and has no blank outcome labels.
+SPECIALTY_FIELD_MASS_MIN = 0.9
 
 # ---------------------------------------------------------------------------
 # Sub-theme classification
@@ -326,7 +334,8 @@ def _market_row(
     therefore degrades to the pre-#8083 behaviour — which is why the guard test
     asserts the wiring at the ROUTE, not just this function.
     """
-    outcomes = _clean_outcomes(market.outcomes)
+    raw_cleaned = _clean_outcomes(market.outcomes)
+    outcomes = [o for o in raw_cleaned if (o.name or "").strip()]
     outcomes = sorted(
         outcomes, key=lambda o: float(o.current_probability or 0), reverse=True
     )
@@ -406,6 +415,53 @@ def _market_row(
     # the SLICE, never from the ladder's arity.
     top = _order_numeric_outcomes(priced[:max_outcomes])
     outcome_count = len(outcomes)
+    venue_exclusive = getattr(market, "mutually_exclusive", None) is True
+    field_complete = (
+        len(outcomes) == len(raw_cleaned)
+        and len(priced) == len(outcomes)
+        and all(
+            getattr(o, "current_probability", None) is not None
+            and getattr(o, "id", None) not in withheld_ids
+            and bool((getattr(o, "name", None) or "").strip())
+            for o in (market.outcomes or [])
+        )
+    )
+    prob_by_id: dict[int, float] = {
+        id(o): float(o.current_probability or 0) for o in priced
+    }
+    raw_mass = sum(prob_by_id.values())
+    if (
+        venue_exclusive
+        and field_complete
+        and len(priced) >= 2
+        and raw_mass + 1e-9 >= SPECIALTY_FIELD_MASS_MIN
+    ):
+        outcome_dicts = [
+            {
+                "id": getattr(o, "id", idx),
+                "name": (o.name or "").strip(),
+                "probability": prob_by_id[id(o)],
+                "is_winner": getattr(o, "is_winner", None),
+                "resolution_source": getattr(o, "resolution_source", None),
+                "_obj_id": id(o),
+            }
+            for idx, o in enumerate(priced)
+        ]
+        divisor = display_probability_divisor(
+            outcome_dicts,
+            mutually_exclusive=True,
+            field_complete=field_complete,
+            question=getattr(market, "name", None),
+        )
+        if divisor is not None and divisor > 1.0:
+            normalize_display_probs(
+                outcome_dicts,
+                mutually_exclusive=True,
+                field_complete=field_complete,
+                question=getattr(market, "name", None),
+            )
+            for d in outcome_dicts:
+                prob_by_id[d["_obj_id"]] = float(d["probability"])
     return {
         **_ladder_headline(market, priced),
         "q": market.name,
@@ -415,15 +471,15 @@ def _market_row(
         # the stable sort then handed the headline to whichever came first in
         # the ladder. Reading the filtered list means the number, the rungs and
         # the hook's leader are all the same object.
-        "prob": round(float(priced[0].current_probability) * 100, 1),
-        "src": _source(market),
+        "prob": round(prob_by_id[id(priced[0])] * 100, 1),
+        "src": _source(market) or None,
         "market_id": market.id,
         "external_id": market.external_id,
         "kind": _classify_kind(market, outcome_count),
         "top_outcomes": [
             {
-                "name": o.name,
-                "prob": round(float(o.current_probability or 0) * 100, 1),
+                "name": (o.name or "").strip(),
+                "prob": round(prob_by_id[id(o)] * 100, 1),
                 "delta_24h": round(
                     float(o.probability_change_24h or 0) * 100, 1
                 ),

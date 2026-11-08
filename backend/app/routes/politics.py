@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+SPECIALTY_FIELD_MASS_MIN = 0.9
+
 # ---------------------------------------------------------------------------
 # Sub-theme classification
 # ---------------------------------------------------------------------------
@@ -625,7 +627,9 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     the clock, so the caller states its anchor and a guard can sweep a year of
     them instead of asserting whatever today happens to be.
     """
-    outcomes = _clean_outcomes(market.outcomes)
+    raw_outcomes = _clean_outcomes(market.outcomes)
+    outcomes = [o for o in raw_outcomes if (o.name or "").strip()]
+    has_blank_outcome = len(outcomes) < len(raw_outcomes)
     if not outcomes:
         return None
     # #6235 — A MARKET NOBODY HAS PRICED IS NOT A MARKET AT 0%.
@@ -807,10 +811,18 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     from app.utils.outcome_display import normalize_display_probs
 
     normalized = [{**o, "probability": o["prob"] / 100} for o in top_outcomes]
-    normalize_display_probs(
-        normalized, mutually_exclusive=mutually_exclusive is not False,
-        field_complete=len(ranked) == len(outcomes), question=market.name,
-    )
+    raw_mass = sum(float(o["probability"]) for o in normalized)
+    if (
+        mutually_exclusive is True
+        and not has_blank_outcome
+        and raw_mass + 1e-9 >= SPECIALTY_FIELD_MASS_MIN
+    ):
+        normalize_display_probs(
+            normalized,
+            mutually_exclusive=True,
+            field_complete=len(ranked) == len(outcomes),
+            question=market.name,
+        )
     top_outcomes = _order_numeric_top_outcomes([
         {"name": o["name"], "prob": round(o["probability"] * 100, 6),
          **({"rendered_percent": o["rendered_percent"]} if "rendered_percent" in o else {})}
@@ -843,12 +855,12 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         # measurement." A `0` returned here would be the very thing this ship
         # exists to stop printing.
         "prob": top_outcomes[0]["prob"],
-        "src": _source(market),
+        "src": _source(market) or None,
         "market_id": market.id,
         "top_outcomes": top_outcomes,
         # Every rung, priced or not — the filter above drops rungs from the
         # SLICE, never from the ladder's arity.
-        "outcome_count": len(outcomes),
+        "outcome_count": len(raw_outcomes),
         # The rungs `/futures/{id}` shows that this card does not.
         "more_count": max(0, len(page_rungs) - len(top_outcomes)),
         # #9474: `false` = the legs can all be true (a deadline or threshold
@@ -1417,6 +1429,10 @@ def _build_presidential(
         venue_complete = True
         for o in headline["outcomes"]:
             name = (o.name or "").strip()
+            if not name:
+                venue_complete = False
+                field_complete = False
+                continue
             if _BUCKET_LABEL_RE.match(name):
                 continue
             if o.current_probability is None or o.id in unobserved:
@@ -1436,11 +1452,16 @@ def _build_presidential(
             raw_by_source[src_name][name_key] = raw_prob
             venue_rows.append({"name": name, "key": name_key, "probability": raw_prob})
 
-        venue_divisor = display_probability_divisor(
-            venue_rows,
-            mutually_exclusive=venue_exclusive,
-            field_complete=venue_complete,
-            question=headline["q"],
+        venue_raw_mass = sum(float(r["probability"]) for r in venue_rows)
+        venue_divisor = (
+            display_probability_divisor(
+                venue_rows,
+                mutually_exclusive=venue_exclusive,
+                field_complete=venue_complete,
+                question=headline["q"],
+            )
+            if venue_exclusive and venue_raw_mass + 1e-9 >= SPECIALTY_FIELD_MASS_MIN
+            else None
         )
         if venue_divisor is not None and venue_divisor > 1.0:
             normalize_display_probs(
@@ -1476,11 +1497,16 @@ def _build_presidential(
             }
         )
 
-    blended_divisor = display_probability_divisor(
-        blended_rows,
-        mutually_exclusive=blended_exclusive,
-        field_complete=field_complete,
-        question=headline_q,
+    blended_raw_mass = sum(float(r["probability"]) for r in blended_rows)
+    blended_divisor = (
+        display_probability_divisor(
+            blended_rows,
+            mutually_exclusive=blended_exclusive,
+            field_complete=field_complete,
+            question=headline_q,
+        )
+        if blended_exclusive and blended_raw_mass + 1e-9 >= SPECIALTY_FIELD_MASS_MIN
+        else None
     )
     if blended_divisor is not None and blended_divisor > 1.0:
         normalize_display_probs(
@@ -1594,7 +1620,7 @@ def _extract_control_probs(market: FuturesMarket) -> dict | None:
     literally named `yes`, saw `republican` in the title, and published
     `gop = 10.5 / dem = 89.5` as chamber control.
     """
-    outcomes = _clean_outcomes(market.outcomes)
+    outcomes = [o for o in _clean_outcomes(market.outcomes) if (o.name or "").strip()]
     if not outcomes:
         return None
 
@@ -1664,7 +1690,7 @@ def _extract_control_probs(market: FuturesMarket) -> dict | None:
         "gop": gop_prob,
         "dem": dem_prob,
         "market_id": market.id,
-        "source": _source(market),
+        "source": _source(market) or None,
     }
     if settled_winner:
         out["winner"] = settled_winner
@@ -1860,7 +1886,7 @@ def _stated_party(name: str) -> str:
 
 
 def _extract_dem_prob(market: FuturesMarket) -> float | None:
-    outcomes = _clean_outcomes(market.outcomes)
+    outcomes = [o for o in _clean_outcomes(market.outcomes) if (o.name or "").strip()]
     if not outcomes:
         return None
     for o in outcomes:

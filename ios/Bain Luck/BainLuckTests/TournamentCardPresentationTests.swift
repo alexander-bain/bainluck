@@ -162,6 +162,14 @@ final class TournamentCardPresentationTests: XCTestCase {
         XCTAssertEqual(golfer.rank, 3)
     }
 
+    func testSharedFieldAllocationDecodesOnBothGolfPayloads11995() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let data = Data(#"{"name":"Alice Smith","probability":0.255,"rank":1,"rendered_percent":25}"#.utf8)
+        XCTAssertEqual(try decoder.decode(FeedTournamentGolfer.self, from: data).renderedPercent, 25)
+        XCTAssertEqual(try decoder.decode(GolfGolferData.self, from: data).renderedPercent, 25)
+    }
+
     // MARK: - The two rules do not contradict each other
 
     func testWhatHitTournamentIsRenderedAndNotGatedOut() throws {

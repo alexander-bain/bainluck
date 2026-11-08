@@ -9213,6 +9213,10 @@ def _file_publish_gate_rejection(verdict, *, marker: str = "calibration-publish-
                 f"failure class (`{', '.join(verdict.codes)}`). "
                 f"{verdict.summary()} The last published snapshot is still being served."
             ),
+            # The summary's counts move every hour as outcomes resolve; the
+            # failure class is the finding, so an unchanged class is commented
+            # once a day (#12276).
+            red_digest_basis=verdict.fingerprint,
         )
     except Exception as exc:  # noqa: BLE001 — alerting must never mask the rejection
         logger.warning("calibration gate: rejection filing failed: %s", exc)

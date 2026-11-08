@@ -1411,7 +1411,7 @@ export default function EventPage({ params }: EventPageProps) {
   };
 
   // Game-level markets (totals spectrum, player props)
-  const { data: servedGameMarkets } = useGameMarketsStream(eventId, event?.id ?? eventId);
+  const { data: servedGameMarkets } = useGameMarketsStream(eventId, event?.id ?? eventId, isFinished);
 
   // #10294 — the event row's score as of the NEWER of the page's two reads of it.
   // Detail is re-read every 120 s while the stream is connected; game markets every

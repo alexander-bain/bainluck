@@ -62,7 +62,14 @@ async def test_browse_static_route_returns_only_producer_cards(
 async def test_browse_http_enforces_publication_and_edition(
     client, mock_db, enabled, card, change, offered
 ):
-    values = {**card, "parent_container_id": None, "publication_state": "published"}
+    values = {
+        **card,
+        "parent_container_id": None,
+        "publication_state": "published",
+        "first_game_at": None,
+        "last_game_at": None,
+        "sport_matches": True,
+    }
     values["matched_event_ids"] = []  # Browse has no event relevance filter.
     for key in ("window_start", "window_end"):
         values[key] = datetime.fromisoformat(values[key])

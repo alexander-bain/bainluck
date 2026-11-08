@@ -57,7 +57,7 @@ from app.utils.feed_cache import (
 
 #: Bumped when the payload shape changes, so a release never serves a body the
 #: new code would not have built.
-CONTAINER_READ_CACHE_VERSION = "v1"
+CONTAINER_READ_CACHE_VERSION = "v3"
 CONTAINER_READ_CACHE_PREFIX = "container_read"
 
 #: The fresh / stale-servable windows (seconds) — see the module docstring.
@@ -72,11 +72,14 @@ def container_read_cache_enabled() -> bool:
     return os.getenv("CONTAINERS_READ_CACHE_ENABLED", "true").strip().lower() != "false"
 
 
-def container_read_cache_key(slug: str, revision: Optional[int], include_children: bool) -> str:
+def container_read_cache_key(
+    slug: str, revision: Optional[int], include_children: bool, compact: bool = False
+) -> str:
     scope = "all" if include_children else "own"
+    representation = ":compact" if compact else ""
     return (
         f"{CONTAINER_READ_CACHE_PREFIX}:{CONTAINER_READ_CACHE_VERSION}:"
-        f"{slug}:r{revision}:{scope}"
+        f"{slug}:r{revision}:{scope}{representation}"
     )
 
 

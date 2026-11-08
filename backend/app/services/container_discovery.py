@@ -28,8 +28,7 @@ ELIGIBLE MEANS ALL OF THESE, AND FAILS CLOSED ON EACH:
 * ``publication_state = 'published'`` exactly — ``unpublished``, ``withdrawn``
   and any state this code has never heard of are not permission;
 * a ROOT collection (no parent): an entry lands on the hub, never inside it;
-* an edition the adapters would write byte for byte, of a kind this ship
-  offers (``nfl_week``, ``mlb_postseason``), and inside the caller's
+* an edition the adapters would write byte for byte, inside the caller's
   league/season filter when one is given — anything else is ``wrong_edition``;
 * at least one member whose row we still hold — an empty hub is not a
   destination (#2215: an empty page reads, from outside, as "nothing on").
@@ -38,8 +37,9 @@ The SQL applies these so ineligible rows cannot consume the bound, AND the pure
 half (``collection_card``) re-applies every one to every returned row, so a
 query that drifted can only ever offer fewer collections, never a wrong one.
 
-BOUNDED. Two statements whatever the inputs: the schema probe and one
-aggregate read. Inputs are capped (``MAX_EVENT_IDS``, ``MAX_SLUGS``,
+BOUNDED. A schema probe and one aggregate read for existing consumers. A
+query tries titles first, then the ordinary answer's matched member ids. Inputs
+are capped (``MAX_EVENT_IDS``, ``MAX_SLUGS``,
 ``MAX_COLLECTIONS``) and truncation is reported, never silent.
 """
 
@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
@@ -63,6 +64,7 @@ from app.utils.container_presentation import (
     EDITION_NFL_WEEK,
     container_destination,
     edition_for_slug,
+    nfl_week_title,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,6 +100,7 @@ EXCLUDED_NESTED = "nested_collection"
 EXCLUDED_WRONG_EDITION = "wrong_edition"
 EXCLUDED_EMPTY = "empty"
 EXCLUDED_NOT_MATCHED = "no_matching_member"
+EXCLUDED_SPORT = "no_matching_sport"
 
 REASON_DISABLED = "discovery_disabled"
 REASON_HUB_DISABLED = "hub_read_disabled"
@@ -180,6 +183,9 @@ def collection_card(
     league: Optional[str] = None,
     season: Optional[int] = None,
     matched_required: bool = False,
+    search: bool = False,
+    sport_required: bool = False,
+    include_counts: bool = True,
 ) -> tuple[Optional[dict], Optional[str]]:
     """``(card, None)`` for an eligible row, ``(None, excluded_reason)`` otherwise.
 
@@ -194,7 +200,9 @@ def collection_card(
 
     slug = row.get("slug")
     edition = edition_for_slug(slug)
-    if edition is None or edition.get("kind") not in DISCOVERABLE_EDITIONS:
+    if edition is None or (
+        not search and edition.get("kind") not in DISCOVERABLE_EDITIONS
+    ):
         return None, EXCLUDED_WRONG_EDITION
     if league is not None and edition.get("league") != league:
         return None, EXCLUDED_WRONG_EDITION
@@ -203,24 +211,31 @@ def collection_card(
 
     game_count = int(row.get("game_count") or 0)
     question_count = int(row.get("question_count") or 0)
-    if game_count + question_count == 0:
+    if include_counts and game_count + question_count == 0:
+        return None, EXCLUDED_EMPTY
+    if not include_counts and row.get("has_member") is not True:
         return None, EXCLUDED_EMPTY
 
     matched = sorted(int(i) for i in (row.get("matched_event_ids") or ()))
     if matched_required and not matched:
         return None, EXCLUDED_NOT_MATCHED
+    if sport_required and not row.get("sport_matches"):
+        return None, EXCLUDED_SPORT
 
     window_start, window_end = row.get("window_start"), row.get("window_end")
     status = row.get("status")
     if edition.get("kind") == EDITION_NFL_WEEK and "game_statuses" in row:
         status = nfl_week_status(row.get("game_statuses"), fallback=status)
+    name = nfl_week_title(
+        row.get("name"), slug, (row.get("first_game_at"), row.get("last_game_at"))
+    )
     card = {
         "type": CARD_TYPE,
         # ``text`` is the field every search result is labelled by.
-        "text": row.get("name"),
+        "text": name,
         "id": int(row["id"]),
         "slug": slug,
-        "name": row.get("name"),
+        "name": name,
         "state": READ_PUBLISHED,
         "revision": int(row["revision"]) if row.get("revision") is not None else None,
         "edition": edition,
@@ -236,17 +251,67 @@ def collection_card(
         "matched_event_ids": matched,
         "destination": container_destination(slug),
     }
+    if not include_counts:
+        for key in (
+            "game_count", "question_count", "matched_event_ids", "status",
+            "window_start", "window_end",
+        ):
+            card.pop(key)
+        card["has_members"] = True
     return card, None
 
 
-def _discovery_sql(*, by_slug: bool, by_prefix: bool, by_season: bool, by_events: bool) -> str:
+def collection_query_tokens(query: str) -> tuple[str, ...]:
+    """Literal words/numbers shared by stored-set and computed-set search."""
+    return tuple(re.findall(r"[^\W\d_]+|\d+", query.lower()))
+
+
+def _discovery_sql(
+    *,
+    by_slug: bool,
+    by_prefix: bool,
+    by_season: bool,
+    by_events: bool,
+    by_query: bool = False,
+    title_only: bool = False,
+    by_sport: bool = False,
+    by_markets: bool = False,
+    brief: bool = False,
+) -> str:
     """One aggregate statement. Filters are composed from fixed fragments only;
     every value is a bind parameter (gotcha #45)."""
     hub_filters = [
         f"c.{PUBLICATION_COLUMN} = 'published'",
         "c.parent_container_id IS NULL",
-        "c.slug ~ :slug_pattern",
     ]
+    if not by_query:
+        hub_filters.append("c.slug ~ :slug_pattern")
+    if title_only:
+        hub_filters.append(
+            "(concat_ws(' ', c.name, replace(c.slug, '-', ' ')) ~* ALL(:query_patterns) "
+            "OR EXISTS (SELECT 1 FROM containers schedule_part "
+            "JOIN event_edges schedule_edge ON schedule_edge.parent_type = 'container' "
+            "AND schedule_edge.parent_id = schedule_part.id AND schedule_edge.kind = 'contains' "
+            "AND schedule_edge.child_type = 'event' "
+            "LEFT JOIN events schedule_event ON schedule_event.id = schedule_edge.child_id "
+            "WHERE (schedule_part.id = c.id OR schedule_part.parent_container_id = c.id) "
+            f"AND schedule_part.{PUBLICATION_COLUMN} <> 'withdrawn' "
+            "HAVING COUNT(DISTINCT schedule_edge.child_id) = "
+            "COUNT(DISTINCT schedule_event.id) FILTER (WHERE schedule_event.commence_time IS NOT NULL) "
+            "AND concat_ws(' ', c.name, replace(c.slug, '-', ' '), "
+            "to_char(MIN(schedule_event.commence_time) AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY'), "
+            "to_char(MAX(schedule_event.commence_time) AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY')) "
+            "~* ALL(:query_patterns)))"
+        )
+    if by_markets and not title_only:
+        hub_filters.append(
+            "c.id = ANY(ARRAY(SELECT DISTINCT COALESCE(member_part.parent_container_id, member_part.id) "
+            "FROM event_edges member_edge JOIN containers member_part ON member_part.id=member_edge.parent_id "
+            "WHERE member_edge.parent_type='container' AND member_edge.kind='contains' "
+            f"AND member_part.{PUBLICATION_COLUMN}<>'withdrawn' AND "
+            "((member_edge.child_type = 'event' AND member_edge.child_id = ANY(:event_ids)) "
+            "OR (member_edge.child_type = 'market' AND member_edge.child_id = ANY(:market_ids)))))"
+        )
     if by_slug:
         hub_filters.append("c.slug = ANY(:slugs)")
     if by_prefix:
@@ -254,6 +319,10 @@ def _discovery_sql(*, by_slug: bool, by_prefix: bool, by_season: bool, by_events
     if by_season:
         # Both discoverable slug shapes carry the season as their second token.
         hub_filters.append("split_part(c.slug, '-', 2) = :season_token")
+    if brief and not by_sport:
+        return _brief_title_sql(hub_filters)
+    if by_query:
+        return _search_count_sql(hub_filters, by_events, by_markets, by_sport)
     matched = (
         "COALESCE(array_agg(DISTINCT m.child_id) FILTER ("
         "  WHERE m.child_type = 'event' AND ev.id IS NOT NULL "
@@ -264,11 +333,33 @@ def _discovery_sql(*, by_slug: bool, by_prefix: bool, by_season: bool, by_events
     having = [
         "COUNT(DISTINCT ev.id) + COUNT(DISTINCT fm.id) > 0",
     ]
+    matching = []
     if by_events:
-        having.append(
+        matching.append(
             "bool_or(m.child_type = 'event' AND ev.id IS NOT NULL "
             "AND m.child_id = ANY(:event_ids))"
         )
+    if by_markets:
+        matching.append(
+            "bool_or(m.child_type = 'market' AND fm.id IS NOT NULL "
+            "AND m.child_id = ANY(:market_ids))"
+        )
+    if matching:
+        having.append("(" + " OR ".join(matching) + ")")
+    sport_match = (
+        "bool_or(ev_sport.key = :sport_key OR fm_sport.key = :sport_key)"
+        if by_sport
+        else "TRUE"
+    )
+    if by_sport:
+        having.append(sport_match)
+    sport_joins = (
+        "LEFT JOIN sports ev_sport ON ev_sport.id = ev.sport_id "
+        "LEFT JOIN sports fm_sport ON fm_sport.id = fm.sport_id "
+        if by_sport
+        else ""
+    )
+    sport_column = ", sport_id" if by_sport else ""
     return (
         "WITH hub AS ("
         "  SELECT c.id, c.name, c.slug, c.status, c.window_start, c.window_end, "
@@ -287,6 +378,12 @@ def _discovery_sql(*, by_slug: bool, by_prefix: bool, by_season: bool, by_events
         "    ON e.kind = 'contains' AND e.parent_type = 'container' "
         "   AND e.parent_id = parts.part_id "
         "  WHERE e.child_type IN ('event', 'market')"
+        "), member_events AS MATERIALIZED ("
+        f"  SELECT id, status, commence_time{sport_column} FROM events "
+        "  WHERE id = ANY(ARRAY(SELECT DISTINCT child_id FROM m WHERE child_type = 'event'))"
+        "), member_markets AS MATERIALIZED ("
+        f"  SELECT id{sport_column} FROM futures_markets "
+        "  WHERE id = ANY(ARRAY(SELECT DISTINCT child_id FROM m WHERE child_type = 'market'))"
         ") "
         "SELECT hub.id, hub.name, hub.slug, "
         "       CASE "
@@ -313,11 +410,21 @@ def _discovery_sql(*, by_slug: bool, by_prefix: bool, by_season: bool, by_events
         "       hub.parent_container_id, hub.publication_state, hub.revision, "
         "       COUNT(DISTINCT ev.id) AS game_count, "
         "       COUNT(DISTINCT fm.id) AS question_count, "
-        f"      {matched} AS matched_event_ids "
+        f"      {matched} AS matched_event_ids, "
+        "       CASE WHEN COUNT(DISTINCT ev.id) = COUNT(DISTINCT ev.id) FILTER "
+        "         (WHERE ev.commence_time IS NOT NULL) "
+        "         AND COUNT(DISTINCT ev.id) = COUNT(DISTINCT m.child_id) FILTER "
+        "         (WHERE m.child_type = 'event') THEN MIN(ev.commence_time) END AS first_game_at, "
+        "       CASE WHEN COUNT(DISTINCT ev.id) = COUNT(DISTINCT ev.id) FILTER "
+        "         (WHERE ev.commence_time IS NOT NULL) "
+        "         AND COUNT(DISTINCT ev.id) = COUNT(DISTINCT m.child_id) FILTER "
+        "         (WHERE m.child_type = 'event') THEN MAX(ev.commence_time) END AS last_game_at, "
+        f"       {sport_match} AS sport_matches "
         "FROM hub "
         "LEFT JOIN m ON m.hub_id = hub.id "
-        "LEFT JOIN events ev ON m.child_type = 'event' AND ev.id = m.child_id "
-        "LEFT JOIN futures_markets fm ON m.child_type = 'market' AND fm.id = m.child_id "
+        "LEFT JOIN member_events ev ON ev.id = CASE WHEN m.child_type = 'event' THEN m.child_id END "
+        "LEFT JOIN member_markets fm ON fm.id = CASE WHEN m.child_type = 'market' THEN m.child_id END "
+        f"{sport_joins}"
         "GROUP BY hub.id, hub.name, hub.slug, hub.status, hub.window_start, hub.window_end, "
         "         hub.parent_container_id, hub.publication_state, hub.revision "
         f"HAVING {' AND '.join(having)} "
@@ -331,24 +438,182 @@ _COLUMNS = (
     "id", "name", "slug", "status", "window_start", "window_end",
     "parent_container_id", "publication_state", "revision",
     "game_count", "question_count", "matched_event_ids",
+    "first_game_at", "last_game_at",
+    "sport_matches",
 )
+
+_BRIEF_COLUMNS = (
+    "id", "name", "slug", "parent_container_id", "publication_state", "revision",
+    "first_game_at", "last_game_at", "has_member",
+)
+
+
+def _search_count_sql(
+    hub_filters: list[str], by_events: bool, by_markets: bool, by_sport: bool
+) -> str:
+    """Aggregate each member type before joining the one-row container summary."""
+    matched_events = (
+        "COALESCE(array_agg(ev.id) FILTER (WHERE ev.id = ANY(:event_ids)), '{}'::bigint[])"
+        if by_events
+        else "'{}'::bigint[]"
+    )
+    matched_markets = (
+        "COALESCE(bool_or(fm.id = ANY(:market_ids)), FALSE)" if by_markets else "FALSE"
+    )
+    event_sport = "bool_or(es.key = :sport_key)" if by_sport else "TRUE"
+    market_sport = "bool_or(fs.key = :sport_key)" if by_sport else "TRUE"
+    event_sport_join = "LEFT JOIN sports es ON es.id = ev.sport_id" if by_sport else ""
+    market_sport_join = "LEFT JOIN sports fs ON fs.id = fm.sport_id" if by_sport else ""
+    sport_match = (
+        "(COALESCE(games.sport_matches, FALSE) OR COALESCE(markets.sport_matches, FALSE))"
+        if by_sport
+        else "TRUE"
+    )
+    title_match = (
+        "concat_ws(' ', hub.name, replace(hub.slug, '-', ' '), "
+        "to_char(games.first_game_at AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY'), "
+        "to_char(games.last_game_at AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY')) "
+        "~* ALL(:query_patterns)"
+    )
+    # Split the ID array so PostgreSQL can batch heap checks with a bitmap OR.
+    # One scalar-array index-only scan still fetched thousands of heap tuples
+    # on recently updated markets, exceeding the full-search latency gate.
+    return f"""
+        WITH hub AS (
+            SELECT c.id, c.name, c.slug, c.status, c.window_start, c.window_end,
+                   c.parent_container_id, c.{PUBLICATION_COLUMN} AS publication_state,
+                   c.{REVISION_COLUMN} AS revision
+            FROM containers c
+            WHERE {' AND '.join(hub_filters)}
+        ), parts AS (
+            SELECT id AS part_id, id AS hub_id FROM hub
+            UNION ALL
+            SELECT c.id, hub.id FROM containers c JOIN hub ON c.parent_container_id = hub.id
+            WHERE c.{PUBLICATION_COLUMN} <> 'withdrawn'
+        ), edges AS MATERIALIZED (
+            SELECT parent_id, child_type, child_id FROM event_edges
+            WHERE parent_type = 'container' AND kind = 'contains'
+              AND child_type IN ('event', 'market')
+              AND parent_id = ANY(ARRAY(SELECT part_id FROM parts))
+        ), members AS MATERIALIZED (
+            SELECT parts.hub_id,
+                   array_agg(DISTINCT edges.child_id) FILTER (
+                       WHERE edges.child_type = 'event'
+                   ) AS event_ids,
+                   array_agg(edges.child_id) FILTER (
+                       WHERE edges.child_type = 'market'
+                   ) AS market_ids
+            FROM parts JOIN edges ON edges.parent_id = parts.part_id
+            GROUP BY parts.hub_id
+        )
+        SELECT hub.id, hub.name, hub.slug,
+               CASE WHEN starts_with(hub.slug, 'nfl-') AND games.game_count > 0 THEN
+                   CASE WHEN games.cancelled_count = games.game_count THEN 'cancelled'
+                        WHEN games.terminal_count = games.game_count THEN 'final'
+                        WHEN games.has_started THEN 'live' ELSE 'scheduled' END
+                   ELSE hub.status END AS status,
+               hub.window_start, hub.window_end, hub.parent_container_id,
+               hub.publication_state, hub.revision, games.game_count, markets.question_count,
+               games.matched_event_ids, games.first_game_at, games.last_game_at,
+               {sport_match} AS sport_matches
+        FROM hub JOIN members ON members.hub_id = hub.id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(ev.id) AS game_count,
+                   COUNT(ev.id) FILTER (
+                       WHERE ev.status IN ('cancelled', 'canceled')
+                   ) AS cancelled_count,
+                   COUNT(ev.id) FILTER (WHERE ev.status IN (
+                       'completed', 'closed', 'final', 'finished', 'cancelled', 'canceled'
+                   )) AS terminal_count,
+                   bool_or((ev.status = 'live' AND (
+                       ev.commence_time IS NULL OR ev.commence_time <= now()
+                   )) OR ev.status IN ('completed', 'closed', 'final', 'finished')) AS has_started,
+                   {matched_events} AS matched_event_ids,
+                   CASE WHEN cardinality(members.event_ids) = COUNT(ev.commence_time)
+                        THEN MIN(ev.commence_time) END AS first_game_at,
+                   CASE WHEN cardinality(members.event_ids) = COUNT(ev.commence_time)
+                        THEN MAX(ev.commence_time) END AS last_game_at,
+                   MAX(ev.commence_time) AS latest_game_at, {event_sport} AS sport_matches
+            FROM events ev
+            {event_sport_join}
+            WHERE ev.id = ANY(members.event_ids)
+        ) games ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COUNT(fm.id) AS question_count, {matched_markets} AS matched_market,
+                   {market_sport} AS sport_matches
+            FROM futures_markets fm {market_sport_join}
+            WHERE fm.id = ANY(members.market_ids[1 : cardinality(members.market_ids) / 2])
+               OR fm.id = ANY(members.market_ids[cardinality(members.market_ids) / 2 + 1:])
+        ) markets ON TRUE
+        WHERE games.game_count + markets.question_count > 0
+          AND ({title_match} OR cardinality(games.matched_event_ids) > 0 OR markets.matched_market)
+          AND {sport_match}
+        ORDER BY ({title_match}) DESC, cardinality(games.matched_event_ids) DESC,
+                 games.latest_game_at DESC NULLS LAST, hub.window_start DESC NULLS LAST, hub.id
+        LIMIT :limit
+    """.strip()
+
+
+def _brief_title_sql(hub_filters: list[str]) -> str:
+    """Typeahead needs a live destination and dates, without full member counts."""
+    has_member = (
+        "EXISTS (SELECT 1 FROM containers part JOIN event_edges edge "
+        "ON edge.parent_type='container' AND edge.parent_id=part.id AND edge.kind='contains' "
+        "WHERE (part.id=hub.id OR part.parent_container_id=hub.id) "
+        "AND part.publication_state<>'withdrawn' AND "
+        "((edge.child_type='event' AND EXISTS (SELECT 1 FROM events e WHERE e.id=edge.child_id)) "
+        "OR (edge.child_type='market' AND EXISTS (SELECT 1 FROM futures_markets f WHERE f.id=edge.child_id))))"
+    )
+    return (
+        "WITH hub AS (SELECT c.id, c.name, c.slug, c.parent_container_id, c.window_start, "
+        f"c.{PUBLICATION_COLUMN} AS publication_state, c.{REVISION_COLUMN} AS revision "
+        "FROM containers c "
+        f"WHERE {' AND '.join(hub_filters)}) "
+        "SELECT hub.id, hub.name, hub.slug, hub.parent_container_id, "
+        "hub.publication_state, hub.revision, "
+        "CASE WHEN schedule.complete THEN schedule.first_game_at END AS first_game_at, "
+        "CASE WHEN schedule.complete THEN schedule.last_game_at END AS last_game_at, "
+        f"{has_member} AS has_member "
+        "FROM hub LEFT JOIN LATERAL ("
+        "SELECT MIN(e.commence_time) AS first_game_at, MAX(e.commence_time) AS last_game_at, "
+        "COUNT(DISTINCT edge.child_id) = COUNT(DISTINCT e.id) FILTER "
+        "(WHERE e.commence_time IS NOT NULL) AS complete "
+        "FROM containers part JOIN event_edges edge "
+        "ON edge.parent_type='container' AND edge.parent_id=part.id "
+        "AND edge.kind='contains' AND edge.child_type='event' "
+        "LEFT JOIN events e ON e.id=edge.child_id "
+        "WHERE (part.id=hub.id OR part.parent_container_id=hub.id) "
+        "AND part.publication_state<>'withdrawn') schedule ON TRUE "
+        f"WHERE {has_member} "
+        "ORDER BY schedule.last_game_at DESC NULLS LAST, "
+        "hub.window_start DESC NULLS LAST, hub.id LIMIT :limit"
+    )
 
 
 async def discover_collections(
     session,
     *,
     event_ids: Optional[Iterable[int]] = None,
+    market_ids: Optional[Iterable[int]] = None,
     slugs: Optional[Iterable[str]] = None,
     league: Optional[str] = None,
     season: Optional[int] = None,
     limit: int = MAX_COLLECTIONS,
+    query: Optional[str] = None,
+    sport_key: Optional[str] = None,
+    titles_only: bool = False,
 ) -> DiscoveryRead:
-    """The collections a reader may be offered, as cards. Two statements, always.
+    """The collections a reader may be offered, as cards.
+
+    A query tries titles before looking up its matched member ids. Other callers retain
+    their schema probe and one aggregate read.
 
     * ``event_ids`` — the games a consumer is already showing (a search
       page, a feed page). Only collections containing at least one of them are
       returned, most-matched first; ``matched_event_ids`` names which. This is
       how Search and Discover stay relevance-based: no games, no card.
+    * ``market_ids`` — markets already matched by ordinary full search,
+      including outcome and family matches. Membership is checked live.
     * ``slugs`` — exact collections (a Browse list, a deep link).
     * ``league`` (``"nfl"``/``"mlb"``) / ``season`` — Browse's filter.
 
@@ -367,10 +632,18 @@ async def discover_collections(
         return read
 
     limit = max(1, min(int(limit), MAX_COLLECTIONS))
+    tokens = collection_query_tokens(query) if query else ()
     events = _capped(event_ids, MAX_EVENT_IDS, "event_ids", read.truncated, int)
+    markets = _capped(market_ids, MAX_EVENT_IDS, "market_ids", read.truncated, int)
+    if tokens and markets is None:
+        markets = []
+    if markets is not None and events is None:
+        events = []
     slug_list = _capped(slugs, MAX_SLUGS, "slugs", read.truncated, str)
     # An explicit empty list is "nothing to look for", not "no filter".
-    if (events is not None and not events) or (slug_list is not None and not slug_list):
+    if (events is not None and not events and not markets and not tokens) or (
+        slug_list is not None and not slug_list
+    ):
         return read
 
     schema = await correction_schema_present(session)
@@ -378,7 +651,17 @@ async def discover_collections(
         read.reason = REASON_SCHEMA_ABSENT
         return read
 
-    params: dict = {"slug_pattern": DISCOVERABLE_SLUG_PATTERN, "limit": limit}
+    params: dict = {
+        "slug_pattern": DISCOVERABLE_SLUG_PATTERN,
+        "limit": MAX_COLLECTIONS if tokens else limit,
+    }
+    if tokens:
+        params["query_patterns"] = [
+            ("(^|[^[:digit:]])" if token.isdecimal() else "(^|[^[:alpha:]])") + token
+            for token in tokens
+        ]
+    if sport_key:
+        params["sport_key"] = sport_key
     if slug_list is not None:
         params["slugs"] = slug_list
     if league is not None:
@@ -387,25 +670,90 @@ async def discover_collections(
         params["season_token"] = str(int(season))
     if events is not None:
         params["event_ids"] = events
-    sql = _discovery_sql(
+    if markets is not None:
+        params["market_ids"] = markets
+    filters = dict(
         by_slug=slug_list is not None,
         by_prefix=league is not None,
         by_season=season is not None,
         by_events=events is not None,
+        by_query=bool(tokens),
+        by_sport=bool(sport_key),
+        by_markets=markets is not None,
     )
-    rows = (await session.execute(text(sql), params)).fetchall()
+    brief = bool(tokens) and not sport_key
+    rows = []
+    if tokens:
+        rows = (
+            await session.execute(
+                text(_discovery_sql(**filters, title_only=True, brief=brief)), params
+            )
+        ).fetchall()
+    if brief:
+        headings = []
+        for raw in rows:
+            row = dict(zip(_BRIEF_COLUMNS, raw))
+            if row.get("slug") == "midterms-2026":
+                from app.routes.containers import midterms_enabled
+
+                if not midterms_enabled():
+                    continue
+            heading, excluded = collection_card(
+                row, league=league, season=season, search=True, include_counts=False
+            )
+            if heading is None:
+                read.excluded[excluded] = read.excluded.get(excluded, 0) + 1
+                continue
+            headings.append(heading)
+            if len(headings) == limit:
+                break
+        if len(rows) == MAX_COLLECTIONS and len(headings) < limit:
+            read.truncated["matching_collections"] = MAX_COLLECTIONS
+        if titles_only:
+            read.collections = headings
+            return read
+        rows = []
+        if headings:
+            # Count only the eligible destinations this answer can display.
+            # The second read rechecks publication before returning full cards.
+            rows = (
+                await session.execute(
+                    text(_discovery_sql(**{**filters, "by_slug": True}, title_only=True)),
+                    {**params, "slugs": [heading["slug"] for heading in headings]},
+                )
+            ).fetchall()
+    has_member_candidates = not tokens or bool(events or markets)
+    if not rows and not titles_only and has_member_candidates:
+        rows = (
+            await session.execute(text(_discovery_sql(**filters)), params)
+        ).fetchall()
 
     for raw in rows:
         row = dict(zip(_COLUMNS, raw))
+        if tokens and row.get("slug") == "midterms-2026":
+            from app.routes.containers import midterms_enabled
+
+            if not midterms_enabled():
+                continue
         card, excluded = collection_card(
-            row, league=league, season=season, matched_required=events is not None
+            row,
+            league=league,
+            season=season,
+            matched_required=events is not None and markets is None and not tokens,
+            search=bool(tokens),
+            sport_required=bool(sport_key),
         )
         if card is None:
             read.excluded[excluded] = read.excluded.get(excluded, 0) + 1
             logger.warning(
                 "container discovery: SQL returned %s, which the pure check refused (%s)",
-                row.get("slug"), excluded,
+                row.get("slug"),
+                excluded,
             )
             continue
         read.collections.append(card)
+        if len(read.collections) == limit:
+            break
+    if tokens and len(rows) == MAX_COLLECTIONS and len(read.collections) < limit:
+        read.truncated["matching_collections"] = MAX_COLLECTIONS
     return read

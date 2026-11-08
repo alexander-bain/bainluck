@@ -636,6 +636,42 @@ def encode_base_last_good(base_json: str) -> bytes:
     return wire_encode(base_json)
 
 
+def dumps_feed_cache(payload: Any) -> str:
+    """#12334: the JSON text every feed Redis tier stores, which is the JSON the
+    reader of a fresh build is served.
+
+    WHAT A READER SAW. Discover cards printed `—` as their big number while the
+    line under it read "7% chance": `GET /api/feed?limit=20&event_pct=0.15`, on
+    every cached read of Nov 7-8 (`page_base_stale_hit`), carried 16 to 23
+    `top_outcomes[].probability` values as strings (`"0.067500"`) beside 300+
+    numbers. A `NUMERIC` column arrives in the payload as a `Decimal`. A fresh
+    build goes out through FastAPI's `jsonable_encoder`, which writes a number;
+    the cache tiers stored it through `json.dumps(..., default=str)`, which
+    writes its text. So the first reader got a number and every cached reader
+    got a string, and the card's `Number.isFinite` check refused the string.
+
+    So any value plain JSON cannot hold is encoded the way FastAPI would serve
+    it: a `Decimal` as a number (an integral one as an int), a datetime as
+    ISO-8601. That is LAT-P121's rule (`routes/events.py`, "encode before
+    storing"), applied per value. `json.dumps` calls the hook only for a value
+    it cannot write natively, so a payload holding none of them is stored
+    byte-for-byte as before, and the cost stays off the ordinary leaf.
+
+    A value the encoder refuses is stored as its text, which is what the old
+    codec did with every value. The publishes swallow their own failures, so a
+    codec that could raise would turn the cache off without a word.
+    """
+    from fastapi.encoders import jsonable_encoder
+
+    def _as_served(value: Any) -> Any:
+        try:
+            return jsonable_encoder(value)
+        except Exception:  # noqa: BLE001 — the old codec's answer; see above
+            return str(value)
+
+    return json.dumps(payload, default=_as_served)
+
+
 def _feed_start_epoch(raw: Any) -> Optional[float]:
     """A card's ``commence_time`` as epoch seconds, or ``None``.
 

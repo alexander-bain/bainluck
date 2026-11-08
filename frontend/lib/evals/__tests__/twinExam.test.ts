@@ -80,7 +80,7 @@ describe("the exam record", () => {
     expect(exam && examTruth(exam)).toEqual({
       kind: "last_run",
       asOf: RAW.recorded_at_pt,
-      source: { label: "Twin exam receipt", href: RAW.receipt_url },
+      source: { label: "Matcher exam results", href: RAW.receipt_url },
     });
     expect(pacificDayLabel(RAW.recorded_at_pt)).toBe("Nov 5");
   });

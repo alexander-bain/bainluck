@@ -15,7 +15,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.utils.container_game_winner import is_the_games_own_winner_market
+from app.utils.container_game_winner import (
+    RELATED_LINK_LIMIT,
+    is_the_games_own_winner_market,
+    related_link_presentation,
+)
 
 #: (id, source, name, external_id, market_type) — the game's own winner markets.
 WINNERS = [
@@ -66,3 +70,28 @@ def test_an_unshaped_winner_is_kept_not_guessed(row):
     _, _, name, external_id, _ = row
     assert is_the_games_own_winner_market(None, name, external_id) is False
     assert is_the_games_own_winner_market("binary", name, external_id) is False
+
+
+@pytest.mark.parametrize(
+    "market_type,name,external_id,presentation",
+    [
+        ("duel", "Panthers vs. Saints", "KXNFLGAME-26NOV15CARNOR", "game"),
+        ("duel", "Panthers vs. Saints", "0x123", "game"),
+        ("field", "Panthers vs. Saints", "885112", "inline"),
+        (None, "Panthers vs. Saints", "0x123", "inline"),
+        ("duel", "2H Spread: Colts (-17.5)", "0x123", "secondary"),
+        ("duel", "Spread: Chiefs (-3.5)", "0x123", "secondary"),
+        ("claim", "Buffalo vs New York J: Weather Delay", "REP-1", "secondary"),
+        ("duel", "Steelers vs. Browns: 1H Moneyline", "0x123", "inline"),
+        ("quantity", "Buccaneers vs. Cowboys: O/U 47.5", "0x123", "inline"),
+        ("claim", "Josh Allen: 2+ passing touchdowns?", "REP-1", "inline"),
+    ],
+)
+def test_related_links_reuse_the_game_classifier_without_changing_membership(
+    market_type, name, external_id, presentation
+):
+    assert related_link_presentation(market_type, name, external_id) == presentation
+
+
+def test_only_twelve_related_links_can_have_an_inline_presentation():
+    assert RELATED_LINK_LIMIT == 12

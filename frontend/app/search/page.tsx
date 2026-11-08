@@ -11,6 +11,8 @@ import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import SearchFamilyCard from "@/components/SearchFamilyCard";
 import SearchTeamCard from "@/components/SearchTeamCard";
+import DiscoverCollectionCard from "@/components/discover/DiscoverCollectionCard";
+import { admitSearchCollection } from "@/lib/discover/collectionFeed";
 import { familyShownIds } from "@/components/searchFamilyDisplay";
 import CategoryBrowser from "@/components/CategoryBrowser";
 import LoadingState from "@/components/LoadingState";
@@ -246,6 +248,7 @@ function SearchContent() {
         setIsLoading(false);
         const eventCount = data.results?.length ?? 0;
         const futuresCount = data.futures?.length ?? 0;
+        const collectionCount = (data.collections ?? []).filter((card) => admitSearchCollection(card)).length;
         track('search_submit', {
           query,
           results_count: eventCount,
@@ -259,7 +262,7 @@ function SearchContent() {
         // `query` is passed RAW on purpose — the sanitation boundary turns it
         // into query_hash/length/word_count and hard-drops the text, and that
         // hash is what joins this to search_submit / search_result_click.
-        if (eventCount === 0 && futuresCount === 0) {
+        if (eventCount === 0 && futuresCount === 0 && collectionCount === 0) {
           track('search_no_results', {
             query,
             results_count: 0,
@@ -342,6 +345,11 @@ function SearchContent() {
   const hasTeams = results?.teams && results.teams.length > 0;
   const hasFutures = results?.futures && results.futures.length > 0;
   const hasEvents = results?.results && results.results.length > 0;
+  const collections = (results?.collections ?? []).flatMap((card) => {
+    const entry = admitSearchCollection(card);
+    return entry ? [entry] : [];
+  });
+  const hasCollections = collections.length > 0;
   // #7529 — a split-squad home-and-home puts the same two clubs on this
   // page twice at the same minute; the cue is the only thing telling those
   // two cards apart. Empty map on every other query.
@@ -369,6 +377,7 @@ function SearchContent() {
     hasFutures: !!hasFutures,
     hasTeams: !!hasTeams,
     hasEventConcepts,
+    hasCollections,
     degraded: results?.degraded,
   });
 
@@ -391,7 +400,8 @@ function SearchContent() {
 
   const totalCount = (results.teams?.length ?? 0)
     + (results.pagination?.total_results ?? 0)
-    + (results.futures?.length ?? 0);
+    + (results.futures?.length ?? 0)
+    + collections.length;
 
   return (
     <div>
@@ -411,6 +421,7 @@ function SearchContent() {
           {hasTeams && ` · ${results.teams.length} team${results.teams.length !== 1 ? "s" : ""}`}
           {hasEvents && ` · ${results.pagination.total_results} game${results.pagination.total_results !== 1 ? "s" : ""}`}
           {hasFutures && ` · ${results.futures.length} market${results.futures.length !== 1 ? "s" : ""}`}
+          {hasCollections && ` · ${collections.length} collection${collections.length !== 1 ? "s" : ""}`}
         </p>
       </div>
 
@@ -456,6 +467,15 @@ function SearchContent() {
             </button>
           ))}
         </div>
+      )}
+
+      {hasCollections && (
+        <section className="mb-8" aria-label="Collections">
+          <SectionHeader title="Collections" count={collections.length} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {collections.map((entry) => <DiscoverCollectionCard key={entry.slug} entry={entry} />)}
+          </div>
+        </section>
       )}
 
       {/* Events section — tournament concept pages, first-class above markets (L2-65) */}

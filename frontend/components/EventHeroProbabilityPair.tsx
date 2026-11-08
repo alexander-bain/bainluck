@@ -399,19 +399,20 @@ export default function EventHeroProbabilityPair({
   const homeDigitsStyle = homeParts.decimal ? reserve : {};
   const awayDigitsStyle = awayParts.decimal ? reserve : {};
   // A two-sided tenths pair at today's 48px is ~242px and runs into the crests
-  // and player photos at 390px. The space between the two 56px photo boxes is
-  // ~214px at 390, and the boxes can shrink: a 38px pair (214.3px) squeezed
-  // them to 51.8px ovals rather than overflowing (PR #11697 review). So the
-  // pair is sized to fit that space with room to spare and never moves the
-  // photos — 35px numerals and a 24px decimal at 390, 32px / 20px at 375,
-  // 28px / 18px at 360 (each side's gap >= 4px, photos loaded or failed;
-  // below 360 the pair has its own row, #11301). One named number
-  // (#6238) has the room and keeps 48px, and a band pair (`<1` / `>99`)
-  // prints no decimal, so it keeps today's markup exactly.
+  // and player photos at 390px. When one or both team columns hold a wider
+  // single-word name (e.g. "Mountaineers", 81.4px at 390px on /events/15340134,
+  // #12338), the centre column narrows to ~188.6px and a 35px/24px pair
+  // (204.1px) overlaps the logo box (-8.4px). Stepping the fit pair to
+  // 28px / 18px at 390, 26px / 17px at 375, and 23px / 15px at 360 (176px /
+  // 168.3px / 156.1px across every 0.1%–99.9% value with 2ch reservation;
+  // below 360 the pair has its own row, #11301) keeps positive logo clearance
+  // on both sides. One named number (#6238) has the room and keeps 48px, and a
+  // band pair (`<1` / `>99`) prints no decimal, so it keeps today's markup
+  // exactly.
   const fitTenths = !awayWithheld && (homeParts.decimal !== '' || awayParts.decimal !== '');
   const fitDigitsClass =
-    'text-[28px] min-[375px]:text-[32px] min-[390px]:text-[35px] sm:text-[44px] font-black tracking-tight leading-none tabular-nums';
-  const decimalClass = 'text-[18px] min-[375px]:text-[20px] min-[390px]:text-[24px] font-black tracking-tight leading-none tabular-nums';
+    'text-[23px] min-[375px]:text-[26px] min-[390px]:text-[28px] sm:text-[44px] font-black tracking-tight leading-none tabular-nums';
+  const decimalClass = 'text-[15px] min-[375px]:text-[17px] min-[390px]:text-[18px] sm:text-[24px] font-black tracking-tight leading-none tabular-nums';
 
   // #3459 — NEITHER side has a number. Drawing the chrome anyway produced
   // `—%–—%`: at `text-[48px] font-black` an em-dash is a 41px solid rectangle,
@@ -489,7 +490,7 @@ export default function EventHeroProbabilityPair({
                   {ATLAS_STATE_COPY.noRecentPrice}
                 </span>
               ) : (
-                "No price yet"
+                "No probability yet"
               )}
             </span>
           ) : null

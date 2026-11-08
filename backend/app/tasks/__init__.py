@@ -354,6 +354,13 @@ celery_config = {
         "socket_keepalive_options": _KEEPALIVE_OPTS,
         "health_check_interval": 25,
         "retry_on_timeout": True,
+        # #12042 L-1 (worker audit §7.1 step 1, Alex 52-A): a worker that
+        # consumes more than one queue BRPOPs them in its `--queues` order
+        # every time, instead of rotating the queue that just delivered to the
+        # back (kombu's default `round_robin`). Only `worker-background`
+        # consumes two (`discover_base,background`); every other worker reads
+        # one queue, so this changes nothing for them.
+        "queue_order_strategy": "priority",
     },
     "result_backend_transport_options": {
         "socket_keepalive": True,
@@ -710,15 +717,28 @@ except Exception:  # pragma: no cover - defensive
 
 from kombu import Queue
 
+#: #12042 L-1 (worker audit 2026-11-06 §7.1 step 1; Alex 52-A). Measured: 18 of
+#: 47 base fires expired on the shared `background` queue (the audit; 134 runs in
+#: 24 h against ~720 for a 2-minute beat, Speed's read). On its own lane, listed
+#: first in `worker-background`'s `--queues`, the simulation completes 714 of 720
+#: a day. It removes no load. The warmers it displaces served about 0 real
+#: searches in 60 minutes. Revert = route it back to `background`.
+DISCOVER_BASE_QUEUE = "discover_base"
+
 celery_app.conf.task_queues = [
     Queue("realtime", routing_key="realtime"),
     Queue("background", routing_key="background"),
     Queue("heavy", routing_key="heavy"),
+    # #12042 L-1: the Discover base rebuild's own lane, served FIRST by
+    # `worker-background` (see `queue_order_strategy` above and the Procfile).
+    Queue(DISCOVER_BASE_QUEUE, routing_key=DISCOVER_BASE_QUEUE),
 ]
 
 celery_app.conf.task_default_queue = "background"
 
 celery_app.conf.task_routes = {
+    # #12042 L-1: the Discover base rebuild runs on its own lane (above).
+    "app.tasks.precompute_discover_candidate_base": {"queue": DISCOVER_BASE_QUEUE},
     # --- Realtime: live game data (30s-120s cycle) ---
     "app.tasks.poll_all_odds": {"queue": "realtime"},
     "app.tasks.poll_datagolf_inplay": {"queue": "realtime"},
@@ -3860,6 +3880,24 @@ MOVEMENT_CHUNK_IDLE_TIMEOUT_MS = 5_000
 #: locked row already is. The other 50 s are the tail's.
 MOVEMENT_RETIRE_BUDGET_SECONDS = 70
 
+#: Seconds into a run after which the full B/C recompute starts no new chunk
+#: (worker audit 2026-11-06 B-5). Its candidate read is bounded by what is left
+#: of this, and each chunk commits alone, so a run stopped here keeps every chunk
+#: it wrote and the banks and the movers warm still run inside the 120 s
+#: `soft_time_limit`. The next heavy run reads the candidates again.
+MOVEMENT_RECOMPUTE_DEADLINE_SECONDS = 95
+
+#: The minute of the hour whose `update_max_movement` run is the HEAVY one
+#: (worker audit 2026-11-06 B-5). Only that run takes A4's and A7's snapshot
+#: LATERAL scans and the full B/C recompute; the other five runs an hour do the
+#: cheap sweeps (A10, A, A2, A3, A5, A6) and the banks with the whole retirement
+#: budget. Measured 2026-11-06: 1 of 9 runs finished, because the A4 prepare
+#: (48.9 s at its worst that day) spent the 70 s budget and the full recompute
+#: then hit a 500 ms lock timeout or the soft limit, so Discover's movement pool,
+#: /search movers and iOS movers served frozen deltas. :20 rather than :00 or :50,
+#: which are the queue's two crowded minutes in the same audit.
+MOVEMENT_HEAVY_MINUTE = 20
+
 
 def _movement_run_clock() -> float:
     """The clock `MOVEMENT_RETIRE_BUDGET_SECONDS` is measured on."""
@@ -3961,8 +3999,14 @@ def _opening_book_slice(epoch_seconds: float) -> int:
 
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
-def update_max_movement(self):
+def update_max_movement(self, heavy: bool = True):
     """Retire expired movement deltas, recompute max_movement_24h, publish movers.
+
+    ``heavy`` (worker audit 2026-11-06 B-5): the beat passes ``heavy=False`` on
+    five of its six runs an hour and ``True`` on the :20 run
+    (`MOVEMENT_HEAVY_MINUTE`). A light run skips A4's and A7's snapshot LATERAL
+    scans and the full B/C recompute; every other statement runs as before. A
+    direct call (the default) is a heavy run, which is what the task always was.
 
     LAT-P115: this task WRITES the column `/api/futures/movers` ranks by, so it
     is also the honest place to publish that answer. The warm runs AFTER the
@@ -4067,8 +4111,10 @@ def update_max_movement(self):
         # it left for the next run (None: its read never ran).
         retire_deferred = {}
 
-        def retire_budget_spent(label, unattempted=None):
-            if _movement_run_clock() - run_started < MOVEMENT_RETIRE_BUDGET_SECONDS:
+        def retire_budget_spent(
+            label, unattempted=None, deadline_s=MOVEMENT_RETIRE_BUDGET_SECONDS,
+        ):
+            if _movement_run_clock() - run_started < deadline_s:
                 return False
             retire_deferred[label] = unattempted
             return True
@@ -4103,7 +4149,11 @@ def update_max_movement(self):
         # imported from their owners so the sweep and the reader cannot drift.
         from app.utils.futures_highlights import MODERATE_SURPRISE_THRESHOLD
         from app.utils.futures_market_snapshot import UNPRICED_OPENING_METADATA_KEY
-        from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, lock_timeout_value
+        from app.utils.repair_lock_budget import (
+            SET_LOCK_TIMEOUT_SQL,
+            is_lock_timeout,
+            lock_timeout_value,
+        )
         from app.utils.statement_timeout import is_statement_timeout
 
         # 🔴 A4's two thresholds are bound as `Decimal`, and a `float` here is a
@@ -4237,16 +4287,20 @@ def update_max_movement(self):
 
             await session.commit()
 
-            async def bounded_prepare(label, statement, params):
+            async def bounded_prepare(
+                label, statement, params, deadline_s=MOVEMENT_RETIRE_BUDGET_SECONDS,
+            ):
                 # A prepare read still running when the retirement budget ends
                 # is cancelled there and deferred, so one slow scan cannot carry
                 # the run past its soft limit. The A4 read alone measured up to
                 # 96 s. Its bound is set for this read only, and the previous
                 # value comes back after it, so no chunk UPDATE inherits it.
-                if retire_budget_spent(label):
+                # `deadline_s`: the full recompute's read (B-5) is bounded by
+                # `MOVEMENT_RECOMPUTE_DEADLINE_SECONDS` instead.
+                if retire_budget_spent(label, deadline_s=deadline_s):
                     return []
                 remaining_ms = max(1, int(1000 * (
-                    MOVEMENT_RETIRE_BUDGET_SECONDS
+                    deadline_s
                     - (_movement_run_clock() - run_started)
                 )))
                 previous = (await session.execute(
@@ -4276,7 +4330,8 @@ def update_max_movement(self):
             # plain reads that take no row lock, so no quote row is held while
             # they run. The core re-checks the same predicate on these ids only.
             # See A4_UNOBSERVED_PREDICATE.
-            a4_prepared_ids = await bounded_prepare(
+            # B-5: light runs skip both scans; A4 and A7 then retire nothing.
+            a4_prepared_ids = [] if not heavy else await bounded_prepare(
                 "A4",
                 """
                     /* movement prepare: A4 */
@@ -4293,7 +4348,7 @@ def update_max_movement(self):
                     "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
                 },
             )
-            a7_prepared_ids = await bounded_prepare(
+            a7_prepared_ids = [] if not heavy else await bounded_prepare(
                 "A7",
                 """
                     /* movement prepare: A7 */
@@ -4340,9 +4395,10 @@ def update_max_movement(self):
                     logger.warning("update_max_movement: warm failed: %s", exc, exc_info=True)
                     warm = {"terminal": "failed", "completed": 0, "reason": "error"}
 
-            async def recompute_maxima(market_ids=None):
+            async def recompute_maxima(market_ids=None, marker=""):
                 # Restrict the aggregate's INPUT, not only the UPDATE target:
                 # core outcome locks must not wait behind an all-market scan.
+                # `marker` is a SQL comment naming the caller (B-5's chunks).
                 params = {} if market_ids is None else {"market_ids": market_ids}
                 outcome_scope = (
                     "" if market_ids is None else " AND fo.market_id = ANY(:market_ids)"
@@ -4350,7 +4406,7 @@ def update_max_movement(self):
                 market_scope = (
                     "" if market_ids is None else " AND fm.id = ANY(:market_ids)"
                 )
-                recomputed = await session.execute(text("""
+                recomputed = await session.execute(text(marker + """
                     UPDATE futures_markets fm
                     SET max_movement_24h = sub.max_mv
                     FROM (
@@ -4364,7 +4420,7 @@ def update_max_movement(self):
                       AND fm.status IN ('open', 'active')
                       AND (fm.max_movement_24h IS DISTINCT FROM sub.max_mv)
                 """), params)
-                emptied = await session.execute(text("""
+                emptied = await session.execute(text(marker + """
                     UPDATE futures_markets fm
                     SET max_movement_24h = NULL
                     WHERE fm.status IN ('open', 'active')
@@ -5021,16 +5077,75 @@ def update_max_movement(self):
                 )
 
                 # Preserve the original full B/C maintenance for markets whose
-                # prices changed independently of retirement. Its new transaction
-                # owns no outcome locks, and re-arms the same local wait budget.
-                await session.execute(
-                    SET_LOCK_TIMEOUT_SQL,
-                    {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
+                # prices changed independently of retirement — on the heavy run
+                # only (B-5), and in chunks. One lock-free read lists the markets
+                # whose maximum B would change or C would clear; each chunk of
+                # `MOVEMENT_RETIRE_CHUNK` of them then runs the targeted B/C
+                # (the same statements, input restricted to the chunk) in its
+                # own transaction under the same 500 ms wait bound, so the value
+                # written is computed when it is written. A chunk that hits the
+                # bound rolls back alone and waits for the next heavy run; before
+                # B-5 one blocked market row (2 of 9 runs on 2026-11-06) threw
+                # away the whole recompute.
+                updated, cleared_markets = core_updated, core_cleared
+                recompute_lock_skipped = 0
+                recompute_ids = [] if not heavy else await bounded_prepare(
+                    "RECOMPUTE",
+                    """
+                        /* movement prepare: RECOMPUTE */
+                        SELECT fm.id
+                        FROM (
+                            SELECT fo.market_id,
+                                   MAX(ABS(fo.probability_change_24h)) AS max_mv
+                            FROM futures_outcomes fo
+                            WHERE fo.probability_change_24h IS NOT NULL
+                            GROUP BY fo.market_id
+                        ) sub
+                        JOIN futures_markets fm ON fm.id = sub.market_id
+                        WHERE fm.status IN ('open', 'active')
+                          AND fm.max_movement_24h IS DISTINCT FROM sub.max_mv
+                        UNION
+                        SELECT fm.id
+                        FROM futures_markets fm
+                        WHERE fm.status IN ('open', 'active')
+                          AND fm.max_movement_24h IS NOT NULL
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM futures_outcomes fo
+                              WHERE fo.market_id = fm.id
+                                AND fo.probability_change_24h IS NOT NULL
+                          )
+                        ORDER BY 1
+                    """,
+                    {},
+                    deadline_s=MOVEMENT_RECOMPUTE_DEADLINE_SECONDS,
                 )
-                updated, cleared_markets = await recompute_maxima()
-                updated += core_updated
-                cleared_markets += core_cleared
-                await session.commit()
+                # The read took no lock, and its statement_timeout is already
+                # restored, so the first chunk's transaction may simply carry on.
+                for start in range(0, len(recompute_ids), MOVEMENT_RETIRE_CHUNK):
+                    if retire_budget_spent(
+                        "RECOMPUTE", len(recompute_ids) - start,
+                        deadline_s=MOVEMENT_RECOMPUTE_DEADLINE_SECONDS,
+                    ):
+                        break
+                    chunk = recompute_ids[start:start + MOVEMENT_RETIRE_CHUNK]
+                    try:
+                        await session.execute(
+                            SET_LOCK_TIMEOUT_SQL,
+                            {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
+                        )
+                        chunk_updated, chunk_cleared = await recompute_maxima(
+                            chunk, marker="/* movement recompute */ ",
+                        )
+                        await session.commit()
+                    except Exception as exc:
+                        await session.rollback()
+                        if not is_lock_timeout(exc):
+                            raise
+                        recompute_lock_skipped += len(chunk)
+                        continue
+                    updated += chunk_updated
+                    cleared_markets += chunk_cleared
 
                 # A8's carrier key, shared by A8-DG / A9-DG below.
                 bank_key = DATED_BASIS_METADATA_KEY
@@ -5589,6 +5704,13 @@ def update_max_movement(self):
                 # it left for the next run (None when its read never ran). Empty
                 # on a run that finished every statement.
                 "retire_deferred": retire_deferred,
+                # B-5. Whether this was the hour's heavy run (A4/A7 scans and the
+                # full recompute ran), how many markets the full recompute read
+                # as needing work, and how many of those a 500 ms lock wait sent
+                # to the next heavy run. A light run reads False / 0 / 0.
+                "heavy_pass": heavy,
+                "recompute_candidates": len(recompute_ids),
+                "recompute_lock_skipped": recompute_lock_skipped,
                 "window_hours": MOVEMENT_WINDOW_HOURS,
                 "movers_warm": warm,
             }
@@ -5659,6 +5781,23 @@ def grid_sentinel(self, file_issues=True):
     return _tracked_run(
         "grid_sentinel",
         _run_grid_sentinel(file_issues=file_issues),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.grouping_sentinel")
+def grouping_sentinel(self, post=True, file_issues=True):
+    """Grouping Sentinel (#12231): count the market families no grouping covers
+    (five or more open, priced markets alive 48 h), new venue series, unshaped
+    markets and frames written, and post the counts on #12221 once a week
+    through the rail's report path. Report-only (72-A): it files nothing until
+    Thu Nov 26, then at most five issues a run through ``reconcile_issue``.
+    Read-only against market data. The 840s soft limit (under the 900s hard
+    limit) sits above the run's 600s definitions deadline plus its paged reads,
+    so a slow run ends tracked, never SIGKILLed (#966)."""
+    from app.tasks.grouping_sentinel import _run_grouping_sentinel
+    return _tracked_run(
+        "grouping_sentinel",
+        _run_grouping_sentinel(post=post, file_issues=file_issues),
     )
 
 
@@ -6962,6 +7101,31 @@ def warm_typeahead(self, head_size: int = None):
     return _tracked_run("warm_typeahead", _warm_typeahead(head_size=size))
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=100,
+    time_limit=115,
+    max_retries=8,
+    name="app.tasks.warm_typeahead_gold_set",
+)
+def warm_typeahead_gold_set(self):
+    """W-1 (2026-11-06): warm the Flow Sentinel's gold-set terms at 07:05 UTC.
+
+    The regular pass keeps 8 terms resident; the 07:10 sentinel searches 32. This
+    runs `_warm_typeahead` once over those terms. It shares the regular pass's run
+    lock and 30 s floor, so a fire that lands on a running or just-finished pass is
+    retried every 15 s (at most 8 times, two minutes) instead of being dropped.
+    """
+    from app.tasks.typeahead_warmer import _warm_typeahead, flow_sentinel_gold_terms
+
+    summary = _tracked_run(
+        "warm_typeahead_gold_set", _warm_typeahead(queries=flow_sentinel_gold_terms())
+    )
+    if isinstance(summary, dict) and summary.get("terminal") == "skipped":
+        raise self.retry(countdown=15)
+    return summary
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=140, name="app.tasks.warm_search_head")
 def warm_search_head(self, head_size: int = None):
     """Keep the head of the `/search` distribution inside its response cache.
@@ -7504,6 +7668,10 @@ celery_app.conf.beat_schedule = {
         # off-tournament) and generates only while The Open is LIVE — one OpenAI
         # call per run, at most. Background queue (runs the full golf aggregation).
         "task": "app.tasks.refresh_open_commentary",
+        # C-1 (2026-11-06) did NOT take B-7's July-only gate here: a month-gated
+        # crontab is counted by the settlement sweep's minute census as twenty
+        # fires an hour all year, and the run already exits on a cheap Redis
+        # read outside The Open. Stays an interval beat.
         "schedule": 180.0,
         "options": {"queue": "background"},
     },
@@ -7552,7 +7720,11 @@ celery_app.conf.beat_schedule = {
     },
     "compute-gei-percentiles-hourly": {
         "task": "app.tasks.compute_gei_percentiles",
-        "schedule": crontab(minute=5),
+        # C-1 / B-15 (worker audit 2026-11-06): daily at 06:05 UTC — the key
+        # name predates it and is kept so the beat history stays one series.
+        # The thresholds are stored rows, not a TTL'd cache, so nothing goes
+        # dark between runs; EI percentile badges can be up to 24 h old.
+        "schedule": crontab(minute=5, hour=6),
     },
     "poll-futures-every-4h": {
         "task": "app.tasks.poll_futures_odds",
@@ -7847,6 +8019,9 @@ celery_app.conf.beat_schedule = {
     # census is left at 18 and nothing is spent.
     "revive-retired-future-starts": {
         "task": "app.tasks.revive_retired_future_starts",
+        # C-1 (2026-11-06) did NOT take B-11's 6/h -> 2/h here: the arm's
+        # ~10-minute cadence and its dodge of the settlement sweep's :31-:44
+        # window are both pinned by #7260's tests, and 2/h breaks both.
         "schedule": crontab(minute="0,10,20,30,45,55"),
     },
     "match-prediction-markets": {
@@ -7902,11 +8077,11 @@ celery_app.conf.beat_schedule = {
     },
     "track-statpal-usage": {
         "task": "app.tasks.track_statpal_usage",
-        "schedule": crontab(minute="*/15"),  # Every 15 minutes
-    },
-    "check-tier1-coverage": {
-        "task": "app.tasks.check_tier1_coverage",
-        "schedule": crontab(minute=30),  # Every hour at :30
+        # C-1 / B-15 (2026-11-06): hourly at :15 (was every 15 minutes). It
+        # records a DAILY request count, so four reads an hour added nothing.
+        # :15 keeps one of its old minutes, which the tennis-link offset census
+        # (`test_tennis_link_beat_restart_starvation_3316`) counts as a reader.
+        "schedule": crontab(minute=15),
     },
     "backfill-team-links": {
         "task": "app.tasks.backfill_team_links",
@@ -7921,7 +8096,9 @@ celery_app.conf.beat_schedule = {
     # cost cannot be called bounded.
     "reconcile-unanchored-events": {
         "task": "app.tasks.reconcile_unanchored_events",
-        "schedule": crontab(minute="18,48"),
+        # C-1 / B-11 (2026-11-06): daily at 09:18 UTC. It runs with
+        # apply=False — a report, 0 writes — so twice an hour bought nothing.
+        "schedule": crontab(minute=18, hour=9),
         "kwargs": {"apply": False, "limit": 1000},
         "options": {"queue": "background"},
     },
@@ -7953,6 +8130,10 @@ celery_app.conf.beat_schedule = {
     # `scripts/restore_2878_tennis_twin_ghosts.py --apply`.
     "tennis-twin-sweep": {
         "task": "app.tasks.tennis_twin_sweep",
+        # C-1 (2026-11-06) did NOT halve this (B-11): 79 of 79 candidates were
+        # already tagged in the audit window, but the race this sweep exists for
+        # measured 92 min and `test_the_cadence_beats_the_fastest_thing_that_
+        # can_mint_a_ghost` holds the longest gap at 30 min. Stays twice hourly.
         "schedule": crontab(minute="27,57"),
         "kwargs": {"apply": True, "lookback": 10, "lookahead": 5},
         "options": {"queue": "background"},
@@ -7982,7 +8163,9 @@ celery_app.conf.beat_schedule = {
     # back.
     "soccer-ghost-twin-sweep": {
         "task": "app.tasks.soccer_ghost_twin_sweep",
-        "schedule": crontab(minute="9,49"),
+        # C-1 / B-11 (worker audit 2026-11-06): hourly at :09 (was :09/:49).
+        # 102 of 102 candidates were already tagged in the audit window.
+        "schedule": crontab(minute="9"),
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },
@@ -8065,7 +8248,11 @@ celery_app.conf.beat_schedule = {
     },
     "merge-duplicate-events": {
         "task": "app.tasks.merge_duplicate_events",
-        "schedule": crontab(minute="*/30"),  # Every 30 min (was 10)
+        # C-1 / B-11 (2026-11-06): hourly at :22 (was */30, and */10 before
+        # that); 0 merges in the audit window. A new two-rows-for-one-game pair
+        # can stay visible up to ~60 min instead of ~30 before it folds. :22 is
+        # outside the nightly settlement sweep's 10:31+13m window.
+        "schedule": crontab(minute=22),
         "kwargs": {"dry_run": False},
     },
     "merge-degenerate-combat-events": {
@@ -8352,6 +8539,12 @@ celery_app.conf.beat_schedule = {
         # (#1910), so this moved instead. A minute census over the assembled
         # schedule says :53 carries one other beat, against 33 at :00, 24 at :30
         # and 15 at :45.
+        #
+        # C-1 (worker audit 2026-11-06) did NOT take B-14 (every 3 h). The
+        # coverage contract above needs ceil(200 / (180 // 17)) = 20 passes inside
+        # the 86,400 s mirror: 20 x 3,600 fits, 20 x 10,800 does not, so a 3 h
+        # beat would let up to two thirds of a full reachable set lapse and those
+        # team pages would pay the cold build. Stays hourly.
         "schedule": crontab(minute=53),
         "options": {"queue": "background"},
     },
@@ -8498,7 +8691,22 @@ celery_app.conf.beat_schedule = {
         # from the duration histogram — that is what it is for.
         #
         # Registered prediction and grading rows: `lat-p062-warmer-graded.md` §3.
-        "schedule": 10.0,
+        #
+        # W-1 (worker audit 2026-11-06 B-1; Alex 53: A): every 15 s (was 10 s),
+        # a residency pass of 8 terms (was 40), the 30 s floor kept. The 15 s
+        # beat keeps the real-pass gap <= 45 s, inside the "survives 45s" bound
+        # above. Revert = this number, `DEFAULT_HEAD_SIZE` and
+        # `typeahead_beat_budget.CURRENT_BEAT_INTERVAL_S`.
+        "schedule": 15.0,
+        "options": {"queue": "background"},
+    },
+    "warm-typeahead-gold-set": {
+        "task": "app.tasks.warm_typeahead_gold_set",
+        # W-1 (2026-11-06): once a day, five minutes before the 07:10 UTC Flow
+        # Sentinel, warm the sentinel's 32 gold-set terms through the typeahead
+        # route. With the residency pass down to 8 terms, this keeps the pages the
+        # sentinel's searches read resident at the one moment it reads them.
+        "schedule": crontab(hour=7, minute=5),
         "options": {"queue": "background"},
     },
     "rebuild-typeahead-index": {
@@ -8574,7 +8782,13 @@ celery_app.conf.beat_schedule = {
         # family and a user-latency warmer does not belong behind a 25-minute
         # calibration pass. Same queue as `warm-typeahead`, and the contention
         # that creates is declared for Integrator review rather than discovered.
-        "schedule": 20.0,
+        #
+        # W-1 (worker audit 2026-11-06 B-2; Alex 53: A): beat 20 -> 60 s, floor
+        # 45 -> 300 s, refresh-ahead 150 -> 410 s, warmer entries live 600 s
+        # (`SEARCH_HEAD_WARMER_TTL_SECONDS`; readers keep 180 s). The head now
+        # costs `background` one pass per 5 minutes, and a reader's head answer
+        # is up to ~10 minutes old instead of ~3. Revert = these four numbers.
+        "schedule": 60.0,
         "options": {"queue": "background"},
     },
     "warm-container-hubs": {
@@ -8662,8 +8876,9 @@ celery_app.conf.beat_schedule = {
         # freshness window (CANDIDATE_BASE_FRESH_SECONDS) enforces the "no looser
         # than the anon feed freshness contract" bound; the bounded last-good key
         # + request-path publish keep cold pages covered between beats.
+        # #12042 L-1: its own lane, which `worker-background` serves first.
         "schedule": crontab(minute="*/2"),
-        "options": {"queue": "background"},
+        "options": {"queue": DISCOVER_BASE_QUEUE},
     },
     "prewarm-live-feed-shapes": {
         "task": "app.tasks.prewarm_live_feed_shapes",
@@ -8741,7 +8956,19 @@ celery_app.conf.beat_schedule = {
     },
     "update-max-movement": {
         "task": "app.tasks.update_max_movement",
-        "schedule": crontab(minute="*/10"),  # Every 10 minutes
+        # B-5 (worker audit 2026-11-06): five LIGHT runs an hour — the cheap
+        # sweeps and the banks with the whole retirement budget. The :20 run is
+        # the heavy one, below; together they are still every 10 minutes.
+        "schedule": crontab(minute="0,10,30,40,50"),
+        "kwargs": {"heavy": False},
+        "options": {"queue": "background"},
+    },
+    "update-max-movement-heavy": {
+        "task": "app.tasks.update_max_movement",
+        # B-5: the hour's one HEAVY run (`MOVEMENT_HEAVY_MINUTE`): A4/A7's
+        # snapshot LATERAL scans and the chunked full B/C recompute as well.
+        "schedule": crontab(minute=MOVEMENT_HEAVY_MINUTE),
+        "kwargs": {"heavy": True},
         "options": {"queue": "background"},
     },
     "collapse-odds-snapshots-daily": {
@@ -8823,6 +9050,16 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.grid_sentinel",
         "schedule": crontab(minute=25, hour=7),  # Daily 07:25 UTC
         "options": {"queue": "heavy"},
+    },
+    "grouping-sentinel-weekly": {
+        # #12231: the weekly count of market families no grouping covers, posted
+        # on #12221 (report-only until Thu Nov 26, 72-A). Thursday 16:00 UTC
+        # (8 AM PT) on background, as Fable answered on #12231 (Nov 6, 9:28 PM):
+        # a weekly, rules-only read with no reader waiting on it, so it is not
+        # one of #233's morning alarms that need a guaranteed heavy slot.
+        "task": "app.tasks.grouping_sentinel",
+        "schedule": crontab(minute=0, hour=16, day_of_week=4),  # Weekly Thursday 16:00 UTC
+        "options": {"queue": "background"},
     },
     "grid-register-sentinel-daily": {
         # Queue #295: diff every committed grid register against live source
@@ -9147,7 +9384,9 @@ celery_app.conf.beat_schedule = {
         # endpoint reads a warm Redis key instead of calling Sentry live. Light HTTP
         # task on the background queue; no-ops without SENTRY_AUTH_TOKEN.
         "task": "app.tasks.sentry_snapshot",
-        "schedule": crontab(minute="*/15"),
+        # C-1 / B-15 (2026-11-06): hourly at :13 (the key name predates it),
+        # with the snapshot TTL raised to 2 h so one late beat never empties it.
+        "schedule": crontab(minute=13),
     },
     "mark-resolved-futures": {
         "task": "app.tasks.mark_resolved_futures",
@@ -9195,12 +9434,12 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 500},
         "options": {"queue": "background"},
     },
-    "backfill-kalshi-price-history": {
-        "task": "app.tasks.backfill_kalshi_history",
-        "schedule": crontab(minute=30, hour="4,10,16,22"),  # Every 6h, 30min after Polymarket
-        "kwargs": {"limit": 500},
-        "options": {"queue": "background"},
-    },
+    # "backfill-kalshi-price-history" (the `resolved_zero` mode) retired by C-1 /
+    # B-12 (worker audit 2026-11-06): it has no watermark, so it re-selects the
+    # same empty head rows every run and cannot drain (`kalshi_cliff.py` header,
+    # reasons 1-3). `kalshi-cliff-drain` below covers the same resolved cohort
+    # hourly with a watermark, and `repair-openings-from-first-snapshot` covers
+    # the opening-null arm. The task and its other modes stay.
     # #1586 (queue 355): the cliff drain. HOURLY, deliberately — unlike every
     # other backfill here, the work this one does not do today cannot be done
     # at all: ~7,800 Kalshi markets cross the 86-day retention horizon every
@@ -9544,8 +9783,13 @@ celery_app.conf.beat_schedule = {
         # poller alone — the background worker is concurrency 2 and a long
         # co-scheduled beat is how three of these siblings starved before
         # (gotcha #12/#39). Our own wall is 480s, so the run ends by :56.
+        #
+        # C-1 / B-12 (worker audit 2026-11-06): DAILY, the 04:48 UTC slot of
+        # the four above. The drain's steady state is "examined a slice,
+        # restored zero" (see `repair_openings_from_first_snapshot`), so three
+        # of four runs were ~480 s of table walk that fixed nothing.
         "task": "app.tasks.repair_openings_from_first_snapshot",
-        "schedule": crontab(minute=48, hour="4,10,16,22"),
+        "schedule": crontab(minute=48, hour=4),
         "options": {"queue": "background"},
     },
     "compute-calibration-prices": {
@@ -9859,7 +10103,10 @@ celery_app.conf.beat_schedule = {
     "precompute-admin-audit-all": {
         "task": "app.tasks.precompute_admin_audit_all",
         # */15 -> */30 (LAT-P062). Was 4 recomputes per 3600s TTL; now 2.
-        "schedule": crontab(minute="*/30"),
+        # C-1 / B-15 (2026-11-06): hourly at :08, off the crowded :00/:30, with
+        # the cache TTL raised to 2 h (`_ADMIN_HEALTH_CACHE_TTL`) so one late
+        # beat never empties it. Admin pages can be up to 1 h old.
+        "schedule": crontab(minute=8),
         "options": {"queue": "background"},
     },
     "precompute-admin-link-rate": {
@@ -9878,7 +10125,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.precompute_admin_matured_linkage",
         # */10 -> */30 (LAT-P062). Was 6 recomputes per 3600s TTL; now 2.
         # Matured-linkage headline (Item 2).
-        "schedule": crontab(minute="*/30"),
+        # C-1 / B-15 (2026-11-06): hourly at :11, TTL 2 h — as audit-all above.
+        "schedule": crontab(minute=11),
         "options": {"queue": "background"},
     },
 }
@@ -10115,7 +10363,7 @@ _EXPIRING_WARMER_BEATS = {
     "warm-futures-categories": _futures_categories_warm_minutes() * 60,
 
     # #4920. One period, so #1609's flat rule applies unamended: the pass is
-    # ~30 s of measurement against a 720 s beat, so a fire that could not start
+    # ~30 s of measurement against an 1800 s beat (C-1), so a fire that could not start
     # IS superseded by the next one — and superseded exactly, because the next
     # fire re-measures the same categories through the same route. DERIVED from
     # the period for the same reason the period is derived from the slot's TTL.
@@ -10175,7 +10423,11 @@ _EXPIRING_WARMER_BEATS = {
     # ⚠️ **This does not close #3539.** It makes the effective pass period the
     # ~60 s the cadence arithmetic assumes instead of the ~576 s it is today.
     # #3539 is that 60 s still not being sound against a 60 s TTL.
-    "warm-search-head": 180,
+    #
+    # W-1 (2026-11-06): 180 -> 600, re-derived by `derive_message_expiry_s` at
+    # the warmer's new 600 s entry life and 60 s beat — 10 messages alive at
+    # most, inside `MAX_LIVE_MESSAGES` 16.
+    "warm-search-head": 600,
 }
 
 for _warmer_beat, _expires_s in _EXPIRING_WARMER_BEATS.items():

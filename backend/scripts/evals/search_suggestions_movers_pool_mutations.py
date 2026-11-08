@@ -294,7 +294,7 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "M-SHAPE-NARROW",
         ROUTE,
         "keep only the ladders out — the `Yes` shapes come back",
-        '_SUGGESTION_MOVERS_EXCLUDED_SHAPES = ("quantity", "unshaped", "container_member")',
+        '_SUGGESTION_MOVERS_EXCLUDED_SHAPES = ("quantity", "unshaped", "container_member", "claim")',
         '_SUGGESTION_MOVERS_EXCLUDED_SHAPES = ("quantity",)',
     ),
     (

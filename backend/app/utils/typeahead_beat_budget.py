@@ -171,8 +171,10 @@ RESPONSE_CACHE_TTL_S = 65
 MIN_PASS_PERIOD_S = 30
 
 #: The beat interval in force today. Mirrored from the `warm-typeahead` entry in
-#: `tasks/__init__.py` (`"schedule": 10.0`).
-CURRENT_BEAT_INTERVAL_S = 10.0
+#: `tasks/__init__.py` (`"schedule": 15.0`). W-1 (2026-11-06): 10 -> 15 s, which
+#: keeps the real-pass gap at or under 45 s on the 30 s floor; a 30 s beat on a
+#: 30 s floor would skip to 60 s whenever a pass started late.
+CURRENT_BEAT_INTERVAL_S = 15.0
 
 # ---------------------------------------------------------------------------
 # The measured pass wall. PROVENANCE, not folklore.
@@ -506,7 +508,10 @@ LOCK_TTL_S = 45
 #: rather than an open one. Same constant, same job, as
 #: `search_head_warmer.MAX_LIVE_MESSAGES`; the two beats differ in period so the
 #: seconds differ (12 x 10 s here, 9 x 20 s there).
-MAX_LIVE_MESSAGES = 12
+#:
+#: W-1 (2026-11-06): 12 -> 8 with the beat 10 -> 15 s, so the window a queued fire
+#: may wait stays the 120 s it was (8 x 15 s) and the broker holds fewer of them.
+MAX_LIVE_MESSAGES = 8
 
 
 def derive_message_expiry_s(
@@ -2092,6 +2097,48 @@ def free_background_slots(
 #: #142's 2:05 AM snapshot already runs, one primary-key market read and one
 #: insert. The census RUN over the tree merged with `80b7a1605c` printed
 #: `explicit 102 implicit 40 total 142`.
+#: 🔴 RE-DERIVED at speed (2026-11-06, #12042 L-1): 142 → 141, explicit 102 →
+#: 101, fall-through UNMOVED at 40. `precompute-discover-candidate-base` left
+#: `background` for its own `discover_base` lane, which `worker-background`
+#: serves FIRST (`--queues=discover_base,background`, `queue_order_strategy=
+#: priority`). The same worker still runs it, so the slot count is unchanged.
+#: What changes is the order: the base no longer waits behind the warmers.
+#: The census RUN over the tree branched from `9247e7f5ca` printed
+#: `explicit 101 implicit 40 total 141`.
+#: 🔴 RE-DERIVED at speed (2026-11-06, B-5 over L-1): 141 → 142, explicit
+#: 101 → 102, fall-through UNMOVED at 40. `update-max-movement-heavy`
+#: (`crontab(minute=20)`) names `background` explicitly; it is the :20 run of
+#: `update_max_movement`, taken out of `update-max-movement`, so arrivals on the
+#: queue are unchanged (six an hour). W-1 #12222 writes against an older base:
+#: whichever merges after another re-runs the census, never adds one. The census
+#: RUN over the tree merged with `7cf2c6561a` printed `explicit 102 implicit 40 total 142`.
+#: 🔴 RE-DERIVED at speed (2026-11-06, W-1 over L-1 + B-5): 142 → 143, explicit 102 → 103,
+#: fall-through UNMOVED at 40. `warm-typeahead-gold-set`
+#: (`crontab(hour=7, minute=5)`) names `background` explicitly. Cost: one fire a
+#: day, one typeahead pass over the Flow Sentinel's 32 gold-set terms (~the
+#: old 40-term pass, ~20 s) — against W-1 taking the every-15 s pass from 40
+#: terms to 8. The census RUN over the tree merged with `8e7a2135ff` (L-1 and
+#: B-5 both on master) printed `explicit 103 implicit 40 total 143`.
+#: 🔴 RE-DERIVED at speed (2026-11-06, C-1 over L-1 + B-5 + W-1): 143 → 141,
+#: explicit 103 → 102, fall-through 40 → 39. Two beats retired: B-7's
+#: `check-tier1-coverage` (hourly, default queue; its only output was one log
+#: line) and B-12's `backfill-kalshi-price-history` (the `resolved_zero` mode,
+#: explicit `background`; no watermark, so it cannot drain, and
+#: `kalshi-cliff-drain` covers its cohort hourly). The census RUN over the tree
+#: merged with `ce54f96e3c` (W-1 on master) printed `explicit 102 implicit 39
+#: total 141`.
+#: 🔴 RE-DERIVED at Builder E (2026-11-07, #12231 over C-1): 141 → 142, explicit
+#: 102 → 103, fall-through UNMOVED at 39. `grouping-sentinel-weekly`
+#: (`crontab(minute=0, hour=16, day_of_week=4)`) names `background` explicitly.
+#: Fable's answer on #12231 said 144 against a base of 143; C-1 retired two beats
+#: before this landed, so the census was re-run, not offset. Cost: one fire a
+#: week. It pages the 59,249 open markets by primary key (12 pages of 5,000
+#: rows, ~4–5 s each, measured 2026-11-07), reads the graph twice, evaluates the 18
+#: round-up definitions live (each bounded at 60 s, all at 600 s), then one
+#: GitHub read and one comment, one Redis ZADD NX and one claim key. It holds a
+#: background slot for minutes once a week, inside an 840 s soft limit. The
+#: census RUN over the tree rebased onto `f3798ba3b0` (C-1 on master) printed
+#: `explicit 103 implicit 39 total 142`.
 BACKGROUND_BEAT_COUNT = 142
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,

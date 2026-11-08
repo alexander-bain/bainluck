@@ -163,8 +163,20 @@ class _Venue:
         return self._svc._parse_event(raw)
 
 
+class _FrozenAtNow(datetime):
+    """``fpr``'s clock read at the specimen's instant. The fetch path passes
+    ``datetime.now(timezone.utc)`` to the window writer; on the real clock this went red
+    once the specimen's expected expiration (2027-01-04) passed (#12252, timebomb_confirm
+    red at +60 d on 2026-11-07)."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return NOW if tz is not None else NOW.replace(tzinfo=None)
+
+
 class TestTheFetchFillsTheWindow:
-    def test_filled_on_a_live_book_with_no_extra_call(self):
+    def test_filled_on_a_live_book_with_no_extra_call(self, monkeypatch):
+        monkeypatch.setattr(fpr, "datetime", _FrozenAtNow)
         venue = _Venue(_senateme())
         windows: dict = {}
         priced = asyncio.run(

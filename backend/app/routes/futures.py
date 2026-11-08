@@ -5852,14 +5852,67 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
     return compose_outcomes(spec, members, boards, index, now)
 
 
+#: #12335 step 2: each title market's verdict, kept briefly and shared by every
+#: reader of it — the detail page, its chart's current column, and the Search
+#: card (`routes/events.py::_search_verified_titles`). Measured on production
+#: Nov 8 just after midnight PT, the page's composition read: 16.1 s cold, then
+#: 3.0, 1.2, 1.1 s — and every page view recomposed. ``{market id: (expires at
+#: monotonic, verdict)}``. PLAIN DATA ONLY (gotcha #6): a `Composition` or
+#: `Refusal` is frozen dataclasses of ids, floats, strings and lists, never an
+#: ORM row. A `resolver_error` is never kept — the next reader retries.
+_VERIFIED_TITLE_CACHE: dict[int, tuple[float, object]] = {}
+
+#: Bound on the map's size. Only title questions ever enter (the NFL title today:
+#: a handful of venue rows), so this is a backstop, never a working limit.
+_VERIFIED_TITLE_CACHE_MAX = 256
+
+
+def _verified_title_cache_seconds() -> float:
+    """``VERIFIED_TITLE_CACHE_SECONDS`` (default 60): how long one verdict serves.
+
+    60 s is the staleness #12335's ruling accepts for a futures title board — it
+    moves on venue polls measured in minutes — against a recompose that costs a
+    reader 1-16 s. ``0`` turns the cache off (the test default, see conftest).
+    """
+    try:
+        return max(0.0, float(os.getenv("VERIFIED_TITLE_CACHE_SECONDS", "60")))
+    except ValueError:
+        return 60.0
+
+
+def _held_verified_title(market_id):
+    """The verdict `_VERIFIED_TITLE_CACHE` holds for ``market_id`` now, or ``None``.
+
+    Reads only: no composition, no session. The Search card asks this first, so
+    a held verdict costs it no connection (#12335 step 4).
+    """
+    import time as _time
+
+    if _verified_title_cache_seconds() <= 0:
+        return None
+    held = _VERIFIED_TITLE_CACHE.get(market_id)
+    if held is not None and held[0] > _time.monotonic():
+        return held[1]
+    return None
+
+
 async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
     """A `Composition`, or a `Refusal` naming why this response is source mode.
 
     Never raises: an opted-in reader whose identity cannot be proved gets the
-    source page, never an error page.
+    source page, never an error page. Served from `_VERIFIED_TITLE_CACHE` while
+    a verdict for this market is younger than `_verified_title_cache_seconds()`.
     """
+    import time as _time
+
+    ttl = _verified_title_cache_seconds()
+    key = getattr(market, "id", None)
+    if ttl > 0 and key is not None:
+        held = _VERIFIED_TITLE_CACHE.get(key)
+        if held is not None and held[0] > _time.monotonic():
+            return held[1]
     try:
-        return await _compose_verified_title(db, market)
+        verdict = await _compose_verified_title(db, market)
     except Exception:
         logger.warning(
             "verified_title resolver failed for market %s; serving source mode",
@@ -5867,6 +5920,15 @@ async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
             exc_info=True,
         )
         return Refusal("resolver_error")
+    if ttl > 0 and key is not None:
+        now = _time.monotonic()
+        if len(_VERIFIED_TITLE_CACHE) >= _VERIFIED_TITLE_CACHE_MAX:
+            for stale in [k for k, (exp, _v) in _VERIFIED_TITLE_CACHE.items() if exp <= now]:
+                del _VERIFIED_TITLE_CACHE[stale]
+            if len(_VERIFIED_TITLE_CACHE) >= _VERIFIED_TITLE_CACHE_MAX:
+                _VERIFIED_TITLE_CACHE.clear()
+        _VERIFIED_TITLE_CACHE[key] = (now + ttl, verdict)
+    return verdict
 
 
 def _stamp_representation(payload: dict, verdict) -> None:
@@ -6917,14 +6979,28 @@ async def get_progression(
     # this process would read now is not necessarily the one on the user's screen.
     applied_card_receipt: Optional[str] = None
     if sport_cat == "golf" and "win" in stage_markets:
-        card_wins, applied_card_receipt = await _golf_card_win_probabilities(
-            source_tournament_name, golf_card_receipt
+        card_wins, applied_card_receipt, card_display = (
+            await _golf_card_win_probabilities(
+                source_tournament_name, golf_card_receipt
+            )
         )
         for merge_key, card_prob in card_wins.items():
             p = participants.get(merge_key)
             if p is None:
                 continue  # on the card, not in this market's field — never a row
             p["probabilities"]["win"] = card_prob
+            display = card_display.get(merge_key)
+            if display:
+                p.setdefault("rendered_percents", {})["win"] = display[
+                    "rendered_percent"
+                ]
+                # A raw live-source delta cannot describe a normalized card.
+                # Adopt that card's complete-field dated comparison, including
+                # its independent refusal, rather than subtract unlike scales.
+                if display["change_24h"] is None:
+                    p["changes_24h"].pop("win", None)
+                else:
+                    p["changes_24h"]["win"] = display["change_24h"]
             # Terminal state is a claim about the number we publish, so it is
             # recomputed from the published value rather than left on the blend's.
             p["status"].pop("win", None)
@@ -6978,10 +7054,12 @@ async def get_progression(
 async def _golf_card_win_probabilities(
     tournament_name: Optional[str],
     requested_receipt: Optional[str] = None,
-) -> tuple[dict[str, float], Optional[str]]:
+) -> tuple[dict[str, float], Optional[str], dict[str, dict]]:
     """The win probabilities the card is publishing, and the receipt they came from.
 
-    Returns `(win_map, applied_receipt)`. The receipt is echoed to the caller so the
+    Returns `(win_map, applied_receipt, display_map)`. The receipt pins both the
+    server integer and its normalized comparison when present, preserving the
+    original receipt for older unallocated cards. It is echoed to the caller so the
     page can tell whether the table bound to the card it is actually holding; see
     the module docstring of `app.utils.golf_card_snapshot` for why that matters.
 
@@ -7029,19 +7107,20 @@ async def _golf_card_win_probabilities(
     numbers — different numbers are a different receipt.
 
     Fails open in every direction — no Redis, no payload, no matching tournament,
-    or a malformed entry all return `({}, None)` and leave the live blend in place.
+    or a malformed entry all return `({}, None, {})` and leave the live blend in place.
     A receipt that cannot be resolved (Redis here is an LRU and may evict) does NOT
     silently fall through to a different snapshot's numbers pretending to be the
     requested one: the current card is adopted and its OWN receipt is echoed, so
     the mismatch is visible to the caller instead of being absorbed here.
     """
     if not tournament_name:
-        return {}, None
+        return {}, None, {}
 
     from app.utils.golf_card_snapshot import (
+        card_win_display_map,
         card_win_map,
         card_win_receipt,
-        resolve_snapshot,
+        resolve_card_snapshot,
         snapshot_key,
     )
 
@@ -7057,23 +7136,23 @@ async def _golf_card_win_probabilities(
             # Only fall back to the current card when it cannot be resolved.
             if requested_receipt:
                 pinned_raw = await rc.get(snapshot_key(requested_receipt))
-                pinned = resolve_snapshot(
+                pinned = resolve_card_snapshot(
                     pinned_raw, requested_receipt, tournament_name
                 )
                 if pinned:
-                    return pinned, requested_receipt
+                    return pinned[0], requested_receipt, pinned[1]
             raw = await rc.get(GOLF_CATEGORY_CACHE_KEY)
         finally:
             await rc.aclose()
         if not raw:
-            return {}, None
+            return {}, None, {}
         payload = _json.loads(raw)
     except Exception:
         logger.debug("golf card authority unavailable", exc_info=True)
-        return {}, None
+        return {}, None, {}
 
     if not isinstance(payload, dict):
-        return {}, None
+        return {}, None, {}
     for entry in payload.get("tournaments") or []:
         if not isinstance(entry, dict):
             continue
@@ -7082,12 +7161,13 @@ async def _golf_card_win_probabilities(
             continue
         published = card_win_map(entry)
         if not published:
-            return {}, None
+            return {}, None, {}
         # Recomputed from the map actually being applied rather than read off the
         # payload's stamped field, so the echoed receipt always describes the
         # numbers this response carries — even if the stamp were stale or absent.
-        return published, card_win_receipt(published)
-    return {}, None
+        display_map = card_win_display_map(entry)
+        return published, card_win_receipt(published, display_map), display_map
+    return {}, None, {}
 
 
 def _progression_merge_key(outcome: FuturesOutcome) -> str:

@@ -1085,14 +1085,37 @@ class TestTheWidthIsBoundedByTheEngineItUses:
         """
         ttl_s = 45
         beat_s = _warm_typeahead_beat_seconds()
-        # The measured envelope on v3829, not a projection.
+
+        # W-1 (2026-11-06): the head is 8 terms on a 15 s beat. The envelope
+        # below was measured on the 40-term pass (v3829), so it no longer
+        # describes the shipped pass; what the code PERMITS does. Each query is
+        # walled at `PER_QUERY_TIMEOUT_SECONDS`, so the warming phase is at most
+        # `ceil(head / width)` walls — 2 x 10 s — and the floor holds the period
+        # at 30 s. Head resolution and lock work are outside that bound; the
+        # post-deploy pass ring's `period_s` is the check on them.
+        warming_bound = (
+            math.ceil(warmer.DEFAULT_HEAD_SIZE / warmer.WARM_CONCURRENCY)
+            * warmer.PER_QUERY_TIMEOUT_SECONDS
+        )
+        floor_s = warmer.MIN_PASS_PERIOD_SECONDS
+        period = beat_s * math.ceil(max(floor_s, warming_bound) / beat_s)
+        assert period < ttl_s, (
+            f"an 8-term pass permitted {warming_bound}s on a {beat_s}s beat and a "
+            f"{floor_s}s floor quantises to a {period}s period, not under the "
+            f"{ttl_s}s TTL — the head goes cold between passes"
+        )
+
+        # The coupling, pinned: the 40-term envelope measured on v3829 does NOT
+        # fit a 15 s beat (38.1 s -> 45 s), so restoring `DEFAULT_HEAD_SIZE = 40`
+        # without the 10 s beat must fail here.
         for wall_s in (27.4, 30.9, 36.2, 38.1):
-            period = beat_s * math.ceil(wall_s / beat_s)
-            assert period < ttl_s, (
-                f"a {wall_s}s pass on a {beat_s}s beat quantises to a {period}s "
-                f"period, which is not under the {ttl_s}s TTL — the head goes "
-                f"cold between passes and the duty cycle cannot reach 100%"
-            )
+            at_10 = 10.0 * math.ceil(wall_s / 10.0)
+            assert at_10 < ttl_s, (wall_s, at_10)
+        assert beat_s * math.ceil(38.1 / beat_s) >= ttl_s
+        assert warmer.DEFAULT_HEAD_SIZE <= 8, (
+            "a head larger than 8 on the 15 s beat is graded only by the 40-term "
+            "envelope above, which does not fit — re-measure before widening it"
+        )
 
     def test_the_floor_bounds_how_hard_the_warmer_may_hit_the_database(self):
         """The other half of the beat change, and the reason it is safe.

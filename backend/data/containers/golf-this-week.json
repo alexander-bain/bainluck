@@ -1,0 +1,35 @@
+{
+  "slug": "golf-this-week",
+  "membership": "event-derived",
+  "kind": "roundup",
+  "kicker": "GOLF · THIS WEEK",
+  "name": "This week's tournaments",
+  "category": "golf",
+  "tag": "GOLF",
+  "section_title": "This week's tournaments",
+  "footer": "Each row is the leader in its own tournament.",
+  "relations": [
+    "same_measure",
+    "same_window"
+  ],
+  "level": "member",
+  "rule": {
+    "producer": "week_events",
+    "sport": "golf",
+    "window": "play_week",
+    "date_source": "start_date_and_end_date",
+    "min_events": 2,
+    "max_rows": 4,
+    "row_value": "field_leader",
+    "twins": "blended-where-paired",
+    "normalize": true,
+    "relation": "same_sport_play_week",
+    "relations": [
+      "same_measure",
+      "same_window"
+    ],
+    "level": "member",
+    "refusal": "per-tournament-coherence-then-min-events",
+    "materialize": "read-time"
+  }
+}

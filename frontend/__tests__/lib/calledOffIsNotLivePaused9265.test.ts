@@ -133,7 +133,9 @@ describe("C · THE LEAGUE PAGE — the headings a reader scrolls past", () => {
   test("…and a paused match still gets its heading beside it", () => {
     // The rung must not have emptied the bucket by accident: the same row
     // without its stoppage word is the paused match CERT-786 was written for.
-    const paused = { ...CALLED_OFF[0], espn: undefined } as Event;
+    // #3016 — with a last score, which is what that match carries: a paused row
+    // with NO score now draws below Upcoming (`leagueSections.test.ts`, block E).
+    const paused = { ...CALLED_OFF[0], espn: undefined, home_score: 3, away_score: 2 } as Event;
     const withPaused = buildLeagueSections([...COMPLETED, paused], CAPTURED_AT);
     expect(withPaused[0].title).toBe("Live & Paused");
     expect(withPaused[0].events.map((e) => e.id)).toEqual([15319530]);

@@ -31,10 +31,12 @@ import pytest
 import yaml
 
 from tests.test_ci_matrix_required_contexts import (
+    JOB_IF,
     RUNS,
     LIVE,
     REUSE,
     SCOPE_RUNS,
+    SEARCH_RECALL,
     _validate_backend_partition,
 )
 from tests.test_ci_supersede_concurrency import DEPLOY_NEEDS
@@ -67,8 +69,18 @@ python -m pytest $FILES -q --durations=0
 
 # These are only reviewed workflow-defined keys, not a claim that runner,
 # installed-package, test and production environments are equivalent.
+# Decide 55-A: the ONE reviewed PYTEST_ADDOPTS — the shared tail re-runs a failed
+# test once and every other group gets nothing. Any other value (e.g. `-k`, which
+# would deselect tests) is still an unreviewed environment.
+RETRY_ONCE_ADDOPTS = "${{ matrix.group == 'shared-tail' && '--reruns 1 -rR' || '' }}"
+
+# #12252 item 2: the quarantine list and the retry file are admitted ONLY at these exact
+# reviewed values (data from change-scope, a fixed path); any other value is unreviewed.
+QUARANTINE_ENV = ("CI_QUARANTINE", "${{ needs.change-scope.outputs.quarantine }}")
+RETRIES_FILE_ENV = ("FLAKY_RETRIES_FILE", "/tmp/flaky-retries.txt")
 JOB_ENV_KEYS = {
     "database-integration": {"DATABASE_URL", "SEARCH_TEST_DATABASE_URL"},
+    "flaky-canary": {"DATABASE_URL", "SEARCH_TEST_DATABASE_URL"},
     "deploy": {"HEROKU_API_KEY", "GH_TOKEN"},
 }
 STEP_ENV_KEYS = {
@@ -134,9 +146,17 @@ STEP_ENV_KEYS[("change-scope", "Extend change-scope with impacted tests for live
     "GH_TOKEN", "RELEASE_LOOP_FAST_ENABLED", "PR_NUMBER", "PR_BASE", "PR_HEAD", "PUSH_BASE",
 }
 STEP_ENV_KEYS[("change-scope", "Record the deployed gate for the watchdog")] = {"LIVE_MODE"}
+STEP_ENV_KEYS[("change-scope", "Flaky quarantine (#12252)")] = {"GH_TOKEN"}
 STEP_ENV_KEYS[("fast-gate", "Python 3.11 syntax, smoke test and change-scope selected tests")] = {
     "SELECTED_TESTS",
 }
+
+# #10708: the native leg step reads the native job's result as data; the native
+# job reads change-scope's computed test list as data.
+STEP_ENV_KEYS[
+    ("backend-tests", "Native candidate — the full shard is replaced by native-backend-readers")
+] = {"NATIVE_RESULT"}
+STEP_ENV_KEYS[("native-backend-readers", "Run the native backend readers")] = {"NATIVE_TESTS"}
 
 # Receipt values are data, never workflow-expression interpolation in shell.
 for _receipt_job in (
@@ -210,8 +230,14 @@ def _validate_current_composed_promotion(
         workflow_env = _workflow().get("env", {})
     _allowed_environment(workflow_env, set(), "workflow")
     for name, job in jobs.items():
+        job_env = dict(job.get("env") or {})
+        if name == "database-integration" and job_env.get("PYTEST_ADDOPTS") == RETRY_ONCE_ADDOPTS:
+            job_env.pop("PYTEST_ADDOPTS")
+        for key, value in (QUARANTINE_ENV, RETRIES_FILE_ENV):
+            if job_env.get(key) == value:
+                job_env.pop(key)
         _allowed_environment(
-            job.get("env"), JOB_ENV_KEYS.get(name, set()), f"{name} job"
+            job_env, JOB_ENV_KEYS.get(name, set()), f"{name} job"
         )
         for step in job.get("steps", []):
             _allowed_environment(
@@ -234,7 +260,9 @@ def _validate_current_composed_promotion(
     deploy = jobs["deploy"]
     assert set(deploy["needs"]) == DEPLOY_NEEDS, "all broad gates precede promotion"
     assert deploy.get("if") == DEPLOY_IF, "only the guarded full or live promotion paths"
-    assert "if" not in jobs["backend-tests"], "backend matrix must expand"
+    # #10708: the one reviewed job condition never reads the scope, so the
+    # backend matrix always expands.
+    assert jobs["backend-tests"].get("if") == JOB_IF, "backend matrix must expand"
     for name in DEPLOY_NEEDS | {"change-scope", "database-integration", "deploy"}:
         job = jobs[name]
         assert "continue-on-error" not in job, f"{name} failure cannot be waived"
@@ -248,6 +276,15 @@ def _validate_current_composed_promotion(
                 and (step.get("name") == "Publish compose checkout provenance"
                      or (name == "change-scope" and step.get("with", {}).get("name")
                          == "release-loop-mode-${{ github.run_id }}-${{ github.run_attempt }}"))
+            ) or (
+                # #12252 item 2: the shared tail's 55-A retry list, read by the flake
+                # sentinel only; nothing downloads it as evidence for a commit.
+                name == "database-integration"
+                and step.get("uses") == "actions/upload-artifact@v4"
+                and step.get("id") == "db_flaky_retries_upload"
+                and step.get("with") == {"name": "flaky-retries-${{ github.run_attempt }}",
+                                         "path": "/tmp/flaky-retries.txt",
+                                         "if-no-files-found": "ignore", "retention-days": 8}
             ), "only explicit compose test-provenance upload; no build artifact credit"
     for name in ("backend-tests", "shard-completeness", "database-integration"):
         job = jobs[name]
@@ -270,7 +307,7 @@ def _validate_current_composed_promotion(
     assert backend["steps"].index(_step(backend, "Install dependencies")) < backend[
         "steps"
     ].index(command)
-    assert len(backend["steps"]) == 10, "new source preparation needs review"
+    assert len(backend["steps"]) == 11, "new source preparation needs review"
     # #10090 attempt163, the one reviewed addition: a test binary supplied
     # outside the checkout. It runs no git and installs nothing, so it cannot
     # change the source, the dependencies or the test selection under test.
@@ -295,10 +332,12 @@ def _validate_current_composed_promotion(
     assert verifier["steps"][-1].get("if") == REUSE
     aggregate = jobs["search-recall"]
     assert set(aggregate["needs"]) == {"change-scope", "database-integration"}
-    assert aggregate["if"] == f"${{{{ !cancelled() && {SCOPE_RUNS} && {LIVE} }}}}"
-    for name in ("frontend-build", "e2e-contract", "release-required", "deploy"):
+    # 75-A: only the explicitly labelled never-merge study skips this runner.
+    # Keep the ordinary scope/live predicates and every master promotion gate.
+    assert aggregate["if"] == SEARCH_RECALL
+    for name in ("frontend-build", "e2e-contract", "release-required", "deploy", "native-backend-readers"):
         _current_checkout(jobs[name])
-    assert jobs["frontend-build"].get("if") == LIVE
+    assert jobs["frontend-build"].get("if") == f"{LIVE} && needs.change-scope.outputs.scope != 'native'"
     assert jobs["e2e-contract"].get("if") is None
     assert len(deploy["steps"]) == 4, "no artifact substitution step"
     assert _current_checkout(deploy) is deploy["steps"][1]
@@ -349,6 +388,7 @@ def test_actual_workflow_requires_current_composed_source_before_main_promotion(
         "component_push",
         "artifact_substitution",
         "lost_database_aggregate",
+        "widened_eval_ci_skip",
         "conditional_verifier",
     ],
 )
@@ -422,6 +462,10 @@ def test_current_source_guard_rejects_substituted_or_partial_promotion(mutation)
         )
     elif mutation == "lost_database_aggregate":
         jobs["search-recall"]["needs"].remove("database-integration")
+    elif mutation == "widened_eval_ci_skip":
+        jobs["search-recall"]["if"] = jobs["search-recall"]["if"].replace(
+            "'eval-candidate'", "'tier-b'"
+        )
     else:
         jobs["shard-completeness"]["steps"][-1]["if"] = "false"
     with pytest.raises(AssertionError):

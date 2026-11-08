@@ -100,13 +100,13 @@ enum MLBVenueResult11284: Hashable {
 /// Details show what was on screen until Refresh. Every value is named for
 /// what it is — saved chance, last recorded quote, final count, venue
 /// result — and none is merged into another.
-struct MLBOriginal11284: Equatable, Identifiable {
-    struct Field: Equatable {
+struct MLBOriginal11284: Equatable, Identifiable, Sendable {
+    struct Field: Equatable, Sendable {
         let label: String
         let value: String
     }
 
-    struct Section: Equatable {
+    struct Section: Equatable, Sendable {
         let title: String?
         let fields: [Field]
     }
@@ -701,6 +701,7 @@ struct MLBExtraInningsCard11284: Equatable {
         /// The venue's own settlement of the row.
         let venueResult: MLBVenueResult11284
         let original: MLBOriginal11284
+        var pregameChance: Double? = nil
         var id: String { original.id }
     }
 
@@ -717,7 +718,46 @@ struct MLBExtraInningsCard11284: Equatable {
         return stat == "extra innings"
     }
 
-    static func build(_ rows: [GameMarketOther], eventID: Int) -> MLBExtraInningsCard11284? {
+    static func build(_ rows: [GameMarketOther], eventID: Int, now: Date = Date()) -> MLBExtraInningsCard11284? {
+        if ReleaseSurfaces.isEventPageAtlasEnabled() {
+            let entries = EventAtlasMlbCards11666.buildExtraInningsEntries(
+                rows: rows,
+                finished: true,
+                isBefore: false,
+                now: now
+            )
+            let outcomes = entries.map { entry in
+                var fields: [MLBOriginal11284.Field] = [
+                    .init(label: "Original side", value: entry.label)
+                ]
+                if let venue = SourceLabels.label(for: entry.source) {
+                    fields.append(.init(label: "Venue", value: venue))
+                }
+                fields.append(
+                    .init(
+                        label: "Pregame chance",
+                        value: entry.pregameChance.map { formatProbability($0) } ?? "Unavailable"
+                    )
+                )
+                if let stamp = SourceAge.preciseStamp(entry.observedAt) {
+                    fields.append(.init(label: "Saved", value: stamp))
+                }
+                fields.append(.init(label: "Venue result", value: entry.venueResult.label))
+                let original = MLBOriginal11284(
+                    id: "mlb-o:\(eventID):\(entry.id)",
+                    title: entry.marketTitle,
+                    sections: [.init(title: nil, fields: fields)]
+                )
+                return Outcome(
+                    label: entry.label,
+                    venue: SourceLabels.label(for: entry.source),
+                    venueResult: entry.venueResult,
+                    original: original,
+                    pregameChance: entry.pregameChance
+                )
+            }
+            return outcomes.isEmpty ? nil : MLBExtraInningsCard11284(eventID: eventID, outcomes: outcomes)
+        }
         let outcomes = rows.filter { isExtraInnings($0) }.map { row in
             Outcome(label: row.outcomeName, venue: SourceLabels.label(for: row.source),
                     venueResult: .venue(isWinner: row.isWinner, resolutionSource: row.resolutionSource),

@@ -12,8 +12,13 @@ import type { ForwardRecordView } from "@/lib/evals/forwardRecord";
 import type { ReviewOutcome, ReviewerResults } from "@/lib/evals/reviewerResults";
 import type { ReviewerStudy } from "@/lib/evals/reviewerStudy";
 
-/** The probability picture's drawing box, in SVG units. */
-export const TRUTH_PLOT = { width: 320, height: 96, left: 28, right: 4, top: 4, bottom: 13 } as const;
+/**
+ * The probability picture's drawing box, in SVG units. 84 tall, not 96 (Nov 6):
+ * under #12227's "Get the app" bar the first phone screen must still hold the
+ * accuracy note's longest form, "We can't confirm the curve is current. …",
+ * which takes two lines at 390 px.
+ */
+export const TRUTH_PLOT = { width: 320, height: 84, left: 28, right: 4, top: 4, bottom: 13 } as const;
 
 export interface TruthDot {
   /** Centre, in SVG units. */

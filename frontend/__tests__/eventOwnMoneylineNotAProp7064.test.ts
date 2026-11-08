@@ -203,7 +203,7 @@ describe("#7064 the call site — a filter nothing calls is not a fix", () => {
   it("the event page runs the served payload through it before anything reads gameMarkets", () => {
     // The served fresh-stream result must not be called `gameMarkets` — the 30-odd downstream readers bind
     // to that name, so the filtered value is the one that has to carry it.
-    expect(source).toMatch(/const\s*\{\s*data:\s*servedGameMarkets\s*\}\s*=\s*useGameMarketsStream\(eventId, event\?\.id \?\? eventId\)/);
+    expect(source).toMatch(/const\s*\{\s*data:\s*servedGameMarkets\s*\}\s*=\s*useGameMarketsStream\(eventId, event\?\.id \?\? eventId, isFinished\)/);
     expect(source).toMatch(/const\s+gameMarkets\s*=\s*useMemo\(/);
     expect(source).toMatch(/withoutEventOwnMoneyline\(servedGameMarkets\)/);
   });

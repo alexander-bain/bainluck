@@ -396,6 +396,76 @@ describe("#10357 round-up model", () => {
     ]);
   });
 
+  it("accepts two-row HEAD TO HEAD and 2-4 row THIS WEEK cards (#11936)", () => {
+    const headToHeadContract: FeedRoundupContract = {
+      kicker: "HEAD TO HEAD",
+      tag: "TENNIS",
+      footer: "Each player is their own market; both can win 2+.",
+      rows: [
+        {
+          market_id: 66937562,
+          outcome_id: 669375622,
+          label: "Carlos Alcaraz",
+          probability: 0.42,
+          rendered_percent: 42,
+          observed_at: FRESH,
+        },
+        {
+          market_id: 66937563,
+          outcome_id: 669375632,
+          label: "Jannik Sinner",
+          probability: 0.38,
+          rendered_percent: 38,
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const h2h = buildRoundupCardModel(
+      "Who wins 2+ Grand Slams in 2027?",
+      headToHeadContract,
+      NOW_MS,
+    );
+    expect(h2h.refusal).toBeNull();
+    expect(h2h.model!.kicker).toBe("HEAD TO HEAD");
+    expect(h2h.model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "42% Carlos Alcaraz",
+      "38% Jannik Sinner",
+    ]);
+
+    const golfWeekContract: FeedRoundupContract = {
+      kicker: "GOLF · THIS WEEK",
+      tag: "GOLF",
+      footer: "Each row is the leader in its own tournament.",
+      rows: [
+        {
+          market_id: 28862743,
+          label: "World Wide Technology Championship · Nov 5–8 · Ben James",
+          probability: 0.313,
+          rendered_percent: 31,
+          observed_at: FRESH,
+        },
+        {
+          market_id: 28862742,
+          label: "Abu Dhabi Aldar Championship · Nov 5–8 · Rory McIlroy",
+          probability: 0.19125,
+          rendered_percent: 19,
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const golf = buildRoundupCardModel(
+      "Two tournaments",
+      golfWeekContract,
+      NOW_MS,
+    );
+    expect(golf.refusal).toBeNull();
+    expect(golf.model!.kicker).toBe("GOLF · THIS WEEK");
+    expect(golf.model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "31% World Wide Technology Championship · Nov 5–8 · Ben James",
+      "19% Abu Dhabi Aldar Championship · Nov 5–8 · Rory McIlroy",
+    ]);
+  });
+
   it("ages event_id rows on the 30-minute live cadence while market_id rows keep the 6-hour futures cadence", () => {
     const twoHoursOld = "2026-10-06T19:41:00Z";
     const eventContract: FeedRoundupContract = {

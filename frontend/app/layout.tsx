@@ -14,6 +14,7 @@ import EmbedGate from "@/components/EmbedGate";
 import DesktopNav from "@/components/DesktopNav";
 import Footer from "@/components/Footer";
 import EventOpenIntent from "@/components/event/EventOpenIntent";
+import { APP_STORE_APP_ID } from "@/lib/brandCopy";
 import { BUILD_META_NAME, frontendCommitSha } from "@/lib/buildInfo";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { Suspense } from "react";
@@ -80,6 +81,7 @@ export const metadata: Metadata = {
   // see `lib/siteUrl.ts` for the measurement and for why the literal lives once.
   metadataBase: new URL(getSiteUrl()),
   alternates: { canonical: "/" },
+  itunes: { appId: APP_STORE_APP_ID },
   robots: { index: true, follow: true },
   openGraph: {
     type: "website",

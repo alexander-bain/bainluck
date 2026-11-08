@@ -105,6 +105,16 @@ SEARCH_RESPONSE_CACHE_PREFIX = "bainluck:search"
 #: red test there to this day.
 SEARCH_RESPONSE_TTL_SECONDS = 180
 
+#: W-1 (worker audit 2026-11-06 B-2; Alex 53: A, 2026-11-06 12:07 PM PT): the
+#: life of an entry the HEAD WARMER writes. Readers keep
+#: :data:`SEARCH_RESPONSE_TTL_SECONDS`; only the warmer's own rebuilds live this
+#: long. The warmer now passes every 300 s instead of every ~45-60 s, so its
+#: entries must outlive a 300 s gap plus the rebuild budget, and a head answer a
+#: reader sees can be up to ~10 minutes old instead of ~3. That is the stated cost
+#: of the change; the revert is this constant and the warmer's three timing
+#: constants together.
+SEARCH_HEAD_WARMER_TTL_SECONDS = 600
+
 #: Reported on every ``/search`` response so hit and miss are readable from
 #: OUTSIDE the process — which is what makes a production deploy check possible
 #: at all. A header rather than a body key on purpose: the cached body stays
@@ -166,21 +176,67 @@ def search_response_ttl_seconds(
     same bound, so it gets the same short life. The default keeps every other
     caller's answer exactly as before.
 
-    A warmer rebuild keeps the full TTL even when thin. The head is rebuilt on
-    every pass (~60 s), so a thin head answer is replaced by the next pass
+    A warmer rebuild gets :data:`SEARCH_HEAD_WARMER_TTL_SECONDS` (W-1), even when
+    thin. The head is rebuilt on every pass (300 s since W-1), so a thin head answer is replaced by the next pass
     whatever its TTL, and `search_head_warmer.residency_invariant()` needs each
     entry to live one pass period plus the full rebuild budget (160 s): a 30 s
     head entry would open the very hole D81 was ruled to close, for exactly the
     head terms that are always thin.
     """
     if warmer_rebuild:
-        return SEARCH_RESPONSE_TTL_SECONDS
+        return SEARCH_HEAD_WARMER_TTL_SECONDS
     if (
         futures_outcome_arm in THIN_FUTURES_OUTCOME_ARM_STATES
         or futures_split_arm in THIN_FUTURES_OUTCOME_ARM_STATES
     ):
         return SEARCH_THIN_RESPONSE_TTL_SECONDS
     return SEARCH_RESPONSE_TTL_SECONDS
+
+#: #4437 (b): the ONE degraded stage whose answer may still be cached, briefly.
+#:
+#: LAT-P007 keeps every degraded answer out of the cache, and the headline lane
+#: joined that rule (#7243) because its shed was RARE — `red sox` 1/45 on
+#: 2026-09-19 — so the next build would almost always be fuller. For a term
+#: whose headline lane sheds on EVERY build that premise is false, the
+#: #3399/LAT-P241 case: `chi` timed out its headline lane on every read on
+#: 2026-11-07 (2,031-2,094 ms) and so paid a 3.3-3.4 s build on every repeat,
+#: never a hit. Such an answer still carries its teams, games and futures —
+#: only the championship card the lane promotes is missing.
+#:
+#: So it lives :data:`SEARCH_THIN_RESPONSE_TTL_SECONDS` — the same short life as a
+#: thin outcome-arm answer, long enough to absorb a burst of repeats, never the
+#: freshness ceiling — and only when it has content, so a cut-short answer can
+#: never be served back as "No results". Any stage NOT listed here, alone or
+#: beside a listed one, keeps the answer out of the cache exactly as before.
+#:
+#: #12335 step 4: ``verified_title`` joins it. A title card whose verified-title
+#: composition was still running at the search's 1 s bound prints its own
+#: venue's prices, and the composition finishes in the background. Measured
+#: 2026-11-08 3:25 and 5:53 AM PT: 0 of 20 title-team searches carried the
+#: blend. Cached for 180 s, such a page outlived the 60 s verdict it was waiting
+#: for, so the next build tripped the bound again and the blend never showed.
+#: At 30 s, the next build lands inside the verdict's life.
+SEARCH_CACHEABLE_SHED_STAGES = frozenset({"headline_contenders", "verified_title"})
+
+
+def shed_answer_ttl_seconds(degraded: list, payload: dict, *, debug_timing: bool) -> int | None:
+    """The cache life of a DEGRADED answer, or ``None`` = do not write it.
+
+    Never a timing request; only an answer whose every shed stage is in
+    :data:`SEARCH_CACHEABLE_SHED_STAGES` and which still shows something. The
+    life is the short one whoever built it: a warmer rebuild that sheds gets
+    30 s too, never the head's 600 s, because the warmer's long life is for
+    complete answers (and the warmer flag stays off every write condition —
+    `test_search_head_warmer_overwrites_not_deletes`).
+    """
+    if not degraded or debug_timing:
+        return None
+    if not set(degraded) <= SEARCH_CACHEABLE_SHED_STAGES:
+        return None
+    if not any(payload.get(k) for k in ("results", "futures", "teams", "event_concepts")):
+        return None
+    return SEARCH_THIN_RESPONSE_TTL_SECONDS
+
 
 #: Operator kill switch, mirroring ``FEED_INERT_PRINCIPAL_SHARE`` (ruling from
 #: LAT-P089: *an operator lever must be faster than a release when the failure

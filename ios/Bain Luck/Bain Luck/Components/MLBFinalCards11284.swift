@@ -17,21 +17,26 @@ struct MLBFinalCardView11284: View {
     var expanded = false
 
     var body: some View {
-        switch card {
-        case .homeRuns(let homeRuns):
-            MLBHomeRunCardView11284(card: homeRuns, awayColor: awayColor, homeColor: homeColor,
-                                    state: state, expanded: expanded)
-        case .strikeouts(let milestone):
-            MLBMilestoneCardView11284(
-                card: milestone,
-                color: PlayerPropsTeam.color(for: milestone.side, home: homeColor, away: awayColor),
-                state: state, expanded: expanded)
-        case .totals(let totals):
-            MLBTotalsCardView11284(card: totals, color: homeColor, state: state, expanded: expanded)
-        case .extraInnings(let extra):
-            MLBExtraInningsCardView11284(card: extra, state: state, expanded: expanded)
-        case .series(let series):
-            MLBSeriesCardView11284(card: series, color: homeColor, state: state, expanded: expanded)
+        VStack(alignment: .leading, spacing: 8) {
+            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                EventAtlasStoryCardMarkKeyView11666(items: EventAtlasMlbCards11666.markKey(for: card))
+            }
+            switch card {
+            case .homeRuns(let homeRuns):
+                MLBHomeRunCardView11284(card: homeRuns, awayColor: awayColor, homeColor: homeColor,
+                                        state: state, expanded: expanded)
+            case .strikeouts(let milestone):
+                MLBMilestoneCardView11284(
+                    card: milestone,
+                    color: PlayerPropsTeam.color(for: milestone.side, home: homeColor, away: awayColor),
+                    state: state, expanded: expanded)
+            case .totals(let totals):
+                MLBTotalsCardView11284(card: totals, color: homeColor, state: state, expanded: expanded)
+            case .extraInnings(let extra):
+                MLBExtraInningsCardView11284(card: extra, state: state, expanded: expanded)
+            case .series(let series):
+                MLBSeriesCardView11284(card: series, color: homeColor, state: state, expanded: expanded)
+            }
         }
     }
 }
@@ -474,7 +479,7 @@ struct MLBTotalsCardView11284: View {
                 if let comparison = card.comparison(line) {
                     Text(comparison).font(.caption2).foregroundStyle(.secondary)
                 }
-                Text("Venue result: \(line.venueResult.label)"
+                Text("Venue result: \(EventAtlasMlbCards11666.verdictLabel(line.venueResult))"
                      + (line.pregame.map { " · pregame \(formatProbability($0))" } ?? "")
                      + (expanded ? " · details" : ""))
                     .font(.caption2)
@@ -552,9 +557,16 @@ struct MLBExtraInningsCardView11284: View {
     var expanded = false
 
     var body: some View {
+        let hasPregame = ReleaseSurfaces.isEventPageAtlasEnabled()
+            && card.outcomes.contains(where: { $0.pregameChance != nil })
         VStack(alignment: .leading, spacing: 10) {
-            MLBStoryHeading11284(kicker: "Extra innings · venue market", title: "Extra innings",
-                                 reason: "Pregame chance unavailable for this market")
+            MLBStoryHeading11284(
+                kicker: "Extra innings · venue market",
+                title: "Extra innings",
+                reason: hasPregame
+                    ? "Pregame chance and venue settlement for extra innings"
+                    : "Pregame chance unavailable for this market"
+            )
             ForEach(card.outcomes) { outcome in
                 if expanded {
                     Button { state.detailsRowID = outcome.original.id } label: { row(outcome) }
@@ -571,12 +583,16 @@ struct MLBExtraInningsCardView11284: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(outcome.label).font(.headline)
-                if let venue = outcome.venue {
+                if ReleaseSurfaces.isEventPageAtlasEnabled(), let pregame = outcome.pregameChance {
+                    Text("Pregame \(formatProbability(pregame))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else if let venue = outcome.venue {
                     Text(venue).font(.caption2).foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 8)
-            Text("Venue result: \(outcome.venueResult.label)")
+            Text("Venue result: \(EventAtlasMlbCards11666.verdictLabel(outcome.venueResult))")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(outcome.venueResult == .won ? Color.primary : Color.secondary)
             if expanded {
@@ -667,7 +683,7 @@ struct MLBSeriesCardView11284: View {
                 MLBFigure11284(label: "Chance before this game",
                                value: option.pregame.map { formatProbability($0) } ?? "Unavailable",
                                color: option.pregame == nil ? Color.secondary : color)
-                Text("Venue result: \(option.result.label)")
+                Text("Venue result: \(EventAtlasMlbCards11666.verdictLabel(option.result))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

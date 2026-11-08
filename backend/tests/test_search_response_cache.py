@@ -625,9 +625,11 @@ def test_a_fresh_entry_is_left_alone_and_a_near_dead_one_is_rebuilt(rc):
     producing.
     """
     from app.tasks.search_head_warmer import REFRESH_AHEAD_SECONDS, _needs_rebuild
-    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
-    assert _needs_rebuild(SEARCH_RESPONSE_TTL_SECONDS) is False
+    # W-1 (2026-11-06): a fresh WARMER entry (600 s). A reader's 180 s entry is
+    # under the 430 s threshold by design and is rebuilt at first sight.
+    assert _needs_rebuild(SEARCH_HEAD_WARMER_TTL_SECONDS) is False
     assert _needs_rebuild(REFRESH_AHEAD_SECONDS - 1) is True
     # -2: no key at all. The pass must treat that as needing work, not as fresh.
     assert _needs_rebuild(-2) is True
@@ -666,7 +668,8 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
         max_same_query_write_interval_s,
         residency_invariant,
     )
-    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+    # W-1 (2026-11-06): the head's entries are the WARMER's, which live 600 s.
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
     ok, why = residency_invariant()
     assert ok, f"the head is not provably resident at the shipped constants: {why}"
@@ -677,7 +680,7 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     period = effective_pass_period_s()
     budget = full_rebuild_budget_s()
 
-    caught, why_caught = residency_invariant(refresh_ahead_s=SEARCH_RESPONSE_TTL_SECONDS - period)
+    caught, why_caught = residency_invariant(refresh_ahead_s=SEARCH_HEAD_WARMER_TTL_SECONDS - period)
     assert not caught, "clause (1) is dead: a threshold at exactly TTL - period must NOT pass"
     assert "NOT CAUGHT" in why_caught
 
@@ -703,7 +706,7 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     # and both ends are asserted so the next constant to move fails here loudly
     # instead of quietly re-pointing this test at a different clause.
     reachable_budget = 70.0
-    assert period + reachable_budget > SEARCH_RESPONSE_TTL_SECONDS - period, (
+    assert period + reachable_budget > SEARCH_HEAD_WARMER_TTL_SECONDS - period, (
         "this fixture must keep clause (2)'s boundary above clause (1)'s, or it is "
         "asserting on clause (1) while claiming to test clause (2)"
     )
@@ -731,15 +734,18 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     assert "NOT A THRESHOLD" in why_bounded
 
     # Three configurations that all read plausible and all hole. Each must be
-    # refused BY NAME, and each was actually proposed by someone.
-    assert residency_invariant(ttl_s=60, refresh_ahead_s=25)[0] is False, (
+    # refused BY NAME, and each was actually proposed by someone. W-1: driven at
+    # the 60 s period they were graded at, so each still fails on its own clause.
+    assert residency_invariant(ttl_s=60, refresh_ahead_s=25, period_s=60.0)[0] is False, (
         "the pre-#3526 constants (60/25) must not satisfy the invariant"
     )
-    assert residency_invariant(ttl_s=180, refresh_ahead_s=90)[0] is False, (
+    assert residency_invariant(ttl_s=180, refresh_ahead_s=90, period_s=60.0)[0] is False, (
         "#3539's option 4 (180/90) leaves the entry uncaught at its first "
         "eligible pass — it must not satisfy the invariant either"
     )
-    blocked_2084 = residency_invariant(ttl_s=180, refresh_ahead_s=150, budget_s=100.0)
+    blocked_2084 = residency_invariant(
+        ttl_s=180, refresh_ahead_s=150, budget_s=100.0, period_s=60.0
+    )
     assert blocked_2084[0] is False, (
         "180/150 is the configuration CERT-2084 blocked: an organic entry seen at "
         "the threshold is rebuilt one period later with 90s against a 100s budget"
@@ -748,7 +754,9 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
 
     # 🔴 CERT-2086: 180/170 passed clauses (1)-(3) and still holed, because one
     # query can be written first in one pass and last in the next.
-    blocked_2086 = residency_invariant(ttl_s=180, refresh_ahead_s=170, budget_s=100.0)
+    blocked_2086 = residency_invariant(
+        ttl_s=180, refresh_ahead_s=170, budget_s=100.0, period_s=60.0
+    )
     assert blocked_2086[0] is False, (
         "180/170 at a 100s budget is the configuration CERT-2086 blocked — the "
         "re-ranked write interval reaches 200s against a 180s life"
@@ -764,10 +772,14 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     # `residency_invariant(ttl_s=max_same_query_write_interval_s())` would be
     # asserting on clause (3) under clause (4)'s name. A 100 s budget gives a 100 s
     # gap and puts the boundary back in reach.
-    wide = 100.0
-    boundary = max_same_query_write_interval_s(budget_s=wide)   # 200
+    #
+    # W-1 (2026-11-06): at the 300 s floor the gap exceeds the period only for a
+    # budget over 300 s, so the fixture moves to 350 s (gap 360, interval 710) with
+    # a 680 s threshold, which clears (1)-(3) at that boundary.
+    wide = 350.0
+    boundary = max_same_query_write_interval_s(budget_s=wide)   # 710
     interval_dead, why_interval = residency_invariant(
-        ttl_s=boundary, refresh_ahead_s=170, budget_s=wide
+        ttl_s=boundary, refresh_ahead_s=680, budget_s=wide
     )
     assert not interval_dead, "clause (4) is dead: a TTL equal to the interval must NOT pass"
     assert "WRITE INTERVAL" in why_interval, why_interval
@@ -784,13 +796,13 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     # owes is that it stops accusing the write interval, and that is what is
     # checked.
     cleared_ok, why_cleared = residency_invariant(
-        ttl_s=boundary + 1, refresh_ahead_s=170, budget_s=wide
+        ttl_s=boundary + 1, refresh_ahead_s=680, budget_s=wide
     )
     assert "WRITE INTERVAL" not in why_cleared, (
         f"clause (4) refuses a TTL that clears the write interval: {why_cleared}"
     )
     assert cleared_ok or "OUTRUNS ITS OWN LOCK" in why_cleared, (
-        f"a 100s budget is expected to be refused by clause (6) once (4) is "
+        f"a {wide:g}s budget is expected to be refused by clause (6) once (4) is "
         f"cleared, and it was refused by something else: {why_cleared}"
     )
 
@@ -817,14 +829,20 @@ def test_the_effective_pass_period_is_the_floor_quantized_to_the_beat_not_the_fl
         effective_pass_period_s,
     )
 
-    assert effective_pass_period_s() == 60.0
-    assert effective_pass_period_s() > MIN_PASS_PERIOD_SECONDS, (
+    # W-1 (2026-11-06): the shipped floor (300 s) IS a multiple of the shipped
+    # beat (60 s), so the shipped period equals the floor. The defect is driven at
+    # the cadence it was found at, 20 s / 45 s, where it still bites.
+    assert (BEAT_PERIOD_SECONDS, MIN_PASS_PERIOD_SECONDS) == (60.0, 300)
+    assert effective_pass_period_s() == 300.0
+    pre = {"beat_s": 20.0, "floor_s": 45}
+    assert effective_pass_period_s(**pre) == 60.0
+    assert effective_pass_period_s(**pre) > pre["floor_s"], (
         "the achievable period must be strictly above the floor whenever the "
         "floor is not a multiple of the beat — that gap is the whole defect"
     )
     # The naive forms this replaced, each refused by name.
-    assert effective_pass_period_s() != MIN_PASS_PERIOD_SECONDS, "reads the floor"
-    assert effective_pass_period_s() != max(BEAT_PERIOD_SECONDS, MIN_PASS_PERIOD_SECONDS), (
+    assert effective_pass_period_s(**pre) != pre["floor_s"], "reads the floor"
+    assert effective_pass_period_s(**pre) != max(pre["beat_s"], pre["floor_s"]), (
         "reads the sibling's max() form, which is wrong for a non-multiple floor"
     )
     # Quantization, not rounding: a floor already on a beat multiple stays put.
@@ -961,10 +979,11 @@ def test_the_message_expiry_is_derived_from_the_entry_life_not_the_beat_period()
         BEAT_PERIOD_SECONDS,
         derive_message_expiry_s,
     )
-    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
+    # W-1 (2026-11-06): the warmer's entry life is 600 s, so the wired bound is 600.
     derived = derive_message_expiry_s()
-    assert derived == float(SEARCH_RESPONSE_TTL_SECONDS)
+    assert derived == float(SEARCH_HEAD_WARMER_TTL_SECONDS)
     # Still a derivation and not a literal: move the entry life and it follows.
     assert derive_message_expiry_s(entry_life_s=240.0) == 240.0
     # The whole point: strictly above the period, or the flat rule would apply
@@ -1014,6 +1033,12 @@ def test_a_degraded_answer_is_never_written_to_the_cache():
     futures-less answer in front of every user asking that question for the full
     TTL — a transient becomes sticky. Caching an answer you already know is
     incomplete is worse than not caching at all.
+
+    #4437 (b), AMENDED: one exception, guarded in its own file
+    (`test_search_headline_shed_short_cache_4437.py`): an answer whose ONLY shed
+    stage is the headline lane, with content, for the 30 s thin TTL. This test
+    still pins the main write's joint guard, and that the exception (its own
+    function, `_publish_shed_search_answer`) is the route's only other write.
     """
     from app.routes import events
 
@@ -1021,6 +1046,11 @@ def test_a_degraded_answer_is_never_written_to_the_cache():
     assert "if not degraded and not debug_timing:" in src, (
         "the cache write is not jointly guarded on `degraded` and `debug_timing`"
     )
+    assert src.count("_get_rc().setex(") == 1, (
+        "a second /search cache write in the route — degraded answers stay out "
+        "of the cache except through `_publish_shed_search_answer`"
+    )
+    assert src.count("_publish_shed_search_answer(") == 1
 
 
 def test_a_shed_headline_contender_lane_marks_the_answer_degraded():
@@ -1330,9 +1360,18 @@ def test_the_ttl_is_declared_once_and_is_the_whole_invalidation_contract():
     # The ceiling and the residency proof are ONE decision. Pinning the literal
     # alone would let someone lower it to 60 and satisfy this test's sibling
     # while re-opening the hole CERT-2068 blocked.
+    # W-1 = 53: A (Alex, 2026-11-06 12:07 PM PT): the head warmer's OWN entries
+    # live 600 s — head answers up to ~10 minutes old — while every reader-built
+    # answer keeps the 180 s ceiling above. That literal is a ruling too, and the
+    # residency proof is checked against it, since it is the warmer's entries the
+    # proof is about.
     from app.tasks.search_head_warmer import residency_invariant
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
-    ok, why = residency_invariant(ttl_s=SEARCH_RESPONSE_TTL_SECONDS)
+    assert SEARCH_HEAD_WARMER_TTL_SECONDS == 600, (
+        "the head warmer's entry life is set by Alex's 53: A (W-1), not by a lane."
+    )
+    ok, why = residency_invariant(ttl_s=SEARCH_HEAD_WARMER_TTL_SECONDS)
     assert ok, f"the declared TTL does not keep the head resident: {why}"
 
     from app.routes import events

@@ -22,6 +22,10 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/ci.yml"
 MANIFEST = ROOT / ".github/ci-postgres-groups.json"
 TAIL_PROVISIONER = "#10703 shared tail — provision pg_trgm on the fresh database"
+# Decide 55-A: the shared tail's first step installs the pinned retry-once
+# plugin. It touches no database and runs no test, so the provisioning order
+# below is read without it.
+RETRY_PLUGIN = "#55-A shared tail — provision the pinned retry-once plugin"
 MIDDLE_PROVISIONER = "#10717 shared middle — provision pg_trgm on the fresh database"
 MIDDLE_FIRST_GATE = "#8466 a Polymarket leg resolves on its own date, and a re-ingest repairs it (real Postgres)"
 TAIL_FIRST_GATE = "#2927 container assembly writes and re-writes (real Postgres)"
@@ -73,13 +77,13 @@ def _validate_fresh_tail(worker, fixture_source):
     offloaded = _offloaded_suffix(worker)
     tail = [
         step for step in worker["steps"]
-        if step.get("if") == "matrix.group == 'shared-tail'"
+        if step.get("if") == "matrix.group == 'shared-tail'" and step.get("name") != RETRY_PLUGIN
     ]
     assert [step["name"] for step in tail[:2]] == [TAIL_PROVISIONER, TAIL_FIRST_GATE]
     original_shared = [
         step["name"] for step in worker["steps"]
         if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-tail'")
-        and step.get("name") not in (TAIL_PROVISIONER, MIDDLE_PROVISIONER)
+        and step.get("name") not in (TAIL_PROVISIONER, MIDDLE_PROVISIONER, RETRY_PLUGIN)
         and step.get("name") not in offloaded
     ]
     prefix = [
@@ -325,7 +329,8 @@ def test_common_setup_services_and_intentional_scope_skip():
     jobs, _ = _inputs()
     worker = jobs["database-integration"]
     assert worker["needs"] == "change-scope"
-    assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true'"
+    # #10708: skipped on a pure-ios/ PR too; native-backend-readers covers it.
+    assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'"
     assert worker["strategy"]["fail-fast"] is False
     assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-tail", "isolated", "shared-suffix"]
     assert worker["services"]["postgres"]["image"] == "postgres:15"
@@ -436,7 +441,7 @@ def test_required_aggregate_runs_after_failure_and_deploy_still_depends_on_it():
     aggregate = jobs["search-recall"]
     assert "strategy" not in aggregate and "name" not in aggregate
     assert aggregate["needs"] == ["change-scope", "database-integration"]
-    assert aggregate["if"] == "${{ !cancelled() && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true' }}"
+    assert aggregate["if"] == "${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}"
     assert "search-recall" in jobs["deploy"]["needs"]
     assert "continue-on-error" not in aggregate
     assert "continue-on-error" not in jobs["database-integration"]

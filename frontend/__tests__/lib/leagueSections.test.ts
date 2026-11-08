@@ -29,7 +29,9 @@
 import realPayload from "../fixtures/leagueUsOpen.20260904.json";
 import {
   buildLeagueSections as buildLeagueSectionsAt,
+  leagueSectionKey,
   leagueSubtitle,
+  startedWithNothingToShow,
 } from "@/lib/sports/leagueSections";
 import type { Event, EventStatus } from "@/lib/types";
 
@@ -83,6 +85,11 @@ function ev(
     home_score: null,
     away_score: null,
   } as Event;
+}
+
+/** The same row with a last score on it (#3016: a paused match that has one). */
+function scored(event: Event, home: number, away: number): Event {
+  return { ...event, home_score: home, away_score: away };
 }
 
 const ids = (events: Event[]) => events.map((e) => e.id);
@@ -183,9 +190,13 @@ describe("ux/1058 · the rule over the real payload", () => {
 // B · the shared authority — SYNTHETIC, because the corpus has no live row
 // ───────────────────────────────────────────────────────────────────────────
 describe("ux/1058 · the bucket comes from eventState, not from this module", () => {
+  // #3016 — the paused rows in this block carry a LAST SCORE: a match stopped
+  // mid-play, the rain delay CERT-786 was written for, which still renders at the
+  // top. A paused row with no score is #3016's and draws below Upcoming; its arms
+  // are in the #3016 block at the end of this file.
   test("a suspended match is LIVE and is never filed under Finished", () => {
     const sections = buildLeagueSections([
-      ev(1, "suspended" as EventStatus, "2026-09-04T01:00:00Z"),
+      scored(ev(1, "suspended" as EventStatus, "2026-09-04T01:00:00Z"), 3, 2),
       ev(2, "completed", "2026-09-03T01:00:00Z", "2026-09-03T03:00:00Z"),
     ]);
     expect(sections.map((s) => s.key)).toEqual(["live", "finished"]);
@@ -194,7 +205,9 @@ describe("ux/1058 · the bucket comes from eventState, not from this module", ()
   });
 
   test("the live heading reads the bucket rather than asserting Live Now", () => {
-    const paused = buildLeagueSections([ev(1, "suspended" as EventStatus, "2026-09-04T01:00:00Z")]);
+    const paused = buildLeagueSections([
+      scored(ev(1, "suspended" as EventStatus, "2026-09-04T01:00:00Z"), 3, 2),
+    ]);
     expect(paused[0].title).toBe("Live & Paused");
     const playing = buildLeagueSections([ev(1, "live" as EventStatus, "2026-09-04T01:00:00Z")]);
     expect(playing[0].title).toBe("Live Now");
@@ -210,11 +223,13 @@ describe("ux/1058 · the bucket comes from eventState, not from this module", ()
       ev(1, "scheduled", "2026-09-02T00:00:00Z"),
       ev(2, "scheduled", "2026-09-05T00:00:00Z"),
     ]);
-    expect(sections.map((s) => s.key)).toEqual(["live", "upcoming"]);
-    expect(ids(sections[0].events)).toEqual([1]);
-    expect(ids(sections[1].events)).toEqual([2]);
+    // #3016 — and it draws BELOW the game still to play, under the card's own
+    // words, rather than heading the page. Still not Upcoming, still not Finished.
+    expect(sections.map((s) => s.key)).toEqual(["upcoming", "unreported"]);
+    expect(ids(sections[0].events)).toEqual([2]);
+    expect(ids(sections[1].events)).toEqual([1]);
     // …and the heading does not claim anyone is watching it.
-    expect(sections[0].title).toBe("Live & Paused");
+    expect(sections[1].title).toBe("No result reported");
   });
 
   test("#3211: the boundary is the grace, asserted from BOTH sides", () => {
@@ -227,8 +242,9 @@ describe("ux/1058 · the bucket comes from eventState, not from this module", ()
     expect(buildLeagueSections(row, justInside).map((s) => s.key)).toEqual([
       "upcoming",
     ]);
+    // #3016: past the grace it is the ladder's live row with nothing to show.
     expect(buildLeagueSections(row, justOutside).map((s) => s.key)).toEqual([
-      "live",
+      "unreported",
     ]);
   });
 
@@ -410,5 +426,124 @@ describe("ux/1282 · #3246 the subtitle names only what is there", () => {
         { key: "finished", title: "Finished", events: [] },
       ]),
     ).toBe(LIVE_AND_UPCOMING);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// E · #3016 — a row that says nothing about the game sits below Upcoming
+// ───────────────────────────────────────────────────────────────────────────
+describe("#3016 · the page opens on games on now or still to play", () => {
+  /** `GET /api/events?sport=soccer_other&limit=50`, production 2026-11-08 05:07Z. */
+  const READ_AT = new Date("2026-11-08T05:07:00Z").getTime();
+  const at = (events: Event[], now: number = READ_AT) => buildLeagueSectionsAt(events, now);
+  const soccer = (id: number, status: EventStatus, kickoff: string): Event =>
+    ({ ...ev(id, status, kickoff), sport: "soccer_other" }) as Event;
+  const SUSPENDED = "suspended" as EventStatus;
+  const LIVE = "live" as EventStatus;
+
+  // The head of that read, in its own order (kickoff ascending): suspended rows
+  // that kicked off 3-5 h earlier and report nothing, then games being played,
+  // then games still to play. Ids are the production rows.
+  const SPECIMEN: Event[] = [
+    soccer(15336024, SUSPENDED, "2026-11-08T00:00:00+00:00"), // LA Galaxy @ Real Salt Lake
+    soccer(15341389, SUSPENDED, "2026-11-08T00:00:00+00:00"), // Miami FC @ Louisville City FC
+    soccer(15336159, SUSPENDED, "2026-11-08T00:30:00+00:00"), // CR Brasil @ Náutico
+    soccer(15336539, SUSPENDED, "2026-11-08T02:00:00+00:00"), // Sporting FC @ LD Alajuelense
+    soccer(15341411, LIVE, "2026-11-08T02:30:00+00:00"), // Colorado Springs @ New Mexico United
+    soccer(15336297, LIVE, "2026-11-08T04:00:00+00:00"), // Consadole Sapporo @ Vanraure Hachinohe
+    soccer(15340272, LIVE, "2026-11-08T05:00:00+00:00"), // Yongin FC @ Suwon Bluewings
+    soccer(15336300, "scheduled", "2026-11-08T06:00:00+00:00"), // Ventforet Kōfu @ Vegalta Sendai
+    soccer(15340273, "scheduled", "2026-11-08T07:30:00+00:00"), // Chungnam Asan @ Paju Frontier
+  ];
+
+  test("CONTROL: on the parent's rule this read opened on four empty cards", () => {
+    // The ladder files every one of them live, which is where the page used to
+    // draw them: first, in payload order, ahead of the games being played.
+    const liveBucket = SPECIMEN.filter((e) => leagueSectionKey(e, READ_AT) === "live");
+    expect(ids(liveBucket).slice(0, 4)).toEqual([15336024, 15341389, 15336159, 15336539]);
+  });
+
+  test("THE SHIP: the first card is a game being played; the empty ones sit below Upcoming", () => {
+    const sections = at(SPECIMEN);
+    expect(sections.map((s) => s.key)).toEqual(["live", "upcoming", "unreported"]);
+    expect(sections[0].title).toBe("Live Now");
+    expect(ids(sections[0].events)).toEqual([15341411, 15336297, 15340272]);
+    expect(ids(sections[1].events)).toEqual([15336300, 15340273]);
+    expect(sections[2].title).toBe("No result reported");
+  });
+
+  test("with nothing live, the page opens on Upcoming, not on the empty cards", () => {
+    const sections = at(SPECIMEN.filter((e) => e.status !== "live"));
+    expect(sections.map((s) => s.key)).toEqual(["upcoming", "unreported"]);
+  });
+
+  test("every card is kept: the split moves cards and loses none", () => {
+    const rendered = at(SPECIMEN).flatMap((s) => s.events);
+    expect(rendered).toHaveLength(SPECIMEN.length);
+    expect(new Set(ids(rendered))).toEqual(new Set(ids(SPECIMEN)));
+  });
+
+  test("the empty cards run most-recent-kickoff-first, ties in payload order", () => {
+    const unreported = at(SPECIMEN).find((s) => s.key === "unreported");
+    expect(ids(unreported?.events ?? [])).toEqual([15336539, 15336159, 15336024, 15341389]);
+  });
+
+  test("CONTROL: a paused match WITH a score stays at the top (emptiness, not status)", () => {
+    const rainDelay = scored(soccer(1, SUSPENDED, "2026-11-08T03:00:00+00:00"), 3, 2);
+    const sections = at([...SPECIMEN, rainDelay]);
+    expect(sections[0].key).toBe("live");
+    expect(sections[0].title).toBe("Live & Paused");
+    expect(ids(sections[0].events)).toContain(1);
+    expect(ids(sections.find((s) => s.key === "unreported")?.events ?? [])).not.toContain(1);
+  });
+
+  test("one side's score is not a score: the card prints the bare label", () => {
+    const half = { ...soccer(2, SUSPENDED, "2026-11-08T03:00:00+00:00"), home_score: 1 } as Event;
+    expect(startedWithNothingToShow(half, READ_AT)).toBe(true);
+  });
+
+  test("the BUCKET is unchanged: an unreported row is still the ladder's live row", () => {
+    for (const row of SPECIMEN.filter((e) => e.status === SUSPENDED)) {
+      expect(leagueSectionKey(row, READ_AT)).toBe("live");
+      expect(startedWithNothingToShow(row, READ_AT)).toBe(true);
+    }
+  });
+
+  test("a live row is never moved, with or without a score", () => {
+    for (const row of SPECIMEN.filter((e) => e.status === LIVE)) {
+      expect(startedWithNothingToShow(row, READ_AT)).toBe(false);
+    }
+  });
+
+  test("the server's hold outranks the clock (#9634), in both directions", () => {
+    const held = {
+      ...soccer(3, "scheduled", "2026-11-08T01:00:00+00:00"),
+      started_without_result: false,
+    } as Event;
+    expect(at([held]).map((s) => s.key)).toEqual(["upcoming"]);
+    expect(at([{ ...held, started_without_result: true } as Event]).map((s) => s.key)).toEqual([
+      "unreported",
+    ]);
+  });
+
+  test("the split reads the served flag as the card does, inside the grace too", () => {
+    // 30 min past kickoff the clock alone says "not yet unreported", but a served
+    // `true` makes the card print "No result reported" (`EventCard`'s
+    // `isSuspended` passes the flag). The page must draw it with those cards,
+    // not under a "Live Now" heading.
+    const servedTrue = {
+      ...soccer(5, "scheduled", "2026-11-08T04:37:00+00:00"),
+      started_without_result: true,
+    } as Event;
+    expect(at([servedTrue]).map((s) => s.key)).toEqual(["unreported"]);
+  });
+
+  test("CONTROL: a venue-graded row is Finished before this split is asked (#7112)", () => {
+    const graded = {
+      ...soccer(4, SUSPENDED, "2026-11-08T00:00:00+00:00"),
+      venue_settled: true,
+      venue_settled_result: "Real Salt Lake",
+    } as Event;
+    expect(at([graded]).map((s) => s.key)).toEqual(["finished"]);
   });
 });

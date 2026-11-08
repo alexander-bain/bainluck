@@ -116,18 +116,14 @@ class TestTheControls:
         assert _golf_winner_renorm_factor(name, n, s, mutually_exclusive=True) == 1.0
         assert _golf_winner_renorm_factor(name, n, s) == 1.0
 
-    def test_an_oversumming_EXCLUSIVE_field_is_still_renormalized(self):
-        """The two `excl=true` oversumming rows in the census keep today's behaviour.
-
-        Without this the gate could be 'refuse everything over 1.5' and still pass
-        every arm above, which would drop the only markets #926 exists to save.
-        """
+    def test_an_oversumming_exclusive_field_reaches_the_final_blend_raw(self):
+        """#11995 normalizes after the blend, never once per provider input."""
         assert _golf_winner_renorm_factor(
             "New Zealand Darts Masters: Winner", 16, 3.825, mutually_exclusive=True
-        ) == pytest.approx(1 / 3.825)
+        ) == 1.0
         assert _golf_winner_renorm_factor(
             "KLM Open Winner", 157, 5.338, mutually_exclusive=True
-        ) == pytest.approx(1 / 5.338)
+        ) == 1.0
 
     def test_unknown_exclusivity_keeps_the_pre_4402_path(self):
         """Zero golf rows are null today; the default is graceful degradation, not policy."""
@@ -227,8 +223,8 @@ SEASON_MAJORS = _market(
     mutually_exclusive=False,
 )
 
-#: THE CONTROL. A real one-winner field with a real spread, `mutually_exclusive`
-#: true, summing over 1.5 so it takes the same branch and must still renormalize.
+#: A one-winner field at191%. The shared160% guard must retain these raw prices;
+#: the healthy-field control below separately proves normalization still works.
 REAL_FIELD = _market(
     59512401,
     "Husqvarna British Masters Winner",
@@ -290,28 +286,39 @@ class TestTheFlagReachesTheRule:
             f"6%-for-a-56.5%-golfer card. Got: {sorted(names)}"
         )
 
-    async def test_CONTROL_the_real_field_beside_it_still_renders_renormalized(self, golf_db):
+    async def test_CONTROL_the_suspect_field_beside_it_still_renders_raw(self, golf_db):
         """Emptying the golf page would pass the assertion above."""
         body = await get_golf(golf_db)
-        real = next(
-            (t for t in body["tournaments"] if "Husqvarna" in t["name"]), None
-        )
+        real = next((t for t in body["tournaments"] if "Husqvarna" in t["name"]), None)
         assert real is not None, (
             "the exclusive field vanished too — the gate is wider than the defect. "
             f"Got: {sorted(t['name'] for t in body['tournaments'])}"
         )
 
         golfers = {g["name"]: g["probability"] for g in real["golfers"]}
-        # 0.55 / 1.91, i.e. still renormalized: this rule drops fields, it does not
-        # stop scaling the ones that earn it.
-        assert golfers["Marco Penge"] == pytest.approx(0.55 / 1.91, abs=0.002)
+        assert golfers["Marco Penge"] == 0.55
+        assert all("rendered_percent" not in golfer for golfer in real["golfers"])
+
+    async def test_CONTROL_a_healthy_complete_field_still_normalizes(
+        self, golf_db, monkeypatch
+    ):
+        monkeypatch.setattr(
+            REAL_FIELD,
+            "outcomes",
+            [
+                _outcome(11, "Marco Penge", 0.35),
+                _outcome(12, "Daniel Hillier", 0.30),
+                _outcome(13, "Tom McKibbin", 0.25),
+                _outcome(14, "Shaun Norris", 0.20),
+            ],
+        )
+        body = await get_golf(golf_db)
+        real = next(t for t in body["tournaments"] if "Husqvarna" in t["name"])
+        assert real["golfers"][0]["probability"] == pytest.approx(0.35 / 1.1)
+        assert sum(g["rendered_percent"] for g in real["golfers"]) == 100
 
     async def test_no_golfer_from_the_season_market_leaks_into_the_page(self, golf_db):
         body = await get_golf(golf_db)
-        served = {
-            g["name"]
-            for t in body["tournaments"]
-            for g in t.get("golfers", [])
-        }
+        served = {g["name"] for t in body["tournaments"] for g in t.get("golfers", [])}
         assert "Scottie Scheffler" not in served
         assert "Rory McIlroy" not in served

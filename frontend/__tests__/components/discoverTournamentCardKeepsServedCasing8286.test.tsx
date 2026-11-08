@@ -48,6 +48,10 @@ jest.mock("next/image", () => ({
   __esModule: true,
   default: ({ alt }: { alt: string }) => <img alt={alt} />,
 }));
+jest.mock("@/components/discover/shared", () => ({
+  ...jest.requireActual("@/components/discover/shared"),
+  AnimatedProbability: ({ value }: { value: number }) => <span>{value}%</span>,
+}));
 
 import DiscoverCard from "../../components/DiscoverCard";
 
@@ -86,6 +90,15 @@ function visible(html: string): string {
 }
 
 describe("#8286 — the Discover golf card keeps the served casing", () => {
+  it("#11995 keeps the complete-field integer on the tournament hero", () => {
+    const item = tournamentItem("Masters");
+    const data = item.data as FeedTournamentData;
+    data.golfers[0].probability = 0.255;
+    data.golfers[0].rendered_percent = 25;
+    const html = renderToStaticMarkup(<DiscoverCard groupedItem={{ type: "single", item }} positionIndex={0} />);
+    expect(visible(html)).toMatch(/25\s*%/);
+    expect(visible(html)).not.toMatch(/26\s*%/);
+  });
   it("prints the production specimen as served", () => {
     const html = draw("FedEx Open de France");
     expect(visible(html)).toContain("FedEx Open de France");

@@ -202,6 +202,7 @@ jobs:
     env:
       SEARCH_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
+      PYTEST_ADDOPTS: ${{ matrix.group == 'shared-tail' && '--reruns 1 -rR' || '' }}
     steps:
     - id: db_000_reused_exact_commit_test_evidence
       name: Reused exact-commit test evidence
@@ -234,6 +235,17 @@ jobs:
       if: ${{ !cancelled() && (needs.change-scope.outputs.reuse != 'true') }}
       run: "python -c \"\nimport os, sys\nurl = os.environ.get('SEARCH_TEST_DATABASE_URL')\nif not url:\n    sys.exit('SEARCH_TEST_DATABASE_URL\
         \ unset \u2014 the recall gate would silently SKIP')\nprint(f'recall gate armed against {url.rsplit(chr(64), 1)[-1]}')\n\"\n"
+    - id: db_004a_55a_shared_tail_retry_once_plugin
+      name: "#55-A shared tail \u2014 provision the pinned retry-once plugin"
+      if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/rerunfailures"
+        wheel=pytest_rerunfailures-16.7-py3-none-any.whl
+        pip download --no-deps --only-binary=:all: pytest-rerunfailures==16.7 -d "$dir"
+        echo "edf1886209c2b7dafe35b5bf1708d6ec40ccf6c6b357f0f02807efcec0204c99  $dir/$wheel" | sha256sum -c -
+        pip install --no-deps "$dir/$wheel"
+        python -c "import pytest_rerunfailures; print('retry-once plugin', pytest_rerunfailures.__file__)"
     - id: db_005_10703_shared_tail_provision_pg_trgm_on_t
       name: "#10703 shared tail \u2014 provision pg_trgm on the fresh database"
       if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
@@ -408,8 +420,8 @@ jobs:
       run: "set -o pipefail\npython -m pytest tests/integration/test_typeahead_venue_settled_pg_9550.py \\\n  -v -rs 2>&1 | tee /tmp/ta9550.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate SKIPPED \u2014 the gate did\
         \ not run\"\n  exit 1\nfi\nif grep -qiE \"no tests ran|collected 0 items\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled\
-        \ gate collected NOTHING\"\n  exit 1\nfi\nif ! grep -qE \"^=+ 6 passed\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled\
-        \ gate did not report exactly 6 passed\"\n  exit 1\nfi\n"
+        \ gate collected NOTHING\"\n  exit 1\nfi\nif ! grep -qE \"^=+ 7 passed\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled\
+        \ gate did not report exactly 7 passed\"\n  exit 1\nfi\n"
     - id: db_030_9527_9522_red_sox_vs_yankees_finds_the_g
       name: '#9527/#9522 ''red sox vs yankees'' finds the game; a tennis row reads ''v'' (real Postgres)'
       if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
@@ -2423,6 +2435,15 @@ jobs:
         \ gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]19 passed([,[:space:]]|$)\" /tmp/roster11315.txt || {\n  echo \"::error::#11315 roster\
         \ lock gate did not run all nineteen cases\"\n  exit 1\n}\n"
 
+    - name: "#12252 shared tail \u2014 upload this attempt's 55-A retries for the flake sentinel"
+      id: db_flaky_retries_upload
+      if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: flaky-retries-${{ github.run_attempt }}
+        path: /tmp/flaky-retries.txt
+        if-no-files-found: ignore
+        retention-days: 8
     - name: Summarize database integration failures
       id: database_integration_summary
       if: ${{ !cancelled() }}

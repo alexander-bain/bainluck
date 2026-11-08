@@ -565,8 +565,17 @@ def test_the_net_rides_a_different_queue_from_the_rail_it_covers():
     it scrolled past a truncated grep and CI shard 1 found it instead. A `!=`-only
     test would have passed silently through the move and told nobody the pin had
     gone stale.
+
+    🔄 AMENDED by #12042 L-1 (worker audit §7.1 step 1, Alex 52-A, Nov 6): the
+    HOST moved, `background` -> its own `discover_base` lane, which
+    `worker-background` serves first. The causal claim was re-derived rather than
+    adjusted: the host was late because `background` was contended (the audit:
+    18 of 47 base fires expired), and the lane is the fix for exactly that. The
+    net still rides `realtime`, so the two still share no queue, and the net
+    stays as cover for whatever lateness the lane leaves (a busy slot still has
+    to free before the base runs).
     """
-    from app.tasks import celery_app
+    from app.tasks import DISCOVER_BASE_QUEUE, celery_app
 
     conf = celery_app.conf
     host = conf.beat_schedule["precompute-discover-candidate-base"]
@@ -577,7 +586,7 @@ def test_the_net_rides_a_different_queue_from_the_rail_it_covers():
         "queue": "realtime"
     }
     host_queue = host.get("options", {}).get("queue", conf.task_default_queue)
-    assert host_queue == "background", (
+    assert host_queue == DISCOVER_BASE_QUEUE == "discover_base", (
         "the HOST rail moved. Re-derive this test's causal claim from scratch "
         "rather than adjusting the net around it — the claim is about which "
         f"queue starves, not about the two being unequal (host is {host_queue!r})"
