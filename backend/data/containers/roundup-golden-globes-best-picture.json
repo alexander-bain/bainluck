@@ -2,6 +2,11 @@
   "slug": "roundup-golden-globes-best-picture",
   "membership": "computed-produced",
   "kind": "roundup",
+  "relations": [
+    "same_event",
+    "implies"
+  ],
+  "level": "member",
   "kicker": "GOLDEN GLOBES",
   "name": "Best Picture: who's nominated, who wins",
   "category": "entertainment",

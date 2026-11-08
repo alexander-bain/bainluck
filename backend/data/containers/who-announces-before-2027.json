@@ -2,6 +2,12 @@
   "slug": "who-announces-before-2027",
   "membership": "sibling-family",
   "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
   "kicker": "2028",
   "name": "Who announces a presidential run before 2027?",
   "category": "politics",

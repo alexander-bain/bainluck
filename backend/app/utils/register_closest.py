@@ -621,6 +621,8 @@ def build_register_closest_producer(
         footer=str(definition["footer"]),
         produce=_produce,
         membership=str(definition.get("membership") or "computed-produced"),
+        relations=definition.get("relations"),
+        level=definition.get("level"),
         rule=definition.get("rule") if isinstance(definition.get("rule"), Mapping) else None,
         tag=str(definition.get("tag") or "POLITICS"),
         kicker=str(definition.get("kicker") or "CLOSEST RACES"),

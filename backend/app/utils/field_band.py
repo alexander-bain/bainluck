@@ -861,6 +861,8 @@ def build_field_band_producer(
         footer=footer,
         produce=_produce,
         membership=str(definition.get("membership") or "computed-produced"),
+        relations=definition.get("relations"),
+        level=definition.get("level"),
         rule=dict(rule),
         tag=str(
             definition.get("tag") or str(definition["category"]).upper()
