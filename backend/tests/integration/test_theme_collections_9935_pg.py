@@ -1658,3 +1658,137 @@ async def test_9936_operator_undo_refuses_an_ai_result_the_clock_moved_beyond_re
     assert await _edge_rows(world, cid) == edges and await _ledger_ids(world, cid) == ledger
     assert await _live_revision(world, cid) == live and world["sent"] == []
     assert world["store"] == store and gone not in _page_ids(await _get(world, AI_SLUG))
+
+
+@pytest.mark.asyncio
+async def test_11935_ceremony_sources_use_bounded_read_only_connections(
+    world, monkeypatch
+):
+    """Both venue selectors execute on real Postgres through the worker's reader."""
+    from functools import partial
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import httpx
+    from sqlalchemy.exc import DBAPIError
+
+    from app.models.models import FuturesMarket
+    from app.services import awards_occasion_source as source, database
+    from app.services.kalshi_api import KalshiAPIService
+    from app.services.polymarket_api import PolymarketAPIService
+    from tests.test_awards_occasion_source_11935 import RULE, TICKER, envelope
+
+    async with world["Session"]() as db:
+        db.add_all(
+            [
+                FuturesMarket(
+                    source="kalshi",
+                    external_id="KXPG11935-A",
+                    name="Category A",
+                    category="entertainment",
+                    status="open",
+                    market_metadata={"kalshi_event_ticker": TICKER},
+                ),
+                FuturesMarket(
+                    source="kalshi",
+                    external_id="KXPG11935-B",
+                    name="Category B",
+                    llm_sport_category="entertainment",
+                    status="open",
+                    market_metadata={"kalshi_event_ticker": TICKER},
+                ),
+                FuturesMarket(
+                    source="polymarket",
+                    external_id="PG11935-POLY",
+                    name="Category C",
+                    category="entertainment",
+                    status="open",
+                    market_metadata={"polymarket_event_id": "123456"},
+                ),
+                FuturesMarket(
+                    source="kalshi",
+                    external_id="KXPG11935-SPORT",
+                    name="Sports control",
+                    category="sports",
+                    status="open",
+                ),
+                FuturesMarket(
+                    source="kalshi",
+                    external_id="KXPG11935-PAST",
+                    name="Resolved control",
+                    category="entertainment",
+                    status="resolved",
+                ),
+            ]
+        )
+        await db.commit()
+
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        if request.url.path.endswith("/" + TICKER):
+            return httpx.Response(200, json=envelope())
+        assert request.url.path == "/events"
+        assert request.url.params.get_list("id") == ["123456"]
+        assert request.url.params["limit"] == "1"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "123456",
+                    "title": "Best Picture",
+                    "markets": [{"id": "123457", "description": RULE}],
+                }
+            ],
+        )
+
+    monkeypatch.setattr(database, "DATABASE_URL", DB_URL)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond)
+    ) as kalshi_http, httpx.AsyncClient(
+        transport=httpx.MockTransport(respond),
+        base_url=PolymarketAPIService.GAMMA_BASE_URL,
+    ) as gamma_http:
+        kalshi = SimpleNamespace(client=kalshi_http, BASE_URL=KalshiAPIService.BASE_URL)
+        polymarket = SimpleNamespace(
+            gamma_client=gamma_http, get_event_by_id=AsyncMock()
+        )
+        polymarket.get_events_by_ids = partial(
+            PolymarketAPIService.get_events_by_ids, polymarket
+        )
+        async with source.read_only_session() as db:
+            settings = (
+                await db.execute(
+                    text(
+                        "SELECT current_setting('transaction_read_only'), "
+                        "current_setting('default_transaction_read_only'), "
+                        "current_setting('statement_timeout'), current_setting('lock_timeout')"
+                    )
+                )
+            ).one()
+            assert tuple(settings) == ("on", "on", "2s", "250ms")
+            with pytest.raises(DBAPIError) as refused:
+                await db.execute(
+                    text("UPDATE futures_markets SET name = name WHERE false")
+                )
+            assert refused.value.orig.sqlstate == "25006"
+            await db.rollback()
+            assert (
+                await db.execute(text("SHOW transaction_read_only"))
+            ).scalar_one() == "on"
+            found = await source.read_awards_occasions(db, kalshi, polymarket)
+            assert (
+                await db.execute(text("SELECT count(*) FROM futures_markets"))
+            ).scalar_one() == 5
+
+    assert len(calls) == 2
+    assert found.refused == ()
+    assert len(found.occasions) == 1
+    occasion = found.occasions[0]
+    assert occasion.label == "84th Golden Globe Awards"
+    assert [event.provider for event in occasion.events] == ["kalshi", "polymarket"]
+    assert all(event.evidence == (RULE,) for event in occasion.events)
+    assert occasion.ceremony_date is occasion.completed_at is None
+    assert occasion.level == "member" and occasion.state == "proposed"
+    assert world["store"] == {}

@@ -2,7 +2,7 @@
 
 Run from backend with PYTHONPATH=. python3 scripts/propose_awards_occasions.py
 --source-file /absolute/path/to/a/venue-response.json, or select --live for a
-read-only, bounded read of the stored open Kalshi entertainment pool.
+read-only, bounded read of the stored open entertainment pool on both venues.
 """
 
 from __future__ import annotations
@@ -10,54 +10,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 from app.services.awards_occasion_source import (
     kalshi_occasion_event,
-    read_kalshi_awards_occasions,
+    polymarket_occasion_event,
+    read_live,
+    read_only_session,
 )
+from app.utils.awards_ceremony import awards_ceremony_definition
 from app.utils.awards_occasion_finder import OccasionDiscovery, find_awards_occasions
-
-
-@asynccontextmanager
-async def read_only_session():
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from sqlalchemy.pool import NullPool
-
-    from app.services.database import DATABASE_URL, build_connect_args
-
-    connect_args = build_connect_args(
-        DATABASE_URL,
-        statement_timeout_ms=750,
-        lock_timeout_ms=250,
-    )
-    connect_args["server_settings"]["default_transaction_read_only"] = "on"
-    engine = create_async_engine(
-        DATABASE_URL,
-        connect_args=connect_args,
-        poolclass=NullPool,
-        hide_parameters=True,
-    )
-    sessions = async_sessionmaker(engine, expire_on_commit=False)
-    try:
-        async with sessions() as db:
-            yield db
-    finally:
-        await engine.dispose()
-
-
-async def read_live() -> OccasionDiscovery:
-    from app.services.kalshi_api import KalshiAPIService
-
-    service = KalshiAPIService()
-    try:
-        async with read_only_session() as db:
-            return await read_kalshi_awards_occasions(db, service)
-    finally:
-        await service.close()
 
 
 async def preview_ceremonies(discovery: OccasionDiscovery) -> list[dict]:
@@ -95,6 +59,9 @@ def main() -> None:
     inputs.add_argument("--source-file", type=Path, nargs="+")
     inputs.add_argument("--live", action="store_true")
     parser.add_argument(
+        "--provider", choices=("kalshi", "polymarket", "all"), default="all"
+    )
+    parser.add_argument(
         "--preview",
         action="store_true",
         help="Read stored market cards and include proposed card/page payloads.",
@@ -103,14 +70,20 @@ def main() -> None:
 
     print(json.dumps({"model_cost_usd": 0, "state": "proposed"}), flush=True)
     if args.live:
-        discovery = asyncio.run(read_live())
-        scope = "stored_open_kalshi_entertainment"
+        discovery = asyncio.run(read_live(args.provider))
+        providers = "kalshi_and_polymarket" if args.provider == "all" else args.provider
+        scope = f"stored_open_{providers}_entertainment"
     else:
         events = []
         for path in args.source_file:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            ticker = payload.get("event", {}).get("event_ticker")
-            events.append(kalshi_occasion_event(payload, ticker))
+            if "event" in payload:
+                ticker = payload.get("event", {}).get("event_ticker")
+                events.append(kalshi_occasion_event(payload, ticker))
+            else:
+                events.append(
+                    polymarket_occasion_event(payload, str(payload.get("id") or ""))
+                )
         discovery = find_awards_occasions(events)
         scope = "saved_venue_responses"
     report = {
@@ -123,6 +96,10 @@ def main() -> None:
             for occasion in discovery.occasions
         ],
         "refused": discovery.refused,
+        "definitions": [
+            awards_ceremony_definition(occasion.selector)
+            for occasion in discovery.occasions
+        ],
     }
     if args.preview:
         report["previews"] = asyncio.run(preview_ceremonies(discovery))

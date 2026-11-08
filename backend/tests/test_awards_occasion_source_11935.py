@@ -16,7 +16,6 @@ from sqlalchemy.dialects import postgresql
 from app.services import awards_occasion_source as source
 from app.services.kalshi_api import KalshiAPIService
 
-
 TICKER = "KXGGNOM-SCR26"
 RULE = (
     "If Wild Horse Nine is on the list of nominees for Best Screenplay at the "
@@ -47,13 +46,20 @@ def database(tickers):
     return SimpleNamespace(execute=AsyncMock(return_value=result))
 
 
-@pytest.mark.parametrize("shape", ["separate", "nested", "both"])
+@pytest.mark.parametrize(
+    "shape", ["separate", "nested", "both", "empty_separate", "empty_nested"]
+)
 def test_native_market_envelopes_keep_the_verbatim_primary_rule(shape):
     payload = envelope()
     if shape in {"nested", "both"}:
         payload["event"]["markets"] = deepcopy(payload["markets"])
     if shape == "nested":
         del payload["markets"]
+    if shape == "empty_separate":
+        payload["event"]["markets"] = payload["markets"]
+        payload["markets"] = []
+    if shape == "empty_nested":
+        payload["event"]["markets"] = []
     normalized = source.kalshi_occasion_event(payload, TICKER)
 
     assert normalized["provider"] == "kalshi"
@@ -76,7 +82,14 @@ def test_native_market_envelopes_keep_the_verbatim_primary_rule(shape):
             "market_identity_mismatch",
         ),
         (
-            lambda payload: payload["event"].update(markets=[]),
+            lambda payload: payload["event"].update(
+                markets=[
+                    {
+                        **payload["markets"][0],
+                        "rules_primary": "A conflicting primary rule.",
+                    }
+                ]
+            ),
             "conflicting_market_envelopes",
         ),
     ],
@@ -129,7 +142,7 @@ async def test_the_worker_reads_new_ceremonies_from_the_stored_pool_without_a_ro
     assert "futures_markets.source = 'kalshi'" in statement
     assert "futures_markets.status = 'open'" in statement
     assert "SELECT DISTINCT" in statement
-    assert "LIMIT 101" in statement
+    assert f"LIMIT {source.MAX_AWARDS_EVENT_CANDIDATES + 1}" in statement
     assert "Golden" not in statement and "KXGG" not in statement
 
 
@@ -216,6 +229,53 @@ async def test_caller_cancellation_propagates_during_the_venue_read():
             await task
 
 
+async def test_cancelling_a_source_pass_joins_all_four_inflight_reads():
+    entered = set()
+    cancelled = set()
+    all_entered = asyncio.Event()
+    tickers = [f"KXNEW-{index}" for index in range(source.AWARDS_KALSHI_CONCURRENCY)]
+
+    async def blocked(request):
+        ticker = request.url.path.rsplit("/", 1)[-1]
+        entered.add(ticker)
+        if len(entered) == len(tickers):
+            all_entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.add(ticker)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(blocked)) as client:
+        service = SimpleNamespace(client=client, BASE_URL=KalshiAPIService.BASE_URL)
+        task = asyncio.create_task(
+            source.read_kalshi_awards_occasions(database(tickers), service)
+        )
+        await asyncio.wait_for(all_entered.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert cancelled == entered == set(tickers)
+
+
+async def test_the_kalshi_batches_retain_the_shared_request_rate_bound(monkeypatch):
+    tickers = [f"KXNEW-{index}" for index in range(6)]
+    pauses = AsyncMock()
+    monkeypatch.setattr(source, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(source.asyncio, "sleep", pauses)
+
+    def respond(request):
+        ticker = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, json=envelope(ticker))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        service = SimpleNamespace(client=client, BASE_URL=KalshiAPIService.BASE_URL)
+        result = await source.read_kalshi_awards_occasions(database(tickers), service)
+    assert len(result.occasions[0].events) == 6
+    assert [call.args[0] for call in pauses.await_args_list] == pytest.approx(
+        [4 / 12, 2 / 12]
+    )
+
+
 def test_the_saved_response_entrypoint_outputs_a_reproducible_proposal(
     tmp_path, monkeypatch, capsys
 ):
@@ -289,7 +349,7 @@ async def test_live_entrypoint_enforces_connection_bounds_and_always_disposes(
 
     settings = captured["connect_args"]["server_settings"]
     assert settings["default_transaction_read_only"] == "on"
-    assert int(settings["statement_timeout"]) == 750
+    assert int(settings["statement_timeout"]) == 2000
     assert int(settings["lock_timeout"]) == 250
     assert captured["hide_parameters"] is True
     reader.assert_awaited_once_with(db, service)

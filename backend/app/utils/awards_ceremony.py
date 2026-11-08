@@ -10,17 +10,25 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import case, func, select, tuple_
 
+from app.services.awards_occasion_source import AwardsOccasionSourceError
 from app.utils.awards_occasion_finder import (
     AwardsOccasion,
     OccasionDiscovery,
     validate_awards_selector,
 )
 from app.utils.container_presentation import MEMBER_MARKET, market_destination
-from app.utils.roundup_containers import RoundupMembers, RoundupProducer, RoundupRefusal
+
+if TYPE_CHECKING:
+    from app.utils.roundup_containers import (
+        RoundupMembers,
+        RoundupProducer,
+        RoundupRefusal,
+    )
 
 
 def awards_ceremony_slug(label: str) -> str:
@@ -30,11 +38,35 @@ def awards_ceremony_slug(label: str) -> str:
     return "roundup-awards-" + re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
 
 
+def awards_ceremony_definition(selector: Mapping[str, str]) -> dict[str, Any]:
+    """Emit one reviewable definition from the finder's source-established label."""
+    validate_awards_selector(selector)
+    label = selector["label"]
+    return {
+        "slug": awards_ceremony_slug(label),
+        "membership": "computed-produced",
+        "kind": "roundup",
+        "name": label,
+        "category": "entertainment",
+        "section_title": "Awards markets",
+        "footer": "Ceremony date unknown · Completion unknown",
+        "relations": ["same_event"],
+        "level": "member",
+        "enabled": False,
+        "rule": {
+            "producer": "awards_ceremony",
+            "selector": dict(selector),
+            "trigger": "market_availability",
+        },
+    }
+
+
 async def _ceremony_members(
     db: Any, occasion: AwardsOccasion
 ) -> RoundupMembers | RoundupRefusal:
     from app.models.models import FuturesMarket
     from app.routes.containers import _hydrate_market_cards
+    from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
 
     if not occasion.events:
         return RoundupRefusal(((occasion.label, "occasion_empty"),))
@@ -124,6 +156,8 @@ async def _ceremony_members(
             "shared_question": None,
             "item_count": len(members),
             "member_ids": [member["id"] for member in members],
+            "relations": ["same_event"],
+            "level": "member",
         },
     }
     return RoundupMembers(
@@ -136,16 +170,47 @@ async def _ceremony_members(
 
 
 def build_awards_ceremony_producer(
-    selector: Mapping[str, str],
+    definition: Mapping[str, Any],
     *,
-    load_occasions: Callable[[Any], Awaitable[OccasionDiscovery]],
+    load_occasions: Callable[[Any], Awaitable[OccasionDiscovery]] | None = None,
 ) -> RoundupProducer:
     """Build both presentations from a selector and a current evidence loader."""
+    from app.services.awards_occasion_snapshot import read_cached_awards_occasions
+    from app.utils.roundup_containers import (
+        RoundupProducer,
+        RoundupRefusal,
+        validate_roundup_definition,
+    )
+
+    # Retain the saved-preview API. The folder loader supplies a full definition.
+    if "rule" not in definition:
+        definition = awards_ceremony_definition(definition)
+        definition.pop("enabled")
+    definition = validate_roundup_definition(deepcopy(definition))
+    rule = definition["rule"]
+    if rule.get("producer") != "awards_ceremony":
+        raise ValueError("Expected the awards_ceremony producer kind")
+    selector = rule.get("selector")
     validate_awards_selector(selector)
+    if (
+        definition["slug"] != awards_ceremony_slug(selector["label"])
+        or definition.get("name") != selector["label"]
+        or definition["relations"] != ["same_event"]
+        or definition["level"] != "member"
+    ):
+        raise ValueError(
+            "A ceremony definition must retain its source identity and member relation"
+        )
+    if "enabled" in definition and not isinstance(definition["enabled"], bool):
+        raise ValueError("Ceremony definition enabled must be boolean")
     parameters = dict(selector)
+    loader = load_occasions or read_cached_awards_occasions
 
     async def produce(db: Any) -> RoundupMembers | RoundupRefusal:
-        discovery = await load_occasions(db)
+        try:
+            discovery = await loader(db)
+        except AwardsOccasionSourceError as error:
+            return RoundupRefusal((("source", str(error)),))
         occasion = next(
             (row for row in discovery.occasions if row.selector == parameters), None
         )
@@ -161,6 +226,9 @@ def build_awards_ceremony_producer(
         section_title="Awards markets",
         footer="Ceremony date unknown · Completion unknown",
         produce=produce,
-        rule={"producer": "awards_ceremony", "selector": parameters},
+        rule=dict(rule),
+        relations=definition["relations"],
+        level=definition["level"],
         story_key="ceremony:" + awards_ceremony_slug(parameters["label"]),
+        enabled=(lambda: definition["enabled"]) if "enabled" in definition else None,
     )

@@ -11,7 +11,10 @@ from sqlalchemy.dialects import postgresql
 
 from app.routes import containers as route
 from app.utils import roundup_containers as roundups
-from app.utils.awards_ceremony import build_awards_ceremony_producer
+from app.utils.awards_ceremony import (
+    awards_ceremony_definition,
+    build_awards_ceremony_producer,
+)
 from app.utils.awards_occasion_finder import find_awards_occasions
 
 
@@ -105,6 +108,8 @@ async def test_a_new_ceremony_and_its_venue_sections_use_the_same_set(monkeypatc
     ]
     assert page_ids == feed["data"]["member_ids"] == [10, 11]
     assert feed["data"]["kind"] == "theme"
+    assert feed["data"]["relations"] == page["relations"] == ["same_event"]
+    assert feed["data"]["level"] == page["level"] == "member"
     assert [item["data"]["id"] for item in feed["data"]["items"]] == page_ids
     assert feed["data"]["collection_ref"]["href"] == "/collections/" + producer.slug
     assert (
@@ -276,3 +281,46 @@ def test_conflicting_venue_category_titles_refuse_deterministically():
     assert find_awards_occasions([first, second]).refused == (
         ("kalshi", "KXNEW-SCR42", "conflicting_event_title"),
     )
+
+
+async def test_proposed_definition_stays_disabled_through_the_real_reader(monkeypatch):
+    found = discovery("KXNEW-SCR42")
+    definition = awards_ceremony_definition(found.occasions[0].selector)
+    loader = AsyncMock(return_value=found)
+    producer = build_awards_ceremony_producer(definition, load_occasions=loader)
+    assert producer.enabled() is False
+    assert await roundups.evaluate_roundup_producer(producer, object()) == (None, None)
+    loader.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda d: d.update(slug="typed-in-slug"),
+        lambda d: d.update(name="Typed-in ceremony"),
+        lambda d: d.update(relations=["same_subject"]),
+        lambda d: d.update(level="related"),
+        lambda d: d.update(enabled="true"),
+    ],
+)
+def test_definition_cannot_relabel_or_promote_its_source_relation(change):
+    definition = awards_ceremony_definition(
+        discovery("KXNEW-SCR42").occasions[0].selector
+    )
+    change(definition)
+    with pytest.raises(ValueError):
+        build_awards_ceremony_producer(definition)
+
+
+async def test_source_cache_failure_refuses_before_a_member_query(monkeypatch):
+    from app.services.awards_occasion_source import AwardsOccasionSourceError
+
+    definition = awards_ceremony_definition(
+        discovery("KXNEW-SCR42").occasions[0].selector
+    )
+    loader = AsyncMock(side_effect=AwardsOccasionSourceError("source_snapshot_stale"))
+    producer = build_awards_ceremony_producer(definition, load_occasions=loader)
+    db = SimpleNamespace(execute=AsyncMock())
+    result = await producer.produce(db)
+    assert result.reasons == (("source", "source_snapshot_stale"),)
+    db.execute.assert_not_awaited()
