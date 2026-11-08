@@ -763,6 +763,8 @@ def build_awards_category_producer(
         footer=str(definition["footer"]),
         produce=_produce,
         membership=str(definition.get("membership") or "computed-produced"),
+        relations=definition.get("relations"),
+        level=definition.get("level"),
         rule=definition.get("rule") if isinstance(definition.get("rule"), Mapping) else None,
         tag=str(definition.get("tag") or "ENTERTAINMENT"),
         kicker=str(definition.get("kicker") or "GOLDEN GLOBES"),

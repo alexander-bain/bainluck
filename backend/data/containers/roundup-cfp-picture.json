@@ -2,6 +2,11 @@
   "slug": "roundup-cfp-picture",
   "membership": "computed-produced",
   "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_window"
+  ],
+  "level": "member",
   "name": "College Football Playoff picture",
   "category": "ncaaf",
   "tag": "NCAAF",

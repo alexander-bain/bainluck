@@ -524,6 +524,8 @@ class TestPrimitivesInvariantsAndFolderLoading:
                     "slug": "tennis-this-week",
                     "membership": "event-derived",
                     "kind": "roundup",
+                    "relations": ["same_measure", "same_window"],
+                    "level": "member",
                     "kicker": "TENNIS · THIS WEEK",
                     "name": "This week's tournaments",
                     "category": "tennis",

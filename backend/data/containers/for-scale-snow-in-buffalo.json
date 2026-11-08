@@ -2,6 +2,11 @@
   "slug": "for-scale-snow-in-buffalo",
   "membership": "computed-produced",
   "kind": "roundup",
+  "relations": [
+    "yardstick"
+  ],
+  "level": "member",
+  "id_list_reason": "Curated cross-topic yardstick candidate pool paired with custom display labels.",
   "kicker": "FOR SCALE",
   "name": "For scale: snow in Buffalo by Nov 15",
   "category": "cross-topic",

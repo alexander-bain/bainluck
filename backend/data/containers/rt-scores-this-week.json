@@ -2,6 +2,12 @@
   "slug": "rt-scores-this-week",
   "membership": "sibling-family",
   "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
   "kicker": "ROTTEN TOMATOES",
   "name": "How this week's films are expected to review",
   "category": "entertainment",
@@ -11,6 +17,8 @@
   "rule": {
     "producer": "sibling_family",
     "source": "kalshi",
+    "title_ilike": "%Rotten Tomatoes score%",
+    "release_window_days": 14,
     "template": "* rotten tomatoes score",
     "title_template": "How this week's films are expected to review",
     "kicker_prefix": "ROTTEN TOMATOES",
@@ -25,11 +33,6 @@
     "lead_rule": "nearest_open_deadline",
     "min_numbered_members": 3,
     "card_rows": 3,
-    "candidates": [
-      "kalshi:60481116",
-      "kalshi:62383659",
-      "kalshi:65536662"
-    ],
     "twins": "none",
     "normalize": false,
     "relation": "exact",
