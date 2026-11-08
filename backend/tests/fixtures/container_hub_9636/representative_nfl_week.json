@@ -159,6 +159,7 @@
           {
             "card": {
               "category": "sports",
+              "collection_link_presentation": "inline",
               "id": 9101,
               "llm_sport_category": null,
               "market_tier": 2,
@@ -212,6 +213,7 @@
           {
             "card": {
               "category": "sports",
+              "collection_link_presentation": "inline",
               "id": 9102,
               "llm_sport_category": null,
               "market_tier": 2,
@@ -271,6 +273,7 @@
           {
             "card": {
               "category": "sports",
+              "collection_link_presentation": "inline",
               "id": 9103,
               "llm_sport_category": null,
               "market_tier": 2,

@@ -181,11 +181,19 @@ export default function CollectionHub({ slug }: { slug: string }) {
   // Back from a market returns to its game, the drawn row it was listed under.
   const relatedLinks = (game: CollectionMember) => {
     const links = shown ? relatedMarketLinks(shown, game.key) : [];
-    return links.length > 0 && <ul data-related-markets={game.key} className="divide-y divide-surface-border/60 rounded-card border border-surface-border bg-surface-card text-sm">
-      {links.map((market) => <li key={market.key}><Link href={market.href} data-related-market={market.key} onClick={() => remember(game.key)} className="flex justify-between gap-4 px-4 py-2.5 text-text-secondary hover:bg-surface-elevated hover:text-text-primary">
+    const secondary = shown ? relatedMarketLinks(shown, game.key, "secondary") : [];
+    const list = (markets: CollectionMember[]) => <ul data-related-markets={game.key} className="divide-y divide-surface-border/60 rounded-card border border-surface-border bg-surface-card text-sm">
+      {markets.map((market) => <li key={market.key}><Link href={market.href} data-related-market={market.key} onClick={() => remember(game.key)} className="flex justify-between gap-4 px-4 py-2.5 text-text-secondary hover:bg-surface-elevated hover:text-text-primary">
         <span className="min-w-0">{(market.item.data as FeedFuturesData).name}</span><span aria-hidden>›</span>
       </Link></li>)}
     </ul>;
+    return <>
+      {links.length > 0 && list(links)}
+      {secondary.length > 0 && <details data-secondary-markets={game.key} className="rounded-card border border-surface-border bg-surface-card text-sm text-text-secondary">
+        <summary className="cursor-pointer px-4 py-2.5">More linked markets</summary>
+        {list(secondary)}
+      </details>}
+    </>;
   };
 
   return <div className="mx-auto w-full max-w-4xl space-y-6" data-collection-hub={slug}>

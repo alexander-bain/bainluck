@@ -68,6 +68,7 @@ import logging
 import math
 import os
 import time
+from collections import Counter
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
@@ -86,6 +87,7 @@ from app.utils.container_corrections import (
 )
 from app.utils.container_graph import CLASS_UNCLASSIFIED, EDGE_CLASSES
 from app.utils.container_presentation import (
+    EDITION_NFL_WEEK,
     MEMBER_EVENT,
     MEMBER_MARKET,
     WITHHELD_UNSERIALIZABLE,
@@ -298,7 +300,7 @@ async def _attach_settled_prematch(db: AsyncSession, events: list, cards: dict, 
 
 
 async def _hydrate_market_cards(
-    db: AsyncSession, market_ids: list
+    db: AsyncSession, market_ids: list, *, nfl_week: bool = False
 ) -> tuple[dict, dict, dict]:
     """``({market_id: card}, {market_id: event_id}, failures)``, constant queries.
 
@@ -316,6 +318,7 @@ async def _hydrate_market_cards(
     from app.models import FuturesMarket
     from app.routes.events import _format_futures_for_search
     from app.routes.futures import withheld_price_outcome_ids_for_markets
+    from app.utils.container_game_winner import RELATED_LINK_LIMIT, related_link_presentation
 
     markets = (
         await db.execute(
@@ -335,12 +338,21 @@ async def _hydrate_market_cards(
     for m in markets:
         try:
             card = _format_futures_for_search(m, withheld.get(m.id))
+            if nfl_week:
+                card["collection_link_presentation"] = related_link_presentation(
+                    m.market_type, m.name, m.external_id
+                )
         except Exception:  # noqa: BLE001 — per-item guard (gotcha #42)
             logger.exception("container hub: market %s card failed", m.id)
             failed[(MEMBER_MARKET, int(m.id))] = WITHHELD_UNSERIALIZABLE
             continue
         cards[int(m.id)] = card
         event_ids[int(m.id)] = int(m.event_id) if m.event_id is not None else None
+    if nfl_week:
+        related_counts = Counter(event_ids.values())
+        for market_id, event_id in event_ids.items():
+            if related_counts[event_id] > RELATED_LINK_LIMIT:
+                cards[market_id].pop("collection_link_presentation", None)
     return cards, event_ids, failed
 
 
@@ -533,7 +545,9 @@ async def _build_published_payload(db: AsyncSession, published, include_children
     event_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_EVENT})
     market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
     event_cards, event_failed = await _hydrate_event_cards(db, event_ids)
-    market_cards, market_event_ids, market_failed = await _hydrate_market_cards(db, market_ids)
+    market_cards, market_event_ids, market_failed = await _hydrate_market_cards(
+        db, market_ids, nfl_week=(payload["edition"] or {}).get("kind") == EDITION_NFL_WEEK
+    )
 
     sections, withheld = present_sections(
         members,
