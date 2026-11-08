@@ -377,7 +377,7 @@ function hrefsIn(html: string): string[] {
   return Array.from(html.matchAll(/<a href="([^"]+)"/g), (m) => m[1]);
 }
 
-describe("#10476 desktop and phone Browse both show collections above every category", () => {
+describe("#12090 desktop and phone Browse retain hubs without collection entries", () => {
   beforeEach(async () => {
     navLoader = await readyLoader();
     forceOpen.value = true;
@@ -390,16 +390,15 @@ describe("#10476 desktop and phone Browse both show collections above every cate
   test.each([
     ["desktop", () => <DesktopNav />, "desktop-browse-panel"],
     ["phone", () => <BottomNav />, "mobile-browse-panel"],
-  ])("%s: Week 4 and Week 5 links, then all eleven categories unchanged", (_label, render, panelId) => {
+  ])("%s: collection entries are absent and the remaining destinations keep their order", (_label, render, panelId) => {
     const html = renderToStaticMarkup(render());
     const hrefs = hrefsIn(html);
-    const week4 = hrefs.indexOf("/collections/nfl-2026-week-4");
-    expect(week4).toBeGreaterThanOrEqual(0);
-    expect(hrefs[week4 + 1]).toBe("/collections/nfl-2026-week-5");
-    const categories = CATEGORIES.map(([, href]) => hrefs.indexOf(href));
-    expect(categories.every((i) => i > week4 + 1)).toBe(true);
+    expect(hrefs.filter((href) => href.startsWith("/collections/"))).toEqual([]);
+    const kept = CATEGORIES.filter(([, href]) => !href.startsWith("/collections/"));
+    const categories = kept.map(([, href]) => hrefs.indexOf(href));
+    expect(categories.every((i) => i >= 0)).toBe(true);
     expect(categories).toEqual([...categories].sort((a, b) => a - b));
-    for (const [label] of CATEGORIES) expect(html).toContain(label);
+    for (const [label] of kept) expect(html).toContain(label);
     // The panel is the button's controlled region and plain links, not an
     // ARIA menu (whose items would have to be menuitems with arrow keys).
     expect(html).toContain(`aria-controls="${panelId}"`);
@@ -438,7 +437,8 @@ describe("#10476 desktop and phone Browse both show collections above every cate
   test("following a link, Escape, or any page change shuts Browse (source wiring)", () => {
     for (const file of ["components/DesktopNav.tsx", "components/BottomNav.tsx"]) {
       const src = readFileSync(join(process.cwd(), file), "utf8");
-      expect(src).toMatch(/<PublishedCollectionsMenu[\s\S]*?onNavigate=\{\(href\) => \{\s*setBrowseOpen\(false\);/);
+      expect(src).not.toContain("PublishedCollectionsMenu");
+      expect(src).toMatch(/onClick=\{\(\) => \{\s*setBrowseOpen\(false\);/);
       expect(src).toMatch(/useEffect\(\(\) => \{\s*setBrowseOpen\(false\);\s*\}, \[pathname\]\);/);
       expect(src).toMatch(/e\.key === "Escape"/);
     }

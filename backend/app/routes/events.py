@@ -5048,6 +5048,43 @@ _SEARCH_FUTURES_REFILL = 40    # rank 21-60, fetched ONLY on an observed collaps
 _RESOLVED_TEAM_RESCUE_CAP = 5
 
 
+#: #4437: how many candidate ids the /search window's ordered slice carries —
+#: well above the widest window it feeds (`_SEARCH_FUTURES_WINDOW` +
+#: `_SEARCH_FUTURES_REFILL` = 60), so a short survivor count is rare and costs
+#: only the fallback, never the answer.
+_SEARCH_OPEN_NOW_SLICE = 200
+
+
+async def _search_sliced_window_rows(db, stmt, slice_stmt, over_ids, limit: int) -> list:
+    """The window's rows, proving "open now" for an ordered slice, not every candidate.
+
+    #4437. ``slice_stmt`` returns the top :data:`_SEARCH_OPEN_NOW_SLICE` candidate
+    ids in ``stmt``'s own total order, filtered by the two cheap open-now
+    predicates only; ``over_ids(ids)`` is ``stmt`` with the candidate filter
+    replaced by those ids — the same builder, so the same full predicate, order
+    and LIMIT. Replaced, not ANDed: the candidate filter's arms carry the full
+    predicate too, and ANDing them back would re-prove every candidate (measured
+    on "we": 2,181 ms sliced-but-ANDed vs 2,292 ms unsliced).
+
+    WHY THE PAGE IS THE SAME PAGE. The full predicate implies the cheap one, so
+    every row ``stmt`` could return is a cheap-open candidate. If the slice came
+    back short of its LIMIT it holds ALL of them, and ``stmt`` over it is
+    ``stmt``. If it was full and at least ``limit`` rows survive, any row ranked
+    above the ``limit``-th survivor ranks above a slice member, so it is in the
+    slice and survives too — the top ``limit`` survivors are ``stmt``'s top
+    ``limit``. Otherwise (a full slice, too few survivors) ``stmt`` runs unsliced,
+    exactly as before. The order is total (it ends on ``id``), which is what
+    makes "ranks above" well defined.
+    """
+    if slice_stmt is None:
+        return list((await db.execute(stmt)).scalars().unique().all())
+    slice_ids = list((await db.execute(slice_stmt)).scalars().all())
+    rows = list((await db.execute(over_ids(slice_ids))).scalars().unique().all())
+    if len(slice_ids) < _SEARCH_OPEN_NOW_SLICE or len(rows) >= limit:
+        return rows
+    return list((await db.execute(stmt)).scalars().unique().all())
+
+
 async def _fetch_futures_window(
     db,
     window_query,
@@ -5059,6 +5096,7 @@ async def _fetch_futures_window(
     split_arms: Sequence = (),
     split_report: dict | None = None,
     arm_ms: dict | None = None,
+    slice_query=None,
 ) -> tuple[list, str]:
     """The futures window, fetched TIER-ORDERED instead of all at once.
 
@@ -5129,11 +5167,18 @@ async def _fetch_futures_window(
         _tier1_stmt = window_query(candidates_in(tier1_arms))
         if tier1_limit is not None:
             _tier1_stmt = _tier1_stmt.limit(tier1_limit)
-        tier1_rows = list(
-            (await db.execute(_tier1_stmt))
-            .scalars()
-            .unique()
-            .all()
+        # #4437: ``slice_query`` (the route's `_futures_slice_query`) proves "open
+        # now" on an ordered slice instead of every candidate. ``None`` keeps the
+        # single statement — every caller that does not pass one.
+        _tier1_cap = _SEARCH_FUTURES_WINDOW if tier1_limit is None else tier1_limit
+        tier1_rows = await _search_sliced_window_rows(
+            db,
+            _tier1_stmt,
+            None if slice_query is None else slice_query(tier1_arms),
+            lambda ids: window_query(
+                FuturesMarket.id == any_(literal(ids, ARRAY(Integer)))
+            ).limit(_tier1_cap),
+            _tier1_cap,
         )
         _arm_done("tier1")
     else:  # pragma: no cover - the name arm is always built
@@ -9192,6 +9237,68 @@ _TYPEAHEAD_FUTURES_POOL = 20
 _TYPEAHEAD_OPEN_NOW_SLICE = 200
 
 
+#: #4437: strong references to outcome arms running beside a request. asyncio
+#: holds a task WEAKLY, and a request that fails before collecting its arm must
+#: not leave the arm to be garbage-collected mid-statement.
+_TYPEAHEAD_BESIDE_TASKS: set = set()
+
+
+def _typeahead_beside_done(task) -> None:
+    _TYPEAHEAD_BESIDE_TASKS.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        # A collected arm also re-raises in the route, as the in-place call
+        # did; this line is what keeps an UNcollected one from failing silently.
+        logger.warning("typeahead outcome arm (beside) failed: %s", task.exception())
+
+
+def _typeahead_start_outcome_arm_beside(db, arm, open_now, deadline, pattern, outcome_cond):
+    """Start the outcome arm on its own session; the task, or ``None`` to run it in place.
+
+    #4437: the arm is the dropdown's costliest stage (1.1-2.4 s measured on
+    "mid"/"chi", Nov 7) and depends on nothing the teams and games lookups
+    produce, yet ran after them on the request's one session. Running beside
+    them, a first read pays the slower of the two chains, not their sum.
+
+    In place (``None``) when:
+    - there is no arm (a sub-trigram query);
+    - ``db`` is not a session on an ENGINE — a test double, or a session bound
+      to one connection, where a second concurrent session would share it;
+    - the pool has no free connection without overflow — a checkout that waits
+      would spend the arm's budget queueing, so it keeps today's path;
+    - the warmer is rebuilding (`_force_cache_rebuild`, the same signal
+      :func:`_typeahead_outcome_arm_budget_ms` reads): no reader waits on it, and
+      its own pool use stays what it was.
+    """
+    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+
+    if arm is None or not isinstance(db, AsyncSession):
+        return None
+    engine = db.bind
+    if not isinstance(engine, AsyncEngine) or _force_cache_rebuild.get():
+        return None
+    pool = engine.pool
+    try:
+        if pool.checkedout() >= pool.size():
+            return None
+    except Exception:  # noqa: BLE001 — a pool without counters keeps the old path
+        return None
+
+    import asyncio
+
+    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def _run():
+        async with maker() as side:
+            return await _resolve_typeahead_outcome_arm(
+                side, arm, open_now, deadline, pattern=pattern, outcome_cond=outcome_cond,
+            )
+
+    task = asyncio.ensure_future(_run())
+    _TYPEAHEAD_BESIDE_TASKS.add(task)
+    task.add_done_callback(_typeahead_beside_done)
+    return task
+
+
 async def _typeahead_sliced_futures(db, slice_query, futures_query):
     """#4437: run `futures_query` on the first `_TYPEAHEAD_OPEN_NOW_SLICE` ids of
     `slice_query` (the same candidates and order under the cheap filters), falling
@@ -12167,7 +12274,10 @@ async def search_events(
         # filters above it do.
         _futures_game_already_played(),
     )
-    def _futures_candidates_in(arms):
+    # #4437: the two CHEAP open-now filters alone, for the ordered slice below.
+    _futures_cheap_open_now = _futures_open_now[:2]
+
+    def _futures_candidates_in(arms, open_now=_futures_open_now):
         """The UNION-of-arms candidate filter, for any SUBSET of the arms.
 
         Extracted from a single inline expression by LAT-P111 so the same
@@ -12175,9 +12285,12 @@ async def search_events(
         One builder, so a subset can never drift from the shape the full set
         uses — the `search_cache` key lesson (one key, one place) applied to the
         predicate.
+
+        #4437: ``open_now`` is the full predicate everywhere except the ordered
+        slice (:func:`_futures_slice_query`), which pushes only the cheap two.
         """
         _selects = [
-            select(FuturesMarket.id).where(arm, *_futures_open_now) for arm in arms
+            select(FuturesMarket.id).where(arm, *open_now) for arm in arms
         ]
         if len(_selects) > 1:
             return FuturesMarket.id.in_(select(union(*_selects).subquery().c.id))
@@ -12372,7 +12485,7 @@ async def search_events(
     if _futures_postseason_key is not None:
         _futures_season_order.append(_futures_postseason_key.asc())
 
-    def _futures_window_query(candidate_filter):
+    def _futures_window_query(candidate_filter, open_now=_futures_open_now):
         """The futures window statement over a given candidate filter.
 
         LAT-P111: a builder rather than a literal, because the ORDER BY is the
@@ -12387,7 +12500,7 @@ async def search_events(
             .options(selectinload(FuturesMarket.outcomes))
             .where(
                 candidate_filter,
-                *_futures_open_now,
+                *open_now,
             )
             .order_by(
                 _futures_name_tier.asc(),
@@ -12432,6 +12545,27 @@ async def search_events(
                 Sport.key == sport
             )
         return stmt
+
+    def _futures_slice_query(arms):
+        """#4437: the top :data:`_SEARCH_OPEN_NOW_SLICE` candidate ids, in the
+        window's own order, proven open by the two CHEAP filters only.
+
+        The window statement ran "open now" — including the correlated
+        `_futures_game_already_played()` anti-joins — on EVERY candidate before
+        its LIMIT: `we` on Nov 7 proved 1,024 candidates open (1.6 s of sibling
+        probes, plus the outer copy) to keep 60. This is the SAME statement, built
+        by the same builder so it cannot be ordered differently, minus that one
+        predicate. :func:`_search_sliced_window_rows` applies the full predicate to
+        what it returns and falls back to the full statement when too few survive.
+        """
+        return (
+            _futures_window_query(
+                _futures_candidates_in(arms, open_now=_futures_cheap_open_now),
+                open_now=_futures_cheap_open_now,
+            )
+            .with_only_columns(FuturesMarket.id)
+            .limit(_SEARCH_OPEN_NOW_SLICE)
+        )
 
     futures_query = _futures_window_query(_futures_candidate_filter)
 
@@ -12481,6 +12615,7 @@ async def search_events(
                 split_arms=_futures_split_arms,
                 split_report=_futures_split_report,
                 arm_ms=_futures_arm_ms,
+                slice_query=_futures_slice_query,
             )
             _futures_spare_rows = futures_markets_raw[_SEARCH_FUTURES_WINDOW:]
             futures_markets_raw = futures_markets_raw[:_SEARCH_FUTURES_WINDOW]
@@ -13288,9 +13423,15 @@ async def search_events(
         # #8734: a promoted headline contender is asked too.
         and not _answers_a_served_game_card(m, _served_event_ids)
     ]
+    # #12335: a title question's card prints the numbers the page it opens
+    # prints — the verified-title blend, not the one venue this row came from.
+    _verified_by_id = await _search_verified_titles(
+        db, (*deduped_futures, *futures_markets), _deadline
+    )
     _formatted_by_id = {
         m.id: _format_futures_for_search(
-            m, _withheld_by_market.get(m.id), query_terms=expanded  # #8842
+            m, _withheld_by_market.get(m.id), query_terms=expanded,  # #8842
+            verified=_verified_by_id.get(m.id),
         )
         for m in (*deduped_futures, *futures_markets)
     }
@@ -14660,6 +14801,88 @@ async def typeahead_search(
         )
         .limit(_TEAM_POOL_FETCH_LIMIT)
     )
+    # LAT-P007/#1494: the outcome-name arm is NON-CORRELATED, and it is SKIPPED
+    # for a sub-3-character query. Both measured in production 2026-08-08.
+    #
+    # (1) The correlated form. `FuturesMarket.outcomes.any(...)` compiles to an
+    # EXISTS re-probed per candidate row of `futures_markets` (730K rows) against
+    # `futures_outcomes` (3.2M rows / 3 GB). /search replaced exactly this with a
+    # non-correlated IN in #993's Slice-Speed; /typeahead never got the change.
+    # For `%rec%`: correlated 3,468ms -> non-correlated 66.8ms, **52x, on
+    # IDENTICAL results** (n=254 either way). It is set-identical, so there is no
+    # recall or precision consequence — only the plan changes.
+    #
+    # (2) The sub-3-char skip. `min_length=2`, so the endpoint's MINIMUM allowed
+    # query is also its worst case, and it is the first thing every user fires.
+    # A 2-char infix pattern is unservable by a pg_trgm GIN (no complete trigram
+    # is extractable), so `%re%` seq-scans 3 GB: that arm ALONE measured 8,633ms,
+    # and the endpoint measured **12.06s** for `q=re`. The cliff is at exactly the
+    # trigram boundary, across six independent stems — 2-char 4.4-12.1s vs 3-char
+    # 1.85-2.67s — so it is pattern length, not query popularity.
+    #
+    # This is NOT a recall trade, and that was checked by LOOKING rather than
+    # assuming. For `re`, 17 of the 20 visible rows came from this arm alone, and
+    # all 17 were substring accidents: "3M Open Winner" (golfer Lamp-re-cht),
+    # "Pro Baseball Champion" (Baltimo-re), "Nobel Peace Prize Winner 2026"
+    # (Gute-rre-s), "Champions League Winner" (Villar-re-al). Not one is a
+    # plausible answer to "re". At two characters an outcome substring matches
+    # inside almost any name, so the arm is a noise generator that costs 8.6s.
+    #
+    # The market NAME arm still runs at 2 chars — a title match at least describes
+    # the thing being suggested. Scoped to the WHOLE query, not to individual
+    # terms: LAT-P006 pins that a short term still FILTERS inside a multi-term AND
+    # (`us recession` must not admit "Euro area growth"), and this must not
+    # contradict that guard.
+    #
+    # LAT-P013 widened the predicate here in lockstep with /search. The two
+    # surfaces sharing a CONSTANT was not enough to keep them in agreement — they
+    # have to share the RULE. `d'or` is 4 characters, so the old length test
+    # admitted it on both paths while pg_trgm could serve neither.
+    #
+    # LAT-P143: HELD BACK rather than appended. This is the one arm measured to
+    # cost 6-14 s, so it does not join the union until it has proved it can be
+    # served inside its own budget — see `_resolve_typeahead_outcome_arm` below.
+    # The subject, because this gates the recall `pattern` two lines down and
+    # the two must agree: testing the raw query for an extractable trigram while
+    # filtering on the subject would shed the arm on exactly the queries the
+    # subject was computed to rescue.
+    _ta_q_compact = _q_identity.strip()
+
+    # #9306: a round word matches an outcome only as a whole word, as on
+    # /search — `alds` put "Florida Governor winner?" (Byron Donalds) in the
+    # dropdown. The condition is also the probe's, so the two cannot disagree.
+    _ta_outcome_arm = None
+    _ta_outcome_cond = None
+    if _has_extractable_trigram(_ta_q_compact):
+        _ta_outcome_cond = (
+            _outcome_whole_word(_ta_q_compact)
+            if _ta_q_compact.lower() in _TEAM_PREFIX_REFUSED_TOKENS
+            else FuturesOutcome.name.ilike(pattern)
+        )
+        _ta_outcome_arm = FuturesMarket.id.in_(
+            select(FuturesOutcome.market_id).where(_ta_outcome_cond)
+        )
+
+    _ta_open_now = (
+        # #10769: the same inline constant as `_futures_open_now`.
+        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= now,
+        ),
+        # #4914: and the game itself is not already over — the dropdown stops
+        # offering a decided question at 100%. Same helper as /search's
+        # `_futures_open_now`, deliberately: one predicate, both surfaces.
+        _futures_game_already_played(),
+    )
+    # #4437: the outcome arm needs nothing the teams and games lookups produce,
+    # so a reader's request starts it here, on a session of its own, and collects
+    # it where it has always joined the futures stage. Its own bound and shed
+    # rules are unchanged; only the wait overlaps. `None` = it runs in place, on
+    # `db`, exactly as before (see the helper for when).
+    _ta_outcome_beside = _typeahead_start_outcome_arm_beside(
+        db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern, _ta_outcome_cond
+    )
     _ta_mark("setup")
     team_result = await db.execute(team_query)
     _ta_mark("teams_query")
@@ -15179,67 +15402,6 @@ async def typeahead_search(
     # WNBA substring-cousin. Prefix LIKE (index-friendly) — keystroke-budget-safe.
     ta_futures_where = [*futures_name_arms]
 
-    # LAT-P007/#1494: the outcome-name arm is NON-CORRELATED, and it is SKIPPED
-    # for a sub-3-character query. Both measured in production 2026-08-08.
-    #
-    # (1) The correlated form. `FuturesMarket.outcomes.any(...)` compiles to an
-    # EXISTS re-probed per candidate row of `futures_markets` (730K rows) against
-    # `futures_outcomes` (3.2M rows / 3 GB). /search replaced exactly this with a
-    # non-correlated IN in #993's Slice-Speed; /typeahead never got the change.
-    # For `%rec%`: correlated 3,468ms -> non-correlated 66.8ms, **52x, on
-    # IDENTICAL results** (n=254 either way). It is set-identical, so there is no
-    # recall or precision consequence — only the plan changes.
-    #
-    # (2) The sub-3-char skip. `min_length=2`, so the endpoint's MINIMUM allowed
-    # query is also its worst case, and it is the first thing every user fires.
-    # A 2-char infix pattern is unservable by a pg_trgm GIN (no complete trigram
-    # is extractable), so `%re%` seq-scans 3 GB: that arm ALONE measured 8,633ms,
-    # and the endpoint measured **12.06s** for `q=re`. The cliff is at exactly the
-    # trigram boundary, across six independent stems — 2-char 4.4-12.1s vs 3-char
-    # 1.85-2.67s — so it is pattern length, not query popularity.
-    #
-    # This is NOT a recall trade, and that was checked by LOOKING rather than
-    # assuming. For `re`, 17 of the 20 visible rows came from this arm alone, and
-    # all 17 were substring accidents: "3M Open Winner" (golfer Lamp-re-cht),
-    # "Pro Baseball Champion" (Baltimo-re), "Nobel Peace Prize Winner 2026"
-    # (Gute-rre-s), "Champions League Winner" (Villar-re-al). Not one is a
-    # plausible answer to "re". At two characters an outcome substring matches
-    # inside almost any name, so the arm is a noise generator that costs 8.6s.
-    #
-    # The market NAME arm still runs at 2 chars — a title match at least describes
-    # the thing being suggested. Scoped to the WHOLE query, not to individual
-    # terms: LAT-P006 pins that a short term still FILTERS inside a multi-term AND
-    # (`us recession` must not admit "Euro area growth"), and this must not
-    # contradict that guard.
-    #
-    # LAT-P013 widened the predicate here in lockstep with /search. The two
-    # surfaces sharing a CONSTANT was not enough to keep them in agreement — they
-    # have to share the RULE. `d'or` is 4 characters, so the old length test
-    # admitted it on both paths while pg_trgm could serve neither.
-    #
-    # LAT-P143: HELD BACK rather than appended. This is the one arm measured to
-    # cost 6-14 s, so it does not join the union until it has proved it can be
-    # served inside its own budget — see `_resolve_typeahead_outcome_arm` below.
-    # The subject, because this gates the recall `pattern` two lines down and
-    # the two must agree: testing the raw query for an extractable trigram while
-    # filtering on the subject would shed the arm on exactly the queries the
-    # subject was computed to rescue.
-    _ta_q_compact = _q_identity.strip()
-
-    # #9306: a round word matches an outcome only as a whole word, as on
-    # /search — `alds` put "Florida Governor winner?" (Byron Donalds) in the
-    # dropdown. The condition is also the probe's, so the two cannot disagree.
-    _ta_outcome_arm = None
-    _ta_outcome_cond = None
-    if _has_extractable_trigram(_ta_q_compact):
-        _ta_outcome_cond = (
-            _outcome_whole_word(_ta_q_compact)
-            if _ta_q_compact.lower() in _TEAM_PREFIX_REFUSED_TOKENS
-            else FuturesOutcome.name.ilike(pattern)
-        )
-        _ta_outcome_arm = FuturesMarket.id.in_(
-            select(FuturesOutcome.market_id).where(_ta_outcome_cond)
-        )
 
     ta_league_ticker_match = _build_league_ticker_match(ta_expanded)
     if ta_league_ticker_match is not None:
@@ -15264,18 +15426,8 @@ async def typeahead_search(
     # rows. UNION and OR are set-identical, so recall and precision are preserved
     # by construction. Filters pushed into each arm (AND distributes over UNION);
     # kept on the outer query as deliberate redundancy.
-    _ta_open_now = (
-        # #10769: the same inline constant as `_futures_open_now`.
-        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
-        or_(
-            FuturesMarket.resolution_date.is_(None),
-            FuturesMarket.resolution_date >= now,
-        ),
-        # #4914: and the game itself is not already over — the dropdown stops
-        # offering a decided question at 100%. Same helper as /search's
-        # `_futures_open_now`, deliberately: one predicate, both surfaces.
-        _futures_game_already_played(),
-    )
+    # `_ta_open_now` is defined above the teams lookup (#4437): the outcome arm
+    # starts there, beside it.
     # #4437: the arms carry only the two CHEAP open-now filters. The third,
     # `_futures_game_already_played()` (correlated NOT EXISTS over events, twins
     # and group siblings), is applied once, to a bounded ordered slice, below —
@@ -15297,9 +15449,13 @@ async def typeahead_search(
     _ta_outcome_arm_shed = False
     _ta_mark("events_assemble")
     if _ta_outcome_arm is not None:
-        _ta_outcome_ids = await _resolve_typeahead_outcome_arm(
-            db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern=pattern,
-            outcome_cond=_ta_outcome_cond,
+        _ta_outcome_ids = await (
+            _ta_outcome_beside
+            if _ta_outcome_beside is not None
+            else _resolve_typeahead_outcome_arm(
+                db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern=pattern,
+                outcome_cond=_ta_outcome_cond,
+            )
         )
         # ONE mark, labelled by outcome — the same grammar as
         # `futures_query` / `futures_query_TIMED_OUT` below, and for the same
@@ -38444,12 +38600,70 @@ def _search_keep_settled_winners(real: list, limit: int, headline_tier) -> tuple
     return live + kept + tail, kept
 
 
+def _verified_changed_leg(overlay) -> bool:
+    """The page's `_overlay_current` rule: a missing overlay is a change (no number)."""
+    return overlay is None or bool(getattr(overlay, "changed", True))
+
+
+class _VerifiedOutcome:
+    """#12335: one outcome row as the verified-title detail page prices it.
+
+    The page overlays each outcome's composed value by id
+    (`routes/futures.py::_overlay_current`): no overlay means no number, and a
+    value that is not the requested source's own drops the movement measured on
+    that source and re-derives the odds. Everything else reads through.
+
+    The row's loaded state is COPIED into this object's own ``__dict__``, not
+    merely delegated: this file reads rows through ``__dict__`` on purpose (a
+    mapped-attribute read can lazy-load inside async, gotcha #26), and a bare
+    delegating proxy would answer every one of those reads with "absent".
+    """
+
+    def __init__(self, row, overlay):
+        self.__dict__.update(
+            {k: v for k, v in row.__dict__.items() if k != "_sa_instance_state"}
+        )
+        self._row = row
+        self.current_probability = getattr(overlay, "probability", None)
+        if _verified_changed_leg(overlay):
+            from app.utils import probability_to_american
+
+            self.current_american_odds = (
+                probability_to_american(self.current_probability)
+                if self.current_probability is not None
+                else None
+            )
+            self.probability_change_24h = None
+        else:
+            self.current_american_odds = row.current_american_odds
+            self.probability_change_24h = row.probability_change_24h
+
+    def __getattr__(self, name):
+        return getattr(self._row, name)
+
+
+class _VerifiedMarket:
+    """#12335: a market whose outcomes are :class:`_VerifiedOutcome` rows."""
+
+    def __init__(self, market, overlay: dict):
+        # Loaded state copied, as on :class:`_VerifiedOutcome`, for the same reason.
+        self.__dict__.update(
+            {k: v for k, v in market.__dict__.items() if k != "_sa_instance_state"}
+        )
+        self._market = market
+        self.outcomes = [_VerifiedOutcome(o, overlay.get(o.id)) for o in market.outcomes]
+
+    def __getattr__(self, name):
+        return getattr(self._market, name)
+
+
 def _build_search_top_outcomes(
     market: "FuturesMarket",
     limit: int = 5,
     lean: bool = False,
     withheld: Optional[set[int]] = None,
     query_terms: Optional[list[tuple[str, str | None]]] = None,
+    verified=None,
 ) -> list[dict]:
     """Top-N real outcomes for search surfaces, normalized (#23). Shared by the
     full search formatter and the typeahead futures branch.
@@ -38462,6 +38676,12 @@ def _build_search_top_outcomes(
     movement only — no id/odds/rank) to keep the dropdown response small.
     Placeholder outcomes are filtered; probabilities are #23-normalized so the
     displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
+
+    ``verified`` (#12335) is the market's verified-title ``Composition``, when the
+    caller resolved one: the ladder is then built from the values the detail page
+    prints (`representation=verified_title`), through this same selection and
+    normalization, and a composed value carries no source-measured movement —
+    the page's rule. ``None`` keeps the row's own prices.
 
     ``withheld`` is #6993's fourth and last surface. The four-arm refusal union
     lives in ``routes/futures.py::_withheld_price_outcome_ids`` and reaches the
@@ -38490,6 +38710,12 @@ def _build_search_top_outcomes(
         reader_change_24h,
     )
 
+    _verified_changed = False
+    if verified is not None:
+        market = _VerifiedMarket(market, verified.overlay)
+        _verified_changed = any(
+            _verified_changed_leg(verified.overlay.get(o.id)) for o in market.outcomes
+        )
     real = _search_surviving_legs(market)
     # #5516: an exclusive board whose whole served ladder sums far under 100% is
     # incoherent as a SET even when every rung in it is honest — `Cubs 24% ·
@@ -38821,11 +39047,17 @@ def _build_search_top_outcomes(
     full_display = _drop_dominant_field_outcomes(
         full_display, lambda o: o.get("name"), lambda o: 1.0 if has_named_outcome and o.get("probability") == 1.0 else None
     )
-    comparisons = normalized_field_comparisons(
+    # #12335: the detail page compares against the stored field only when no
+    # composed value moved; a moved field's openings belong to another estimator.
+    comparisons = None if _verified_changed else normalized_field_comparisons(
         market,
         full_display,
         field_complete=not _withheld_ids,
     )
+    if _verified_changed:
+        for row in out:
+            if "movement" in row:
+                row["movement"] = None
     changed = _normalize_search_outcome_probs(
         full_display, mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=not _withheld_ids, question=getattr(market, "name", None),
@@ -40056,10 +40288,74 @@ async def _repair_search_card_club_names(
     return changed
 
 
+#: #12335: the verified-title composition is skipped (cards keep their own
+#: venue's prices) when less than this is left of the /search deadline.
+_SEARCH_VERIFIED_TITLE_MIN_REMAINING_S = 3.0
+
+
+async def _search_verified_titles(db, markets, deadline: float | None) -> dict:
+    """``{market id: Composition}`` for the title questions among ``markets``.
+
+    #12335. `/futures/<id>` opts into `representation=verified_title` (#10224):
+    one number per outcome across every venue that provably asks the same title
+    question. The search card that opens it read its own row alone, so the card
+    said Bills 14% while the page said 13%. This calls the SAME resolver the page
+    calls, `routes/futures.py::_resolve_verified_title`, so the two cannot drift.
+
+    Only markets `question_for` recognises (the NFL title question today) cost
+    anything; every other card is untouched and issues no read.
+
+    ON ITS OWN SESSION, never ``db``: the resolver swallows its own failures, and
+    a failed statement inside the request's transaction would abort it — and
+    rolling that back would expire every row the formatter is about to read
+    (gotcha #6). A session on an ENGINE is required, so a test double or a
+    connection-bound session gets no composition; so does a pool with no free
+    connection, where a checkout would wait on the reader's time, and a request
+    with less than :data:`_SEARCH_VERIFIED_TITLE_MIN_REMAINING_S` left. Each of
+    those keeps the card's own prices — the card before #12335, never an error.
+    """
+    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+
+    from app.routes.futures import _resolve_verified_title, _verified_title_facts
+    from app.utils.futures_verified_title import Composition, question_for
+
+    engine = getattr(db, "bind", None)
+    if not isinstance(db, AsyncSession) or not isinstance(engine, AsyncEngine):
+        return {}
+    wanted = []
+    for m in markets:
+        if all(m is not w for w in wanted) and question_for(_verified_title_facts(m)) is not None:
+            wanted.append(m)
+    if not wanted:
+        return {}
+    try:
+        if engine.pool.checkedout() >= engine.pool.size():
+            return {}
+    except Exception:  # noqa: BLE001 — a pool without counters keeps the cards as they are
+        return {}
+    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    out: dict = {}
+    async with maker() as side:
+        for m in wanted:
+            if (
+                deadline is not None
+                and deadline - time.monotonic() < _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S
+            ):
+                break
+            verdict = await _resolve_verified_title(side, m)
+            if isinstance(verdict, Composition):
+                out[m.id] = verdict
+            else:
+                # A refusal may follow a failed statement; start the next one clean.
+                await side.rollback()
+    return out
+
+
 def _format_futures_for_search(
     market: FuturesMarket,
     withheld: Optional[set[int]] = None,
     query_terms: Optional[list[tuple[str, str | None]]] = None,
+    verified=None,
 ) -> dict:
     """Format a futures market for search results (answer-first, #23-normalized).
 
@@ -40076,6 +40372,7 @@ def _format_futures_for_search(
         lean=False,
         withheld=withheld,
         query_terms=query_terms,  # #8842
+        verified=verified,  # #12335
     )
     # #6585: COUNT THE LEGS THE LADDER DRAWS FROM, not the rows behind it.
     #
@@ -40174,6 +40471,15 @@ def _format_futures_for_search(
         # byte-for-byte (it is the row's write time and other readers key off
         # it); this is the additive field the age pip reads instead.
         "prices_updated_at": _served_prices_as_of(market, top_outcomes, withheld),
+        # #12335: additive — which numbers these are, in the page's own words.
+        **(
+            {
+                "representation": "verified_title",
+                "contributing_sources": list(verified.contributing_sources),
+            }
+            if verified is not None
+            else {}
+        ),
     }
 
 
