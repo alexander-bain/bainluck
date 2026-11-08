@@ -46,6 +46,7 @@ from app.utils.market_staleness import (
     stale_observation_keys,
 )
 from app.utils.ladder_monotonicity import INC, parse_threshold
+from app.utils.midterms_collection import outcome_key
 
 logger = logging.getLogger(__name__)
 
@@ -1026,7 +1027,7 @@ _CYCLE_2026_TICKER_RE = re.compile(r"-(?:2026|26)(?:[A-Z]{3}\d{0,2})?(?:-|$)", r
 
 
 def _finished_midterms_market(market: FuturesMarket, now: datetime) -> bool:
-    """Is this a non-exclusive 2026 midterms market after Election Day?
+    """Retire 2026 Midterms forecasts after Election Day, without grading them.
 
     #12093 Defect 2: `market_reads_settled` intentionally spares markets with
     `mutually_exclusive = False` unless every leg is graded, so cumulative and
@@ -1037,8 +1038,8 @@ def _finished_midterms_market(market: FuturesMarket, now: datetime) -> bool:
     section cards after the November 3, 2026 election has finished — even when
     11 of 13 rungs are already graded `api_settlement` losers.
     """
-    if getattr(market, "mutually_exclusive", None) is not False:
-        return False
+    # Exclusive fields also expire as forecasts. KXHOUSEPOPVSGB-26NOV03
+    # remained on the live shelf because only pick-several markets reached here.
     name = market.name or ""
     ext_id = getattr(market, "external_id", None) or ""
     title_years = [int(m.group(1)) for m in re.finditer(r"\b(20\d\d)\b", name)]
@@ -1136,6 +1137,32 @@ def _by_uncertainty(row: dict, market: FuturesMarket) -> tuple[int, float]:
 _PARTY_TAG_RE = re.compile(r"\s*\((?:R|D|I)\)\s*$", re.I)
 _NOT_CANDIDATES = frozenset({"yes", "no"})
 
+# #12336. These venues cover the same 2027 Kentucky general election, but
+# Kalshi settles on inauguration and Polymarket on the election winner. This
+# register folds their presentation only. It grants no twin or blend licence.
+_KENTUCKY_2027_RACE = {
+    112821: ("kalshi", "GOVPARTYKY-27", "Kentucky governor winner? (2027)"),
+    58335990: ("polymarket", "798143", "Kentucky Governor Election Winner (2027)"),
+}
+# Fixed presentation choice. This contract names the election winner directly.
+_KENTUCKY_2027_PRIMARY_ID = 58335990
+
+
+def _same_registered_race(a: FuturesMarket, b: FuturesMarket) -> bool:
+    if {a.id, b.id} != set(_KENTUCKY_2027_RACE):
+        return False
+    for market in (a, b):
+        identity = (_source(market), getattr(market, "external_id", None), market.name)
+        if identity != _KENTUCKY_2027_RACE[market.id]:
+            return False
+        if getattr(market, "mutually_exclusive", None) is not True:
+            return False
+        if {outcome_key(o.name) for o in _clean_outcomes(market.outcomes)} != {
+            "democratic", "republican",
+        }:
+            return False
+    return True
+
 
 def _candidate_key(market: FuturesMarket) -> frozenset[str]:
     return frozenset(
@@ -1161,12 +1188,27 @@ def _take_without_venue_twins(
     Compares each candidate only with the rows already kept (at most `limit`),
     never pool-wide: the Other pool is ~4,000 rows, and a pairwise pass over it
     would cost seconds of title comparisons. A folded twin's slot backfills from
-    the same sorted pool.
+    the same sorted pool. The declared Kentucky near-twin uses a fixed source
+    at the pair's first ranked slot, including when that source ranks past the cap.
     """
+    race_pairs = {
+        market.id: (row, market)
+        for row, market in pairs
+        if market.id in _KENTUCKY_2027_RACE
+    }
+    preferred_race = None
+    if set(race_pairs) == set(_KENTUCKY_2027_RACE) and _same_registered_race(
+        race_pairs[112821][1], race_pairs[_KENTUCKY_2027_PRIMARY_ID][1]
+    ):
+        preferred_race = race_pairs[_KENTUCKY_2027_PRIMARY_ID]
     kept: list[tuple[dict, FuturesMarket]] = []
     for row, market in pairs:
         if len(kept) >= limit:
             break
+        if preferred_race is not None and market.id in _KENTUCKY_2027_RACE:
+            if any(other.id == _KENTUCKY_2027_PRIMARY_ID for _, other in kept):
+                continue
+            row, market = preferred_race
         if any(_is_venue_twin(market, other) for _, other in kept):
             continue
         kept.append((row, market))
@@ -1910,7 +1952,9 @@ def _extract_dem_prob(market: FuturesMarket) -> float | None:
     return None
 
 
-def _build_senate_map(congressional_markets: list[FuturesMarket]) -> dict[str, float]:
+def _build_senate_map(
+    congressional_markets: list[FuturesMarket], *, now: datetime | None = None
+) -> dict[str, float]:
     """Per-state Dem chance of the Senate seat, for the NEAREST election cycle only.
 
     Order-independent: every venue's seat market for the state is blended (a
@@ -1927,6 +1971,10 @@ def _build_senate_map(congressional_markets: list[FuturesMarket]) -> dict[str, f
         # the shared settlement answer, before it reaches this builder.
         seat = _senate_seat(m)
         if seat is None:
+            continue
+        # An ungraded 2026 seat is still awaiting a result, not a forecast for
+        # the next election. Retire its colour without inferring its winner.
+        if seat[1] == 2026 and now is not None and now >= _MIDTERMS_2026_PASSED_UTC:
             continue
         dem_prob = _extract_dem_prob(m)
         if dem_prob is None:
@@ -2303,7 +2351,7 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
         and m not in congressional_markets
     ]
     chamber_control = _find_chamber_control(chamber_control_pool)
-    senate_map = _build_senate_map(senate_seat_markets)
+    senate_map = _build_senate_map(senate_seat_markets, now=now)
     _t = _mark("congressional", _t)
 
     # Cross-source spotlight — fed the set this page ACCEPTED, not `all_markets`.
