@@ -57,7 +57,7 @@ from app.utils.feed_cache import (
 
 #: Bumped when the payload shape changes, so a release never serves a body the
 #: new code would not have built.
-CONTAINER_READ_CACHE_VERSION = "v2"
+CONTAINER_READ_CACHE_VERSION = "v3"
 CONTAINER_READ_CACHE_PREFIX = "container_read"
 
 #: The fresh / stale-servable windows (seconds) — see the module docstring.

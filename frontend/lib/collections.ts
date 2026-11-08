@@ -10,6 +10,7 @@ export interface CollectionMember {
   item: FeedItem;
   questionIds: number[];
   eventId: number | null;
+  linkPresentation?: "game" | "inline" | "secondary";
 }
 export interface CollectionSection { key: string; cls: string; title: string; note: string | null; layout?: string; members: CollectionMember[] }
 export interface CollectionPin { slug: string; name: string; href: string; subtitle: string; pin_until: string }
@@ -78,9 +79,12 @@ function member(value: unknown, quiet = false): CollectionMember | null {
     : card;
   const data = type === "event" ? shown as unknown as FeedEventData : shown as unknown as FeedFuturesData;
   const item: FeedItem = { type: type === "event" ? "event" : "futures", score: 0, reason: "", headline: null, data };
+  const linkPresentation = card.collection_link_presentation;
   return { key: `${type}:${row.id}`, id: row.id, type, href, item,
     questionIds: Array.isArray(row.question_ids) ? row.question_ids.filter(positive) : [],
-    eventId: positive(row.event_id) ? row.event_id : null };
+    eventId: positive(row.event_id) ? row.event_id : null,
+    linkPresentation: linkPresentation === "game" || linkPresentation === "inline" || linkPresentation === "secondary"
+      ? linkPresentation : undefined };
 }
 
 const sectionTitles: Record<string, string> = {
@@ -228,12 +232,19 @@ function relate(members: CollectionMember[]): Record<string, CollectionMember[]>
 // #5342: a game's attached markets keep their own served routes on the hub. The
 // game page does not draw every one (Week 5's Polymarket "O/U 47.5" is reachable
 // only from here), so a game with a short served list names each as a plain
-// link, in served order, with no number, count or ranking. A longer list stays
-// behind "More on this game": hundreds of rungs never go inline (#10146).
+// link, in served order, with no number, count or ranking. #12337 adds the
+// shared NFL presentation decision: winners are represented by the game card,
+// while secondary contracts keep their direct links in a closed disclosure.
+// A longer list stays behind "More on this game" (#10146).
 export const RELATED_LINK_LIMIT = 12;
-export function relatedMarketLinks(hub: CollectionHub, gameKey: string): CollectionMember[] {
+export function relatedMarketLinks(
+  hub: CollectionHub,
+  gameKey: string,
+  presentation: "inline" | "secondary" = "inline",
+): CollectionMember[] {
   const related = hub.related[gameKey] ?? [];
-  return related.length <= RELATED_LINK_LIMIT ? related : [];
+  if (related.length > RELATED_LINK_LIMIT) return [];
+  return related.filter((member) => (member.linkPresentation ?? "inline") === presentation);
 }
 
 export interface CollectionPageRequest { revision: number; cursor: string }
