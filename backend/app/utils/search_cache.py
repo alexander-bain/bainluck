@@ -206,9 +206,17 @@ def search_response_ttl_seconds(
 #: So it lives :data:`SEARCH_THIN_RESPONSE_TTL_SECONDS` — the same short life as a
 #: thin outcome-arm answer, long enough to absorb a burst of repeats, never the
 #: freshness ceiling — and only when it has content, so a cut-short answer can
-#: never be served back as "No results". Any OTHER shed stage, alone or beside
-#: this one, keeps the answer out of the cache exactly as before.
-SEARCH_CACHEABLE_SHED_STAGES = frozenset({"headline_contenders"})
+#: never be served back as "No results". Any stage NOT listed here, alone or
+#: beside a listed one, keeps the answer out of the cache exactly as before.
+#:
+#: #12335 step 4: ``verified_title`` joins it. A title card whose verified-title
+#: composition was still running at the search's 1 s bound prints its own
+#: venue's prices, and the composition finishes in the background. Measured
+#: 2026-11-08 3:25 and 5:53 AM PT: 0 of 20 title-team searches carried the
+#: blend. Cached for 180 s, such a page outlived the 60 s verdict it was waiting
+#: for, so the next build tripped the bound again and the blend never showed.
+#: At 30 s, the next build lands inside the verdict's life.
+SEARCH_CACHEABLE_SHED_STAGES = frozenset({"headline_contenders", "verified_title"})
 
 
 def shed_answer_ttl_seconds(degraded: list, payload: dict, *, debug_timing: bool) -> int | None:
