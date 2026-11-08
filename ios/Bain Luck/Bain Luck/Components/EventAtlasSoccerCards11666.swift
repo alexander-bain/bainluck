@@ -541,20 +541,21 @@ nonisolated enum EventAtlasSoccerCards11666 {
         func current(at now: Date) -> ExactScoreCard {
             guard phase != .after else { return self }
             let anyCellStale = cells.contains { cell in
-                (cell.quotedChance != nil || (phase == .before && cell.pregameChance != nil))
+                cell.quotedChance != nil
                     && !NFLMilestoneCard9483.isRecent(cell.observedAt, now: now)
             }
             let otherStale: Bool = {
                 guard let other = otherCell else { return false }
-                return (other.quotedChance != nil || (phase == .before && other.pregameChance != nil))
+                return other.quotedChance != nil
                     && !NFLMilestoneCard9483.isRecent(other.observedAt, now: now)
             }()
             guard anyCellStale || otherStale else { return self }
 
             let agedCells = cells.map { cell -> ExactScoreCell in
-                let recent = NFLMilestoneCard9483.isRecent(cell.observedAt, now: now)
-                let nextQuoted = recent ? cell.quotedChance : nil
-                let nextPregame = phase == .before ? (recent ? cell.pregameChance : nil) : cell.pregameChance
+                let quoteStale = cell.quotedChance != nil
+                    && !NFLMilestoneCard9483.isRecent(cell.observedAt, now: now)
+                let nextQuoted = quoteStale ? nil : cell.quotedChance
+                let nextPregame = (phase == .before && quoteStale) ? nil : cell.pregameChance
                 let nextChance = nextQuoted ?? nextPregame
                 return ExactScoreCell(
                     key: cell.key,
@@ -571,9 +572,10 @@ nonisolated enum EventAtlasSoccerCards11666 {
                 )
             }
             let agedOther: ExactScoreOtherCell? = otherCell.map { other in
-                let recent = NFLMilestoneCard9483.isRecent(other.observedAt, now: now)
-                let nextQuoted = recent ? other.quotedChance : nil
-                let nextPregame = phase == .before ? (recent ? other.pregameChance : nil) : other.pregameChance
+                let quoteStale = other.quotedChance != nil
+                    && !NFLMilestoneCard9483.isRecent(other.observedAt, now: now)
+                let nextQuoted = quoteStale ? nil : other.quotedChance
+                let nextPregame = (phase == .before && quoteStale) ? nil : other.pregameChance
                 let nextChance = nextQuoted ?? nextPregame
                 return ExactScoreOtherCell(
                     outcomeLabel: other.outcomeLabel,
@@ -836,7 +838,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
                 let recent = NFLMilestoneCard9483.isRecent(observedAt, now: now)
                 let quoted = !finished && recent ? openChance(row.probability) : nil
                 let pregame: Double? = currentPhase == .before
-                    ? (recent ? openChance(row.probability) : nil)
+                    ? (recent ? openChance(row.probability) ?? openChance(row.pregameMark) : openChance(row.pregameMark))
                     : openChance(row.pregameMark)
                 let chance = finished ? pregame : (quoted ?? pregame)
                 let verdict = OutcomeVerdict.verdict(
@@ -1189,7 +1191,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
             primaryLabel = "Pregame baseline"
             primaryValue = pregameText
         } else if let chance = cell.chance {
-            primaryLabel = card.phase == .after ? "Pregame baseline" : "Last quote"
+            primaryLabel = "Last quote"
             primaryValue = formatProbability(chance)
         } else {
             primaryLabel = "Reading"

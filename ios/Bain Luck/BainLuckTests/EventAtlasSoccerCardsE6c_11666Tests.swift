@@ -892,7 +892,7 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         XCTAssertEqual(agedOtherDetails.primaryReadingLabel, "Pregame baseline")
         XCTAssertEqual(agedOtherDetails.primaryReadingValue, "5%")
 
-        // 3. Before kickoff: aging out drops both quotedChance and pregameChance to nil
+        // 3a. Before kickoff: when cells carry a live quote that ages out, both quotedChance and pregameChance drop to nil
         let pregameCard = try XCTUnwrap(
             EventAtlasSoccerCards11666.buildExactScoreCard(
                 matrix: nil,
@@ -915,6 +915,83 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         XCTAssertNil(agedPregameCard.otherCell?.quotedChance)
         XCTAssertNil(agedPregameCard.otherCell?.pregameChance)
         XCTAssertNil(agedPregameCard.otherCell?.chance)
+
+        // 3b. Before kickoff: pregame-only cells (quotedChance == nil, pregameChance != nil) with an old
+        // observedAt (>2 hours old) must stay priced after current(at:) (matching ThreeWayCard).
+        let pregamePinMatrixJSON = """
+        {
+            "contract": "10238.v1",
+            "display_scope": "game",
+            "questions": [
+                {
+                    "question_key": "q:exact_score_pins",
+                    "kind": "named_options",
+                    "label": "Exact Score",
+                    "market_name": "Exact Score",
+                    "typing": {"state": "typed"},
+                    "options": [
+                        {
+                            "option_key": "0-0",
+                            "label": "Draw 0-0",
+                            "contributor_outcome_ids": [9601],
+                            "published": {"value_state": "not_quoted", "source": "polymarket"},
+                            "pregame_reading": {"state": "available", "basis": "pregame_pin", "outcome_id": 9601, "probability": 0.11, "observed_at": "2026-11-06T18:00:00Z"}
+                        },
+                        {
+                            "option_key": "1-0",
+                            "label": "Arsenal wins 1-0",
+                            "contributor_outcome_ids": [9602],
+                            "published": {"value_state": "not_quoted", "source": "polymarket"},
+                            "pregame_reading": {"state": "available", "basis": "pregame_pin", "outcome_id": 9602, "probability": 0.17, "observed_at": "2026-11-06T18:00:00Z"}
+                        },
+                        {
+                            "option_key": "1-1",
+                            "label": "Draw 1-1",
+                            "contributor_outcome_ids": [9603],
+                            "published": {"value_state": "not_quoted", "source": "polymarket"},
+                            "pregame_reading": {"state": "available", "basis": "pregame_pin", "outcome_id": 9603, "probability": 0.13, "observed_at": "2026-11-06T18:00:00Z"}
+                        },
+                        {
+                            "option_key": "0-1",
+                            "label": "Chelsea wins 1-0",
+                            "contributor_outcome_ids": [9604],
+                            "published": {"value_state": "not_quoted", "source": "polymarket"},
+                            "pregame_reading": {"state": "available", "basis": "pregame_pin", "outcome_id": 9604, "probability": 0.09, "observed_at": "2026-11-06T18:00:00Z"}
+                        },
+                        {
+                            "option_key": "other",
+                            "label": "Any other score",
+                            "contributor_outcome_ids": [9605],
+                            "published": {"value_state": "not_quoted", "source": "polymarket"},
+                            "pregame_reading": {"state": "available", "basis": "pregame_pin", "outcome_id": 9605, "probability": 0.06, "observed_at": "2026-11-06T18:00:00Z"}
+                        }
+                    ]
+                }
+            ]
+        }
+        """
+        let pregamePinMatrix = try decoder.decode(EventQuestionMatrix.self, from: Data(pregamePinMatrixJSON.utf8))
+        let pregameOnlyCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildExactScoreCard(
+                matrix: pregamePinMatrix,
+                otherMarkets: [],
+                status: "scheduled",
+                commenceTime: "2026-11-06T23:30:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: freshNow
+            )
+        )
+        let afterTickPregameOnly = pregameOnlyCard.current(at: staleNow)
+        XCTAssertEqual(afterTickPregameOnly, pregameOnlyCard, "pregame-only cells in .before must stay priced after current(at:)")
+        let pregameOnly10 = try XCTUnwrap(afterTickPregameOnly.cells.first(where: { $0.key == "1-0" }))
+        XCTAssertNil(pregameOnly10.quotedChance)
+        XCTAssertEqual(pregameOnly10.pregameChance ?? -1, 0.17, accuracy: 1e-6)
+        XCTAssertEqual(pregameOnly10.chance ?? -1, 0.17, accuracy: 1e-6)
+        XCTAssertEqual(afterTickPregameOnly.otherCell?.chance ?? -1, 0.06, accuracy: 1e-6)
+        XCTAssertEqual(afterTickPregameOnly.defaultSelectedKey, "1-0")
 
         // 4. Render 390px captures of fresh live vs aged live Exact Score card
         let state = NFLCardDeckState9483()
