@@ -37,6 +37,13 @@ def test_native_description_is_retained_as_verbatim_primary_evidence():
     assert payload == envelope()
 
 
+def test_a_market_may_belong_to_the_enclosing_event_and_another_provider_event():
+    payload = envelope()
+    payload["markets"][0]["events"] = [{"id": EVENT_ID}, {"id": "999999"}]
+    normalized = source.polymarket_occasion_event(payload, EVENT_ID)
+    assert normalized["markets"][0]["rules_primary"] == RULE
+
+
 @pytest.mark.parametrize(
     "change,reason",
     [

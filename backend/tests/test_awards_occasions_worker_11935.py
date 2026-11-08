@@ -1,6 +1,8 @@
 """Only a completed worker read can replace ceremony evidence."""
 
+import asyncio
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -80,3 +82,97 @@ async def test_missing_redis_stops_before_the_source_read(monkeypatch):
     with pytest.raises(AwardsOccasionSourceError, match="source_unavailable:redis"):
         await worker.refresh_awards_occasions()
     reader.assert_not_awaited()
+
+
+def test_registered_refresh_is_hourly_on_background_with_its_own_runtime_limits():
+    from app import tasks
+
+    entry = tasks.celery_app.conf.beat_schedule["refresh-awards-occasions-hourly"]
+    assert entry["task"] == "app.tasks.refresh_awards_occasions"
+    assert entry["schedule"].minute == {47}
+    assert entry["options"]["queue"] == "background"
+    assert entry["options"]["expires"] == 3600
+    assert tasks.celery_app.conf.task_routes[entry["task"]] == {"queue": "background"}
+    registered = tasks.celery_app.tasks[entry["task"]]
+    assert registered.soft_time_limit == 120
+    assert registered.time_limit == 150
+
+
+def test_disabled_definitions_return_before_the_lease_or_source(monkeypatch):
+    from app import tasks
+    from app.utils import roundup_containers, single_flight
+
+    monkeypatch.setattr(roundup_containers, "ROUNDUP_PRODUCERS", {})
+    lease = Mock(side_effect=AssertionError("unexpected lease"))
+    refresh = AsyncMock(side_effect=AssertionError("unexpected source read"))
+    monkeypatch.setattr(single_flight, "single_flight", lease)
+    monkeypatch.setattr(worker, "refresh_awards_occasions", refresh)
+    result = tasks.refresh_awards_occasions.run()
+    assert result == {
+        "terminal": "skipped",
+        "reason": "ceremony_definitions_disabled",
+        "model_cost_usd": 0,
+    }
+    lease.assert_not_called()
+    refresh.assert_not_awaited()
+
+
+@pytest.mark.parametrize("reason", ["already_running", "redis_unavailable"])
+def test_an_unavailable_lease_cannot_launch_a_publisher(monkeypatch, reason):
+    from app import tasks
+    from app.utils import roundup_containers, single_flight
+
+    producer = SimpleNamespace(
+        rule={"producer": "awards_ceremony"}, enabled=lambda: True
+    )
+    monkeypatch.setattr(roundup_containers, "ROUNDUP_PRODUCERS", {"fixture": producer})
+
+    @contextmanager
+    def lease(task_name, ttl_seconds):
+        assert task_name == "app.tasks.refresh_awards_occasions" and ttl_seconds == 180
+        yield SimpleNamespace(
+            acquired=reason != "already_running",
+            reason=reason,
+            skipped_result=lambda: {"skipped": True, "reason": reason},
+        )
+
+    refresh = AsyncMock(side_effect=AssertionError("unexpected source read"))
+    monkeypatch.setattr(single_flight, "single_flight", lease)
+    monkeypatch.setattr(worker, "refresh_awards_occasions", refresh)
+    if reason == "redis_unavailable":
+        with pytest.raises(RuntimeError, match="evidence lease unavailable"):
+            tasks.refresh_awards_occasions.run()
+    else:
+        assert tasks.refresh_awards_occasions.run() == {
+            "skipped": True,
+            "reason": reason,
+        }
+    refresh.assert_not_awaited()
+
+
+def test_enabled_definition_dispatches_the_owned_refresh_under_the_lease(monkeypatch):
+    from app import tasks
+    from app.utils import roundup_containers, single_flight
+
+    producer = SimpleNamespace(
+        rule={"producer": "awards_ceremony"}, enabled=lambda: True
+    )
+    monkeypatch.setattr(roundup_containers, "ROUNDUP_PRODUCERS", {"fixture": producer})
+
+    @contextmanager
+    def lease(task_name, ttl_seconds):
+        assert task_name == "app.tasks.refresh_awards_occasions" and ttl_seconds == 180
+        yield SimpleNamespace(acquired=True, reason="acquired")
+
+    expected = {"terminal": "complete", "occasions": 1, "model_cost_usd": 0}
+    refresh = AsyncMock(return_value=expected)
+
+    def tracked(task_name, awaitable):
+        assert task_name == "awards_occasions"
+        return asyncio.run(awaitable)
+
+    monkeypatch.setattr(single_flight, "single_flight", lease)
+    monkeypatch.setattr(worker, "refresh_awards_occasions", refresh)
+    monkeypatch.setattr(tasks, "_tracked_run", tracked)
+    assert tasks.refresh_awards_occasions.run() == expected
+    refresh.assert_awaited_once()

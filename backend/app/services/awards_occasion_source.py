@@ -98,10 +98,8 @@ def polymarket_occasion_event(payload: Any, event_id: str) -> dict[str, Any]:
         if parents is not None and (
             not isinstance(parents, list)
             or not parents
-            or any(
-                not isinstance(parent, Mapping) or str(parent.get("id")) != event_id
-                for parent in parents
-            )
+            or any(not isinstance(parent, Mapping) for parent in parents)
+            or not any(str(parent.get("id")) == event_id for parent in parents)
         ):
             raise AwardsOccasionSourceError(f"{event_id}: market_identity_mismatch")
         normalized.append({**market, "rules_primary": market.get("description")})

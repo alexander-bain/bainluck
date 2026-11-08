@@ -382,6 +382,7 @@ class TestBeatScheduleCompleteness:
         # Gotcha #12: this allowlist is the reason a new beat entry cannot land
         # silently.
         "warm-container-hubs",
+        "refresh-awards-occasions-hourly",
         # LAT-P109 (#2255) — the trigram GIN pending-list flush that keeps cold
         # `/api/events/search` off the 4 MB sawtooth. Gotcha #12: this allowlist
         # is the reason a new beat entry cannot land silently.

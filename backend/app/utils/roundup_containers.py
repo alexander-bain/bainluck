@@ -1282,6 +1282,14 @@ _KIND_TO_MODULE_BUILDER: dict[str, tuple[str, str]] = {
         "app.utils.field_band",
         "build_field_band_producer",
     ),
+    "field_selection": (
+        "app.utils.field_selection",
+        "build_field_selection_producer",
+    ),
+    "awards_ceremony": (
+        "app.utils.awards_ceremony",
+        "build_awards_ceremony_producer",
+    ),
     "week_events": (
         "app.utils.week_events",
         "build_week_events_producer",

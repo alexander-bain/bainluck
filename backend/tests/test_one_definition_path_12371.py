@@ -174,7 +174,7 @@ class TestOneDefinitionPathFolderRegistration:
         assert container["member_count"] == 3
 
     def test_every_producer_kind_in_containers_dir_builds_via_unified_builder(self) -> None:
-        """All 9 producer kinds in backend/data/containers/ build cleanly via build_roundup_producer_from_definition."""
+        """Every producer kind in the folder builds through the shared factory."""
         defs = load_roundup_definitions_from_dir(CONTAINERS_DATA_DIR)
         assert len(defs) >= 18
         seen_kinds: set[str] = set()
@@ -191,6 +191,8 @@ class TestOneDefinitionPathFolderRegistration:
             "yardstick_pair",
             "field_leaders",
             "field_band",
+            "field_selection",
+            "awards_ceremony",
             "week_events",
             "window_events_closest",
             "register_closest",

@@ -775,6 +775,7 @@ celery_app.conf.task_routes = {
     # heavy task (main app, not `bainluck-heavy`).
     "app.tasks.assemble_theme_collections": {"queue": "background"},
     "app.tasks.rebuild_theme_snapshot": {"queue": "background"},
+    "app.tasks.refresh_awards_occasions": {"queue": "background"},
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
@@ -5929,6 +5930,37 @@ def assemble_containers(self, apply=True, only=None):
     )
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=120,
+    time_limit=150,
+    name="app.tasks.refresh_awards_occasions",
+)
+def refresh_awards_occasions(self):
+    """Refresh ceremony evidence for enabled, reviewed definitions (#11935)."""
+    from app.tasks.awards_occasions import refresh_awards_occasions as refresh
+    from app.utils.roundup_containers import ROUNDUP_PRODUCERS
+    from app.utils.single_flight import single_flight
+
+    enabled = any(
+        (producer.rule or {}).get("producer") == "awards_ceremony"
+        and (producer.enabled is None or producer.enabled())
+        for producer in ROUNDUP_PRODUCERS.values()
+    )
+    if not enabled:
+        return {
+            "terminal": "skipped",
+            "reason": "ceremony_definitions_disabled",
+            "model_cost_usd": 0,
+        }
+    with single_flight("app.tasks.refresh_awards_occasions", ttl_seconds=180) as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        if lease.reason == "redis_unavailable":
+            raise RuntimeError("Awards occasion evidence lease unavailable")
+        return _tracked_run("awards_occasions", refresh())
+
+
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
                  name="app.tasks.assemble_theme_collections")
 def assemble_theme_collections(self, apply=True, only=None):
@@ -9601,6 +9633,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.assemble_theme_collections",
         "schedule": crontab(minute=59),
         "options": {"queue": "background"},
+    },
+    "refresh-awards-occasions-hourly": {
+        "task": "app.tasks.refresh_awards_occasions",
+        "schedule": crontab(minute=47),
+        "options": {"queue": "background", "expires": 3600},
     },
     # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------
     #
