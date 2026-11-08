@@ -1,0 +1,30 @@
+{
+  "slug": "celtics-next-3-games",
+  "name": "Boston Celtics: next 3 games",
+  "kind": "roundup",
+  "membership": "subject_sequence",
+  "relations": [
+    "same_subject",
+    "same_measure",
+    "same_window"
+  ],
+  "level": "member",
+  "category": "nba",
+  "kicker": "NEXT 3 GAMES",
+  "tag": "NBA",
+  "section_title": "Next 3 games",
+  "footer": "Combined win probability \u00b7 next 3 games in schedule order",
+  "rule": {
+    "producer": "subject_sequence",
+    "sport": "basketball_nba",
+    "team_slug": "boston-celtics",
+    "team_name": "Boston Celtics",
+    "team_short_name": "Celtics",
+    "destination_href": "/team/boston-celtics",
+    "league": "nba",
+    "count": 3,
+    "window_days": 21,
+    "order": "sequence",
+    "presentation": "strip"
+  }
+}

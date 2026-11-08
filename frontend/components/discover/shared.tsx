@@ -711,18 +711,23 @@ export interface AdmittedCollectionRef {
 const isPositiveInt = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value > 0;
 
+const SAFE_TEAM_HREF_RE = /^\/team\/[a-z0-9][a-z0-9-]*$/;
+
 /**
  * The link a theme card may draw, or null. The server only sends a ref it has
  * proved (published, complete, the whole preview on the page at that revision);
  * this refuses anything malformed rather than linking somewhere unproven. The
- * destination is the canonical `/collections/{slug}` and nothing else — never
- * derived from the card's header or its members.
+ * destination is the canonical `/collections/{slug}` or a canonical `/team/{slug}`
+ * served by `subject_sequence` (Decide 62-A "the page wins") — never derived
+ * from the card's header or its members.
  */
 export function admitCollectionRef(ref: FeedThemeCollectionRef | null | undefined): AdmittedCollectionRef | null {
   if (!ref || typeof ref !== "object") return null;
-  const href = collectionPath(ref.slug);
+  const baseHref = collectionPath(ref.slug);
+  const servedHref = typeof ref.href === "string" ? ref.href.trim() : "";
+  const href = servedHref && SAFE_TEAM_HREF_RE.test(servedHref) ? servedHref : baseHref;
   const name = typeof ref.name === "string" ? ref.name.trim() : "";
-  if (!href || !name || !isPositiveInt(ref.revision) || !isPositiveInt(ref.collection_count)) return null;
+  if (!href || !baseHref || !name || !isPositiveInt(ref.revision) || !isPositiveInt(ref.collection_count)) return null;
   return { href, name, count: ref.collection_count };
 }
 

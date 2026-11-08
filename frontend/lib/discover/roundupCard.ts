@@ -37,6 +37,8 @@ export interface RoundupRowModel {
   kind: "event" | "market";
   cadence: "live" | "futures";
   label: string;
+  opponentLabel?: string | null;
+  dateLabel?: string | null;
   /** The formatter's boundary marker when rounding would claim a boundary; else null. */
   marker: ProbabilityParts["marker"];
   digits: string;
@@ -56,6 +58,8 @@ export interface RoundupCardModel {
   footer: string;
   countLine: string | null;
   longHeadline: boolean;
+  presentation?: "rows" | "strip";
+  order?: "probability" | "sequence";
   rows: RoundupRowModel[];
   cadence: "live" | "futures";
   /** The footer's age mark (the "every row old" state), or null. */
@@ -89,6 +93,12 @@ export function buildRoundupCardModel(
   const served = Array.isArray(contract.rows) ? contract.rows : [];
   const upperKicker = kicker.toUpperCase();
   const isYardstickPair = upperKicker === "FOR SCALE";
+  const isSequenceOrder =
+    text(contract.order).toLowerCase() === "sequence" ||
+    upperKicker === "NEXT 3 GAMES";
+  const isStripPresentation =
+    text(contract.presentation).toLowerCase() === "strip" ||
+    upperKicker === "NEXT 3 GAMES";
   const isTwoRowPair =
     isYardstickPair || upperKicker.startsWith("HEAD TO HEAD");
   const isWeekEvents =
@@ -150,8 +160,9 @@ export function buildRoundupCardModel(
   }
 
   // Highest first; a tie keeps the served order. Yardstick pairs ("FOR SCALE")
-  // keep their served [target, anchor] order so the two rows match the headline.
-  if (!isYardstickPair) {
+  // and subject_sequence ("NEXT 3 GAMES", order: "sequence") preserve their
+  // served order so the rows match the headline and schedule sequence.
+  if (!isYardstickPair && !isSequenceOrder) {
     readable.sort((a, b) => b.row.probability - a.row.probability || a.index - b.index);
   }
 
@@ -182,11 +193,16 @@ export function buildRoundupCardModel(
         secondaryLabel: text(row.secondary_bar_label) || "Nominated",
       };
     }
+    const splitParts = label.includes(" · ") ? label.split(" · ", 2) : null;
+    const opponentLabel = text(row.opponent_label) || (splitParts ? splitParts[0].trim() : null);
+    const dateLabel = text(row.date_label) || (splitParts ? splitParts[1].trim() : null);
     return {
       marketId: rowId,
       kind,
       cadence,
       label,
+      opponentLabel,
+      dateLabel,
       marker: parts.marker,
       digits: parts.digits,
       fill: row.probability,
@@ -204,6 +220,8 @@ export function buildRoundupCardModel(
       footer,
       countLine: text(contract.count_line) || null,
       longHeadline: headline.length > ROUNDUP_LONG_HEADLINE_CHARS,
+      presentation: isStripPresentation ? "strip" : "rows",
+      order: isSequenceOrder ? "sequence" : "probability",
       rows,
       cadence: cardCadence,
       cardMarkObservedAt: allOld ? oldestSourceStamp(stamps) : null,
