@@ -1838,7 +1838,8 @@ struct EventDetailView: View {
                     let pregame = PrematchReading.resolve(
                         prematch: event.prematchOdds, opening: event.openingOdds)
                     let pregameWord = pregame?.captionWord ?? "Opened"
-                    if let pregame, let opened = DrawPricedWinner.printablePair(
+                    if !ReleaseSurfaces.isEventPageAtlasEnabled(),
+                       let pregame, let opened = DrawPricedWinner.printablePair(
                         away: pregame.awayProbability,
                         home: pregame.homeProbability,
                         sport: event.sport) {
@@ -2318,7 +2319,8 @@ struct EventDetailView: View {
                     preview: vm.blendPreview,
                     liveStatus: vm.liveUpdateStatus,
                     ekgTracker: ekgTracker,
-                    asOf: displayAsOf)
+                    asOf: displayAsOf,
+                    embeddedInHero: true)
             }
         }
 

@@ -537,17 +537,17 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
         .background(Color(.systemBackground))
         .environment(\.colorScheme, .light)
 
-        let r1 = ImageRenderer(content: atRestView)
+        let r1 = rendererForMeasurement(atRestView)
         r1.scale = 2.0
         let img1 = try XCTUnwrap(r1.uiImage)
         XCTAssertEqual(Int(img1.size.width), 390)
 
-        let r2 = ImageRenderer(content: scrubView)
+        let r2 = rendererForMeasurement(scrubView)
         r2.scale = 2.0
         let img2 = try XCTUnwrap(r2.uiImage)
         XCTAssertEqual(Int(img2.size.width), 390)
 
-        let r3 = ImageRenderer(content: settledTerminalView)
+        let r3 = rendererForMeasurement(settledTerminalView)
         r3.scale = 2.0
         let img3 = try XCTUnwrap(r3.uiImage)
         XCTAssertEqual(Int(img3.size.width), 390)
