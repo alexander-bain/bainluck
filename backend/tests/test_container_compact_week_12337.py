@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -17,7 +19,11 @@ class CompactSession(_Session):
         if statement.startswith("SELECT id, event_id FROM futures_markets"):
             self.statements.append(statement)
             ids = set(params["market_ids"])
-            return _Result((market.id, market.event_id) for market in self.markets if market.id in ids)
+            event_ids = set(params["event_ids"])
+            return _Result(
+                (market.id, market.event_id) for market in self.markets
+                if market.id in ids and market.event_id in event_ids
+            )
         if statement.startswith("SELECT futures_markets.") and "WHERE futures_markets.id IN" in statement:
             self.statements.append(statement)
             ids = set(sql.compile().params["id_1"])
@@ -27,6 +33,13 @@ class CompactSession(_Session):
 
 @pytest.fixture(autouse=True)
 def enabled(monkeypatch):
+    from app.services import database
+
+    @asynccontextmanager
+    async def reference_session():
+        yield _Session()
+
+    monkeypatch.setattr(database, "async_session_maker", reference_session)
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
     monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
 

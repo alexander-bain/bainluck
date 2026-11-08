@@ -160,36 +160,35 @@ def order_classes(present: set) -> list:
     return ordered + extras + tail
 
 
-async def _hydrate_event_cards(db: AsyncSession, event_ids: list) -> tuple[dict, dict]:
+async def _read_event_card_references(names: list[str]) -> tuple[dict, dict]:
+    """Read the canonical EI/team references on one separate session."""
+    from app.routes.events import _build_team_lookup, _load_gei_percentiles
+    from app.services.database import async_session_maker
+
+    async with async_session_maker() as reference_db:
+        percentiles = await _load_gei_percentiles(reference_db)
+        teams = await _build_team_lookup(reference_db, names)
+    return percentiles, teams
+
+
+async def _hydrate_event_cards(
+    db: AsyncSession, event_ids: list, *, concurrent_references: bool = False
+) -> tuple[dict, dict]:
     """``({event_id: card}, {("event", id): reason})`` in a constant query count.
 
-    The card is ``GET /api/events``' card, built by the same calls in the same
-    order (odds → EI percentiles → team lookup → fold → venue settlement), so a
-    hub card and a list card of one game cannot disagree. The page-level
-    duplicate drains of the list are deliberately NOT applied: membership was
-    decided by assembly on the authority's ids, and a reader route that dropped
-    members would be a second, unaudited membership rule.
+    The card uses ``GET /api/events``' canonical data readers and formatter.
+    Compact reads overlap EI/team references with the bookmaker/fold reads,
+    using a separate session whose lifetime is joined by the task group. The
+    page-level duplicate drains of the list are deliberately NOT applied:
+    membership was decided by assembly on the authority's ids, and a reader
+    route that dropped members would be a second, unaudited membership rule.
     """
     if not event_ids:
         return {}, {}
-    from collections import defaultdict
-    from datetime import datetime, timezone
-
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     from app.models import Event
-    from app.routes.events import (
-        _build_team_lookup,
-        _filter_stale_bookmaker_snapshots,
-        _format_event_with_aggregated_odds,
-        _load_gei_percentiles,
-        aggregate_bookmaker_odds,
-        detect_reversed_bookmakers,
-        latest_odds_per_bookmaker_query,
-    )
-    from app.utils.proven_duplicates import folded_card_numbers_batch
-    from app.utils.venue_settlement_reader import attach_venue_settlement
 
     events = (
         await db.execute(
@@ -201,6 +200,40 @@ async def _hydrate_event_cards(db: AsyncSession, event_ids: list) -> tuple[dict,
     ).scalars().all()
     if not events:
         return {}, {}
+    if concurrent_references:
+        names = sorted(
+            {
+                name
+                for event in events
+                for name in (event.home_team_name, event.away_team_name)
+                if name
+            }
+        )
+        async with asyncio.TaskGroup() as reads:
+            references = reads.create_task(
+                _read_event_card_references(names), name="container-card-references"
+            )
+            return await _assemble_event_cards(db, events, references=references)
+    return await _assemble_event_cards(db, events)
+
+
+async def _assemble_event_cards(
+    db: AsyncSession, events: list, *, references: Optional[asyncio.Task] = None
+) -> tuple[dict, dict]:
+    from collections import defaultdict
+    from datetime import datetime, timezone
+
+    from app.routes.events import (
+        _build_team_lookup,
+        _filter_stale_bookmaker_snapshots,
+        _format_event_with_aggregated_odds,
+        _load_gei_percentiles,
+        aggregate_bookmaker_odds,
+        detect_reversed_bookmakers,
+        latest_odds_per_bookmaker_query,
+    )
+    from app.utils.proven_duplicates import folded_card_numbers_batch
+    from app.utils.venue_settlement_reader import attach_venue_settlement
 
     snapshots_by_event: dict = defaultdict(list)
     for snap in (
@@ -226,10 +259,14 @@ async def _hydrate_event_cards(db: AsyncSession, event_ids: list) -> tuple[dict,
             "captured_at": max(s.captured_at for s in filtered) if filtered else None,
         }
 
-    gei_percentiles = await _load_gei_percentiles(db)
-    names = {n for e in events for n in (e.home_team_name, e.away_team_name) if n}
-    team_lookup = await _build_team_lookup(db, sorted(names))
-    folded_map = await folded_card_numbers_batch(db, events)
+    if references is None:
+        gei_percentiles = await _load_gei_percentiles(db)
+        names = {n for e in events for n in (e.home_team_name, e.away_team_name) if n}
+        team_lookup = await _build_team_lookup(db, sorted(names))
+        folded_map = await folded_card_numbers_batch(db, events)
+    else:
+        folded_map = await folded_card_numbers_batch(db, events)
+        gei_percentiles, team_lookup = await references
 
     cards: dict = {}
     failed: dict = {}
@@ -553,14 +590,19 @@ async def _build_published_payload(
 
     event_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_EVENT})
     market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
-    event_cards, event_failed = await _hydrate_event_cards(db, event_ids)
+    event_cards, event_failed = await _hydrate_event_cards(
+        db, event_ids, concurrent_references=compact
+    )
     related_counts = {}
     unclassified_count = 0
     if compact and market_ids:
         rows = (
             await db.execute(
-                text("SELECT id, event_id FROM futures_markets WHERE id = ANY(:market_ids)"),
-                {"market_ids": market_ids},
+                text(
+                    "SELECT id, event_id FROM futures_markets WHERE id = ANY(:market_ids) "
+                    "AND event_id = ANY(:event_ids)"
+                ),
+                {"market_ids": market_ids, "event_ids": sorted(event_cards)},
             )
         ).fetchall()
         members, related_counts, unclassified_count = compact_related_members(
