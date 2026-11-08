@@ -1862,8 +1862,17 @@ class TestSearchFuturesFamilyCollectionRef:
 
     @pytest.mark.asyncio
     async def test_attach_search_collections_family_ref_fails_open(self, monkeypatch):
+        from app.services import container_discovery
+        from app.utils import roundup_containers
+
         monkeypatch.setenv("CONTAINER_DISCOVERY_ENABLED", "true")
         monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+        monkeypatch.setattr(
+            container_discovery,
+            "discover_collections",
+            AsyncMock(return_value=container_discovery.DiscoveryRead()),
+        )
+        monkeypatch.setattr(roundup_containers, "ROUNDUP_PRODUCERS", {})
         payload = {
             "query": "katie zacharia",
             "results": [],

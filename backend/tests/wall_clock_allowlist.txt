@@ -413,3 +413,4 @@ tests/test_ws_cpu_cuts_10090.py  clock-invariant at +1/+31/+60 d (timebomb_confi
 tests/test_ws_loop_load_10090.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_ws_open_contract_auxiliary_dispatch_10734.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_ws_retained_pool_10090.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
+tests/test_container_search_12090.py  fixed kickoff dates test calendar formatting; query readers and producers use in-memory fixtures, with no comparison to the wall clock

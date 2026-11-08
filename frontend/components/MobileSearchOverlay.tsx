@@ -10,6 +10,7 @@ import { eventPath } from "@/lib/eventKey";
 import { matchCuratedConcepts } from "@/lib/curatedConcepts";
 import { getRecentSearches, saveRecentSearch } from "@/lib/recentSearches";
 import { TypeaheadRequestGate } from "@/lib/typeaheadRace";
+import { typeaheadWithCollections } from "@/lib/discover/collectionFeed";
 // #1620: shared with the desktop SearchBar. Phones never received #993 Slice A
 // because this component rendered its own, poorer row. Logic there, classes here.
 import {
@@ -104,12 +105,13 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
       // Request-generation guard (L2-198): only the owning request publishes, so
       // a superseded/cleared/closed request can never overwrite fresh results.
       if (!gate.owns(controller)) return;
+      const backendSuggestions = typeaheadWithCollections(data.suggestions, data.collections);
       const backendKeys = new Set(
-        data.suggestions.filter((s) => s.event_key).map((s) => s.event_key)
+        backendSuggestions.map((s) => s.event_key || s.href).filter(Boolean)
       );
       setSuggestions([
-        ...curated.filter((c) => !backendKeys.has(c.event_key)),
-        ...data.suggestions,
+        ...curated.filter((c) => !backendKeys.has(c.event_key || c.href)),
+        ...backendSuggestions,
       ]);
       setDidYouMean(data.did_you_mean ?? null);
       // #1620: the phone reports answer exposure too. Until now only the desktop

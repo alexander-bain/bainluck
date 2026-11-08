@@ -45,13 +45,15 @@ export function searchAnswerState(input: {
   hasFutures: boolean;
   hasTeams: boolean;
   hasEventConcepts: boolean;
+  hasCollections?: boolean;
   degraded?: readonly string[] | null;
 }): SearchAnswerState {
   if (
     input.hasEvents ||
     input.hasFutures ||
     input.hasTeams ||
-    input.hasEventConcepts
+    input.hasEventConcepts ||
+    input.hasCollections
   ) {
     return "present";
   }

@@ -10,6 +10,7 @@ import { eventPath } from "@/lib/eventKey";
 import { matchCuratedConcepts } from "@/lib/curatedConcepts";
 import { getRecentSearches, saveRecentSearch } from "@/lib/recentSearches";
 import { TypeaheadRequestGate } from "@/lib/typeaheadRace";
+import { typeaheadWithCollections } from "@/lib/discover/collectionFeed";
 // #1620: row presentation is shared with MobileSearchOverlay so the two
 // dropdowns cannot drift again. Logic there, classes here.
 import {
@@ -120,12 +121,13 @@ export default function SearchBar({
       // resolves a superseded/cleared/unmounted request, this still drops it so
       // query N-1 can never overwrite query N.
       if (!gate.owns(controller)) return;
+      const backendSuggestions = typeaheadWithCollections(data.suggestions, data.collections);
       const backendKeys = new Set(
-        data.suggestions.filter((s) => s.event_key).map((s) => s.event_key)
+        backendSuggestions.map((s) => s.event_key || s.href).filter(Boolean)
       );
       const merged = [
-        ...curated.filter((c) => !backendKeys.has(c.event_key)),
-        ...data.suggestions,
+        ...curated.filter((c) => !backendKeys.has(c.event_key || c.href)),
+        ...backendSuggestions,
       ];
       // L2-158 Item 3 (frontend half): for team-name queries, float the matching
       // team page to the top so "pats"/"celtics" lands on the team page first.
