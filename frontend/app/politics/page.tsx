@@ -613,11 +613,6 @@ function SectionHead({
           {totalLabel || `${count} markets`}
         </span>
       </h2>
-      {count > 10 && (
-        <div className={s.sectionActions}>
-          <span className={s.sectionLink}>View all →</span>
-        </div>
-      )}
     </div>
   );
 }
