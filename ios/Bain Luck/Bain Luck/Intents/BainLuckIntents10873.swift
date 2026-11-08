@@ -75,6 +75,7 @@ struct GetProbabilityIntent10873: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
+        SiriProbabilityTipRule12315.markUsed() // #12315: the reader knows this one now
         let answer = try await answer(now: Date())
         return .result(value: answer.text, dialog: IntentDialog("\(answer.text)"))
     }

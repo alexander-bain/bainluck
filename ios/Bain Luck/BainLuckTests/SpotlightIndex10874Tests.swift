@@ -95,10 +95,13 @@ final class SpotlightIndex10874Tests: XCTestCase {
                                   encoding: .utf8)) ?? ""
         let written = Set(source.split(separator: "\n").compactMap { line -> String? in
             let text = line.trimmingCharacters(in: .whitespaces)
-            guard text.hasPrefix("attributes."), let name = text.dropFirst(11).split(separator: " ").first else { return nil }
-            return String(name)
+            guard text.hasPrefix("attributes.") else { return nil }
+            let name = text.dropFirst(11).prefix { $0.isLetter }
+            return name.isEmpty ? nil : String(name)
         })
-        XCTAssertEqual(written, ["title", "contentDescription", "keywords"],
+        // #12315: `associateAppEntity` names the entry's own game or market,
+        // built only from its title and detail (SiriTipAndSpotlight12315Tests).
+        XCTAssertEqual(written, ["title", "contentDescription", "keywords", "associateAppEntity"],
                        "the system item gained a field (a rating, imagery, a value, a start clock) beyond the stable description")
     }
 

@@ -411,7 +411,9 @@ struct EventDetailView: View {
                 .spotlightViewed10874(vm.event.flatMap { event in
                     event.id == eventId ? SpotlightSubject10874.game(
                         id: event.id, away: event.awayTeam, home: event.homeTeam,
-                        sportKey: event.sport, commenceTime: event.commenceTime) : nil
+                        sportKey: event.sport, commenceTime: event.commenceTime,
+                        awayAbbreviation: event.awayTeamData?.abbreviation,
+                        homeAbbreviation: event.homeTeamData?.abbreviation) : nil
                 })
                 .task {
                     marketPageVisible = true
