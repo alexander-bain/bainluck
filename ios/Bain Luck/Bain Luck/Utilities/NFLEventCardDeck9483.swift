@@ -61,7 +61,7 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .mlb: return self
         case .nhlScoring(let card): return .nhlScoring(card.current(at: now))
         case .soccerThreeWay(let card): return .soccerThreeWay(card.current(at: now))
-        case .soccerExactScore: return self
+        case .soccerExactScore(let card): return .soccerExactScore(card.current(at: now))
         }
     }
 }

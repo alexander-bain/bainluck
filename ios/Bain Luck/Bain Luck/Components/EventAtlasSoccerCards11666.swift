@@ -498,6 +498,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
         let homeGoals: Int
         let awayGoals: Int
         let outcomeLabel: String
+        var quotedChance: Double? = nil
         let chance: Double?
         let pregameChance: Double?
         let observedAt: String?
@@ -510,6 +511,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
         var id: String { "soccer-exact:other" }
         var key: String { "other" }
         let outcomeLabel: String
+        var quotedChance: Double? = nil
         let chance: Double?
         let pregameChance: Double?
         let observedAt: String?
@@ -535,6 +537,84 @@ nonisolated enum EventAtlasSoccerCards11666 {
         let sourceCount: Int
 
         var title: String { "The exact-score landscape" }
+
+        func current(at now: Date) -> ExactScoreCard {
+            guard phase != .after else { return self }
+            let anyCellStale = cells.contains { cell in
+                (cell.quotedChance != nil || (phase == .before && cell.pregameChance != nil))
+                    && !NFLMilestoneCard9483.isRecent(cell.observedAt, now: now)
+            }
+            let otherStale: Bool = {
+                guard let other = otherCell else { return false }
+                return (other.quotedChance != nil || (phase == .before && other.pregameChance != nil))
+                    && !NFLMilestoneCard9483.isRecent(other.observedAt, now: now)
+            }()
+            guard anyCellStale || otherStale else { return self }
+
+            let agedCells = cells.map { cell -> ExactScoreCell in
+                let recent = NFLMilestoneCard9483.isRecent(cell.observedAt, now: now)
+                let nextQuoted = recent ? cell.quotedChance : nil
+                let nextPregame = phase == .before ? (recent ? cell.pregameChance : nil) : cell.pregameChance
+                let nextChance = nextQuoted ?? nextPregame
+                return ExactScoreCell(
+                    key: cell.key,
+                    homeGoals: cell.homeGoals,
+                    awayGoals: cell.awayGoals,
+                    outcomeLabel: cell.outcomeLabel,
+                    quotedChance: nextQuoted,
+                    chance: nextChance,
+                    pregameChance: nextPregame,
+                    observedAt: cell.observedAt,
+                    result: cell.result,
+                    source: cell.source,
+                    marketTitle: cell.marketTitle
+                )
+            }
+            let agedOther: ExactScoreOtherCell? = otherCell.map { other in
+                let recent = NFLMilestoneCard9483.isRecent(other.observedAt, now: now)
+                let nextQuoted = recent ? other.quotedChance : nil
+                let nextPregame = phase == .before ? (recent ? other.pregameChance : nil) : other.pregameChance
+                let nextChance = nextQuoted ?? nextPregame
+                return ExactScoreOtherCell(
+                    outcomeLabel: other.outcomeLabel,
+                    quotedChance: nextQuoted,
+                    chance: nextChance,
+                    pregameChance: nextPregame,
+                    observedAt: other.observedAt,
+                    result: other.result,
+                    source: other.source,
+                    marketTitle: other.marketTitle
+                )
+            }
+            let sortedCells = agedCells.sorted { a, b in
+                let aChance = a.chance ?? -1.0
+                let bChance = b.chance ?? -1.0
+                if aChance != bChance { return aChance > bChance }
+                if a.awayGoals != b.awayGoals { return a.awayGoals < b.awayGoals }
+                return a.homeGoals < b.homeGoals
+            }
+            let nextMaxChance = sortedCells.reduce(0.05) { max($0, $1.chance ?? 0.0) }
+            let highestCell = sortedCells.first(where: { $0.chance != nil })
+            let nextDefaultKey = highestCell?.key
+                ?? (agedOther?.chance != nil ? "other" : nil)
+                ?? sortedCells.first?.key
+                ?? defaultSelectedKey
+            return ExactScoreCard(
+                phase: phase,
+                homeTeam: homeTeam,
+                awayTeam: awayTeam,
+                homeShort: homeShort,
+                awayShort: awayShort,
+                maxGoals: maxGoals,
+                maxChance: nextMaxChance,
+                cells: sortedCells,
+                otherCell: agedOther,
+                defaultSelectedKey: nextDefaultKey,
+                marketTitle: marketTitle,
+                source: source,
+                sourceCount: sourceCount
+            )
+        }
     }
 
     static func parseExactScoreOutcome(
@@ -670,6 +750,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
                     guard otherCell == nil else { continue }
                     otherCell = ExactScoreOtherCell(
                         outcomeLabel: o.label,
+                        quotedChance: quoted,
                         chance: chance,
                         pregameChance: pregame,
                         observedAt: o.published.observedAt ?? pregameAt,
@@ -690,6 +771,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
                     homeGoals: hGoals,
                     awayGoals: aGoals,
                     outcomeLabel: o.label,
+                    quotedChance: quoted,
                     chance: chance,
                     pregameChance: pregame,
                     observedAt: o.published.observedAt ?? pregameAt,
@@ -767,6 +849,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
                     guard otherCell == nil else { continue }
                     otherCell = ExactScoreOtherCell(
                         outcomeLabel: outLabel,
+                        quotedChance: quoted,
                         chance: chance,
                         pregameChance: pregame,
                         observedAt: observedAt,
@@ -788,6 +871,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
                     homeGoals: hGoals,
                     awayGoals: aGoals,
                     outcomeLabel: outLabel,
+                    quotedChance: quoted,
                     chance: chance,
                     pregameChance: pregame,
                     observedAt: observedAt,
@@ -1026,6 +1110,9 @@ nonisolated enum EventAtlasSoccerCards11666 {
     static func exactScoreMarkKey(for card: ExactScoreCard) -> [EventAtlasStoryCards11666.MarkKeyItem11666] {
         typealias Item = EventAtlasStoryCards11666.MarkKeyItem11666
         var items: [Item] = [Item(glyph: .hollowCircle, label: "Pregame")]
+        if card.phase == .during && (card.cells.contains(where: { $0.quotedChance != nil }) || card.otherCell?.quotedChance != nil) {
+            items.append(Item(glyph: .filledCircle, label: "Recorded"))
+        }
         if card.cells.contains(where: { $0.result != nil }) || card.otherCell?.result != nil {
             items.append(Item(glyph: .hitMissVerdict, label: "✓ Won / ✗ Lost"))
         }
@@ -1095,6 +1182,12 @@ nonisolated enum EventAtlasSoccerCards11666 {
         } else if card.phase == .after {
             primaryLabel = "Result"
             primaryValue = EventAtlasStates11666.pending
+        } else if let quoted = cell.quotedChance {
+            primaryLabel = "Last quote"
+            primaryValue = formatProbability(quoted)
+        } else if let pregameText {
+            primaryLabel = "Pregame baseline"
+            primaryValue = pregameText
         } else if let chance = cell.chance {
             primaryLabel = card.phase == .after ? "Pregame baseline" : "Last quote"
             primaryValue = formatProbability(chance)
@@ -1140,6 +1233,12 @@ nonisolated enum EventAtlasSoccerCards11666 {
         } else if card.phase == .after {
             primaryLabel = "Result"
             primaryValue = EventAtlasStates11666.pending
+        } else if let quoted = otherCell.quotedChance {
+            primaryLabel = "Last quote"
+            primaryValue = formatProbability(quoted)
+        } else if let pregameText {
+            primaryLabel = "Pregame baseline"
+            primaryValue = pregameText
         } else if let chance = otherCell.chance {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(chance)

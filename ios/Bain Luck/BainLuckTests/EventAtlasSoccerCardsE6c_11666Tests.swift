@@ -1,4 +1,6 @@
 import XCTest
+import SwiftUI
+import UIKit
 @testable import Bain_Luck
 
 /// #11666 Step E6c — Native Event-page Atlas Soccer story cards (`soccer_*`),
@@ -804,5 +806,151 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         XCTAssertEqual(matrixCard.defaultSelectedKey, "1-0")
         XCTAssertEqual(matrixCard.otherCell?.chance ?? 0, 0.06, accuracy: 1e-6)
         XCTAssertEqual(matrixCard.source, "polymarket")
+    }
+
+    @MainActor
+    func testExactScoreCardLiveQuoteAgingBehaviorThroughDeckAndRenders390px() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        let liveExactJSON = """
+        [
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Draw 0-0", "probability": 0.22, "pregame_mark": 0.10, "observed_at": "2026-11-06T20:10:00Z", "source": "kalshi"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Arsenal wins 1-0", "probability": 0.28, "pregame_mark": 0.15, "observed_at": "2026-11-06T20:10:00Z", "source": "kalshi"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Draw 1-1", "probability": 0.16, "pregame_mark": 0.12, "observed_at": "2026-11-06T20:10:00Z", "source": "kalshi"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Arsenal wins 2-1", "probability": 0.11, "observed_at": "2026-11-06T20:10:00Z", "source": "kalshi"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Any other score", "probability": 0.08, "pregame_mark": 0.05, "observed_at": "2026-11-06T20:10:00Z", "source": "kalshi"}
+        ]
+        """
+        let rows = try decoder.decode([GameMarketOther].self, from: Data(liveExactJSON.utf8))
+        let freshNow = try XCTUnwrap("2026-11-06T20:12:00Z".asDate)
+        let staleNow = try XCTUnwrap("2026-11-06T22:45:00Z".asDate)
+
+        // 1. During play: fresh live quotes show quotedChance + "Recorded" mark key + "Last quote" in details
+        let liveCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildExactScoreCard(
+                matrix: nil,
+                otherMarkets: rows,
+                status: "in_progress",
+                commenceTime: "2026-11-06T20:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: freshNow
+            )
+        )
+        XCTAssertEqual(liveCard.phase, .during)
+        XCTAssertEqual(
+            EventAtlasSoccerCards11666.exactScoreMarkKey(for: liveCard).map(\.label),
+            ["Pregame", "Recorded"]
+        )
+        let freshCell10 = try XCTUnwrap(liveCard.cells.first(where: { $0.key == "1-0" }))
+        XCTAssertEqual(freshCell10.quotedChance ?? -1, 0.28, accuracy: 1e-6)
+        XCTAssertEqual(freshCell10.chance ?? -1, 0.28, accuracy: 1e-6)
+        XCTAssertEqual(freshCell10.pregameChance ?? -1, 0.15, accuracy: 1e-6)
+        let freshDetails10 = EventAtlasSoccerCards11666.detailsModel(for: freshCell10, card: liveCard)
+        XCTAssertEqual(freshDetails10.primaryReadingLabel, "Last quote")
+        XCTAssertEqual(freshDetails10.primaryReadingValue, "28%")
+        XCTAssertEqual(freshDetails10.pregameBaseline, "15%")
+
+        let freshOther = try XCTUnwrap(liveCard.otherCell)
+        XCTAssertEqual(freshOther.quotedChance ?? -1, 0.08, accuracy: 1e-6)
+        XCTAssertEqual(freshOther.chance ?? -1, 0.08, accuracy: 1e-6)
+        XCTAssertEqual(freshOther.pregameChance ?? -1, 0.05, accuracy: 1e-6)
+
+        // 2. When live quote ages out via NFLEventCard9483.current(at:), quotedChance drops to nil,
+        // cells with pregameMark fall back to pregameChance, cells without pregameMark become nil ("No recent price"),
+        // and "Recorded" disappears from the mark-grammar key.
+        guard case .soccerExactScore(let agedLiveCard) = NFLEventCard9483.soccerExactScore(liveCard).current(at: staleNow) else {
+            return XCTFail("Expected .soccerExactScore from current(at:)")
+        }
+        XCTAssertEqual(
+            EventAtlasSoccerCards11666.exactScoreMarkKey(for: agedLiveCard).map(\.label),
+            ["Pregame"]
+        )
+        let agedCell10 = try XCTUnwrap(agedLiveCard.cells.first(where: { $0.key == "1-0" }))
+        XCTAssertNil(agedCell10.quotedChance)
+        XCTAssertEqual(agedCell10.chance ?? -1, 0.15, accuracy: 1e-6)
+        XCTAssertEqual(agedCell10.pregameChance ?? -1, 0.15, accuracy: 1e-6)
+        let agedDetails10 = EventAtlasSoccerCards11666.detailsModel(for: agedCell10, card: agedLiveCard)
+        XCTAssertEqual(agedDetails10.primaryReadingLabel, "Pregame baseline")
+        XCTAssertEqual(agedDetails10.primaryReadingValue, "15%")
+
+        let agedCell21 = try XCTUnwrap(agedLiveCard.cells.first(where: { $0.key == "2-1" }))
+        XCTAssertNil(agedCell21.quotedChance)
+        XCTAssertNil(agedCell21.pregameChance)
+        XCTAssertNil(agedCell21.chance)
+        let agedDetails21 = EventAtlasSoccerCards11666.detailsModel(for: agedCell21, card: agedLiveCard)
+        XCTAssertEqual(agedDetails21.primaryReadingLabel, "Reading")
+        XCTAssertEqual(agedDetails21.primaryReadingValue, EventAtlasStates11666.noRecentPrice)
+
+        let agedOther = try XCTUnwrap(agedLiveCard.otherCell)
+        XCTAssertNil(agedOther.quotedChance)
+        XCTAssertEqual(agedOther.chance ?? -1, 0.05, accuracy: 1e-6)
+        let agedOtherDetails = EventAtlasSoccerCards11666.detailsModel(for: agedOther, card: agedLiveCard)
+        XCTAssertEqual(agedOtherDetails.primaryReadingLabel, "Pregame baseline")
+        XCTAssertEqual(agedOtherDetails.primaryReadingValue, "5%")
+
+        // 3. Before kickoff: aging out drops both quotedChance and pregameChance to nil
+        let pregameCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildExactScoreCard(
+                matrix: nil,
+                otherMarkets: rows,
+                status: "scheduled",
+                commenceTime: "2026-11-06T23:30:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: freshNow
+            )
+        )
+        let agedPregameCard = pregameCard.current(at: staleNow)
+        for cell in agedPregameCard.cells {
+            XCTAssertNil(cell.quotedChance)
+            XCTAssertNil(cell.pregameChance)
+            XCTAssertNil(cell.chance)
+        }
+        XCTAssertNil(agedPregameCard.otherCell?.quotedChance)
+        XCTAssertNil(agedPregameCard.otherCell?.pregameChance)
+        XCTAssertNil(agedPregameCard.otherCell?.chance)
+
+        // 4. Render 390px captures of fresh live vs aged live Exact Score card
+        let state = NFLCardDeckState9483()
+        let freshView = EventAtlasSoccerExactScoreCardView11666(
+            card: liveCard,
+            state: state
+        )
+        .padding(16)
+        .frame(width: 390)
+        .background(Color(.systemBackground))
+        .environment(\.colorScheme, .light)
+
+        let agedView = EventAtlasSoccerExactScoreCardView11666(
+            card: agedLiveCard,
+            state: state
+        )
+        .padding(16)
+        .frame(width: 390)
+        .background(Color(.systemBackground))
+        .environment(\.colorScheme, .light)
+
+        let r1 = ImageRenderer(content: freshView)
+        r1.scale = 2.0
+        let img1 = try XCTUnwrap(r1.uiImage)
+        XCTAssertEqual(Int(img1.size.width), 390)
+
+        let r2 = ImageRenderer(content: agedView)
+        r2.scale = 2.0
+        let img2 = try XCTUnwrap(r2.uiImage)
+        XCTAssertEqual(Int(img2.size.width), 390)
+
+        if let outDir = ProcessInfo.processInfo.environment["ATLAS_SOCCER_EXACT_SCORE_AGING_SCREENSHOT_DIR"], !outDir.isEmpty {
+            let dirURL = URL(fileURLWithPath: outDir)
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            try XCTUnwrap(img1.pngData()).write(to: dirURL.appendingPathComponent("soccer-exact-score-live-fresh-390px.png"))
+            try XCTUnwrap(img2.pngData()).write(to: dirURL.appendingPathComponent("soccer-exact-score-live-aged-390px.png"))
+        }
     }
 }
