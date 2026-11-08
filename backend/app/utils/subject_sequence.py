@@ -207,6 +207,20 @@ def _team_matches_side(
     return False
 
 
+def _matches_sport_filter(sport_value: Any, target_sport: Optional[str]) -> bool:
+    if not target_sport:
+        return True
+    sport_str = str(sport_value or "").strip().lower()
+    target = str(target_sport).strip().lower()
+    if not sport_str:
+        return False
+    return (
+        sport_str == target
+        or sport_str.endswith(f"_{target}")
+        or sport_str.startswith(f"{target}_")
+    )
+
+
 def _extract_two_sided_blend(
     card: Mapping[str, Any],
     *,
@@ -214,19 +228,11 @@ def _extract_two_sided_blend(
     max_prob_age_hours: float = 48.0,
 ) -> Optional[tuple[float, float, str]]:
     """Return ``(home_prob, away_prob, observed_iso)`` when ``card`` has a fresh two-sided blend."""
-    source = str(card.get("hero_probability_source") or "").strip().lower()
-    if source and source != "blend":
+    if card.get("hero_probability_source") != "blend":
         return None
 
     home_p = card.get("hero_probability")
     away_p = card.get("hero_probability_away")
-    current_odds = card.get("current_odds")
-    if isinstance(current_odds, Mapping):
-        if home_p is None:
-            home_p = current_odds.get("home")
-        if away_p is None:
-            away_p = current_odds.get("away")
-
     if (
         not isinstance(home_p, (int, float))
         or isinstance(home_p, bool)
@@ -305,6 +311,7 @@ def select_subject_sequence(
     team_slug: str,
     team_name: str,
     team_short_name: str = "",
+    sport: Optional[str] = None,
     count: int = 3,
     window_days: int = 21,
     max_prob_age_hours: float = 48.0,
@@ -341,6 +348,8 @@ def select_subject_sequence(
         if not isinstance(raw_id, int) or isinstance(raw_id, bool) or raw_id <= 0:
             continue
         if raw_id in seen_ids:
+            continue
+        if sport and not _matches_sport_filter(raw_card.get("sport"), sport):
             continue
 
         status = str(raw_card.get("status") or "scheduled").strip().lower()
@@ -530,32 +539,30 @@ async def _load_team_events_from_db(
     window_start: datetime,
     window_end: datetime,
     rule: Mapping[str, Any],
-) -> Optional[list[dict[str, Any]]]:
-    """Load upcoming scheduled events for the subject team in one indexed query."""
+) -> Any:
+    """Load and hydrate upcoming scheduled events for the subject team via ``_hydrate_event_cards`` + ``folded_card_numbers_batch``."""
     from sqlalchemy import or_, select
-    from app.models import Event, Sport
-    from app.utils.aggregation import (
-        compute_aggregate_probability,
-        newest_source_reading_time,
+    from app.models import Event
+    from app.routes.containers import _hydrate_event_cards
+    from app.utils.aggregation import newest_source_reading_time
+    from app.utils.proven_duplicates import (
+        FoldedBlendView,
+        folded_card_numbers_batch,
     )
 
     if not hasattr(db, "execute") or not callable(db.execute):
-        return None
+        return _rc().RoundupRefusal((("sequence", "unsupported_session"),))
 
     team_name = str(rule.get("team_name") or "").strip()
     team_short = str(rule.get("team_short_name") or "").strip()
     sport = str(rule.get("sport") or "").strip()
+    count = max(1, int(rule.get("count") or rule.get("sequence_length") or 3))
 
     filters = [
         Event.status.notin_(tuple(_EXCLUDED_STATUSES)),
         Event.commence_time >= window_start,
         Event.commence_time <= window_end,
     ]
-    if sport:
-        filters.append(
-            Event.sport_id.in_(select(Sport.id).where(Sport.key == sport))
-        )
-
     name_clauses = []
     if team_name:
         name_clauses.append(Event.home_team_name.ilike(team_name))
@@ -566,90 +573,65 @@ async def _load_team_events_from_db(
     if name_clauses:
         filters.append(or_(*name_clauses))
 
-    stmt = (
+    res = await db.execute(
         select(Event)
         .where(*filters)
         .order_by(Event.commence_time.asc(), Event.id.asc())
-        .limit(12)
     )
-    res = await db.execute(stmt)
     raw_rows = res.scalars().all() if hasattr(res, "scalars") else []
+    events_by_id: dict[int, Any] = {}
+    candidate_ids: list[int] = []
+    for row in raw_rows:
+        if isinstance(row, int) and not isinstance(row, bool) and row > 0:
+            candidate_ids.append(row)
+        else:
+            ev_id = getattr(row, "id", None)
+            if isinstance(ev_id, int) and not isinstance(ev_id, bool) and ev_id > 0:
+                candidate_ids.append(ev_id)
+                events_by_id[ev_id] = row
 
-    cards: list[dict[str, Any]] = []
-    for ev in raw_rows:
-        ev_id = getattr(ev, "id", None)
-        if not isinstance(ev_id, int) or isinstance(ev_id, bool) or ev_id <= 0:
+    if len(candidate_ids) < count:
+        return _rc().RoundupRefusal(
+            (("sequence", f"candidates_{len(candidate_ids)}_below_count_{count}"),)
+        )
+
+    cards_by_id, _failed = await _hydrate_event_cards(db, candidate_ids)
+    if _failed:
+        return _rc().RoundupRefusal(
+            (("sequence", f"hydrate_failed_{len(_failed)}"),)
+        )
+    folded_map = (
+        await folded_card_numbers_batch(db, list(events_by_id.values()))
+        if events_by_id
+        else {}
+    )
+    ordered_cards: list[dict[str, Any]] = []
+    for i in candidate_ids:
+        if i not in cards_by_id:
             continue
-        agg = compute_aggregate_probability(ev)
-        observed_dt = newest_source_reading_time(ev, require_complete=True)
-        home_prob: Optional[float] = None
-        away_prob: Optional[float] = None
-        if agg is not None:
-            hp, ap = agg
-            if isinstance(hp, (int, float)) and isinstance(ap, (int, float)):
-                home_prob = float(hp)
-                away_prob = float(ap)
-        commence_dt = getattr(ev, "commence_time", None)
-        commence_iso = (
-            commence_dt.astimezone(timezone.utc).isoformat()
-            if isinstance(commence_dt, datetime) and commence_dt.tzinfo is not None
-            else (
-                commence_dt.replace(tzinfo=timezone.utc).isoformat()
-                if isinstance(commence_dt, datetime)
-                else str(commence_dt or "")
+        card = dict(cards_by_id[i])
+        if sport and not _matches_sport_filter(card.get("sport"), sport):
+            continue
+        if (
+            "hero_probability_observed_at" not in card
+            and card.get("hero_probability_source") == "blend"
+            and i in events_by_id
+        ):
+            ev = events_by_id[i]
+            folded = folded_map.get(i)
+            blend_view = (
+                FoldedBlendView(ev, folded.win_probability_sources)
+                if folded is not None and folded.win_probability_sources is not None
+                else ev
             )
-        )
-        home_str = str(
-            getattr(ev, "home_team_name", None)
-            or (
-                getattr(ev, "home_team", None)
-                if isinstance(getattr(ev, "home_team", None), str)
-                else ""
+            observed_at = newest_source_reading_time(
+                blend_view, require_complete=True
             )
-            or ""
-        )
-        away_str = str(
-            getattr(ev, "away_team_name", None)
-            or (
-                getattr(ev, "away_team", None)
-                if isinstance(getattr(ev, "away_team", None), str)
-                else ""
+            card["hero_probability_observed_at"] = (
+                observed_at.isoformat() if observed_at is not None else None
             )
-            or ""
-        )
-        ev_sport_attr = getattr(ev, "__dict__", {}).get("sport")
-        sport_str = (
-            ev_sport_attr
-            if isinstance(ev_sport_attr, str)
-            else (sport or None)
-        )
-        cards.append(
-            {
-                "id": ev_id,
-                "sport": sport_str,
-                "status": getattr(ev, "status", "scheduled") or "scheduled",
-                "commence_time": commence_iso,
-                "start_is_tbd": bool(getattr(ev, "start_is_tbd", False)),
-                "home_team": home_str,
-                "home_team_name": home_str,
-                "away_team": away_str,
-                "away_team_name": away_str,
-                "hero_probability": home_prob,
-                "hero_probability_away": away_prob,
-                "hero_probability_source": "blend" if home_prob is not None else None,
-                "hero_probability_observed_at": (
-                    observed_dt.astimezone(timezone.utc).isoformat()
-                    if isinstance(observed_dt, datetime)
-                    else None
-                ),
-                "current_odds": (
-                    {"home": home_prob, "away": away_prob}
-                    if home_prob is not None and away_prob is not None
-                    else None
-                ),
-            }
-        )
-    return cards
+        ordered_cards.append(card)
+    return ordered_cards
 
 
 async def produce_subject_sequence(
@@ -677,6 +659,7 @@ async def produce_subject_sequence(
     team_slug = str(rule.get("team_slug") or "").strip()
     team_name = str(rule.get("team_name") or definition.get("name") or "").strip()
     team_short_name = str(rule.get("team_short_name") or "").strip()
+    sport = str(rule.get("sport") or "").strip() or None
     count = int(rule.get("count") or rule.get("sequence_length") or 3)
     window_days = int(rule.get("window_days") or 21)
     max_prob_age_hours = float(rule.get("max_prob_age_hours") or 48.0)
@@ -693,8 +676,8 @@ async def produce_subject_sequence(
         ordered_cards = list(await load_cards(db, window_start, window_end, rule))
     else:
         loaded = await _load_team_events_from_db(db, window_start, window_end, rule)
-        if loaded is None:
-            return _rc().RoundupRefusal((("sequence", "unsupported_session"),))
+        if not isinstance(loaded, list):
+            return loaded
         ordered_cards = loaded
 
     return select_subject_sequence(
@@ -703,6 +686,7 @@ async def produce_subject_sequence(
         team_slug=team_slug,
         team_name=team_name,
         team_short_name=team_short_name,
+        sport=sport,
         count=count,
         window_days=window_days,
         max_prob_age_hours=max_prob_age_hours,

@@ -329,3 +329,217 @@ class TestSubjectSequenceCardAndContainerComposition:
             15341912,
             15342527,
         ]
+
+
+class _AsyncSessionAdapter:
+    """Thin async wrapper around an in-memory SQLite ``Session`` for ``_hydrate_event_cards``."""
+
+    def __init__(self, session: Any) -> None:
+        self._s = session
+
+    async def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        res = self._s.execute(statement, *args)
+        for obj in list(self._s.identity_map.values()):
+            for attr in ("commence_time", "captured_at", "completed_at"):
+                val = getattr(obj, attr, None)
+                if isinstance(val, datetime) and val.tzinfo is None:
+                    setattr(obj, attr, val.replace(tzinfo=timezone.utc))
+        return res
+
+
+class TestSubjectSequenceDatabaseLoader:
+    """#12232: ``produce_subject_sequence`` through a database session hydrates via ``_hydrate_event_cards`` + ``folded_card_numbers_batch``."""
+
+    @pytest.mark.asyncio
+    async def test_produce_subject_sequence_through_session_hydrates_and_folds_twins(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datetime import timedelta
+        from unittest.mock import AsyncMock, patch
+
+        from sqlalchemy import create_engine, select
+        from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+        from sqlalchemy.ext.compiler import compiles
+        from sqlalchemy.orm import Session
+
+        @compiles(JSONB, "sqlite")
+        def _jsonb_on_sqlite(type_: Any, compiler: Any, **kw: Any) -> str:
+            return "JSON"
+
+        @compiles(ARRAY, "sqlite")
+        def _array_on_sqlite(type_: Any, compiler: Any, **kw: Any) -> str:
+            return "JSON"
+
+        from app.models.models import Base, Event, OddsSnapshot, Sport, Team
+        from app.routes.containers import _hydrate_event_cards
+        from app.utils.hero_probability import resolve_hero
+
+        now = NOW_NOV_8
+        hero_stamp = (now - timedelta(minutes=10)).isoformat()
+        odds_captured_dt = now - timedelta(minutes=25)
+
+        eng = create_engine("sqlite://")
+        Base.metadata.create_all(eng)
+
+        nba_sport_id = 41
+        nhl_sport_id = 42
+
+        def _portable_odds_query(event_ids: list[int]) -> Any:
+            return select(OddsSnapshot).where(OddsSnapshot.event_id.in_(event_ids))
+
+        with (
+            patch("app.routes.events._load_gei_percentiles", new=AsyncMock(return_value={})),
+            patch("app.routes.events.latest_odds_per_bookmaker_query", new=_portable_odds_query),
+            patch("app.routes.events._team_cache", {}),
+            patch("app.routes.events._team_cache_time", 0.0),
+            Session(eng, expire_on_commit=False) as s,
+        ):
+            s.add(Sport(id=nba_sport_id, key="basketball_nba", name="NBA", group="Basketball"))
+            s.add(Sport(id=nhl_sport_id, key="icehockey_nhl", name="NHL", group="Ice Hockey"))
+
+            teams = [
+                (1, nba_sport_id, "Boston Celtics", "BOS"),
+                (2, nba_sport_id, "Milwaukee Bucks", "MIL"),
+                (3, nba_sport_id, "Philadelphia 76ers", "PHI"),
+                (4, nba_sport_id, "Toronto Raptors", "TOR"),
+                (5, nba_sport_id, "Washington Wizards", "WAS"),
+            ]
+            for tid, sid, tname, abbr in teams:
+                s.add(
+                    Team(
+                        id=tid,
+                        sport_id=sid,
+                        name=tname,
+                        abbreviation=abbr,
+                        logo_url=f"https://cdn.example/{abbr.lower()}.png",
+                        logo_url_small=f"https://cdn.example/{abbr.lower()}-sm.png",
+                    )
+                )
+
+            # Three upcoming Celtics NBA games (plus a 4th later game, plus a non-NBA row with matching team name)
+            games = [
+                # Game 2 (Nov 10 ET, away at 76ers): blend home=0.50 (Celtics away=0.50), books home=0.62
+                (
+                    15341912,
+                    nba_sport_id,
+                    "Philadelphia 76ers",
+                    "Boston Celtics",
+                    datetime(2026, 11, 11, 1, 0, tzinfo=timezone.utc),
+                    0.50,
+                    0.62,
+                ),
+                # Game 1 (Nov 8 ET, away at Bucks): blend home=0.145 (Celtics away=0.855), books home=0.30
+                (
+                    15343971,
+                    nba_sport_id,
+                    "Milwaukee Bucks",
+                    "Boston Celtics",
+                    datetime(2026, 11, 9, 1, 0, tzinfo=timezone.utc),
+                    0.145,
+                    0.30,
+                ),
+                # Game 3 (Nov 11 ET, home vs Raptors): blend home=0.645 (Celtics home=0.645), books home=0.75
+                (
+                    15342527,
+                    nba_sport_id,
+                    "Boston Celtics",
+                    "Toronto Raptors",
+                    datetime(2026, 11, 12, 0, 0, tzinfo=timezone.utc),
+                    0.645,
+                    0.75,
+                ),
+                # Non-NBA event with matching team name that must be filtered out after hydrating on card["sport"]
+                (
+                    15999999,
+                    nhl_sport_id,
+                    "Boston Celtics",
+                    "Toronto Raptors",
+                    datetime(2026, 11, 9, 0, 30, tzinfo=timezone.utc),
+                    0.55,
+                    0.55,
+                ),
+            ]
+            for eid, sid, home_full, away_full, tipoff, blend_home, book_home in games:
+                s.add(
+                    Event(
+                        id=eid,
+                        sport_id=sid,
+                        home_team_name=home_full,
+                        away_team_name=away_full,
+                        commence_time=tipoff,
+                        status="scheduled",
+                        win_probability_sources={
+                            "betting": {"value": blend_home, "updated_at": hero_stamp},
+                            "kalshi": {"value": blend_home, "updated_at": hero_stamp},
+                            "polymarket": {"value": blend_home, "updated_at": hero_stamp},
+                        },
+                    )
+                )
+                s.add(
+                    OddsSnapshot(
+                        event_id=eid,
+                        bookmaker="fanduel",
+                        home_win_probability=book_home,
+                        away_win_probability=round(1.0 - book_home, 4),
+                        captured_at=odds_captured_dt,
+                    )
+                )
+            s.commit()
+
+            fake_db = _AsyncSessionAdapter(s)
+            hydrated_cards, failed = await _hydrate_event_cards(
+                fake_db, [15343971, 15341912, 15342527]
+            )
+            assert failed == {}
+
+            outcome = await produce_subject_sequence(
+                CELTICS_NEXT_3_GAMES_DEFINITION,
+                fake_db,
+                now=now,
+            )
+            assert isinstance(outcome, RoundupMembers)
+            assert [r["event_id"] for r in outcome.rows] == [15343971, 15341912, 15342527]
+            assert [r["rendered_percent"] for r in outcome.rows] == [86, 50, 65]
+            assert [r["label"] for r in outcome.rows] == [
+                "at Bucks \u00b7 Sun Nov 8",
+                "at 76ers \u00b7 Tue Nov 10",
+                "vs Raptors \u00b7 Wed Nov 11",
+            ]
+
+            for row, member in zip(outcome.rows, outcome.members):
+                eid = row["event_id"]
+                ev = s.get(Event, eid)
+                hero = resolve_hero(ev)
+                assert hero is not None
+                assert hero.source == "blend"
+                expected_celtics_prob = (
+                    hero.home_probability
+                    if ev.home_team_name == "Boston Celtics"
+                    else hero.away_probability
+                )
+                assert row["probability"] == pytest.approx(expected_celtics_prob)
+                assert row["observed_at"] == member["card"]["hero_probability_observed_at"] == hero_stamp
+                assert isinstance(member["card"]["home_team"], str)
+                assert isinstance(member["card"]["sport"], str)
+                assert member["card"]["sport"] == "basketball_nba"
+
+            # All-or-nothing refusal if _hydrate_event_cards fails on any candidate:
+            async def _failing_hydrate(_db: Any, _ids: Any) -> tuple[dict[int, Any], dict[Any, str]]:
+                return (
+                    {k: v for k, v in hydrated_cards.items() if k != 15341912},
+                    {("event", 15341912): "hydration_error"},
+                )
+
+            monkeypatch.setattr(
+                "app.routes.containers._hydrate_event_cards",
+                _failing_hydrate,
+            )
+            refused = await produce_subject_sequence(
+                CELTICS_NEXT_3_GAMES_DEFINITION,
+                fake_db,
+                now=now,
+            )
+            assert isinstance(refused, RoundupRefusal)
+            assert refused.reasons == (("sequence", "hydrate_failed_1"),)
+
