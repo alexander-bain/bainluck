@@ -210,6 +210,8 @@
 				Utilities/EventState.swift,
 				Utilities/FormattingUtilities.swift,
 				Utilities/OutcomeVerdict.swift,
+				Intents/IntentRouteHandoff10873.swift,
+				Widgets10875/SavedItemOpenIntent12305.swift,
 				Widgets10875/SavedWidgetBridge10875.swift,
 				Widgets10875/SavedWidgetDetail10875.swift,
 				Widgets10875/SavedWidgetReading10875.swift,

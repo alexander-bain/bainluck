@@ -38,6 +38,12 @@ struct SavedWidgetPublisher10875 {
         reload: {
             #if canImport(WidgetKit)
             WidgetCenter.shared.reloadTimelines(ofKind: SavedWidgetBridge10875.widgetKind)
+            #if os(iOS)
+            // #12305 — signing out or unsaving relabels the "My game" control.
+            if #available(iOS 18.0, *) {
+                ControlCenter.shared.reloadControls(ofKind: SavedWidgetBridge10875.controlKind)
+            }
+            #endif
             #endif
         }
     )

@@ -113,6 +113,14 @@ struct SavedItemWidgetView10875: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
+        // #12305 — ↻ outside the combined reading, so it is its own element.
+        .overlay(alignment: .bottomTrailing) {
+            if showsRefresh { SavedRefreshButton12305() }
+        }
+    }
+
+    private var showsRefresh: Bool {
+        (family == .systemSmall || family == .systemMedium) && entry.isRefreshable12305
     }
 
     private var accessibilityText: String {
@@ -208,6 +216,7 @@ struct SavedSmall10875: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+                .padding(.trailing, entry.isRefreshable12305 ? 24 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
@@ -255,6 +264,7 @@ struct SavedMedium10875: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
+                    .padding(.trailing, entry.isRefreshable12305 ? 24 : 0)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
