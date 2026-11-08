@@ -3781,12 +3781,8 @@ class OpenFuturesOutcome(Base):
     market_id: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(String(300), nullable=False)
 
-    __table_args__ = (
-        Index("ix_open_futures_outcomes_market_id", "market_id"),
-        Index(
-            "ix_open_futures_outcomes_name_trgm",
-            "name",
-            postgresql_using="gin",
-            postgresql_ops={"name": "gin_trgm_ops"},
-        ),
-    )
+    # The pg_trgm GIN on `name` (`ix_open_futures_outcomes_name_trgm`) lives in
+    # the migration only, like `ix_futures_outcomes_name_trgm` on the original:
+    # declared here, every test rig that runs `create_all` without the pg_trgm
+    # extension would fail on its operator class.
+    __table_args__ = (Index("ix_open_futures_outcomes_market_id", "market_id"),)
