@@ -249,6 +249,7 @@ from app.utils.feed_cache import (
     FEED_PAGE_BASE_BUILT_AT_FIELD,
     base_from_last_good,
     build_feed_cache_metadata,
+    dumps_feed_cache,
     encode_base_last_good,
     feed_edition_token,
     feed_page_base_built_at,
@@ -5063,9 +5064,7 @@ async def get_feed(
                     # pins both halves so neither can be changed by accident.
                     if _inert_fresh_ttl > 0 and _inert_stale_ttl > 0:
                         try:
-                            _shared_json = _json_module.dumps(
-                                _shared_payload, default=str
-                            )
+                            _shared_json = dumps_feed_cache(_shared_payload)
 
                             async def _publish_inert_private(
                                 _client=_shared_redis,
@@ -5371,9 +5370,7 @@ async def get_feed(
                     and _base_opening.token != _base_body.get(FEED_EDITION_FIELD)
                 ):
                     try:
-                        _composed_json = _json_module.dumps(
-                            _base_opening.manifest, default=str
-                        )
+                        _composed_json = dumps_feed_cache(_base_opening.manifest)
 
                         async def _publish_composed_manifest(
                             _client=_shared_redis,
@@ -6923,7 +6920,7 @@ async def get_feed(
         # publication entirely (guarded above).
         if _cache_key and not _is_degraded_build and _shared_redis is not None:
             try:
-                _payload_json = _json_module.dumps(payload, default=str)
+                _payload_json = dumps_feed_cache(payload)
 
                 async def _publish_feed_cache(
                     _client=_shared_redis,
@@ -6966,7 +6963,7 @@ async def get_feed(
                         built_at=time.time(),
                     )
                     if _manifest is not None:
-                        _manifest_json = _json_module.dumps(_manifest, default=str)
+                        _manifest_json = dumps_feed_cache(_manifest)
 
                         async def _publish_edition_manifest(
                             _client=_shared_redis,
@@ -7013,9 +7010,7 @@ async def get_feed(
                 and _shared_redis is not None
             ):
                 try:
-                    _seated_json = _json_module.dumps(
-                        _seated_mint.manifest, default=str
-                    )
+                    _seated_json = dumps_feed_cache(_seated_mint.manifest)
 
                     async def _publish_seated_manifest(
                         _client=_shared_redis,
@@ -7101,9 +7096,7 @@ async def get_feed(
                         oldest_artifact_age_s=_consumed_age_s,
                         strict_artifact_age_s=_strict_age_s,
                     )
-                    _page_base_json = _json_module.dumps(
-                        _page_base_body, default=str
-                    )
+                    _page_base_json = dumps_feed_cache(_page_base_body)
                     # #11259: the durable copy the incomplete-build terminals
                     # fall back to. Kept no longer than it may be served at —
                     # the bound is on content age, and the origin is never
