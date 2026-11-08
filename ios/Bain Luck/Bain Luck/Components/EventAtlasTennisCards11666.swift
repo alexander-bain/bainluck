@@ -89,6 +89,11 @@ nonisolated enum EventAtlasTennisCards11666 {
             .filter { $0.count >= 2 }
     }
 
+    private static func containsWholeWordPhrase(_ haystack: String, phrase: String) -> Bool {
+        guard !haystack.isEmpty, !phrase.isEmpty, phrase.count >= 3 else { return false }
+        return " \(haystack) ".contains(" \(phrase) ")
+    }
+
     static func tennisNameMatchesSide(
         candidate: String,
         playerName: String,
@@ -98,7 +103,8 @@ nonisolated enum EventAtlasTennisCards11666 {
         let fullNorm = normalizePlayerPlain(playerName)
         guard !candNorm.isEmpty, !fullNorm.isEmpty else { return false }
         if candNorm == fullNorm { return true }
-        if candNorm.count >= 3 && (candNorm.contains(fullNorm) || fullNorm.contains(candNorm)) {
+        if containsWholeWordPhrase(candNorm, phrase: fullNorm)
+            || containsWholeWordPhrase(fullNorm, phrase: candNorm) {
             return true
         }
 
@@ -140,11 +146,11 @@ nonisolated enum EventAtlasTennisCards11666 {
         if shortHome != shortAway { return shortHome ? .home : .away }
         if shortHome && shortAway { return nil }
 
-        // 3. Full-name substring match (candNorm >= 3 chars to avoid short-string false positives)
-        let subHome = candNorm.count >= 3 && !homeNorm.isEmpty
-            && (candNorm.contains(homeNorm) || homeNorm.contains(candNorm))
-        let subAway = candNorm.count >= 3 && !awayNorm.isEmpty
-            && (candNorm.contains(awayNorm) || awayNorm.contains(candNorm))
+        // 3. Word-bounded full-name phrase match
+        let subHome = containsWholeWordPhrase(candNorm, phrase: homeNorm)
+            || containsWholeWordPhrase(homeNorm, phrase: candNorm)
+        let subAway = containsWholeWordPhrase(candNorm, phrase: awayNorm)
+            || containsWholeWordPhrase(awayNorm, phrase: candNorm)
         if subHome != subAway { return subHome ? .home : .away }
         if subHome && subAway { return nil }
 
@@ -1210,6 +1216,9 @@ nonisolated enum EventAtlasTennisCards11666 {
             var totalsByLine: [Double: [GameMarketOutcome]] = [:]
             var totalLineOrder: [Double] = []
             for row in totals {
+                guard QuestionCatalog9483.lineSide(QuestionCatalog9483.row(row)) == .over else {
+                    continue
+                }
                 let mName = row.marketName.trimmingCharacters(in: .whitespacesAndNewlines)
                 if mName.range(
                     of: #"\b(?:Set\s+[1-5]|[1-5](?:st|nd|rd|th)\s+Set|Set\s+Handicap|Game\s+Spread|Tiebreak)\b"#,

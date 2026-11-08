@@ -633,12 +633,12 @@ final class EventAtlasTennisCardsE6d_11666Tests: XCTestCase {
         .background(Color(.systemBackground))
         .environment(\.colorScheme, .light)
 
-        let r1 = ImageRenderer(content: setsView)
+        let r1 = rendererForMeasurement(setsView)
         r1.scale = 2.0
         let img1 = try XCTUnwrap(r1.uiImage)
         XCTAssertEqual(Int(img1.size.width), 390)
 
-        let r2 = ImageRenderer(content: exactView)
+        let r2 = rendererForMeasurement(exactView)
         r2.scale = 2.0
         let img2 = try XCTUnwrap(r2.uiImage)
         XCTAssertEqual(Int(img2.size.width), 390)
@@ -649,5 +649,63 @@ final class EventAtlasTennisCardsE6d_11666Tests: XCTestCase {
             try XCTUnwrap(img1.pngData()).write(to: dirURL.appendingPathComponent("tennis-e6d-sets-card-390px.png"))
             try XCTUnwrap(img2.pngData()).write(to: dirURL.appendingPathComponent("tennis-e6d-exact-score-card-390px.png"))
         }
+    }
+
+    @MainActor
+    func testTotalGamesFallbackIgnoresUnderAndInvertedRowsAndRequiresWordBoundaryOnSubstringMatch() throws {
+        let now = try XCTUnwrap("2026-11-08T12:15:00Z".asDate)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        // 1. Word boundary on tier-3/4 player matching: "Alex" does not false-match "Alexander Zverev".
+        XCTAssertNil(
+            EventAtlasTennisCards11666.matchTennisPlayerSide(
+                candidate: "Alex",
+                homeTeam: "Alexander Zverev",
+                awayTeam: "Carlos Alcaraz",
+                homeShort: "Zverev",
+                awayShort: "Alcaraz"
+            )
+        )
+        XCTAssertEqual(
+            EventAtlasTennisCards11666.matchTennisPlayerSide(
+                candidate: "Alexander Zverev",
+                homeTeam: "Alexander Zverev",
+                awayTeam: "Carlos Alcaraz",
+                homeShort: "Zverev",
+                awayShort: "Alcaraz"
+            ),
+            .home
+        )
+
+        // 2. Fallback totals: Under row comes first for line 21.5 + blended Under row + _inverted Over row;
+        // line 24.5 has only an Under row.
+        let totalsJSON = """
+        [
+            {"_market_id": 910, "market_name": "Match O/U 21.5", "outcome_name": "Under 21.5", "threshold": 21.5, "probability": 0.38, "pregame_mark": 0.36, "observed_at": "2026-11-08T12:12:00Z", "source": "kalshi"},
+            {"_market_id": 910, "market_name": "Match O/U 21.5", "outcome_name": "Under 21.5", "threshold": 21.5, "probability": 0.39, "pregame_mark": 0.37, "observed_at": "2026-11-08T12:12:00Z", "source": "blend"},
+            {"_market_id": 910, "market_name": "Match O/U 21.5", "outcome_name": "Over 21.5", "threshold": 21.5, "probability": 0.41, "pregame_mark": 0.40, "observed_at": "2026-11-08T12:12:00Z", "source": "polymarket", "_inverted": true},
+            {"_market_id": 910, "market_name": "Match O/U 21.5", "outcome_name": "Over 21.5", "threshold": 21.5, "probability": 0.62, "pregame_mark": 0.64, "observed_at": "2026-11-08T12:12:00Z", "source": "kalshi"},
+            {"_market_id": 911, "market_name": "Match O/U 22.5", "outcome_name": "Over 22.5", "threshold": 22.5, "probability": 0.51, "pregame_mark": 0.53, "observed_at": "2026-11-08T12:12:00Z", "source": "kalshi"},
+            {"_market_id": 912, "market_name": "Match O/U 23.5", "outcome_name": "Over 23.5", "threshold": 23.5, "probability": 0.39, "pregame_mark": 0.41, "observed_at": "2026-11-08T12:12:00Z", "source": "kalshi"},
+            {"_market_id": 913, "market_name": "Match O/U 24.5", "outcome_name": "Under 24.5", "threshold": 24.5, "probability": 0.72, "pregame_mark": 0.70, "observed_at": "2026-11-08T12:12:00Z", "source": "blend"}
+        ]
+        """
+        let totals = try decoder.decode([GameMarketOutcome].self, from: Data(totalsJSON.utf8))
+        let ladder = try XCTUnwrap(
+            EventAtlasTennisCards11666.buildTotalGamesCard(
+                matrix: nil,
+                totals: totals,
+                status: "in_progress",
+                commenceTime: "2026-11-08T12:00:00Z".asDate,
+                homeShort: "Zverev",
+                awayShort: "Alcaraz",
+                now: now
+            )
+        )
+        XCTAssertEqual(ladder.points.map(\.x), [21.5, 22.5, 23.5], "line 24.5 with only an Under row must not be plotted")
+        let point215 = try XCTUnwrap(ladder.points.first(where: { $0.x == 21.5 }))
+        XCTAssertEqual(point215.now ?? -1, 0.62, accuracy: 1e-6, "must use the Over row's probability (0.62), never the Under row (0.38/0.39) or _inverted row (0.41)")
+        XCTAssertEqual(point215.chance ?? -1, 0.64, accuracy: 1e-6, "must use the Over row's pregameMark (0.64)")
     }
 }
