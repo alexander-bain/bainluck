@@ -115,9 +115,14 @@ async def rig():
     def _fresh_reader():
         reader._memo["at"] = None
 
+    import app.tasks.base as task_base
+
+    # `async_session_maker` is the app's module-level engine, here bound to this
+    # fixture's loop, exactly the hazard a Celery child meets on its second pass.
+    # `get_task_session` builds a fresh engine on DATABASE_URL per call.
     with patch("app.tasks.redis_state.get_redis_client", return_value=fake), patch.object(
         database, "async_session_maker", maker
-    ):
+    ), patch.object(task_base, "DATABASE_URL", DB_URL):
         _fresh_reader()
         yield {"maker": maker, "ids": ids, "redis": fake, "fresh": _fresh_reader, "now": now}
     reader._memo["at"] = None
@@ -303,3 +308,16 @@ async def test_both_routes_answer_the_same_with_the_copy(rig):
     assert any(served), "CONTROL: no lookup read the copy, so this compared the original with itself"
     assert after == before
     assert any(before.values()), "CONTROL: the routes returned no futures at all"
+
+
+def test_each_pass_survives_its_own_event_loop(rig):
+    """Fable, #12358: the task runs under `asyncio.run` per invocation, and one
+    prefork child runs many passes. A pass on the module-level engine checks out
+    connections bound to a loop that has closed. Two passes, two loops."""
+    import asyncio
+
+    from app.tasks.open_futures_outcomes import _refresh_open_futures_outcomes
+
+    first = asyncio.run(_refresh_open_futures_outcomes())
+    second = asyncio.run(_refresh_open_futures_outcomes())
+    assert first["terminal"] == "complete" and second["terminal"] == "complete"

@@ -188,7 +188,6 @@ async def test_a_second_pass_never_runs_beside_the_first(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_failed_pass_withdraws_the_state_so_readers_fall_back(monkeypatch):
-    import app.services.database as database
     import app.tasks.redis_state as rs
     from app.tasks.open_futures_outcomes import _refresh_open_futures_outcomes
 
@@ -203,7 +202,9 @@ async def test_a_failed_pass_withdraws_the_state_so_readers_fall_back(monkeypatc
         async def __aexit__(self, *a):
             return False
 
-    monkeypatch.setattr(database, "async_session_maker", lambda: _Boom())
+    import app.tasks.base as task_base
+
+    monkeypatch.setattr(task_base, "get_task_session", lambda **kw: _Boom())
     with pytest.raises(RuntimeError):
         await _refresh_open_futures_outcomes()
     assert ofo.STATE_KEY not in r.data

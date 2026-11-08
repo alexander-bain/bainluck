@@ -117,7 +117,6 @@ def _load_state(rc) -> dict:
 
 
 async def _step(session, stmt, params: dict | None = None) -> int:
-    await session.execute(text(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}"))
     result = await session.execute(stmt, params or {})
     await session.commit()
     return int(result.rowcount or 0) if result.rowcount is not None else 0
@@ -126,7 +125,7 @@ async def _step(session, stmt, params: dict | None = None) -> int:
 async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECONDS) -> dict[str, Any]:
     """One maintenance pass. Returns a summary with a ``terminal`` (task_verdict)."""
     from app.models.models import FuturesOutcome
-    from app.services.database import async_session_maker
+    from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
 
     rc = get_redis_client()
@@ -141,7 +140,12 @@ async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECON
         cursor = int(state.get("slice_cursor") or 0) % SLICES
         filled = int(state.get("filled_slices") or 0) if filling else SLICES
 
-        async with async_session_maker() as session:
+        # A fresh engine per pass, disposed on exit (Fable, #12358): the task runs
+        # under `asyncio.run`, a new loop each invocation, and one prefork child
+        # runs many passes, so the module-level engine's pooled connections would
+        # belong to a loop that has closed. The statement bound rides the
+        # connection (#4482), never a `SET`.
+        async with get_task_session(statement_timeout_ms=STATEMENT_TIMEOUT_MS) as session:
             watermark = int(
                 (await session.execute(select(func.max(FuturesOutcome.id)))).scalar() or 0
             )

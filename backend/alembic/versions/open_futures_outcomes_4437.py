@@ -64,6 +64,9 @@ def upgrade() -> None:
         ["name"],
         postgresql_using="gin",
         postgresql_ops={"name": "gin_trgm_ops"},
+        # Light writes, hot reads: no pending list to sawtooth the reads
+        # (lat-p109's measurement on `futures_outcomes`).
+        postgresql_with={"fastupdate": "off"},
     )
 
 
