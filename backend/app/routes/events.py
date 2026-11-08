@@ -40328,6 +40328,22 @@ _VERIFIED_TITLE_BACKGROUND: dict = {}
 _VERIFIED_TITLE_BACKGROUND_CEILING_S = 30.0
 
 
+def _search_verified_title_wait_s() -> float:
+    """How long this build may WAIT for a title market's composition.
+
+    A reader's build: :data:`_SEARCH_VERIFIED_TITLE_BUDGET_S` (1 s). The search
+    head warmer's rebuild (`_force_search_cache_rebuild`): the background ceiling,
+    still under the deadline floor, because no reader waits on it. #12335 step
+    5, measured Nov 8 7:12-7:15 AM PT after #12351: "chiefs", a head term whose
+    page the warmer builds, printed Polymarket's row on 6 of 6 reads. The
+    warmer's event loop ends with its pass, which cancelled the composition
+    the 1 s bound had left running, so the worker's verdict was never kept.
+    """
+    if _force_search_cache_rebuild.get():
+        return _VERIFIED_TITLE_BACKGROUND_CEILING_S
+    return _SEARCH_VERIFIED_TITLE_BUDGET_S
+
+
 async def _verified_title_row(side, market_id: int):
     """The title market's row read on the composition's OWN session, or ``None``.
 
@@ -40468,7 +40484,7 @@ async def _search_verified_titles(
         return out
     import asyncio
 
-    budget_ends = time.monotonic() + _SEARCH_VERIFIED_TITLE_BUDGET_S
+    budget_ends = time.monotonic() + _search_verified_title_wait_s()
     floor_ends = (
         deadline - _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S if deadline is not None else None
     )
