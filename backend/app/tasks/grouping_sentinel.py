@@ -582,7 +582,7 @@ def file_families(uncovered: list[Family], now: datetime) -> dict:
             )
         )
     filed = sum(1 for r in results if r.get("action") == "filed")
-    commented = sum(1 for r in results if r.get("action") == "commented")
+    commented = sum(1 for r in results if r.get("action") in ("commented", "comment_skipped_unchanged"))
     resolved = sum(1 for r in results if r.get("action") == "resolved")
     failed = sum(1 for r in results if r.get("action") in ("error", "comment_failed", "close_failed"))
     return {

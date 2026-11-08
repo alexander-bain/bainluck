@@ -219,6 +219,15 @@ def _prematch_reading_cache_process_tier_only(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _sentinel_red_comment_cadence_off_unless_a_test_sets_it(monkeypatch):
+    """#12276: the sentinel rail's "Still RED" cadence keeps its last comment in
+    Redis. Off in tests unless a test turns it on with a fake client — a
+    developer's local Redis would otherwise carry one test's comment into the
+    next, and the rail's older tests expect every RED run to comment."""
+    monkeypatch.setenv("SENTINEL_RED_COMMENT_CADENCE", "off")
+
+
+@pytest.fixture(autouse=True)
 def _pm_open_scope_all_unless_a_test_sets_it(monkeypatch):
     """#10090 settings freeze: production's open-arm scope is ``slate``
     (docs/live-settings.md). The ~30 consumer rigs predate it and fake none of

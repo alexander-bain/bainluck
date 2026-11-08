@@ -33,6 +33,10 @@ The rail centralizes these so no sentinel re-implements (and re-breaks) them:
     UNKNOWN no-op (``dedup_unknown_no_op``) — it never files or closes blind. Create
     is serialized per fingerprint with a Redis idempotency claim plus a final
     re-read so a beat+manual overlap cannot file the same fingerprint twice.
+    While an open episode's finding is UNCHANGED it is re-commented at most
+    once a day; a CHANGED finding is commented on the run that sees it (#12276:
+    95 identical "Still RED" lines on #12144 in 29 hours). The body refresh
+    still runs every cycle.
   * ``post_report`` — the report path (#12231): one comment per period on a
     NAMED issue (a sentinel's report-only weeks), never a filing. Idempotent by
     a marker line read back from the issue's own comments plus a Redis claim;
@@ -75,8 +79,12 @@ Read-only against production data — the rail files/updates GitHub metadata onl
 never touches market data.
 """
 
+import hashlib
+import json
 import logging
+import os
 import re
+import time as _time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -337,6 +345,110 @@ def _claim_fingerprint(marker_key: str, fingerprint: str) -> str:
     return "won" if got else "lost"
 
 
+# ---------------------------------------------------------------------------
+# RED comment cadence (#12276).
+# ---------------------------------------------------------------------------
+#: An open episode whose finding is unchanged is re-commented at most once per
+#: this many seconds. A changed finding is commented on the run that sees it.
+RED_COMMENT_MIN_INTERVAL_S = 24 * 3600
+#: How early inside the 24 h the daily comment may land. A daily sentinel's runs
+#: are a few seconds either side of 24 h apart, so a strict 24 h would hold every
+#: other night's comment at random; the 15-minute matching beat still lands at
+#: exactly 24 h (95 cycles is 23 h 45 m, short of 23 h 50 m).
+RED_COMMENT_DAILY_SLACK_S = 10 * 60
+_RED_COMMENT_STATE_TTL_S = 8 * 24 * 3600
+
+#: A date and time in a finding's text is when it was looked at — a run's own
+#: clock, a pass's last run, a matcher's last attempt — and moves every run, so
+#: the digest reads past it. A bare date is left in: at most it changes once a day.
+_DIGEST_MOMENT = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?"
+)
+
+
+def _red_comment_cadence_on() -> bool:
+    """The cadence's switch, read at call time: on unless
+    ``SENTINEL_RED_COMMENT_CADENCE`` is ``off`` (every run comments, as before
+    #12276). Tests run with it off unless a test turns it on (conftest)."""
+    return os.getenv("SENTINEL_RED_COMMENT_CADENCE", "on").strip().lower() not in ("0", "off", "false", "no")
+
+
+def _now() -> float:
+    """Wall-clock seconds for the cadence; one seam for tests."""
+    return _time.time()
+
+
+def red_finding_digest(
+    red_comment: str | None, red_body: str | None, basis: str | None = None
+) -> str:
+    """What one RED re-observation says, as a digest: the comment line plus the
+    body the issue is refreshed to, read past every date and time in them.
+    Counts, rows or provenance moving change it; the same finding seen again does
+    not. ``basis``, when a caller gives one, replaces both: the caller's own
+    statement of what makes the finding the same finding, for text that carries
+    a measurement moving every run. Pure."""
+    raw = basis if basis is not None else f"{red_comment or ''}\x00{red_body or ''}"
+    return hashlib.sha1(_DIGEST_MOMENT.sub("<t>", raw).encode("utf-8")).hexdigest()[:16]
+
+
+def _red_comment_key(marker_key: str, fingerprint: str) -> str:
+    return f"sentinel:red_comment:last:{marker_key}:{fingerprint}"
+
+
+def _red_comment_due(
+    marker_key: str, fingerprint: str, issue: int, digest: str, now: float
+) -> tuple[bool, str]:
+    """``(comment now?, why)`` from the last recorded comment on this episode.
+
+    Unreadable state comments, as every run did before #12276: a sentinel that
+    cannot tell whether its finding changed must not go quiet."""
+    if not _red_comment_cadence_on():
+        return True, "cadence_off"
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client(fast_fail=True).get(_red_comment_key(marker_key, fingerprint))
+    except Exception:
+        return True, "state_unreadable"
+    if not raw:
+        return True, "first"
+    try:
+        last = json.loads(raw)
+    except (TypeError, ValueError):
+        return True, "state_unreadable"
+    if not isinstance(last, dict) or last.get("issue") != issue:
+        return True, "new_issue"
+    if last.get("digest") != digest:
+        return True, "changed"
+    try:
+        age = now - float(last.get("at"))
+    except (TypeError, ValueError):
+        return True, "state_unreadable"
+    if age >= RED_COMMENT_MIN_INTERVAL_S - RED_COMMENT_DAILY_SLACK_S:
+        return True, "daily"
+    return False, "unchanged"
+
+
+def _record_red_comment(marker_key: str, fingerprint: str, issue: int, digest: str, now: float) -> None:
+    if not _red_comment_cadence_on():
+        return
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client(fast_fail=True).set(
+            _red_comment_key(marker_key, fingerprint),
+            json.dumps({"issue": issue, "digest": digest, "at": now}),
+            ex=_RED_COMMENT_STATE_TTL_S,
+        )
+    except Exception:
+        logger.warning(
+            "sentinel_filing: could not record the RED comment state for %s:%s "
+            "(the next run comments, as before #12276)",
+            marker_key,
+            fingerprint,
+        )
+
+
 def reconcile_issue(
     *,
     red: bool,
@@ -351,6 +463,7 @@ def reconcile_issue(
     green_comment: str | None = None,
     open_issues: "list[dict] | OpenIssuesResult | None" = None,
     add_to_board: bool = True,
+    red_digest_basis: str | None = None,
 ) -> dict:
     """The one fingerprint lifecycle for RED and GREEN.
 
@@ -358,6 +471,12 @@ def reconcile_issue(
       ``alert-intake`` issues; if one exists, comment AND (when ``red_body`` is
       supplied) refresh the body (no duplicate, no label edit, no state change);
       else create a new issue (default P2 labels) and add it to the board.
+      The comment keeps a cadence (#12276): while the finding
+      (``red_finding_digest`` of ``red_comment`` + ``red_body``, or of
+      ``red_digest_basis`` when given) is unchanged since the episode's last
+      comment, or since it was filed, the run is ``comment_skipped_unchanged``
+      for 24 h (the body refresh still runs); a changed finding, a new issue, or
+      unreadable state comments at once.
       Create is serialized per fingerprint (Redis claim + final re-read) so a
       beat+manual overlap cannot both file.
     * ``red=False`` — resolve. If the fingerprint's canonical open issue exists,
@@ -375,7 +494,7 @@ def reconcile_issue(
     ``held_no_close`` and writes nothing (#10526).
 
     Returns a dict describing the action taken. ``action`` ∈
-    {``filed``, ``commented``, ``resolved``, ``held_no_close``, ``green_no_issue``,
+    {``filed``, ``commented``, ``comment_skipped_unchanged``, ``resolved``, ``held_no_close``, ``green_no_issue``,
     ``skipped_no_token``, ``dedup_unknown_no_op``, ``filing_deferred``,
     ``comment_failed``, ``close_failed``, ``error``}."""
     from app.tasks import bug_report_github as gh
@@ -418,6 +537,36 @@ def reconcile_issue(
             return "failed"
         return "refreshed"
 
+    def _reobserve(issue: int) -> dict:
+        """Comment on an open episode — at most once a day while its finding is
+        unchanged, at once when it changes (#12276) — then refresh its body."""
+        now = _now()
+        digest = red_finding_digest(red_comment, red_body, red_digest_basis)
+        due, why = _red_comment_due(marker_key, fingerprint, issue, digest, now)
+        if not due:
+            result.update(
+                action="comment_skipped_unchanged",
+                issue=issue,
+                comment_reason=why,
+                body_refresh=_refresh_body(issue),
+            )
+            return result
+        try:
+            gh.comment_on_issue(
+                issue,
+                red_comment
+                or f"Sentinel re-observed this failure (fingerprint `{fingerprint}`). Still open.",
+            )
+        except Exception as exc:
+            logger.warning("sentinel_filing: comment failed on #%d: %s", issue, exc)
+            result.update(action="comment_failed", issue=issue, error=str(exc)[:200])
+            return result
+        _record_red_comment(marker_key, fingerprint, issue, digest, now)
+        result.update(
+            action="commented", issue=issue, comment_reason=why, body_refresh=_refresh_body(issue)
+        )
+        return result
+
     if not gh.GITHUB_TOKEN:
         result["action"] = "skipped_no_token"
         return result
@@ -448,20 +597,7 @@ def reconcile_issue(
             snapshot, fingerprint, marker_key, title_prefix, accepting_comments=True
         )
         if existing is not None:
-            try:
-                gh.comment_on_issue(
-                    existing,
-                    red_comment
-                    or f"Sentinel re-observed this failure (fingerprint `{fingerprint}`). Still open.",
-                )
-            except Exception as exc:
-                logger.warning("sentinel_filing: comment failed on #%d: %s", existing, exc)
-                result.update(action="comment_failed", issue=existing, error=str(exc)[:200])
-                return result
-            result.update(
-                action="commented", issue=existing, body_refresh=_refresh_body(existing)
-            )
-            return result
+            return _reobserve(existing)
 
         if not (title and body):
             result.update(action="error", error="missing title/body for a new issue")
@@ -486,20 +622,7 @@ def reconcile_issue(
                     fresh.issues, fingerprint, marker_key, title_prefix, accepting_comments=True
                 )
                 if raced is not None:
-                    try:
-                        gh.comment_on_issue(
-                            raced,
-                            red_comment
-                            or f"Sentinel re-observed this failure (fingerprint `{fingerprint}`). Still open.",
-                        )
-                    except Exception as exc:
-                        logger.warning("sentinel_filing: comment failed on #%d: %s", raced, exc)
-                        result.update(action="comment_failed", issue=raced, error=str(exc)[:200])
-                        return result
-                    result.update(
-                        action="commented", issue=raced, body_refresh=_refresh_body(raced)
-                    )
-                    return result
+                    return _reobserve(raced)
         # #11958: an open issue for this fingerprint that GitHub will take no
         # more comments on is continued, not abandoned — the successor names it.
         full = find_matching_issue(snapshot, fingerprint, marker_key, title_prefix)
@@ -524,6 +647,12 @@ def reconcile_issue(
                     exc_info=True,
                 )
         result.update(action="filed", issue=number)
+        # The new issue's body carries this finding, so the next run's "Still RED"
+        # waits for a change or a day, like any other comment (#12276).
+        _record_red_comment(
+            marker_key, fingerprint, number,
+            red_finding_digest(red_comment, red_body, red_digest_basis), _now(),
+        )
         return result
 
     # GREEN — resolve the canonical open issue (declaration-only match; never title).
