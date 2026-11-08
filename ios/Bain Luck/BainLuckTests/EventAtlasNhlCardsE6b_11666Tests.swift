@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Bain_Luck
 
@@ -397,5 +398,82 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
         XCTAssertEqual(milestone.player, "Mitch Marner")
         XCTAssertEqual(milestone.rungs.count, 3)
         XCTAssertEqual(milestone.actual, 2.0)
+    }
+
+    @MainActor
+    func testNhlScoringBlendedMultiSourceAttributionAndAccessibilityDynamicTypeRender() throws {
+        let entry = EventAtlasNhlCards11666.ScorerEntry(
+            id: "nhl-scorer:pastrnak",
+            rowId: "pastrnak",
+            player: "David Pastrnak",
+            pregameChance: 0.44,
+            observedAt: "2026-11-05T23:55:00Z",
+            actualGoals: 2,
+            hit: true,
+            hasHitConflict: false,
+            side: .home,
+            source: "blended",
+            sourceCount: 2,
+            marketTitle: "David Pastrnak · 1+ goals"
+        )
+        let card = EventAtlasNhlCards11666.ScoringCard(
+            story: .scored,
+            phase: .after,
+            entries: [entry],
+            scaleCeiling: 0.50
+        )
+        let details = EventAtlasNhlCards11666.detailsModel(for: entry, card: card)
+        XCTAssertEqual(details.primaryReadingLabel, "Result")
+        XCTAssertEqual(details.primaryReadingValue, "✓ Won · 2 goals")
+        XCTAssertEqual(details.sourceLabel, "Blended (2 sources)")
+
+        let state = NFLCardDeckState9483()
+        let finishCard = NFLFinishCard9483(
+            phase: .during,
+            pregame: .init(away: 21, home: 24.5, at: Date(timeIntervalSince1970: 1_762_440_000)),
+            projectedNow: .init(away: 17, home: 27, at: Date(timeIntervalSince1970: 1_762_455_000)),
+            final: nil
+        )
+        let view = VStack(alignment: .leading, spacing: 18) {
+            EventAtlasNhlScoringCardView11666(
+                card: card,
+                awayColor: .blue,
+                homeColor: .orange,
+                state: state,
+                expanded: true
+            )
+            Divider()
+            NFLFinishCardView9483(
+                card: finishCard,
+                awayName: "Eagles",
+                homeName: "Cowboys",
+                awayColor: .green,
+                homeColor: .blue,
+                state: state,
+                expanded: true
+            )
+        }
+        .padding(16)
+        .frame(width: 390)
+        .background(Color(.systemBackground))
+        .environment(\.colorScheme, .light)
+
+        let rDefault = rendererForMeasurement(view)
+        rDefault.scale = 2.0
+        let imgDefault = try XCTUnwrap(rDefault.uiImage)
+        XCTAssertEqual(Int(imgDefault.size.width), 390)
+
+        let rA11y = rendererForMeasurement(view, at: .accessibility3)
+        rA11y.scale = 2.0
+        let imgA11y = try XCTUnwrap(rA11y.uiImage)
+        XCTAssertEqual(Int(imgA11y.size.width), 390)
+        XCTAssertGreaterThanOrEqual(imgA11y.size.height, imgDefault.size.height)
+
+        if let outDir = ProcessInfo.processInfo.environment["ATLAS_E3_E6_POLISH_SCREENSHOT_DIR"], !outDir.isEmpty {
+            let dirURL = URL(fileURLWithPath: outDir)
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            try XCTUnwrap(imgDefault.pngData()).write(to: dirURL.appendingPathComponent("e3-e6-nhl-scoring-default-390px.png"))
+            try XCTUnwrap(imgA11y.pngData()).write(to: dirURL.appendingPathComponent("e3-e6-nhl-scoring-a11y-390px.png"))
+        }
     }
 }

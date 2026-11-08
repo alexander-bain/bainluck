@@ -697,7 +697,7 @@ nonisolated enum EventAtlasNhlCards11666 {
         } else {
             sourceLabel = EventAtlasHeadline11666.sourceAttribution(
                 source: entry.source,
-                sourceCount: nil
+                sourceCount: entry.sourceCount > 1 ? entry.sourceCount : nil
             )
         }
         return EventAtlasDetailsSheetModel11666(
@@ -756,23 +756,21 @@ struct EventAtlasNhlScoringCardView11666: View {
             ?? (card.phase == .before ? EventAtlasStates11666.noRecentPrice : "Pregame chance unavailable")
 
         let rowBody = VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(entry.player)
-                    .font(.subheadline.weight(.semibold))
-                Spacer(minLength: 6)
-                if let goals = entry.actualGoals, card.phase == .after {
-                    Text("\(goals) \(goals == 1 ? "goal" : "goals")")
-                        .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(.primary)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(entry.player)
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 6)
+                    scorerTrailingMeta(entry)
                 }
-                if entry.hasHitConflict, card.phase == .after {
-                    Text(EventAtlasStates11666.pending)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                } else if let hit = entry.hit, card.phase == .after {
-                    Text(hit ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(hit ? Color.green : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.player)
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        scorerTrailingMeta(entry)
+                    }
                 }
             }
             GeometryReader { geo in
@@ -809,6 +807,24 @@ struct EventAtlasNhlScoringCardView11666: View {
             } else {
                 rowBody
             }
+        }
+    }
+
+    @ViewBuilder
+    private func scorerTrailingMeta(_ entry: EventAtlasNhlCards11666.ScorerEntry) -> some View {
+        if let goals = entry.actualGoals, card.phase == .after {
+            Text("\(goals) \(goals == 1 ? "goal" : "goals")")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.primary)
+        }
+        if entry.hasHitConflict, card.phase == .after {
+            Text(EventAtlasStates11666.pending)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        } else if let hit = entry.hit, card.phase == .after {
+            Text(hit ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(hit ? Color.green : Color.secondary)
         }
     }
 }

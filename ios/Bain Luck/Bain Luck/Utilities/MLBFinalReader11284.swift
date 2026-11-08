@@ -114,6 +114,8 @@ struct MLBOriginal11284: Equatable, Identifiable, Sendable {
     let id: String
     let title: String
     let sections: [Section]
+    var rawSource: String? = nil
+    var sourceCount: Int = 1
 
     static func stamp(_ iso: String?) -> String {
         SourceAge.preciseStamp(iso) ?? "time unavailable"
@@ -747,7 +749,9 @@ struct MLBExtraInningsCard11284: Equatable {
                 let original = MLBOriginal11284(
                     id: "mlb-o:\(eventID):\(entry.id)",
                     title: entry.marketTitle,
-                    sections: [.init(title: nil, fields: fields)]
+                    sections: [.init(title: nil, fields: fields)],
+                    rawSource: entry.source,
+                    sourceCount: entry.sourceCount
                 )
                 return Outcome(
                     label: entry.label,
