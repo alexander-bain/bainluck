@@ -7,6 +7,7 @@ import Link from "next/link";
 import { searchEvents, fetchSearchSuggestions } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague, getSportLabel } from "@/lib/sportCategories";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
+import { useSearchFuturesStream } from "@/hooks/useSearchFuturesStream";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import SearchFamilyCard from "@/components/SearchFamilyCard";
@@ -24,7 +25,10 @@ import { END_OF_FEED_CATEGORIES } from "@/components/discover/EndOfFeedCard";
 import { eventPath } from "@/lib/eventKey";
 import { hostCuesForEvents } from "@/lib/sameFixtureHostCue";
 import { trackEvent } from "@/lib/analytics";
-import type { SearchResponse, SearchSuggestion } from "@/lib/types";
+import type { FuturesMarket, SearchResponse, SearchSuggestion } from "@/lib/types";
+
+// Stable, so an absent answer does not reset the live-price book each render.
+const NO_FUTURES: FuturesMarket[] = [];
 
 // Representative example queries spanning the search gold-set's classes (a team,
 // a season future, a politics question) — a self-contained zero-state that works
@@ -214,6 +218,11 @@ function SearchContent() {
     isMaxReached: isFuturesMaxReached
   } = usePinnedFutures();
 
+  // #10090: the open Kalshi/Polymarket futures cards re-price live while the
+  // page is open (`hooks/useSearchFuturesStream`). Called before any early
+  // return; the families above the flat list keep their served prices.
+  const liveFutures = useSearchFuturesStream(results?.futures ?? NO_FUTURES);
+
   useEffect(() => {
     if (!query || query.length < 2) {
       setResults(null);
@@ -363,7 +372,7 @@ function SearchContent() {
   // nothing double-renders. Backend is the composition source of truth.
   const families = results?.futures_families ?? [];
   const shownIds = familyShownIds(families);
-  const flatFutures = (results?.futures ?? []).filter((m) => !shownIds.has(m.id));
+  const flatFutures = liveFutures.filter((m) => !shownIds.has(m.id));
   const hasFamilies = families.length > 0;
   const hasFlatFutures = flatFutures.length > 0;
 
