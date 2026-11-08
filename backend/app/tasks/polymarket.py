@@ -4043,6 +4043,36 @@ async def _process_event_batch(
                     await session.execute(snapshot_stmt)
                     stats["snapshots_created"] += 1
 
+                # #12322: record that the legs we could not price EXIST, so the
+                # market keeps its outcome set. `on_conflict_do_nothing` and NOT
+                # `do_update`: an existing row's price belongs to the upsert above
+                # and the retire/withdraw passes below; this write may only ADD.
+                # `is_winner=None` for the same reason as the priced insert.
+                # Ranks are left to `rerank_market_field_stmt` below, which puts an
+                # unpriced leg after every priced one.
+                _placeholders = _parent_placeholder_legs(event, outcome_data)
+                for _offset, _leg in enumerate(_placeholders, 1):
+                    await session.execute(
+                        pg_insert(FuturesOutcome)
+                        .values(
+                            market_id=futures_market_id,
+                            external_id=_leg["external_id"],
+                            name=_leg["name"],
+                            current_probability=None,
+                            current_american_odds=None,
+                            current_yes_bid=None,
+                            current_yes_ask=None,
+                            rank=len(outcome_data) + _offset,
+                            is_winner=None,
+                            resolution_source=None,
+                        )
+                        .on_conflict_do_nothing(index_elements=["market_id", "external_id"])
+                    )
+                if _placeholders:
+                    stats["unpriced_legs_recorded"] = (
+                        stats.get("unpriced_legs_recorded", 0) + len(_placeholders)
+                    )
+
                 # #4000: the same pass also learned which legs the venue quotes
                 # NO price for. Withdraw our number on those rather than leaving
                 # the last one standing — see `_unpriced_leg_external_ids`. Runs
@@ -5827,6 +5857,52 @@ def complementary_book(
     no_ask = None if yes_bid is None else 1 - float(yes_bid)
     no_last = None if yes_last_trade is None else 1 - float(yes_last_trade)
     return no_bid, no_ask, no_last
+
+
+def _parent_placeholder_legs(event, priced: list[dict]) -> list[dict]:
+    """The legs the venue LISTS on an open sub-market that `_parent_outcome_data` wrote no row
+    for, as ``{"external_id", "name"}`` placeholders with no price (#12322).
+
+    `_parent_outcome_data` drops a leg it cannot price — correctly, there is no number to
+    write. But when it drops EVERY leg the market is left with no outcomes at all, and on
+    Nov 7 2026 that was 3,859 open Polymarket rows (plus 594 holding one leg of a field):
+    "Senegal vs. Sudan" (event 1282307) lists Senegal / Draw / Sudan, each quoted 0.20 x 0.91
+    with no trade, so the gated resolver refuses all three and the row holds nothing. With
+    no outcome set a market has no shape, so no grouping, comparison or page can place it.
+
+    The same state Kalshi has written at birth since #3518: the leg EXISTS, its price is
+    NULL. Named exactly as the priced writer would name it (same helpers), keyed exactly
+    as it would key it, so the row the poll writes once a price arrives is this one.
+    A closed or inactive sub-market is skipped: a settled child is not a listing.
+
+    Scope, by shape: a neg-risk field gets every unpriced leg (it IS the field, so a
+    partial one is completed). A game's bag of sub-markets or a single market gets
+    placeholders only when NOTHING was priced. A priced moneyline keeps its parent exactly
+    as today; only the rows that would otherwise be empty change.
+    """
+    have = {od["external_id"] for od in priced}
+    legs: list[dict] = []
+    markets = list(event.markets or [])
+    if priced and not (event.neg_risk and len(markets) > 1):
+        return legs
+    for market in markets:
+        if not market.condition_id or market.closed or not market.active:
+            continue
+        if len(markets) > 1:
+            names = [(market.condition_id, _leg_label(market, event.title))]
+        else:
+            sub_name = market.question or event.title
+            side_name = _sub_market_side_label(market, 0, sub_name, "Yes")
+            names = [(market.condition_id, side_name)]
+            if side_name != "Yes" and len(getattr(market, "outcomes", None) or []) > 1:
+                comp_fallback = "Under" if "o/u" in (sub_name or "").lower() else "No"
+                comp_name = _sub_market_side_label(market, 1, sub_name, comp_fallback)
+                if comp_name != comp_fallback:
+                    names.append((f"{market.condition_id}_side1", comp_name))
+        for external_id, name in names:
+            if external_id not in have and (name or "").strip():
+                legs.append({"external_id": external_id, "name": name})
+    return legs
 
 
 def _unpriced_leg_external_ids(event) -> list[str]:

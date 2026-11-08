@@ -349,7 +349,14 @@ class TestRecovery:
         stats, writer, *_ = await _run(monkeypatch, [_Row(60880026, NAMED)])
         rows = _market_rows(writer)
         assert set(rows) == {NAMED}, "parent re-stamped; zero children minted"
-        assert _outcome_names(writer) == []
+        # #12322: the legs the venue lists are recorded so the market keeps its outcome
+        # set, but not one of them carries a price: still "writes no price".
+        outcomes = [
+            _bound_params(st) for st in writer.statements
+            if getattr(getattr(st, "table", None), "name", None) == "futures_outcomes" and st.is_insert
+        ]
+        assert outcomes and all(o.get("current_probability") is None for o in outcomes), outcomes
+        assert "Norma Dumont vs. Ailin Perez" in _outcome_names(writer)
         assert stats["events_unpriced_at_venue"] == 1
         assert stats["events_fully_priced_at_venue"] == 0
         assert stats["terminal"] == "slice_done" and "complete" not in stats["terminal"]
