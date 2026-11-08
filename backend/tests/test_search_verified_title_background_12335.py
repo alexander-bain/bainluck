@@ -216,3 +216,38 @@ def test_the_route_declares_the_miss_before_the_cache_decision():
     declare = src.index('degraded.append("verified_title")')
     write = src.index("shed_answer_ttl_seconds(degraded, _payload")
     assert call < declare < write
+
+
+@pytest.mark.asyncio
+async def test_the_warmer_waits_for_the_composition_a_reader_does_not(rig):
+    """#12335 step 5: no reader waits on the head warmer, and its event loop ends
+    with its pass, so it waits for the verdict rather than leave it to be cancelled."""
+    engine, db = _engine_session()
+    token = events._force_search_cache_rebuild.set(True)
+    try:
+        missed = []
+        out = await _search_verified_titles(db, [_market()], None, missed=missed)
+    finally:
+        events._force_search_cache_rebuild.reset(token)
+    assert isinstance(out.get(129037), Composition) and missed == []
+    futures_mod._VERIFIED_TITLE_CACHE.clear()
+    reader_missed = []
+    assert await _search_verified_titles(db, [_market(129038)], None, missed=reader_missed) == {}
+    assert reader_missed == [129038], "CONTROL: a reader's build must still stop at its bound"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_the_warmer_still_respects_the_deadline_floor(rig):
+    engine, db = _engine_session()
+    deadline = time.monotonic() + events._SEARCH_VERIFIED_TITLE_MIN_REMAINING_S + 0.1
+    token = events._force_search_cache_rebuild.set(True)
+    try:
+        t0 = time.monotonic()
+        missed = []
+        await _search_verified_titles(db, [_market()], deadline, missed=missed)
+        took = time.monotonic() - t0
+    finally:
+        events._force_search_cache_rebuild.reset(token)
+    assert took < 0.25 and missed == [129037]
+    await engine.dispose()
