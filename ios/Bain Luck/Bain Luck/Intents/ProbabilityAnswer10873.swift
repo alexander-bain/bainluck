@@ -6,8 +6,8 @@ import Foundation
 /// Nothing here re-derives a number. A game answer walks the event hero's own
 /// branches in the hero's own order (`EventDetailView`'s centre column):
 /// finished → venue-settled → the price pair. The pair comes from
-/// `OpeningLineHero` + `DrawPricedWinner.printablePair`, its integers from
-/// `EventDetailView.heroPairPercents`, and whether it is CURRENT or LAST
+/// `OpeningLineHero` + `DrawPricedWinner.printablePair`, its printed tenths
+/// from `EventHeadlineTenths10090.pair` (#10090), and whether it is CURRENT or LAST
 /// RECORDED from `EventHeadlinePhase9483` on the quote's own clock. A market
 /// answer reads `FuturesDetailRowValue` (Won / Lost / price) and
 /// `futuresDetailRenderedPercents`, the market page's row value and integers.
@@ -247,17 +247,14 @@ extension ProbabilityAnswer10873 {
             away: shown.awayProbability, home: shown.homeProbability, sport: event.sport)
         else { return nil }
 
-        let awayFigure: String?
-        let homeFigure: String
-        if let away = pair.away {
-            let percents = EventDetailView.heroPairPercents(shown, away: away, home: pair.home)
-            awayFigure = formatProbability(away, renderedPercent: percents.away)
-            homeFigure = formatProbability(pair.home, renderedPercent: percents.home)
-        } else {
-            // Draw-priced: the lone home number, rounded alone (#5271).
-            awayFigure = nil
-            homeFigure = formatProbability(pair.home)
-        }
+        // #10090 (Alex item 39): the hero prints the pair in tenths, so the
+        // answer speaks the hero's own strings. Whole numbers here said "23%"
+        // beside a hero printing 22.5% (Patriots v Packers, Nov 8).
+        // Draw-priced: the away slot is withheld and the lone home number is
+        // printed un-normalised, as the hero prints it (#5271).
+        let printed = EventHeadlineTenths10090.pair(home: pair.home, away: pair.away)
+        let awayFigure: String? = printed.away
+        let homeFigure: String = printed.home
 
         if shown.isOpeningLine {
             return PricePair(awayFigure: awayFigure, homeFigure: homeFigure, reading: .openingLine)
