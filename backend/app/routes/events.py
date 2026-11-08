@@ -240,6 +240,7 @@ from app.utils.search_cache import (
     search_response_cache_enabled,
     search_response_cache_key,
     search_response_ttl_seconds,
+    shed_answer_ttl_seconds,
 )
 from app.utils.participant_images import participant_images_for_event
 from app.utils.search_collections import (
@@ -13119,7 +13120,12 @@ async def search_events(
             # residual tail). LAT-P007's rule is stated at the cache write below:
             # a degraded answer is never cached, because pinning an incomplete
             # body for the full `SEARCH_RESPONSE_TTL_SECONDS` — 180 s by ruling
-            # D81 — turns one slow moment into a sticky wrong answer. This lane
+            # D81 — turns one slow moment into a sticky wrong answer.
+            # (#4437 (b), AMENDED: a shed of THIS lane alone is now written for
+            # `SEARCH_THIN_RESPONSE_TTL_SECONDS` when the page has content —
+            # `chi` sheds it on every build, so never caching it cost every
+            # repeat a full build. 30 s, not 180 s; see
+            # `SEARCH_CACHEABLE_SHED_STAGES`.) This lane
             # was one of two shed paths in the handler that never joined
             # `degraded` (CORRECTED: `d45510b58` said "the only" — the futures
             # REFILL lane above is the other, and it is fixed in the same commit
@@ -13785,6 +13791,13 @@ async def search_events(
                 )
         except Exception:  # noqa: BLE001 — a cache write never breaks a response
             pass
+    elif (
+        _shed_ttl := shed_answer_ttl_seconds(degraded, _payload, debug_timing=debug_timing)
+    ) is not None:
+        # #4437 (b): the one exception to the rule above, and a short one — a
+        # headline lane that sheds on EVERY build (`chi`) made its term
+        # uncacheable. See `SEARCH_CACHEABLE_SHED_STAGES` for why only that stage.
+        _publish_shed_search_answer(_search_cache_key, _payload, _shed_ttl)
 
     # #239 Item 4 / LAT-P090: the SECOND of this function's two exits, and both
     # of them count. See `_record_search_query` for why the guard and the count
@@ -13798,6 +13811,22 @@ async def search_events(
     if _force_search_cache_rebuild.get():
         return _payload
     return await attach_search_collections(db, _payload)
+
+
+def _publish_shed_search_answer(key: str, payload: dict, ttl: int) -> None:
+    """#4437 (b): write a degraded answer `shed_answer_ttl_seconds` admitted.
+
+    Its own function, so `search_events` keeps exactly ONE cache write — the
+    complete answer's, whose TTL `test_search_thin_answer_ttl_9947` pins to
+    `search_response_ttl_seconds`. This write never takes that helper's life.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client as _get_rc
+
+        if search_response_cache_enabled():
+            _get_rc().setex(key, ttl, json.dumps(payload, default=str))
+    except Exception:  # noqa: BLE001 — a cache write never breaks a response
+        pass
 
 
 # L2-88: extra query synonyms per hub slug so "ufc"→mma, "pga"→golf, etc. resolve

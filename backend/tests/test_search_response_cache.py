@@ -1033,6 +1033,12 @@ def test_a_degraded_answer_is_never_written_to_the_cache():
     futures-less answer in front of every user asking that question for the full
     TTL — a transient becomes sticky. Caching an answer you already know is
     incomplete is worse than not caching at all.
+
+    #4437 (b), AMENDED: one exception, guarded in its own file
+    (`test_search_headline_shed_short_cache_4437.py`): an answer whose ONLY shed
+    stage is the headline lane, with content, for the 30 s thin TTL. This test
+    still pins the main write's joint guard, and that the exception (its own
+    function, `_publish_shed_search_answer`) is the route's only other write.
     """
     from app.routes import events
 
@@ -1040,6 +1046,11 @@ def test_a_degraded_answer_is_never_written_to_the_cache():
     assert "if not degraded and not debug_timing:" in src, (
         "the cache write is not jointly guarded on `degraded` and `debug_timing`"
     )
+    assert src.count("_get_rc().setex(") == 1, (
+        "a second /search cache write in the route — degraded answers stay out "
+        "of the cache except through `_publish_shed_search_answer`"
+    )
+    assert src.count("_publish_shed_search_answer(") == 1
 
 
 def test_a_shed_headline_contender_lane_marks_the_answer_degraded():
