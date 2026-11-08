@@ -5048,6 +5048,43 @@ _SEARCH_FUTURES_REFILL = 40    # rank 21-60, fetched ONLY on an observed collaps
 _RESOLVED_TEAM_RESCUE_CAP = 5
 
 
+#: #4437: how many candidate ids the /search window's ordered slice carries —
+#: well above the widest window it feeds (`_SEARCH_FUTURES_WINDOW` +
+#: `_SEARCH_FUTURES_REFILL` = 60), so a short survivor count is rare and costs
+#: only the fallback, never the answer.
+_SEARCH_OPEN_NOW_SLICE = 200
+
+
+async def _search_sliced_window_rows(db, stmt, slice_stmt, over_ids, limit: int) -> list:
+    """The window's rows, proving "open now" for an ordered slice, not every candidate.
+
+    #4437. ``slice_stmt`` returns the top :data:`_SEARCH_OPEN_NOW_SLICE` candidate
+    ids in ``stmt``'s own total order, filtered by the two cheap open-now
+    predicates only; ``over_ids(ids)`` is ``stmt`` with the candidate filter
+    replaced by those ids — the same builder, so the same full predicate, order
+    and LIMIT. Replaced, not ANDed: the candidate filter's arms carry the full
+    predicate too, and ANDing them back would re-prove every candidate (measured
+    on "we": 2,181 ms sliced-but-ANDed vs 2,292 ms unsliced).
+
+    WHY THE PAGE IS THE SAME PAGE. The full predicate implies the cheap one, so
+    every row ``stmt`` could return is a cheap-open candidate. If the slice came
+    back short of its LIMIT it holds ALL of them, and ``stmt`` over it is
+    ``stmt``. If it was full and at least ``limit`` rows survive, any row ranked
+    above the ``limit``-th survivor ranks above a slice member, so it is in the
+    slice and survives too — the top ``limit`` survivors are ``stmt``'s top
+    ``limit``. Otherwise (a full slice, too few survivors) ``stmt`` runs unsliced,
+    exactly as before. The order is total (it ends on ``id``), which is what
+    makes "ranks above" well defined.
+    """
+    if slice_stmt is None:
+        return list((await db.execute(stmt)).scalars().unique().all())
+    slice_ids = list((await db.execute(slice_stmt)).scalars().all())
+    rows = list((await db.execute(over_ids(slice_ids))).scalars().unique().all())
+    if len(slice_ids) < _SEARCH_OPEN_NOW_SLICE or len(rows) >= limit:
+        return rows
+    return list((await db.execute(stmt)).scalars().unique().all())
+
+
 async def _fetch_futures_window(
     db,
     window_query,
@@ -5059,6 +5096,7 @@ async def _fetch_futures_window(
     split_arms: Sequence = (),
     split_report: dict | None = None,
     arm_ms: dict | None = None,
+    slice_query=None,
 ) -> tuple[list, str]:
     """The futures window, fetched TIER-ORDERED instead of all at once.
 
@@ -5129,11 +5167,18 @@ async def _fetch_futures_window(
         _tier1_stmt = window_query(candidates_in(tier1_arms))
         if tier1_limit is not None:
             _tier1_stmt = _tier1_stmt.limit(tier1_limit)
-        tier1_rows = list(
-            (await db.execute(_tier1_stmt))
-            .scalars()
-            .unique()
-            .all()
+        # #4437: ``slice_query`` (the route's `_futures_slice_query`) proves "open
+        # now" on an ordered slice instead of every candidate. ``None`` keeps the
+        # single statement — every caller that does not pass one.
+        _tier1_cap = _SEARCH_FUTURES_WINDOW if tier1_limit is None else tier1_limit
+        tier1_rows = await _search_sliced_window_rows(
+            db,
+            _tier1_stmt,
+            None if slice_query is None else slice_query(tier1_arms),
+            lambda ids: window_query(
+                FuturesMarket.id == any_(literal(ids, ARRAY(Integer)))
+            ).limit(_tier1_cap),
+            _tier1_cap,
         )
         _arm_done("tier1")
     else:  # pragma: no cover - the name arm is always built
@@ -12229,7 +12274,10 @@ async def search_events(
         # filters above it do.
         _futures_game_already_played(),
     )
-    def _futures_candidates_in(arms):
+    # #4437: the two CHEAP open-now filters alone, for the ordered slice below.
+    _futures_cheap_open_now = _futures_open_now[:2]
+
+    def _futures_candidates_in(arms, open_now=_futures_open_now):
         """The UNION-of-arms candidate filter, for any SUBSET of the arms.
 
         Extracted from a single inline expression by LAT-P111 so the same
@@ -12237,9 +12285,12 @@ async def search_events(
         One builder, so a subset can never drift from the shape the full set
         uses — the `search_cache` key lesson (one key, one place) applied to the
         predicate.
+
+        #4437: ``open_now`` is the full predicate everywhere except the ordered
+        slice (:func:`_futures_slice_query`), which pushes only the cheap two.
         """
         _selects = [
-            select(FuturesMarket.id).where(arm, *_futures_open_now) for arm in arms
+            select(FuturesMarket.id).where(arm, *open_now) for arm in arms
         ]
         if len(_selects) > 1:
             return FuturesMarket.id.in_(select(union(*_selects).subquery().c.id))
@@ -12434,7 +12485,7 @@ async def search_events(
     if _futures_postseason_key is not None:
         _futures_season_order.append(_futures_postseason_key.asc())
 
-    def _futures_window_query(candidate_filter):
+    def _futures_window_query(candidate_filter, open_now=_futures_open_now):
         """The futures window statement over a given candidate filter.
 
         LAT-P111: a builder rather than a literal, because the ORDER BY is the
@@ -12449,7 +12500,7 @@ async def search_events(
             .options(selectinload(FuturesMarket.outcomes))
             .where(
                 candidate_filter,
-                *_futures_open_now,
+                *open_now,
             )
             .order_by(
                 _futures_name_tier.asc(),
@@ -12494,6 +12545,27 @@ async def search_events(
                 Sport.key == sport
             )
         return stmt
+
+    def _futures_slice_query(arms):
+        """#4437: the top :data:`_SEARCH_OPEN_NOW_SLICE` candidate ids, in the
+        window's own order, proven open by the two CHEAP filters only.
+
+        The window statement ran "open now" — including the correlated
+        `_futures_game_already_played()` anti-joins — on EVERY candidate before
+        its LIMIT: `we` on Nov 7 proved 1,024 candidates open (1.6 s of sibling
+        probes, plus the outer copy) to keep 60. This is the SAME statement, built
+        by the same builder so it cannot be ordered differently, minus that one
+        predicate. :func:`_search_sliced_window_rows` applies the full predicate to
+        what it returns and falls back to the full statement when too few survive.
+        """
+        return (
+            _futures_window_query(
+                _futures_candidates_in(arms, open_now=_futures_cheap_open_now),
+                open_now=_futures_cheap_open_now,
+            )
+            .with_only_columns(FuturesMarket.id)
+            .limit(_SEARCH_OPEN_NOW_SLICE)
+        )
 
     futures_query = _futures_window_query(_futures_candidate_filter)
 
@@ -12543,6 +12615,7 @@ async def search_events(
                 split_arms=_futures_split_arms,
                 split_report=_futures_split_report,
                 arm_ms=_futures_arm_ms,
+                slice_query=_futures_slice_query,
             )
             _futures_spare_rows = futures_markets_raw[_SEARCH_FUTURES_WINDOW:]
             futures_markets_raw = futures_markets_raw[:_SEARCH_FUTURES_WINDOW]
