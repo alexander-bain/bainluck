@@ -148,10 +148,22 @@ nonisolated enum EventAtlasMlbCards11666 {
 
         let observedText = fieldValue("Saved")
         let rawVenue = fieldValue("Venue")
-        let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: rawVenue,
-            sourceCount: 1
-        )
+        let sourceLabel: String?
+        if original.rawSource == nil && rawVenue == nil && original.sourceCount > 1 {
+            sourceLabel = "\(original.sourceCount) sources, not blended"
+        } else if let rawVenue {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: rawVenue,
+                sourceCount: original.sourceCount
+            )
+        } else if original.rawSource == "blended" || original.rawSource == "blend" {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: original.rawSource,
+                sourceCount: original.sourceCount
+            )
+        } else {
+            sourceLabel = nil
+        }
         let outcomeSide = fieldValue("Original side") ?? original.title
 
         return EventAtlasDetailsSheetModel11666(

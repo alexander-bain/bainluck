@@ -239,6 +239,7 @@ struct NFLFinishCardView9483: View {
     let homeName: String
     let awayColor: Color
     let homeColor: Color
+    var state: NFLCardDeckState9483? = nil
     var expanded = false
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
     /// The line the chart draws each team's name on, at the top of its band.
@@ -265,9 +266,26 @@ struct NFLFinishCardView9483: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(card.kicker.uppercased())
-                .font(.caption.weight(.bold))
-                .foregroundStyle(homeColor)
+            HStack(alignment: .firstTextBaseline) {
+                Text(card.kicker.uppercased())
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(homeColor)
+                if expanded, ReleaseSurfaces.isEventPageAtlasEnabled(), let state {
+                    Spacer(minLength: 8)
+                    Button {
+                        state.detailsRowID = "finish"
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Forecast details")
+                    .accessibilityIdentifier("atlas-finish-card-details-button-11666")
+                }
+            }
             Text(card.headline(awayName: awayName, homeName: homeName))
                 .font(.title3.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
@@ -801,7 +819,7 @@ struct NFLEventCardView9483: View {
             switch card {
             case .finish(let finish):
                 NFLFinishCardView9483(card: finish, awayName: awayName, homeName: homeName,
-                                      awayColor: awayColor, homeColor: homeColor, expanded: expanded)
+                                      awayColor: awayColor, homeColor: homeColor, state: state, expanded: expanded)
             case .milestone(let milestone):
                 NFLMilestoneCardView9483(
                     card: milestone,
