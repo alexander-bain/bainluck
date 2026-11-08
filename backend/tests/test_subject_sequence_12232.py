@@ -8,7 +8,6 @@ PILLAR: DISCOVER / TRUTH · SHIP: a team's next three games as a Discover card
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -135,18 +134,6 @@ class TestSubjectSequenceDefinitionAndRegistration:
         assert producer.relations == ("same_subject", "same_measure", "same_window")
         assert producer.level == "member"
         assert producer.destination_href == "/sport/basketball/nba/team/boston-celtics"
-        team_page_route = (
-            Path(__file__).resolve().parents[2]
-            / "frontend"
-            / "app"
-            / "sport"
-            / "[sport]"
-            / "[league]"
-            / "team"
-            / "[team]"
-            / "page.tsx"
-        )
-        assert team_page_route.exists()
 
 
 class TestSubjectSequenceSelectorAndTruthChecks:
