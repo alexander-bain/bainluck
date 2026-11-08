@@ -2507,6 +2507,7 @@ struct EventDetailView: View {
             projectedInput,
             finalBaseline: Self.qualifiedFinalForecast11296(event).map { (away: $0.away, home: $0.home) },
             liveBaseline: liveCardBaseline11296(event))
+        let nflAtlas = nflAtlasStories(event)
         return NFLEventCardDeck9483.cards(
             sportKey: event.sport,
             finish: finish,
@@ -2516,7 +2517,61 @@ struct EventDetailView: View {
                     commenceTime: event.commenceTime?.asDate,
                     homeTeam: event.homeTeam, awayTeam: event.awayTeam)
                 : [],
-            ladders: nbaLadders(event, finish: finish))
+            ladders: nbaLadders(event, finish: finish),
+            periodWinners: nflAtlas.periodWinners,
+            pairedMilestones: nflAtlas.pairedMilestones,
+            combinedYards: nflAtlas.combinedYards)
+    }
+
+    private func nflAtlasStories(_ event: EventDetail) -> (
+        periodWinners: EventAtlasFootballCards11666.PeriodWinnersCard?,
+        pairedMilestones: [EventAtlasFootballCards11666.PairedMilestonesCard],
+        combinedYards: [EventAtlasFootballCards11666.CombinedYardsCard]
+    ) {
+        guard EventAtlasFootballCards11666.applies(sportKey: event.sport),
+              let gm = vm.gameMarkets, gm.eventId == event.id else {
+            return (nil, [], [])
+        }
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let names = nflNames(event)
+        let now = displayNow()
+        let commence = event.commenceTime?.asDate
+        let periodWinners = EventAtlasFootballCards11666.buildPeriodWinnersCard(
+            status: event.status,
+            commenceTime: commence,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            homeShort: names.home,
+            awayShort: names.away,
+            homeScore: hasScore ? event.homeScore : nil,
+            awayScore: hasScore ? event.awayScore : nil,
+            boxScoreData: event.boxScoreData,
+            gameMarkets: gm,
+            now: now
+        )
+        let pairedMilestones = EventAtlasFootballCards11666.TeamStatFamily.allCases.compactMap { family in
+            EventAtlasFootballCards11666.buildPairedMilestonesCard(
+                family: family,
+                status: event.status,
+                commenceTime: commence,
+                homeTeam: event.homeTeam,
+                awayTeam: event.awayTeam,
+                homeShort: names.home,
+                awayShort: names.away,
+                gameMarkets: gm,
+                now: now
+            )
+        }
+        let combinedYards = EventAtlasFootballCards11666.buildCombinedYardsCards(
+            status: event.status,
+            commenceTime: commence,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            gameMarkets: gm,
+            now: now
+        )
+        return (periodWinners, pairedMilestones, combinedYards)
     }
 
     /// #11284 — the final MLB stories, from the event, game-markets and
