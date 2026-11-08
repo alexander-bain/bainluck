@@ -443,6 +443,14 @@ struct EventDetailView: View {
                     showProbabilityDetails = false
                     showUpdateStream = false
                 }
+                #if os(iOS)
+                .background(
+                    PageDetailsCloser(
+                        detailsOpen: $showProbabilityDetails,
+                        streamOpen: $showUpdateStream
+                    )
+                )
+                #endif
                 // #10090 (Alex 67) — the EKG beats on evidence: J or the printed
                 // number's clock advancing while the stream delivers. A re-render
                 // or a reconnect moves no input, so it cannot beat.
