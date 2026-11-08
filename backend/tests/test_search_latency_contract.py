@@ -946,7 +946,10 @@ class TestTypeaheadIsBoundedAndIndexable:
             "CORRELATED_OUTCOME_ARM reintroduced in /typeahead: measured 3,468ms "
             "vs 66.8ms for the set-identical non-correlated IN form"
         )
-        assert "select(FuturesOutcome.market_id).where(" in TYPEAHEAD_CODE, (
+        # #4437 (Decide 89-A): the arm's subquery is built by `_outcome_market_ids`,
+        # which returns the same non-correlated `SELECT market_id ... WHERE` (over
+        # `open_futures_outcomes` while that copy is current).
+        assert "_outcome_market_ids(_ta_outcome_cond)" in TYPEAHEAD_CODE, (
             "the non-correlated outcome subquery is gone from /typeahead"
         )
 
@@ -979,7 +982,7 @@ class TestTypeaheadIsBoundedAndIndexable:
             "them both admitting `d'or`"
         )
         gate_at = TYPEAHEAD_CODE.find("if _has_extractable_trigram(_ta_q_compact)")
-        arm_at = TYPEAHEAD_CODE.find("select(FuturesOutcome.market_id).where(")
+        arm_at = TYPEAHEAD_CODE.find("_outcome_market_ids(_ta_outcome_cond)")
         assert 0 < gate_at < arm_at, (
             "the outcome arm is not inside the unservable-pattern gate"
         )

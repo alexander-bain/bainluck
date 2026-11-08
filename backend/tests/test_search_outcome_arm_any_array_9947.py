@@ -98,9 +98,12 @@ class TestTheInFormCallSitesArePinned:
     `_headline_contender_outcome_clause` is the contender hoist's own statement,
     and `/typeahead` already resolves its match set first (LAT-P166). A new name
     here is a new arm in the slow shape — route it through `_market_has_outcome`.
+
+    #4437 (Decide 89-A): `typeahead_search` left this set — its arm now takes its
+    subquery from `_outcome_market_ids`, the helper `_market_has_outcome` uses.
     """
 
-    EXPECTED = {"_headline_contender_outcome_clause", "typeahead_search"}
+    EXPECTED = {"_headline_contender_outcome_clause"}
 
     @staticmethod
     def _is_in_form_call(node: ast.AST) -> bool:
