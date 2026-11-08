@@ -197,7 +197,7 @@ nonisolated enum EventAtlasStoryCards11666 {
         let rung = card?.rungs.first(where: { $0.rowID == rowID })
         let hit = prop?.hit ?? rung?.hit
         let pregameProb: Double? = card?.basis == .pregamePrice
-            ? prop?.pregameMark
+            ? nil
             : (rung?.chance ?? prop?.pregameMark)
         let pregameText = pregameProb.map { formatProbability($0) }
         let primaryLabel: String

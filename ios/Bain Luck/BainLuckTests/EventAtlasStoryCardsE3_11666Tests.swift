@@ -320,38 +320,78 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
         XCTAssertEqual(finishSheet.primaryReadingLabel, "Projected now")
         XCTAssertEqual(finishSheet.pregameBaseline, "Eagles 21 · Cowboys 24.5")
 
-        // On a .pregamePrice milestone card, rung.chance is the current quote while prop.pregameMark is the pregame baseline
+        // Before kick-off (basis == .pregamePrice), pregame_mark holds the opening price rather than a
+        // commence-time pin, so Details must leave pregameBaseline nil for both fresh and stale quotes.
         let pregameCard = NFLMilestoneCard9483(
             id: "milestone-pre",
             player: "CeeDee Lamb",
             stat: "Receiving Yards",
             side: .home,
             basis: .pregamePrice,
-            rungs: [.init(threshold: 75, chance: 0.54, observedAt: "2026-11-06T20:15:00Z", rowID: "r75", hit: nil)],
+            rungs: [.init(threshold: 75, chance: 0.10, observedAt: "2026-11-06T20:15:00Z", rowID: "r75", hit: nil)],
             actual: nil
         )
         let pregameProp = GameMarketPlayerProp(
             marketName: "Player Receiving Yards",
             outcomeName: "CeeDee Lamb: 75+",
             threshold: 75,
-            overProbability: 0.54,
+            overProbability: 0.10,
             source: "draftkings",
             movement: nil,
             playerHeadshot: nil,
             playerTeam: "DAL",
             actual: nil,
             hit: nil,
-            pregameMark: 0.42,
+            pregameMark: 0.265,
             observedAt: "2026-11-06T20:15:00Z"
         )
-        let pregameMilestoneSheet = EventAtlasStoryCards11666.detailsModel(
+        let freshPregameSheet = EventAtlasStoryCards11666.detailsModel(
             for: pregameProp,
             card: pregameCard,
             rowID: "r75"
         )
-        XCTAssertEqual(pregameMilestoneSheet.primaryReadingLabel, "Last quote")
-        XCTAssertEqual(pregameMilestoneSheet.primaryReadingValue, "54%")
-        XCTAssertEqual(pregameMilestoneSheet.pregameBaseline, "42%")
+        XCTAssertEqual(freshPregameSheet.primaryReadingLabel, "Last quote")
+        XCTAssertEqual(freshPregameSheet.primaryReadingValue, "10%")
+        XCTAssertNil(freshPregameSheet.pregameBaseline)
+
+        let stalePregameCard = pregameCard.current(at: ISO8601DateFormatter().date(from: "2026-11-08T20:15:00Z")!)
+        XCTAssertNil(stalePregameCard.rungs.first?.chance)
+        let stalePregameSheet = EventAtlasStoryCards11666.detailsModel(
+            for: pregameProp,
+            card: stalePregameCard,
+            rowID: "r75"
+        )
+        XCTAssertEqual(stalePregameSheet.primaryReadingLabel, "Last quote")
+        XCTAssertEqual(stalePregameSheet.primaryReadingValue, "10%")
+        XCTAssertNil(stalePregameSheet.pregameBaseline)
+
+        // After kick-off (basis == .pregameMark), rung.chance ?? prop.pregameMark is the admitted pin.
+        let startedCard = NFLMilestoneCard9483(
+            id: "milestone-live",
+            player: "CeeDee Lamb",
+            stat: "Receiving Yards",
+            side: .home,
+            basis: .pregameMark,
+            rungs: [.init(threshold: 75, chance: 0.265, observedAt: nil, rowID: "r75", hit: nil)],
+            actual: nil
+        )
+        let startedSheet = EventAtlasStoryCards11666.detailsModel(
+            for: pregameProp,
+            card: startedCard,
+            rowID: "r75"
+        )
+        XCTAssertEqual(startedSheet.primaryReadingLabel, "Last quote")
+        XCTAssertEqual(startedSheet.primaryReadingValue, "10%")
+        XCTAssertEqual(startedSheet.pregameBaseline, "27%")
+
+        // Unmatched rowID never falls back to the first rung.
+        let unmatchedSheet = EventAtlasStoryCards11666.detailsModel(
+            for: nil,
+            card: startedCard,
+            rowID: "missing-row"
+        )
+        XCTAssertEqual(unmatchedSheet.outcomeTitle, "Player milestone")
+        XCTAssertNil(unmatchedSheet.pregameBaseline)
 
         let keyView = EventAtlasStoryCardMarkKeyView11666(items: items)
             .padding(12)
