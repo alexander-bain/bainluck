@@ -13425,9 +13425,16 @@ async def search_events(
     ]
     # #12335: a title question's card prints the numbers the page it opens
     # prints — the verified-title blend, not the one venue this row came from.
+    _verified_missed: list = []
     _verified_by_id = await _search_verified_titles(
-        db, (*deduped_futures, *futures_markets), _deadline
+        db, (*deduped_futures, *futures_markets), _deadline, missed=_verified_missed
     )
+    if _verified_missed:
+        # #12335 step 4: the card printed its own venue's prices because the
+        # composition was still running. Say so, so this page is cached for the
+        # short shed life (`SEARCH_CACHEABLE_SHED_STAGES`), not 180 s: the next
+        # build finds the finished verdict and prints the page's blend.
+        degraded.append("verified_title")
     _formatted_by_id = {
         m.id: _format_futures_for_search(
             m, _withheld_by_market.get(m.id), query_terms=expanded,  # #8842
@@ -13937,7 +13944,7 @@ async def search_events(
     ) is not None:
         # #4437 (b): the one exception to the rule above, and a short one — a
         # headline lane that sheds on EVERY build (`chi`) made its term
-        # uncacheable. See `SEARCH_CACHEABLE_SHED_STAGES` for why only that stage.
+        # uncacheable. See `SEARCH_CACHEABLE_SHED_STAGES` for why only those stages.
         _publish_shed_search_answer(_search_cache_key, _payload, _shed_ttl)
 
     # #239 Item 4 / LAT-P090: the SECOND of this function's two exits, and both
@@ -40300,8 +40307,97 @@ _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S = 3.0
 #: its own venue's prices (the card before #12335), never an error.
 _SEARCH_VERIFIED_TITLE_BUDGET_S = 1.0
 
+#: #12335 step 4: compositions a search's bound left RUNNING, one per market
+#: (single-flight). Measured 2026-11-08 3:25 and 5:53 AM PT after #12346: 0 of
+#: 20 searches for the NFL title teams carried the blend, because every build
+#: tripped the 1 s bound and the bound CANCELLED the composition, so nothing ever
+#: reached `_VERIFIED_TITLE_CACHE` and the next build tripped again. Now the
+#: search stops WAITING at the bound and the composition finishes here, on its
+#: own session, and its verdict serves the next build. Strong references, as
+#: `_TYPEAHEAD_BESIDE_TASKS`: asyncio holds a task weakly.
+_VERIFIED_TITLE_BACKGROUND: dict = {}
 
-async def _search_verified_titles(db, markets, deadline: float | None) -> dict:
+#: The background composition's own wall ceiling. The slowest read measured is
+#: the 16.1 s cold one; past this the statement is abandoned and its connection
+#: invalidated, as at the search bound.
+_VERIFIED_TITLE_BACKGROUND_CEILING_S = 30.0
+
+
+async def _verified_title_row(side, market_id: int):
+    """The title market's row read on the composition's OWN session, or ``None``.
+
+    Never the request's row: a background composition outlives its request, and
+    a row of a closed request session can be expired under it (gotcha #6). The
+    page's member statement reads identity and quotes in one snapshot.
+    """
+    from app.routes.futures import _verified_title_market_stmt
+
+    return (
+        (
+            await side.execute(
+                _verified_title_market_stmt().where(FuturesMarket.id == market_id)
+            )
+        )
+        .unique()
+        .scalars()
+        .first()
+    )
+
+
+async def _compose_verified_title_alone(engine, market_id: int):
+    """One market's verdict on a session of its own; ``None`` past the ceiling or on failure."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.routes.futures import _resolve_verified_title
+
+    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with maker() as side:
+
+        async def run():
+            row = await _verified_title_row(side, market_id)
+            if row is None:
+                return None
+            return await _resolve_verified_title(side, row)
+
+        try:
+            return await asyncio.wait_for(run(), timeout=_VERIFIED_TITLE_BACKGROUND_CEILING_S)
+        except Exception as exc:  # noqa: BLE001 — the card already has its answer
+            logger.warning(
+                "background verified-title composition for market %s ended "
+                "without a verdict: %r", market_id, exc,
+            )
+            try:
+                await side.invalidate()
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+
+
+def _verified_title_in_background(engine, market_id: int):
+    """The running composition for ``market_id``, started if none is."""
+    import asyncio
+
+    task = _VERIFIED_TITLE_BACKGROUND.get(market_id)
+    if task is not None and not task.done():
+        return task
+    task = asyncio.ensure_future(_compose_verified_title_alone(engine, market_id))
+    _VERIFIED_TITLE_BACKGROUND[market_id] = task
+
+    def _done(t, market_id=market_id):
+        if _VERIFIED_TITLE_BACKGROUND.get(market_id) is t:
+            del _VERIFIED_TITLE_BACKGROUND[market_id]
+        if not t.cancelled():
+            t.exception()  # retrieved: never "Task exception was never retrieved"
+
+    task.add_done_callback(_done)
+    return task
+
+
+async def _search_verified_titles(
+    db, markets, deadline: float | None, *, missed: list | None = None
+) -> dict:
     """``{market id: Composition}`` for the title questions among ``markets``.
 
     #12335. `/futures/<id>` opts into `representation=verified_title` (#10224):
@@ -40322,15 +40418,20 @@ async def _search_verified_titles(db, markets, deadline: float | None) -> dict:
     with less than :data:`_SEARCH_VERIFIED_TITLE_MIN_REMAINING_S` left. Each of
     those keeps the card's own prices — the card before #12335, never an error.
 
-    BOUNDED: every composition together gets :data:`_SEARCH_VERIFIED_TITLE_BUDGET_S`
-    of wall time (less if the deadline floor is nearer). A composition still
-    running at the bound is cancelled and its session's connection INVALIDATED,
-    not returned to the pool — a cancelled statement can leave it mid-protocol —
-    and no further market is started.
-    """
-    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+    BOUNDED: the search WAITS at most :data:`_SEARCH_VERIFIED_TITLE_BUDGET_S`
+    for every composition together (less if the deadline floor is nearer). A
+    composition still running at the bound is NOT cancelled (#12335 step 4): it
+    finishes in the background (:func:`_verified_title_in_background`, one per
+    market) and its verdict reaches `_VERIFIED_TITLE_CACHE` for the next build.
+    No further market is waited on once the bound is spent, but each is started.
 
-    from app.routes.futures import _resolve_verified_title, _verified_title_facts
+    ``missed`` collects the ids of title markets that got no verdict in time
+    (the bound, the deadline floor, or a full pool), so the caller can cache
+    that page briefly rather than pin the card's own prices for 180 s.
+    """
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from app.routes.futures import _held_verified_title, _verified_title_facts
     from app.utils.futures_verified_title import Composition, question_for
 
     engine = getattr(db, "bind", None)
@@ -40342,41 +40443,57 @@ async def _search_verified_titles(db, markets, deadline: float | None) -> dict:
             wanted.append(m)
     if not wanted:
         return {}
+    out: dict = {}
+    pending = []
+    for m in wanted:
+        held = _held_verified_title(m.id)
+        if held is None:
+            pending.append(m)
+        elif isinstance(held, Composition):
+            out[m.id] = held
+    if not pending:
+        return out
     try:
-        if engine.pool.checkedout() >= engine.pool.size():
-            return {}
+        pool_full = engine.pool.checkedout() >= engine.pool.size()
     except Exception:  # noqa: BLE001 — a pool without counters keeps the cards as they are
-        return {}
+        pool_full = True
+    if pool_full:
+        if missed is not None:
+            missed.extend(m.id for m in pending)
+        return out
     import asyncio
 
-    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    out: dict = {}
     budget_ends = time.monotonic() + _SEARCH_VERIFIED_TITLE_BUDGET_S
-    if deadline is not None:
-        budget_ends = min(budget_ends, deadline - _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S)
-    async with maker() as side:
-        for m in wanted:
-            left = budget_ends - time.monotonic()
-            if left <= 0:
-                break
-            try:
-                verdict = await asyncio.wait_for(_resolve_verified_title(side, m), timeout=left)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "search verified-title composition for market %s passed its "
-                    "%.1fs bound; the card keeps its own prices", m.id,
-                    _SEARCH_VERIFIED_TITLE_BUDGET_S,
-                )
-                try:
-                    await side.invalidate()
-                except Exception:  # noqa: BLE001 — the card already has its answer
-                    pass
-                break
-            if isinstance(verdict, Composition):
-                out[m.id] = verdict
-            else:
-                # A refusal may follow a failed statement; start the next one clean.
-                await side.rollback()
+    floor_ends = (
+        deadline - _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S if deadline is not None else None
+    )
+    for m in pending:
+        now = time.monotonic()
+        if floor_ends is not None and floor_ends <= now:
+            # A request this close to its deadline is on a slow database: it
+            # adds no work there, background or not.
+            if missed is not None:
+                missed.append(m.id)
+            continue
+        task = _verified_title_in_background(engine, m.id)
+        left = min(budget_ends, floor_ends if floor_ends is not None else budget_ends) - now
+        if left <= 0:
+            if missed is not None:
+                missed.append(m.id)
+            continue
+        try:
+            verdict = await asyncio.wait_for(asyncio.shield(task), timeout=left)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "search verified-title composition for market %s passed its "
+                "%.1fs bound; the card keeps its own prices and the composition "
+                "finishes in the background", m.id, _SEARCH_VERIFIED_TITLE_BUDGET_S,
+            )
+            if missed is not None:
+                missed.append(m.id)
+            continue
+        if isinstance(verdict, Composition):
+            out[m.id] = verdict
     return out
 
 

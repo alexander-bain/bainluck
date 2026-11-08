@@ -219,6 +219,30 @@ def _verified_title_cache_off_unless_a_test_sets_it(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_background_verified_title_crosses_tests():
+    """#12335 step 4: a Search composition left running in the background is
+    single-flight per market id, so one test's task (a 30 s fake, say) would be
+    joined by the next test asking for the same id. Each test starts empty."""
+    import sys
+
+    def _drop():
+        events = sys.modules.get("app.routes.events")
+        held = getattr(events, "_VERIFIED_TITLE_BACKGROUND", None)
+        if not held:
+            return
+        for task in list(held.values()):
+            try:
+                task.cancel()
+            except RuntimeError:  # its loop is already closed
+                pass
+        held.clear()
+
+    _drop()
+    yield
+    _drop()
+
+
+@pytest.fixture(autouse=True)
 def _prematch_reading_cache_process_tier_only(monkeypatch):
     """#10090: the pre-match reading cache's Redis tier is OFF in tests unless a
     test installs a fake client and turns it on — a developer's local Redis
