@@ -87,8 +87,14 @@ enum NFLCardReaderHold9483 {
     static func rows(for cards: [NFLEventCard9483],
                      in props: [GameMarketPlayerProp]) -> [String: GameMarketPlayerProp] {
         let ids = Set(cards.flatMap { card -> [String] in
-            guard case .milestone(let milestone) = card else { return [] }
-            return milestone.rungs.map(\.rowID)
+            switch card {
+            case .milestone(let milestone):
+                return milestone.rungs.map(\.rowID)
+            case .nflCombinedYards(let combined):
+                return combined.milestone.rungs.map(\.rowID)
+            default:
+                return []
+            }
         })
         var rows: [String: GameMarketPlayerProp] = [:]
         for prop in props where ids.contains(prop.id) && rows[prop.id] == nil { rows[prop.id] = prop }

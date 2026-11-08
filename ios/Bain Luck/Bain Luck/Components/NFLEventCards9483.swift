@@ -845,6 +845,19 @@ struct NFLEventCardView9483: View {
             case .tennisExactScore(let tennisExactScore):
                 EventAtlasTennisExactScoreCardView11666(card: tennisExactScore, awayColor: awayColor, homeColor: homeColor,
                                                         state: state, expanded: expanded)
+            case .nflPeriodWinners(let periodWinners):
+                EventAtlasFootballPeriodWinnersCardView11666(card: periodWinners, awayColor: awayColor, homeColor: homeColor,
+                                                             state: state, expanded: expanded)
+            case .nflPairedMilestones(let pairedMilestones):
+                EventAtlasFootballPairedMilestonesCardView11666(card: pairedMilestones, awayColor: awayColor, homeColor: homeColor,
+                                                                state: state, expanded: expanded)
+            case .nflCombinedYards(let combinedYards):
+                EventAtlasFootballCombinedYardsCardView11666(
+                    card: combinedYards,
+                    color: PlayerPropsTeam.color(for: combinedYards.milestone.side, home: homeColor, away: awayColor),
+                    state: state,
+                    expanded: expanded
+                )
             }
         }
         .padding(16)

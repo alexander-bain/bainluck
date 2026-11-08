@@ -26,6 +26,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
     case soccerExactScore(EventAtlasSoccerCards11666.ExactScoreCard)
     case tennisSets(EventAtlasTennisCards11666.SetsCard)
     case tennisExactScore(EventAtlasTennisCards11666.ExactScoreCard)
+    case nflPeriodWinners(EventAtlasFootballCards11666.PeriodWinnersCard)
+    case nflPairedMilestones(EventAtlasFootballCards11666.PairedMilestonesCard)
+    case nflCombinedYards(EventAtlasFootballCards11666.CombinedYardsCard)
 
     var id: String {
         switch self {
@@ -38,6 +41,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .soccerExactScore(let card): return card.id
         case .tennisSets(let card): return card.id
         case .tennisExactScore(let card): return card.id
+        case .nflPeriodWinners(let card): return card.id
+        case .nflPairedMilestones(let card): return card.id
+        case .nflCombinedYards(let card): return card.id
         }
     }
 
@@ -52,6 +58,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .soccerExactScore(let card): return card.title
         case .tennisSets(let card): return card.title
         case .tennisExactScore(let card): return card.title
+        case .nflPeriodWinners(let card): return card.title
+        case .nflPairedMilestones(let card): return card.title
+        case .nflCombinedYards(let card): return card.title
         }
     }
 
@@ -70,6 +79,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .soccerExactScore(let card): return .soccerExactScore(card.current(at: now))
         case .tennisSets(let card): return .tennisSets(card.current(at: now))
         case .tennisExactScore(let card): return .tennisExactScore(card.current(at: now))
+        case .nflPeriodWinners(let card): return .nflPeriodWinners(card.current(at: now))
+        case .nflPairedMilestones(let card): return .nflPairedMilestones(card.current(at: now))
+        case .nflCombinedYards(let card): return .nflCombinedYards(card.current(at: now))
         }
     }
 }
@@ -80,13 +92,17 @@ enum NFLEventCardDeck9483 {
     static let maximumMilestoneCards = 2
 
     /// The deck for this page, or empty to draw none. NFL: the projected
-    /// finish, then the player milestones. NBA: winning margin, scoring
+    /// finish, then period winners, paired team milestones, combined ground+air
+    /// yards, and the player milestones. NBA: winning margin, scoring
     /// expectations, then the projected finish — a fixed order per page state,
     /// no ranking service. Each sport reads only its own families.
     @MainActor
     static func cards(
         sportKey: String?, finish: NFLFinishCard9483?, milestones: [NFLMilestoneCard9483],
-        ladders: [NBALadderCard9483] = []
+        ladders: [NBALadderCard9483] = [],
+        periodWinners: EventAtlasFootballCards11666.PeriodWinnersCard? = nil,
+        pairedMilestones: [EventAtlasFootballCards11666.PairedMilestonesCard] = [],
+        combinedYards: [EventAtlasFootballCards11666.CombinedYardsCard] = []
     ) -> [NFLEventCard9483] {
         let finishCard: [NFLEventCard9483] = finish.map { [.finish($0)] } ?? []
         if NBAEventCards9483.applies(sportKey: sportKey) {
@@ -95,7 +111,14 @@ enum NFLEventCardDeck9483 {
             return ordered.map { .ladder($0) } + finishCard
         }
         guard NFLRecognizablePage9483.isNFL(sportKey: sportKey) else { return [] }
-        return finishCard + milestones.map { .milestone($0) }
+        let periodCard: [NFLEventCard9483] = periodWinners.map { [.nflPeriodWinners($0)] } ?? []
+        let pairedCards: [NFLEventCard9483] = pairedMilestones.map { .nflPairedMilestones($0) }
+        let combinedCards: [NFLEventCard9483] = combinedYards.map { .nflCombinedYards($0) }
+        let dealtCombinedIDs = Set(combinedYards.map { $0.milestone.id })
+        let remainingMilestones = milestones
+            .filter { !dealtCombinedIDs.contains($0.id) }
+            .map { NFLEventCard9483.milestone($0) }
+        return finishCard + periodCard + pairedCards + combinedCards + remainingMilestones
     }
 }
 
