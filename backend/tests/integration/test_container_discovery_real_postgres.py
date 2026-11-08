@@ -361,3 +361,99 @@ class TestNflWeekAuthorityStatus11906:
         await pg_session.commit()
         read_underway = await discovery.discover_collections(pg_session, slugs=["nfl-2026-week-5"])
         assert read_underway.collections[0]["status"] == "live"
+
+
+class TestCollectionTitleAndMembers12090:
+    async def test_typeahead_title_read_skips_the_member_fallback(self, pg_session):
+        await _seed(pg_session)
+        read = await discovery.discover_collections(
+            pg_session, query="Home wk6_a", titles_only=True
+        )
+        assert not read.collections
+        assert (
+            await discovery.discover_collections(pg_session, query="Home wk6_a")
+        ).collections
+
+    @pytest.mark.parametrize(
+        "sport_key,expected",
+        [("americanfootball_nfl", True), ("basketball_nba", False)],
+    )
+    async def test_collection_search_honours_the_requested_sport(
+        self, pg_session, sport_key, expected
+    ):
+        await _seed(pg_session)
+        read = await discovery.discover_collections(
+            pg_session, query="Week 5", sport_key=sport_key
+        )
+        assert bool(read.collections) == expected
+
+    @pytest.mark.parametrize("query", ["Week5", "NFL 2026 Week 5 Oct 4"])
+    async def test_title_query_without_games_and_with_empty_window_fields(
+        self, pg_session, query
+    ):
+        hubs, _ = await _seed(pg_session)
+        await pg_session.execute(
+            text(
+                "UPDATE containers SET window_start = NULL, window_end = NULL WHERE id = :id"
+            ),
+            {"id": hubs["wk5"]},
+        )
+        await pg_session.commit()
+        read = await discovery.discover_collections(
+            pg_session, query=query, event_ids=[], limit=1
+        )
+        assert [card["slug"] for card in read.collections] == ["nfl-2026-week-5"]
+        assert read.collections[0]["name"] == "NFL 2026 · Week 5 · Oct 4"
+
+    @pytest.mark.parametrize("query", ["Home wk6_a", "Week 5 question"])
+    async def test_member_game_and_market_names_are_searchable(self, pg_session, query):
+        await _seed(pg_session)
+        read = await discovery.discover_collections(pg_session, query=query)
+        assert read.collections
+        expected = "nfl-2026-week-6" if "wk6" in query else "nfl-2026-week-5"
+        assert read.collections[0]["slug"] == expected
+
+    async def test_member_outcome_is_searchable(self, pg_session):
+        from app.models.models import FuturesOutcome
+
+        await _seed(pg_session)
+        market_id = (
+            await pg_session.execute(
+                text(
+                    "SELECT id FROM futures_markets WHERE external_id = 'KXNFLGAME-9653'"
+                )
+            )
+        ).scalar_one()
+        pg_session.add(
+            FuturesOutcome(
+                market_id=market_id,
+                external_id="CHIEFS-12090",
+                name="Kansas City Chiefs",
+            )
+        )
+        await pg_session.commit()
+        read = await discovery.discover_collections(pg_session, query="Kansas City")
+        assert [card["slug"] for card in read.collections] == ["nfl-2026-week-5"]
+
+    async def test_explicit_title_precedes_a_game_membership_match(self, pg_session):
+        _, events = await _seed(pg_session)
+        read = await discovery.discover_collections(
+            pg_session, query="Week 5", event_ids=[events["wk6_a"]], limit=1
+        )
+        assert read.collections[0]["slug"] == "nfl-2026-week-5"
+
+    async def test_withdrawal_removes_a_title_match_on_the_next_serve(self, pg_session):
+        hubs, _ = await _seed(pg_session)
+        assert (
+            await discovery.discover_collections(pg_session, query="Week 5")
+        ).collections
+        await pg_session.execute(
+            text(
+                "UPDATE containers SET publication_state = 'withdrawn' WHERE id = :id"
+            ),
+            {"id": hubs["wk5"]},
+        )
+        await pg_session.commit()
+        assert not (
+            await discovery.discover_collections(pg_session, query="Week 5")
+        ).collections

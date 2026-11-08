@@ -1608,6 +1608,7 @@ export interface SearchResponse {
   futures: FuturesMarket[];
   futures_families?: FuturesFamily[]; // #993: composed topical families (additive)
   event_concepts?: SearchEventConcept[]; // #999 L2-65: tournament pages, first-class
+  collections?: FeedCollectionData[];
   teams: SearchTeam[];
   pagination: SearchPagination;
   sports: SearchSportFacet[];

@@ -21,6 +21,7 @@
  */
 
 import type { FeedCollectionData, FeedItem } from "@/lib/types";
+import type { TypeaheadSuggestion } from "@/lib/api";
 
 export interface DiscoverCollectionEntry {
   slug: string;
@@ -79,6 +80,14 @@ export function admitCollection(item: FeedItem | null | undefined): DiscoverColl
   const data: unknown = item!.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
   const card = data as FeedCollectionData;
+  if (card.slug !== canonicalSlug(card.edition)) return null;
+  return admitSearchCollection(card);
+}
+
+/** Search receives published summaries from the same stored/computed page producers. */
+export function admitSearchCollection(value: unknown): DiscoverCollectionEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const card = value as FeedCollectionData;
 
   if (card.state !== "published") return null;
   if (!isPositiveInt(card.id) || !isPositiveInt(card.revision)) return null;
@@ -86,7 +95,7 @@ export function admitCollection(item: FeedItem | null | undefined): DiscoverColl
   if (!name) return null;
 
   const slug = card.slug;
-  if (typeof slug !== "string" || slug !== canonicalSlug(card.edition)) return null;
+  if (typeof slug !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return null;
 
   const games = card.game_count;
   const markets = card.question_count;
@@ -106,6 +115,21 @@ export interface AnchoredCollection {
   item: FeedItem;
   /** Ids of the ordinary cards served after this one, in served order. */
   followers: string[];
+}
+
+export function typeaheadWithCollections(
+  suggestions: TypeaheadSuggestion[],
+  cards: unknown,
+): TypeaheadSuggestion[] {
+  const collections: TypeaheadSuggestion[] = (Array.isArray(cards) ? cards : []).flatMap((card) => {
+    const entry = admitSearchCollection(card);
+    return entry ? [{ type: "hub" as const, text: entry.name, href: entry.href }] : [];
+  });
+  const destinations = new Set(collections.map((entry) => entry.href));
+  return [
+    ...collections,
+    ...suggestions.filter((row) => !destinations.has(row.href || "")),
+  ];
 }
 
 /**

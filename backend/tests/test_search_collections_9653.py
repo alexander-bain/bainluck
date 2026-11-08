@@ -116,6 +116,14 @@ def switches_on(monkeypatch):
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
 
 
+@pytest.fixture(autouse=True)
+def stored_collection_scope(monkeypatch):
+    # Computed-set membership has its own #12090 producer tests.
+    from app.utils import roundup_containers
+
+    monkeypatch.setattr(roundup_containers, "ROUNDUP_PRODUCERS", {})
+
+
 # ---------------------------------------------------------------------------
 # Off means byte-identical
 # ---------------------------------------------------------------------------
@@ -152,16 +160,18 @@ class TestOffMeansUnchanged:
 
 
 class TestRelevance:
-    async def test_the_page_s_own_games_are_the_only_evidence(self, switches_on):
+    async def test_the_page_s_own_games_remain_membership_evidence(self, switches_on):
         session = _Session([_row()])
         await sc.attach_search_collections(session, _payload(ids=(503, 501, 502)))
         read_params = session.params[-1]
         assert read_params["event_ids"] == [501, 502, 503]
-        assert read_params["limit"] == sc.SEARCH_COLLECTIONS_CAP
+        assert read_params["limit"] == sc.container_discovery.MAX_COLLECTIONS
+        assert read_params["query_patterns"]
 
-    async def test_a_page_with_no_games_reads_nothing(self, switches_on):
+    async def test_a_page_without_a_query_or_games_reads_nothing(self, switches_on):
         session = _Session([_row()])
         body = _payload(ids=())
+        body["query"] = ""
         out = await sc.attach_search_collections(session, body)
         assert out is body and "collections" not in out
         assert session.statements == []
@@ -229,7 +239,8 @@ class TestFailOpen:
         session = _Session([_row()], fail=True)
         body = _payload()
         out = await sc.attach_search_collections(session, body)
-        assert out is body and "collections" not in out
+        assert out == {**body, "degraded": ["collections"]}
+        assert "collections" not in out
         assert session.rollbacks == 1
 
     async def test_an_overrun_read_is_cut_at_the_budget(self, switches_on):
@@ -239,7 +250,8 @@ class TestFailOpen:
         started = loop.time()
         out = await sc.attach_search_collections(session, body, budget_seconds=0.05)
         assert loop.time() - started < 1.0
-        assert out is body and session.rollbacks == 1
+        assert out == {**body, "degraded": ["collections"]}
+        assert session.rollbacks == 1
 
     async def test_the_budget_can_only_shrink_never_grow(self, switches_on):
         session = _Session([_row()], delay=5.0)

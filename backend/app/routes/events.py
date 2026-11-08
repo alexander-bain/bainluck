@@ -242,7 +242,10 @@ from app.utils.search_cache import (
     search_response_ttl_seconds,
 )
 from app.utils.participant_images import participant_images_for_event
-from app.utils.search_collections import attach_search_collections
+from app.utils.search_collections import (
+    attach_search_collections,
+    attach_typeahead_collections,
+)
 from app.utils.search_fixture_dedup import (
     collapse_duplicate_fixtures,
     is_individual_sport,
@@ -14246,6 +14249,7 @@ async def typeahead_search(
             # Only on the HIT branch: a miss falls through and is counted at the
             # other exit, so counting here as well would double every query.
             _record_trending(q)
+            _hit = await attach_typeahead_collections(db, _hit)
             return _hit
 
     # LAT-P007: start the request budget AFTER the cache read — a cache hit has
@@ -16562,7 +16566,9 @@ async def typeahead_search(
     # warmed — was never counted. See `_record_trending` for the measurement.
     _record_trending(q)
 
-    return result
+    if _force_cache_rebuild.get():
+        return result
+    return await attach_typeahead_collections(db, result)
 
 
 @router.get("/search/trending")

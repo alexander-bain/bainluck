@@ -38,7 +38,9 @@ state (the event card already carries ``served_event_status``).
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Callable, Iterable, Mapping, Optional
+from zoneinfo import ZoneInfo
 
 from app.utils.container_mlb_playoffs import MlbPostseason
 from app.utils.container_nfl import (
@@ -150,6 +152,36 @@ def container_destination(slug: str) -> dict:
     this, so every entry to one collection lands on the same page."""
     return {"kind": "container", "slug": slug, "web": f"/collections/{slug}",
             "api": f"/api/containers/{slug}"}
+
+
+def nfl_week_title(name: str, slug: str, kickoffs: Iterable) -> str:
+    """Date a week from its complete member schedule, using NFL calendar dates."""
+    edition = edition_for_slug(slug)
+    if edition is None or edition.get("kind") != EDITION_NFL_WEEK:
+        return name
+    dates = []
+    for value in kickoffs:
+        try:
+            instant = datetime.fromisoformat(value) if isinstance(value, str) else value
+            if not isinstance(instant, datetime) or instant.tzinfo is None:
+                return name
+            dates.append(instant.astimezone(ZoneInfo("America/New_York")).date())
+        except (ValueError, OverflowError):
+            return name
+    if not dates:
+        return name
+    start, end = min(dates), max(dates)
+    label = f"{start:%b} {start.day}"
+    if start.year != end.year:
+        label += f", {start.year}–{end:%b} {end.day}, {end.year}"
+    elif start.month != end.month:
+        label += f"–{end:%b} {end.day}"
+    elif start != end:
+        label += f"–{end.day}"
+    if start.year == end.year and start.year != edition["season"]:
+        label += f", {start.year}"
+    suffix = f" · {label}"
+    return name if name.endswith(suffix) else name + suffix
 
 
 def _kickoff_key(entry: dict) -> tuple:
