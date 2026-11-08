@@ -26,12 +26,19 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     let homeColorHex: String?
     let awayColorHex: String?
     let periodLabel: String?
+    /// The producer's admitted in-play projected final and its own label
+    /// ("Projected final"), live games only: both sides or neither, never
+    /// confused with the actual score above it.
+    let projectedHomeScore: Int?
+    let projectedAwayScore: Int?
+    let projectionLabel: String?
 
     private enum CodingKeys: String, CodingKey {
         case eventID, homeTeam, awayTeam, homeScore, awayScore, lifecycle
         case homeRenderedPercent, scoreObservedAt, probabilityObservedAt
         case awayRenderedPercent, homeAbbreviation, awayAbbreviation
         case homeColorHex, awayColorHex, periodLabel
+        case projectedHomeScore, projectedAwayScore, projectionLabel
     }
 
     init(from decoder: Decoder) throws {
@@ -57,6 +64,14 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         awayColorHex = Self.cleanHex((try? c.decodeIfPresent(String.self, forKey: .awayColorHex)) ?? nil)
         periodLabel = Self.cleanPeriod((try? c.decodeIfPresent(String.self, forKey: .periodLabel)) ?? nil,
                                        lifecycle: lifecycle)
+        let projection = Self.cleanProjection(
+            home: (try? c.decodeIfPresent(Int.self, forKey: .projectedHomeScore)) ?? nil,
+            away: (try? c.decodeIfPresent(Int.self, forKey: .projectedAwayScore)) ?? nil,
+            label: (try? c.decodeIfPresent(String.self, forKey: .projectionLabel)) ?? nil,
+            lifecycle: lifecycle)
+        projectedHomeScore = projection?.home
+        projectedAwayScore = projection?.away
+        projectionLabel = projection?.label
         guard eventID > 0,
               !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -79,7 +94,9 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
           scoreObservedAt: Date? = nil, probabilityObservedAt: Date? = nil,
           homeAbbreviation: String? = nil, awayAbbreviation: String? = nil,
           homeColorHex: String? = nil, awayColorHex: String? = nil,
-          periodLabel: String? = nil) {
+          periodLabel: String? = nil,
+          projectedHomeScore: Int? = nil, projectedAwayScore: Int? = nil,
+          projectionLabel: String? = nil) {
         let home = homeTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         let away = awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         guard eventID > 0, !home.isEmpty, !away.isEmpty else { return nil }
@@ -113,6 +130,11 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         self.homeColorHex = Self.cleanHex(homeColorHex)
         self.awayColorHex = Self.cleanHex(awayColorHex)
         self.periodLabel = Self.cleanPeriod(periodLabel, lifecycle: lifecycle)
+        let projection = Self.cleanProjection(home: projectedHomeScore, away: projectedAwayScore,
+                                              label: projectionLabel, lifecycle: lifecycle)
+        self.projectedHomeScore = projection?.home
+        self.projectedAwayScore = projection?.away
+        self.projectionLabel = projection?.label
     }
 
     var isTerminal: Bool { lifecycle == .final || lifecycle == .closed }
@@ -164,6 +186,15 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
               let text = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               (1...24).contains(text.count) else { return nil }
         return text
+    }
+    /// A whole projected pair with its label while the game is live; a final
+    /// has its real score and nothing projected.
+    private static func cleanProjection(home: Int?, away: Int?, label: String?,
+                                        lifecycle: Lifecycle) -> (home: Int, away: Int, label: String)? {
+        guard lifecycle == .live, let home, let away, home >= 0, away >= 0,
+              let text = label?.trimmingCharacters(in: .whitespacesAndNewlines),
+              (1...40).contains(text.count) else { return nil }
+        return (home, away, text)
     }
     private static func validProbability(_ value: Double?) -> Double? {
         value.flatMap { $0.isFinite && (0...1).contains($0) ? $0 : nil }

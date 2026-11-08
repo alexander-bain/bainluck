@@ -36,8 +36,9 @@ struct GameLiveActivityBase: Widget {
                     GameActivityStatusPill(reading: reading)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: 6) {
+                    VStack(spacing: 5) {
                         GameActivityChanceLine(reading: reading)
+                        GameActivityProjectionLine(reading: reading)
                         GameActivityFooter(reading: reading)
                     }
                     .padding(.horizontal, 8)
@@ -102,6 +103,19 @@ private struct GameActivityReading {
     /// A priced draw's one honest number: the home side's chance, always named.
     var singleChance: Int? { pair == nil && showsForecast ? snapshot.homeRenderedPercent : nil }
     var singleChanceLabel: String? { singleChance == nil ? nil : snapshot.probabilityLabel }
+    /// The page's admitted projected final, beside a live reading only.
+    var projection: (label: String, away: Int, home: Int)? {
+        guard matches, let label = snapshot.projectionLabel, let away = snapshot.projectedAwayScore,
+              let home = snapshot.projectedHomeScore else { return nil }
+        return (label, away, home)
+    }
+    /// The page's own wording: the label, then each badge glued to its number.
+    var projectionText: String? {
+        projection.map { "\($0.label): \(badge(.away))\u{00A0}\($0.away) · \(badge(.home))\u{00A0}\($0.home)" }
+    }
+    var projectionSpoken: String? {
+        projection.map { "\($0.label): \(name(.away)) \($0.away), \(name(.home)) \($0.home)" }
+    }
     func percentText(_ value: Int) -> String {
         (Double(value) / 100).formatted(.percent.precision(.fractionLength(0)))
     }
@@ -276,14 +290,15 @@ private struct GameActivityLockScreenView: View {
     let reading: GameActivityReading
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
+        VStack(alignment: .leading, spacing: 6) {
+            // The state and the time the numbers were observed share one row,
+            // so the card keeps room for the projection inside the Lock
+            // Screen's 160-point height.
+            HStack(alignment: .center, spacing: 8) {
                 GameActivityStatusPill(reading: reading)
-                Spacer(minLength: 8)
-                Text("Bain Luck")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
+                Spacer(minLength: 4)
+                GameActivityFooter(reading: reading, alignment: .trailing)
+                    .layoutPriority(-1)
             }
             if reading.matches {
                 VStack(spacing: 4) {
@@ -299,12 +314,12 @@ private struct GameActivityLockScreenView: View {
                         .font(.subheadline.weight(.semibold))
                         .monospacedDigit()
                 }
+                GameActivityProjectionLine(reading: reading)
             } else {
                 Text("Game reading unavailable").font(.headline)
             }
-            GameActivityFooter(reading: reading)
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .widgetURL(GameContinuation.url(eventID: reading.eventID))
     }
@@ -395,14 +410,35 @@ private struct GameActivitySplitBar: View {
 @available(iOS 17.0, *)
 private struct GameActivityFooter: View {
     let reading: GameActivityReading
+    var alignment: Alignment = .leading
 
     var body: some View {
         reading.footer
             .font(.caption2)
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .minimumScaleFactor(0.75)
+            .frame(maxWidth: .infinity, alignment: alignment)
+    }
+}
+
+/// The projected final, labeled as the page labels it and kept a step below
+/// the actual score so the two are never read as one another.
+@available(iOS 17.0, *)
+private struct GameActivityProjectionLine: View {
+    let reading: GameActivityReading
+
+    var body: some View {
+        if let text = reading.projectionText {
+            Text(text)
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(reading.projectionSpoken ?? text)
+        }
     }
 }
 
