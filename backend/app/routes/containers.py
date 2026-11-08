@@ -292,7 +292,8 @@ async def _assemble_event_cards(
         folded_map = await folded_card_numbers_batch(db, events)
     else:
         folded_map = await folded_card_numbers_batch(db, events)
-        gei_percentiles, team_lookup = await references
+        with _time_stage("reference_wait"):
+            gei_percentiles, team_lookup = await references
 
     cards: dict = {}
     failed: dict = {}

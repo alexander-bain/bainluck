@@ -74,7 +74,7 @@ async def test_opt_in_cold_and_hit_headers_keep_the_normal_bytes():
 
     assert cold.headers["X-Feed-Cache"] == "miss"
     assert {
-        "published_read", "event_cards", "reference_checkout", "reference_reads",
+        "published_read", "event_cards", "reference_checkout", "reference_reads", "reference_wait",
         "linked_market_lookup", "market_cards", "render", "cache_store", "cache_lookup", "total",
     } <= cold_fields.keys()
     assert cold_fields["basis"] == "overlapping_wall_ms"
@@ -174,6 +174,29 @@ async def test_reference_checkout_is_measured_before_its_readers(monkeypatch):
     operations.clear()
     await route._read_event_card_references(["team"])
     assert operations == ["percentiles", "teams"]
+
+
+async def test_reference_wait_measures_the_part_after_primary_reads(monkeypatch):
+    clock = [1.0]
+    monkeypatch.setattr(route, "perf_counter", lambda: clock[0])
+    db = session()
+
+    async def references():
+        await asyncio.sleep(0)
+        clock[0] += 0.025
+        return {}, {}
+
+    timings = {}
+    token = route._stage_timings.set(timings)
+    try:
+        cards, _ = await route._assemble_event_cards(
+            db, db.events, references=asyncio.create_task(references())
+        )
+    finally:
+        route._stage_timings.reset(token)
+
+    assert cards
+    assert timings["reference_wait"] == pytest.approx(25)
 
 
 @pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
