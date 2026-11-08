@@ -483,7 +483,9 @@ struct EventDetailView: View {
                     ProgressView()
                 }
             }
-        } else if let error = vm.error, (previewEventForTest12278 ?? vm.event) == nil {
+        } else if let event = previewEventForTest12278 ?? vm.event {
+            return loadedEventContentView12278(event)
+        } else if let error = vm.error {
             return stackBoundary12278 {
                 ContentUnavailableView(
                     "Error",
@@ -491,12 +493,19 @@ struct EventDetailView: View {
                     description: Text(error)
                 )
             }
-        } else if let event = previewEventForTest12278 ?? vm.event {
-            // #10090 — the hero may show a provisional blend; with
-            // none held this is `event` itself. The chart projects the
-            // same one (`vm.chartFrames`); every other section keeps
-            // committed truth.
-            let heroBlock = stackBoundary12278 {
+        }
+        return stackBoundary12278 {
+            EmptyView()
+        }
+    }
+
+    @inline(never)
+    private func loadedEventContentView12278(_ event: EventDetail) -> AnyView {
+        // #10090 — the hero may show a provisional blend; with
+        // none held this is `event` itself. The chart projects the
+        // same one (`vm.chartFrames`); every other section keeps
+        // committed truth.
+        let heroBlock = stackBoundary12278 {
                 heroSection(vm.headline(event))
                     .background(GeometryReader { proxy in
                         Color.clear.preference(
@@ -1039,10 +1048,6 @@ struct EventDetailView: View {
                     .sheet(isPresented: nflReaderPresented) { nflReader(event).frame(minWidth: 420, minHeight: 640) }
                     #endif
             }
-        }
-        return stackBoundary12278 {
-            EmptyView()
-        }
     }
 
     // MARK: - Team Colors
