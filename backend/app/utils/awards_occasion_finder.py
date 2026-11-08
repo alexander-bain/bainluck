@@ -31,6 +31,7 @@ class OccasionEvent:
     event_id: str
     label: str
     evidence: tuple[str, ...]
+    title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,14 @@ def find_awards_occasions(events: Iterable[Mapping[str, Any]]) -> OccasionDiscov
             reason = "ceremony_identity_unknown" if not labels else "ambiguous_ceremony"
             refused.add((provider, event_id, reason))
             continue
+        titles = {
+            event["title"].strip()
+            for event in observations
+            if isinstance(event.get("title"), str) and event["title"].strip()
+        }
+        if len(titles) > 1:
+            refused.add((provider, event_id, "conflicting_event_title"))
+            continue
         label = labels[0]
         quotes = tuple(
             sorted(
@@ -132,7 +141,9 @@ def find_awards_occasions(events: Iterable[Mapping[str, Any]]) -> OccasionDiscov
                 }
             )
         )
-        grouped[label].append(OccasionEvent(provider, event_id, label, quotes))
+        grouped[label].append(
+            OccasionEvent(provider, event_id, label, quotes, next(iter(titles), None))
+        )
     return OccasionDiscovery(
         occasions=tuple(
             AwardsOccasion(label, tuple(sorted(members)))
@@ -142,10 +153,8 @@ def find_awards_occasions(events: Iterable[Mapping[str, Any]]) -> OccasionDiscov
     )
 
 
-def select_awards_occasion(
-    selector: Mapping[str, str], events: Iterable[Mapping[str, Any]]
-) -> AwardsOccasion | None:
-    """Re-run the proposed definition on current venue data, admitting new categories."""
+def validate_awards_selector(selector: Mapping[str, str]) -> None:
+    """Keep one validation contract for the finder and its presentations."""
     if (
         set(selector) != {"evidence", "label"}
         or selector.get("evidence") != "primary_rules_ordinal_awards"
@@ -155,6 +164,13 @@ def select_awards_occasion(
         selector["label"]
     ):
         raise ValueError("An explicit venue ceremony label is required")
+
+
+def select_awards_occasion(
+    selector: Mapping[str, str], events: Iterable[Mapping[str, Any]]
+) -> AwardsOccasion | None:
+    """Re-run the proposed definition on current venue data, admitting new categories."""
+    validate_awards_selector(selector)
     return next(
         (
             occasion

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,12 +22,12 @@ from app.services.awards_occasion_source import (
 from app.utils.awards_occasion_finder import OccasionDiscovery, find_awards_occasions
 
 
-async def read_live() -> OccasionDiscovery:
+@asynccontextmanager
+async def read_only_session():
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool
 
     from app.services.database import DATABASE_URL, build_connect_args
-    from app.services.kalshi_api import KalshiAPIService
 
     connect_args = build_connect_args(
         DATABASE_URL,
@@ -41,15 +42,51 @@ async def read_live() -> OccasionDiscovery:
         hide_parameters=True,
     )
     sessions = async_sessionmaker(engine, expire_on_commit=False)
-    service = KalshiAPIService()
     try:
         async with sessions() as db:
+            yield db
+    finally:
+        await engine.dispose()
+
+
+async def read_live() -> OccasionDiscovery:
+    from app.services.kalshi_api import KalshiAPIService
+
+    service = KalshiAPIService()
+    try:
+        async with read_only_session() as db:
             return await read_kalshi_awards_occasions(db, service)
     finally:
-        try:
-            await service.close()
-        finally:
-            await engine.dispose()
+        await service.close()
+
+
+async def preview_ceremonies(discovery: OccasionDiscovery) -> list[dict]:
+    from app.utils.awards_ceremony import build_awards_ceremony_producer
+    from app.utils.roundup_containers import (
+        RoundupRefusal,
+        compose_roundup_container,
+        compose_roundup_feed_item,
+    )
+
+    async def load_occasions(db):
+        return discovery
+
+    previews = []
+    async with read_only_session() as db:
+        for occasion in discovery.occasions:
+            producer = build_awards_ceremony_producer(
+                occasion.selector,
+                load_occasions=load_occasions,
+            )
+            result = await producer.produce(db)
+            preview = {"selector": occasion.selector, "stage": "proposed_preview"}
+            if isinstance(result, RoundupRefusal):
+                preview["refused"] = result.reasons
+            else:
+                preview["feed_item"] = compose_roundup_feed_item(producer, result)
+                preview["container"] = compose_roundup_container(producer, result)
+            previews.append(preview)
+    return previews
 
 
 def main() -> None:
@@ -57,6 +94,11 @@ def main() -> None:
     inputs = parser.add_mutually_exclusive_group(required=True)
     inputs.add_argument("--source-file", type=Path, nargs="+")
     inputs.add_argument("--live", action="store_true")
+    parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Read stored market cards and include proposed card/page payloads.",
+    )
     args = parser.parse_args()
 
     print(json.dumps({"model_cost_usd": 0, "state": "proposed"}), flush=True)
@@ -71,22 +113,20 @@ def main() -> None:
             events.append(kalshi_occasion_event(payload, ticker))
         discovery = find_awards_occasions(events)
         scope = "saved_venue_responses"
-    print(
-        json.dumps(
-            {
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "source_scope": scope,
-                "kind": "awards_ceremony",
-                "model_cost_usd": 0,
-                "occasions": [
-                    {**asdict(occasion), "selector": occasion.selector}
-                    for occasion in discovery.occasions
-                ],
-                "refused": discovery.refused,
-            },
-            sort_keys=True,
-        )
-    )
+    report = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source_scope": scope,
+        "kind": "awards_ceremony",
+        "model_cost_usd": 0,
+        "occasions": [
+            {**asdict(occasion), "selector": occasion.selector}
+            for occasion in discovery.occasions
+        ],
+        "refused": discovery.refused,
+    }
+    if args.preview:
+        report["previews"] = asyncio.run(preview_ceremonies(discovery))
+    print(json.dumps(report, sort_keys=True))
 
 
 if __name__ == "__main__":
