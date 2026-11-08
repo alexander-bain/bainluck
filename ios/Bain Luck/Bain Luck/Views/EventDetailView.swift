@@ -2566,6 +2566,7 @@ struct EventDetailView: View {
 
     /// #11666 Step E6b — NHL story cards (`icehockey_nhl`) from THIS event's
     /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    @inline(never)
     private func nhlAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
         guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
         let hasScore = EventDetailView.showsScore(
@@ -2588,6 +2589,7 @@ struct EventDetailView: View {
 
     /// #11666 Step E6c — Soccer story cards (`soccer_*`) from THIS event's
     /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    @inline(never)
     private func soccerAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
         guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
         let hasScore = EventDetailView.showsScore(
@@ -2604,12 +2606,15 @@ struct EventDetailView: View {
             homeScore: hasScore ? event.homeScore : nil,
             awayScore: hasScore ? event.awayScore : nil,
             gameMarkets: gm,
+            boxScoreData: event.boxScoreData,
+            scoreHistory: vm.history?.eventId == event.id ? vm.history?.scoreHistory : nil,
             now: displayNow()
         )
     }
 
     /// #11666 Step E6d — Tennis story cards (`tennis_*`) from THIS event's
     /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    @inline(never)
     private func tennisAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
         guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
         let hasScore = EventDetailView.showsScore(
