@@ -3756,3 +3756,37 @@ class ClientTimingEvent(Base):
         # A retention sweep walks the window alone.
         Index("ix_client_timing_created_at", "created_at"),
     )
+
+
+class OpenFuturesOutcome(Base):
+    """#4437 Decide 89-A: the outcome NAMES of open markets, and nothing else.
+
+    The dropdown's and Search's outcome-name lookups ran a pg_trgm match over
+    ``futures_outcomes`` — 9.4 GB, 8.8 M rows, about 95% on closed markets — so a
+    common fragment like "chi" read ~67 k matching outcomes to keep the ~1,200
+    open markets among them (Nov 7, 8.5 s at best). This copy holds only open
+    markets' outcomes (~262 k rows), and the same match runs over it instead.
+
+    A SECOND COPY, NEVER THE AUTHORITY. ``app.tasks.open_futures_outcomes`` keeps
+    it; readers use it only while that task's state says a full pass is recent
+    (``app.utils.open_futures_outcomes``), read outcomes newer than its watermark
+    from ``futures_outcomes`` directly, and re-check every market against
+    ``futures_markets`` as before. Stale, empty or gone, they fall back to the
+    original lookup.
+    """
+
+    __tablename__ = "open_futures_outcomes"
+
+    outcome_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    market_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+
+    __table_args__ = (
+        Index("ix_open_futures_outcomes_market_id", "market_id"),
+        Index(
+            "ix_open_futures_outcomes_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
+    )

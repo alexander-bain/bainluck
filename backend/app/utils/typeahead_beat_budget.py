@@ -2139,7 +2139,16 @@ def free_background_slots(
 #: background slot for minutes once a week, inside an 840 s soft limit. The
 #: census RUN over the tree rebased onto `f3798ba3b0` (C-1 on master) printed
 #: `explicit 103 implicit 39 total 142`.
-BACKGROUND_BEAT_COUNT = 142
+#: 🔴 RE-DERIVED at speed (2026-11-08, #4437 Decide 89-A): 142 → 143, explicit
+#: 103 → 104, fall-through UNMOVED at 39. `refresh-open-futures-outcomes`
+#: (`crontab(minute="2-59/5")`) names `background` explicitly. Cost: twelve fires
+#: an hour, each ~5 s of database time (one 1/12 slice of open markets' outcomes,
+#: ~22 k rows in 2.4 s measured 2026-11-08; a delta by primary-key range; one
+#: anti-join over the ~262 k-row copy), about 60 s of a slot an hour. Its
+#: lateness is safe by construction: readers stop using the copy 15 minutes
+#: after its last pass. The census RUN over the tree branched from `dfb64a5dd5`
+#: printed `explicit 104 implicit 39 total 143`.
+BACKGROUND_BEAT_COUNT = 143
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

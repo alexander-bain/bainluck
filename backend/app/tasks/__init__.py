@@ -7126,6 +7126,29 @@ def warm_typeahead_gold_set(self):
     return summary
 
 
+@celery_app.task(
+    bind=True, soft_time_limit=150, time_limit=180, name="app.tasks.refresh_open_futures_outcomes"
+)
+def refresh_open_futures_outcomes(self, budget_seconds: int = None):
+    """#4437 Decide 89-A: one maintenance pass over `open_futures_outcomes`.
+
+    See `app.tasks.open_futures_outcomes`. The first fill (all twelve slices,
+    ~30 s) runs inside an ordinary pass; a pass cut short by its budget returns
+    `partial` and resumes at its cursor.
+    """
+    from app.tasks.open_futures_outcomes import (
+        PASS_BUDGET_SECONDS,
+        _refresh_open_futures_outcomes,
+    )
+
+    return _tracked_run(
+        "refresh_open_futures_outcomes",
+        _refresh_open_futures_outcomes(
+            budget_seconds=PASS_BUDGET_SECONDS if budget_seconds is None else int(budget_seconds)
+        ),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=140, name="app.tasks.warm_search_head")
 def warm_search_head(self, head_size: int = None):
     """Keep the head of the `/search` distribution inside its response cache.
@@ -8730,6 +8753,16 @@ celery_app.conf.beat_schedule = {
         # the assigned migration slot.
         "schedule": crontab(minute="23,53"),
         "options": {"queue": "heavy"},
+    },
+    "refresh-open-futures-outcomes": {
+        "task": "app.tasks.refresh_open_futures_outcomes",
+        # #4437 Decide 89-A: every 5 minutes at :02/:07/..., clear of the :00 and
+        # :15 tops of the hour. A pass that never comes leaves the state to
+        # expire after 15 minutes, and readers fall back to `futures_outcomes`;
+        # so a late or skipped fire costs speed, never correctness. ~5 s of
+        # database time a pass (one 1/12 slice, one delta, one anti-join).
+        "schedule": crontab(minute="2-59/5"),
+        "options": {"queue": "background"},
     },
     "warm-search-head": {
         "task": "app.tasks.warm_search_head",
