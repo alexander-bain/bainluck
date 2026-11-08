@@ -2,6 +2,11 @@
   "slug": "roundup-closest-games-tonight",
   "membership": "time-boxed-tonight",
   "kind": "roundup",
+  "relations": [
+    "same_window",
+    "same_measure"
+  ],
+  "level": "member",
   "name": "The closest games tonight",
   "category": "sports",
   "tag": "TONIGHT",

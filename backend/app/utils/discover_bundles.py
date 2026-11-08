@@ -3175,6 +3175,8 @@ def _make_nfl_division_roundup_producer() -> Any:
             section_title=NFL_DIVISION_ROUNDUP_SECTION_TITLE,
             footer=NFL_DIVISION_ROUNDUP_FOOTER,
             produce=produce_nfl_division_roundup,
+            relations=("same_measure", "same_window"),
+            level="member",
             tag="NFL",
             story_key=NFL_DIVISION_ROUNDUP_ID,
             enabled=nfl_division_roundup_enabled,

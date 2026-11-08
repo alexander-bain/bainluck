@@ -1326,6 +1326,8 @@ def build_same_deadline_board_producer(
         footer=footer,
         produce=_produce,
         membership=str(definition.get("membership") or "computed-produced"),
+        relations=definition.get("relations"),
+        level=definition.get("level"),
         rule=dict(rule),
         tag=tag,
         kicker=kicker,

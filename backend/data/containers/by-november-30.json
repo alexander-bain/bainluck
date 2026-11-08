@@ -2,6 +2,11 @@
   "slug": "by-november-30",
   "membership": "computed-produced",
   "kind": "roundup",
+  "relations": [
+    "same_window",
+    "by_when"
+  ],
+  "level": "member",
   "kicker": "SAME DEADLINE",
   "name": "By November 30",
   "category": "cross-topic",
