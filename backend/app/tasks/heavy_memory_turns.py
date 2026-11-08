@@ -107,7 +107,8 @@ def peak_rss_mb() -> float | None:
                 if line.startswith(b"VmHWM:"):
                     return round(int(line.split()[1]) / 1024, 1)
     except (OSError, IndexError, ValueError):
-        pass
+        # No /proc (macOS) or an unexpected line: unmeasured, never a small number.
+        return None
     return None
 
 
