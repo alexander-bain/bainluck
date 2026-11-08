@@ -63,15 +63,16 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
         XCTAssertEqual(away.kind, .current)
         XCTAssertTrue(home.text.contains("current win chance"), home.text)
         XCTAssertTrue(home.text.contains("Starts"), home.text)
-        // #2085: the two sides are one pair. Independently rounded they print 35 + 66 = 101.
-        let shown = OpeningLineHero.resolve(e.currentOdds!, for: e)
-        let pair = EventDetailView.heroPairPercents(shown, away: 0.655, home: 0.345)
-        XCTAssertEqual(home.figure, formatProbability(0.345, renderedPercent: pair.home))
-        XCTAssertEqual(away.figure, formatProbability(0.655, renderedPercent: pair.away))
-        XCTAssertEqual(percent(home.figure) + percent(away.figure), 100)
+        // #2085: the two sides are one pair, and #10090 prints it in tenths
+        // that sum to 100.0, exactly as the hero does.
+        XCTAssertEqual(home.figure, "34.5%")
+        XCTAssertEqual(away.figure, "65.5%")
+        XCTAssertEqual(tenths(home.figure) + tenths(away.figure), 1000)
     }
 
-    func testServedPercentsAreUsedBothOrNeither() throws {
+    /// #10090 (Alex item 39): the hero prints tenths and ignores the served
+    /// integers, so Siri does too. It said "40%" beside a hero printing 40.5%.
+    func testTheAnswerSpeaksTheHerosTenthsNotTheServedIntegers() throws {
         let e = try event("""
         "status":"live","commence_time":"\(pastStart)","home_score":2,"away_score":3,
         "current_odds":{"home_probability":0.405,"away_probability":0.595,
@@ -79,9 +80,35 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
         "hero_probability_observed_at":"\(freshStamp)"
         """)
         let home = ProbabilityAnswer10873.game(e, side: .home, now: now)
-        XCTAssertEqual(home.figure, "40%")
+        XCTAssertEqual(home.figure, "40.5%")
+        XCTAssertEqual(ProbabilityAnswer10873.game(e, side: .away, now: now).figure, "59.5%")
         XCTAssertEqual(home.kind, .current)
+        XCTAssertTrue(home.text.contains("New York Yankees 40.5%, current win chance"), home.text)
         XCTAssertTrue(home.text.contains("Live: Boston Red Sox 3, New York Yankees 2"), home.text)
+    }
+
+    /// Every pair the hero can print, Siri says the same string: the half-tenth
+    /// edge, a pair that doesn't sum to 1, both marker bands, and a lone
+    /// draw-priced home side.
+    func testEveryFigureIsTheStringTheHeroPrints() throws {
+        let rows: [(home: Double, away: Double, sport: String)] = [
+            (0.3675, 0.6325, "baseball_mlb"), (0.2253, 0.7747, "americanfootball_nfl"),
+            (0.52, 0.5, "basketball_nba"), (0.004, 0.996, "baseball_mlb"),
+            (0.996, 0.004, "baseball_mlb"), (0.41, 0.59, "soccer_epl"),
+        ]
+        for row in rows {
+            let e = try event("""
+            "status":"scheduled","commence_time":"\(futureStart)","sport":"\(row.sport)",
+            "current_odds":{"home_probability":\(row.home),"away_probability":\(row.away)},
+            "hero_probability_observed_at":"\(freshStamp)"
+            """)
+            let shown = OpeningLineHero.resolve(e.currentOdds!, for: e)
+            let pair = try XCTUnwrap(DrawPricedWinner.printablePair(
+                away: shown.awayProbability, home: shown.homeProbability, sport: e.sport))
+            let hero = EventHeadlineTenths10090.pair(home: pair.home, away: pair.away)
+            XCTAssertEqual(ProbabilityAnswer10873.game(e, side: .home, now: now).figure, hero.home, "\(row)")
+            XCTAssertEqual(ProbabilityAnswer10873.game(e, side: .away, now: now).figure, hero.away, "\(row)")
+        }
     }
 
     func testAStaleQuoteIsTheLastRecordedChanceNeverTheCurrentOne() throws {
@@ -116,7 +143,7 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
         """)
         let answer = ProbabilityAnswer10873.game(e, side: .home, now: now)
         XCTAssertEqual(answer.kind, .openingLine)
-        XCTAssertEqual(answer.figure, "60%")
+        XCTAssertEqual(answer.figure, "60.0%")
         XCTAssertTrue(answer.text.contains("opening line"), answer.text)
     }
 
@@ -130,9 +157,9 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
         let away = ProbabilityAnswer10873.game(e, side: .away, now: now)
         XCTAssertEqual(away.kind, .unavailable)
         XCTAssertNil(away.figure)
-        XCTAssertFalse(away.text.contains("48%"), away.text)
+        XCTAssertFalse(away.text.contains("48"), away.text)
         let home = ProbabilityAnswer10873.game(e, side: .home, now: now)
-        XCTAssertEqual(home.figure, "52%")
+        XCTAssertEqual(home.figure, "52.0%")
         XCTAssertEqual(home.kind, .current)
     }
 
@@ -552,7 +579,11 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
         }
     }
 
-    private func percent(_ figure: String?) -> Int {
-        Int(figure?.trimmingCharacters(in: CharacterSet(charactersIn: "%<>")) ?? "") ?? -1
+    /// "34.5%" → 345; anything else → -1, so a marker or a whole number can't sum to 1000.
+    private func tenths(_ figure: String?) -> Int {
+        let parts = (figure ?? "").dropLast().split(separator: ".")
+        guard figure?.hasSuffix("%") == true, parts.count == 2, parts[1].count == 1,
+              let whole = Int(parts[0]), let tenth = Int(parts[1]) else { return -1 }
+        return whole * 10 + tenth
     }
 }

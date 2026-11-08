@@ -6,8 +6,8 @@ import Foundation
 /// Nothing here re-derives a number. A game answer walks the event hero's own
 /// branches in the hero's own order (`EventDetailView`'s centre column):
 /// finished → venue-settled → the price pair. The pair comes from
-/// `OpeningLineHero` + `DrawPricedWinner.printablePair`, its integers from
-/// `EventDetailView.heroPairPercents`, and whether it is CURRENT or LAST
+/// `OpeningLineHero` + `DrawPricedWinner.printablePair`, its printed tenths
+/// from `EventHeadlineTenths10090.pair` (#10090), and whether it is CURRENT or LAST
 /// RECORDED from `EventHeadlinePhase9483` on the quote's own clock. A market
 /// answer reads `FuturesDetailRowValue` (Won / Lost / price) and
 /// `futuresDetailRenderedPercents`, the market page's row value and integers.
@@ -136,25 +136,23 @@ extension ProbabilityAnswer10873 {
             return unavailableGame(subject: subject, team: team, status: stopped)
         }
 
+        // #10090 (Alex item 39): the hero prints the pair in tenths, so the
+        // answer speaks the hero's own strings. Whole numbers here said "23%"
+        // beside a hero printing 22.5% (Patriots v Packers, Nov 8).
+        let printed = EventHeadlineTenths10090.pair(home: pair.home, away: pair.away)
         let figure: String
         switch side {
         case .home:
-            if let away = pair.away {
-                let percents = EventDetailView.heroPairPercents(shown, away: away, home: pair.home)
-                figure = formatProbability(pair.home, renderedPercent: percents.home)
-            } else {
-                // Draw-priced: the lone home number, rounded alone (#5271).
-                figure = formatProbability(pair.home)
-            }
+            // Draw-priced: the lone home number, un-normalised, as the hero prints it (#5271).
+            figure = printed.home
         case .away:
-            guard let away = pair.away else {
+            guard let away = printed.away else {
                 // #5271: the slot is withheld on the detail, so it is here.
                 return Self(kind: .unavailable,
                             text: joined(stopped, "Bain Luck doesn't show a separate chance for \(team) in \(subject). It shows \(event.homeTeam)'s chance only."),
                             figure: nil)
             }
-            let percents = EventDetailView.heroPairPercents(shown, away: away, home: pair.home)
-            figure = formatProbability(away, renderedPercent: percents.away)
+            figure = away
         }
 
         if shown.isOpeningLine {
