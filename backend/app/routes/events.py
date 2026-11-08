@@ -40292,6 +40292,14 @@ async def _repair_search_card_club_names(
 #: venue's prices) when less than this is left of the /search deadline.
 _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S = 3.0
 
+#: #12335 follow-up: the WALL bound on every composition one search runs, all
+#: markets together. Measured on production 2026-11-08 12:2x AM PT, the page's
+#: own `?representation=verified_title` read: 16.1 s cold, then 3.0, 1.2, 1.1 s
+#: — the resolver has no timeout of its own, so without this a cache-miss search
+#: showing the NFL title card waited for the whole tail. Past it the card keeps
+#: its own venue's prices (the card before #12335), never an error.
+_SEARCH_VERIFIED_TITLE_BUDGET_S = 1.0
+
 
 async def _search_verified_titles(db, markets, deadline: float | None) -> dict:
     """``{market id: Composition}`` for the title questions among ``markets``.
@@ -40313,6 +40321,12 @@ async def _search_verified_titles(db, markets, deadline: float | None) -> dict:
     connection, where a checkout would wait on the reader's time, and a request
     with less than :data:`_SEARCH_VERIFIED_TITLE_MIN_REMAINING_S` left. Each of
     those keeps the card's own prices — the card before #12335, never an error.
+
+    BOUNDED: every composition together gets :data:`_SEARCH_VERIFIED_TITLE_BUDGET_S`
+    of wall time (less if the deadline floor is nearer). A composition still
+    running at the bound is cancelled and its session's connection INVALIDATED,
+    not returned to the pool — a cancelled statement can leave it mid-protocol —
+    and no further market is started.
     """
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
@@ -40333,16 +40347,31 @@ async def _search_verified_titles(db, markets, deadline: float | None) -> dict:
             return {}
     except Exception:  # noqa: BLE001 — a pool without counters keeps the cards as they are
         return {}
+    import asyncio
+
     maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     out: dict = {}
+    budget_ends = time.monotonic() + _SEARCH_VERIFIED_TITLE_BUDGET_S
+    if deadline is not None:
+        budget_ends = min(budget_ends, deadline - _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S)
     async with maker() as side:
         for m in wanted:
-            if (
-                deadline is not None
-                and deadline - time.monotonic() < _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S
-            ):
+            left = budget_ends - time.monotonic()
+            if left <= 0:
                 break
-            verdict = await _resolve_verified_title(side, m)
+            try:
+                verdict = await asyncio.wait_for(_resolve_verified_title(side, m), timeout=left)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "search verified-title composition for market %s passed its "
+                    "%.1fs bound; the card keeps its own prices", m.id,
+                    _SEARCH_VERIFIED_TITLE_BUDGET_S,
+                )
+                try:
+                    await side.invalidate()
+                except Exception:  # noqa: BLE001 — the card already has its answer
+                    pass
+                break
             if isinstance(verdict, Composition):
                 out[m.id] = verdict
             else:
