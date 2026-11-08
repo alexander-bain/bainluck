@@ -29,7 +29,7 @@
  *
  * Provisional `market_preview` moves are not shown here yet.
  */
-import type { FeedFuturesData, FuturesMarket } from '@/lib/types';
+import type { FeedFuturesData, FuturesFamily, FuturesMarket } from '@/lib/types';
 import { marketResolved, type DiscoverPriceCards } from '@/lib/discover/priceRefresh';
 
 /** One adopted leg: its price (null = withheld by the server) and revision. */
@@ -113,4 +113,27 @@ export function patchSearchFutures(market: FuturesMarket, book: SearchPriceBook)
   const all = patchRows(market.outcomes);
   if (top === market.top_outcomes && all === market.outcomes) return market;
   return { ...market, top_outcomes: top, outcomes: all };
+}
+
+/** Every market a search answer draws: the flat cards and each family's rows. */
+export function searchAnswerMarkets(futures: FuturesMarket[], families: FuturesFamily[]): FuturesMarket[] {
+  return [...futures, ...families.flatMap((f) => [f.headline, ...f.members])];
+}
+
+/**
+ * The families with their headline and member rows re-priced. Returns
+ * `families` itself, and each unchanged family itself, when nothing moved.
+ */
+export function patchSearchFamilies(
+  families: FuturesFamily[], patch: (market: FuturesMarket) => FuturesMarket,
+): FuturesFamily[] {
+  let changed = false;
+  const next = families.map((family) => {
+    const headline = patch(family.headline);
+    const members = family.members.map(patch);
+    if (headline === family.headline && members.every((m, i) => m === family.members[i])) return family;
+    changed = true;
+    return { ...family, headline, members };
+  });
+  return changed ? next : families;
 }

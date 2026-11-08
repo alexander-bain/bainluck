@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchDiscoverPriceCards } from '@/lib/api';
 import { createPriceDelivery } from '@/lib/discover/priceDelivery';
 import type { FeedItem, FuturesMarket } from '@/lib/types';
@@ -16,12 +16,21 @@ import { useMarketStream } from './useMarketStream';
  * The same dispatcher Discover uses (`createPriceDelivery`: one read in flight,
  * 50 ids a batch, a 2 s floor between reads, 429 back-off, a 60 s recovery read)
  * drives `/api/feed/price-cards`; `/api/markets/stream` tells it when to read.
- * Adoption and patching are `lib/searchFuturesStream`'s. Returns `futures`
- * itself until something is adopted.
+ * Adoption and patching are `lib/searchFuturesStream`'s.
+ *
+ * `futures` is every market the page draws, families included; an id may
+ * appear more than once (a family's headline can carry different rows than the
+ * flat card). The stream subscribes each id once, and the returned `patch`
+ * re-prices each OCCURRENCE by its own rows. `patch` returns its argument
+ * itself until something is adopted for that market. Pass a memoised array:
+ * a new array is a new search answer and resets the book.
  */
-export function useSearchFuturesStream(futures: FuturesMarket[]): FuturesMarket[] {
+export function useSearchFuturesStream(futures: FuturesMarket[]): (market: FuturesMarket) => FuturesMarket {
   const [book, setBook] = useState<SearchPriceBook>(() => new Map());
-  const streamed = useMemo(() => futures.filter(searchFuturesStreamable), [futures]);
+  const streamed = useMemo(() => {
+    const seen = new Set<number>();
+    return futures.filter((m) => searchFuturesStreamable(m) && !seen.has(m.id) && seen.add(m.id));
+  }, [futures]);
   const streamedRef = useRef(streamed);
   streamedRef.current = streamed;
   const futuresRef = useRef(futures);
@@ -73,9 +82,5 @@ export function useSearchFuturesStream(futures: FuturesMarket[]): FuturesMarket[
     onInvalidate: () => delivery.current?.invalidate(),
   });
 
-  return useMemo(() => {
-    if (!book.size) return futures;
-    const next = futures.map((m) => patchSearchFutures(m, book));
-    return next.every((m, i) => m === futures[i]) ? futures : next;
-  }, [futures, book]);
+  return useCallback((market: FuturesMarket) => (book.size ? patchSearchFutures(market, book) : market), [book]);
 }
