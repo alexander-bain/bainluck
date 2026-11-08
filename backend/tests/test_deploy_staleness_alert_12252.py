@@ -139,3 +139,58 @@ def test_the_rule_is_cis_own_script_on_real_commits():
     assert alert._release_required(f"{frontend_only}^", frontend_only) is False
     assert alert._release_required(f"{backend}^", backend) is True
     assert alert._release_required("0" * 40, backend) is True  # an unusable base fails toward releasing
+
+
+# --- Fable, #12328: a recovered episode closes even when master's tip is frontend-only ----------
+
+def _frontend_only_reading():
+    return alert.assess("h", _compare(_c("fe", "2026-11-07T12:00:00Z", "h")), DONE, now=NOW,
+                        needs_release=lambda before, after: False)
+
+
+def test_an_open_stale_issue_closes_when_only_frontend_landings_remain(monkeypatch):
+    import app.tasks.sentinel_filing as rail
+
+    calls = []
+    monkeypatch.setattr(alert, "in_hours", lambda now: True)
+    monkeypatch.setattr(alert, "read", lambda token, now: _frontend_only_reading())
+    monkeypatch.setattr(alert, "open_stale_issue", lambda token: True)
+    monkeypatch.setattr(rail, "reconcile_issue", lambda **kw: calls.append(kw) or {"action": "resolved"})
+    out = Path(__import__("tempfile").mkdtemp()) / "out"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    assert alert.main(["--plan"]) == 0
+    assert "act=true" in out.read_text()
+    assert alert.main([]) == 0
+    assert len(calls) == 1 and calls[0]["red"] is False
+
+
+def test_a_caught_up_reading_with_no_issue_open_does_nothing(monkeypatch):
+    monkeypatch.setattr(alert, "in_hours", lambda now: True)
+    monkeypatch.setattr(alert, "read", lambda token, now: _frontend_only_reading())
+    monkeypatch.setattr(alert, "open_stale_issue", lambda token: False)
+    out = Path(__import__("tempfile").mkdtemp()) / "out"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    alert.main(["--plan"])
+    assert "act=false" in out.read_text()
+
+
+def test_the_open_issue_read_pages_past_100(monkeypatch):
+    marker = f"{alert.MARKER_KEY}:{alert.FINGERPRINT}"
+    pages = {1: [{"body": "x"}] * 100, 2: [{"body": "x"}] * 100, 3: [{"body": f"... {marker} ..."}]}
+    seen = []
+
+    def fake_get(url, token=None):
+        page = int(url.rsplit("page=", 1)[1])
+        seen.append(page)
+        return pages.get(page, [])
+
+    monkeypatch.setattr(alert, "_get", fake_get)
+    assert alert.open_stale_issue("t") is True and seen == [1, 2, 3]
+    pages[3] = [{"body": "x"}]
+    seen.clear()
+    assert alert.open_stale_issue("t") is False and seen == [1, 2, 3]
+
+
+def test_a_stale_comment_keys_its_cadence_on_the_reading_not_the_hour():
+    src = (ROOT / "backend" / "scripts" / "deploy_staleness_alert.py").read_text()
+    assert "red_digest_basis=f\"{a['health']}|{a['master']}|{run.get('id')}|{run.get('conclusion')}\"" in src

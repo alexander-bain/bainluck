@@ -39,7 +39,20 @@ jobs:
       run:
         working-directory: backend
     steps:
+      # Off-hours runs (most cron fires) stop here, before the full-history clone. The script
+      # keeps its own 8 AM-10 PM PT check too; dispatch always reads.
+      - name: Inside 8 AM-10 PM Pacific?
+        id: hours
+        run: |
+          h=$(TZ=America/Los_Angeles date +%-H)
+          if [ "${{ github.event_name }}" = workflow_dispatch ] || { [ "$h" -ge 8 ] && [ "$h" -lt 22 ]; }; then
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "outside 8 AM-10 PM PT (hour $h); nothing read"; echo "open=false" >> "$GITHUB_OUTPUT"
+          fi
+        working-directory: .
       - uses: actions/checkout@v6
+        if: steps.hours.outputs.open == 'true'
         with:
           # Full history: each undeployed landing is judged by CI's own
           # heroku-release-required.sh, which needs both commits present.
@@ -47,6 +60,7 @@ jobs:
       # Standard library only: a caught-up run with no issue open stops after this step.
       - name: Compare production with master
         id: plan
+        if: steps.hours.outputs.open == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/deploy_staleness_alert.py --plan

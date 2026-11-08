@@ -172,10 +172,23 @@ def read(token: str, now: dt.datetime) -> dict:
     return assess(health, compare, newest, now)
 
 
-def open_stale_issue(token: str) -> bool:
+def caught_up(a: dict) -> bool:
+    """Production serves everything CI would release: either no commit is behind, or every one
+    behind is frontend/docs only. Both readings close an open stale issue (Fable, #12328)."""
+    return a["reason"].startswith("caught up")
+
+
+def open_stale_issue(token: str, pages: int = 5) -> bool:
+    """Whether the one stale issue is open. Paged like the rail (at most 5 x 100), so a busy
+    alert-intake list cannot hide it from the close path."""
     marker = f"{MARKER_KEY}:{FINGERPRINT}"
-    issues = _get(f"{API}/repos/{REPO}/issues?state=open&labels=alert-intake&per_page=100", token)
-    return any(marker in (i.get("body") or "") for i in issues)
+    for page in range(1, pages + 1):
+        issues = _get(f"{API}/repos/{REPO}/issues?state=open&labels=alert-intake&per_page=100&page={page}", token)
+        if any(marker in (i.get("body") or "") for i in issues):
+            return True
+        if len(issues) < 100:
+            return False
+    return True  # more than 500 open: cannot rule it out, so let the rail decide
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -198,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.plan:
         # Most runs are caught up with no issue open: they stop here, before any dependency
         # install, so a quiet day costs a checkout and three reads per run.
-        act = a["stale"] or (a["reason"] == "caught up" and open_stale_issue(token))
+        act = a["stale"] or (caught_up(a) and open_stale_issue(token))
         out = os.environ.get("GITHUB_OUTPUT")
         if out:
             with open(out, "a") as fh:
@@ -217,13 +230,16 @@ def main(argv: list[str] | None = None) -> int:
             red_comment=f"Still stale: {title(a)[len(TITLE_PREFIX):]}. Newest master run "
                         f"{run.get('id')} ({run.get('conclusion')}).",
             add_to_board=False,
+            # Comment when the reading changes (or daily), not because "N h" ticked over.
+            red_digest_basis=f"{a['health']}|{a['master']}|{run.get('id')}|{run.get('conclusion')}",
         )
-        if result.get("action") == "commented" and result.get("issue"):
+        if result.get("action") in ("commented", "comment_skipped_unchanged") and result.get("issue"):
             _patch(f"{API}/repos/{REPO}/issues/{result['issue']}", token, {"title": title(a)})
-    elif a["reason"] == "caught up":
+    elif caught_up(a):
         result = reconcile_issue(
             red=False, fingerprint=FINGERPRINT, marker_key=MARKER_KEY,
-            green_comment=f"Caught up: production serves master's tip `{a['master']}`. Closing.",
+            green_comment=f"Caught up: production (`{a['health']}`) serves every change CI would release "
+                          f"from master (tip `{a['master']}`; {a['reason']}). Closing.",
         )
     else:
         result = {"action": "none", "note": a["reason"]}
