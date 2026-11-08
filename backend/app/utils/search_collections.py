@@ -176,7 +176,7 @@ async def attach_search_collections(
         from app.utils.roundup_containers import ROUNDUP_PRODUCERS
 
         named_roundup = bool(tokens) and any(
-            _matches(tokens, (producer.name, producer.slug))
+            _matches(tokens, _producer_search_terms(producer))
             for producer in ROUNDUP_PRODUCERS.values()
         )
         if named_roundup:
@@ -250,6 +250,39 @@ async def attach_search_collections(
     return result
 
 
+def _producer_search_terms(producer: Any) -> tuple[str, ...]:
+    """Return the title, slug, kicker, and keyword strings a roundup producer is named by (#12376, Decide 31-A)."""
+    terms: list[str] = []
+    for attr in ("name", "slug", "kicker", "tag"):
+        val = getattr(producer, attr, None)
+        if isinstance(val, str) and val.strip():
+            terms.append(val.strip())
+
+    rule = getattr(producer, "rule", None)
+    if isinstance(rule, dict):
+        for key in (
+            "title",
+            "card_title",
+            "headline",
+            "kicker",
+            "tag",
+            "title_pattern",
+            "question_prefix",
+            "question_suffix",
+            "team_name",
+        ):
+            val = rule.get(key)
+            if isinstance(val, str) and val.strip():
+                terms.append(val.strip())
+        for list_key in ("keywords", "search_words", "team_aliases"):
+            seq = rule.get(list_key)
+            if isinstance(seq, (list, tuple)):
+                for item in seq:
+                    if isinstance(item, str) and item.strip():
+                        terms.append(item.strip())
+    return tuple(dict.fromkeys(terms))
+
+
 def _matches(tokens: tuple[str, ...], values: Iterable[object]) -> bool:
     for value in values:
         words = container_discovery.collection_query_tokens(str(value or ""))
@@ -271,7 +304,7 @@ async def _append_roundup_matches(
     named = [
         producer
         for producer in ROUNDUP_PRODUCERS.values()
-        if _matches(tokens, (producer.name, producer.slug))
+        if _matches(tokens, _producer_search_terms(producer))
     ]
     failed = False
     for producer in named:
@@ -293,7 +326,7 @@ async def _append_roundup_matches(
         if page is None or page.get("state") != "published":
             continue
         header = page.get("container") or {}
-        values = [header.get("name"), producer.slug]
+        values = [header.get("name"), *_producer_search_terms(producer)]
         member_ids = {"event": set(), "market": set()}
         for section in page.get("sections") or []:
             for member in section.get("members") or []:

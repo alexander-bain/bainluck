@@ -131,6 +131,7 @@ class PersonalizationContext:
     # broad ranking: avoid showing the same stale card repeatedly.
     recent_seen_event_ids: set[int] = field(default_factory=set)
     recent_seen_futures_ids: set[int] = field(default_factory=set)
+    recent_seen_keys: set[str] = field(default_factory=set)
     # item_id → last-impression timestamp (within the seen window). Powers bounded
     # card recycling for exhausted feeds: a seen card can be re-shown after
     # FEED_RECYCLE_AFTER_HOURS if it's still live or has moved materially, instead
@@ -151,6 +152,20 @@ class PersonalizationContext:
     recent_dismissed_group_ids: set[str] = field(default_factory=set)
     # Whether this is a real user context (vs anonymous)
     is_authenticated: bool = False
+
+
+def is_returning_reader(ctx: Optional[PersonalizationContext]) -> bool:
+    """Return True when ``ctx`` carries prior Discover impression or swipe state (#12376, Decide 32-C)."""
+    if ctx is None:
+        return False
+    return bool(
+        ctx.recent_seen_event_ids
+        or ctx.recent_seen_futures_ids
+        or ctx.recent_seen_keys
+        or ctx.recent_dismissed_event_ids
+        or ctx.recent_dismissed_futures_ids
+        or ctx.recent_dismissed_keys
+    )
 
 
 @dataclass

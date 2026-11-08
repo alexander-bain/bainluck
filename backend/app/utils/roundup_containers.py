@@ -33,6 +33,7 @@ __all__ = [
     "HAND_LIST_ID_RULE_KEYS",
     "OCCASION_ID_RULE_KEYS",
     "ROUNDUP_CACHE_TTL_S",
+    "ROUNDUP_NOVELTY_SEAT_CAP",
     "ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS",
     "ROUNDUP_PRODUCERS",
     "ROUNDUP_PRODUCER_TIMEOUT_SECONDS",
@@ -43,6 +44,7 @@ __all__ = [
     "RoundupProducer",
     "RoundupRefusal",
     "add_roundup_feed_items",
+    "apply_novelty_seats",
     "build_roundup_producer_from_definition",
     "compose_roundup_container",
     "compose_roundup_feed_item",
@@ -134,6 +136,10 @@ ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS = 10.0
 #: 0–9) are the dated why-now opening ten. Standing round-ups sit in page one's
 #: back half starting at index 10 (seat 11), with no ranking change.
 ROUNDUP_SEAT_FLOOR = 10
+#: Decide 32-C (#12091 / #12376): a returning reader gets up to two novelty
+#: seats in the opening ten when new (unseen) generated cards exist; first-time
+#: readers get zero.
+ROUNDUP_NOVELTY_SEAT_CAP = 2
 
 _roundup_local_cache: dict[
     tuple[str, Any], tuple[float, Optional[dict[str, Any]], Optional[dict[str, Any]]]
@@ -1057,6 +1063,162 @@ def _opening_eligible_floor_index(
     return max(seat_floor, len(items))
 
 
+def _roundup_card_candidate_keys(card: Mapping[str, Any]) -> set[str]:
+    data = card.get("data")
+    if not isinstance(data, Mapping):
+        return set()
+    keys: set[str] = set()
+    r_id = str(data.get("id") or "").strip()
+    if r_id:
+        keys.add(r_id)
+        keys.add(f"bundle:{r_id}")
+    cref = data.get("collection_ref")
+    slug = str(cref.get("slug") or "").strip() if isinstance(cref, Mapping) else ""
+    if slug:
+        keys.add(slug)
+        keys.add(f"roundup:{slug}")
+        keys.add(f"bundle:roundup:{slug}")
+    return keys
+
+
+def _is_unseen_roundup_card(
+    card: Mapping[str, Any],
+    *,
+    seen_card_keys: Optional[Sequence[str] | set[str]] = None,
+    seen_futures_ids: Optional[Sequence[int] | set[int]] = None,
+    seen_event_ids: Optional[Sequence[int] | set[int]] = None,
+) -> bool:
+    """Return True when ``card`` has not already been seen/dismissed by the reader (#12376)."""
+    if seen_card_keys:
+        seen_keys_norm = {str(k).strip() for k in seen_card_keys if k}
+        if _roundup_card_candidate_keys(card) & seen_keys_norm:
+            return False
+
+    covered_markets = _roundup_covered_market_ids(card)
+    if covered_markets and seen_futures_ids:
+        seen_fids = {int(fid) for fid in seen_futures_ids if isinstance(fid, int)}
+        if covered_markets <= seen_fids:
+            return False
+
+    data = card.get("data")
+    if isinstance(data, Mapping) and seen_event_ids:
+        event_member_ids = {
+            int(child["data"]["id"])
+            for child in (data.get("items") or ())
+            if isinstance(child, Mapping)
+            and child.get("type") == "event"
+            and isinstance(child.get("data"), Mapping)
+            and isinstance(child["data"].get("id"), int)
+        }
+        if event_member_ids:
+            seen_eids = {int(eid) for eid in seen_event_ids if isinstance(eid, int)}
+            if event_member_ids <= seen_eids:
+                return False
+
+    return True
+
+
+def _is_roundup_opening_eligible(
+    card: Mapping[str, Any],
+    items: Sequence[dict[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    """Return True when ``card`` is opening-eligible under ``discover_opening_seating`` (#5105)."""
+    from app.utils.discover_opening_seating import _group_members, classify_card
+
+    effective_now = (
+        now
+        if isinstance(now, datetime) and now.tzinfo is not None
+        else datetime.now(timezone.utc)
+    )
+    by_event_id = {}
+    for existing in items:
+        if not isinstance(existing, dict):
+            continue
+        seating = classify_card(existing, now=effective_now)
+        if (
+            seating is not None
+            and seating.kind == "event"
+            and isinstance(existing.get("data"), dict)
+        ):
+            by_event_id[existing["data"].get("id")] = seating
+
+    seating = classify_card(dict(card), now=effective_now)
+    if seating is None:
+        return False
+    reason, restricted_by = _group_members(
+        dict(card), by_event_id, now=effective_now
+    )
+    if reason is not None or restricted_by:
+        return False
+    return not bool(seating.restricted)
+
+
+def apply_novelty_seats(
+    items: list[dict[str, Any]],
+    *,
+    returning_reader: bool = False,
+    seen_card_keys: Optional[Sequence[str] | set[str]] = None,
+    seen_futures_ids: Optional[Sequence[int] | set[int]] = None,
+    seen_event_ids: Optional[Sequence[int] | set[int]] = None,
+    seat_floor: int = ROUNDUP_SEAT_FLOOR,
+    novelty_seat_cap: int = ROUNDUP_NOVELTY_SEAT_CAP,
+    now: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
+    """Seat up to ``novelty_seat_cap`` unseen round-up cards in the opening ten for returning readers (#12376).
+
+    First-time readers (``returning_reader=False``) receive zero novelty seats in
+    the opening ten; all round-up cards remain at ``index >= seat_floor``.
+    """
+    if not returning_reader or novelty_seat_cap <= 0 or seat_floor <= 0 or not items:
+        return items
+
+    cap = min(int(novelty_seat_cap), int(seat_floor))
+    novelty_indices: list[int] = []
+    for idx, card in enumerate(items):
+        if not _is_roundup_bundle_card(card):
+            continue
+        if not _is_unseen_roundup_card(
+            card,
+            seen_card_keys=seen_card_keys,
+            seen_futures_ids=seen_futures_ids,
+            seen_event_ids=seen_event_ids,
+        ):
+            continue
+        if not _is_roundup_opening_eligible(card, items, now=now):
+            continue
+        novelty_indices.append(idx)
+        if len(novelty_indices) >= cap:
+            break
+
+    if not novelty_indices:
+        return items
+
+    novelty_set = set(novelty_indices)
+    novelty_cards = [items[i] for i in novelty_indices]
+    remaining = [card for i, card in enumerate(items) if i not in novelty_set]
+
+    target_non_roundup_eligible = max(0, int(seat_floor) - len(novelty_cards))
+    insert_at = min(
+        _opening_eligible_floor_index(
+            remaining, target_non_roundup_eligible, now=now
+        ),
+        len(remaining),
+    )
+
+    result = list(remaining)
+    for offset, raw_n_card in enumerate(novelty_cards):
+        n_card = copy.deepcopy(dict(raw_n_card))
+        if isinstance(n_card.get("data"), dict):
+            n_card["data"]["novelty_seat"] = True
+            if isinstance(n_card["data"].get("roundup"), dict):
+                n_card["data"]["roundup"]["novelty_seat"] = True
+        pos = min(insert_at + offset, len(result))
+        result.insert(pos, n_card)
+    return result
+
+
 def insert_roundup_feed_items(
     items: list[dict[str, Any]],
     roundup_items: Sequence[dict[str, Any]],
@@ -1064,6 +1226,11 @@ def insert_roundup_feed_items(
     seat_floor: int = ROUNDUP_SEAT_FLOOR,
     page_window: int = 20,
     now: Optional[datetime] = None,
+    returning_reader: bool = False,
+    seen_card_keys: Optional[Sequence[str] | set[str]] = None,
+    seen_futures_ids: Optional[Sequence[int] | set[int]] = None,
+    seen_event_ids: Optional[Sequence[int] | set[int]] = None,
+    novelty_seat_cap: int = ROUNDUP_NOVELTY_SEAT_CAP,
 ) -> list[dict[str, Any]]:
     """Place served round-up cards on Discover in page one's back half without changing scores.
 
@@ -1076,6 +1243,9 @@ def insert_roundup_feed_items(
       both before and after ``seat_opening``), or at its earliest replaced
       post-opening member's seat when that is past the opening-eligible floor,
       inheriting the neighbour's score at that seat without modifying any card's score.
+    * Under Decide 32-C (#12091 / #12376), when ``returning_reader=True``, up to
+      ``novelty_seat_cap`` (2) unseen, opening-eligible round-up cards take the
+      novelty seats at the back of the opening ten; first-time readers get zero.
     """
     if not items or not roundup_items:
         return items
@@ -1154,7 +1324,22 @@ def insert_roundup_feed_items(
         inserted_count += 1
         changed = True
 
-    return result if changed else items
+    if not changed:
+        return items
+
+    if returning_reader and novelty_seat_cap > 0:
+        result = apply_novelty_seats(
+            result,
+            returning_reader=returning_reader,
+            seen_card_keys=seen_card_keys,
+            seen_futures_ids=seen_futures_ids,
+            seen_event_ids=seen_event_ids,
+            seat_floor=seat_floor,
+            novelty_seat_cap=novelty_seat_cap,
+            now=now,
+        )
+
+    return result
 
 
 async def add_roundup_feed_items(
@@ -1166,6 +1351,11 @@ async def add_roundup_feed_items(
     budget_seconds: float = ROUNDUP_READ_BUDGET_SECONDS,
     stage_budget_seconds: Optional[float] = None,
     now: Optional[datetime] = None,
+    returning_reader: bool = False,
+    seen_card_keys: Optional[Sequence[str] | set[str]] = None,
+    seen_futures_ids: Optional[Sequence[int] | set[int]] = None,
+    seen_event_ids: Optional[Sequence[int] | set[int]] = None,
+    novelty_seat_cap: int = ROUNDUP_NOVELTY_SEAT_CAP,
 ) -> list[dict[str, Any]]:
     """Evaluate registered round-up producers and place their cards on Discover."""
     if not items or len(items) < seat_floor:
@@ -1243,6 +1433,11 @@ async def add_roundup_feed_items(
         seat_floor=seat_floor,
         page_window=page_window,
         now=now,
+        returning_reader=returning_reader,
+        seen_card_keys=seen_card_keys,
+        seen_futures_ids=seen_futures_ids,
+        seen_event_ids=seen_event_ids,
+        novelty_seat_cap=novelty_seat_cap,
     )
 
 
