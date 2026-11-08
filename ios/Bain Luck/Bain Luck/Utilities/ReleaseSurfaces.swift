@@ -75,10 +75,10 @@ enum ReleaseSurfaces {
         enabled && (index + 1) % 5 == 0
     }
 
-    /// #11666 — the native event-page atlas (E1–E6c parity with web #11974):
-    /// headline, chart marks, result words, shared details sheet, and story
-    /// cards across sports. Kept behind a build flag until Alex's phone look.
-    static let eventPageAtlasEnabled = false
+    /// #11666 / #12278 (85-A) — the native event-page atlas (E1–E6c parity with
+    /// web #11974): headline, chart marks, result words, shared details sheet,
+    /// and story cards across sports. Enabled for Alex's TestFlight phone look.
+    static let eventPageAtlasEnabled = true
 
     /// Launch-argument key (`-event_page_atlas_11666 YES`) so unit tests and
     /// the headless rig can exercise the enabled surface while the shipping

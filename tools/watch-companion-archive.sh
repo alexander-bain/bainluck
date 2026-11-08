@@ -24,6 +24,7 @@ if xcodebuild archive -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -jobs 2 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' \
   > "$OUT/archive.log" 2>&1; then
+  python3 "$ROOT/tools/ios_stack_frame_guard_12278.py" "$RUN/DerivedData"
   python3 "$ROOT/tools/watch_companion_archive.py" "$RUN/BainLuck.xcarchive" \
     --sha "$SHA" --output "$OUT/receipt.json"
 else
