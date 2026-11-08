@@ -134,7 +134,19 @@ class TestSubjectSequenceDefinitionAndRegistration:
         assert producer.slug == CELTICS_NEXT_3_GAMES_SLUG
         assert producer.relations == ("same_subject", "same_measure", "same_window")
         assert producer.level == "member"
-        assert producer.destination_href == "/team/boston-celtics"
+        assert producer.destination_href == "/sport/basketball/nba/team/boston-celtics"
+        team_page_route = (
+            Path(__file__).resolve().parents[2]
+            / "frontend"
+            / "app"
+            / "sport"
+            / "[sport]"
+            / "[league]"
+            / "team"
+            / "[team]"
+            / "page.tsx"
+        )
+        assert team_page_route.exists()
 
 
 class TestSubjectSequenceSelectorAndTruthChecks:
@@ -297,7 +309,10 @@ class TestSubjectSequenceCardAndContainerComposition:
         feed_item = compose_roundup_feed_item(producer, members)
         assert feed_item is not None
         data = feed_item["data"]
-        assert data["collection_ref"]["href"] == "/team/boston-celtics"
+        assert (
+            data["collection_ref"]["href"]
+            == "/sport/basketball/nba/team/boston-celtics"
+        )
         assert data["collection_ref"]["slug"] == CELTICS_NEXT_3_GAMES_SLUG
         assert data["collection_ref"]["collection_count"] == 3
         assert data["roundup"]["relations"] == [
@@ -316,7 +331,10 @@ class TestSubjectSequenceCardAndContainerComposition:
 
         container = compose_roundup_container(producer, members)
         assert container["state"] == "published"
-        assert container["destination_href"] == "/team/boston-celtics"
+        assert (
+            container["destination_href"]
+            == "/sport/basketball/nba/team/boston-celtics"
+        )
         assert container["relations"] == [
             "same_subject",
             "same_measure",

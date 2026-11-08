@@ -466,7 +466,7 @@ describe("#10357 round-up model", () => {
     ]);
   });
 
-  it("preserves chronological sequence order and links to /team/<slug> for subject_sequence (#12232)", () => {
+  it("preserves chronological sequence order and links to /sport/<sport>/<league>/team/<slug> for subject_sequence (#12232)", () => {
     const seqContract: FeedRoundupContract = {
       kicker: "NEXT 3 GAMES",
       tag: "NBA",
@@ -475,7 +475,7 @@ describe("#10357 round-up model", () => {
       presentation: "strip",
       relations: ["same_subject", "same_measure", "same_window"],
       level: "member",
-      destination_href: "/team/boston-celtics",
+      destination_href: "/sport/basketball/nba/team/boston-celtics",
       rows: [
         {
           event_id: 15343971,
@@ -526,7 +526,7 @@ describe("#10357 round-up model", () => {
       title: "Boston Celtics: next 3 games",
       ref: {
         slug: "celtics-next-3-games",
-        href: "/team/boston-celtics",
+        href: "/sport/basketball/nba/team/boston-celtics",
         name: "Boston Celtics: next 3 games",
         revision: 41239812,
         collection_count: 3,
@@ -534,7 +534,7 @@ describe("#10357 round-up model", () => {
     });
     expect(html).toContain('data-presentation="strip"');
     expect(html).toMatch(
-      /<a href="\/team\/boston-celtics"[^>]*data-testid="roundup-card"/,
+      /<a href="\/sport\/basketball\/nba\/team\/boston-celtics"[^>]*data-testid="roundup-card"/,
     );
   });
 

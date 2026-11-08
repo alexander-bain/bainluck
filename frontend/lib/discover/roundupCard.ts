@@ -94,11 +94,9 @@ export function buildRoundupCardModel(
   const upperKicker = kicker.toUpperCase();
   const isYardstickPair = upperKicker === "FOR SCALE";
   const isSequenceOrder =
-    text(contract.order).toLowerCase() === "sequence" ||
-    upperKicker === "NEXT 3 GAMES";
+    text(contract.order).toLowerCase() === "sequence";
   const isStripPresentation =
-    text(contract.presentation).toLowerCase() === "strip" ||
-    upperKicker === "NEXT 3 GAMES";
+    text(contract.presentation).toLowerCase() === "strip";
   const isTwoRowPair =
     isYardstickPair || upperKicker.startsWith("HEAD TO HEAD");
   const isWeekEvents =

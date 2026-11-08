@@ -2,7 +2,7 @@
 
 PILLAR: DISCOVER / FORMATTING / TRUTH · SHIP: a team's next three games as a
 Discover card (three-game strip, time order, within a window) that opens the
-team page (``/team/<slug>``, Decide 62-A "the page wins").
+team page (``/sport/<sport>/<league>/team/<slug>``, Decide 62-A "the page wins").
 
 Built to ``docs/design/grouping-primitives.md`` (#12221):
 1. **Atoms**: scheduled upcoming games for one subject team within the window.
@@ -12,7 +12,7 @@ Built to ``docs/design/grouping-primitives.md`` (#12221):
    in chronological schedule order or ``RoundupRefusal`` when fewer than ``count``
    games carry fresh two-sided blended win probabilities.
 4. **Presentations**: 390 px Discover three-game strip (``presentation: "strip"``,
-   ``order: "sequence"``) whose card tap opens ``/team/<slug>``.
+   ``order: "sequence"``) whose card tap opens ``/sport/<sport>/<league>/team/<slug>``.
 5. **Triggers / Folder Loading**: definitions in ``backend/data/containers/*.json``
    with ``rule.producer == "subject_sequence"`` are loaded automatically by kind
    (Decide 60-A).
@@ -44,6 +44,7 @@ __all__ = [
     "PRODUCER_KIND_SUBJECT_SEQUENCE",
     "SPORTS_DAY_TZ",
     "build_subject_sequence_producer",
+    "canonical_team_page_href",
     "celtics_next_3_games",
     "load_subject_sequence_definition",
     "produce_subject_sequence",
@@ -139,6 +140,64 @@ def subject_sequence_enabled() -> bool:
         "yes",
         "on",
     )
+
+
+_SPORT_KEY_TO_TEAM_ROUTE_SEGMENTS: dict[str, tuple[str, str]] = {
+    "basketball_nba": ("basketball", "nba"),
+    "americanfootball_nfl": ("football", "nfl"),
+    "baseball_mlb": ("baseball", "mlb"),
+    "icehockey_nhl": ("hockey", "nhl"),
+    "basketball_ncaab": ("basketball", "ncaab"),
+    "americanfootball_ncaaf": ("football", "ncaaf"),
+    "basketball_wnba": ("basketball", "wnba"),
+    "soccer_usa_mls": ("soccer", "mls"),
+    "soccer_epl": ("soccer", "epl"),
+    "soccer_spain_la_liga": ("soccer", "laliga"),
+    "soccer_uefa_champs_league": ("soccer", "ucl"),
+    "soccer_germany_bundesliga": ("soccer", "bundesliga"),
+    "basketball_wncaab": ("basketball", "wncaab"),
+    "mma_mixed_martial_arts": ("mma", "ufc"),
+    "golf_pga": ("golf", "pga"),
+}
+
+
+def canonical_team_page_href(
+    team_slug: str,
+    sport: Optional[str] = None,
+    league: Optional[str] = None,
+) -> str:
+    """Return the canonical ``/sport/<sport>/<league>/team/<slug>`` URL for a team page."""
+    clean_slug = _slugify(team_slug)
+    sport_key = (sport or "").strip().lower()
+    mapped = _SPORT_KEY_TO_TEAM_ROUTE_SEGMENTS.get(sport_key)
+    if mapped is not None:
+        return f"/sport/{mapped[0]}/{mapped[1]}/team/{clean_slug}"
+    if "_" in sport_key:
+        parts = sport_key.split("_", 1)
+        if parts[0] and parts[1]:
+            return f"/sport/{parts[0]}/{parts[1]}/team/{clean_slug}"
+    clean_league = (league or "").strip().lower()
+    if sport_key and clean_league:
+        return f"/sport/{sport_key}/{clean_league}/team/{clean_slug}"
+    return f"/sport/basketball/nba/team/{clean_slug}"
+
+
+def _normalize_team_destination_href(
+    href: Optional[str],
+    *,
+    team_slug: str,
+    sport: Optional[str] = None,
+    league: Optional[str] = None,
+) -> str:
+    cleaned = str(href or "").strip()
+    if cleaned.startswith("/sport/") and "/team/" in cleaned:
+        return cleaned
+    if cleaned.startswith("/team/"):
+        slug_part = cleaned.removeprefix("/team/").strip("/") or team_slug
+        return canonical_team_page_href(slug_part, sport=sport, league=league)
+    if cleaned:
+        return cleaned
+    return canonical_team_page_href(team_slug, sport=sport, league=league)
 
 
 def _slugify(value: str) -> str:
@@ -316,6 +375,7 @@ def select_subject_sequence(
     window_days: int = 21,
     max_prob_age_hours: float = 48.0,
     footer: str = "Combined win probability · next 3 games in schedule order",
+    destination_href: Optional[str] = None,
 ) -> Any:
     """Pure selector for ``subject_sequence`` (Decide 74-A).
 
@@ -520,11 +580,16 @@ def select_subject_sequence(
         }
         for g in ordered
     ]
+    resolved_href = _normalize_team_destination_href(
+        destination_href,
+        team_slug=team_slug,
+        sport=sport,
+    )
     return _rc().RoundupMembers(
         members=members,
         rows=rows,
         footer=footer,
-        destination_href=f"/team/{team_slug}",
+        destination_href=resolved_href,
     )
 
 
@@ -680,6 +745,12 @@ async def produce_subject_sequence(
             return loaded
         ordered_cards = loaded
 
+    defined_href = _normalize_team_destination_href(
+        rule.get("destination_href") or definition.get("destination_href"),
+        team_slug=team_slug,
+        sport=sport,
+        league=str(rule.get("league") or definition.get("category") or ""),
+    )
     return select_subject_sequence(
         ordered_cards,
         now=effective_now,
@@ -691,6 +762,7 @@ async def produce_subject_sequence(
         window_days=window_days,
         max_prob_age_hours=max_prob_age_hours,
         footer=footer,
+        destination_href=defined_href,
     )
 
 
@@ -735,10 +807,19 @@ def build_subject_sequence_producer(
     _validate_narrative_copy(name, footer, kicker, section_title)
     tag = str(definition.get("tag") or category.upper())
     team_slug = str(rule.get("team_slug") or "").strip()
-    destination_href = str(
-        rule.get("destination_href")
-        or definition.get("destination_href")
-        or (f"/team/{team_slug}" if team_slug else f"/collections/{slug}")
+    destination_href = (
+        _normalize_team_destination_href(
+            rule.get("destination_href") or definition.get("destination_href"),
+            team_slug=team_slug,
+            sport=str(rule.get("sport") or ""),
+            league=str(rule.get("league") or category),
+        )
+        if team_slug
+        else str(
+            rule.get("destination_href")
+            or definition.get("destination_href")
+            or f"/collections/{slug}"
+        )
     )
     order = str(rule.get("order") or "sequence")
     presentation = str(rule.get("presentation") or "strip")
