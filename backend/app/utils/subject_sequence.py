@@ -283,37 +283,6 @@ class _SequenceGame:
     card: dict[str, Any]
 
 
-def select_subject_sequence(
-    event_cards: Sequence[Mapping[str, Any]],
-    *,
-    now: datetime,
-    team_slug: str,
-    team_name: str,
-    team_short_name: str = "",
-    count: int = 3,
-    window_days: int = 21,
-    max_prob_age_hours: float = 48.0,
-    footer: str = "Combined win probability · next 3 games in schedule order",
-) -> Any:
-    """Pure selector for ``subject_sequence`` (Decide 74-A).
-
-    Selects the subject team's next ``count`` upcoming games within ``window_days``
-    that carry a fresh two-sided blended win probability, ordered strictly by
-    chronological kickoff time (``commence_time``, then ``event_id``).
-    Refuses when fewer than ``count`` eligible games exist in the window.
-    """
-    if footer:
-        _validate_narrative_copy(footer)
-
-    effective_now = (
-        now.astimezone(timezone.utc)
-        if now.tzinfo is not None
-        else now.replace(tzinfo=timezone.utc)
-    )
-    window_end = effective_now + timedelta(days=max(1, int(window_days)))
-    required = max(1, int(count))
-    effective_short = team_short_name or _extract_short_name(team_name)
-
 @dataclass(frozen=True)
 class _CandidateTeamGame:
     event_id: int
@@ -564,7 +533,7 @@ async def _load_team_events_from_db(
 ) -> Optional[list[dict[str, Any]]]:
     """Load upcoming scheduled events for the subject team in one indexed query."""
     from sqlalchemy import or_, select
-    from app.models import Event
+    from app.models import Event, Sport
     from app.utils.aggregation import (
         compute_aggregate_probability,
         newest_source_reading_time,
@@ -583,15 +552,17 @@ async def _load_team_events_from_db(
         Event.commence_time <= window_end,
     ]
     if sport:
-        filters.append(Event.sport == sport)
+        filters.append(
+            Event.sport_id.in_(select(Sport.id).where(Sport.key == sport))
+        )
 
     name_clauses = []
     if team_name:
-        name_clauses.append(Event.home_team.ilike(team_name))
-        name_clauses.append(Event.away_team.ilike(team_name))
+        name_clauses.append(Event.home_team_name.ilike(team_name))
+        name_clauses.append(Event.away_team_name.ilike(team_name))
     if team_short:
-        name_clauses.append(Event.home_team.ilike(f"%{team_short}"))
-        name_clauses.append(Event.away_team.ilike(f"%{team_short}"))
+        name_clauses.append(Event.home_team_name.ilike(f"%{team_short}"))
+        name_clauses.append(Event.away_team_name.ilike(f"%{team_short}"))
     if name_clauses:
         filters.append(or_(*name_clauses))
 
@@ -628,17 +599,41 @@ async def _load_team_events_from_db(
                 else str(commence_dt or "")
             )
         )
+        home_str = str(
+            getattr(ev, "home_team_name", None)
+            or (
+                getattr(ev, "home_team", None)
+                if isinstance(getattr(ev, "home_team", None), str)
+                else ""
+            )
+            or ""
+        )
+        away_str = str(
+            getattr(ev, "away_team_name", None)
+            or (
+                getattr(ev, "away_team", None)
+                if isinstance(getattr(ev, "away_team", None), str)
+                else ""
+            )
+            or ""
+        )
+        ev_sport_attr = getattr(ev, "__dict__", {}).get("sport")
+        sport_str = (
+            ev_sport_attr
+            if isinstance(ev_sport_attr, str)
+            else (sport or None)
+        )
         cards.append(
             {
                 "id": ev_id,
-                "sport": getattr(ev, "sport", None),
+                "sport": sport_str,
                 "status": getattr(ev, "status", "scheduled") or "scheduled",
                 "commence_time": commence_iso,
                 "start_is_tbd": bool(getattr(ev, "start_is_tbd", False)),
-                "home_team": getattr(ev, "home_team", "") or "",
-                "home_team_name": getattr(ev, "home_team", "") or "",
-                "away_team": getattr(ev, "away_team", "") or "",
-                "away_team_name": getattr(ev, "away_team", "") or "",
+                "home_team": home_str,
+                "home_team_name": home_str,
+                "away_team": away_str,
+                "away_team_name": away_str,
                 "hero_probability": home_prob,
                 "hero_probability_away": away_prob,
                 "hero_probability_source": "blend" if home_prob is not None else None,
