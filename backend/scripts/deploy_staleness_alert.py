@@ -68,22 +68,48 @@ def in_hours(now: dt.datetime) -> bool:
     return HOURS_PT[0] <= now.astimezone(PT).hour < HOURS_PT[1]
 
 
-def first_landing(commits: list[dict]) -> dt.datetime:
-    """When the oldest undeployed change REACHED master: walk master's first-parent chain
-    back from the tip through the undeployed commits. A PR merged with a merge commit brings
-    commits authored hours earlier; their dates are not when master got them, the merge's is."""
+def landings(commits: list[dict]) -> list[dict]:
+    """The undeployed commits as master GOT them, oldest first: master's first-parent chain
+    back from the tip. A PR merged with a merge commit brings commits authored hours earlier;
+    their dates are not when master got them, the merge's is."""
     by_sha = {c["sha"]: c for c in commits}
-    node = commits[-1]
+    chain = [commits[-1]]
     while True:
-        parents = node.get("parents") or []
+        parents = chain[-1].get("parents") or []
         nxt = by_sha.get(parents[0]["sha"]) if parents else None
         if nxt is None:
-            return _ts(node["commit"]["committer"]["date"])
-        node = nxt
+            return chain[::-1]
+        chain.append(nxt)
 
 
-def assess(health_sha: str, compare: dict, newest_run: dict | None, now: dt.datetime) -> dict:
-    """Pure decision. ``compare`` is GitHub's ``compare/{health}...{master}`` payload."""
+def first_landing(commits: list[dict]) -> dt.datetime:
+    """When the oldest undeployed change REACHED master."""
+    return _ts(landings(commits)[0]["commit"]["committer"]["date"])
+
+
+def _release_required(before: str, after: str) -> bool:
+    """CI's own rule (`.github/scripts/heroku-release-required.sh`, #4456): does this landing
+    change anything the Heroku dynos serve? A frontend/docs-only merge never deploys to
+    Heroku, so `/health` rightly stays behind it. Every failure reads as True, as the
+    script itself fails toward releasing."""
+    import subprocess
+
+    script = os.path.join(os.path.dirname(__file__), "..", "..", ".github", "scripts", "heroku-release-required.sh")
+    try:
+        out = subprocess.run(["bash", script, before, after], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return out.stdout.strip() != "false"
+
+
+def assess(health_sha: str, compare: dict, newest_run: dict | None, now: dt.datetime,
+           needs_release=_release_required) -> dict:
+    """Pure decision. ``compare`` is GitHub's ``compare/{health}...{master}`` payload.
+
+    The clock starts at the oldest undeployed landing that CI would release. Nov 7: a Safari
+    banner merge (#12326, frontend only) skipped the Heroku deploy, correctly, and `/health`
+    stayed at the commit before it; counting it would have filed a false alarm 2 h later.
+    """
     status = compare.get("status")
     commits = compare.get("commits") or []
     master = (commits[-1]["sha"] if commits else compare.get("merge_base_commit", {}).get("sha")) or ""
@@ -92,7 +118,16 @@ def assess(health_sha: str, compare: dict, newest_run: dict | None, now: dt.date
     if status in ("identical", "behind") or not commits:
         out["reason"] = "caught up"
         return out
-    out["waiting"] = now - first_landing(commits)
+    pending = []
+    for landing in landings(commits):
+        parents = landing.get("parents") or []
+        before = parents[0]["sha"] if parents else health_sha
+        if needs_release(before, landing["sha"]):
+            pending.append(landing)
+    if not pending:
+        out["reason"] = "caught up (everything since is frontend/docs only, which Heroku never serves)"
+        return out
+    out["waiting"] = now - _ts(pending[0]["commit"]["committer"]["date"])
     if out["waiting"] <= STALE_AFTER:
         out["reason"] = "behind, under 2 h"
         return out

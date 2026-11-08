@@ -40,6 +40,10 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Full history: each undeployed landing is judged by CI's own
+          # heroku-release-required.sh, which needs both commits present.
+          fetch-depth: 0
       # Standard library only: a caught-up run with no issue open stops after this step.
       - name: Compare production with master
         id: plan

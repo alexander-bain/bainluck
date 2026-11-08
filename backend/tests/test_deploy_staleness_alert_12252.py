@@ -81,8 +81,12 @@ def test_the_body_declares_the_one_fingerprint_the_rail_dedups_on():
 
 def test_the_alert_never_cancels_reruns_or_deploys():
     src = (ROOT / "backend" / "scripts" / "deploy_staleness_alert.py").read_text()
-    for verb in ("/cancel", "/rerun", "/dispatches", "git push", "heroku"):
+    # Heroku is named (CI's release rule reads "what the Heroku dynos serve"), never called:
+    # no CLI argv, no Platform API.
+    for verb in ("/cancel", "/rerun", "/dispatches", "git push", '"heroku"', "api.heroku.com"):
         assert verb not in src, verb
+    # The one subprocess it runs is CI's read-only release rule.
+    assert src.count("subprocess.run(") == 1 and "heroku-release-required.sh" in src
 
 
 def test_the_workflow_checks_on_every_master_ci_completion_and_every_30_minutes():
@@ -95,3 +99,43 @@ def test_the_workflow_checks_on_every_master_ci_completion_and_every_30_minutes(
     plan = next(s for s in steps if s.get("id") == "plan")
     assert "--plan" in plan["run"] and "setup-python" not in str(steps[: steps.index(plan)])
     assert all(s.get("if") == "steps.plan.outputs.act == 'true'" for s in steps[steps.index(plan) + 1:])
+
+
+# --- a frontend/docs-only landing never deploys to Heroku, so it never starts the clock ---------
+
+def test_frontend_only_landings_are_caught_up():
+    """Nov 7: #12326 (Safari banner, frontend only) skipped the Heroku deploy, correctly."""
+    a = alert.assess("h", _compare(_c("m1", "2026-11-07T12:00:00Z", "h")), DONE, now=NOW,
+                     needs_release=lambda before, after: False)
+    assert not a["stale"] and a["reason"].startswith("caught up")
+
+
+def test_the_clock_starts_at_the_oldest_landing_ci_would_release():
+    commits = _compare(_c("fe", "2026-11-07T12:00:00Z", "h"), _c("be", "2026-11-07T17:00:00Z", "fe"))
+    a = alert.assess("h", commits, DONE, now=NOW, needs_release=lambda before, after: after == "be")
+    assert a["waiting"] == dt.timedelta(hours=1) and not a["stale"]
+    a = alert.assess("h", commits, DONE, now=NOW, needs_release=lambda before, after: after == "fe")
+    assert a["waiting"] == dt.timedelta(hours=6) and a["stale"]
+
+
+def test_each_landing_is_judged_against_its_own_first_parent():
+    seen = []
+    pr = _c("p1", "2026-11-07T03:00:00Z", "h")
+    merge = _c("m1", "2026-11-07T17:00:00Z", "h", extra_parents=("p1",))
+    alert.assess("h", _compare(pr, merge), DONE, now=NOW, needs_release=lambda b, a: seen.append((b, a)) or True)
+    assert seen == [("h", "m1")]
+
+
+def test_the_rule_is_cis_own_script_on_real_commits():
+    import subprocess
+
+    import pytest
+
+    frontend_only, backend = "2cbf51e7f6", "cf40a89866"  # #12326 and #12321, both on master Nov 7
+    have = subprocess.run(["git", "-C", str(ROOT), "cat-file", "-e", f"{frontend_only}^{{commit}}"],
+                          capture_output=True).returncode == 0
+    if not have:
+        pytest.skip("shallow checkout: the Nov 7 commits are not present")
+    assert alert._release_required(f"{frontend_only}^", frontend_only) is False
+    assert alert._release_required(f"{backend}^", backend) is True
+    assert alert._release_required("0" * 40, backend) is True  # an unusable base fails toward releasing
