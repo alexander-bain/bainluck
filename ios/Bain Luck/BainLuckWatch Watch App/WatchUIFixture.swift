@@ -165,6 +165,29 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
             payload.removeValue(forKey: "hero_probability_observed_at")
             // score_observed_at retains the supplied independent fixedObservation.
         }
+        // RECTANGULAR_FACE_STATES_BEGIN
+        // Opt-in #4933 watch-face specimens for game 101; every other journey keeps its payload.
+        let environment = ProcessInfo.processInfo.environment
+        if first, let face = environment["BAINLUCK_WATCH_UI_RECTANGULAR_FACE"] {
+            if face == "triple" {
+                // The widest live score-only line: three-digit scores and no probability.
+                payload["home_score"] = 108
+                payload["away_score"] = 112
+                payload.removeValue(forKey: "hero_probability")
+                payload.removeValue(forKey: "hero_probability_observed_at")
+            } else if ["scheduled-start", "scheduled-forecast"].contains(face),
+                      let start = environment["BAINLUCK_WATCH_UI_RECTANGULAR_FACE_START"] {
+                // Not started: no score exists yet, and the journey supplies the start time.
+                payload["status"] = "scheduled"
+                payload["commence_time"] = start
+                for key in ["home_score", "away_score", "score_observed_at"] { payload.removeValue(forKey: key) }
+                if face == "scheduled-start" {
+                    payload.removeValue(forKey: "hero_probability")
+                    payload.removeValue(forKey: "hero_probability_observed_at")
+                }
+            }
+        }
+        // RECTANGULAR_FACE_STATES_END
         return try JSONDecoder().decode(WatchSelectedGame.self, from: JSONSerialization.data(withJSONObject: payload))
     }
 }
