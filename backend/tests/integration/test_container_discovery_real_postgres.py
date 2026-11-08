@@ -364,14 +364,52 @@ class TestNflWeekAuthorityStatus11906:
 
 
 class TestCollectionTitleAndMembers12090:
-    async def test_typeahead_title_read_skips_the_member_fallback(self, pg_session):
+    async def test_search_member_ids_scope_the_lookup_to_its_matched_markets(
+        self, pg_session
+    ):
+        hubs, _ = await _seed(pg_session)
+        market_id = (
+            await pg_session.execute(
+                text("SELECT id FROM futures_markets WHERE external_id = 'KXNFLGAME-9653'")
+            )
+        ).scalar_one()
+        read = await discovery.discover_collections(
+            pg_session, query="Kansas City", event_ids=[], market_ids=[market_id]
+        )
+        assert [card["slug"] for card in read.collections] == ["nfl-2026-week-5"]
+        await pg_session.execute(
+            text("UPDATE containers SET publication_state='withdrawn' WHERE id=:id"),
+            {"id": hubs["wk5"]},
+        )
+        await pg_session.commit()
+        assert not (
+            await discovery.discover_collections(
+                pg_session, query="Kansas City", event_ids=[], market_ids=[market_id]
+            )
+        ).collections
+
+    async def test_dated_title_search_is_independent_of_ordinary_member_matches(
+        self, pg_session
+    ):
         await _seed(pg_session)
         read = await discovery.discover_collections(
-            pg_session, query="Home wk6_a", titles_only=True
+            pg_session,
+            query="NFL 2026 Week 5 Oct 4",
+            event_ids=[],
+            market_ids=[],
+        )
+        assert [card["slug"] for card in read.collections] == ["nfl-2026-week-5"]
+
+    async def test_typeahead_title_read_skips_the_member_fallback(self, pg_session):
+        _, events = await _seed(pg_session)
+        read = await discovery.discover_collections(
+            pg_session, query="Home wk6_a", event_ids=[events["wk6_a"]], titles_only=True
         )
         assert not read.collections
         assert (
-            await discovery.discover_collections(pg_session, query="Home wk6_a")
+            await discovery.discover_collections(
+                pg_session, query="Home wk6_a", event_ids=[events["wk6_a"]]
+            )
         ).collections
 
     @pytest.mark.parametrize(
@@ -407,13 +445,24 @@ class TestCollectionTitleAndMembers12090:
 
     @pytest.mark.parametrize("query", ["Home wk6_a", "Week 5 question"])
     async def test_member_game_and_market_names_are_searchable(self, pg_session, query):
-        await _seed(pg_session)
-        read = await discovery.discover_collections(pg_session, query=query)
+        _, events = await _seed(pg_session)
+        market_id = (
+            await pg_session.execute(
+                text("SELECT id FROM futures_markets WHERE external_id='KXNFLGAME-9653'")
+            )
+        ).scalar_one()
+        read = await discovery.discover_collections(
+            pg_session,
+            query=query,
+            event_ids=[events["wk6_a"]] if "wk6" in query else [],
+            market_ids=[market_id] if "question" in query else [],
+        )
         assert read.collections
         expected = "nfl-2026-week-6" if "wk6" in query else "nfl-2026-week-5"
         assert read.collections[0]["slug"] == expected
 
-    async def test_member_outcome_is_searchable(self, pg_session):
+    @pytest.mark.parametrize("query", ["Kansas City", "Kansas"])
+    async def test_outcome_matched_market_ids_find_their_collection(self, pg_session, query):
         from app.models.models import FuturesOutcome
 
         await _seed(pg_session)
@@ -432,7 +481,15 @@ class TestCollectionTitleAndMembers12090:
             )
         )
         await pg_session.commit()
-        read = await discovery.discover_collections(pg_session, query="Kansas City")
+        matched_market_ids = (
+            await pg_session.execute(
+                text("SELECT market_id FROM futures_outcomes WHERE name ILIKE :name"),
+                {"name": f"%{query}%"},
+            )
+        ).scalars().all()
+        read = await discovery.discover_collections(
+            pg_session, query=query, market_ids=matched_market_ids
+        )
         assert [card["slug"] for card in read.collections] == ["nfl-2026-week-5"]
 
     async def test_explicit_title_precedes_a_game_membership_match(self, pg_session):

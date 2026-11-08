@@ -38,7 +38,7 @@ half (``collection_card``) re-applies every one to every returned row, so a
 query that drifted can only ever offer fewer collections, never a wrong one.
 
 BOUNDED. A schema probe and one aggregate read for existing consumers. A
-query tries title matches first, then a member fallback when needed. Inputs
+query tries titles first, then the ordinary answer's matched member ids. Inputs
 are capped (``MAX_EVENT_IDS``, ``MAX_SLUGS``,
 ``MAX_COLLECTIONS``) and truncation is reported, never silent.
 """
@@ -265,6 +265,7 @@ def _discovery_sql(
     by_query: bool = False,
     title_only: bool = False,
     by_sport: bool = False,
+    by_markets: bool = False,
 ) -> str:
     """One aggregate statement. Filters are composed from fixed fragments only;
     every value is a bind parameter (gotcha #45)."""
@@ -276,7 +277,28 @@ def _discovery_sql(
         hub_filters.append("c.slug ~ :slug_pattern")
     if title_only:
         hub_filters.append(
-            "concat_ws(' ', c.name, replace(c.slug, '-', ' ')) ~* ALL(:query_patterns)"
+            "(concat_ws(' ', c.name, replace(c.slug, '-', ' ')) ~* ALL(:query_patterns) "
+            "OR EXISTS (SELECT 1 FROM containers schedule_part "
+            "JOIN event_edges schedule_edge ON schedule_edge.parent_type = 'container' "
+            "AND schedule_edge.parent_id = schedule_part.id AND schedule_edge.kind = 'contains' "
+            "AND schedule_edge.child_type = 'event' "
+            "JOIN events schedule_event ON schedule_event.id = schedule_edge.child_id "
+            "WHERE (schedule_part.id = c.id OR schedule_part.parent_container_id = c.id) "
+            f"AND schedule_part.{PUBLICATION_COLUMN} <> 'withdrawn' "
+            "HAVING concat_ws(' ', c.name, replace(c.slug, '-', ' '), "
+            "to_char(MIN(schedule_event.commence_time) AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY'), "
+            "to_char(MAX(schedule_event.commence_time) AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY')) "
+            "~* ALL(:query_patterns)))"
+        )
+    if by_markets and not title_only:
+        hub_filters.append(
+            "EXISTS (SELECT 1 FROM containers member_part "
+            "JOIN event_edges member_edge ON member_edge.parent_type = 'container' "
+            "AND member_edge.parent_id = member_part.id AND member_edge.kind = 'contains' "
+            "WHERE (member_part.id = c.id OR member_part.parent_container_id = c.id) "
+            f"AND member_part.{PUBLICATION_COLUMN} <> 'withdrawn' AND "
+            "((member_edge.child_type = 'event' AND member_edge.child_id = ANY(:event_ids)) "
+            "OR (member_edge.child_type = 'market' AND member_edge.child_id = ANY(:market_ids))))"
         )
     if by_slug:
         hub_filters.append("c.slug = ANY(:slugs)")
@@ -307,16 +329,13 @@ def _discovery_sql(
             "bool_or(m.child_type = 'event' AND ev.id IS NOT NULL "
             "AND m.child_id = ANY(:event_ids))"
         )
-    if by_query:
-        matching.extend(
-            [
-                title_match,
-                "bool_or(concat_ws(' ', ev.home_team_name, ev.away_team_name, fm.name) "
-                "~* ALL(:query_patterns))",
-                "bool_or(EXISTS (SELECT 1 FROM futures_outcomes fo "
-                "WHERE fo.market_id = fm.id AND fo.name ~* ALL(:query_patterns)))",
-            ]
+    if by_markets:
+        matching.append(
+            "bool_or(m.child_type = 'market' AND fm.id IS NOT NULL "
+            "AND m.child_id = ANY(:market_ids))"
         )
+    if by_query:
+        matching.append(title_match)
     if matching:
         having.append("(" + " OR ".join(matching) + ")")
     sport_match = (
@@ -390,8 +409,8 @@ def _discovery_sql(
         f"       {sport_match} AS sport_matches "
         "FROM hub "
         "LEFT JOIN m ON m.hub_id = hub.id "
-        "LEFT JOIN events ev ON m.child_type = 'event' AND ev.id = m.child_id "
-        "LEFT JOIN futures_markets fm ON m.child_type = 'market' AND fm.id = m.child_id "
+        "LEFT JOIN events ev ON ev.id = CASE WHEN m.child_type = 'event' THEN m.child_id END "
+        "LEFT JOIN futures_markets fm ON fm.id = CASE WHEN m.child_type = 'market' THEN m.child_id END "
         f"{sport_joins}"
         "GROUP BY hub.id, hub.name, hub.slug, hub.status, hub.window_start, hub.window_end, "
         "         hub.parent_container_id, hub.publication_state, hub.revision "
@@ -415,6 +434,7 @@ async def discover_collections(
     session,
     *,
     event_ids: Optional[Iterable[int]] = None,
+    market_ids: Optional[Iterable[int]] = None,
     slugs: Optional[Iterable[str]] = None,
     league: Optional[str] = None,
     season: Optional[int] = None,
@@ -425,13 +445,15 @@ async def discover_collections(
 ) -> DiscoveryRead:
     """The collections a reader may be offered, as cards.
 
-    A query tries titles before the member fallback. Other callers retain
+    A query tries titles before looking up its matched member ids. Other callers retain
     their schema probe and one aggregate read.
 
     * ``event_ids`` — the games a consumer is already showing (a search
       page, a feed page). Only collections containing at least one of them are
       returned, most-matched first; ``matched_event_ids`` names which. This is
       how Search and Discover stay relevance-based: no games, no card.
+    * ``market_ids`` — markets already matched by ordinary full search,
+      including outcome and family matches. Membership is checked live.
     * ``slugs`` — exact collections (a Browse list, a deep link).
     * ``league`` (``"nfl"``/``"mlb"``) / ``season`` — Browse's filter.
 
@@ -452,9 +474,14 @@ async def discover_collections(
     limit = max(1, min(int(limit), MAX_COLLECTIONS))
     tokens = collection_query_tokens(query) if query else ()
     events = _capped(event_ids, MAX_EVENT_IDS, "event_ids", read.truncated, int)
+    markets = _capped(market_ids, MAX_EVENT_IDS, "market_ids", read.truncated, int)
+    if tokens and markets is None:
+        markets = []
+    if markets is not None and events is None:
+        events = []
     slug_list = _capped(slugs, MAX_SLUGS, "slugs", read.truncated, str)
     # An explicit empty list is "nothing to look for", not "no filter".
-    if (events is not None and not events and not tokens) or (
+    if (events is not None and not events and not markets and not tokens) or (
         slug_list is not None and not slug_list
     ):
         return read
@@ -483,6 +510,8 @@ async def discover_collections(
         params["season_token"] = str(int(season))
     if events is not None:
         params["event_ids"] = events
+    if markets is not None:
+        params["market_ids"] = markets
     filters = dict(
         by_slug=slug_list is not None,
         by_prefix=league is not None,
@@ -490,6 +519,7 @@ async def discover_collections(
         by_events=events is not None,
         by_query=bool(tokens),
         by_sport=bool(sport_key),
+        by_markets=markets is not None,
     )
     rows = []
     if tokens:
@@ -498,7 +528,8 @@ async def discover_collections(
                 text(_discovery_sql(**filters, title_only=True)), params
             )
         ).fetchall()
-    if not rows and not titles_only:
+    has_member_candidates = not tokens or bool(events or markets)
+    if not rows and not titles_only and has_member_candidates:
         rows = (
             await session.execute(text(_discovery_sql(**filters)), params)
         ).fetchall()
@@ -514,7 +545,7 @@ async def discover_collections(
             row,
             league=league,
             season=season,
-            matched_required=events is not None and not tokens,
+            matched_required=events is not None and markets is None and not tokens,
             search=bool(tokens),
             sport_required=bool(sport_key),
         )

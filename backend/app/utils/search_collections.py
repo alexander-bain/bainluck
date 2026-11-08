@@ -13,9 +13,10 @@ else in that payload moves:
   matching hub, the ordinary payload is unchanged. Failed or unfinished query
   reads add ``degraded=["collections"]`` and retain completed matches.
 
-Relevance comes from the query's title/member matches and the games already
-shown (``results[].id``). Computed sets use the same licensed round-up
-producers as their cards and pages. Collection destinations are read after
+Relevance comes from title matches and the ordinary answer's matched games
+and markets, including its family members. Computed sets are read only when
+their producer is named, using the same licensed producers as their cards
+and pages. Collection destinations are read after
 both response-cache exits, so a withdrawn page cannot survive in the cache.
 
 LIVE AUTHORITY, NOT CACHED. Publication can be withdrawn at any moment, so the
@@ -79,6 +80,25 @@ def _page_event_ids(payload: dict) -> list[int]:
         except (KeyError, TypeError, ValueError):
             continue
     return ids
+
+
+def _page_market_ids(payload: dict) -> list[int]:
+    rows = list(payload.get("futures") or [])
+    for family in payload.get("futures_families") or []:
+        if not isinstance(family, dict):
+            continue
+        rows.extend(family.get("markets") or [])
+        rows.extend(family.get("members") or [])
+        rows.append(family.get("headline"))
+    ids = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            ids.append(int(row["id"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(set(ids))
 
 
 async def _attach_theme_family_refs(payload: dict) -> dict:
@@ -168,6 +188,8 @@ async def attach_search_collections(
         kwargs = {"event_ids": event_ids, "limit": SEARCH_COLLECTIONS_CAP}
         if tokens:
             kwargs["query"] = query
+            if not titles_only:
+                kwargs["market_ids"] = _page_market_ids(payload)
         if sport_key:
             kwargs["sport_key"] = sport_key
         if titles_only:
@@ -177,14 +199,6 @@ async def attach_search_collections(
         degraded = degraded or bool(tokens and read.truncated)
         if tokens and read.reason == container_discovery.REASON_SCHEMA_ABSENT:
             raise RuntimeError("collection publication schema is unavailable")
-        if not tokens or read.reason is not None or named_roundup or titles_only:
-            return
-        if any(_matches(tokens, (card["name"], card["slug"])) for card in cards):
-            return
-        degraded = (
-            await _append_roundup_matches(db, cards, tokens, sport_key=sport_key)
-            or degraded
-        )
 
     try:
         await asyncio.wait_for(
@@ -239,9 +253,8 @@ async def _append_roundup_matches(
         for producer in ROUNDUP_PRODUCERS.values()
         if _matches(tokens, (producer.name, producer.slug))
     ]
-    producers = named or list(ROUNDUP_PRODUCERS.values())
     failed = False
-    for producer in producers:
+    for producer in named:
         if len(cards) >= SEARCH_COLLECTIONS_CAP:
             return failed
         try:
