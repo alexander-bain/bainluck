@@ -169,7 +169,10 @@ def evaluate_prologues(
     return True, "\n".join(lines)
 
 
-PRE_FIX_D8F7C15E59_FIXTURE = """\
+# Synthetic disassembly fixtures for offline parser self-check (--self-check on Linux CI).
+# Real object-file verification runs against the compiled Release arm64 EventDetailView.o
+# in tools/watch-companion-archive.sh and tools/native-release-check.sh.
+SYNTHETIC_PRE_FIX_D8F7C15E59_FIXTURE = """\
 0000000000000000 <_$s9Bain_Luck15EventDetailViewV4bodyQrvg>:
        0: d140acff     \tsub\tsp, sp, #0x2b, lsl #12
        4: d10103ff     \tsub\tsp, sp, #0x40
@@ -184,7 +187,7 @@ PRE_FIX_D8F7C15E59_FIXTURE = """\
     2008: 94000000     \tbl\t0x2000
 """
 
-POST_FIX_12278_FIXTURE = """\
+SYNTHETIC_POST_FIX_12278_FIXTURE = """\
 0000000000000000 <_$s9Bain_Luck15EventDetailViewV4bodyQrvg>:
        0: d101c3ff     \tsub\tsp, sp, #0x70
        4: 94000000     \tbl\t0x0
@@ -198,28 +201,32 @@ POST_FIX_12278_FIXTURE = """\
 
 
 def run_self_check() -> int:
-    pre_funcs = parse_objdump_prologues(PRE_FIX_D8F7C15E59_FIXTURE)
+    pre_funcs = parse_objdump_prologues(SYNTHETIC_PRE_FIX_D8F7C15E59_FIXTURE)
     ok_pre, report_pre = evaluate_prologues(
-        pre_funcs, budget_bytes=MAX_PROLOGUE_BYTES, source_label="d8f7c15e59 (build 5670 fixture)"
+        pre_funcs,
+        budget_bytes=MAX_PROLOGUE_BYTES,
+        source_label="synthetic pre-fix parser fixture (d8f7c15e59 prologue instruction values)",
     )
     if ok_pre or "338,912 B" not in report_pre:
-        print("SELF-CHECK FAIL: expected pre-fix d8f7c15e59 fixture to fail with 338,912 B", file=sys.stderr)
+        print("SELF-CHECK FAIL: expected synthetic pre-fix fixture to fail with 338,912 B", file=sys.stderr)
         print(report_pre, file=sys.stderr)
         return 1
 
-    post_funcs = parse_objdump_prologues(POST_FIX_12278_FIXTURE)
+    post_funcs = parse_objdump_prologues(SYNTHETIC_POST_FIX_12278_FIXTURE)
     ok_post, report_post = evaluate_prologues(
-        post_funcs, budget_bytes=MAX_PROLOGUE_BYTES, source_label="HEAD (#12278 fixture)"
+        post_funcs,
+        budget_bytes=MAX_PROLOGUE_BYTES,
+        source_label="synthetic post-fix parser fixture (#12278 prologue instruction values)",
     )
     if not ok_post or "12,288 B" not in report_post:
-        print("SELF-CHECK FAIL: expected post-fix fixture to pass with 12,288 B", file=sys.stderr)
+        print("SELF-CHECK FAIL: expected synthetic post-fix fixture to pass with 12,288 B", file=sys.stderr)
         print(report_post, file=sys.stderr)
         return 1
 
-    print("=== Pre-fix parent commit d8f7c15e59 (expected FAIL) ===")
+    print("=== Synthetic pre-fix parser fixture (expected FAIL) ===")
     print(report_pre)
     print()
-    print("=== Post-fix #12278 (expected PASS) ===")
+    print("=== Synthetic post-fix parser fixture (expected PASS) ===")
     print(report_post)
     return 0
 
