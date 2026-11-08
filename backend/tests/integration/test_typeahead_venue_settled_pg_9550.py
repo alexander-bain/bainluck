@@ -263,9 +263,43 @@ async def test_the_verdict_survives_a_degraded_stage(typeahead, monkeypatch, sta
 
     monkeypatch.setattr(events_module, arm_after, _arm)
     monkeypatch.setattr(AsyncSession, "execute", _exec)
+    # #4437: on a real engine the outcome arm runs BESIDE the event loop, on its
+    # own session, so its shed cannot expire these rows. The in-place path still
+    # exists (no free pooled connection, the warmer) and is what this rig proves,
+    # so it is pinned here; the beside shed has its own test below.
+    monkeypatch.setattr(
+        events_module, "_typeahead_start_outcome_arm_beside", lambda *a, **k: None
+    )
 
     row = await typeahead(_SPECIMEN_Q, "specimen")
     assert len(armed["fired"]) == 1 and expected_sql in armed["fired"][0], armed
+    assert row["status"] == "suspended", row
+    assert row.get("venue_settled") is True, row
+    assert row.get("venue_settled_result") == "Pereira wins", row
+
+
+async def test_the_verdict_survives_the_outcome_arm_shedding_beside(typeahead, monkeypatch):
+    """#4437: the same shed, on the arm's own session (the reader path on an engine).
+
+    The probe is cancelled wherever it runs; the page still carries the verdict,
+    read from the request's own rows.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    fired = []
+    orig_exec = AsyncSession.execute
+
+    async def _exec(self, stmt, *a, **kw):
+        sql = str(stmt)
+        if not fired and "FROM futures_outcomes" in sql:
+            fired.append(sql)
+            raise QueryCanceledError("canceling statement due to statement timeout")
+        return await orig_exec(self, stmt, *a, **kw)
+
+    monkeypatch.setattr(AsyncSession, "execute", _exec)
+
+    row = await typeahead(_SPECIMEN_Q, "specimen")
+    assert len(fired) == 1, fired
     assert row["status"] == "suspended", row
     assert row.get("venue_settled") is True, row
     assert row.get("venue_settled_result") == "Pereira wins", row
