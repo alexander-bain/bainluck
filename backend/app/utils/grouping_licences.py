@@ -176,6 +176,18 @@ def default_grouping_licences_registry() -> dict[str, Any]:
                 "suspended_by_card_slug": None,
                 "suspended_reason": None,
             },
+            "series_hub": {
+                "kind": "series_hub",
+                "status": "HELD",
+                "mode": "hand_defined",
+                "relations": ["same_series", "same_event", "path"],
+                "level": "member",
+                "exam_as_of": None,
+                "exam_receipt": None,
+                "suspended_at": None,
+                "suspended_by_card_slug": None,
+                "suspended_reason": None,
+            },
         },
     }
 
@@ -322,11 +334,14 @@ def record_runtime_kind_suspension(
 
 def detect_served_card_violation(
     card: Mapping[str, Any],
+    *,
+    allow_settled_members: bool = False,
 ) -> tuple[str, str] | None:
     """Inspect a served grouping card or container payload for truth violations (§5).
 
     Returns ``(card_slug, violation_reason)`` when a served card carries:
-    - a settled/closed/completed member in an open grouping card,
+    - a settled/closed/completed member in an open grouping card (unless
+      ``allow_settled_members=True``, e.g. completed games in a ``series_hub``),
     - fewer than 2 rows/members,
     - a row probability outside ``[0, 1]`` or ``[0, 100]``.
     Returns ``None`` when the served card passes all checks.
@@ -353,11 +368,12 @@ def detect_served_card_violation(
             if isinstance(sec, Mapping) and isinstance(sec.get("members"), Sequence):
                 members.extend(m for m in sec["members"] if isinstance(m, Mapping))
 
-    for idx, m in enumerate(members, start=1):
-        inner = m.get("card") if isinstance(m.get("card"), Mapping) else m
-        m_status = str(inner.get("status") or m.get("status") or "").strip().lower()
-        if m_status in _SETTLED_MEMBER_STATUSES:
-            return (slug, f"Served settled member in row {idx} (status={m_status})")
+    if not allow_settled_members:
+        for idx, m in enumerate(members, start=1):
+            inner = m.get("card") if isinstance(m.get("card"), Mapping) else m
+            m_status = str(inner.get("status") or m.get("status") or "").strip().lower()
+            if m_status in _SETTLED_MEMBER_STATUSES:
+                return (slug, f"Served settled member in row {idx} (status={m_status})")
 
     rows: list[Mapping[str, Any]] = []
     if isinstance(roundup.get("rows"), Sequence):

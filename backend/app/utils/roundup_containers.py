@@ -108,6 +108,7 @@ SELECTOR_RULE_KEYS: tuple[str, ...] = (
     "subject",
     "selector",
     "team_slug",
+    "series_code",
 )
 
 #: Rule keys that name an occasion/field/register/anchor ("an id, never a member", Decide 73-A).
@@ -160,6 +161,7 @@ class RoundupMembers:
     destination_href: Optional[str] = None
     sections: tuple[dict[str, Any], ...] = ()
     revision_ids: tuple[int, ...] = ()
+    suppress_feed_item: bool = False
 
     def __init__(
         self,
@@ -174,6 +176,7 @@ class RoundupMembers:
         destination_href: Optional[str] = None,
         sections: Sequence[dict[str, Any]] = (),
         revision_ids: Sequence[int] = (),
+        suppress_feed_item: bool = False,
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
@@ -199,6 +202,7 @@ class RoundupMembers:
         object.__setattr__(
             self, "revision_ids", tuple(int(rid) for rid in revision_ids)
         )
+        object.__setattr__(self, "suppress_feed_item", bool(suppress_feed_item))
 
 
 @dataclass(frozen=True)
@@ -539,6 +543,8 @@ def compose_roundup_feed_item(
     members: RoundupMembers,
 ) -> Optional[dict[str, Any]]:
     """Build the Discover feed item for a round-up producer from its produced members."""
+    if getattr(members, "suppress_feed_item", False):
+        return None
     if not members.members:
         return copy.deepcopy(members.feed_item) if members.feed_item is not None else None
     rows = list(members.rows)
@@ -858,7 +864,9 @@ async def evaluate_roundup_producer(
 
     container_payload = compose_roundup_container(producer, outcome)
     feed_item = compose_roundup_feed_item(producer, outcome)
-    if container_payload is None or feed_item is None:
+    if container_payload is None or (
+        feed_item is None and not getattr(outcome, "suppress_feed_item", False)
+    ):
         if use_cache:
             await _store_roundup_cache_entry(
                 cache_key, producer.slug, ts, None, None, db
@@ -878,9 +886,16 @@ async def evaluate_roundup_producer(
             else load_grouping_licences(licences_path)
         )
         if producer_kind in (active_licences.get("kinds") or {}):
+            allow_settled = producer_kind == "series_hub"
             violation = detect_served_card_violation(
-                container_payload
-            ) or detect_served_card_violation(feed_item)
+                container_payload, allow_settled_members=allow_settled
+            ) or (
+                detect_served_card_violation(
+                    feed_item, allow_settled_members=allow_settled
+                )
+                if feed_item is not None
+                else None
+            )
             if violation is not None:
                 bad_slug, bad_reason = violation
                 record_runtime_kind_suspension(
@@ -1645,6 +1660,10 @@ _KIND_TO_MODULE_BUILDER: dict[str, tuple[str, str]] = {
         "app.utils.subject_sequence",
         "build_subject_sequence_producer",
     ),
+    "series_hub": (
+        "app.utils.series_hub",
+        "build_series_hub_producer",
+    ),
 }
 
 
@@ -1747,6 +1766,10 @@ _BUILTIN_SLUG_TO_MODULE_ATTR: dict[str, tuple[str, str]] = {
     "celtics-next-3-games": (
         "app.utils.subject_sequence",
         "CELTICS_NEXT_3_GAMES_PRODUCER",
+    ),
+    "mlb-2026-alwc-bos-nyy": (
+        "app.utils.series_hub",
+        "MLB_2026_ALWC_BOS_NYY_PRODUCER",
     ),
 }
 
