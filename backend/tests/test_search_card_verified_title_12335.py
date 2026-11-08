@@ -229,6 +229,20 @@ def test_a_moved_field_ignores_the_stored_fields_24h_comparison(monkeypatch):
 # ── #12335 follow-up: the composition is wall-bounded ───────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _rows_by_id(monkeypatch):
+    """The background composition reads its market on its own session (#12335
+    step 4); these rigs never connect, so it reads the specimen instead."""
+    from app.routes import events
+
+    async def _row(side, market_id):
+        m = _market()
+        m.id = market_id
+        return m
+
+    monkeypatch.setattr(events, "_verified_title_row", _row)
+
+
 def _engine_session():
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 

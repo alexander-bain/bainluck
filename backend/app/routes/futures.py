@@ -5880,6 +5880,22 @@ def _verified_title_cache_seconds() -> float:
         return 60.0
 
 
+def _held_verified_title(market_id):
+    """The verdict `_VERIFIED_TITLE_CACHE` holds for ``market_id`` now, or ``None``.
+
+    Reads only: no composition, no session. The Search card asks this first, so
+    a held verdict costs it no connection (#12335 step 4).
+    """
+    import time as _time
+
+    if _verified_title_cache_seconds() <= 0:
+        return None
+    held = _VERIFIED_TITLE_CACHE.get(market_id)
+    if held is not None and held[0] > _time.monotonic():
+        return held[1]
+    return None
+
+
 async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
     """A `Composition`, or a `Refusal` naming why this response is source mode.
 
