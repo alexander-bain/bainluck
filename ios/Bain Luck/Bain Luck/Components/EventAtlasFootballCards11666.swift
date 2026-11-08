@@ -106,26 +106,46 @@ enum EventAtlasFootballCards11666 {
         let sourceCount: Int
 
         func current(at now: Date, phase: Phase) -> PeriodWinnerLeg {
-            guard phase == .during else { return self }
-            if let observedAt {
-                let age = now.timeIntervalSince(observedAt)
-                if age > EventAtlasFootballCards11666.liveQuoteMaxAgeSeconds {
-                    return PeriodWinnerLeg(
-                        id: id,
-                        quarter: quarter,
-                        side: side,
-                        label: label,
-                        pregameChance: pregameChance,
-                        liveChance: nil,
-                        observedAt: observedAt,
-                        isStaleLive: true,
-                        verdict: verdict,
-                        rawSource: rawSource,
-                        sourceCount: sourceCount
-                    )
-                }
+            guard phase != .after else { return self }
+            let isStale: Bool = {
+                guard let observedAt else { return true }
+                return now.timeIntervalSince(observedAt) > EventAtlasFootballCards11666.liveQuoteMaxAgeSeconds
+            }()
+            guard isStale else { return self }
+            switch phase {
+            case .before:
+                guard pregameChance != nil else { return self }
+                return PeriodWinnerLeg(
+                    id: id,
+                    quarter: quarter,
+                    side: side,
+                    label: label,
+                    pregameChance: nil,
+                    liveChance: nil,
+                    observedAt: observedAt,
+                    isStaleLive: isStaleLive,
+                    verdict: verdict,
+                    rawSource: rawSource,
+                    sourceCount: sourceCount
+                )
+            case .during:
+                guard liveChance != nil || !isStaleLive else { return self }
+                return PeriodWinnerLeg(
+                    id: id,
+                    quarter: quarter,
+                    side: side,
+                    label: label,
+                    pregameChance: pregameChance,
+                    liveChance: nil,
+                    observedAt: observedAt,
+                    isStaleLive: true,
+                    verdict: verdict,
+                    rawSource: rawSource,
+                    sourceCount: sourceCount
+                )
+            case .after:
+                return self
             }
-            return self
         }
     }
 
@@ -236,27 +256,48 @@ enum EventAtlasFootballCards11666 {
         let sourceCount: Int
 
         func current(at now: Date, phase: Phase) -> TeamMilestoneSlot {
-            guard phase == .during else { return self }
-            if let observedAt {
-                let age = now.timeIntervalSince(observedAt)
-                if age > EventAtlasFootballCards11666.liveQuoteMaxAgeSeconds {
-                    return TeamMilestoneSlot(
-                        id: id,
-                        side: side,
-                        teamLabel: teamLabel,
-                        threshold: threshold,
-                        targetLabel: targetLabel,
-                        pregameChance: pregameChance,
-                        liveChance: nil,
-                        observedAt: observedAt,
-                        isStaleLive: true,
-                        verdict: verdict,
-                        rawSource: rawSource,
-                        sourceCount: sourceCount
-                    )
-                }
+            guard phase != .after else { return self }
+            let isStale: Bool = {
+                guard let observedAt else { return true }
+                return now.timeIntervalSince(observedAt) > EventAtlasFootballCards11666.liveQuoteMaxAgeSeconds
+            }()
+            guard isStale else { return self }
+            switch phase {
+            case .before:
+                guard pregameChance != nil else { return self }
+                return TeamMilestoneSlot(
+                    id: id,
+                    side: side,
+                    teamLabel: teamLabel,
+                    threshold: threshold,
+                    targetLabel: targetLabel,
+                    pregameChance: nil,
+                    liveChance: nil,
+                    observedAt: observedAt,
+                    isStaleLive: isStaleLive,
+                    verdict: verdict,
+                    rawSource: rawSource,
+                    sourceCount: sourceCount
+                )
+            case .during:
+                guard liveChance != nil || !isStaleLive else { return self }
+                return TeamMilestoneSlot(
+                    id: id,
+                    side: side,
+                    teamLabel: teamLabel,
+                    threshold: threshold,
+                    targetLabel: targetLabel,
+                    pregameChance: pregameChance,
+                    liveChance: nil,
+                    observedAt: observedAt,
+                    isStaleLive: true,
+                    verdict: verdict,
+                    rawSource: rawSource,
+                    sourceCount: sourceCount
+                )
+            case .after:
+                return self
             }
-            return self
         }
     }
 
@@ -664,13 +705,15 @@ enum EventAtlasFootballCards11666 {
                 let rawSource = sourceCount > 1 ? nil : first.source
 
                 let pregameChance: Double? = {
-                    let validPregame = first.pregameMark.flatMap { ($0 > 0 && $0 < 1) ? $0 : nil }
                     switch phase {
                     case .before:
-                        if let validPregame { return validPregame }
+                        guard let obs = first.observedAt,
+                              now.timeIntervalSince(obs) <= liveQuoteMaxAgeSeconds else {
+                            return nil
+                        }
                         return first.probability.flatMap { ($0 > 0 && $0 < 1) ? $0 : nil }
                     case .during, .after:
-                        return validPregame
+                        return first.pregameMark.flatMap { ($0 > 0 && $0 < 1) ? $0 : nil }
                     }
                 }()
 
@@ -869,13 +912,14 @@ enum EventAtlasFootballCards11666 {
             let rawSource = sourceCount > 1 ? nil : first.source
 
             let pregameChance: Double? = {
-                let validMark = first.pregameMark.flatMap { ($0 > 0 && $0 < 1) ? $0 : nil }
                 switch phase {
                 case .before:
-                    if let validMark { return validMark }
+                    guard NFLMilestoneCard9483.isRecent(first.observedAt, now: now) else {
+                        return nil
+                    }
                     return first.overProbability.flatMap { ($0 > 0 && $0 < 1) ? $0 : nil }
                 case .during, .after:
-                    return validMark
+                    return first.pregameMark.flatMap { ($0 > 0 && $0 < 1) ? $0 : nil }
                 }
             }()
 
@@ -1355,6 +1399,65 @@ enum EventAtlasFootballCards11666 {
             sourceLabel: attribution
         )
     }
+    // MARK: - Complete NFL Story Bundle Builder
+
+    static func buildStories(
+        sportKey: String?,
+        status: String?,
+        commenceTime: Date?,
+        homeTeam: String,
+        awayTeam: String,
+        homeShort: String,
+        awayShort: String,
+        homeScore: Int?,
+        awayScore: Int?,
+        boxScoreData: EventBoxScoreData?,
+        gameMarkets: GameMarketsResponse?,
+        now: Date = Date()
+    ) -> (
+        periodWinners: PeriodWinnersCard?,
+        pairedMilestones: [PairedMilestonesCard],
+        combinedYards: [CombinedYardsCard]
+    ) {
+        guard applies(sportKey: sportKey), let gm = gameMarkets else {
+            return (nil, [], [])
+        }
+        let periodWinners = buildPeriodWinnersCard(
+            status: status,
+            commenceTime: commenceTime,
+            homeTeam: homeTeam,
+            awayTeam: awayTeam,
+            homeShort: homeShort,
+            awayShort: awayShort,
+            homeScore: homeScore,
+            awayScore: awayScore,
+            boxScoreData: boxScoreData,
+            gameMarkets: gm,
+            now: now
+        )
+        let pairedMilestones = TeamStatFamily.allCases.compactMap { family in
+            buildPairedMilestonesCard(
+                family: family,
+                status: status,
+                commenceTime: commenceTime,
+                homeTeam: homeTeam,
+                awayTeam: awayTeam,
+                homeShort: homeShort,
+                awayShort: awayShort,
+                gameMarkets: gm,
+                now: now
+            )
+        }
+        let combinedYards = buildCombinedYardsCards(
+            status: status,
+            commenceTime: commenceTime,
+            homeTeam: homeTeam,
+            awayTeam: awayTeam,
+            gameMarkets: gm,
+            now: now
+        )
+        return (periodWinners, pairedMilestones, combinedYards)
+    }
 }
 
 // MARK: - 12a View: Quarter-by-Quarter Period Winners Card
@@ -1484,6 +1587,10 @@ struct EventAtlasFootballPeriodWinnersCardView11666: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: true, vertical: false)
+                } else if card.phase == .before {
+                    Text(EventAtlasStates11666.noRecentPrice)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 } else {
                     Text("○ —")
                         .font(.caption)
@@ -1649,6 +1756,10 @@ struct EventAtlasFootballPairedMilestonesCardView11666: View {
                     if let pre = slot.pregameChance {
                         Text("○ \(formatProbability(pre))")
                             .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else if card.phase == .before {
+                        Text(EventAtlasStates11666.noRecentPrice)
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                     } else {
                         Text("○ Unavailable")

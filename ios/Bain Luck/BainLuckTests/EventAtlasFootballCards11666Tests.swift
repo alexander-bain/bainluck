@@ -382,6 +382,232 @@ final class EventAtlasFootballCards11666Tests: XCTestCase {
         XCTAssertEqual(details.pregameBaseline, "48%")
     }
 
+    func testBeforeKickoffUsesRecentCurrentPriceIgnoresOpeningMarkAndAgesOut() throws {
+        // Buccaneers @ Bears (kick-off 5:20 PM PT = 2026-11-09T01:20:00Z, read at 1:44 PM PT = 2026-11-08T21:44:00Z)
+        let now = ISO8601DateFormatter().date(from: "2026-11-08T21:44:00Z")!
+        let commence = ISO8601DateFormatter().date(from: "2026-11-09T01:20:00Z")!
+        let heldLater = ISO8601DateFormatter().date(from: "2026-11-08T22:20:00Z")!
+
+        // 12b: Bucs @ Bears Team Field Goals rows where pregame_mark (opening) differs from current price
+        let fgProps: [GameMarketPlayerProp] = [
+            GameMarketPlayerProp(
+                marketName: "Tampa Bay vs Chicago: Team Field Goals",
+                outcomeName: "Chicago: 1+",
+                threshold: 1,
+                overProbability: 0.885,
+                source: "kalshi",
+                movement: nil,
+                playerHeadshot: nil,
+                playerTeam: "CHI",
+                actual: nil,
+                hit: nil,
+                pregameMark: 0.755,
+                observedAt: "2026-11-08T21:35:00Z"
+            ),
+            GameMarketPlayerProp(
+                marketName: "Tampa Bay vs Chicago: Team Field Goals",
+                outcomeName: "Chicago: 3+",
+                threshold: 3,
+                overProbability: 0.265,
+                source: "kalshi",
+                movement: nil,
+                playerHeadshot: nil,
+                playerTeam: "CHI",
+                actual: nil,
+                hit: nil,
+                pregameMark: 0.22,
+                observedAt: "2026-11-08T21:35:00Z"
+            ),
+            GameMarketPlayerProp(
+                marketName: "Tampa Bay vs Chicago: Team Field Goals",
+                outcomeName: "Chicago: 4+",
+                threshold: 4,
+                overProbability: 0.10,
+                source: "kalshi",
+                movement: nil,
+                playerHeadshot: nil,
+                playerTeam: "CHI",
+                actual: nil,
+                hit: nil,
+                pregameMark: 0.265,
+                observedAt: "2026-11-08T21:35:00Z"
+            ),
+            GameMarketPlayerProp(
+                marketName: "Tampa Bay vs Chicago: Team Field Goals",
+                outcomeName: "Tampa Bay: 3+",
+                threshold: 3,
+                overProbability: 0.215,
+                source: "kalshi",
+                movement: nil,
+                playerHeadshot: nil,
+                playerTeam: "TB",
+                actual: nil,
+                hit: nil,
+                pregameMark: nil,
+                observedAt: "2026-11-08T21:35:00Z"
+            ),
+            GameMarketPlayerProp(
+                marketName: "Tampa Bay vs Chicago: Team Field Goals",
+                outcomeName: "Tampa Bay: 4+",
+                threshold: 4,
+                overProbability: 0.085,
+                source: "kalshi",
+                movement: nil,
+                playerHeadshot: nil,
+                playerTeam: "TB",
+                actual: nil,
+                hit: nil,
+                pregameMark: 0.26,
+                observedAt: "2026-11-08T21:35:00Z"
+            ),
+            // Stale pre-kickoff row (45m old) -> pregameChance must be nil ("No recent probability")
+            GameMarketPlayerProp(
+                marketName: "Tampa Bay vs Chicago: Team Field Goals",
+                outcomeName: "Tampa Bay: 1+",
+                threshold: 1,
+                overProbability: 0.85,
+                source: "kalshi",
+                movement: nil,
+                playerHeadshot: nil,
+                playerTeam: "TB",
+                actual: nil,
+                hit: nil,
+                pregameMark: 0.80,
+                observedAt: "2026-11-08T20:55:00Z"
+            )
+        ]
+
+        // 12a: Q1 fresh (9m old) vs Q2 stale (40m old) before kickoff
+        let periodMarkets: [GameMarketOutcome] = [
+            GameMarketOutcome(
+                marketName: "1st Quarter Winner",
+                outcomeName: "Chicago Bears",
+                probability: 0.49,
+                source: "polymarket",
+                threshold: nil,
+                overProbability: nil,
+                marketType: "moneyline",
+                movement: nil,
+                period: "Q1",
+                isWinner: nil,
+                resolutionSource: nil,
+                observedAt: "2026-11-08T21:35:00Z",
+                pregameMark: 0.42
+            ),
+            GameMarketOutcome(
+                marketName: "2nd Quarter Winner",
+                outcomeName: "Chicago Bears",
+                probability: 0.51,
+                source: "polymarket",
+                threshold: nil,
+                overProbability: nil,
+                marketType: "moneyline",
+                movement: nil,
+                period: "Q2",
+                isWinner: nil,
+                resolutionSource: nil,
+                observedAt: "2026-11-08T21:00:00Z",
+                pregameMark: nil
+            )
+        ]
+
+        let gm = GameMarketsResponse(
+            eventId: 14780575,
+            homeTeam: "Chicago Bears",
+            awayTeam: "Tampa Bay Buccaneers",
+            status: "scheduled",
+            homeScore: nil,
+            awayScore: nil,
+            playerProps: fgProps,
+            spreads: nil,
+            totals: nil,
+            teamTotals: nil,
+            periodMarkets: periodMarkets,
+            other: nil,
+            pace: nil
+        )
+
+        let fgCard = try XCTUnwrap(
+            EventAtlasFootballCards11666.buildPairedMilestonesCard(
+                family: .fieldGoals,
+                status: "scheduled",
+                commenceTime: commence,
+                homeTeam: "Chicago Bears",
+                awayTeam: "Tampa Bay Buccaneers",
+                homeShort: "Bears",
+                awayShort: "Buccaneers",
+                gameMarkets: gm,
+                now: now
+            )
+        )
+        XCTAssertEqual(fgCard.phase, .before)
+        XCTAssertEqual(fgCard.groups.map(\.threshold), [1, 3, 4])
+
+        // 1. Pre-kickoff rows whose mark differs from current price show the current price (never opening mark)
+        let chi1 = try XCTUnwrap(fgCard.groups[0].home?.pregameChance)
+        let chi3 = try XCTUnwrap(fgCard.groups[1].home?.pregameChance)
+        let chi4 = try XCTUnwrap(fgCard.groups[2].home?.pregameChance)
+        XCTAssertEqual(chi1, 0.885, accuracy: 0.0001)
+        XCTAssertEqual(chi3, 0.265, accuracy: 0.0001)
+        XCTAssertEqual(chi4, 0.10, accuracy: 0.0001)
+
+        let tb3 = try XCTUnwrap(fgCard.groups[1].away?.pregameChance)
+        let tb4 = try XCTUnwrap(fgCard.groups[2].away?.pregameChance)
+        XCTAssertEqual(tb3, 0.215, accuracy: 0.0001)
+        XCTAssertEqual(tb4, 0.085, accuracy: 0.0001)
+
+        // 2. Ladder monotonicity: higher rung never prints a higher probability than a lower rung
+        XCTAssertLessThan(chi3, chi1)
+        XCTAssertLessThan(chi4, chi3)
+        XCTAssertLessThan(tb4, tb3)
+
+        // 3. Stale pre-kickoff row (Tampa Bay 1+ at 20:55Z, 49m old) has nil pregameChance and reads "No recent probability"
+        let tb1Slot = try XCTUnwrap(fgCard.groups[0].away)
+        XCTAssertNil(tb1Slot.pregameChance)
+        let staleSlotDetails = EventAtlasFootballCards11666.detailsModel(for: tb1Slot, card: fgCard)
+        XCTAssertEqual(staleSlotDetails.primaryReadingValue, EventAtlasStates11666.noRecentPrice)
+        XCTAssertNil(staleSlotDetails.pregameBaseline)
+
+        // 4. Card held open past 30 minutes before kick-off ages out its pre-kickoff values
+        let agedFgCard = fgCard.current(at: heldLater)
+        XCTAssertNil(agedFgCard.groups[0].home?.pregameChance)
+        XCTAssertNil(agedFgCard.groups[1].home?.pregameChance)
+        XCTAssertNil(agedFgCard.groups[2].home?.pregameChance)
+
+        // Verify 12a PeriodWinnersCard pre-kickoff recency and aging as well
+        let periodCard = try XCTUnwrap(
+            EventAtlasFootballCards11666.buildPeriodWinnersCard(
+                status: "scheduled",
+                commenceTime: commence,
+                homeTeam: "Chicago Bears",
+                awayTeam: "Tampa Bay Buccaneers",
+                homeShort: "Bears",
+                awayShort: "Buccaneers",
+                homeScore: nil,
+                awayScore: nil,
+                boxScoreData: nil,
+                gameMarkets: gm,
+                now: now
+            )
+        )
+        XCTAssertEqual(periodCard.phase, .before)
+        // Q1 (9m old) uses current price 0.49 (not pregameMark 0.42)
+        XCTAssertEqual(periodCard.panels[0].legs.first?.pregameChance ?? 0, 0.49, accuracy: 0.0001)
+        // Q2 (44m old) is nil ("No recent probability")
+        let q2Leg = try XCTUnwrap(periodCard.panels[1].legs.first)
+        XCTAssertNil(q2Leg.pregameChance)
+        let q2Details = EventAtlasFootballCards11666.detailsModel(
+            for: q2Leg,
+            panel: periodCard.panels[1],
+            card: periodCard
+        )
+        XCTAssertEqual(q2Details.primaryReadingValue, EventAtlasStates11666.noRecentPrice)
+
+        // Held open past 30m before kick-off ages Q1 as well
+        let agedPeriodCard = periodCard.current(at: heldLater)
+        XCTAssertNil(agedPeriodCard.panels[0].legs.first?.pregameChance)
+    }
+
     func testCombinedYardsPreservesSignedNegativeYardageAndHandlesUnavailableSplit() throws {
         let milestone = NFLMilestoneCard9483(
             id: "barkley-rush-rec",
