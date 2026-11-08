@@ -1,0 +1,4995 @@
+{
+  "generated_at": "2026-11-09T12:01:27Z",
+  "model": "gpt-4o-mini",
+  "proposer": "sibling_family_proposer",
+  "runs_per_card": 3,
+  "total_input_tokens": 58434,
+  "total_output_tokens": 13224,
+  "actual_cost_usd": 0.0167,
+  "cards": [
+    {
+      "card_id": "dev-01-proposed-polymarket-will-contenders-record-100-p",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-contenders-record-100-points",
+      "proposed_title": "Will which contender record 100+ points?",
+      "source": "polymarket",
+      "parent_subject": "will * record 100 points",
+      "axis": "contenders",
+      "category": "hockey",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * record 100 points",
+        "title_ilike": "Will % record 100+ points%",
+        "title_template": "Will which contender record 100+ points?",
+        "kicker_prefix": "HOCKEY",
+        "kicker_include_date": false,
+        "subject_unit": "contenders",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 567,
+          "output_tokens": 125,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Connor McDavid record 100+ points?",
+          "market_b_quote": "Will Leon Draisaitl record 100+ points?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * record 100 points"
+        },
+        "2": {
+          "input_tokens": 567,
+          "output_tokens": 120,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Connor McDavid record 100+ points?",
+          "market_b_quote": "Will Leon Draisaitl record 100+ points?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * record 100 points"
+        },
+        "3": {
+          "input_tokens": 567,
+          "output_tokens": 120,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Connor McDavid record 100+ points?",
+          "market_b_quote": "Will Leon Draisaitl record 100+ points?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * record 100 points"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 63105212,
+          "name": "Will Connor McDavid record 100+ points?",
+          "description": "Will Connor McDavid record 100+ points?",
+          "source": "polymarket",
+          "category": "hockey",
+          "status": "open",
+          "resolution_date": "2027-04-30T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9195
+            },
+            {
+              "name": "No",
+              "probability": 0.0805
+            }
+          ],
+          "rule_quote": "Will Connor McDavid record 100+ points?"
+        },
+        {
+          "id": 63218794,
+          "name": "Will Leon Draisaitl record 100+ points?",
+          "description": "Will Leon Draisaitl record 100+ points?",
+          "source": "polymarket",
+          "category": "hockey",
+          "status": "open",
+          "resolution_date": "2027-04-30T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.875
+            },
+            {
+              "name": "No",
+              "probability": 0.125
+            }
+          ],
+          "rule_quote": "Will Leon Draisaitl record 100+ points?"
+        },
+        {
+          "id": 63218810,
+          "name": "Will Nikita Kucherov record 100+ points?",
+          "description": "Will Nikita Kucherov record 100+ points?",
+          "source": "polymarket",
+          "category": "hockey",
+          "status": "open",
+          "resolution_date": "2027-04-30T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.82
+            },
+            {
+              "name": "No",
+              "probability": 0.18
+            }
+          ],
+          "rule_quote": "Will Nikita Kucherov record 100+ points?"
+        },
+        {
+          "id": 63119688,
+          "name": "Will Macklin Celebrini record 100+ points?",
+          "description": "Will Macklin Celebrini record 100+ points?",
+          "source": "polymarket",
+          "category": "hockey",
+          "status": "open",
+          "resolution_date": "2027-04-30T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.585
+            },
+            {
+              "name": "No",
+              "probability": 0.415
+            }
+          ],
+          "rule_quote": "Will Macklin Celebrini record 100+ points?"
+        },
+        {
+          "id": 63218792,
+          "name": "Will Kyle Connor record 100+ points?",
+          "description": "Will Kyle Connor record 100+ points?",
+          "source": "polymarket",
+          "category": "hockey",
+          "status": "open",
+          "resolution_date": "2027-04-30T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.41
+            },
+            {
+              "name": "No",
+              "probability": 0.59
+            }
+          ],
+          "rule_quote": "Will Kyle Connor record 100+ points?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-02-proposed-polymarket-will-teams-finish-9th-24th-i",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-teams-finish-9th-24th-in-uecl-league-phase",
+      "proposed_title": "Will which team finish 9th-24th in UECL league phase?",
+      "source": "polymarket",
+      "parent_subject": "will * finish 9th-24th in uecl league phase",
+      "axis": "teams",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * finish 9th-24th in uecl league phase",
+        "title_ilike": "Will % finish 9th-24th in UECL league phase%",
+        "title_template": "Will which team finish 9th-24th in UECL league phase?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 616,
+          "output_tokens": 138,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Getafe finish 9th-24th in UECL league phase?",
+          "market_b_quote": "Will Sint-Truiden finish 9th-24th in UECL league phase?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * finish 9th-24th in uecl league phase"
+        },
+        "2": {
+          "input_tokens": 616,
+          "output_tokens": 138,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Getafe finish 9th-24th in UECL league phase?",
+          "market_b_quote": "Will Sint-Truiden finish 9th-24th in UECL league phase?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * finish 9th-24th in uecl league phase"
+        },
+        "3": {
+          "input_tokens": 616,
+          "output_tokens": 138,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Getafe finish 9th-24th in UECL league phase?",
+          "market_b_quote": "Will Sint-Truiden finish 9th-24th in UECL league phase?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * finish 9th-24th in uecl league phase"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 63462187,
+          "name": "Will Getafe finish 9th-24th in UECL league phase?",
+          "description": "Will Getafe finish 9th-24th in UECL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.67
+            },
+            {
+              "name": "No",
+              "probability": 0.33
+            }
+          ],
+          "rule_quote": "Will Getafe finish 9th-24th in UECL league phase?"
+        },
+        {
+          "id": 63348210,
+          "name": "Will Sint-Truiden finish 9th-24th in UECL league phase?",
+          "description": "Will Sint-Truiden finish 9th-24th in UECL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.615
+            },
+            {
+              "name": "No",
+              "probability": 0.385
+            }
+          ],
+          "rule_quote": "Will Sint-Truiden finish 9th-24th in UECL league phase?"
+        },
+        {
+          "id": 63348208,
+          "name": "Will Panathinaikos finish 9th-24th in UECL league phase?",
+          "description": "Will Panathinaikos finish 9th-24th in UECL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.605
+            },
+            {
+              "name": "No",
+              "probability": 0.395
+            }
+          ],
+          "rule_quote": "Will Panathinaikos finish 9th-24th in UECL league phase?"
+        },
+        {
+          "id": 63462192,
+          "name": "Will Brann finish 9th-24th in UECL league phase?",
+          "description": "Will Brann finish 9th-24th in UECL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.6
+            },
+            {
+              "name": "No",
+              "probability": 0.4
+            }
+          ],
+          "rule_quote": "Will Brann finish 9th-24th in UECL league phase?"
+        },
+        {
+          "id": 63462198,
+          "name": "Will Hajduk Split finish 9th-24th in UECL league phase?",
+          "description": "Will Hajduk Split finish 9th-24th in UECL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.59
+            },
+            {
+              "name": "No",
+              "probability": 0.41
+            }
+          ],
+          "rule_quote": "Will Hajduk Split finish 9th-24th in UECL league phase?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-03-proposed-polymarket-will-teams-finish-top-8-in-u",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-teams-finish-top-8-in-uecl-league-phase",
+      "proposed_title": "Will which team finish top 8 in UECL league phase?",
+      "source": "polymarket",
+      "parent_subject": "will * finish top 8 in uecl league phase",
+      "axis": "teams",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * finish top 8 in uecl league phase",
+        "title_ilike": "Will % finish top 8 in UECL league phase%",
+        "title_template": "Will which team finish top 8 in UECL league phase?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 592,
+          "output_tokens": 128,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Trabzonspor finish top 8 in UECL league phase?",
+          "market_b_quote": "Will Monaco finish top 8 in UECL league phase?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * finish top 8 in uecl league phase"
+        },
+        "2": {
+          "input_tokens": 592,
+          "output_tokens": 128,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Trabzonspor finish top 8 in UECL league phase?",
+          "market_b_quote": "Will Monaco finish top 8 in UECL league phase?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * finish top 8 in uecl league phase"
+        },
+        "3": {
+          "input_tokens": 592,
+          "output_tokens": 128,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Trabzonspor finish top 8 in UECL league phase?",
+          "market_b_quote": "Will Monaco finish top 8 in UECL league phase?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * finish top 8 in uecl league phase"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 63590742,
+          "name": "Will Trabzonspor finish top 8 in UECL league phase?",
+          "description": "Will Trabzonspor finish top 8 in UECL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.845
+            },
+            {
+              "name": "No",
+              "probability": 0.155
+            }
+          ],
+          "rule_quote": "Will Trabzonspor finish top 8 in UECL league phase?"
+        },
+        {
+          "id": 63462212,
+          "name": "Will Monaco finish top 8 in UECL league phase?",
+          "description": "Will Monaco finish top 8 in UECL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.825
+            },
+            {
+              "name": "No",
+              "probability": 0.175
+            }
+          ],
+          "rule_quote": "Will Monaco finish top 8 in UECL league phase?"
+        },
+        {
+          "id": 63348216,
+          "name": "Will Brighton & Hove Albion finish top 8 in UECL league phase?",
+          "description": "Will Brighton & Hove Albion finish top 8 in UECL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.78
+            },
+            {
+              "name": "No",
+              "probability": 0.22
+            }
+          ],
+          "rule_quote": "Will Brighton & Hove Albion finish top 8 in UECL league phase?"
+        },
+        {
+          "id": 63348215,
+          "name": "Will SC Freiburg finish top 8 in UECL league phase?",
+          "description": "Will SC Freiburg finish top 8 in UECL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.655
+            },
+            {
+              "name": "No",
+              "probability": 0.345
+            }
+          ],
+          "rule_quote": "Will SC Freiburg finish top 8 in UECL league phase?"
+        },
+        {
+          "id": 63462218,
+          "name": "Will Panathinaikos finish top 8 in UECL league phase?",
+          "description": "Will Panathinaikos finish top 8 in UECL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.595
+            },
+            {
+              "name": "No",
+              "probability": 0.405
+            }
+          ],
+          "rule_quote": "Will Panathinaikos finish top 8 in UECL league phase?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-04-proposed-polymarket-will-teams-reach-the-2027-ue",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-teams-reach-the-2027-uefa-champions-league",
+      "proposed_title": "Will which team reach the 2027 UEFA Champions League Round of 16?",
+      "source": "polymarket",
+      "parent_subject": "will * reach the 2027 uefa champions league round of 16",
+      "axis": "teams",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * reach the 2027 uefa champions league round of 16",
+        "title_ilike": "Will % reach the 2027 UEFA Champions League Round of 16%",
+        "title_template": "Will which team reach the 2027 UEFA Champions League Round of 16?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 611,
+          "output_tokens": 138,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Paris Saint-Germain reach the 2027 UEFA Champions League Round of 16?",
+          "market_b_quote": "Will Arsenal reach the 2027 UEFA Champions League Round of 16?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * reach the 2027 uefa champions league round of 16"
+        },
+        "2": {
+          "input_tokens": 611,
+          "output_tokens": 138,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Paris Saint-Germain reach the 2027 UEFA Champions League Round of 16?",
+          "market_b_quote": "Will Arsenal reach the 2027 UEFA Champions League Round of 16?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * reach the 2027 uefa champions league round of 16"
+        },
+        "3": {
+          "input_tokens": 611,
+          "output_tokens": 141,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Paris Saint-Germain reach the 2027 UEFA Champions League Round of 16?",
+          "market_b_quote": "Will Arsenal reach the 2027 UEFA Champions League Round of 16?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * reach the 2027 uefa champions league round of 16"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61380620,
+          "name": "Will Paris Saint-Germain reach the 2027 UEFA Champions League Round of 16?",
+          "description": "Will Paris Saint-Germain reach the 2027 UEFA Champions League Round of 16?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-02-28T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9965
+            },
+            {
+              "name": "No",
+              "probability": 0.0035
+            }
+          ],
+          "rule_quote": "Will Paris Saint-Germain reach the 2027 UEFA Champions League Round of 16?"
+        },
+        {
+          "id": 61380622,
+          "name": "Will Arsenal reach the 2027 UEFA Champions League Round of 16?",
+          "description": "Will Arsenal reach the 2027 UEFA Champions League Round of 16?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-02-28T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9785
+            },
+            {
+              "name": "No",
+              "probability": 0.0215
+            }
+          ],
+          "rule_quote": "Will Arsenal reach the 2027 UEFA Champions League Round of 16?"
+        },
+        {
+          "id": 61380631,
+          "name": "Will Real Madrid reach the 2027 UEFA Champions League Round of 16?",
+          "description": "Will Real Madrid reach the 2027 UEFA Champions League Round of 16?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-02-28T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9785
+            },
+            {
+              "name": "No",
+              "probability": 0.0215
+            }
+          ],
+          "rule_quote": "Will Real Madrid reach the 2027 UEFA Champions League Round of 16?"
+        },
+        {
+          "id": 61380635,
+          "name": "Will Bayern Munich reach the 2027 UEFA Champions League Round of 16?",
+          "description": "Will Bayern Munich reach the 2027 UEFA Champions League Round of 16?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-02-28T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.966
+            },
+            {
+              "name": "No",
+              "probability": 0.034
+            }
+          ],
+          "rule_quote": "Will Bayern Munich reach the 2027 UEFA Champions League Round of 16?"
+        },
+        {
+          "id": 61380630,
+          "name": "Will Barcelona reach the 2027 UEFA Champions League Round of 16?",
+          "description": "Will Barcelona reach the 2027 UEFA Champions League Round of 16?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-02-28T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.962
+            },
+            {
+              "name": "No",
+              "probability": 0.038
+            }
+          ],
+          "rule_quote": "Will Barcelona reach the 2027 UEFA Champions League Round of 16?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-05-proposed-polymarket-will-contenders-be-relegated",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-liga",
+      "proposed_title": "Will which contender be relegated from the 2026 Liga Profesional (Argentina)?",
+      "source": "polymarket",
+      "parent_subject": "will * be relegated from the 2026 liga profesional argentina",
+      "axis": "contenders",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be relegated from the 2026 liga profesional argentina",
+        "title_ilike": "Will % be relegated from the 2026 Liga Profesional (Argentina)%",
+        "title_template": "Will which contender be relegated from the 2026 Liga Profesional (Argentina)?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "contenders",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 638,
+          "output_tokens": 142,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Estudiantes (RC) be relegated from the 2026 Liga Profesional (Argentina)?",
+          "market_b_quote": "Will Aldosivi be relegated from the 2026 Liga Profesional (Argentina)?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 liga profesional argentina"
+        },
+        "2": {
+          "input_tokens": 638,
+          "output_tokens": 142,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Estudiantes (RC) be relegated from the 2026 Liga Profesional (Argentina)?",
+          "market_b_quote": "Will Aldosivi be relegated from the 2026 Liga Profesional (Argentina)?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 liga profesional argentina"
+        },
+        "3": {
+          "input_tokens": 638,
+          "output_tokens": 142,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Estudiantes (RC) be relegated from the 2026 Liga Profesional (Argentina)?",
+          "market_b_quote": "Will Aldosivi be relegated from the 2026 Liga Profesional (Argentina)?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 liga profesional argentina"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61373126,
+          "name": "Will Estudiantes (RC) be relegated from the 2026 Liga Profesional (Argentina)?",
+          "description": "Will Estudiantes (RC) be relegated from the 2026 Liga Profesional (Argentina)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.967
+            },
+            {
+              "name": "No",
+              "probability": 0.033
+            }
+          ],
+          "rule_quote": "Will Estudiantes (RC) be relegated from the 2026 Liga Profesional (Argentina)?"
+        },
+        {
+          "id": 61373115,
+          "name": "Will Aldosivi be relegated from the 2026 Liga Profesional (Argentina)?",
+          "description": "Will Aldosivi be relegated from the 2026 Liga Profesional (Argentina)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.952
+            },
+            {
+              "name": "No",
+              "probability": 0.048
+            }
+          ],
+          "rule_quote": "Will Aldosivi be relegated from the 2026 Liga Profesional (Argentina)?"
+        },
+        {
+          "id": 61373133,
+          "name": "Will Lan\u00fas be relegated from the 2026 Liga Profesional (Argentina)?",
+          "description": "Will Lan\u00fas be relegated from the 2026 Liga Profesional (Argentina)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0325
+            },
+            {
+              "name": "No",
+              "probability": 0.9675
+            }
+          ],
+          "rule_quote": "Will Lan\u00fas be relegated from the 2026 Liga Profesional (Argentina)?"
+        },
+        {
+          "id": 61373117,
+          "name": "Will Atl\u00e9tico Tucum\u00e1n be relegated from the 2026 Liga Profesional (Argentina)?",
+          "description": "Will Atl\u00e9tico Tucum\u00e1n be relegated from the 2026 Liga Profesional (Argentina)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0315
+            },
+            {
+              "name": "No",
+              "probability": 0.9685
+            }
+          ],
+          "rule_quote": "Will Atl\u00e9tico Tucum\u00e1n be relegated from the 2026 Liga Profesional (Argentina)?"
+        },
+        {
+          "id": 61373118,
+          "name": "Will Banfield be relegated from the 2026 Liga Profesional (Argentina)?",
+          "description": "Will Banfield be relegated from the 2026 Liga Profesional (Argentina)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0315
+            },
+            {
+              "name": "No",
+              "probability": 0.9685
+            }
+          ],
+          "rule_quote": "Will Banfield be relegated from the 2026 Liga Profesional (Argentina)?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-06-proposed-polymarket-will-teams-advance-to-the-wo",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
+      "proposed_title": "Will which team advance to the World Series in the 2027 MLB Playoffs?",
+      "source": "polymarket",
+      "parent_subject": "will * advance to the world series in the 2027 mlb playoffs",
+      "axis": "teams",
+      "category": "baseball",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * advance to the world series in the 2027 mlb playoffs",
+        "title_ilike": "Will % advance to the World Series in the 2027 MLB Playoffs%",
+        "title_template": "Will which team advance to the World Series in the 2027 MLB Playoffs?",
+        "kicker_prefix": "BASEBALL",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 622,
+          "output_tokens": 142,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Los Angeles Dodgers advance to the World Series in the 2027 MLB Playoffs?",
+          "market_b_quote": "Will Milwaukee Brewers advance to the World Series in the 2027 MLB Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the world series in the 2027 mlb playoffs"
+        },
+        "2": {
+          "input_tokens": 622,
+          "output_tokens": 142,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Los Angeles Dodgers advance to the World Series in the 2027 MLB Playoffs?",
+          "market_b_quote": "Will Milwaukee Brewers advance to the World Series in the 2027 MLB Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the world series in the 2027 mlb playoffs"
+        },
+        "3": {
+          "input_tokens": 622,
+          "output_tokens": 150,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Los Angeles Dodgers advance to the World Series in the 2027 MLB Playoffs?",
+          "market_b_quote": "Will Milwaukee Brewers advance to the World Series in the 2027 MLB Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the world series in the 2027 mlb playoffs"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 68954957,
+          "name": "Will Los Angeles Dodgers advance to the World Series in the 2027 MLB Playoffs?",
+          "description": "Will Los Angeles Dodgers advance to the World Series in the 2027 MLB Playoffs?",
+          "source": "polymarket",
+          "category": "baseball",
+          "status": "open",
+          "resolution_date": "2027-10-22T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.32
+            },
+            {
+              "name": "No",
+              "probability": 0.68
+            }
+          ],
+          "rule_quote": "Will Los Angeles Dodgers advance to the World Series in the 2027 MLB Playoffs?"
+        },
+        {
+          "id": 68954953,
+          "name": "Will Milwaukee Brewers advance to the World Series in the 2027 MLB Playoffs?",
+          "description": "Will Milwaukee Brewers advance to the World Series in the 2027 MLB Playoffs?",
+          "source": "polymarket",
+          "category": "baseball",
+          "status": "open",
+          "resolution_date": "2027-10-22T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.25
+            },
+            {
+              "name": "No",
+              "probability": 0.75
+            }
+          ],
+          "rule_quote": "Will Milwaukee Brewers advance to the World Series in the 2027 MLB Playoffs?"
+        },
+        {
+          "id": 68954932,
+          "name": "Will New York Yankees advance to the World Series in the 2027 MLB Playoffs?",
+          "description": "Will New York Yankees advance to the World Series in the 2027 MLB Playoffs?",
+          "source": "polymarket",
+          "category": "baseball",
+          "status": "open",
+          "resolution_date": "2027-10-22T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.25
+            },
+            {
+              "name": "No",
+              "probability": 0.75
+            }
+          ],
+          "rule_quote": "Will New York Yankees advance to the World Series in the 2027 MLB Playoffs?"
+        },
+        {
+          "id": 68954937,
+          "name": "Will Cleveland Guardians advance to the World Series in the 2027 MLB Playoffs?",
+          "description": "Will Cleveland Guardians advance to the World Series in the 2027 MLB Playoffs?",
+          "source": "polymarket",
+          "category": "baseball",
+          "status": "open",
+          "resolution_date": "2027-10-22T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.195
+            },
+            {
+              "name": "No",
+              "probability": 0.805
+            }
+          ],
+          "rule_quote": "Will Cleveland Guardians advance to the World Series in the 2027 MLB Playoffs?"
+        },
+        {
+          "id": 68954945,
+          "name": "Will Texas Rangers advance to the World Series in the 2027 MLB Playoffs?",
+          "description": "Will Texas Rangers advance to the World Series in the 2027 MLB Playoffs?",
+          "source": "polymarket",
+          "category": "baseball",
+          "status": "open",
+          "resolution_date": "2027-10-22T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.145
+            },
+            {
+              "name": "No",
+              "probability": 0.855
+            }
+          ],
+          "rule_quote": "Will Texas Rangers advance to the World Series in the 2027 MLB Playoffs?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-07-proposed-polymarket-will-the-contenders-make-the",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-the-contenders-make-the-2026-27-nhl-playoff",
+      "proposed_title": "Will the contenders make the 2026-27 NHL Playoffs?",
+      "source": "polymarket",
+      "parent_subject": "will the * make the 2026-27 nhl playoffs",
+      "axis": "contenders",
+      "category": "hockey",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will the * make the 2026-27 nhl playoffs",
+        "title_ilike": "Will the % make the 2026-27 NHL Playoffs%",
+        "title_template": "Will the contenders make the 2026-27 NHL Playoffs?",
+        "kicker_prefix": "HOCKEY",
+        "kicker_include_date": false,
+        "subject_unit": "contenders",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 605,
+          "output_tokens": 134,
+          "only_subject_differs": true,
+          "market_a_quote": "Will the Minnesota Wild make the 2026-27 NHL Playoffs?",
+          "market_b_quote": "Will the Carolina Hurricanes make the 2026-27 NHL Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will the * make the 2026-27 nhl playoffs"
+        },
+        "2": {
+          "input_tokens": 605,
+          "output_tokens": 134,
+          "only_subject_differs": true,
+          "market_a_quote": "Will the Minnesota Wild make the 2026-27 NHL Playoffs?",
+          "market_b_quote": "Will the Carolina Hurricanes make the 2026-27 NHL Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will the * make the 2026-27 nhl playoffs"
+        },
+        "3": {
+          "input_tokens": 605,
+          "output_tokens": 136,
+          "only_subject_differs": true,
+          "market_a_quote": "Will the Minnesota Wild make the 2026-27 NHL Playoffs?",
+          "market_b_quote": "Will the Carolina Hurricanes make the 2026-27 NHL Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will the * make the 2026-27 nhl playoffs"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 63104793,
+          "name": "Will the Minnesota Wild make the 2026-27 NHL Playoffs?",
+          "description": "Will the Minnesota Wild make the 2026-27 NHL Playoffs?",
+          "source": "polymarket",
+          "category": "hockey",
+          "status": "open",
+          "resolution_date": "2027-04-16T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.955
+            },
+            {
+              "name": "No",
+              "probability": 0.045
+            }
+          ],
+          "rule_quote": "Will the Minnesota Wild make the 2026-27 NHL Playoffs?"
+        },
+        {
+          "id": 63104784,
+          "name": "Will the Carolina Hurricanes make the 2026-27 NHL Playoffs?",
+          "description": "Will the Carolina Hurricanes make the 2026-27 NHL Playoffs?",
+          "source": "polymarket",
+          "category": "hockey",
+          "status": "open",
+          "resolution_date": "2027-04-16T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.94
+            },
+            {
+              "name": "No",
+              "probability": 0.06
+            }
+          ],
+          "rule_quote": "Will the Carolina Hurricanes make the 2026-27 NHL Playoffs?"
+        },
+        {
+          "id": 63104790,
+          "name": "Will the Edmonton Oilers make the 2026-27 NHL Playoffs?",
+          "description": "Will the Edmonton Oilers make the 2026-27 NHL Playoffs?",
+          "source": "polymarket",
+          "category": "hockey",
+          "status": "open",
+          "resolution_date": "2027-04-16T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.91
+            },
+            {
+              "name": "No",
+              "probability": 0.09
+            }
+          ],
+          "rule_quote": "Will the Edmonton Oilers make the 2026-27 NHL Playoffs?"
+        },
+        {
+          "id": 63104786,
+          "name": "Will the Colorado Avalanche make the 2026-27 NHL Playoffs?",
+          "description": "Will the Colorado Avalanche make the 2026-27 NHL Playoffs?",
+          "source": "polymarket",
+          "category": "hockey",
+          "status": "open",
+          "resolution_date": "2027-04-16T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.8995
+            },
+            {
+              "name": "No",
+              "probability": 0.1005
+            }
+          ],
+          "rule_quote": "Will the Colorado Avalanche make the 2026-27 NHL Playoffs?"
+        },
+        {
+          "id": 63119277,
+          "name": "Will the Vegas Golden Knights make the 2026-27 NHL Playoffs?",
+          "description": "Will the Vegas Golden Knights make the 2026-27 NHL Playoffs?",
+          "source": "polymarket",
+          "category": "hockey",
+          "status": "open",
+          "resolution_date": "2027-04-16T03:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.89
+            },
+            {
+              "name": "No",
+              "probability": 0.11
+            }
+          ],
+          "rule_quote": "Will the Vegas Golden Knights make the 2026-27 NHL Playoffs?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-08-proposed-polymarket-will-teams-advance-to-the-di",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-teams-advance-to-the-divisional-round-in-th",
+      "proposed_title": "Will which team advance to the Divisional Round in the 2027 NFL Playoffs?",
+      "source": "polymarket",
+      "parent_subject": "will * advance to the divisional round in the 2027 nfl playoffs",
+      "axis": "teams",
+      "category": "football",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * advance to the divisional round in the 2027 nfl playoffs",
+        "title_ilike": "Will % advance to the Divisional Round in the 2027 NFL Playoffs%",
+        "title_template": "Will which team advance to the Divisional Round in the 2027 NFL Playoffs?",
+        "kicker_prefix": "FOOTBALL",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 632,
+          "output_tokens": 145,
+          "only_subject_differs": true,
+          "market_a_quote": "Will San Francisco 49ers advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "market_b_quote": "Will Buffalo Bills advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * advance to the divisional round in the 2027 nfl playoffs"
+        },
+        "2": {
+          "input_tokens": 632,
+          "output_tokens": 154,
+          "only_subject_differs": true,
+          "market_a_quote": "Will San Francisco 49ers advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "market_b_quote": "Will Buffalo Bills advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the divisional round in the 2027 nfl playoffs"
+        },
+        "3": {
+          "input_tokens": 632,
+          "output_tokens": 145,
+          "only_subject_differs": true,
+          "market_a_quote": "Will San Francisco 49ers advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "market_b_quote": "Will Buffalo Bills advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the divisional round in the 2027 nfl playoffs"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 62813044,
+          "name": "Will San Francisco 49ers advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "description": "Will San Francisco 49ers advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-19T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.77
+            },
+            {
+              "name": "No",
+              "probability": 0.23
+            }
+          ],
+          "rule_quote": "Will San Francisco 49ers advance to the Divisional Round in the 2027 NFL Playoffs?"
+        },
+        {
+          "id": 62813047,
+          "name": "Will Buffalo Bills advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "description": "Will Buffalo Bills advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-19T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.715
+            },
+            {
+              "name": "No",
+              "probability": 0.285
+            }
+          ],
+          "rule_quote": "Will Buffalo Bills advance to the Divisional Round in the 2027 NFL Playoffs?"
+        },
+        {
+          "id": 61524314,
+          "name": "Will Jacksonville Jaguars advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "description": "Will Jacksonville Jaguars advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-19T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.705
+            },
+            {
+              "name": "No",
+              "probability": 0.295
+            }
+          ],
+          "rule_quote": "Will Jacksonville Jaguars advance to the Divisional Round in the 2027 NFL Playoffs?"
+        },
+        {
+          "id": 62058233,
+          "name": "Will Denver Broncos advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "description": "Will Denver Broncos advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-19T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.51
+            },
+            {
+              "name": "No",
+              "probability": 0.49
+            }
+          ],
+          "rule_quote": "Will Denver Broncos advance to the Divisional Round in the 2027 NFL Playoffs?"
+        },
+        {
+          "id": 61602472,
+          "name": "Will Chicago Bears advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "description": "Will Chicago Bears advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-19T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.475
+            },
+            {
+              "name": "No",
+              "probability": 0.525
+            }
+          ],
+          "rule_quote": "Will Chicago Bears advance to the Divisional Round in the 2027 NFL Playoffs?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-09-proposed-polymarket-will-subjects-become-ufc-cha",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-subjects-become-ufc-champion",
+      "proposed_title": "Will which subject become UFC champion?",
+      "source": "polymarket",
+      "parent_subject": "will * become ufc champion",
+      "axis": "subjects",
+      "category": "mma",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * become ufc champion",
+        "title_ilike": "Will % become UFC champion%",
+        "title_template": "Will which subject become UFC champion {deadline}?",
+        "kicker_prefix": "MMA",
+        "kicker_include_date": true,
+        "subject_unit": "subjects",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 583,
+          "output_tokens": 123,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Alexander Volkov become UFC champion in 2026?",
+          "market_b_quote": "Will Manel Kape become UFC champion in 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * become ufc champion"
+        },
+        "2": {
+          "input_tokens": 583,
+          "output_tokens": 123,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Alexander Volkov become UFC champion in 2026?",
+          "market_b_quote": "Will Manel Kape become UFC champion in 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * become ufc champion"
+        },
+        "3": {
+          "input_tokens": 583,
+          "output_tokens": 123,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Alexander Volkov become UFC champion in 2026?",
+          "market_b_quote": "Will Manel Kape become UFC champion in 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * become ufc champion"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 13793122,
+          "name": "Will Alexander Volkov become UFC champion in 2026?",
+          "description": "Will Alexander Volkov become UFC champion in 2026?",
+          "source": "polymarket",
+          "category": "mma",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0545
+            },
+            {
+              "name": "No",
+              "probability": 0.9455
+            }
+          ],
+          "rule_quote": "Will Alexander Volkov become UFC champion in 2026?"
+        },
+        {
+          "id": 13793097,
+          "name": "Will Manel Kape become UFC champion in 2026?",
+          "description": "Will Manel Kape become UFC champion in 2026?",
+          "source": "polymarket",
+          "category": "mma",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0305
+            },
+            {
+              "name": "No",
+              "probability": 0.9695
+            }
+          ],
+          "rule_quote": "Will Manel Kape become UFC champion in 2026?"
+        },
+        {
+          "id": 13793123,
+          "name": "Will Sergei Pavlovich become UFC champion in 2026?",
+          "description": "Will Sergei Pavlovich become UFC champion in 2026?",
+          "source": "polymarket",
+          "category": "mma",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0285
+            },
+            {
+              "name": "No",
+              "probability": 0.9715
+            }
+          ],
+          "rule_quote": "Will Sergei Pavlovich become UFC champion in 2026?"
+        },
+        {
+          "id": 13793113,
+          "name": "Will Belal Muhammad become UFC champion in 2026?",
+          "description": "Will Belal Muhammad become UFC champion in 2026?",
+          "source": "polymarket",
+          "category": "mma",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.028
+            },
+            {
+              "name": "No",
+              "probability": 0.972
+            }
+          ],
+          "rule_quote": "Will Belal Muhammad become UFC champion in 2026?"
+        },
+        {
+          "id": 13793116,
+          "name": "Will Dricus Du Plessis become UFC champion in 2026?",
+          "description": "Will Dricus Du Plessis become UFC champion in 2026?",
+          "source": "polymarket",
+          "category": "mma",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.028
+            },
+            {
+              "name": "No",
+              "probability": 0.972
+            }
+          ],
+          "rule_quote": "Will Dricus Du Plessis become UFC champion in 2026?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-10-proposed-polymarket-will-contenders-make-college",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-contenders-make-college-football-playoff-qu",
+      "proposed_title": "Will which contender make College Football Playoff Quarterfinals?",
+      "source": "polymarket",
+      "parent_subject": "will * make college football playoff quarterfinals",
+      "axis": "contenders",
+      "category": "football",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * make college football playoff quarterfinals",
+        "title_ilike": "Will % make College Football Playoff Quarterfinals%",
+        "title_template": "Will which contender make College Football Playoff Quarterfinals?",
+        "kicker_prefix": "FOOTBALL",
+        "kicker_include_date": false,
+        "subject_unit": "contenders",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 577,
+          "output_tokens": 125,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Georgia make College Football Playoff Quarterfinals?",
+          "market_b_quote": "Will Miami (FL) make College Football Playoff Quarterfinals?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * make college football playoff quarterfinals"
+        },
+        "2": {
+          "input_tokens": 577,
+          "output_tokens": 125,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Georgia make College Football Playoff Quarterfinals?",
+          "market_b_quote": "Will Miami (FL) make College Football Playoff Quarterfinals?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * make college football playoff quarterfinals"
+        },
+        "3": {
+          "input_tokens": 577,
+          "output_tokens": 132,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Georgia make College Football Playoff Quarterfinals?",
+          "market_b_quote": "Will Miami (FL) make College Football Playoff Quarterfinals?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * make college football playoff quarterfinals"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 58426785,
+          "name": "Will Georgia make College Football Playoff Quarterfinals?",
+          "description": "Will Georgia make College Football Playoff Quarterfinals?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-14T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.855
+            },
+            {
+              "name": "No",
+              "probability": 0.145
+            }
+          ],
+          "rule_quote": "Will Georgia make College Football Playoff Quarterfinals?"
+        },
+        {
+          "id": 58426808,
+          "name": "Will Miami (FL) make College Football Playoff Quarterfinals?",
+          "description": "Will Miami (FL) make College Football Playoff Quarterfinals?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-14T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.81
+            },
+            {
+              "name": "No",
+              "probability": 0.19
+            }
+          ],
+          "rule_quote": "Will Miami (FL) make College Football Playoff Quarterfinals?"
+        },
+        {
+          "id": 58426789,
+          "name": "Will Alabama make College Football Playoff Quarterfinals?",
+          "description": "Will Alabama make College Football Playoff Quarterfinals?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-14T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.54
+            },
+            {
+              "name": "No",
+              "probability": 0.46
+            }
+          ],
+          "rule_quote": "Will Alabama make College Football Playoff Quarterfinals?"
+        },
+        {
+          "id": 58426786,
+          "name": "Will Indiana make College Football Playoff Quarterfinals?",
+          "description": "Will Indiana make College Football Playoff Quarterfinals?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-14T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.515
+            },
+            {
+              "name": "No",
+              "probability": 0.485
+            }
+          ],
+          "rule_quote": "Will Indiana make College Football Playoff Quarterfinals?"
+        },
+        {
+          "id": 58426787,
+          "name": "Will Texas make College Football Playoff Quarterfinals?",
+          "description": "Will Texas make College Football Playoff Quarterfinals?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-14T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.395
+            },
+            {
+              "name": "No",
+              "probability": 0.605
+            }
+          ],
+          "rule_quote": "Will Texas make College Football Playoff Quarterfinals?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-11-proposed-polymarket-will-the-teams-reach-the-202",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-the-teams-reach-the-2026-nba-cup-championsh",
+      "proposed_title": "Will the teams reach the 2026 NBA Cup Championship game?",
+      "source": "polymarket",
+      "parent_subject": "will the * reach the 2026 nba cup championship game",
+      "axis": "teams",
+      "category": "basketball",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will the * reach the 2026 nba cup championship game",
+        "title_ilike": "Will the % reach the 2026 NBA Cup Championship game%",
+        "title_template": "Will the teams reach the 2026 NBA Cup Championship game?",
+        "kicker_prefix": "BASKETBALL",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 596,
+          "output_tokens": 131,
+          "only_subject_differs": true,
+          "market_a_quote": "Will the Atlanta Hawks reach the 2026 NBA Cup Championship game?",
+          "market_b_quote": "Will the Cleveland Cavaliers reach the 2026 NBA Cup Championship game?",
+          "already_happened_market_ids": [],
+          "card_heading": "will the * reach the 2026 nba cup championship game"
+        },
+        "2": {
+          "input_tokens": 596,
+          "output_tokens": 131,
+          "only_subject_differs": true,
+          "market_a_quote": "Will the Atlanta Hawks reach the 2026 NBA Cup Championship game?",
+          "market_b_quote": "Will the Cleveland Cavaliers reach the 2026 NBA Cup Championship game?",
+          "already_happened_market_ids": [],
+          "card_heading": "will the * reach the 2026 nba cup championship game"
+        },
+        "3": {
+          "input_tokens": 596,
+          "output_tokens": 131,
+          "only_subject_differs": true,
+          "market_a_quote": "Will the Atlanta Hawks reach the 2026 NBA Cup Championship game?",
+          "market_b_quote": "Will the Cleveland Cavaliers reach the 2026 NBA Cup Championship game?",
+          "already_happened_market_ids": [],
+          "card_heading": "will the * reach the 2026 nba cup championship game"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 68697824,
+          "name": "Will the Atlanta Hawks reach the 2026 NBA Cup Championship game?",
+          "description": "Will the Atlanta Hawks reach the 2026 NBA Cup Championship game?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2026-12-24T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.06
+            },
+            {
+              "name": "No",
+              "probability": 0.94
+            }
+          ],
+          "rule_quote": "Will the Atlanta Hawks reach the 2026 NBA Cup Championship game?"
+        },
+        {
+          "id": 68697828,
+          "name": "Will the Cleveland Cavaliers reach the 2026 NBA Cup Championship game?",
+          "description": "Will the Cleveland Cavaliers reach the 2026 NBA Cup Championship game?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2026-12-24T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.06
+            },
+            {
+              "name": "No",
+              "probability": 0.94
+            }
+          ],
+          "rule_quote": "Will the Cleveland Cavaliers reach the 2026 NBA Cup Championship game?"
+        },
+        {
+          "id": 68697829,
+          "name": "Will the Dallas Mavericks reach the 2026 NBA Cup Championship game?",
+          "description": "Will the Dallas Mavericks reach the 2026 NBA Cup Championship game?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2026-12-24T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.06
+            },
+            {
+              "name": "No",
+              "probability": 0.94
+            }
+          ],
+          "rule_quote": "Will the Dallas Mavericks reach the 2026 NBA Cup Championship game?"
+        },
+        {
+          "id": 68697830,
+          "name": "Will the Golden State Warriors reach the 2026 NBA Cup Championship game?",
+          "description": "Will the Golden State Warriors reach the 2026 NBA Cup Championship game?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2026-12-24T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.06
+            },
+            {
+              "name": "No",
+              "probability": 0.94
+            }
+          ],
+          "rule_quote": "Will the Golden State Warriors reach the 2026 NBA Cup Championship game?"
+        },
+        {
+          "id": 68697831,
+          "name": "Will the Houston Rockets reach the 2026 NBA Cup Championship game?",
+          "description": "Will the Houston Rockets reach the 2026 NBA Cup Championship game?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2026-12-24T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.06
+            },
+            {
+              "name": "No",
+              "probability": 0.94
+            }
+          ],
+          "rule_quote": "Will the Houston Rockets reach the 2026 NBA Cup Championship game?"
+        }
+      ]
+    },
+    {
+      "card_id": "dev-12-proposed-polymarket-will-the-teams-make-the-2027",
+      "split": "dev",
+      "family_slug": "proposed-polymarket-will-the-teams-make-the-2027-nfl-playoffs",
+      "proposed_title": "Will the teams make the 2027 NFL Playoffs?",
+      "source": "polymarket",
+      "parent_subject": "will the * make the 2027 nfl playoffs",
+      "axis": "teams",
+      "category": "football",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will the * make the 2027 nfl playoffs",
+        "title_ilike": "Will the % make the 2027 NFL Playoffs%",
+        "title_template": "Will the teams make the 2027 NFL Playoffs?",
+        "kicker_prefix": "FOOTBALL",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 592,
+          "output_tokens": 139,
+          "only_subject_differs": true,
+          "market_a_quote": "Will the San Francisco 49ers make the 2027 NFL Playoffs?",
+          "market_b_quote": "Will the Jacksonville Jaguars make the 2027 NFL Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will the * make the 2027 nfl playoffs"
+        },
+        "2": {
+          "input_tokens": 592,
+          "output_tokens": 132,
+          "only_subject_differs": true,
+          "market_a_quote": "Will the San Francisco 49ers make the 2027 NFL Playoffs?",
+          "market_b_quote": "Will the Jacksonville Jaguars make the 2027 NFL Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will the * make the 2027 nfl playoffs"
+        },
+        "3": {
+          "input_tokens": 592,
+          "output_tokens": 139,
+          "only_subject_differs": true,
+          "market_a_quote": "Will the San Francisco 49ers make the 2027 NFL Playoffs?",
+          "market_b_quote": "Will the Jacksonville Jaguars make the 2027 NFL Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will the * make the 2027 nfl playoffs"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 16630468,
+          "name": "Will the San Francisco 49ers make the 2027 NFL Playoffs?",
+          "description": "Will the San Francisco 49ers make the 2027 NFL Playoffs?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-05T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9815
+            },
+            {
+              "name": "No",
+              "probability": 0.0185
+            }
+          ],
+          "rule_quote": "Will the San Francisco 49ers make the 2027 NFL Playoffs?"
+        },
+        {
+          "id": 16630446,
+          "name": "Will the Jacksonville Jaguars make the 2027 NFL Playoffs?",
+          "description": "Will the Jacksonville Jaguars make the 2027 NFL Playoffs?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-05T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.965
+            },
+            {
+              "name": "No",
+              "probability": 0.035
+            }
+          ],
+          "rule_quote": "Will the Jacksonville Jaguars make the 2027 NFL Playoffs?"
+        },
+        {
+          "id": 16630442,
+          "name": "Will the Cincinnati Bengals make the 2027 NFL Playoffs?",
+          "description": "Will the Cincinnati Bengals make the 2027 NFL Playoffs?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-05T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.935
+            },
+            {
+              "name": "No",
+              "probability": 0.065
+            }
+          ],
+          "rule_quote": "Will the Cincinnati Bengals make the 2027 NFL Playoffs?"
+        },
+        {
+          "id": 16630459,
+          "name": "Will the Denver Broncos make the 2027 NFL Playoffs?",
+          "description": "Will the Denver Broncos make the 2027 NFL Playoffs?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-05T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9
+            },
+            {
+              "name": "No",
+              "probability": 0.1
+            }
+          ],
+          "rule_quote": "Will the Denver Broncos make the 2027 NFL Playoffs?"
+        },
+        {
+          "id": 16630457,
+          "name": "Will the Chicago Bears make the 2027 NFL Playoffs?",
+          "description": "Will the Chicago Bears make the 2027 NFL Playoffs?",
+          "source": "polymarket",
+          "category": "football",
+          "status": "open",
+          "resolution_date": "2027-01-05T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.875
+            },
+            {
+              "name": "No",
+              "probability": 0.125
+            }
+          ],
+          "rule_quote": "Will the Chicago Bears make the 2027 NFL Playoffs?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-13-proposed-polymarket-will-trump-meet-with-candida",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-trump-meet-with-candidates",
+      "proposed_title": "Will Trump meet with candidates?",
+      "source": "polymarket",
+      "parent_subject": "will trump meet with *",
+      "axis": "candidates",
+      "category": "politics",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will trump meet with *",
+        "title_ilike": "Will Trump meet with %",
+        "title_template": "Will Trump meet with candidates {deadline}?",
+        "kicker_prefix": "POLITICS",
+        "kicker_include_date": true,
+        "subject_unit": "candidates",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 598,
+          "output_tokens": 139,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Trump meet with Xi Jinping by November 30, 2026?",
+          "market_b_quote": "Will Trump meet with Vladimir Putin by November 30, 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will Trump meet with * by November 30, 2026?"
+        },
+        "2": {
+          "input_tokens": 598,
+          "output_tokens": 139,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Trump meet with Xi Jinping by November 30, 2026?",
+          "market_b_quote": "Will Trump meet with Vladimir Putin by November 30, 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will Trump meet with * by November 30, 2026?"
+        },
+        "3": {
+          "input_tokens": 598,
+          "output_tokens": 139,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Trump meet with Xi Jinping by November 30, 2026?",
+          "market_b_quote": "Will Trump meet with Vladimir Putin by November 30, 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will Trump meet with * by November 30, 2026?"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 68370849,
+          "name": "Will Trump meet with Xi Jinping by November 30, 2026?",
+          "description": "Will Trump meet with Xi Jinping by November 30, 2026?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9555
+            },
+            {
+              "name": "No",
+              "probability": 0.0445
+            }
+          ],
+          "rule_quote": "Will Trump meet with Xi Jinping by November 30, 2026?"
+        },
+        {
+          "id": 68370850,
+          "name": "Will Trump meet with Vladimir Putin by November 30, 2026?",
+          "description": "Will Trump meet with Vladimir Putin by November 30, 2026?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.905
+            },
+            {
+              "name": "No",
+              "probability": 0.095
+            }
+          ],
+          "rule_quote": "Will Trump meet with Vladimir Putin by November 30, 2026?"
+        },
+        {
+          "id": 68381117,
+          "name": "Will Trump meet with Mark Carney by November 30, 2026?",
+          "description": "Will Trump meet with Mark Carney by November 30, 2026?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.82
+            },
+            {
+              "name": "No",
+              "probability": 0.18
+            }
+          ],
+          "rule_quote": "Will Trump meet with Mark Carney by November 30, 2026?"
+        },
+        {
+          "id": 68376368,
+          "name": "Will Trump meet with Elon Musk by November 30, 2026?",
+          "description": "Will Trump meet with Elon Musk by November 30, 2026?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.375
+            },
+            {
+              "name": "No",
+              "probability": 0.625
+            }
+          ],
+          "rule_quote": "Will Trump meet with Elon Musk by November 30, 2026?"
+        },
+        {
+          "id": 68370853,
+          "name": "Will Trump meet with Dario Amodei by November 30, 2026?",
+          "description": "Will Trump meet with Dario Amodei by November 30, 2026?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.23
+            },
+            {
+              "name": "No",
+              "probability": 0.77
+            }
+          ],
+          "rule_quote": "Will Trump meet with Dario Amodei by November 30, 2026?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-14-proposed-polymarket-will-trump-speak-to-candidat",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-trump-speak-to-candidates",
+      "proposed_title": "Will Trump speak to candidates?",
+      "source": "polymarket",
+      "parent_subject": "will trump speak to *",
+      "axis": "candidates",
+      "category": "politics",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will trump speak to *",
+        "title_ilike": "Will Trump speak to %",
+        "title_template": "Will Trump speak to candidates {deadline}?",
+        "kicker_prefix": "POLITICS",
+        "kicker_include_date": true,
+        "subject_unit": "candidates",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 570,
+          "output_tokens": 129,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Trump speak to Xi Jinping by November 30?",
+          "market_b_quote": "Will Trump speak to Friedrich Merz by November 30?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will Trump speak to * by November 30?"
+        },
+        "2": {
+          "input_tokens": 570,
+          "output_tokens": 123,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Trump speak to Xi Jinping by November 30?",
+          "market_b_quote": "Will Trump speak to Friedrich Merz by November 30?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will Trump speak to * by November 30?"
+        },
+        "3": {
+          "input_tokens": 570,
+          "output_tokens": 129,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Trump speak to Xi Jinping by November 30?",
+          "market_b_quote": "Will Trump speak to Friedrich Merz by November 30?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will Trump speak to * by November 30?"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 68370836,
+          "name": "Will Trump speak to Xi Jinping by November 30?",
+          "description": "Will Trump speak to Xi Jinping by November 30?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9485
+            },
+            {
+              "name": "No",
+              "probability": 0.0515
+            }
+          ],
+          "rule_quote": "Will Trump speak to Xi Jinping by November 30?"
+        },
+        {
+          "id": 68386359,
+          "name": "Will Trump speak to Friedrich Merz by November 30?",
+          "description": "Will Trump speak to Friedrich Merz by November 30?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9295
+            },
+            {
+              "name": "No",
+              "probability": 0.0705
+            }
+          ],
+          "rule_quote": "Will Trump speak to Friedrich Merz by November 30?"
+        },
+        {
+          "id": 68370842,
+          "name": "Will Trump speak to Mark Carney by November 30?",
+          "description": "Will Trump speak to Mark Carney by November 30?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9265
+            },
+            {
+              "name": "No",
+              "probability": 0.0735
+            }
+          ],
+          "rule_quote": "Will Trump speak to Mark Carney by November 30?"
+        },
+        {
+          "id": 68370837,
+          "name": "Will Trump speak to Vladimir Putin by November 30?",
+          "description": "Will Trump speak to Vladimir Putin by November 30?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.915
+            },
+            {
+              "name": "No",
+              "probability": 0.085
+            }
+          ],
+          "rule_quote": "Will Trump speak to Vladimir Putin by November 30?"
+        },
+        {
+          "id": 68498824,
+          "name": "Will Trump speak to Mohammed bin Salman by November 30?",
+          "description": "Will Trump speak to Mohammed bin Salman by November 30?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.785
+            },
+            {
+              "name": "No",
+              "probability": 0.215
+            }
+          ],
+          "rule_quote": "Will Trump speak to Mohammed bin Salman by November 30?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-15-proposed-polymarket-will-contenders-be-relegated",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-brazi",
+      "proposed_title": "Will which contender be relegated from the 2026 Brazil S\u00e9rie A?",
+      "source": "polymarket",
+      "parent_subject": "will * be relegated from the 2026 brazil s\u00e9rie a",
+      "axis": "contenders",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be relegated from the 2026 brazil s\u00e9rie a",
+        "title_ilike": "Will % be relegated from the 2026 Brazil S\u00e9rie A%",
+        "title_template": "Will which contender be relegated from the 2026 Brazil S\u00e9rie A?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "contenders",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 633,
+          "output_tokens": 135,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Remo be relegated from the 2026 Brazil S\u00e9rie A?",
+          "market_b_quote": "Will Chapecoense be relegated from the 2026 Brazil S\u00e9rie A?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 brazil s\u00e9rie a"
+        },
+        "2": {
+          "input_tokens": 633,
+          "output_tokens": 136,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Remo be relegated from the 2026 Brazil S\u00e9rie A?",
+          "market_b_quote": "Will Chapecoense be relegated from the 2026 Brazil S\u00e9rie A?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 brazil s\u00e9rie a"
+        },
+        "3": {
+          "input_tokens": 633,
+          "output_tokens": 135,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Remo be relegated from the 2026 Brazil S\u00e9rie A?",
+          "market_b_quote": "Will Chapecoense be relegated from the 2026 Brazil S\u00e9rie A?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 brazil s\u00e9rie a"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61589626,
+          "name": "Will Remo be relegated from the 2026 Brazil S\u00e9rie A?",
+          "description": "Will Remo be relegated from the 2026 Brazil S\u00e9rie A?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.988
+            },
+            {
+              "name": "No",
+              "probability": 0.012
+            }
+          ],
+          "rule_quote": "Will Remo be relegated from the 2026 Brazil S\u00e9rie A?"
+        },
+        {
+          "id": 61518887,
+          "name": "Will Chapecoense be relegated from the 2026 Brazil S\u00e9rie A?",
+          "description": "Will Chapecoense be relegated from the 2026 Brazil S\u00e9rie A?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9785
+            },
+            {
+              "name": "No",
+              "probability": 0.0215
+            }
+          ],
+          "rule_quote": "Will Chapecoense be relegated from the 2026 Brazil S\u00e9rie A?"
+        },
+        {
+          "id": 61369549,
+          "name": "Will Internacional be relegated from the 2026 Brazil S\u00e9rie A?",
+          "description": "Will Internacional be relegated from the 2026 Brazil S\u00e9rie A?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.517
+            },
+            {
+              "name": "No",
+              "probability": 0.483
+            }
+          ],
+          "rule_quote": "Will Internacional be relegated from the 2026 Brazil S\u00e9rie A?"
+        },
+        {
+          "id": 61589620,
+          "name": "Will Gr\u00eamio be relegated from the 2026 Brazil S\u00e9rie A?",
+          "description": "Will Gr\u00eamio be relegated from the 2026 Brazil S\u00e9rie A?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.48
+            },
+            {
+              "name": "No",
+              "probability": 0.52
+            }
+          ],
+          "rule_quote": "Will Gr\u00eamio be relegated from the 2026 Brazil S\u00e9rie A?"
+        },
+        {
+          "id": 62207495,
+          "name": "Will Mirassol be relegated from the 2026 Brazil S\u00e9rie A?",
+          "description": "Will Mirassol be relegated from the 2026 Brazil S\u00e9rie A?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.2
+            },
+            {
+              "name": "No",
+              "probability": 0.8
+            }
+          ],
+          "rule_quote": "Will Mirassol be relegated from the 2026 Brazil S\u00e9rie A?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-16-proposed-polymarket-will-subjects-be-time-person",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-subjects-be-time-person",
+      "proposed_title": "Will which subject be TIME Person?",
+      "source": "polymarket",
+      "parent_subject": "will * be time person",
+      "axis": "subjects",
+      "category": "entertainment",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be time person",
+        "title_ilike": "Will % be TIME Person%",
+        "title_template": "Will which subject be TIME Person {deadline}?",
+        "kicker_prefix": "ENTERTAINMENT",
+        "kicker_include_date": true,
+        "subject_unit": "subjects",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 593,
+          "output_tokens": 138,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Zohran Mamdani be TIME Person of the Year 2026?",
+          "market_b_quote": "Will James Talarico be TIME Person of the Year 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will {deadline} be TIME Person of the Year 2026?"
+        },
+        "2": {
+          "input_tokens": 593,
+          "output_tokens": 138,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Zohran Mamdani be TIME Person of the Year 2026?",
+          "market_b_quote": "Will James Talarico be TIME Person of the Year 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will {subject} be TIME Person of the Year 2026?"
+        },
+        "3": {
+          "input_tokens": 593,
+          "output_tokens": 138,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Zohran Mamdani be TIME Person of the Year 2026?",
+          "market_b_quote": "Will James Talarico be TIME Person of the Year 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will {subject} be TIME Person of the Year 2026?"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 27467323,
+          "name": "Will Zohran Mamdani be TIME Person of the Year 2026?",
+          "description": "Will Zohran Mamdani be TIME Person of the Year 2026?",
+          "source": "polymarket",
+          "category": "entertainment",
+          "status": "open",
+          "resolution_date": "2026-12-31T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.205
+            },
+            {
+              "name": "No",
+              "probability": 0.795
+            }
+          ],
+          "rule_quote": "Will Zohran Mamdani be TIME Person of the Year 2026?"
+        },
+        {
+          "id": 27467317,
+          "name": "Will James Talarico be TIME Person of the Year 2026?",
+          "description": "Will James Talarico be TIME Person of the Year 2026?",
+          "source": "polymarket",
+          "category": "entertainment",
+          "status": "open",
+          "resolution_date": "2026-12-31T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.1495
+            },
+            {
+              "name": "No",
+              "probability": 0.8505
+            }
+          ],
+          "rule_quote": "Will James Talarico be TIME Person of the Year 2026?"
+        },
+        {
+          "id": 61861526,
+          "name": "Will Mark Carney be TIME Person of the Year 2026?",
+          "description": "Will Mark Carney be TIME Person of the Year 2026?",
+          "source": "polymarket",
+          "category": "entertainment",
+          "status": "open",
+          "resolution_date": "2026-12-31T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.115
+            },
+            {
+              "name": "No",
+              "probability": 0.885
+            }
+          ],
+          "rule_quote": "Will Mark Carney be TIME Person of the Year 2026?"
+        },
+        {
+          "id": 27467327,
+          "name": "Will Pope Leo XIV be TIME Person of the Year 2026?",
+          "description": "Will Pope Leo XIV be TIME Person of the Year 2026?",
+          "source": "polymarket",
+          "category": "entertainment",
+          "status": "open",
+          "resolution_date": "2026-12-31T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.075
+            },
+            {
+              "name": "No",
+              "probability": 0.925
+            }
+          ],
+          "rule_quote": "Will Pope Leo XIV be TIME Person of the Year 2026?"
+        },
+        {
+          "id": 27467322,
+          "name": "Will Donald Trump be TIME Person of the Year 2026?",
+          "description": "Will Donald Trump be TIME Person of the Year 2026?",
+          "source": "polymarket",
+          "category": "entertainment",
+          "status": "open",
+          "resolution_date": "2026-12-31T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0575
+            },
+            {
+              "name": "No",
+              "probability": 0.9425
+            }
+          ],
+          "rule_quote": "Will Donald Trump be TIME Person of the Year 2026?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-17-proposed-polymarket-will-contenders-finish-top-8",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-contenders-finish-top-8-in-ucl-league-phase",
+      "proposed_title": "Will which contender finish top 8 in UCL league phase?",
+      "source": "polymarket",
+      "parent_subject": "will * finish top 8 in ucl league phase",
+      "axis": "contenders",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * finish top 8 in ucl league phase",
+        "title_ilike": "Will % finish top 8 in UCL league phase%",
+        "title_template": "Will which contender finish top 8 in UCL league phase?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "contenders",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 585,
+          "output_tokens": 127,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Real Madrid finish top 8 in UCL league phase?",
+          "market_b_quote": "Will Arsenal finish top 8 in UCL league phase?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * finish top 8 in ucl league phase"
+        },
+        "2": {
+          "input_tokens": 585,
+          "output_tokens": 130,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Real Madrid finish top 8 in UCL league phase?",
+          "market_b_quote": "Will Arsenal finish top 8 in UCL league phase?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * finish top 8 in ucl league phase"
+        },
+        "3": {
+          "input_tokens": 585,
+          "output_tokens": 127,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Real Madrid finish top 8 in UCL league phase?",
+          "market_b_quote": "Will Arsenal finish top 8 in UCL league phase?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * finish top 8 in ucl league phase"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61914236,
+          "name": "Will Real Madrid finish top 8 in UCL league phase?",
+          "description": "Will Real Madrid finish top 8 in UCL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-02-28T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9315
+            },
+            {
+              "name": "No",
+              "probability": 0.0685
+            }
+          ],
+          "rule_quote": "Will Real Madrid finish top 8 in UCL league phase?"
+        },
+        {
+          "id": 61914235,
+          "name": "Will Arsenal finish top 8 in UCL league phase?",
+          "description": "Will Arsenal finish top 8 in UCL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-02-28T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9
+            },
+            {
+              "name": "No",
+              "probability": 0.1
+            }
+          ],
+          "rule_quote": "Will Arsenal finish top 8 in UCL league phase?"
+        },
+        {
+          "id": 61088381,
+          "name": "Will Como finish top 8 in UCL league phase?",
+          "description": "Will Como finish top 8 in UCL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-02-28T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.33
+            },
+            {
+              "name": "No",
+              "probability": 0.67
+            }
+          ],
+          "rule_quote": "Will Como finish top 8 in UCL league phase?"
+        },
+        {
+          "id": 61079862,
+          "name": "Will Borussia Dortmund finish top 8 in UCL league phase?",
+          "description": "Will Borussia Dortmund finish top 8 in UCL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-02-28T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.285
+            },
+            {
+              "name": "No",
+              "probability": 0.715
+            }
+          ],
+          "rule_quote": "Will Borussia Dortmund finish top 8 in UCL league phase?"
+        },
+        {
+          "id": 61114303,
+          "name": "Will Club Brugge finish top 8 in UCL league phase?",
+          "description": "Will Club Brugge finish top 8 in UCL league phase?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-02-28T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.2215
+            },
+            {
+              "name": "No",
+              "probability": 0.7785
+            }
+          ],
+          "rule_quote": "Will Club Brugge finish top 8 in UCL league phase?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-18-proposed-polymarket-will-teams-be-relegated-from",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-teams-be-relegated-from-the-2026-peru-liga",
+      "proposed_title": "Will which team be relegated from the 2026 Peru Liga 1?",
+      "source": "polymarket",
+      "parent_subject": "will * be relegated from the 2026 peru liga 1",
+      "axis": "teams",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be relegated from the 2026 peru liga 1",
+        "title_ilike": "Will % be relegated from the 2026 Peru Liga 1%",
+        "title_template": "Will which team be relegated from the 2026 Peru Liga 1?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 621,
+          "output_tokens": 139,
+          "only_subject_differs": true,
+          "market_a_quote": "Will UTC Cajamarca be relegated from the 2026 Peru Liga 1?",
+          "market_b_quote": "Will Juan Pablo II be relegated from the 2026 Peru Liga 1?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 peru liga 1"
+        },
+        "2": {
+          "input_tokens": 621,
+          "output_tokens": 140,
+          "only_subject_differs": true,
+          "market_a_quote": "Will UTC Cajamarca be relegated from the 2026 Peru Liga 1?",
+          "market_b_quote": "Will Juan Pablo II be relegated from the 2026 Peru Liga 1?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 peru liga 1"
+        },
+        "3": {
+          "input_tokens": 621,
+          "output_tokens": 140,
+          "only_subject_differs": true,
+          "market_a_quote": "Will UTC Cajamarca be relegated from the 2026 Peru Liga 1?",
+          "market_b_quote": "Will Juan Pablo II be relegated from the 2026 Peru Liga 1?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 peru liga 1"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61369503,
+          "name": "Will UTC Cajamarca be relegated from the 2026 Peru Liga 1?",
+          "description": "Will UTC Cajamarca be relegated from the 2026 Peru Liga 1?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9
+            },
+            {
+              "name": "No",
+              "probability": 0.1
+            }
+          ],
+          "rule_quote": "Will UTC Cajamarca be relegated from the 2026 Peru Liga 1?"
+        },
+        {
+          "id": 65366505,
+          "name": "Will Juan Pablo II be relegated from the 2026 Peru Liga 1?",
+          "description": "Will Juan Pablo II be relegated from the 2026 Peru Liga 1?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0405
+            },
+            {
+              "name": "No",
+              "probability": 0.9595
+            }
+          ],
+          "rule_quote": "Will Juan Pablo II be relegated from the 2026 Peru Liga 1?"
+        },
+        {
+          "id": 61369508,
+          "name": "Will Comerciantes Unidos be relegated from the 2026 Peru Liga 1?",
+          "description": "Will Comerciantes Unidos be relegated from the 2026 Peru Liga 1?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0345
+            },
+            {
+              "name": "No",
+              "probability": 0.9655
+            }
+          ],
+          "rule_quote": "Will Comerciantes Unidos be relegated from the 2026 Peru Liga 1?"
+        },
+        {
+          "id": 61369507,
+          "name": "Will Los Chankas be relegated from the 2026 Peru Liga 1?",
+          "description": "Will Los Chankas be relegated from the 2026 Peru Liga 1?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.034
+            },
+            {
+              "name": "No",
+              "probability": 0.966
+            }
+          ],
+          "rule_quote": "Will Los Chankas be relegated from the 2026 Peru Liga 1?"
+        },
+        {
+          "id": 61589576,
+          "name": "Will Sport Huancayo be relegated from the 2026 Peru Liga 1?",
+          "description": "Will Sport Huancayo be relegated from the 2026 Peru Liga 1?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.032
+            },
+            {
+              "name": "No",
+              "probability": 0.968
+            }
+          ],
+          "rule_quote": "Will Sport Huancayo be relegated from the 2026 Peru Liga 1?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-19-proposed-polymarket-will-artists-have-a-1-song-o",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-artists-have-a-1-song-on-the-billboard-hot",
+      "proposed_title": "Will which artist have a #1 song on the Billboard Hot 100?",
+      "source": "polymarket",
+      "parent_subject": "will * have a 1 song on the billboard hot 100",
+      "axis": "artists",
+      "category": "entertainment",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * have a 1 song on the billboard hot 100",
+        "title_ilike": "Will % have a #1 song on the Billboard Hot 100%",
+        "title_template": "Will which artist have a #1 song on the Billboard Hot 100 {deadline}?",
+        "kicker_prefix": "ENTERTAINMENT",
+        "kicker_include_date": true,
+        "subject_unit": "artists",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 634,
+          "output_tokens": 143,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Morgan Wallen have a #1 song on the Billboard Hot 100 in 2026?",
+          "market_b_quote": "Will Future have a #1 song on the Billboard Hot 100 in 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * have a 1 song on the billboard hot 100"
+        },
+        "2": {
+          "input_tokens": 634,
+          "output_tokens": 158,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Morgan Wallen have a #1 song on the Billboard Hot 100 in 2026?",
+          "market_b_quote": "Will Future have a #1 song on the Billboard Hot 100 in 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will {artist} have a #1 song on the Billboard Hot 100 in 2026?"
+        },
+        "3": {
+          "input_tokens": 634,
+          "output_tokens": 143,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Morgan Wallen have a #1 song on the Billboard Hot 100 in 2026?",
+          "market_b_quote": "Will Future have a #1 song on the Billboard Hot 100 in 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * have a 1 song on the billboard hot 100"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 13793513,
+          "name": "Will Morgan Wallen have a #1 song on the Billboard Hot 100 in 2026?",
+          "description": "Will Morgan Wallen have a #1 song on the Billboard Hot 100 in 2026?",
+          "source": "polymarket",
+          "category": "entertainment",
+          "status": "open",
+          "resolution_date": "2026-12-31T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.21
+            },
+            {
+              "name": "No",
+              "probability": 0.79
+            }
+          ],
+          "rule_quote": "Will Morgan Wallen have a #1 song on the Billboard Hot 100 in 2026?"
+        },
+        {
+          "id": 13793510,
+          "name": "Will Future have a #1 song on the Billboard Hot 100 in 2026?",
+          "description": "Will Future have a #1 song on the Billboard Hot 100 in 2026?",
+          "source": "polymarket",
+          "category": "entertainment",
+          "status": "open",
+          "resolution_date": "2026-12-31T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.205
+            },
+            {
+              "name": "No",
+              "probability": 0.795
+            }
+          ],
+          "rule_quote": "Will Future have a #1 song on the Billboard Hot 100 in 2026?"
+        },
+        {
+          "id": 13793515,
+          "name": "Will Post Malone have a #1 song on the Billboard Hot 100 in 2026?",
+          "description": "Will Post Malone have a #1 song on the Billboard Hot 100 in 2026?",
+          "source": "polymarket",
+          "category": "entertainment",
+          "status": "open",
+          "resolution_date": "2026-12-31T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.17
+            },
+            {
+              "name": "No",
+              "probability": 0.83
+            }
+          ],
+          "rule_quote": "Will Post Malone have a #1 song on the Billboard Hot 100 in 2026?"
+        },
+        {
+          "id": 13793495,
+          "name": "Will Doja Cat have a #1 song on the Billboard Hot 100 in 2026?",
+          "description": "Will Doja Cat have a #1 song on the Billboard Hot 100 in 2026?",
+          "source": "polymarket",
+          "category": "entertainment",
+          "status": "open",
+          "resolution_date": "2026-12-31T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.091
+            },
+            {
+              "name": "No",
+              "probability": 0.909
+            }
+          ],
+          "rule_quote": "Will Doja Cat have a #1 song on the Billboard Hot 100 in 2026?"
+        },
+        {
+          "id": 13793505,
+          "name": "Will Tyler, The Creator have a #1 song on the Billboard Hot 100 in 2026?",
+          "description": "Will Tyler, The Creator have a #1 song on the Billboard Hot 100 in 2026?",
+          "source": "polymarket",
+          "category": "entertainment",
+          "status": "open",
+          "resolution_date": "2026-12-31T00:00:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.085
+            },
+            {
+              "name": "No",
+              "probability": 0.915
+            }
+          ],
+          "rule_quote": "Will Tyler, The Creator have a #1 song on the Billboard Hot 100 in 2026?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-20-proposed-polymarket-will-teams-be-relegated-from",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-teams-be-relegated-from-the-2026-colombia-p",
+      "proposed_title": "Will which team be relegated from the 2026 Colombia Primera A?",
+      "source": "polymarket",
+      "parent_subject": "will * be relegated from the 2026 colombia primera a",
+      "axis": "teams",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be relegated from the 2026 colombia primera a",
+        "title_ilike": "Will % be relegated from the 2026 Colombia Primera A%",
+        "title_template": "Will which team be relegated from the 2026 Colombia Primera A?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 626,
+          "output_tokens": 139,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Boyac\u00e1 Chic\u00f3 be relegated from the 2026 Colombia Primera A?",
+          "market_b_quote": "Will Jaguares be relegated from the 2026 Colombia Primera A?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 colombia primera a"
+        },
+        "2": {
+          "input_tokens": 626,
+          "output_tokens": 145,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Boyac\u00e1 Chic\u00f3 be relegated from the 2026 Colombia Primera A?",
+          "market_b_quote": "Will Jaguares be relegated from the 2026 Colombia Primera A?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 colombia primera a"
+        },
+        "3": {
+          "input_tokens": 626,
+          "output_tokens": 144,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Boyac\u00e1 Chic\u00f3 be relegated from the 2026 Colombia Primera A?",
+          "market_b_quote": "Will Jaguares be relegated from the 2026 Colombia Primera A?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 colombia primera a"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61806086,
+          "name": "Will Boyac\u00e1 Chic\u00f3 be relegated from the 2026 Colombia Primera A?",
+          "description": "Will Boyac\u00e1 Chic\u00f3 be relegated from the 2026 Colombia Primera A?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9815
+            },
+            {
+              "name": "No",
+              "probability": 0.0185
+            }
+          ],
+          "rule_quote": "Will Boyac\u00e1 Chic\u00f3 be relegated from the 2026 Colombia Primera A?"
+        },
+        {
+          "id": 61369650,
+          "name": "Will Jaguares be relegated from the 2026 Colombia Primera A?",
+          "description": "Will Jaguares be relegated from the 2026 Colombia Primera A?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.9655
+            },
+            {
+              "name": "No",
+              "probability": 0.0345
+            }
+          ],
+          "rule_quote": "Will Jaguares be relegated from the 2026 Colombia Primera A?"
+        },
+        {
+          "id": 61734280,
+          "name": "Will Internacional de Bogot\u00e1 be relegated from the 2026 Colombia Primera A?",
+          "description": "Will Internacional de Bogot\u00e1 be relegated from the 2026 Colombia Primera A?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.035
+            },
+            {
+              "name": "No",
+              "probability": 0.965
+            }
+          ],
+          "rule_quote": "Will Internacional de Bogot\u00e1 be relegated from the 2026 Colombia Primera A?"
+        },
+        {
+          "id": 62958534,
+          "name": "Will Llaneros FC be relegated from the 2026 Colombia Primera A?",
+          "description": "Will Llaneros FC be relegated from the 2026 Colombia Primera A?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0305
+            },
+            {
+              "name": "No",
+              "probability": 0.9695
+            }
+          ],
+          "rule_quote": "Will Llaneros FC be relegated from the 2026 Colombia Primera A?"
+        },
+        {
+          "id": 61589751,
+          "name": "Will Once Caldas be relegated from the 2026 Colombia Primera A?",
+          "description": "Will Once Caldas be relegated from the 2026 Colombia Primera A?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.027
+            },
+            {
+              "name": "No",
+              "probability": 0.973
+            }
+          ],
+          "rule_quote": "Will Once Caldas be relegated from the 2026 Colombia Primera A?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-21-proposed-polymarket-will-candidates-be-in-the-he",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-candidates-be-in-the-headlines-on-sunday",
+      "proposed_title": "Will which candidate be in the headlines on Sunday?",
+      "source": "polymarket",
+      "parent_subject": "will * be in the headlines on sunday",
+      "axis": "candidates",
+      "category": "politics",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be in the headlines on sunday",
+        "title_ilike": "Will % be in the headlines on Sunday%",
+        "title_template": "Will which candidate be in the headlines on Sunday?",
+        "kicker_prefix": "POLITICS",
+        "kicker_include_date": false,
+        "subject_unit": "candidates",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 577,
+          "output_tokens": 133,
+          "only_subject_differs": true,
+          "market_a_quote": "Will \"Trump\" be in the headlines on Sunday?",
+          "market_b_quote": "Will \"War\" be in the headlines on Sunday?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be in the headlines on sunday"
+        },
+        "2": {
+          "input_tokens": 577,
+          "output_tokens": 133,
+          "only_subject_differs": true,
+          "market_a_quote": "Will \"Trump\" be in the headlines on Sunday?",
+          "market_b_quote": "Will \"War\" be in the headlines on Sunday?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be in the headlines on sunday"
+        },
+        "3": {
+          "input_tokens": 577,
+          "output_tokens": 133,
+          "only_subject_differs": true,
+          "market_a_quote": "Will \"Trump\" be in the headlines on Sunday?",
+          "market_b_quote": "Will \"War\" be in the headlines on Sunday?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be in the headlines on sunday"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 69456278,
+          "name": "Will \"Trump\" be in the headlines on Sunday?",
+          "description": "Will \"Trump\" be in the headlines on Sunday?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-11-16T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.88
+            },
+            {
+              "name": "No",
+              "probability": 0.12
+            }
+          ],
+          "rule_quote": "Will \"Trump\" be in the headlines on Sunday?"
+        },
+        {
+          "id": 69456289,
+          "name": "Will \"War\" be in the headlines on Sunday?",
+          "description": "Will \"War\" be in the headlines on Sunday?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-11-16T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.68
+            },
+            {
+              "name": "No",
+              "probability": 0.32
+            }
+          ],
+          "rule_quote": "Will \"War\" be in the headlines on Sunday?"
+        },
+        {
+          "id": 69456281,
+          "name": "Will \"Israel / Israeli\" be in the headlines on Sunday?",
+          "description": "Will \"Israel / Israeli\" be in the headlines on Sunday?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-11-16T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.3553
+            },
+            {
+              "name": "No",
+              "probability": 0.6447
+            }
+          ],
+          "rule_quote": "Will \"Israel / Israeli\" be in the headlines on Sunday?"
+        },
+        {
+          "id": 69456284,
+          "name": "Will \"Claude / Anthropic\" be in the headlines on Sunday?",
+          "description": "Will \"Claude / Anthropic\" be in the headlines on Sunday?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-11-16T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.16
+            },
+            {
+              "name": "No",
+              "probability": 0.84
+            }
+          ],
+          "rule_quote": "Will \"Claude / Anthropic\" be in the headlines on Sunday?"
+        },
+        {
+          "id": 69456285,
+          "name": "Will \"NFL / Football\" be in the headlines on Sunday?",
+          "description": "Will \"NFL / Football\" be in the headlines on Sunday?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-11-16T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.12
+            },
+            {
+              "name": "No",
+              "probability": 0.88
+            }
+          ],
+          "rule_quote": "Will \"NFL / Football\" be in the headlines on Sunday?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-22-proposed-polymarket-will-contenders-be-relegated",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-norwa",
+      "proposed_title": "Will which contender be relegated from the 2026 Norway Eliteserien?",
+      "source": "polymarket",
+      "parent_subject": "will * be relegated from the 2026 norway eliteserien",
+      "axis": "contenders",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be relegated from the 2026 norway eliteserien",
+        "title_ilike": "Will % be relegated from the 2026 Norway Eliteserien%",
+        "title_template": "Will which contender be relegated from the 2026 Norway Eliteserien?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "contenders",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 619,
+          "output_tokens": 140,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Start be relegated from the 2026 Norway Eliteserien?",
+          "market_b_quote": "Will Aalesund be relegated from the 2026 Norway Eliteserien?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will Start be relegated from the 2026 Norway Eliteserien?"
+        },
+        "2": {
+          "input_tokens": 619,
+          "output_tokens": 140,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Start be relegated from the 2026 Norway Eliteserien?",
+          "market_b_quote": "Will Aalesund be relegated from the 2026 Norway Eliteserien?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will Start be relegated from the 2026 Norway Eliteserien?"
+        },
+        "3": {
+          "input_tokens": 619,
+          "output_tokens": 140,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Start be relegated from the 2026 Norway Eliteserien?",
+          "market_b_quote": "Will Aalesund be relegated from the 2026 Norway Eliteserien?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will Start be relegated from the 2026 Norway Eliteserien?"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 62660929,
+          "name": "Will Start be relegated from the 2026 Norway Eliteserien?",
+          "description": "Will Start be relegated from the 2026 Norway Eliteserien?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.895
+            },
+            {
+              "name": "No",
+              "probability": 0.105
+            }
+          ],
+          "rule_quote": "Will Start be relegated from the 2026 Norway Eliteserien?"
+        },
+        {
+          "id": 61369611,
+          "name": "Will Aalesund be relegated from the 2026 Norway Eliteserien?",
+          "description": "Will Aalesund be relegated from the 2026 Norway Eliteserien?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.56
+            },
+            {
+              "name": "No",
+              "probability": 0.44
+            }
+          ],
+          "rule_quote": "Will Aalesund be relegated from the 2026 Norway Eliteserien?"
+        },
+        {
+          "id": 61369615,
+          "name": "Will KFUM Oslo be relegated from the 2026 Norway Eliteserien?",
+          "description": "Will KFUM Oslo be relegated from the 2026 Norway Eliteserien?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.065
+            },
+            {
+              "name": "No",
+              "probability": 0.935
+            }
+          ],
+          "rule_quote": "Will KFUM Oslo be relegated from the 2026 Norway Eliteserien?"
+        },
+        {
+          "id": 61369608,
+          "name": "Will HamKam be relegated from the 2026 Norway Eliteserien?",
+          "description": "Will HamKam be relegated from the 2026 Norway Eliteserien?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.04
+            },
+            {
+              "name": "No",
+              "probability": 0.96
+            }
+          ],
+          "rule_quote": "Will HamKam be relegated from the 2026 Norway Eliteserien?"
+        },
+        {
+          "id": 61369614,
+          "name": "Will Fredrikstad be relegated from the 2026 Norway Eliteserien?",
+          "description": "Will Fredrikstad be relegated from the 2026 Norway Eliteserien?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0375
+            },
+            {
+              "name": "No",
+              "probability": 0.9625
+            }
+          ],
+          "rule_quote": "Will Fredrikstad be relegated from the 2026 Norway Eliteserien?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-23-proposed-polymarket-will-contenders-be-relegated",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-uzbek",
+      "proposed_title": "Will which contender be relegated from the 2026 Uzbekistan Super League?",
+      "source": "polymarket",
+      "parent_subject": "will * be relegated from the 2026 uzbekistan super league",
+      "axis": "contenders",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be relegated from the 2026 uzbekistan super league",
+        "title_ilike": "Will % be relegated from the 2026 Uzbekistan Super League%",
+        "title_template": "Will which contender be relegated from the 2026 Uzbekistan Super League?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "contenders",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 617,
+          "output_tokens": 140,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Mash'al be relegated from the 2026 Uzbekistan Super League?",
+          "market_b_quote": "Will Bunyodkor be relegated from the 2026 Uzbekistan Super League?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 uzbekistan super league"
+        },
+        "2": {
+          "input_tokens": 617,
+          "output_tokens": 138,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Mash'al be relegated from the 2026 Uzbekistan Super League?",
+          "market_b_quote": "Will Bunyodkor be relegated from the 2026 Uzbekistan Super League?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 uzbekistan super league"
+        },
+        "3": {
+          "input_tokens": 617,
+          "output_tokens": 138,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Mash'al be relegated from the 2026 Uzbekistan Super League?",
+          "market_b_quote": "Will Bunyodkor be relegated from the 2026 Uzbekistan Super League?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 uzbekistan super league"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61369920,
+          "name": "Will Mash'al be relegated from the 2026 Uzbekistan Super League?",
+          "description": "Will Mash'al be relegated from the 2026 Uzbekistan Super League?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.95
+            },
+            {
+              "name": "No",
+              "probability": 0.05
+            }
+          ],
+          "rule_quote": "Will Mash'al be relegated from the 2026 Uzbekistan Super League?"
+        },
+        {
+          "id": 61369916,
+          "name": "Will Bunyodkor be relegated from the 2026 Uzbekistan Super League?",
+          "description": "Will Bunyodkor be relegated from the 2026 Uzbekistan Super League?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.49
+            },
+            {
+              "name": "No",
+              "probability": 0.51
+            }
+          ],
+          "rule_quote": "Will Bunyodkor be relegated from the 2026 Uzbekistan Super League?"
+        },
+        {
+          "id": 61369919,
+          "name": "Will Kokand 1912 be relegated from the 2026 Uzbekistan Super League?",
+          "description": "Will Kokand 1912 be relegated from the 2026 Uzbekistan Super League?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.4
+            },
+            {
+              "name": "No",
+              "probability": 0.6
+            }
+          ],
+          "rule_quote": "Will Kokand 1912 be relegated from the 2026 Uzbekistan Super League?"
+        },
+        {
+          "id": 61814153,
+          "name": "Will Lokomotiv Tashkent be relegated from the 2026 Uzbekistan Super League?",
+          "description": "Will Lokomotiv Tashkent be relegated from the 2026 Uzbekistan Super League?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.2452
+            },
+            {
+              "name": "No",
+              "probability": 0.7548
+            }
+          ],
+          "rule_quote": "Will Lokomotiv Tashkent be relegated from the 2026 Uzbekistan Super League?"
+        },
+        {
+          "id": 61369915,
+          "name": "Will Andijon be relegated from the 2026 Uzbekistan Super League?",
+          "description": "Will Andijon be relegated from the 2026 Uzbekistan Super League?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.12
+            },
+            {
+              "name": "No",
+              "probability": 0.88
+            }
+          ],
+          "rule_quote": "Will Andijon be relegated from the 2026 Uzbekistan Super League?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-24-proposed-polymarket-will-teams-be-relegated-from",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-teams-be-relegated-from-the-2026-ligapro-se",
+      "proposed_title": "Will which team be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+      "source": "polymarket",
+      "parent_subject": "will * be relegated from the 2026 ligapro serie a ecuador",
+      "axis": "teams",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be relegated from the 2026 ligapro serie a ecuador",
+        "title_ilike": "Will % be relegated from the 2026 LigaPro Serie A (Ecuador)%",
+        "title_template": "Will which team be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 651,
+          "output_tokens": 149,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Manta be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "market_b_quote": "Will Delf\u00edn be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 ligapro serie a ecuador"
+        },
+        "2": {
+          "input_tokens": 651,
+          "output_tokens": 149,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Manta be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "market_b_quote": "Will Delf\u00edn be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 ligapro serie a ecuador"
+        },
+        "3": {
+          "input_tokens": 651,
+          "output_tokens": 149,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Manta be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "market_b_quote": "Will Delf\u00edn be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 ligapro serie a ecuador"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61740159,
+          "name": "Will Manta be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "description": "Will Manta be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.919
+            },
+            {
+              "name": "No",
+              "probability": 0.081
+            }
+          ],
+          "rule_quote": "Will Manta be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+        },
+        {
+          "id": 63323383,
+          "name": "Will Delf\u00edn be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "description": "Will Delf\u00edn be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.375
+            },
+            {
+              "name": "No",
+              "probability": 0.625
+            }
+          ],
+          "rule_quote": "Will Delf\u00edn be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+        },
+        {
+          "id": 61814139,
+          "name": "Will Mushuc Runa be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "description": "Will Mushuc Runa be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0375
+            },
+            {
+              "name": "No",
+              "probability": 0.9625
+            }
+          ],
+          "rule_quote": "Will Mushuc Runa be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+        },
+        {
+          "id": 61590009,
+          "name": "Will Macar\u00e1 be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "description": "Will Macar\u00e1 be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0315
+            },
+            {
+              "name": "No",
+              "probability": 0.9685
+            }
+          ],
+          "rule_quote": "Will Macar\u00e1 be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+        },
+        {
+          "id": 61369899,
+          "name": "Will Deportivo Cuenca be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "description": "Will Deportivo Cuenca be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.027
+            },
+            {
+              "name": "No",
+              "probability": 0.973
+            }
+          ],
+          "rule_quote": "Will Deportivo Cuenca be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-25-proposed-polymarket-will-teams-be-relegated-from",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-teams-be-relegated-from-the-2026-uruguayan",
+      "proposed_title": "Will which team be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+      "source": "polymarket",
+      "parent_subject": "will * be relegated from the 2026 uruguayan primera divisi\u00f3n",
+      "axis": "teams",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be relegated from the 2026 uruguayan primera divisi\u00f3n",
+        "title_ilike": "Will % be relegated from the 2026 Uruguayan Primera Divisi\u00f3n%",
+        "title_template": "Will which team be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 654,
+          "output_tokens": 141,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Danubio be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "market_b_quote": "Will Progreso be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 uruguayan primera divisi\u00f3n"
+        },
+        "2": {
+          "input_tokens": 654,
+          "output_tokens": 141,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Danubio be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "market_b_quote": "Will Progreso be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 uruguayan primera divisi\u00f3n"
+        },
+        "3": {
+          "input_tokens": 654,
+          "output_tokens": 141,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Danubio be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "market_b_quote": "Will Progreso be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 uruguayan primera divisi\u00f3n"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61373097,
+          "name": "Will Danubio be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "description": "Will Danubio be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.98
+            },
+            {
+              "name": "No",
+              "probability": 0.02
+            }
+          ],
+          "rule_quote": "Will Danubio be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?"
+        },
+        {
+          "id": 61373102,
+          "name": "Will Progreso be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "description": "Will Progreso be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.8825
+            },
+            {
+              "name": "No",
+              "probability": 0.1175
+            }
+          ],
+          "rule_quote": "Will Progreso be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?"
+        },
+        {
+          "id": 61373103,
+          "name": "Will Cerro be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "description": "Will Cerro be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.31
+            },
+            {
+              "name": "No",
+              "probability": 0.69
+            }
+          ],
+          "rule_quote": "Will Cerro be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?"
+        },
+        {
+          "id": 62288921,
+          "name": "Will Albion be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "description": "Will Albion be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.21
+            },
+            {
+              "name": "No",
+              "probability": 0.79
+            }
+          ],
+          "rule_quote": "Will Albion be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?"
+        },
+        {
+          "id": 63848914,
+          "name": "Will Central Espa\u00f1ol be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "description": "Will Central Espa\u00f1ol be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.11
+            },
+            {
+              "name": "No",
+              "probability": 0.89
+            }
+          ],
+          "rule_quote": "Will Central Espa\u00f1ol be relegated from the 2026 Uruguayan Primera Divisi\u00f3n?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-26-proposed-polymarket-will-donald-trump-visit-cand",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-donald-trump-visit-candidates",
+      "proposed_title": "Will Donald Trump visit candidates?",
+      "source": "polymarket",
+      "parent_subject": "will donald trump visit *",
+      "axis": "candidates",
+      "category": "politics",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will donald trump visit *",
+        "title_ilike": "Will Donald Trump visit %",
+        "title_template": "Will Donald Trump visit candidates {deadline}?",
+        "kicker_prefix": "POLITICS",
+        "kicker_include_date": true,
+        "subject_unit": "candidates",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 563,
+          "output_tokens": 119,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Donald Trump visit South Korea in 2026?",
+          "market_b_quote": "Will Donald Trump visit Oman in 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "will donald trump visit *"
+        },
+        "2": {
+          "input_tokens": 563,
+          "output_tokens": 119,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Donald Trump visit South Korea in 2026?",
+          "market_b_quote": "Will Donald Trump visit Oman in 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "will donald trump visit *"
+        },
+        "3": {
+          "input_tokens": 563,
+          "output_tokens": 119,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Donald Trump visit South Korea in 2026?",
+          "market_b_quote": "Will Donald Trump visit Oman in 2026?",
+          "already_happened_market_ids": [],
+          "card_heading": "will donald trump visit *"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 13791782,
+          "name": "Will Donald Trump visit South Korea in 2026?",
+          "description": "Will Donald Trump visit South Korea in 2026?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.075
+            },
+            {
+              "name": "No",
+              "probability": 0.925
+            }
+          ],
+          "rule_quote": "Will Donald Trump visit South Korea in 2026?"
+        },
+        {
+          "id": 13791789,
+          "name": "Will Donald Trump visit Oman in 2026?",
+          "description": "Will Donald Trump visit Oman in 2026?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.063
+            },
+            {
+              "name": "No",
+              "probability": 0.937
+            }
+          ],
+          "rule_quote": "Will Donald Trump visit Oman in 2026?"
+        },
+        {
+          "id": 13791779,
+          "name": "Will Donald Trump visit Saudi Arabia in 2026?",
+          "description": "Will Donald Trump visit Saudi Arabia in 2026?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.045
+            },
+            {
+              "name": "No",
+              "probability": 0.955
+            }
+          ],
+          "rule_quote": "Will Donald Trump visit Saudi Arabia in 2026?"
+        },
+        {
+          "id": 13791788,
+          "name": "Will Donald Trump visit Italy in 2026?",
+          "description": "Will Donald Trump visit Italy in 2026?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.04
+            },
+            {
+              "name": "No",
+              "probability": 0.96
+            }
+          ],
+          "rule_quote": "Will Donald Trump visit Italy in 2026?"
+        },
+        {
+          "id": 13791777,
+          "name": "Will Donald Trump visit Canada in 2026?",
+          "description": "Will Donald Trump visit Canada in 2026?",
+          "source": "polymarket",
+          "category": "politics",
+          "status": "open",
+          "resolution_date": "2026-12-31T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0395
+            },
+            {
+              "name": "No",
+              "probability": 0.9605
+            }
+          ],
+          "rule_quote": "Will Donald Trump visit Canada in 2026?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-27-proposed-polymarket-will-it-snow-in-cities",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-it-snow-in-cities",
+      "proposed_title": "Will it snow in cities?",
+      "source": "polymarket",
+      "parent_subject": "will it snow in *",
+      "axis": "cities",
+      "category": "weather",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will it snow in *",
+        "title_ilike": "Will it snow in %",
+        "title_template": "Will it snow in cities {deadline}?",
+        "kicker_prefix": "WEATHER",
+        "kicker_include_date": true,
+        "subject_unit": "cities",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 459,
+          "output_tokens": 126,
+          "only_subject_differs": true,
+          "market_a_quote": "Will it snow in Salt Lake City, UT by November 15?",
+          "market_b_quote": "Will it snow in Chicago, IL by November 15?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will it snow in * by November 15?"
+        },
+        "2": {
+          "input_tokens": 459,
+          "output_tokens": 122,
+          "only_subject_differs": true,
+          "market_a_quote": "Will it snow in Salt Lake City, UT by November 15?",
+          "market_b_quote": "Will it snow in Chicago, IL by November 15?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will it snow in *"
+        },
+        "3": {
+          "input_tokens": 459,
+          "output_tokens": 122,
+          "only_subject_differs": true,
+          "market_a_quote": "Will it snow in Salt Lake City, UT by November 15?",
+          "market_b_quote": "Will it snow in Chicago, IL by November 15?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will it snow in *"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 60087435,
+          "name": "Will it snow in Salt Lake City, UT by November 15?",
+          "description": "Will it snow in Salt Lake City, UT by November 15?",
+          "source": "polymarket",
+          "category": "weather",
+          "status": "open",
+          "resolution_date": "2026-11-19T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.35
+            },
+            {
+              "name": "No",
+              "probability": 0.65
+            }
+          ],
+          "rule_quote": "Will it snow in Salt Lake City, UT by November 15?"
+        },
+        {
+          "id": 60087428,
+          "name": "Will it snow in Chicago, IL by November 15?",
+          "description": "Will it snow in Chicago, IL by November 15?",
+          "source": "polymarket",
+          "category": "weather",
+          "status": "open",
+          "resolution_date": "2026-11-19T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.34
+            },
+            {
+              "name": "No",
+              "probability": 0.66
+            }
+          ],
+          "rule_quote": "Will it snow in Chicago, IL by November 15?"
+        },
+        {
+          "id": 60087431,
+          "name": "Will it snow in Indianapolis, IN by November 15?",
+          "description": "Will it snow in Indianapolis, IN by November 15?",
+          "source": "polymarket",
+          "category": "weather",
+          "status": "open",
+          "resolution_date": "2026-11-19T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.29
+            },
+            {
+              "name": "No",
+              "probability": 0.71
+            }
+          ],
+          "rule_quote": "Will it snow in Indianapolis, IN by November 15?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-28-proposed-polymarket-will-teams-advance-to-the-ea",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-teams-advance-to-the-eastern-conference-sem",
+      "proposed_title": "Will which team advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+      "source": "polymarket",
+      "parent_subject": "will * advance to the eastern conference semifinals in the 2027 nba playoffs",
+      "axis": "teams",
+      "category": "basketball",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * advance to the eastern conference semifinals in the 2027 nba playoffs",
+        "title_ilike": "Will % advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs%",
+        "title_template": "Will which team advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+        "kicker_prefix": "BASKETBALL",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 647,
+          "output_tokens": 158,
+          "only_subject_differs": true,
+          "market_a_quote": "Will New York Knicks advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "market_b_quote": "Will Detroit Pistons advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the eastern conference semifinals in the 2027 nba playoffs"
+        },
+        "2": {
+          "input_tokens": 647,
+          "output_tokens": 158,
+          "only_subject_differs": true,
+          "market_a_quote": "Will New York Knicks advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "market_b_quote": "Will Detroit Pistons advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the eastern conference semifinals in the 2027 nba playoffs"
+        },
+        "3": {
+          "input_tokens": 647,
+          "output_tokens": 158,
+          "only_subject_differs": true,
+          "market_a_quote": "Will New York Knicks advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "market_b_quote": "Will Detroit Pistons advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the eastern conference semifinals in the 2027 nba playoffs"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 63196490,
+          "name": "Will New York Knicks advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "description": "Will New York Knicks advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-05T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.875
+            },
+            {
+              "name": "No",
+              "probability": 0.125
+            }
+          ],
+          "rule_quote": "Will New York Knicks advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61380775,
+          "name": "Will Detroit Pistons advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "description": "Will Detroit Pistons advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-05T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.61
+            },
+            {
+              "name": "No",
+              "probability": 0.39
+            }
+          ],
+          "rule_quote": "Will Detroit Pistons advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61524273,
+          "name": "Will Boston Celtics advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "description": "Will Boston Celtics advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-05T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.5545
+            },
+            {
+              "name": "No",
+              "probability": 0.4455
+            }
+          ],
+          "rule_quote": "Will Boston Celtics advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61817058,
+          "name": "Will Toronto Raptors advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "description": "Will Toronto Raptors advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-05T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.525
+            },
+            {
+              "name": "No",
+              "probability": 0.475
+            }
+          ],
+          "rule_quote": "Will Toronto Raptors advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 63856078,
+          "name": "Will Philadelphia 76ers advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "description": "Will Philadelphia 76ers advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-05T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.4236
+            },
+            {
+              "name": "No",
+              "probability": 0.5764
+            }
+          ],
+          "rule_quote": "Will Philadelphia 76ers advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-29-proposed-polymarket-will-teams-advance-to-the-we",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-teams-advance-to-the-western-conference-fin",
+      "proposed_title": "Will which team advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+      "source": "polymarket",
+      "parent_subject": "will * advance to the western conference finals in the 2027 nba playoffs",
+      "axis": "teams",
+      "category": "basketball",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * advance to the western conference finals in the 2027 nba playoffs",
+        "title_ilike": "Will % advance to the Western Conference Finals in the 2027 NBA Playoffs%",
+        "title_template": "Will which team advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+        "kicker_prefix": "BASKETBALL",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 630,
+          "output_tokens": 144,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Oklahoma City Thunder advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "market_b_quote": "Will Houston Rockets advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the western conference finals in the 2027 nba playoffs"
+        },
+        "2": {
+          "input_tokens": 630,
+          "output_tokens": 143,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Oklahoma City Thunder advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "market_b_quote": "Will Houston Rockets advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the western conference finals in the 2027 nba playoffs"
+        },
+        "3": {
+          "input_tokens": 630,
+          "output_tokens": 144,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Oklahoma City Thunder advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "market_b_quote": "Will Houston Rockets advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the western conference finals in the 2027 nba playoffs"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61380727,
+          "name": "Will Oklahoma City Thunder advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "description": "Will Oklahoma City Thunder advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-25T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.415
+            },
+            {
+              "name": "No",
+              "probability": 0.585
+            }
+          ],
+          "rule_quote": "Will Oklahoma City Thunder advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61380736,
+          "name": "Will Houston Rockets advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "description": "Will Houston Rockets advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-25T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.26
+            },
+            {
+              "name": "No",
+              "probability": 0.74
+            }
+          ],
+          "rule_quote": "Will Houston Rockets advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61380725,
+          "name": "Will Denver Nuggets advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "description": "Will Denver Nuggets advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-25T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.15
+            },
+            {
+              "name": "No",
+              "probability": 0.85
+            }
+          ],
+          "rule_quote": "Will Denver Nuggets advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61380733,
+          "name": "Will Phoenix Suns advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "description": "Will Phoenix Suns advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-25T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.099
+            },
+            {
+              "name": "No",
+              "probability": 0.901
+            }
+          ],
+          "rule_quote": "Will Phoenix Suns advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61380728,
+          "name": "Will Portland Trail Blazers advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "description": "Will Portland Trail Blazers advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-25T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.0905
+            },
+            {
+              "name": "No",
+              "probability": 0.9095
+            }
+          ],
+          "rule_quote": "Will Portland Trail Blazers advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-30-proposed-polymarket-will-teams-advance-to-the-we",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-teams-advance-to-the-western-conference-sem",
+      "proposed_title": "Will which team advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+      "source": "polymarket",
+      "parent_subject": "will * advance to the western conference semifinals in the 2027 nba playoffs",
+      "axis": "teams",
+      "category": "basketball",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * advance to the western conference semifinals in the 2027 nba playoffs",
+        "title_ilike": "Will % advance to the Western Conference Semifinals in the 2027 NBA Playoffs%",
+        "title_template": "Will which team advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+        "kicker_prefix": "BASKETBALL",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 646,
+          "output_tokens": 158,
+          "only_subject_differs": true,
+          "market_a_quote": "Will San Antonio Spurs advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "market_b_quote": "Will Oklahoma City Thunder advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the western conference semifinals in the 2027 nba playoffs"
+        },
+        "2": {
+          "input_tokens": 646,
+          "output_tokens": 158,
+          "only_subject_differs": true,
+          "market_a_quote": "Will San Antonio Spurs advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "market_b_quote": "Will Oklahoma City Thunder advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the western conference semifinals in the 2027 nba playoffs"
+        },
+        "3": {
+          "input_tokens": 646,
+          "output_tokens": 158,
+          "only_subject_differs": true,
+          "market_a_quote": "Will San Antonio Spurs advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "market_b_quote": "Will Oklahoma City Thunder advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * advance to the western conference semifinals in the 2027 nba playoffs"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61602426,
+          "name": "Will San Antonio Spurs advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "description": "Will San Antonio Spurs advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-05T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.725
+            },
+            {
+              "name": "No",
+              "probability": 0.275
+            }
+          ],
+          "rule_quote": "Will San Antonio Spurs advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61380759,
+          "name": "Will Oklahoma City Thunder advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "description": "Will Oklahoma City Thunder advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-05T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.695
+            },
+            {
+              "name": "No",
+              "probability": 0.305
+            }
+          ],
+          "rule_quote": "Will Oklahoma City Thunder advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61380764,
+          "name": "Will Los Angeles Lakers advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "description": "Will Los Angeles Lakers advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-05T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.63
+            },
+            {
+              "name": "No",
+              "probability": 0.37
+            }
+          ],
+          "rule_quote": "Will Los Angeles Lakers advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61380768,
+          "name": "Will Houston Rockets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "description": "Will Houston Rockets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-05T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.5
+            },
+            {
+              "name": "No",
+              "probability": 0.5
+            }
+          ],
+          "rule_quote": "Will Houston Rockets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+        },
+        {
+          "id": 61380757,
+          "name": "Will Denver Nuggets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "description": "Will Denver Nuggets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "source": "polymarket",
+          "category": "basketball",
+          "status": "open",
+          "resolution_date": "2027-05-05T23:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.495
+            },
+            {
+              "name": "No",
+              "probability": 0.505
+            }
+          ],
+          "rule_quote": "Will Denver Nuggets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-31-proposed-polymarket-will-teams-be-relegated-from",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-teams-be-relegated-from-the-2026-venezuelan",
+      "proposed_title": "Will which team be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+      "source": "polymarket",
+      "parent_subject": "will * be relegated from the 2026 venezuelan primera divisi\u00f3n",
+      "axis": "teams",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be relegated from the 2026 venezuelan primera divisi\u00f3n",
+        "title_ilike": "Will % be relegated from the 2026 Venezuelan Primera Divisi\u00f3n%",
+        "title_template": "Will which team be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "teams",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 656,
+          "output_tokens": 139,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Anzo\u00e1tegui be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "market_b_quote": "Will Portuguesa be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 venezuelan primera divisi\u00f3n"
+        },
+        "2": {
+          "input_tokens": 656,
+          "output_tokens": 141,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Anzo\u00e1tegui be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "market_b_quote": "Will Portuguesa be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "already_happened_market_ids": [],
+          "card_heading": "will * be relegated from the 2026 venezuelan primera divisi\u00f3n"
+        },
+        "3": {
+          "input_tokens": 656,
+          "output_tokens": 139,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Anzo\u00e1tegui be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "market_b_quote": "Will Portuguesa be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 venezuelan primera divisi\u00f3n"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 61373110,
+          "name": "Will Anzo\u00e1tegui be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "description": "Will Anzo\u00e1tegui be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.96
+            },
+            {
+              "name": "No",
+              "probability": 0.04
+            }
+          ],
+          "rule_quote": "Will Anzo\u00e1tegui be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?"
+        },
+        {
+          "id": 65374094,
+          "name": "Will Portuguesa be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "description": "Will Portuguesa be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.11
+            },
+            {
+              "name": "No",
+              "probability": 0.89
+            }
+          ],
+          "rule_quote": "Will Portuguesa be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?"
+        },
+        {
+          "id": 65374093,
+          "name": "Will Estudiantes de M\u00e9rida be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "description": "Will Estudiantes de M\u00e9rida be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.1085
+            },
+            {
+              "name": "No",
+              "probability": 0.8915
+            }
+          ],
+          "rule_quote": "Will Estudiantes de M\u00e9rida be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?"
+        },
+        {
+          "id": 65513297,
+          "name": "Will Zamora be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "description": "Will Zamora be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.1055
+            },
+            {
+              "name": "No",
+              "probability": 0.8945
+            }
+          ],
+          "rule_quote": "Will Zamora be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?"
+        },
+        {
+          "id": 64824912,
+          "name": "Will Metropolitanos be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "description": "Will Metropolitanos be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.105
+            },
+            {
+              "name": "No",
+              "probability": 0.895
+            }
+          ],
+          "rule_quote": "Will Metropolitanos be relegated from the 2026 Venezuelan Primera Divisi\u00f3n?"
+        }
+      ]
+    },
+    {
+      "card_id": "test-32-proposed-polymarket-will-contenders-be-relegated",
+      "split": "test",
+      "family_slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-allsv",
+      "proposed_title": "Will which contender be relegated from the 2026 Allsvenskan (Sweden)?",
+      "source": "polymarket",
+      "parent_subject": "will * be relegated from the 2026 allsvenskan sweden",
+      "axis": "contenders",
+      "category": "soccer",
+      "human_grade": null,
+      "rule": {
+        "producer": "sibling_family",
+        "source": "polymarket",
+        "template": "will * be relegated from the 2026 allsvenskan sweden",
+        "title_ilike": "Will % be relegated from the 2026 Allsvenskan (Sweden)%",
+        "title_template": "Will which contender be relegated from the 2026 Allsvenskan (Sweden)?",
+        "kicker_prefix": "SOCCER",
+        "kicker_include_date": false,
+        "subject_unit": "contenders",
+        "outcome_name": "Yes",
+        "lead_rule": "nearest_open_deadline",
+        "min_numbered_members": 3,
+        "card_rows": 5
+      },
+      "footer": "Each row is its own market. They don't add up to 100%.",
+      "passes": {
+        "1": {
+          "input_tokens": 668,
+          "output_tokens": 153,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Halmstads BK be relegated from the 2026 Allsvenskan (Sweden)?",
+          "market_b_quote": "Will \u00d6rgryte IS be relegated from the 2026 Allsvenskan (Sweden)?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 allsvenskan sweden"
+        },
+        "2": {
+          "input_tokens": 668,
+          "output_tokens": 153,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Halmstads BK be relegated from the 2026 Allsvenskan (Sweden)?",
+          "market_b_quote": "Will \u00d6rgryte IS be relegated from the 2026 Allsvenskan (Sweden)?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 allsvenskan sweden"
+        },
+        "3": {
+          "input_tokens": 668,
+          "output_tokens": 153,
+          "only_subject_differs": true,
+          "market_a_quote": "Will Halmstads BK be relegated from the 2026 Allsvenskan (Sweden)?",
+          "market_b_quote": "Will \u00d6rgryte IS be relegated from the 2026 Allsvenskan (Sweden)?",
+          "already_happened_market_ids": [],
+          "card_heading": "Will * be relegated from the 2026 allsvenskan sweden"
+        }
+      },
+      "candidate_markets": [
+        {
+          "id": 62807621,
+          "name": "Will Halmstads BK be relegated from the 2026 Allsvenskan (Sweden)?",
+          "description": "Will Halmstads BK be relegated from the 2026 Allsvenskan (Sweden)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.89
+            },
+            {
+              "name": "No",
+              "probability": 0.11
+            }
+          ],
+          "rule_quote": "Will Halmstads BK be relegated from the 2026 Allsvenskan (Sweden)?"
+        },
+        {
+          "id": 61373164,
+          "name": "Will \u00d6rgryte IS be relegated from the 2026 Allsvenskan (Sweden)?",
+          "description": "Will \u00d6rgryte IS be relegated from the 2026 Allsvenskan (Sweden)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.812
+            },
+            {
+              "name": "No",
+              "probability": 0.188
+            }
+          ],
+          "rule_quote": "Will \u00d6rgryte IS be relegated from the 2026 Allsvenskan (Sweden)?"
+        },
+        {
+          "id": 63702184,
+          "name": "Will Mj\u00e4llby AIF be relegated from the 2026 Allsvenskan (Sweden)?",
+          "description": "Will Mj\u00e4llby AIF be relegated from the 2026 Allsvenskan (Sweden)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.105
+            },
+            {
+              "name": "No",
+              "probability": 0.895
+            }
+          ],
+          "rule_quote": "Will Mj\u00e4llby AIF be relegated from the 2026 Allsvenskan (Sweden)?"
+        },
+        {
+          "id": 63994988,
+          "name": "Will Kalmar FF be relegated from the 2026 Allsvenskan (Sweden)?",
+          "description": "Will Kalmar FF be relegated from the 2026 Allsvenskan (Sweden)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.072
+            },
+            {
+              "name": "No",
+              "probability": 0.928
+            }
+          ],
+          "rule_quote": "Will Kalmar FF be relegated from the 2026 Allsvenskan (Sweden)?"
+        },
+        {
+          "id": 61373166,
+          "name": "Will IF Elfsborg be relegated from the 2026 Allsvenskan (Sweden)?",
+          "description": "Will IF Elfsborg be relegated from the 2026 Allsvenskan (Sweden)?",
+          "source": "polymarket",
+          "category": "soccer",
+          "status": "open",
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "outcomes": [
+            {
+              "name": "Yes",
+              "probability": 0.011
+            },
+            {
+              "name": "No",
+              "probability": 0.989
+            }
+          ],
+          "rule_quote": "Will IF Elfsborg be relegated from the 2026 Allsvenskan (Sweden)?"
+        }
+      ]
+    }
+  ]
+}
