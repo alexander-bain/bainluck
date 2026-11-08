@@ -239,7 +239,7 @@ def _engine_session():
 
 @pytest.mark.asyncio
 async def test_a_composition_past_its_bound_is_abandoned_and_the_card_keeps_its_prices(monkeypatch):
-    """Production 2026-11-08: the page's composition took 16.1 s cold."""
+    """Production, Nov 8 just after midnight PT: the page's composition took 16.1 s cold."""
     import asyncio
     import time
 
