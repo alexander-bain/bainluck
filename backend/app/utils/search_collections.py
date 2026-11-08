@@ -204,7 +204,10 @@ async def attach_search_collections(
                 # members. Its admitted presentation owns the advertised count.
                 # Other completed matches survive a failed or timed-out page read.
                 cards.remove(card)
-                page = await get_container("midterms-2026", db=db)
+                page = await get_container(
+                    "midterms-2026", include_children=True, revision=None,
+                    cursor=None, limit=None, compact=False, db=db,
+                )
                 if page.get("state") != "published" or not page["member_count"]:
                     continue
                 cards.insert(index, {

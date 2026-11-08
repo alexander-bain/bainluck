@@ -1144,6 +1144,8 @@ _KENTUCKY_2027_RACE = {
     112821: ("kalshi", "GOVPARTYKY-27", "Kentucky governor winner? (2027)"),
     58335990: ("polymarket", "798143", "Kentucky Governor Election Winner (2027)"),
 }
+# Fixed presentation choice. This contract names the election winner directly.
+_KENTUCKY_2027_PRIMARY_ID = 58335990
 
 
 def _same_registered_race(a: FuturesMarket, b: FuturesMarket) -> bool:
@@ -1186,16 +1188,28 @@ def _take_without_venue_twins(
     Compares each candidate only with the rows already kept (at most `limit`),
     never pool-wide: the Other pool is ~4,000 rows, and a pairwise pass over it
     would cost seconds of title comparisons. A folded twin's slot backfills from
-    the same sorted pool.
+    the same sorted pool. The declared Kentucky near-twin uses a fixed source
+    at the pair's first ranked slot, including when that source ranks past the cap.
     """
+    race_pairs = {
+        market.id: (row, market)
+        for row, market in pairs
+        if market.id in _KENTUCKY_2027_RACE
+    }
+    preferred_race = None
+    if set(race_pairs) == set(_KENTUCKY_2027_RACE) and _same_registered_race(
+        race_pairs[112821][1], race_pairs[_KENTUCKY_2027_PRIMARY_ID][1]
+    ):
+        preferred_race = race_pairs[_KENTUCKY_2027_PRIMARY_ID]
     kept: list[tuple[dict, FuturesMarket]] = []
     for row, market in pairs:
         if len(kept) >= limit:
             break
-        if any(
-            _is_venue_twin(market, other) or _same_registered_race(market, other)
-            for _, other in kept
-        ):
+        if preferred_race is not None and market.id in _KENTUCKY_2027_RACE:
+            if any(other.id == _KENTUCKY_2027_PRIMARY_ID for _, other in kept):
+                continue
+            row, market = preferred_race
+        if any(_is_venue_twin(market, other) for _, other in kept):
             continue
         kept.append((row, market))
     return [row for row, _ in kept]

@@ -146,7 +146,49 @@ def test_same_race_fold_preserves_one_venues_price_and_working_destination():
     assert primary["prob"] == pytest.approx(78.061224)
     assert politics._take_without_venue_twins(
         [(other, kalshi), (primary, poly)], 10
-    ) == [other]
+    ) == [primary]
+
+
+@pytest.mark.parametrize("kalshi_prob,poly_prob", [(0.6, 0.8), (0.8, 0.6)])
+def test_prices_crossing_in_the_ranking_cannot_change_the_selected_source(
+    kalshi_prob, poly_prob
+):
+    kalshi, poly = kentucky_pair()
+    for member, probability in [(kalshi, kalshi_prob), (poly, poly_prob)]:
+        for outcome in member.outcomes:
+            outcome.current_probability = (
+                probability if outcome.name == "Republican" else 1 - probability
+            )
+    pairs = [(politics._market_row(m, now=AFTER), m) for m in [kalshi, poly]]
+    pairs.sort(key=lambda pair: politics._by_uncertainty(*pair))
+    row = politics._take_without_venue_twins(pairs, 1)[0]
+    assert row["market_id"] == 58335990
+    assert row["src"] == "polymarket"
+    assert row["prob"] == pytest.approx(max(poly_prob, 1 - poly_prob) * 100)
+
+
+def test_preferred_source_past_the_cap_uses_the_pairs_first_slot():
+    kalshi, poly = kentucky_pair()
+    primary = market(
+        65521846,
+        "Kentucky Democratic Governor nominee?",
+        "KXGOVKYNOMD-27",
+        outcomes=[("Rocky Adkins", 0.62), ("Jacqueline Coleman", 0.38)],
+    )
+    pairs = [(politics._market_row(m, now=AFTER), m) for m in [kalshi, primary, poly]]
+    assert [r["market_id"] for r in politics._take_without_venue_twins(pairs, 1)] == [
+        58335990
+    ]
+    assert [r["market_id"] for r in politics._take_without_venue_twins(pairs, 2)] == [
+        58335990,
+        65521846,
+    ]
+
+
+def test_missing_primary_keeps_the_only_available_attributed_contract():
+    kalshi, _ = kentucky_pair()
+    row = politics._market_row(kalshi, now=AFTER)
+    assert politics._take_without_venue_twins([(row, kalshi)], 1) == [row]
 
 
 @pytest.mark.parametrize(

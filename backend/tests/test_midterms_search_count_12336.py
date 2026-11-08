@@ -43,7 +43,15 @@ async def test_search_uses_the_current_page_count_and_revision(
     assert result["collections"][0]["question_count"] == count
     assert result["collections"][0]["revision"] == 3
     assert stored["question_count"] == 15
-    page.assert_awaited_once_with("midterms-2026", db=db)
+    page.assert_awaited_once_with(
+        "midterms-2026",
+        include_children=True,
+        revision=None,
+        cursor=None,
+        limit=None,
+        compact=False,
+        db=db,
+    )
 
 
 @pytest.mark.parametrize("state,count", [("withdrawn", 14), ("published", 0)])
