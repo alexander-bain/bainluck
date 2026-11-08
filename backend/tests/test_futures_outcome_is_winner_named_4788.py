@@ -221,6 +221,30 @@ def _keyword(call, name):
     return None
 
 
+def _dict_names(node, name):
+    return isinstance(node, ast.Dict) and any(
+        isinstance(k, ast.Constant) and k.value == name for k in node.keys
+    )
+
+
+def _names_column(call, name):
+    """Does this write address `name`? A keyword, or — on a multi-row
+    `.values([...])` — a key in EVERY row literal. #12322's placeholder legs
+    are one multi-row statement per market, so the guard reads that shape too
+    rather than forcing a round trip per leg. A rows VARIABLE cannot be read
+    and still counts as omitting the column."""
+    if _keyword(call, name) is not None:
+        return True
+    if call.keywords or len(call.args) != 1:
+        return False
+    rows = call.args[0]
+    if isinstance(rows, ast.ListComp):
+        return _dict_names(rows.elt, name)
+    if isinstance(rows, ast.List) and rows.elts:
+        return all(_dict_names(row, name) for row in rows.elts)
+    return False
+
+
 def _is_literal_none(node):
     return isinstance(node, ast.Constant) and node.value is None
 
@@ -313,7 +337,7 @@ def test_every_futures_outcome_write_names_is_winner():
 
     offenders = []
     for path, lineno, call in core_sites + orm_sites:
-        if _keyword(call, GRADED_COLUMN) is None:
+        if not _names_column(call, GRADED_COLUMN):
             offenders.append(f"{_rel(path)}:{lineno}")
 
     assert not offenders, (
@@ -367,7 +391,7 @@ def _scan(source):
 
 
 def _omits_graded_column(sites):
-    return [s for s in sites if _keyword(s[2], GRADED_COLUMN) is None]
+    return [s for s in sites if not _names_column(s[2], GRADED_COLUMN)]
 
 
 class TestTheScanResolvesTheModelByNameNotBySpelling:
@@ -480,6 +504,40 @@ class TestTheScanResolvesTheModelByNameNotBySpelling:
         empty = ast.parse("")
         assert MODEL in _module_aliases(empty)
         assert INSERT_FUNCS <= _insert_aliases(empty)
+
+
+class TestAMultiRowInsertIsReadRowByRow:
+    """#12322: `.values([{...}, ...])` names the column only if every row does."""
+
+    _HEAD = (
+        "from sqlalchemy.dialects.postgresql import insert as pg_insert\n"
+        "from app.models.models import FuturesOutcome\n"
+    )
+
+    def test_a_comprehension_whose_row_names_the_column_passes(self):
+        core, _, _ = _scan(self._HEAD + (
+            "pg_insert(FuturesOutcome).values(["
+            "{'market_id': 1, 'is_winner': None} for leg in legs])\n"
+        ))
+        assert len(core) == 1
+        assert not _omits_graded_column(core)
+
+    def test_a_comprehension_whose_row_omits_it_is_an_offender(self):
+        core, _, _ = _scan(self._HEAD + (
+            "pg_insert(FuturesOutcome).values([{'market_id': 1} for leg in legs])\n"
+        ))
+        assert _omits_graded_column(core)
+
+    def test_one_row_of_a_list_omitting_it_is_an_offender(self):
+        core, _, _ = _scan(self._HEAD + (
+            "pg_insert(FuturesOutcome).values(["
+            "{'market_id': 1, 'is_winner': None}, {'market_id': 2}])\n"
+        ))
+        assert _omits_graded_column(core)
+
+    def test_a_rows_variable_cannot_be_read_and_is_an_offender(self):
+        core, _, _ = _scan(self._HEAD + "pg_insert(FuturesOutcome).values(rows)\n")
+        assert _omits_graded_column(core)
 
 
 def _sqlite_engine():

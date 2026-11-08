@@ -303,6 +303,7 @@ tests/test_polymarket_listing_seed_opening_9850.py  repaired here: the open mark
 tests/test_polymarket_no_winner_cutoff_10407.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_polymarket_open_leg_never_graded_11007.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_polymarket_resolved_status_id_addressed_2637.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
+tests/test_polymarket_unpriced_legs_are_recorded_12322.py  clock-invariant at +1/+31/+60 d (timebomb_confirm --whole-clock 2026-11-07); "November 9" is the venue title of the specimen market, read by no clock
 tests/test_pregame_projection_11296.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_pregame_projection_league_list_11296.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_pregame_projection_lists_11296.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
