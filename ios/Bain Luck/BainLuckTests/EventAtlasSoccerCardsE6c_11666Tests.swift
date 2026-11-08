@@ -1013,12 +1013,12 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         .background(Color(.systemBackground))
         .environment(\.colorScheme, .light)
 
-        let r1 = ImageRenderer(content: freshView)
+        let r1 = rendererForMeasurement(freshView)
         r1.scale = 2.0
         let img1 = try XCTUnwrap(r1.uiImage)
         XCTAssertEqual(Int(img1.size.width), 390)
 
-        let r2 = ImageRenderer(content: agedView)
+        let r2 = rendererForMeasurement(agedView)
         r2.scale = 2.0
         let img2 = try XCTUnwrap(r2.uiImage)
         XCTAssertEqual(Int(img2.size.width), 390)
