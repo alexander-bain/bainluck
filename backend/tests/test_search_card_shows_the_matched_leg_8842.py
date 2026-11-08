@@ -183,5 +183,7 @@ def test_no_terms_is_the_old_card_exactly():
 
 def test_both_handlers_hand_over_their_terms():
     src = Path(events_route.__file__).read_text()
-    assert "m, _withheld_by_market.get(m.id), query_terms=expanded  # #8842" in src
+    # #12335: the search call gained a `verified=` argument after this one, so the
+    # pin carries the trailing comma — the same form as the typeahead pin below.
+    assert "m, _withheld_by_market.get(m.id), query_terms=expanded,  # #8842" in src
     assert "query_terms=ta_expanded,  # #8842" in src

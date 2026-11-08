@@ -13350,9 +13350,15 @@ async def search_events(
         # #8734: a promoted headline contender is asked too.
         and not _answers_a_served_game_card(m, _served_event_ids)
     ]
+    # #12335: a title question's card prints the numbers the page it opens
+    # prints — the verified-title blend, not the one venue this row came from.
+    _verified_by_id = await _search_verified_titles(
+        db, (*deduped_futures, *futures_markets), _deadline
+    )
     _formatted_by_id = {
         m.id: _format_futures_for_search(
-            m, _withheld_by_market.get(m.id), query_terms=expanded  # #8842
+            m, _withheld_by_market.get(m.id), query_terms=expanded,  # #8842
+            verified=_verified_by_id.get(m.id),
         )
         for m in (*deduped_futures, *futures_markets)
     }
@@ -38521,12 +38527,70 @@ def _search_keep_settled_winners(real: list, limit: int, headline_tier) -> tuple
     return live + kept + tail, kept
 
 
+def _verified_changed_leg(overlay) -> bool:
+    """The page's `_overlay_current` rule: a missing overlay is a change (no number)."""
+    return overlay is None or bool(getattr(overlay, "changed", True))
+
+
+class _VerifiedOutcome:
+    """#12335: one outcome row as the verified-title detail page prices it.
+
+    The page overlays each outcome's composed value by id
+    (`routes/futures.py::_overlay_current`): no overlay means no number, and a
+    value that is not the requested source's own drops the movement measured on
+    that source and re-derives the odds. Everything else reads through.
+
+    The row's loaded state is COPIED into this object's own ``__dict__``, not
+    merely delegated: this file reads rows through ``__dict__`` on purpose (a
+    mapped-attribute read can lazy-load inside async, gotcha #26), and a bare
+    delegating proxy would answer every one of those reads with "absent".
+    """
+
+    def __init__(self, row, overlay):
+        self.__dict__.update(
+            {k: v for k, v in row.__dict__.items() if k != "_sa_instance_state"}
+        )
+        self._row = row
+        self.current_probability = getattr(overlay, "probability", None)
+        if _verified_changed_leg(overlay):
+            from app.utils import probability_to_american
+
+            self.current_american_odds = (
+                probability_to_american(self.current_probability)
+                if self.current_probability is not None
+                else None
+            )
+            self.probability_change_24h = None
+        else:
+            self.current_american_odds = row.current_american_odds
+            self.probability_change_24h = row.probability_change_24h
+
+    def __getattr__(self, name):
+        return getattr(self._row, name)
+
+
+class _VerifiedMarket:
+    """#12335: a market whose outcomes are :class:`_VerifiedOutcome` rows."""
+
+    def __init__(self, market, overlay: dict):
+        # Loaded state copied, as on :class:`_VerifiedOutcome`, for the same reason.
+        self.__dict__.update(
+            {k: v for k, v in market.__dict__.items() if k != "_sa_instance_state"}
+        )
+        self._market = market
+        self.outcomes = [_VerifiedOutcome(o, overlay.get(o.id)) for o in market.outcomes]
+
+    def __getattr__(self, name):
+        return getattr(self._market, name)
+
+
 def _build_search_top_outcomes(
     market: "FuturesMarket",
     limit: int = 5,
     lean: bool = False,
     withheld: Optional[set[int]] = None,
     query_terms: Optional[list[tuple[str, str | None]]] = None,
+    verified=None,
 ) -> list[dict]:
     """Top-N real outcomes for search surfaces, normalized (#23). Shared by the
     full search formatter and the typeahead futures branch.
@@ -38539,6 +38603,12 @@ def _build_search_top_outcomes(
     movement only — no id/odds/rank) to keep the dropdown response small.
     Placeholder outcomes are filtered; probabilities are #23-normalized so the
     displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
+
+    ``verified`` (#12335) is the market's verified-title ``Composition``, when the
+    caller resolved one: the ladder is then built from the values the detail page
+    prints (`representation=verified_title`), through this same selection and
+    normalization, and a composed value carries no source-measured movement —
+    the page's rule. ``None`` keeps the row's own prices.
 
     ``withheld`` is #6993's fourth and last surface. The four-arm refusal union
     lives in ``routes/futures.py::_withheld_price_outcome_ids`` and reaches the
@@ -38567,6 +38637,12 @@ def _build_search_top_outcomes(
         reader_change_24h,
     )
 
+    _verified_changed = False
+    if verified is not None:
+        market = _VerifiedMarket(market, verified.overlay)
+        _verified_changed = any(
+            _verified_changed_leg(verified.overlay.get(o.id)) for o in market.outcomes
+        )
     real = _search_surviving_legs(market)
     # #5516: an exclusive board whose whole served ladder sums far under 100% is
     # incoherent as a SET even when every rung in it is honest — `Cubs 24% ·
@@ -38898,11 +38974,17 @@ def _build_search_top_outcomes(
     full_display = _drop_dominant_field_outcomes(
         full_display, lambda o: o.get("name"), lambda o: 1.0 if has_named_outcome and o.get("probability") == 1.0 else None
     )
-    comparisons = normalized_field_comparisons(
+    # #12335: the detail page compares against the stored field only when no
+    # composed value moved; a moved field's openings belong to another estimator.
+    comparisons = None if _verified_changed else normalized_field_comparisons(
         market,
         full_display,
         field_complete=not _withheld_ids,
     )
+    if _verified_changed:
+        for row in out:
+            if "movement" in row:
+                row["movement"] = None
     changed = _normalize_search_outcome_probs(
         full_display, mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=not _withheld_ids, question=getattr(market, "name", None),
@@ -40133,10 +40215,74 @@ async def _repair_search_card_club_names(
     return changed
 
 
+#: #12335: the verified-title composition is skipped (cards keep their own
+#: venue's prices) when less than this is left of the /search deadline.
+_SEARCH_VERIFIED_TITLE_MIN_REMAINING_S = 3.0
+
+
+async def _search_verified_titles(db, markets, deadline: float | None) -> dict:
+    """``{market id: Composition}`` for the title questions among ``markets``.
+
+    #12335. `/futures/<id>` opts into `representation=verified_title` (#10224):
+    one number per outcome across every venue that provably asks the same title
+    question. The search card that opens it read its own row alone, so the card
+    said Bills 14% while the page said 13%. This calls the SAME resolver the page
+    calls, `routes/futures.py::_resolve_verified_title`, so the two cannot drift.
+
+    Only markets `question_for` recognises (the NFL title question today) cost
+    anything; every other card is untouched and issues no read.
+
+    ON ITS OWN SESSION, never ``db``: the resolver swallows its own failures, and
+    a failed statement inside the request's transaction would abort it — and
+    rolling that back would expire every row the formatter is about to read
+    (gotcha #6). A session on an ENGINE is required, so a test double or a
+    connection-bound session gets no composition; so does a pool with no free
+    connection, where a checkout would wait on the reader's time, and a request
+    with less than :data:`_SEARCH_VERIFIED_TITLE_MIN_REMAINING_S` left. Each of
+    those keeps the card's own prices — the card before #12335, never an error.
+    """
+    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+
+    from app.routes.futures import _resolve_verified_title, _verified_title_facts
+    from app.utils.futures_verified_title import Composition, question_for
+
+    engine = getattr(db, "bind", None)
+    if not isinstance(db, AsyncSession) or not isinstance(engine, AsyncEngine):
+        return {}
+    wanted = []
+    for m in markets:
+        if all(m is not w for w in wanted) and question_for(_verified_title_facts(m)) is not None:
+            wanted.append(m)
+    if not wanted:
+        return {}
+    try:
+        if engine.pool.checkedout() >= engine.pool.size():
+            return {}
+    except Exception:  # noqa: BLE001 — a pool without counters keeps the cards as they are
+        return {}
+    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    out: dict = {}
+    async with maker() as side:
+        for m in wanted:
+            if (
+                deadline is not None
+                and deadline - time.monotonic() < _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S
+            ):
+                break
+            verdict = await _resolve_verified_title(side, m)
+            if isinstance(verdict, Composition):
+                out[m.id] = verdict
+            else:
+                # A refusal may follow a failed statement; start the next one clean.
+                await side.rollback()
+    return out
+
+
 def _format_futures_for_search(
     market: FuturesMarket,
     withheld: Optional[set[int]] = None,
     query_terms: Optional[list[tuple[str, str | None]]] = None,
+    verified=None,
 ) -> dict:
     """Format a futures market for search results (answer-first, #23-normalized).
 
@@ -40153,6 +40299,7 @@ def _format_futures_for_search(
         lean=False,
         withheld=withheld,
         query_terms=query_terms,  # #8842
+        verified=verified,  # #12335
     )
     # #6585: COUNT THE LEGS THE LADDER DRAWS FROM, not the rows behind it.
     #
@@ -40251,6 +40398,15 @@ def _format_futures_for_search(
         # byte-for-byte (it is the row's write time and other readers key off
         # it); this is the additive field the age pip reads instead.
         "prices_updated_at": _served_prices_as_of(market, top_outcomes, withheld),
+        # #12335: additive — which numbers these are, in the page's own words.
+        **(
+            {
+                "representation": "verified_title",
+                "contributing_sources": list(verified.contributing_sources),
+            }
+            if verified is not None
+            else {}
+        ),
     }
 
 
