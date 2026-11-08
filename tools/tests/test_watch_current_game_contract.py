@@ -154,6 +154,17 @@ def test_concrete_fixture_actors_preserve_all_accepted_behavior():
         "if let pickerAlias { return try await pickerAlias.fetch(eventID: eventID) }",
     ):
         assert fixture.count(delegate) == 1
+    # #4933 watch-face specimens apply only when their own variable is set; strip
+    # the guarded block to reconstruct all earlier fixture bytes.
+    face_start = "        // RECTANGULAR_FACE_STATES_BEGIN\n"
+    face_end = "        // RECTANGULAR_FACE_STATES_END\n"
+    assert fixture.count(face_start) == fixture.count(face_end) == 1
+    face_block = face_start + fixture.split(face_start, 1)[1].split(face_end, 1)[0] + face_end
+    assert (
+        'if first, let face = environment["BAINLUCK_WATCH_UI_RECTANGULAR_FACE"] {'
+        in face_block
+    )
+    fixture = fixture.replace(face_block, "")
     # Added main-score color specimens are opt-in; reconstruct all earlier fixture bytes.
     for name in ("FEED", "DETAIL"):
         start = "        // MAIN_SCORE_COLOR_" + name + "_BEGIN\n"

@@ -92,12 +92,33 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.waitForExistence(timeout: 15))
         let center = host.otherElements["center"].firstMatch
         XCTAssertTrue(center.waitForExistence(timeout: 15) && center.isHittable && host.frame.contains(center.frame))
-        let launcher = host.descendants(matching: .any)["watch.complication.fallback"].firstMatch
-        XCTAssertTrue(launcher.waitForExistence(timeout: 20), "Actual installed extension must render its explicit launcher")
-        XCTAssertEqual(launcher.label, "Open your selected game in Bain Luck, or choose a game")
-        try requireReadingWithinWidgetContent(launcher, center: center, host: host)
-        XCTAssertFalse(host.descendants(matching: .any)["watch.complication.rectangular.score-columns"].firstMatch.exists)
-        capture(host, "Actual Modular complete explicit launcher")
+        // #4933: the installed extension reads the App Group file the app just published
+        // and draws the chosen game's named saved reading with its age, not the launcher.
+        let reading = host.descendants(matching: .any)["watch.complication.rectangular.reading"].firstMatch
+        XCTAssertTrue(reading.waitForExistence(timeout: 20), "Actual installed extension must render the published saved reading")
+        let spoken = reading.label
+        XCTAssertTrue(spoken.hasPrefix("Saved reading. Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants win probability 64%. Live. Observed "), spoken)
+        XCTAssertTrue(spoken.hasSuffix(" Open your game in Bain Luck."), spoken)
+        // The age belongs to the original observation. Under two minutes is never stale;
+        // three minutes or more always is (two minutes is the one-second threshold boundary).
+        let fresh = spoken.contains("Observed less than 1 minute ago.") || spoken.contains("Observed 1 minute ago.")
+        let stale = spoken.contains(" Stale reading. ")
+        XCTAssertFalse(fresh && stale, spoken)
+        XCTAssertTrue(fresh || stale || spoken.contains("Observed 2 minutes ago."), spoken)
+        print("WATCH_RECTANGULAR_READING_LABEL=\(spoken)")
+        // The drawn lines: compact matchup with the verified score, the named chance
+        // (full or compact by width), and the saved line that always carries its age.
+        let header = host.descendants(matching: .any)["watch.complication.rectangular.header"].firstMatch
+        let primary = host.descendants(matching: .any)["watch.complication.rectangular.primary"].firstMatch
+        let metadata = host.descendants(matching: .any)["watch.complication.rectangular.metadata"].firstMatch
+        XCTAssertEqual(header.label, "LA at SF · 2–3")
+        XCTAssertTrue(["SF win 64%", "San Francisco Giants win 64%"].contains(primary.label), primary.label)
+        XCTAssertTrue((metadata.label.hasPrefix("Saved · Live · ") || metadata.label.hasPrefix("Saved · Stale · "))
+                      && metadata.label.hasSuffix(" ago"), metadata.label)
+        try requireNamedReadingInsideSlot(reading, center: center, host: host)
+        XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)
+        XCTAssertFalse(host.descendants(matching: .any)["watch.complication.rectangular.legacy"].firstMatch.exists)
+        capture(host, "Actual Modular saved reading with its age")
         center.tap()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 45))
         XCTAssertTrue(probability.waitForExistence(timeout: 20))
@@ -234,6 +255,42 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         capture(app, "Cold Modular tap original score age - " + scenario)
         print("WATCH_SCORE_MODULAR_COLD_STORE_RECEIPT=\(receiptText)")
         print("WATCH_SCORE_MODULAR_HOST_ROUTE_CHECKS=PASS scenario=\(scenario)")
+    }
+
+    /// #4933: the published reading lies wholly inside the slot's own content area. That
+    /// area's margins are the system's, measured from the mounted root (7.0 pt on a 45 mm
+    /// Series 9 under watchOS 27), never a guessed constant.
+    @MainActor
+    private func requireNamedReadingInsideSlot(_ reading: XCUIElement, center: XCUIElement,
+                                               host: XCUIApplication) throws {
+        let centerFrame = center.frame
+        XCTAssertTrue(host.frame.contains(centerFrame))
+        let remoteRoot = try XCTUnwrap(center.descendants(matching: .any).allElementsBoundByIndex.first {
+            $0.frame.origin == .zero && $0.frame.size == centerFrame.size
+        }, "Mounted Modular center has no proven zero-origin WidgetKit remote root")
+        let localReadings = remoteRoot.descendants(matching: .any).matching(identifier: reading.identifier)
+        XCTAssertEqual(localReadings.count, 1, "Reading must belong uniquely to the proven remote root")
+        let root = remoteRoot.frame
+        let card = reading.frame
+        XCTAssertEqual(localReadings.firstMatch.frame, card)
+        XCTAssertTrue([card.minX, card.minY, card.maxX, card.maxY].allSatisfy { $0.isFinite }, "Reading frame must be finite")
+        XCTAssertTrue(card.width > 0 && card.height > 0)
+        XCTAssertTrue(card.minX > root.minX && card.minY > root.minY && card.maxX < root.maxX && card.maxY < root.maxY,
+                      "Reading touches or escapes the WidgetKit slot")
+        // A full-width card spans exactly the system content area, so its side margins
+        // match; a line forcing the card wider would push it off one side.
+        XCTAssertEqual(card.minX - root.minX, root.maxX - card.maxX, accuracy: 0.5,
+                       "Reading is not centered in the slot's content area")
+        // Every drawn line, the saved line with its age included, lies inside the card.
+        for id in ["watch.complication.rectangular.header", "watch.complication.rectangular.primary",
+                   "watch.complication.rectangular.metadata"] {
+            let lines = remoteRoot.descendants(matching: .any).matching(identifier: id)
+            XCTAssertEqual(lines.count, 1, id)
+            let line = lines.firstMatch.frame
+            XCTAssertTrue(line.width > 0 && line.height > 0 && card.contains(line), "\(id) \(line) escapes \(card)")
+        }
+        XCTAssertFalse(remoteRoot.descendants(matching: .any)["watch.complication.detail"].firstMatch.exists)
+        print("WATCH_RECTANGULAR_READING_BOUNDS root=\(root) reading=\(card)")
     }
 
     @MainActor

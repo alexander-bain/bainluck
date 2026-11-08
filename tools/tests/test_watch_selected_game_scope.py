@@ -58,21 +58,24 @@ def require_product(view, content, widget):
         "watch.complication.corner.fallback",
     ):
         assert f'.accessibilityIdentifier("{identifier}")' in content
-    for numerical in (
-        "if let snapshot",
-        "snapshot.",
+    for retained_rectangular in (
+        "snapshot.validatedRectangularReading(now: now)",
+        "watch.complication.rectangular.reading",
+        "watch.complication.rectangular.header",
+        "watch.complication.rectangular.primary",
+        "watch.complication.rectangular.metadata",
+    ):
+        assert retained_rectangular in content
+    for circular_corner_numerical in (
         "TimelineView",
         "ProgressView",
-        "score-columns",
-        "homeProbability",
-        "observationAge",
         "corner.reading",
         "circular.reading",
     ):
-        assert numerical not in content
-    assert widget.count("BainLuckEntry(date: Date(), snapshot: nil)") == 2
+        assert circular_corner_numerical not in content
+    assert "BainLuckEntry(date: Date(), snapshot: nil)" in widget
+    assert "WatchComplicationSnapshot.read(from: directory, now: now)" in widget
     assert "else if family == .accessoryCorner" in widget
-    assert "WatchComplicationSnapshot.read" not in widget
     assert 'let kind = "BainLuckComplication"' in widget
     assert ".widgetURL(WatchLaunchRoute.url)" in widget
     assert (
@@ -114,9 +117,9 @@ class SelectedGameScopeTests(unittest.TestCase):
                 "struct WatchSelectedGameView",
                 "// showingDiscoveries\nstruct WatchSelectedGameView",
             ),
-            (1, "var body: some View {", "var body: some View { if let snapshot {"),
+            (1, "snapshot.validatedRectangularReading(now: now)", "REMOVED"),
             (1, LABEL, "64%"),
-            (2, "snapshot: nil", "snapshot: saved"),
+            (2, "WatchComplicationSnapshot.read(from: directory, now: now)", "REMOVED"),
             (2, ".widgetURL(WatchLaunchRoute.url)", ""),
             (2, ".accessoryCorner", ".accessoryInline"),
             (2, 'let kind = "BainLuckComplication"', 'let kind = "NewKind"'),
