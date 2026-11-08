@@ -224,3 +224,105 @@ def test_a_moved_field_ignores_the_stored_fields_24h_comparison(monkeypatch):
     assert any(o.get("movement") == 0.04 for o in control["top_outcomes"]), (
         "CONTROL: the patched comparison must reach an unverified card, or this test proves nothing"
     )
+
+
+# ── #12335 follow-up: the composition is wall-bounded ───────────────────────
+
+
+def _engine_session():
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    # Never connects: the resolver is faked, so no statement is issued.
+    engine = create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:1/none", pool_size=2)
+    return engine, AsyncSession(bind=engine)
+
+
+@pytest.mark.asyncio
+async def test_a_composition_past_its_bound_is_abandoned_and_the_card_keeps_its_prices(monkeypatch):
+    """Production, Nov 8 just after midnight PT: the page's composition took 16.1 s cold."""
+    import asyncio
+    import time
+
+    import app.routes.futures as futures_mod
+    from app.routes import events
+    from app.routes.events import _SEARCH_VERIFIED_TITLE_BUDGET_S, _search_verified_titles
+
+    async def _slow(db, market):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(futures_mod, "_resolve_verified_title", _slow)
+    monkeypatch.setattr(events, "_SEARCH_VERIFIED_TITLE_BUDGET_S", 0.2)
+    engine, db = _engine_session()
+    t0 = time.monotonic()
+    out = await _search_verified_titles(db, [_market()], None)
+    took = time.monotonic() - t0
+    assert out == {}
+    assert took < 1.0, f"waited {took:.2f}s past a 0.2s bound"
+    assert _SEARCH_VERIFIED_TITLE_BUDGET_S <= 1.0
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_a_composition_inside_its_bound_is_kept(monkeypatch):
+    import app.routes.futures as futures_mod
+    from app.routes.events import _search_verified_titles
+
+    market = _market()
+    verdict = _composition(market)
+
+    async def _fast(db, m):
+        return verdict
+
+    monkeypatch.setattr(futures_mod, "_resolve_verified_title", _fast)
+    engine, db = _engine_session()
+    assert await _search_verified_titles(db, [market], None) == {market.id: verdict}
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_the_bound_is_shared_by_every_market_not_given_to_each(monkeypatch):
+    """Two title cards must not cost two budgets."""
+    import asyncio
+    import time
+
+    import app.routes.futures as futures_mod
+    from app.routes import events
+    from app.routes.events import _search_verified_titles
+
+    calls = []
+
+    async def _slowish(db, m):
+        calls.append(m.id)
+        await asyncio.sleep(0.15)
+        return _composition(m)
+
+    monkeypatch.setattr(futures_mod, "_resolve_verified_title", _slowish)
+    monkeypatch.setattr(events, "_SEARCH_VERIFIED_TITLE_BUDGET_S", 0.2)
+    a, b = _market(), _market()
+    b.id = 129038
+    engine, db = _engine_session()
+    t0 = time.monotonic()
+    out = await _search_verified_titles(db, [a, b], None)
+    assert time.monotonic() - t0 < 0.5
+    assert list(out) == [a.id], "the second market started on a spent budget"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_the_bound_never_outlives_the_deadline_floor(monkeypatch):
+    import time
+
+    import app.routes.futures as futures_mod
+    from app.routes.events import _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S, _search_verified_titles
+
+    calls = []
+
+    async def _never(db, m):  # pragma: no cover - must not start
+        calls.append(m.id)
+
+    monkeypatch.setattr(futures_mod, "_resolve_verified_title", _never)
+    engine, db = _engine_session()
+    deadline = time.monotonic() + _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S - 0.01
+    assert await _search_verified_titles(db, [_market()], deadline) == {}
+    assert calls == []
+    await engine.dispose()
