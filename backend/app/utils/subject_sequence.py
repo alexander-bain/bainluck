@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo
 
 from app.utils.container_presentation import MEMBER_EVENT, event_destination
 from app.utils.field_band import _validate_narrative_copy
+from app.utils.sport_keys import SPORT_HIERARCHY
 from app.utils.tonights_games import _parse_dt
 
 __all__ = [
@@ -142,23 +143,30 @@ def subject_sequence_enabled() -> bool:
     )
 
 
-_SPORT_KEY_TO_TEAM_ROUTE_SEGMENTS: dict[str, tuple[str, str]] = {
-    "basketball_nba": ("basketball", "nba"),
-    "americanfootball_nfl": ("football", "nfl"),
-    "baseball_mlb": ("baseball", "mlb"),
-    "icehockey_nhl": ("hockey", "nhl"),
-    "basketball_ncaab": ("basketball", "ncaab"),
-    "americanfootball_ncaaf": ("football", "ncaaf"),
-    "basketball_wnba": ("basketball", "wnba"),
-    "soccer_usa_mls": ("soccer", "mls"),
-    "soccer_epl": ("soccer", "epl"),
-    "soccer_spain_la_liga": ("soccer", "laliga"),
-    "soccer_uefa_champs_league": ("soccer", "ucl"),
-    "soccer_germany_bundesliga": ("soccer", "bundesliga"),
-    "basketball_wncaab": ("basketball", "wncaab"),
-    "mma_mixed_martial_arts": ("mma", "ufc"),
-    "golf_pga": ("golf", "pga"),
-}
+def _sport_route_segments_from_hierarchy() -> tuple[
+    dict[str, tuple[str, str]], set[tuple[str, str]]
+]:
+    by_key: dict[str, tuple[str, str]] = {}
+    valid_pairs: set[tuple[str, str]] = set()
+    for sport_cfg in SPORT_HIERARCHY.values():
+        sport_slug = str(sport_cfg.get("slug") or "").strip().lower()
+        if not sport_slug:
+            continue
+        for league_cfg in sport_cfg.get("leagues") or ():
+            league_slug = str(league_cfg.get("slug") or "").strip().lower()
+            if not league_slug:
+                continue
+            pair = (sport_slug, league_slug)
+            valid_pairs.add(pair)
+            for sk in league_cfg.get("sport_keys") or ():
+                if isinstance(sk, str) and sk.strip():
+                    by_key[sk.strip().lower()] = pair
+    return by_key, valid_pairs
+
+
+_SPORT_KEY_TO_TEAM_ROUTE_SEGMENTS, _VALID_SPORT_LEAGUE_PAIRS = (
+    _sport_route_segments_from_hierarchy()
+)
 
 
 def canonical_team_page_href(
@@ -166,20 +174,24 @@ def canonical_team_page_href(
     sport: Optional[str] = None,
     league: Optional[str] = None,
 ) -> str:
-    """Return the canonical ``/sport/<sport>/<league>/team/<slug>`` URL for a team page."""
+    """Return the canonical ``/sport/<sport>/<league>/team/<slug>`` URL for a team page.
+
+    Uses ``SPORT_HIERARCHY`` from ``app.utils.sport_keys`` and refuses (raises
+    ``ValueError``) when the sport/league is unmapped instead of falling back to NBA.
+    """
     clean_slug = _slugify(team_slug)
+    if not clean_slug:
+        raise ValueError("canonical_team_page_href requires a non-empty team_slug")
     sport_key = (sport or "").strip().lower()
     mapped = _SPORT_KEY_TO_TEAM_ROUTE_SEGMENTS.get(sport_key)
     if mapped is not None:
         return f"/sport/{mapped[0]}/{mapped[1]}/team/{clean_slug}"
-    if "_" in sport_key:
-        parts = sport_key.split("_", 1)
-        if parts[0] and parts[1]:
-            return f"/sport/{parts[0]}/{parts[1]}/team/{clean_slug}"
     clean_league = (league or "").strip().lower()
-    if sport_key and clean_league:
+    if (sport_key, clean_league) in _VALID_SPORT_LEAGUE_PAIRS:
         return f"/sport/{sport_key}/{clean_league}/team/{clean_slug}"
-    return f"/sport/basketball/nba/team/{clean_slug}"
+    raise ValueError(
+        f"Unmapped sport/league for team route: sport={sport!r}, league={league!r}"
+    )
 
 
 def _normalize_team_destination_href(
@@ -580,11 +592,17 @@ def select_subject_sequence(
         }
         for g in ordered
     ]
-    resolved_href = _normalize_team_destination_href(
-        destination_href,
-        team_slug=team_slug,
-        sport=sport,
-    )
+    effective_sport = sport or str(
+        ordered[0].card.get("sport") or ordered[0].card.get("sport_key") or ""
+    ).strip() or None
+    try:
+        resolved_href = _normalize_team_destination_href(
+            destination_href,
+            team_slug=team_slug,
+            sport=effective_sport,
+        )
+    except ValueError:
+        return _rc().RoundupRefusal([("unmapped_team_sport", effective_sport)])
     return _rc().RoundupMembers(
         members=members,
         rows=rows,
