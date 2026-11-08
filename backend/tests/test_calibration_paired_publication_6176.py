@@ -713,6 +713,18 @@ class TestTheRealRunAsyncBoundary:
         monkeypatch.setattr(cpp, "COLLECT_BUDGET_S", 0.05)
         monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.05)
         published = []
+        logging_s = 0.0
+        original_exception = cpp.logger.exception
+
+        def timed_exception(*args, **kwargs):
+            nonlocal logging_s
+            started = time.monotonic()
+            try:
+                return original_exception(*args, **kwargs)
+            finally:
+                logging_s += time.monotonic() - started
+
+        monkeypatch.setattr(cpp.logger, "exception", timed_exception)
 
         async def build_then_publish():
             block = await cpp.build_paired_accuracy(generated_at="GEN")
@@ -723,7 +735,10 @@ class TestTheRealRunAsyncBoundary:
 
         assert published == [cpp.REASON_TIMEOUT], "the core coroutine did not reach its publish"
         assert block["status"] == cpp.STATUS_UNAVAILABLE
-        assert elapsed < 0.3, f"run_async returned {elapsed:.3f}s on a 0.10s wall"
+        assert elapsed < 0.3, (
+            f"run_async returned {elapsed:.3f}s on a 0.10s wall, "
+            f"error logging took {logging_s:.3f}s, teardown log {harness.log!r}"
+        )
         assert not cpp._ABANDONED
         assert harness.log.count("execute") == 1, "a query ran after the wall"
         assert harness.log.count("terminate") == 1, "the connection was not cut exactly once"
