@@ -26,6 +26,12 @@ nonisolated enum EventAtlasStoryCards11666 {
         let label: String
     }
 
+    /// Accessibility summary string for a story card's mark-grammar key.
+    static func markKeyAccessibilitySummary(_ items: [MarkKeyItem11666]) -> String {
+        guard !items.isEmpty else { return "" }
+        return "Mark key: \(items.map(\.label).joined(separator: ", "))"
+    }
+
     /// Builds the mark-grammar key items for a finish card (`NFLFinishCard9483`).
     static func finishMarkKey(for card: NFLFinishCard9483) -> [MarkKeyItem11666] {
         var items: [MarkKeyItem11666] = [
@@ -379,21 +385,40 @@ nonisolated enum EventAtlasStoryCards11666 {
 /// `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
 struct EventAtlasStoryCardMarkKeyView11666: View {
     let items: [EventAtlasStoryCards11666.MarkKeyItem11666]
+    @ScaledMetric(relativeTo: .caption2) private var glyphSize: CGFloat = 7
+    @ScaledMetric(relativeTo: .caption2) private var changeWidth: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption2) private var barHeight: CGFloat = 8
+    @ScaledMetric(relativeTo: .caption2) private var crossFontSize: CGFloat = 8
 
     var body: some View {
-        HStack(spacing: 10) {
-            ForEach(items) { item in
-                HStack(spacing: 4) {
-                    glyphView(item.glyph)
-                        .accessibilityHidden(true)
-                    Text(item.label)
-                        .font(.caption2)
-                        .foregroundStyle(item.glyph == .wonCheck ? Color.green : Color.secondary)
+        if !items.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    ForEach(items) { item in
+                        itemRow(item)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(items) { item in
+                        itemRow(item)
+                    }
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(EventAtlasStoryCards11666.markKeyAccessibilitySummary(items))
+            .accessibilityIdentifier("atlas-story-card-mark-key-11666")
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("atlas-story-card-mark-key-11666")
+    }
+
+    private func itemRow(_ item: EventAtlasStoryCards11666.MarkKeyItem11666) -> some View {
+        HStack(spacing: 4) {
+            glyphView(item.glyph)
+                .accessibilityHidden(true)
+            Text(item.label)
+                .font(.caption2)
+                .foregroundStyle(item.glyph == .wonCheck ? Color.green : Color.secondary)
+        }
     }
 
     @ViewBuilder
@@ -402,30 +427,30 @@ struct EventAtlasStoryCardMarkKeyView11666: View {
         case .hollowCircle:
             Circle()
                 .strokeBorder(Color.secondary, lineWidth: 1.5)
-                .frame(width: 7, height: 7)
+                .frame(width: glyphSize, height: glyphSize)
         case .filledCircle:
             Circle()
                 .fill(Color.primary)
-                .frame(width: 7, height: 7)
+                .frame(width: glyphSize, height: glyphSize)
         case .hollowSquare:
             Rectangle()
                 .strokeBorder(Color.secondary, lineWidth: 1.5)
-                .frame(width: 7, height: 7)
+                .frame(width: glyphSize, height: glyphSize)
         case .filledSquare:
             Rectangle()
                 .fill(Color.primary)
-                .frame(width: 7, height: 7)
+                .frame(width: glyphSize, height: glyphSize)
         case .changeLine:
             Rectangle()
                 .fill(Color.secondary)
-                .frame(width: 10, height: 1.5)
+                .frame(width: changeWidth, height: 1.5)
         case .verticalBar:
             Rectangle()
                 .fill(Color.primary)
-                .frame(width: 1.5, height: 8)
+                .frame(width: 1.5, height: barHeight)
         case .cross:
             Image(systemName: "plus")
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: crossFontSize, weight: .bold))
                 .foregroundStyle(Color.primary)
         case .wonCheck, .hitMissVerdict:
             EmptyView()

@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Bain_Luck
 
@@ -262,5 +263,36 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
         XCTAssertTrue(nbaCards.contains("EventAtlasStoryCards11666.ladderMarkKey"))
         XCTAssertTrue(nbaCards.contains("EventAtlasStoryCards11666.ladderReadout"))
         XCTAssertTrue(reader.contains("EventAtlasStoryCards11666.readerDetailsModel"))
+    }
+
+    @MainActor
+    func testMarkKeyAccessibilitySummaryAndScaledMetricRendering() throws {
+        let liveFinish = NFLFinishCard9483(
+            phase: .during,
+            pregame: .init(away: 21, home: 24.5, at: Date(timeIntervalSince1970: 1_762_450_000)),
+            projectedNow: .init(away: 17, home: 27, at: Date(timeIntervalSince1970: 1_762_455_000)),
+            final: nil
+        )
+        let items = EventAtlasStoryCards11666.finishMarkKey(for: liveFinish)
+        XCTAssertEqual(
+            EventAtlasStoryCards11666.markKeyAccessibilitySummary(items),
+            "Mark key: Pregame, Recorded, Change"
+        )
+        XCTAssertEqual(EventAtlasStoryCards11666.markKeyAccessibilitySummary([]), "")
+
+        let keyView = EventAtlasStoryCardMarkKeyView11666(items: items)
+            .padding(12)
+            .frame(width: 390, alignment: .leading)
+            .background(Color(.systemBackground))
+        let rDefault = rendererForMeasurement(keyView)
+        rDefault.scale = 2.0
+        let imgDefault = try XCTUnwrap(rDefault.uiImage)
+        XCTAssertEqual(Int(imgDefault.size.width), 390)
+
+        let rA11y = rendererForMeasurement(keyView, at: .accessibility3)
+        rA11y.scale = 2.0
+        let imgA11y = try XCTUnwrap(rA11y.uiImage)
+        XCTAssertEqual(Int(imgA11y.size.width), 390)
+        XCTAssertGreaterThanOrEqual(imgA11y.size.height, imgDefault.size.height)
     }
 }

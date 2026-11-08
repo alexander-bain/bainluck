@@ -148,10 +148,18 @@ nonisolated enum EventAtlasMlbCards11666 {
 
         let observedText = fieldValue("Saved")
         let rawVenue = fieldValue("Venue")
-        let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: rawVenue,
-            sourceCount: 1
-        )
+        let sourceLabel: String?
+        if let rawVenue, rawVenue.lowercased().contains("not blended") {
+            sourceLabel = rawVenue
+        } else if let rawVenue, rawVenue.contains(",") {
+            let parts = rawVenue.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            sourceLabel = parts.count > 1 ? "\(parts.count) sources, not blended" : EventAtlasHeadline11666.sourceAttribution(source: rawVenue, sourceCount: 1)
+        } else {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: rawVenue,
+                sourceCount: 1
+            )
+        }
         let outcomeSide = fieldValue("Original side") ?? original.title
 
         return EventAtlasDetailsSheetModel11666(
@@ -166,6 +174,59 @@ nonisolated enum EventAtlasMlbCards11666 {
             statusLabel: "Comparison",
             sourceLabel: sourceLabel,
             originalSections: original.sections
+        )
+    }
+
+    /// Builds an `EventAtlasDetailsSheetModel11666` for an `ExtraInningsEntry`.
+    static func detailsModel(for entry: ExtraInningsEntry) -> EventAtlasDetailsSheetModel11666 {
+        let pregameText = entry.pregameChance.map { formatProbability($0) }
+        let primaryLabel: String
+        let primaryValue: String
+        switch entry.venueResult {
+        case .won:
+            primaryLabel = "Result"
+            primaryValue = EventAtlasStates11666.wonWithCheck
+        case .lost:
+            primaryLabel = "Result"
+            primaryValue = EventAtlasStates11666.lostWithCross
+        case .pending:
+            primaryLabel = "Venue result"
+            primaryValue = EventAtlasStates11666.pending
+        case .notConfirmed:
+            primaryLabel = "Venue result"
+            primaryValue = "Not confirmed"
+        case .open:
+            if let quoted = entry.quotedChance {
+                primaryLabel = "Last quote"
+                primaryValue = formatProbability(quoted)
+            } else if let pregameText {
+                primaryLabel = "Pregame chance"
+                primaryValue = pregameText
+            } else {
+                primaryLabel = "Reading"
+                primaryValue = EventAtlasStates11666.noRecentPrice
+            }
+        }
+        let observedText = SourceAge.preciseStamp(entry.observedAt)
+        let sourceLabel: String?
+        if entry.source == nil && entry.sourceCount > 1 {
+            sourceLabel = "\(entry.sourceCount) sources, not blended"
+        } else {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: entry.source,
+                sourceCount: entry.sourceCount > 1 ? entry.sourceCount : 1
+            )
+        }
+        return EventAtlasDetailsSheetModel11666(
+            id: entry.id,
+            outcomeTitle: entry.label,
+            marketTitle: entry.marketTitle,
+            primaryReadingLabel: primaryLabel,
+            primaryReadingValue: primaryValue,
+            pregameBaseline: pregameText,
+            observedAtText: observedText,
+            statusSummary: nil,
+            sourceLabel: sourceLabel
         )
     }
 
