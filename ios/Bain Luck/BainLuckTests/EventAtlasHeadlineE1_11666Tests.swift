@@ -584,7 +584,7 @@ final class EventAtlasHeadlineE1_11666Tests: XCTestCase {
         .background(Color(.systemBackground))
         .environment(\.colorScheme, .light)
 
-        let r1 = ImageRenderer(content: liveHero)
+        let r1 = rendererForMeasurement(liveHero)
         r1.scale = 2.0
         let img1 = try XCTUnwrap(r1.uiImage)
         let png1 = try XCTUnwrap(img1.pngData())
@@ -592,7 +592,7 @@ final class EventAtlasHeadlineE1_11666Tests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Int(img1.size.height), 60)
         XCTAssertTrue(Self.hasNonWhiteInk(img1), "live hero render must contain visible non-white ink")
 
-        let r2 = ImageRenderer(content: settledHero)
+        let r2 = rendererForMeasurement(settledHero)
         r2.scale = 2.0
         let img2 = try XCTUnwrap(r2.uiImage)
         let png2 = try XCTUnwrap(img2.pngData())
@@ -600,7 +600,7 @@ final class EventAtlasHeadlineE1_11666Tests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Int(img2.size.height), 60)
         XCTAssertTrue(Self.hasNonWhiteInk(img2), "settled hero render must contain visible non-white ink")
 
-        let r3 = ImageRenderer(content: settledDetailsPreview)
+        let r3 = rendererForMeasurement(settledDetailsPreview)
         r3.scale = 2.0
         let img3 = try XCTUnwrap(r3.uiImage)
         let png3 = try XCTUnwrap(img3.pngData())
