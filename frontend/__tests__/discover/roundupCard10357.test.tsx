@@ -466,6 +466,78 @@ describe("#10357 round-up model", () => {
     ]);
   });
 
+  it("preserves chronological sequence order and links to /sport/<sport>/<league>/team/<slug> for subject_sequence (#12232)", () => {
+    const seqContract: FeedRoundupContract = {
+      kicker: "NEXT 3 GAMES",
+      tag: "NBA",
+      footer: "Combined win probability · next 3 games in schedule order",
+      order: "sequence",
+      presentation: "strip",
+      relations: ["same_subject", "same_measure", "same_window"],
+      level: "member",
+      destination_href: "/sport/basketball/nba/team/boston-celtics",
+      rows: [
+        {
+          event_id: 15343971,
+          label: "at Bucks · Sun Nov 8",
+          opponent_label: "at Bucks",
+          date_label: "Sun Nov 8",
+          probability: 0.855,
+          rendered_percent: 86,
+          observed_at: FRESH,
+        },
+        {
+          event_id: 15341912,
+          label: "at 76ers · Tue Nov 10",
+          opponent_label: "at 76ers",
+          date_label: "Tue Nov 10",
+          probability: 0.5,
+          rendered_percent: 50,
+          observed_at: FRESH,
+        },
+        {
+          event_id: 15342527,
+          label: "vs Raptors · Wed Nov 11",
+          opponent_label: "vs Raptors",
+          date_label: "Wed Nov 11",
+          probability: 0.64,
+          rendered_percent: 64,
+          observed_at: FRESH,
+        },
+      ],
+    };
+
+    const { model, refusal } = buildRoundupCardModel(
+      "Boston Celtics: next 3 games",
+      seqContract,
+      NOW_MS,
+    );
+    expect(refusal).toBeNull();
+    expect(model!.order).toBe("sequence");
+    expect(model!.presentation).toBe("strip");
+    // Must stay in chronological order (86%, 50%, 64%), NOT probability order (86%, 64%, 50%)!
+    expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "86% at Bucks · Sun Nov 8",
+      "50% at 76ers · Tue Nov 10",
+      "64% vs Raptors · Wed Nov 11",
+    ]);
+
+    const html = render(seqContract, {
+      title: "Boston Celtics: next 3 games",
+      ref: {
+        slug: "celtics-next-3-games",
+        href: "/sport/basketball/nba/team/boston-celtics",
+        name: "Boston Celtics: next 3 games",
+        revision: 41239812,
+        collection_count: 3,
+      },
+    });
+    expect(html).toContain('data-presentation="strip"');
+    expect(html).toMatch(
+      /<a href="\/sport\/basketball\/nba\/team\/boston-celtics"[^>]*data-testid="roundup-card"/,
+    );
+  });
+
   it("ages event_id rows on the 30-minute live cadence while market_id rows keep the 6-hour futures cadence", () => {
     const twoHoursOld = "2026-10-06T19:41:00Z";
     const eventContract: FeedRoundupContract = {

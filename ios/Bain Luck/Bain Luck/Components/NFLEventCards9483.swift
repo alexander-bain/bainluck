@@ -837,6 +837,14 @@ struct NFLEventCardView9483: View {
             case .soccerThreeWay(let threeWay):
                 EventAtlasSoccerThreeWayCardView11666(card: threeWay, awayColor: awayColor, homeColor: homeColor,
                                                       state: state, expanded: expanded)
+            case .soccerBothTeams(let bothTeams):
+                EventAtlasSoccerBothTeamsCardView11666(card: bothTeams, state: state, expanded: expanded)
+            case .soccerFirstTeam(let firstTeam):
+                EventAtlasSoccerFirstTeamCardView11666(card: firstTeam, awayColor: awayColor, homeColor: homeColor,
+                                                       state: state, expanded: expanded)
+            case .soccerHalves(let halves):
+                EventAtlasSoccerHalvesCardView11666(card: halves, awayColor: awayColor, homeColor: homeColor,
+                                                    state: state, expanded: expanded)
             case .soccerExactScore(let exactScore):
                 EventAtlasSoccerExactScoreCardView11666(card: exactScore, state: state, expanded: expanded)
             case .tennisSets(let tennisSets):
@@ -845,6 +853,19 @@ struct NFLEventCardView9483: View {
             case .tennisExactScore(let tennisExactScore):
                 EventAtlasTennisExactScoreCardView11666(card: tennisExactScore, awayColor: awayColor, homeColor: homeColor,
                                                         state: state, expanded: expanded)
+            case .nflPeriodWinners(let periodWinners):
+                EventAtlasFootballPeriodWinnersCardView11666(card: periodWinners, awayColor: awayColor, homeColor: homeColor,
+                                                             state: state, expanded: expanded)
+            case .nflPairedMilestones(let pairedMilestones):
+                EventAtlasFootballPairedMilestonesCardView11666(card: pairedMilestones, awayColor: awayColor, homeColor: homeColor,
+                                                                state: state, expanded: expanded)
+            case .nflCombinedYards(let combinedYards):
+                EventAtlasFootballCombinedYardsCardView11666(
+                    card: combinedYards,
+                    color: PlayerPropsTeam.color(for: combinedYards.milestone.side, home: homeColor, away: awayColor),
+                    state: state,
+                    expanded: expanded
+                )
             }
         }
         .padding(16)

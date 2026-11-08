@@ -327,6 +327,21 @@ nonisolated enum EventAtlasStoryCards11666 {
                let leg = threeWay.legs.first(where: { $0.id == rowID }) {
                 return EventAtlasSoccerCards11666.detailsModel(for: leg, card: threeWay)
             }
+            if case .soccerBothTeams(let bothTeams) = card,
+               let leg = bothTeams.legs.first(where: { $0.id == rowID }) {
+                return EventAtlasSoccerCards11666.detailsModel(for: leg, card: bothTeams)
+            }
+            if case .soccerFirstTeam(let firstTeam) = card,
+               let leg = firstTeam.legs.first(where: { $0.id == rowID }) {
+                return EventAtlasSoccerCards11666.detailsModel(for: leg, card: firstTeam)
+            }
+            if case .soccerHalves(let halves) = card {
+                for section in halves.sections {
+                    if let leg = section.legs.first(where: { $0.id == rowID }) {
+                        return EventAtlasSoccerCards11666.detailsModel(for: leg, section: section, card: halves)
+                    }
+                }
+            }
             if case .soccerExactScore(let exactScore) = card {
                 if let cell = exactScore.cells.first(where: { $0.id == rowID || $0.key == rowID }) {
                     return EventAtlasSoccerCards11666.detailsModel(for: cell, card: exactScore)
@@ -349,6 +364,23 @@ nonisolated enum EventAtlasStoryCards11666 {
             if case .tennisExactScore(let tennisExactScore) = card,
                let outcome = tennisExactScore.outcomes.first(where: { $0.id == rowID || $0.key == rowID }) {
                 return EventAtlasTennisCards11666.detailsModel(for: outcome, card: tennisExactScore)
+            }
+            if case .nflPeriodWinners(let periodWinners) = card {
+                for panel in periodWinners.panels {
+                    if let leg = panel.legs.first(where: { $0.id == rowID }) {
+                        return EventAtlasFootballCards11666.detailsModel(for: leg, panel: panel, card: periodWinners)
+                    }
+                }
+            }
+            if case .nflPairedMilestones(let pairedMilestones) = card {
+                for group in pairedMilestones.groups {
+                    if let away = group.away, away.id == rowID {
+                        return EventAtlasFootballCards11666.detailsModel(for: away, card: pairedMilestones)
+                    }
+                    if let home = group.home, home.id == rowID {
+                        return EventAtlasFootballCards11666.detailsModel(for: home, card: pairedMilestones)
+                    }
+                }
             }
         }
         if rowID == "finish" {
@@ -377,6 +409,11 @@ nonisolated enum EventAtlasStoryCards11666 {
             if case .milestone(let milestone) = card,
                milestone.rungs.contains(where: { $0.rowID == rowID }) {
                 matchedMilestone = milestone
+                break
+            }
+            if case .nflCombinedYards(let combined) = card,
+               combined.milestone.rungs.contains(where: { $0.rowID == rowID }) {
+                matchedMilestone = combined.milestone
                 break
             }
         }
