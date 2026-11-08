@@ -224,7 +224,7 @@ struct NBALadderCardView9483: View {
 
     private func readout(_ point: NBALadderCard9483.Point?) -> some View {
         VStack(spacing: 2) {
-            if let point, card.phase == .during {
+            if point != nil, card.phase == .during {
                 // The comparison above names the line and its chances once;
                 // this keeps only the existing source action. Its spoken label
                 // names the line (`NBAScoringLineControls9483.detailsLabel`).

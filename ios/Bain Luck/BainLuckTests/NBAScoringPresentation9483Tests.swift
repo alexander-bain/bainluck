@@ -39,11 +39,37 @@ final class NBAScoringPresentation9483Tests: XCTestCase {
         let aged = card.current(at: ISO8601DateFormatter().date(from: "2026-10-15T23:40:00Z")!)
         let point = try XCTUnwrap(aged.points.first { $0.optionKey == selected.optionKey })
         XCTAssertNil(point.now)
+        XCTAssertNotNil(point.observedAt)
         XCTAssertNotNil(point.detail.quoted, "Retained details remain independently available")
+        XCTAssertEqual(
+            NBAScoringChanceComparison9483.currentMissingLabel(for: point),
+            EventAtlasStates11666.noRecentPrice
+        )
         let spoken = NBAScoringChanceComparison9483.accessibilitySummary(for: point)
-        XCTAssertTrue(spoken.contains("Current chance: Unavailable"))
+        XCTAssertTrue(spoken.contains("Current chance: \(EventAtlasStates11666.noRecentPrice)"))
+        XCTAssertFalse(spoken.contains("Current chance: Unavailable"))
         XCTAssertFalse(spoken.contains("Current chance: \(formatProbability(try XCTUnwrap(point.detail.quoted)))"))
         XCTAssertEqual(aged.actual, card.actual)
+    }
+
+    func testNeverQuotedCurrentChanceReadsUnavailable() throws {
+        let original = try XCTUnwrap(try liveCard().points.first)
+        let unquoted = NBALadderCard9483.Point(
+            optionKey: original.optionKey,
+            x: original.x,
+            label: original.label,
+            side: original.side,
+            chance: 0.42,
+            now: nil,
+            observedAt: nil,
+            result: nil,
+            detail: original.detail
+        )
+        XCTAssertEqual(NBAScoringChanceComparison9483.currentMissingLabel(for: unquoted), "Unavailable")
+        let spoken = NBAScoringChanceComparison9483.accessibilitySummary(for: unquoted)
+        XCTAssertTrue(spoken.contains("Pregame chance: \(formatProbability(0.42))"))
+        XCTAssertTrue(spoken.contains("Current chance: Unavailable"))
+        XCTAssertFalse(spoken.contains(EventAtlasStates11666.noRecentPrice))
     }
 
     func testMissingSelectionNeverReadsANeighbor() throws {

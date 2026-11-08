@@ -54,10 +54,20 @@ struct NBAScoringChanceComparison9483: View {
 
     @ViewBuilder private func readings(_ point: NBALadderCard9483.Point) -> some View {
         reading("Pregame chance", symbol: "circle", value: point.chance)
-        reading("Current chance", symbol: "circle.fill", value: point.now)
+        reading(
+            "Current chance",
+            symbol: "circle.fill",
+            value: point.now,
+            missingLabel: Self.currentMissingLabel(for: point)
+        )
     }
 
-    private func reading(_ label: String, symbol: String, value: Double?) -> some View {
+    private func reading(
+        _ label: String,
+        symbol: String,
+        value: Double?,
+        missingLabel: String = "Unavailable"
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(label, systemImage: symbol)
                 .font(.subheadline)
@@ -70,7 +80,7 @@ struct NBAScoringChanceComparison9483: View {
                 } else {
                     // Same step down as the selected line, so the word stays
                     // whole in a deck column at accessibility sizes.
-                    Text("Unavailable")
+                    Text(missingLabel)
                         .font(typeSize.isAccessibilitySize ? .subheadline.weight(.semibold) : .body.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -81,6 +91,15 @@ struct NBAScoringChanceComparison9483: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// When a live quote ages out through `NBALadderCard9483.current(at:)`,
+    /// `now` becomes `nil` while `observedAt` remains set. Print Decide 10-C's
+    /// `"No recent probability"` (`EventAtlasStates11666.noRecentPrice`) for a
+    /// stale live quote and keep `"Unavailable"` only when the line never had a
+    /// current quote.
+    static func currentMissingLabel(for point: NBALadderCard9483.Point) -> String {
+        point.observedAt != nil ? EventAtlasStates11666.noRecentPrice : "Unavailable"
+    }
+
     /// Shared spoken copy for the selected comparison and the chart's marks.
     /// Uses the existing probability formatter; this does not admit values.
     static func accessibilitySummary(for point: NBALadderCard9483.Point?) -> String {
@@ -88,7 +107,7 @@ struct NBAScoringChanceComparison9483: View {
             return "Selected market unavailable. Your selection is saved. No probability is available for it in this update."
         }
         let before = point.chance.map { formatProbability($0) } ?? "Unavailable"
-        let current = point.now.map { formatProbability($0) } ?? "Unavailable"
+        let current = point.now.map { formatProbability($0) } ?? currentMissingLabel(for: point)
         return "\(point.label). Pregame chance: \(before). Current chance: \(current)."
     }
 }
