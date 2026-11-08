@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import text
 
 from app.services import container_discovery as discovery
 from app.utils import roundup_containers as roundups
@@ -197,10 +198,11 @@ async def test_matched_outcomes_use_membership_without_a_second_outcome_search(
     assert "futures_outcomes" not in title_sql
     assert "futures_outcomes" not in member_sql
     assert "member_edge.child_id = ANY(:market_ids)" in member_sql
-    assert "member_markets AS MATERIALIZED" in member_sql
-    assert "SELECT id FROM futures_markets" in member_sql
-    assert "ev.id = CASE WHEN m.child_type = 'event' THEN m.child_id END" in member_sql
-    assert "fm.id = CASE WHEN m.child_type = 'market' THEN m.child_id END" in member_sql
+    assert "edges AS MATERIALIZED" in member_sql
+    assert "COUNT(fm.id) AS question_count" in member_sql
+    assert "edges.child_type = 'event'" in member_sql
+    assert "edges.child_type = 'market'" in member_sql
+    assert "cardinality" not in text(member_sql)._bindparams
 
 
 async def test_one_failed_roundup_does_not_hide_a_healthy_sibling(monkeypatch):

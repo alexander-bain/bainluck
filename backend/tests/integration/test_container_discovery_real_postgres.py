@@ -364,6 +364,47 @@ class TestNflWeekAuthorityStatus11906:
 
 
 class TestCollectionTitleAndMembers12090:
+    @pytest.mark.parametrize("query", ["Week 5", "Home nested"])
+    async def test_search_counts_canonical_members_once_across_parts(self, pg_session, query):
+        from app.models.models import EventEdge
+
+        hubs, events = await _seed(pg_session)
+        market_id = (
+            await pg_session.execute(text("SELECT id FROM futures_markets"))
+        ).scalar_one()
+        for child_type, child_id in (
+            ("event", events["wk5_a"]), ("market", market_id), ("market", -11),
+        ):
+            pg_session.add(EventEdge(
+                parent_type="container", parent_id=hubs["nested"],
+                child_type=child_type, child_id=child_id, kind="contains",
+                edge_class="match_winner", source="register", confidence=1,
+            ))
+        await pg_session.commit()
+
+        read = await discovery.discover_collections(
+            pg_session, query=query, event_ids=[events["nested"]], market_ids=[market_id]
+        )
+        assert len(read.collections) == 1
+        card = read.collections[0]
+        assert card["slug"] == "nfl-2026-week-5"
+        assert (card["game_count"], card["question_count"]) == (3, 1)
+        assert card["matched_event_ids"] == [events["nested"]]
+
+    async def test_an_incomplete_schedule_cannot_match_a_date_only_in_the_heading(
+        self, pg_session
+    ):
+        _, events = await _seed(pg_session)
+        await pg_session.execute(
+            text("DELETE FROM events WHERE id=:id"),
+            {"id": events["wk5_b"]},
+        )
+        await pg_session.commit()
+        read = await discovery.discover_collections(
+            pg_session, query="NFL 2026 Week 5 Oct 4", titles_only=True
+        )
+        assert not read.collections
+
     async def test_full_title_search_counts_only_its_selected_headings(self, pg_session):
         await _seed(pg_session)
         session = _Counting(pg_session)

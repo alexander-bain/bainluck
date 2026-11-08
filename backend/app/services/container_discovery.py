@@ -293,23 +293,24 @@ def _discovery_sql(
             "JOIN event_edges schedule_edge ON schedule_edge.parent_type = 'container' "
             "AND schedule_edge.parent_id = schedule_part.id AND schedule_edge.kind = 'contains' "
             "AND schedule_edge.child_type = 'event' "
-            "JOIN events schedule_event ON schedule_event.id = schedule_edge.child_id "
+            "LEFT JOIN events schedule_event ON schedule_event.id = schedule_edge.child_id "
             "WHERE (schedule_part.id = c.id OR schedule_part.parent_container_id = c.id) "
             f"AND schedule_part.{PUBLICATION_COLUMN} <> 'withdrawn' "
-            "HAVING concat_ws(' ', c.name, replace(c.slug, '-', ' '), "
+            "HAVING COUNT(DISTINCT schedule_edge.child_id) = "
+            "COUNT(DISTINCT schedule_event.id) FILTER (WHERE schedule_event.commence_time IS NOT NULL) "
+            "AND concat_ws(' ', c.name, replace(c.slug, '-', ' '), "
             "to_char(MIN(schedule_event.commence_time) AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY'), "
             "to_char(MAX(schedule_event.commence_time) AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY')) "
             "~* ALL(:query_patterns)))"
         )
     if by_markets and not title_only:
         hub_filters.append(
-            "EXISTS (SELECT 1 FROM containers member_part "
-            "JOIN event_edges member_edge ON member_edge.parent_type = 'container' "
-            "AND member_edge.parent_id = member_part.id AND member_edge.kind = 'contains' "
-            "WHERE (member_part.id = c.id OR member_part.parent_container_id = c.id) "
-            f"AND member_part.{PUBLICATION_COLUMN} <> 'withdrawn' AND "
+            "c.id = ANY(ARRAY(SELECT DISTINCT COALESCE(member_part.parent_container_id, member_part.id) "
+            "FROM event_edges member_edge JOIN containers member_part ON member_part.id=member_edge.parent_id "
+            "WHERE member_edge.parent_type='container' AND member_edge.kind='contains' "
+            f"AND member_part.{PUBLICATION_COLUMN}<>'withdrawn' AND "
             "((member_edge.child_type = 'event' AND member_edge.child_id = ANY(:event_ids)) "
-            "OR (member_edge.child_type = 'market' AND member_edge.child_id = ANY(:market_ids))))"
+            "OR (member_edge.child_type = 'market' AND member_edge.child_id = ANY(:market_ids)))))"
         )
     if by_slug:
         hub_filters.append("c.slug = ANY(:slugs)")
@@ -320,6 +321,8 @@ def _discovery_sql(
         hub_filters.append("split_part(c.slug, '-', 2) = :season_token")
     if brief and not by_sport:
         return _brief_title_sql(hub_filters)
+    if by_query:
+        return _search_count_sql(hub_filters, by_events, by_markets, by_sport)
     matched = (
         "COALESCE(array_agg(DISTINCT m.child_id) FILTER ("
         "  WHERE m.child_type = 'event' AND ev.id IS NOT NULL "
@@ -331,12 +334,6 @@ def _discovery_sql(
         "COUNT(DISTINCT ev.id) + COUNT(DISTINCT fm.id) > 0",
     ]
     matching = []
-    title_match = (
-        "concat_ws(' ', hub.name, replace(hub.slug, '-', ' '), "
-        "to_char(MIN(ev.commence_time) AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY'), "
-        "to_char(MAX(ev.commence_time) AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY')) "
-        "~* ALL(:query_patterns)"
-    )
     if by_events:
         matching.append(
             "bool_or(m.child_type = 'event' AND ev.id IS NOT NULL "
@@ -347,8 +344,6 @@ def _discovery_sql(
             "bool_or(m.child_type = 'market' AND fm.id IS NOT NULL "
             "AND m.child_id = ANY(:market_ids))"
         )
-    if by_query:
-        matching.append(title_match)
     if matching:
         having.append("(" + " OR ".join(matching) + ")")
     sport_match = (
@@ -365,8 +360,6 @@ def _discovery_sql(
         else ""
     )
     sport_column = ", sport_id" if by_sport else ""
-    title_order = f"({title_match}) DESC, " if by_query else ""
-    schedule_order = "MAX(ev.commence_time) DESC NULLS LAST, " if by_query else ""
     return (
         "WITH hub AS ("
         "  SELECT c.id, c.name, c.slug, c.status, c.window_start, c.window_end, "
@@ -435,8 +428,8 @@ def _discovery_sql(
         "GROUP BY hub.id, hub.name, hub.slug, hub.status, hub.window_start, hub.window_end, "
         "         hub.parent_container_id, hub.publication_state, hub.revision "
         f"HAVING {' AND '.join(having)} "
-        f"ORDER BY {title_order}cardinality("
-        f"{matched}) DESC, {schedule_order}hub.window_start DESC NULLS LAST, hub.id "
+        "ORDER BY cardinality("
+        f"{matched}) DESC, hub.window_start DESC NULLS LAST, hub.id "
         "LIMIT :limit"
     )
 
@@ -453,6 +446,112 @@ _BRIEF_COLUMNS = (
     "id", "name", "slug", "parent_container_id", "publication_state", "revision",
     "first_game_at", "last_game_at", "has_member",
 )
+
+
+def _search_count_sql(
+    hub_filters: list[str], by_events: bool, by_markets: bool, by_sport: bool
+) -> str:
+    """Aggregate each member type before joining the one-row container summary."""
+    matched_events = (
+        "COALESCE(array_agg(ev.id) FILTER (WHERE ev.id = ANY(:event_ids)), '{}'::bigint[])"
+        if by_events
+        else "'{}'::bigint[]"
+    )
+    matched_markets = (
+        "COALESCE(bool_or(fm.id = ANY(:market_ids)), FALSE)" if by_markets else "FALSE"
+    )
+    event_sport = "bool_or(es.key = :sport_key)" if by_sport else "TRUE"
+    market_sport = "bool_or(fs.key = :sport_key)" if by_sport else "TRUE"
+    event_sport_join = "LEFT JOIN sports es ON es.id = ev.sport_id" if by_sport else ""
+    market_sport_join = "LEFT JOIN sports fs ON fs.id = fm.sport_id" if by_sport else ""
+    sport_match = (
+        "(COALESCE(games.sport_matches, FALSE) OR COALESCE(markets.sport_matches, FALSE))"
+        if by_sport
+        else "TRUE"
+    )
+    title_match = (
+        "concat_ws(' ', hub.name, replace(hub.slug, '-', ' '), "
+        "to_char(games.first_game_at AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY'), "
+        "to_char(games.last_game_at AT TIME ZONE 'America/New_York', 'Mon FMDD YYYY')) "
+        "~* ALL(:query_patterns)"
+    )
+    # Split the ID array so PostgreSQL can batch heap checks with a bitmap OR.
+    # One scalar-array index-only scan still fetched thousands of heap tuples
+    # on recently updated markets, exceeding the full-search latency gate.
+    return f"""
+        WITH hub AS (
+            SELECT c.id, c.name, c.slug, c.status, c.window_start, c.window_end,
+                   c.parent_container_id, c.{PUBLICATION_COLUMN} AS publication_state,
+                   c.{REVISION_COLUMN} AS revision
+            FROM containers c
+            WHERE {' AND '.join(hub_filters)}
+        ), parts AS (
+            SELECT id AS part_id, id AS hub_id FROM hub
+            UNION ALL
+            SELECT c.id, hub.id FROM containers c JOIN hub ON c.parent_container_id = hub.id
+            WHERE c.{PUBLICATION_COLUMN} <> 'withdrawn'
+        ), edges AS MATERIALIZED (
+            SELECT parent_id, child_type, child_id FROM event_edges
+            WHERE parent_type = 'container' AND kind = 'contains'
+              AND child_type IN ('event', 'market')
+              AND parent_id = ANY(ARRAY(SELECT part_id FROM parts))
+        ), members AS MATERIALIZED (
+            SELECT parts.hub_id,
+                   array_agg(DISTINCT edges.child_id) FILTER (
+                       WHERE edges.child_type = 'event'
+                   ) AS event_ids,
+                   array_agg(edges.child_id) FILTER (
+                       WHERE edges.child_type = 'market'
+                   ) AS market_ids
+            FROM parts JOIN edges ON edges.parent_id = parts.part_id
+            GROUP BY parts.hub_id
+        )
+        SELECT hub.id, hub.name, hub.slug,
+               CASE WHEN starts_with(hub.slug, 'nfl-') AND games.game_count > 0 THEN
+                   CASE WHEN games.cancelled_count = games.game_count THEN 'cancelled'
+                        WHEN games.terminal_count = games.game_count THEN 'final'
+                        WHEN games.has_started THEN 'live' ELSE 'scheduled' END
+                   ELSE hub.status END AS status,
+               hub.window_start, hub.window_end, hub.parent_container_id,
+               hub.publication_state, hub.revision, games.game_count, markets.question_count,
+               games.matched_event_ids, games.first_game_at, games.last_game_at,
+               {sport_match} AS sport_matches
+        FROM hub JOIN members ON members.hub_id = hub.id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(ev.id) AS game_count,
+                   COUNT(ev.id) FILTER (
+                       WHERE ev.status IN ('cancelled', 'canceled')
+                   ) AS cancelled_count,
+                   COUNT(ev.id) FILTER (WHERE ev.status IN (
+                       'completed', 'closed', 'final', 'finished', 'cancelled', 'canceled'
+                   )) AS terminal_count,
+                   bool_or((ev.status = 'live' AND (
+                       ev.commence_time IS NULL OR ev.commence_time <= now()
+                   )) OR ev.status IN ('completed', 'closed', 'final', 'finished')) AS has_started,
+                   {matched_events} AS matched_event_ids,
+                   CASE WHEN cardinality(members.event_ids) = COUNT(ev.commence_time)
+                        THEN MIN(ev.commence_time) END AS first_game_at,
+                   CASE WHEN cardinality(members.event_ids) = COUNT(ev.commence_time)
+                        THEN MAX(ev.commence_time) END AS last_game_at,
+                   MAX(ev.commence_time) AS latest_game_at, {event_sport} AS sport_matches
+            FROM events ev
+            {event_sport_join}
+            WHERE ev.id = ANY(members.event_ids)
+        ) games ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COUNT(fm.id) AS question_count, {matched_markets} AS matched_market,
+                   {market_sport} AS sport_matches
+            FROM futures_markets fm {market_sport_join}
+            WHERE fm.id = ANY(members.market_ids[1 : cardinality(members.market_ids) / 2])
+               OR fm.id = ANY(members.market_ids[cardinality(members.market_ids) / 2 + 1:])
+        ) markets ON TRUE
+        WHERE games.game_count + markets.question_count > 0
+          AND ({title_match} OR cardinality(games.matched_event_ids) > 0 OR markets.matched_market)
+          AND {sport_match}
+        ORDER BY ({title_match}) DESC, cardinality(games.matched_event_ids) DESC,
+                 games.latest_game_at DESC NULLS LAST, hub.window_start DESC NULLS LAST, hub.id
+        LIMIT :limit
+    """.strip()
 
 
 def _brief_title_sql(hub_filters: list[str]) -> str:
