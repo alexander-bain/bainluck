@@ -9182,6 +9182,47 @@ def _typeahead_headline_bound_ms(deadline: float | None) -> int | None:
 # `_resolve_typeahead_outcome_arm`. A drift between them is a recall change.
 _TYPEAHEAD_FUTURES_POOL = 20
 
+#: #4437: how many cheap-filtered candidates the dropdown proves open before it
+#: falls back to proving all of them. 10x the pool; on "we" (Nov 7) 1,627
+#: candidates went through the open-now anti-joins for a pool of 20.
+_TYPEAHEAD_OPEN_NOW_SLICE = 200
+
+
+async def _typeahead_sliced_futures(db, slice_query, futures_query):
+    """#4437: run `futures_query` on the first `_TYPEAHEAD_OPEN_NOW_SLICE` ids of
+    `slice_query` (the same candidates and order under the cheap filters), falling
+    back to `futures_query` itself only when the slice was full and fewer than the
+    pool survived the remaining filters. Returns a result the caller reads with
+    `.scalars().unique().all()`."""
+    slice_ids = list((await db.execute(slice_query)).scalars().all())
+    sliced = await db.execute(
+        futures_query.where(FuturesMarket.id == any_(literal(slice_ids, ARRAY(Integer))))
+    )
+    if len(slice_ids) < _TYPEAHEAD_OPEN_NOW_SLICE:
+        return sliced  # every candidate was in the slice: this IS the full answer
+    rows = sliced.scalars().unique().all()
+    if len(rows) >= _TYPEAHEAD_FUTURES_POOL:
+        return _TypeaheadRowsResult(rows)
+    # The slice was full and too few of it are still open; the rows below it
+    # might be. Ask the original question.
+    return await db.execute(futures_query)
+
+
+class _TypeaheadRowsResult:
+    """A consumed result handed back in the shape the caller reads (`.scalars().unique().all()`)."""
+
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def scalars(self):
+        return self
+
+    def unique(self):
+        return self
+
+    def all(self):
+        return list(self._rows)
+
 # LAT-P010/#1494 GAP 1: below this many characters an infix ILIKE cannot be served
 # by a pg_trgm GIN (no complete trigram is extractable from the pattern), so it
 # seq-scans. Shared by /search and /typeahead so the two surfaces agree on where
@@ -15202,6 +15243,12 @@ async def typeahead_search(
         # `_futures_open_now`, deliberately: one predicate, both surfaces.
         _futures_game_already_played(),
     )
+    # #4437: the arms carry only the two CHEAP open-now filters. The third,
+    # `_futures_game_already_played()` (correlated NOT EXISTS over events, twins
+    # and group siblings), is applied once, to a bounded ordered slice, below —
+    # measured on "we" (Nov 7) it cost 280 ms proving 1,627 candidates open
+    # before the `LIMIT 20` kept 20 of them.
+    _ta_cheap_open_now = _ta_open_now[:2]
     # LAT-P143: resolve the held-back outcome arm FIRST, under its own bound, and
     # fold it in as a plain id list. `[]` is a real answer (the arm matched no open
     # market) and contributes nothing; `None` means it could not be served in time
@@ -15246,7 +15293,7 @@ async def typeahead_search(
                 ta_futures_where.append(FuturesMarket.id.in_(_ta_outcome_ids))
 
     _ta_arm_selects = [
-        select(FuturesMarket.id).where(arm, *_ta_open_now)
+        select(FuturesMarket.id).where(arm, *_ta_cheap_open_now)
         for arm in ta_futures_where
     ]
     if len(_ta_arm_selects) > 1:
@@ -15364,6 +15411,25 @@ async def typeahead_search(
     if _ta_futures_round_key is not None:
         _ta_futures_postseason_order.append(_ta_futures_round_key.asc())
 
+    _ta_futures_order = (
+        # #9340: the same postseason-in-progress key /search orders by.
+        *_ta_futures_postseason_order,
+        *_ta_futures_relevance_order_keys,
+        FuturesMarket.market_tier.asc().nulls_last(),
+        FuturesMarket.volume.desc().nulls_last(),
+    )
+    # #4437: the same rows, cheaper. Order the candidates under the cheap
+    # filters and keep the first `_TYPEAHEAD_OPEN_NOW_SLICE`; run the full
+    # statement (every filter, same order, same LIMIT) on that slice alone.
+    # Exact, not approximate: if the slice yields the whole pool it is the same
+    # top 20, because a row outside the slice ranks below all of them; if it
+    # yields fewer and the slice was full, the full statement runs as before.
+    _ta_slice_query = (
+        select(FuturesMarket.id)
+        .where(_ta_candidate_filter, *_ta_cheap_open_now)
+        .order_by(*_ta_futures_order, FuturesMarket.id)
+        .limit(_TYPEAHEAD_OPEN_NOW_SLICE)
+    )
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -15371,13 +15437,7 @@ async def typeahead_search(
             _ta_candidate_filter,
             *_ta_open_now,
         )
-        .order_by(
-            # #9340: the same postseason-in-progress key /search orders by.
-            *_ta_futures_postseason_order,
-            *_ta_futures_relevance_order_keys,
-            FuturesMarket.market_tier.asc().nulls_last(),
-            FuturesMarket.volume.desc().nulls_last(),
-        )
+        .order_by(*_ta_futures_order)
         # LAT-P143: ONE constant with the outcome arm's own limit. The two being
         # equal is the whole proof that splitting the arm out is set-identical.
         .limit(_TYPEAHEAD_FUTURES_POOL)
@@ -15398,7 +15458,7 @@ async def typeahead_search(
     # exists to prevent, one stage earlier.
     await _apply_search_statement_timeout(db, _ta_deadline)
     try:
-        futures_result = await db.execute(futures_query)
+        futures_result = await _typeahead_sliced_futures(db, _ta_slice_query, futures_query)
         _ta_mark("futures_query")
     except Exception as exc:  # noqa: BLE001
         if not _is_query_timeout(exc):
