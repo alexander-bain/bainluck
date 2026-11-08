@@ -106,6 +106,7 @@ tests/test_container_mlb_market_pages_9886.py  clock-invariant at +1/+31/+60 d (
 tests/test_container_mlb_playoffs_v3.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_container_mlb_proven_duplicates_9886.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_container_nfl_relocation_5344.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
+tests/test_cross_board_twin_fold_5774.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-08); the dates are fixture data
 tests/test_date_bucket_ladder_1052.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_dated_fixture_carries_its_real_start_time.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_deadline_level_caption_6470.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
