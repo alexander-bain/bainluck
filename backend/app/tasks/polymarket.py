@@ -4050,22 +4050,27 @@ async def _process_event_batch(
                 # `is_winner=None` for the same reason as the priced insert.
                 # Ranks are left to `rerank_market_field_stmt` below, which puts an
                 # unpriced leg after every priced one.
+                # ONE multi-row statement per market: once the rows exist, every poll
+                # replays it as a no-op, and one round trip is the cheap way to do so.
                 _placeholders = _parent_placeholder_legs(event, outcome_data)
-                for _offset, _leg in enumerate(_placeholders, 1):
+                if _placeholders:
                     await session.execute(
                         pg_insert(FuturesOutcome)
-                        .values(
-                            market_id=futures_market_id,
-                            external_id=_leg["external_id"],
-                            name=_leg["name"],
-                            current_probability=None,
-                            current_american_odds=None,
-                            current_yes_bid=None,
-                            current_yes_ask=None,
-                            rank=len(outcome_data) + _offset,
-                            is_winner=None,
-                            resolution_source=None,
-                        )
+                        .values([
+                            {
+                                "market_id": futures_market_id,
+                                "external_id": _leg["external_id"],
+                                "name": _leg["name"],
+                                "current_probability": None,
+                                "current_american_odds": None,
+                                "current_yes_bid": None,
+                                "current_yes_ask": None,
+                                "rank": len(outcome_data) + _offset,
+                                "is_winner": None,
+                                "resolution_source": None,
+                            }
+                            for _offset, _leg in enumerate(_placeholders, 1)
+                        ])
                         .on_conflict_do_nothing(index_elements=["market_id", "external_id"])
                     )
                 if _placeholders:
@@ -5873,7 +5878,8 @@ def _parent_placeholder_legs(event, priced: list[dict]) -> list[dict]:
     The same state Kalshi has written at birth since #3518: the leg EXISTS, its price is
     NULL. Named exactly as the priced writer would name it (same helpers), keyed exactly
     as it would key it, so the row the poll writes once a price arrives is this one.
-    A closed or inactive sub-market is skipped: a settled child is not a listing.
+    A closed or inactive sub-market is skipped: a settled child is not a listing. So is a
+    reserved slot (`_is_placeholder_outcome`, #953).
 
     Scope, by shape: a neg-risk field gets every unpriced leg (it IS the field, so a
     partial one is completed). A game's bag of sub-markets or a single market gets
@@ -5887,6 +5893,10 @@ def _parent_placeholder_legs(event, priced: list[dict]) -> list[dict]:
         return legs
     for market in markets:
         if not market.condition_id or market.closed or not market.active:
+            continue
+        if _is_placeholder_outcome(market):
+            # A reserved slot ("Player AD") is not a listing either: it names no one,
+            # and the run's own #953 cleanup deletes such rows at every start.
             continue
         if len(markets) > 1:
             names = [(market.condition_id, _leg_label(market, event.title))]

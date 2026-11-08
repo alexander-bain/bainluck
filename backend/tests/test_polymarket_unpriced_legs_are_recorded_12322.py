@@ -56,6 +56,16 @@ class TestWhichLegsArePlaceholders:
         legs = [_leg("0xa", "Alpha", closed=True), _leg("0xb", "Beta", active=False), _leg("0xc", "Gamma")]
         assert [l["external_id"] for l in poly._parent_placeholder_legs(_senegal(legs=legs), [])] == ["0xc"]
 
+    def test_a_reserved_slot_is_never_recorded(self):
+        """Fable, #12332: "Player AD" names no one, and #953's cleanup deletes such rows."""
+        legs = [_leg("0xa", "Alpha", prices=(0.6, 0.4), bid=0.59, ask=0.61, last=0.6),
+                _leg("0xad", "Player AD", prices=(), bid=0, ask=None, last=0),
+                _leg("0xb", "Beta")]
+        event = _senegal(legs=legs)
+        assert poly._is_placeholder_outcome(legs[1])  # control: the venue's reserved-slot shape
+        legs_out = poly._parent_placeholder_legs(event, poly._parent_outcome_data(event))
+        assert [l["external_id"] for l in legs_out] == ["0xb"]
+
     def test_a_single_yes_no_market_records_its_one_leg(self):
         m = _leg("0xnik", "", prices=(0.505, 0.5), bid=0.02, ask=0.98, question="Nikkei 225 (NIK) Up or Down on November 9?")
         event = PolymarketEvent(id="1324983", title="Nikkei 225 (NIK) Up or Down on November 9?", neg_risk=False, markets=[m])
@@ -98,11 +108,20 @@ def _outcome_inserts(session):
             if getattr(getattr(st, "table", None), "name", None) == "futures_outcomes" and st.is_insert]
 
 
+def _rows(st):
+    """Every row a statement inserts: one for a single VALUES, each for a multi-row one."""
+    multi = getattr(st, "_multi_values", None)
+    if multi:
+        return [{getattr(k, "key", k): v for k, v in row.items()} for row in multi[0]]
+    return [_bound_params(st)]
+
+
 @pytest.mark.asyncio
 async def test_the_writer_records_the_legs_with_no_price_insert_only(monkeypatch):
     session = await _write(monkeypatch, _senegal())
     rows = _outcome_inserts(session)
-    params = [_bound_params(st) for st in rows]
+    assert len(rows) == 1  # one multi-row statement per market, not one per leg
+    params = [r for st in rows for r in _rows(st)]
     assert [p["name"] for p in params] == ["Senegal", "Draw (Senegal vs. Sudan)", "Sudan"]
     assert all(p["current_probability"] is None and p["is_winner"] is None for p in params)
     # insert-only: an existing row's price is the priced upsert's business, never this one's
@@ -118,7 +137,7 @@ async def test_a_priced_field_writes_exactly_what_it_did_before(monkeypatch):
     legs = [_leg("0xa", "Alpha", prices=(0.6, 0.4), bid=0.59, ask=0.61, last=0.6),
             _leg("0xb", "Beta", prices=(0.4, 0.6), bid=0.39, ask=0.41, last=0.4)]
     session = await _write(monkeypatch, _senegal(legs=legs))
-    params = [_bound_params(st) for st in _outcome_inserts(session)]
+    params = [r for st in _outcome_inserts(session) for r in _rows(st)]
     assert sorted(p["name"] for p in params) == ["Alpha", "Beta"]
     assert all(p["current_probability"] is not None for p in params)
     assert "unpriced_legs_recorded" not in session.stats

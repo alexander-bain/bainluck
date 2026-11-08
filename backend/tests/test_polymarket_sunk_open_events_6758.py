@@ -263,11 +263,19 @@ def _literal(value):
     return getattr(value, "value", value)
 
 
+def _outcome_rows(writer):
+    """Every outcome row the writer inserted, multi-row statements expanded (#12322)."""
+    out = []
+    for s in writer.statements:
+        if getattr(getattr(s, "table", None), "name", None) != "futures_outcomes" or not s.is_insert:
+            continue
+        multi = getattr(s, "_multi_values", None)
+        out.extend([{getattr(k, "key", k): v for k, v in r.items()} for r in multi[0]] if multi else [_bound_params(s)])
+    return out
+
+
 def _outcome_names(writer):
-    return [
-        _bound_params(s).get("name") for s in writer.statements
-        if getattr(getattr(s, "table", None), "name", None) == "futures_outcomes" and s.is_insert
-    ]
+    return [r.get("name") for r in _outcome_rows(writer)]
 
 
 # --------------------------------------------------------------------------
@@ -351,10 +359,7 @@ class TestRecovery:
         assert set(rows) == {NAMED}, "parent re-stamped; zero children minted"
         # #12322: the legs the venue lists are recorded so the market keeps its outcome
         # set, but not one of them carries a price: still "writes no price".
-        outcomes = [
-            _bound_params(st) for st in writer.statements
-            if getattr(getattr(st, "table", None), "name", None) == "futures_outcomes" and st.is_insert
-        ]
+        outcomes = _outcome_rows(writer)
         assert outcomes and all(o.get("current_probability") is None for o in outcomes), outcomes
         assert "Norma Dumont vs. Ailin Perez" in _outcome_names(writer)
         assert stats["events_unpriced_at_venue"] == 1
