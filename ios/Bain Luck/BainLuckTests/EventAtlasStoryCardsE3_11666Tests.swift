@@ -33,6 +33,18 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
         )
         XCTAssertEqual(
             EventAtlasStoryCards11666.finishMarkKey(for: liveCard).map(\.label),
+            ["Earlier forecast", "Recorded", "Change"]
+        )
+
+        let liveScheduledStartCard = NFLFinishCard9483(
+            phase: .during,
+            pregame: .init(away: 21.0, home: 24.5, at: nil),
+            projectedNow: .init(away: 27.5, home: 20.5, at: Date(timeIntervalSince1970: 1_762_003_600)),
+            final: nil,
+            pregameBasis: .scheduledStart
+        )
+        XCTAssertEqual(
+            EventAtlasStoryCards11666.finishMarkKey(for: liveScheduledStartCard).map(\.label),
             ["Pregame", "Recorded", "Change"]
         )
 
@@ -40,7 +52,8 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
             phase: .after,
             pregame: .init(away: 21.0, home: 24.5, at: nil),
             projectedNow: nil,
-            final: .init(away: 28, home: 21, at: Date(timeIntervalSince1970: 1_762_010_800))
+            final: .init(away: 28, home: 21, at: Date(timeIntervalSince1970: 1_762_010_800)),
+            pregameBasis: .scheduledStart
         )
         XCTAssertEqual(
             EventAtlasStoryCards11666.finishMarkKey(for: finishedCard).map(\.label),
@@ -57,7 +70,7 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
         )
         XCTAssertEqual(
             EventAtlasStoryCards11666.finishMarkKey(for: tiedFinal).map(\.label),
-            ["Pregame", "Final"]
+            ["Earlier forecast", "Final"]
         )
         XCTAssertNil(EventAtlasStoryCards11666.finishWinnerBadge(for: tiedFinal, isHome: true))
         XCTAssertNil(EventAtlasStoryCards11666.finishWinnerBadge(for: tiedFinal, isHome: false))
@@ -271,7 +284,8 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
             phase: .during,
             pregame: .init(away: 21, home: 24.5, at: Date(timeIntervalSince1970: 1_762_450_000)),
             projectedNow: .init(away: 17, home: 27, at: Date(timeIntervalSince1970: 1_762_455_000)),
-            final: nil
+            final: nil,
+            pregameBasis: .scheduledStart
         )
         let items = EventAtlasStoryCards11666.finishMarkKey(for: liveFinish)
         XCTAssertEqual(
@@ -279,6 +293,39 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
             "Mark key: Pregame, Recorded, Change"
         )
         XCTAssertEqual(EventAtlasStoryCards11666.markKeyAccessibilitySummary([]), "")
+
+        // On a .pregamePrice milestone card, rung.chance is the current quote while prop.pregameMark is the pregame baseline
+        let pregameCard = NFLMilestoneCard9483(
+            id: "milestone-pre",
+            player: "CeeDee Lamb",
+            stat: "Receiving Yards",
+            side: .home,
+            basis: .pregamePrice,
+            rungs: [.init(threshold: 75, chance: 0.54, observedAt: "2026-11-06T20:15:00Z", rowID: "r75", hit: nil)],
+            actual: nil
+        )
+        let pregameProp = GameMarketPlayerProp(
+            marketName: "Player Receiving Yards",
+            outcomeName: "CeeDee Lamb: 75+",
+            threshold: 75,
+            overProbability: 0.54,
+            source: "draftkings",
+            movement: nil,
+            playerHeadshot: nil,
+            playerTeam: "DAL",
+            actual: nil,
+            hit: nil,
+            pregameMark: 0.42,
+            observedAt: "2026-11-06T20:15:00Z"
+        )
+        let pregameMilestoneSheet = EventAtlasStoryCards11666.detailsModel(
+            for: pregameProp,
+            card: pregameCard,
+            rowID: "r75"
+        )
+        XCTAssertEqual(pregameMilestoneSheet.primaryReadingLabel, "Last quote")
+        XCTAssertEqual(pregameMilestoneSheet.primaryReadingValue, "54%")
+        XCTAssertEqual(pregameMilestoneSheet.pregameBaseline, "42%")
 
         let keyView = EventAtlasStoryCardMarkKeyView11666(items: items)
             .padding(12)

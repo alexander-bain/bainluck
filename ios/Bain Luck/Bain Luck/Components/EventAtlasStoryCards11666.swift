@@ -34,8 +34,9 @@ nonisolated enum EventAtlasStoryCards11666 {
 
     /// Builds the mark-grammar key items for a finish card (`NFLFinishCard9483`).
     static func finishMarkKey(for card: NFLFinishCard9483) -> [MarkKeyItem11666] {
+        let initialLabel = card.namesDistinctBasis ? NFLFinishCard9483.earlierForecast : "Pregame"
         var items: [MarkKeyItem11666] = [
-            MarkKeyItem11666(glyph: .hollowSquare, label: "Pregame")
+            MarkKeyItem11666(glyph: .hollowSquare, label: initialLabel)
         ]
         if card.projectedNow != nil && card.final == nil {
             items.append(MarkKeyItem11666(glyph: .filledSquare, label: "Recorded"))
@@ -193,9 +194,11 @@ nonisolated enum EventAtlasStoryCards11666 {
         card: NFLMilestoneCard9483? = nil,
         rowID: String
     ) -> EventAtlasDetailsSheetModel11666 {
-        let rung = card?.rungs.first(where: { $0.rowID == rowID }) ?? card?.rungs.first
+        let rung = card?.rungs.first(where: { $0.rowID == rowID })
         let hit = prop?.hit ?? rung?.hit
-        let pregameProb = rung?.chance ?? prop?.pregameMark
+        let pregameProb: Double? = card?.basis == .pregamePrice
+            ? prop?.pregameMark
+            : (rung?.chance ?? prop?.pregameMark)
         let pregameText = pregameProb.map { formatProbability($0) }
         let primaryLabel: String
         let primaryValue: String
@@ -203,7 +206,7 @@ nonisolated enum EventAtlasStoryCards11666 {
             primaryLabel = "Result"
             let actualPart = (prop?.actual ?? card?.actual).map { " · Final \(NFLFinishCardView9483.points($0))" } ?? ""
             primaryValue = (hit ? "✓ HIT" : "✗ MISS") + actualPart
-        } else if let quote = prop?.overProbability {
+        } else if let quote = prop?.overProbability ?? (card?.basis == .pregamePrice ? rung?.chance : nil) {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quote)
         } else if let pregameText {
@@ -211,7 +214,7 @@ nonisolated enum EventAtlasStoryCards11666 {
             primaryValue = pregameText
         } else {
             primaryLabel = "Reading"
-            primaryValue = "No recent probability"
+            primaryValue = EventAtlasStates11666.noRecentPrice
         }
 
         let outcomeTitle: String

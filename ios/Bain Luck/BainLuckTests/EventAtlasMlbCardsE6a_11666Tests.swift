@@ -314,55 +314,51 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
         )
     }
 
-    func testExtraInningsDetailsModelAndMultiSourceOriginalAttribution() {
-        let unblendedEntry = EventAtlasMlbCards11666.ExtraInningsEntry(
-            id: "mlb-extra:yes",
-            label: "Yes",
-            pregameChance: nil,
-            quotedChance: nil,
-            observedAt: "2026-10-25T23:50:00Z",
-            venueResult: .open,
-            source: nil,
-            sourceCount: 2,
-            marketTitle: "Will there be extra innings?"
-        )
-        let unblendedSheet = EventAtlasMlbCards11666.detailsModel(for: unblendedEntry)
-        XCTAssertEqual(unblendedSheet.primaryReadingLabel, "Reading")
-        XCTAssertEqual(unblendedSheet.primaryReadingValue, EventAtlasStates11666.noRecentPrice)
-        XCTAssertEqual(unblendedSheet.sourceLabel, "2 sources, not blended")
+    @MainActor
+    func testExtraInningsCardBuildsAndRoutesMultiSourceAttributionThroughReaderDetailsModel() throws {
+        let now = try XCTUnwrap("2026-10-26T04:00:00Z".asDate)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
 
-        let blendedEntry = EventAtlasMlbCards11666.ExtraInningsEntry(
-            id: "mlb-extra:no",
-            label: "No",
-            pregameChance: 0.88,
-            quotedChance: 0.91,
-            observedAt: "2026-10-25T23:50:00Z",
-            venueResult: .won,
-            source: "blended",
-            sourceCount: 2,
-            marketTitle: "Will there be extra innings?"
-        )
-        let blendedSheet = EventAtlasMlbCards11666.detailsModel(for: blendedEntry)
-        XCTAssertEqual(blendedSheet.primaryReadingLabel, "Result")
-        XCTAssertEqual(blendedSheet.primaryReadingValue, EventAtlasStates11666.wonWithCheck)
-        XCTAssertEqual(blendedSheet.pregameBaseline, "88%")
-        XCTAssertEqual(blendedSheet.sourceLabel, "Blended (2 sources)")
+        let unblendedJSON = """
+        [
+            {"_market_id": 980, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "Yes", "probability": 0.01, "pregame_mark": 0.11, "observed_at": "2026-10-25T23:50:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 981, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "Yes", "probability": 0.01, "pregame_mark": 0.14, "observed_at": "2026-10-25T23:50:00Z", "source": "polymarket", "is_winner": false, "resolution_source": "clob_authoritative"},
+            {"_market_id": 980, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "No", "probability": 0.99, "pregame_mark": 0.88, "observed_at": "2026-10-25T23:50:00Z", "source": "blended", "is_winner": true, "resolution_source": "api_settlement"},
+            {"_market_id": 981, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "No", "probability": 0.99, "pregame_mark": 0.86, "observed_at": "2026-10-25T23:50:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "api_settlement"}
+        ]
+        """
+        let rows = try decoder.decode([GameMarketOther].self, from: Data(unblendedJSON.utf8))
+        let extraCard = try XCTUnwrap(MLBExtraInningsCard11284.build(rows, eventID: 9901, now: now))
+        let cards: [NFLEventCard9483] = [.mlb(.extraInnings(extraCard))]
 
-        let multiVenueOriginal = MLBOriginal11284(
-            id: "mlb:hr:judge-multi",
-            title: "Aaron Judge: 1+ Home Runs",
-            sections: [
-                .init(
-                    title: "Saved reading",
-                    fields: [
-                        .init(label: "Original side", value: "Aaron Judge: 1+"),
-                        .init(label: "Saved pregame chance", value: "Unavailable"),
-                        .init(label: "Venue", value: "DraftKings, FanDuel")
-                    ]
-                )
-            ]
+        let yesOutcome = try XCTUnwrap(extraCard.outcomes.first(where: { $0.label == "Yes" }))
+        let yesSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: yesOutcome.id,
+                cards: cards,
+                rows: [:],
+                awayName: "Yankees",
+                homeName: "Dodgers"
+            )
         )
-        let multiVenueSheet = EventAtlasMlbCards11666.detailsModel(for: multiVenueOriginal)
-        XCTAssertEqual(multiVenueSheet.sourceLabel, "2 sources, not blended")
+        XCTAssertEqual(yesSheet.outcomeTitle, "Yes")
+        XCTAssertEqual(yesSheet.sourceLabel, "2 sources, not blended")
+
+        let noOutcome = try XCTUnwrap(extraCard.outcomes.first(where: { $0.label == "No" }))
+        let noSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: noOutcome.id,
+                cards: cards,
+                rows: [:],
+                awayName: "Yankees",
+                homeName: "Dodgers"
+            )
+        )
+        XCTAssertEqual(noSheet.outcomeTitle, "No")
+        XCTAssertEqual(noSheet.primaryReadingLabel, "Result")
+        XCTAssertEqual(noSheet.primaryReadingValue, EventAtlasStates11666.wonWithCheck)
+        XCTAssertEqual(noSheet.pregameBaseline, "88%")
+        XCTAssertEqual(noSheet.sourceLabel, "Blended (2 sources)")
     }
 }

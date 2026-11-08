@@ -731,8 +731,14 @@ struct MLBExtraInningsCard11284: Equatable {
                 var fields: [MLBOriginal11284.Field] = [
                     .init(label: "Original side", value: entry.label)
                 ]
-                if let venue = SourceLabels.label(for: entry.source) {
-                    fields.append(.init(label: "Venue", value: venue))
+                let venueValue: String? = (entry.source == nil && entry.sourceCount > 1)
+                    ? "\(entry.sourceCount) sources, not blended"
+                    : EventAtlasHeadline11666.sourceAttribution(
+                        source: entry.source,
+                        sourceCount: entry.sourceCount > 1 ? entry.sourceCount : 1
+                    )
+                if let venueValue {
+                    fields.append(.init(label: "Venue", value: venueValue))
                 }
                 fields.append(
                     .init(
