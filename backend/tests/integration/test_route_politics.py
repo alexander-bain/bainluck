@@ -381,7 +381,20 @@ class TestPoliticsCongressional:
         assert chamber["senate"]["gop"] == 62.0
         assert chamber["senate"]["dem"] == 38.0
 
-    async def test_senate_map_from_state_race(self, client, mock_db):
+    @pytest.mark.parametrize("day_offset,expected", [(-1, {"OH": 45.0}), (1, None)])
+    async def test_senate_map_from_state_race(
+        self, client, mock_db, monkeypatch, day_offset, expected
+    ):
+        # #12336 preserves the pre-election map and retires its forecasts after
+        # Election Day. Both HTTP arms use the same fixed election boundary.
+        now = datetime(2026, 11, 4, 12, tzinfo=timezone.utc) + timedelta(days=day_offset)
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+
+        monkeypatch.setattr("app.routes.politics.datetime", Clock)
         mock_db.execute.side_effect = [
             _query_result([
                 _market(
@@ -390,6 +403,8 @@ class TestPoliticsCongressional:
                     external_id="kxsenate26-oh",
                     source="kalshi",
                     llm_sport_category="politics",
+                    updated_at=now,
+                    resolution_date=now + timedelta(days=90),
                     outcomes=[
                         _outcome("Tim Ryan (D)", 0.45, outcome_id=4011, rank=1),
                         _outcome("JD Vance (R)", 0.55, outcome_id=4012, rank=2),
@@ -401,9 +416,7 @@ class TestPoliticsCongressional:
 
         body = (await client.get("/api/politics")).json()
         senate_map = body["themes"]["congressional"]["senate_map"]
-        assert senate_map is not None
-        assert "OH" in senate_map
-        assert senate_map["OH"] == 45.0
+        assert senate_map == expected
 
 
 # ============================================================================

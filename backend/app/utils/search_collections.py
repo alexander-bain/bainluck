@@ -196,6 +196,26 @@ async def attach_search_collections(
             kwargs["titles_only"] = True
         read = await container_discovery.discover_collections(db, **kwargs)
         cards.extend(read.collections[:SEARCH_COLLECTIONS_CAP])
+        for index, card in enumerate(tuple(cards)):
+            if card.get("slug") == "midterms-2026" and not titles_only:
+                from app.routes.containers import get_container
+
+                # The page folds venue contributors and withholds unavailable
+                # members. Its admitted presentation owns the advertised count.
+                # Other completed matches survive a failed or timed-out page read.
+                cards.remove(card)
+                page = await get_container(
+                    "midterms-2026", include_children=True, revision=None,
+                    cursor=None, limit=None, compact=False, db=db,
+                )
+                if page.get("state") != "published" or not page["member_count"]:
+                    continue
+                cards.insert(index, {
+                    **card,
+                    "question_count": page["member_count"],
+                    "game_count": 0,
+                    "revision": page["revision"],
+                })
         degraded = degraded or bool(tokens and read.truncated)
         if tokens and read.reason == container_discovery.REASON_SCHEMA_ABSENT:
             raise RuntimeError("collection publication schema is unavailable")

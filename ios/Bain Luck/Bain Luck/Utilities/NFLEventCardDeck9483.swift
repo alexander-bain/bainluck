@@ -24,6 +24,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
     case nhlScoring(EventAtlasNhlCards11666.ScoringCard)
     case soccerThreeWay(EventAtlasSoccerCards11666.ThreeWayCard)
     case soccerExactScore(EventAtlasSoccerCards11666.ExactScoreCard)
+    case tennisSets(EventAtlasTennisCards11666.SetsCard)
+    case tennisExactScore(EventAtlasTennisCards11666.ExactScoreCard)
 
     var id: String {
         switch self {
@@ -34,6 +36,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .nhlScoring(let card): return card.id
         case .soccerThreeWay(let card): return card.id
         case .soccerExactScore(let card): return card.id
+        case .tennisSets(let card): return card.id
+        case .tennisExactScore(let card): return card.id
         }
     }
 
@@ -46,6 +50,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .nhlScoring(let card): return card.title
         case .soccerThreeWay(let card): return card.title
         case .soccerExactScore(let card): return card.title
+        case .tennisSets(let card): return card.title
+        case .tennisExactScore(let card): return card.title
         }
     }
 
@@ -62,6 +68,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .nhlScoring(let card): return .nhlScoring(card.current(at: now))
         case .soccerThreeWay(let card): return .soccerThreeWay(card.current(at: now))
         case .soccerExactScore(let card): return .soccerExactScore(card.current(at: now))
+        case .tennisSets(let card): return .tennisSets(card.current(at: now))
+        case .tennisExactScore(let card): return .tennisExactScore(card.current(at: now))
         }
     }
 }

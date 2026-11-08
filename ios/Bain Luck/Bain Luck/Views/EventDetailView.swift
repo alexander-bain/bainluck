@@ -537,6 +537,7 @@ struct EventDetailView: View {
                                      // for the full-size header's result line.
                                      homeScore: event.homeScore,
                                      awayScore: event.awayScore,
+                                     servedSettledResult: event.heroSettledResult,
                                      // #8320 — the page's one decision, so the
                                      // fullscreen dot cannot claim a push the
                                      // toolbar does not.
@@ -1837,7 +1838,8 @@ struct EventDetailView: View {
                     let pregame = PrematchReading.resolve(
                         prematch: event.prematchOdds, opening: event.openingOdds)
                     let pregameWord = pregame?.captionWord ?? "Opened"
-                    if let pregame, let opened = DrawPricedWinner.printablePair(
+                    if !ReleaseSurfaces.isEventPageAtlasEnabled(),
+                       let pregame, let opened = DrawPricedWinner.printablePair(
                         away: pregame.awayProbability,
                         home: pregame.homeProbability,
                         sport: event.sport) {
@@ -2317,7 +2319,8 @@ struct EventDetailView: View {
                     preview: vm.blendPreview,
                     liveStatus: vm.liveUpdateStatus,
                     ekgTracker: ekgTracker,
-                    asOf: displayAsOf)
+                    asOf: displayAsOf,
+                    embeddedInHero: true)
             }
         }
 
@@ -2484,6 +2487,10 @@ struct EventDetailView: View {
         if EventAtlasSoccerCards11666.applies(sportKey: event.sport) {
             return soccerAtlasCards(event)
         }
+        // #11666 Step E6d — native Tennis story cards when Atlas is enabled.
+        if EventAtlasTennisCards11666.applies(sportKey: event.sport) {
+            return tennisAtlasCards(event)
+        }
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         // #9483 R2 — a finished page's card compares the final with the
         // headline's own qualified forecast, not an earlier history point.
@@ -2547,6 +2554,28 @@ struct EventDetailView: View {
             status: event.status, away: event.awayScore, home: event.homeScore)
         let names = nflNames(event)
         return EventAtlasSoccerCards11666.cards(
+            sportKey: event.sport,
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            homeShort: names.home,
+            awayShort: names.away,
+            homeScore: hasScore ? event.homeScore : nil,
+            awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: gm,
+            now: displayNow()
+        )
+    }
+
+    /// #11666 Step E6d — Tennis story cards (`tennis_*`) from THIS event's
+    /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    private func tennisAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
+        guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let names = nflNames(event)
+        return EventAtlasTennisCards11666.cards(
             sportKey: event.sport,
             status: event.status,
             commenceTime: event.commenceTime?.asDate,

@@ -250,6 +250,8 @@ nonisolated struct QuestionMatrixSourceEvidence: Decodable, Equatable, Sendable 
     let legSide: String?
     let rawProbability: Double?
     let observedAt: String?
+    var isWinner: Bool? = nil
+    var resolutionSource: String? = nil
 }
 
 nonisolated struct QuestionMatrixResult: Decodable, Equatable, Sendable {
