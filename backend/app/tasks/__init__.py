@@ -1335,14 +1335,40 @@ def poll_futures_odds(self):
 
 @celery_app.task(bind=True, name="app.tasks.poll_kalshi_markets", soft_time_limit=600, time_limit=660)
 def poll_kalshi_markets(self, event_ticker=None):
-    """Poll prediction markets from Kalshi (11 min limit for market backfill)."""
+    """Poll prediction markets from Kalshi (11 min limit for market backfill).
+
+    #12019: the full poll never shares worker-heavy with the matcher — the two
+    together were R15-killed mid-poll. Turn rules: `app.tasks.heavy_memory_turns`.
+    """
     from app.tasks.kalshi import _poll_kalshi_markets
-    poll = (
-        _poll_kalshi_markets(event_ticker=event_ticker)
-        if event_ticker is not None
-        else _poll_kalshi_markets()
-    )
-    return _tracked_run("poll_kalshi", poll)
+
+    if event_ticker is not None:
+        return _tracked_run(
+            "poll_kalshi", _poll_kalshi_markets(event_ticker=event_ticker)
+        )
+
+    from app.tasks import heavy_memory_turns as turns
+    from app.utils.single_flight import single_flight
+
+    start_mb = turns.rss_mb()
+    with single_flight(turns.LEASE_TASK, ttl_seconds=turns.POLL_LEASE_TTL_S) as lease:
+        if not lease.acquired:
+            if self.request.retries < turns.POLL_MAX_RETRIES:
+                turns.mark_poll_pending()
+                raise self.retry(
+                    countdown=turns.POLL_RETRY_COUNTDOWN_S,
+                    max_retries=turns.POLL_MAX_RETRIES,
+                )
+            logger.warning(
+                "poll_kalshi_markets: matcher still holds %s after %d retries; polling anyway",
+                lease.key,
+                self.request.retries,
+            )
+        turns.clear_poll_pending()
+        try:
+            return _tracked_run("poll_kalshi", _poll_kalshi_markets())
+        finally:
+            turns.log_memory("poll_kalshi_markets", start_mb)
 
 
 @celery_app.task(
@@ -2558,9 +2584,27 @@ def backfill_market_shapes(self, limit: int = 40000, dry_run: bool = False):
 
 @celery_app.task(bind=True, name="app.tasks.match_prediction_markets", time_limit=870, soft_time_limit=840)
 def match_prediction_markets(self, limit: int = 500):
-    """Match game-level prediction markets to events and write win_prob_snapshots."""
+    """Match game-level prediction markets to events and write win_prob_snapshots.
+
+    #12019: declines a tick while the full Kalshi poll runs or waits for the
+    dyno (`app.tasks.heavy_memory_turns`); the next tick is 15 minutes away.
+    """
+    from app.tasks import heavy_memory_turns as turns
     from app.tasks.prediction_market_matching import _match_prediction_markets
-    return _tracked_run("prediction_market_match", _match_prediction_markets(limit))
+    from app.utils.single_flight import single_flight
+
+    if turns.poll_is_pending():
+        return {"skipped": True, "reason": "kalshi_poll_pending", "task": turns.LEASE_TASK}
+    start_mb = turns.rss_mb()
+    with single_flight(turns.LEASE_TASK, ttl_seconds=turns.MATCH_LEASE_TTL_S) as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        try:
+            return _tracked_run(
+                "prediction_market_match", _match_prediction_markets(limit)
+            )
+        finally:
+            turns.log_memory("match_prediction_markets", start_mb)
 
 
 @celery_app.task(bind=True, name="app.tasks.poll_live_prediction_markets")
