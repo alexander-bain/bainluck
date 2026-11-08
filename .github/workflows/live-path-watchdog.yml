@@ -2434,6 +2434,10 @@ jobs:
         \  exit 1\n}\ncat /tmp/roster11315.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/roster11315.txt; then\n  echo \"::error::#11315 roster lock\
         \ gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]19 passed([,[:space:]]|$)\" /tmp/roster11315.txt || {\n  echo \"::error::#11315 roster\
         \ lock gate did not run all nineteen cases\"\n  exit 1\n}\n"
+    - id: db_307_4437_open_markets_outcome_copy_maintainer
+      name: '#4437 open markets'' outcome copy: maintainer and both routes (real Postgres)'
+      if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+      run: "python -m pytest tests/integration/test_open_futures_outcomes_pg_4437.py -v -rs > /tmp/openoutcomes4437.txt 2>&1 || {\n  cat /tmp/openoutcomes4437.txt\n  exit 1\n}\ncat /tmp/openoutcomes4437.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/openoutcomes4437.txt; then\n  echo \"::error::#4437 open-outcomes gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]8 passed([,[:space:]]|$)\" /tmp/openoutcomes4437.txt || {\n  echo \"::error::#4437 open-outcomes gate did not run all eight cases\"\n  exit 1\n}\n"
 
     - name: "#12252 shared tail \u2014 upload this attempt's 55-A retries for the flake sentinel"
       id: db_flaky_retries_upload
