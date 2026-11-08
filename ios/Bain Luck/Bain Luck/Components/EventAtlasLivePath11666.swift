@@ -37,8 +37,9 @@ nonisolated enum EventAtlasLivePath11666 {
     ///
     /// When `acceptedPriceClock` is present, a fresher `confirmedAtShown`
     /// advances the clock (`max(acceptedPriceClock, confirmedAtShown)`). When
-    /// `acceptedPriceClock` is nil, falls back to `freshestSourceStamp` and then
-    /// `currentOddsCapturedAt`.
+    /// `acceptedPriceClock` is nil, falls back to `confirmedAtShown` and then
+    /// `currentOddsCapturedAt`, never substituting an unrelated `freshestSourceStamp`
+    /// (#9483: an unreadable clock fails toward last recorded, never toward current).
     static func resolveHeadlineObservedAt(_ input: HeadlineObservedAtInput) -> Date? {
         if let accepted = input.acceptedPriceClock {
             if let confirmed = input.confirmedAtShown {
@@ -46,7 +47,7 @@ nonisolated enum EventAtlasLivePath11666 {
             }
             return accepted
         }
-        return input.freshestSourceStamp ?? input.currentOddsCapturedAt
+        return input.confirmedAtShown ?? input.currentOddsCapturedAt
     }
 
     /// Extracts the freshest `updatedAt` timestamp across `winProbabilitySources`.

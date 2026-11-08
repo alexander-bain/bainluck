@@ -58,8 +58,9 @@ final class EventAtlasLivePathE5_11666Tests: XCTestCase {
             .current
         )
 
-        // When no price clock is adopted, resolveHeadlineObservedAt falls back
-        // to freshestSourceStamp and then currentOddsCapturedAt.
+        // When no acceptedPriceClock is present, resolveHeadlineObservedAt uses
+        // confirmedAtShown and then currentOddsCapturedAt, never substituting an
+        // unrelated freshestSourceStamp (#9483).
         let fallbackStamp = try XCTUnwrap("2026-11-06T04:50:00Z".asDate)
         XCTAssertEqual(
             EventAtlasLivePath11666.resolveHeadlineObservedAt(
@@ -70,7 +71,18 @@ final class EventAtlasLivePathE5_11666Tests: XCTestCase {
                     currentOddsCapturedAt: committedAt
                 )
             ),
-            fallbackStamp
+            confirmedAt
+        )
+        XCTAssertNil(
+            EventAtlasLivePath11666.resolveHeadlineObservedAt(
+                EventAtlasLivePath11666.HeadlineObservedAtInput(
+                    acceptedPriceClock: nil,
+                    confirmedAtShown: nil,
+                    freshestSourceStamp: fallbackStamp,
+                    currentOddsCapturedAt: nil
+                )
+            ),
+            "Without an acceptedPriceClock, confirmedAtShown, or currentOddsCapturedAt, freshestSourceStamp is not substituted as a live price clock"
         )
 
         // Now a one-stream preview frame arrives:
@@ -382,10 +394,49 @@ final class EventAtlasLivePathE5_11666Tests: XCTestCase {
             event: venueSettledEvent,
             phase: nil,
             observedAt: now,
-            liveStatus: .live
+            liveStatus: .live,
+            now: now
         )
         XCTAssertEqual(sheet.primaryReadingLabel, "Result")
         XCTAssertEqual(sheet.primaryReadingValue, "Ravens Won")
+
+        // When a venue-settled live event has NO hero_settled_result, it never guesses
+        // a winner from mid-game scores (matching #12380's chart settledResult rule).
+        let venueSettledNoServedJSON = """
+        {
+            "id": 15343000,
+            "sport": "americanfootball_nfl",
+            "away_team": "Cincinnati Bengals",
+            "home_team": "Baltimore Ravens",
+            "commence_time": "2026-11-06T01:15:00Z",
+            "status": "live",
+            "venue_settled": true,
+            "home_score": 21,
+            "away_score": 14,
+            "hero_probability_source": "blend",
+            "hero_probability": 0.99,
+            "hero_probability_away": 0.01,
+            "hero_probability_observed_at": "2026-11-06T04:55:00Z"
+        }
+        """
+        let venueSettledNoServedEvent = try decoder.decode(
+            EventDetail.self,
+            from: Data(venueSettledNoServedJSON.utf8)
+        )
+        XCTAssertEqual(
+            EventAtlasHeadline11666.settledOutcome(for: venueSettledNoServedEvent, isFinished: false),
+            .undecided,
+            "venue-settled live event without heroSettledResult never resolves a winner from mid-game scores"
+        )
+        let unservedSheet = EventAtlasDetailsSheetModel11666.fromHeadline(
+            event: venueSettledNoServedEvent,
+            phase: nil,
+            observedAt: now,
+            liveStatus: .live,
+            now: now
+        )
+        XCTAssertEqual(unservedSheet.primaryReadingLabel, "Result")
+        XCTAssertEqual(unservedSheet.primaryReadingValue, "Final")
     }
 
     func testWiresResolveHeadlineObservedAtAndEkgInEventAtlasAndEventDetailView() throws {
