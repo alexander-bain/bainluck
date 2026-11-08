@@ -335,9 +335,6 @@ private struct GameActivityTeamRow: View {
         let badge = reading.badge(side)
         let name = reading.name(side)
         HStack(spacing: 8) {
-            Capsule()
-                .fill(reading.color(side, onDark: scheme == .dark))
-                .frame(width: 4, height: 24)
             Text(badge)
                 .font(.headline.weight(.heavy))
                 .frame(minWidth: 44, alignment: .leading)
@@ -360,6 +357,16 @@ private struct GameActivityTeamRow: View {
                     .foregroundStyle(reading.lead == side && !reading.isStale ? .primary : .secondary)
                     .frame(minWidth: 48, alignment: .trailing)
             }
+        }
+        .padding(.leading, 12)
+        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+        .overlay(alignment: .leading) {
+            // Hidden from VoiceOver: the rendered activity framed the row's
+            // element by this 4-point bar, so the focus box missed the row.
+            Capsule()
+                .fill(reading.color(side, onDark: scheme == .dark))
+                .frame(width: 4, height: 24)
+                .accessibilityHidden(true)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(reading.rowSpoken(side))
