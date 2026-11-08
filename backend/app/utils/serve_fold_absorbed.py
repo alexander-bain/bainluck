@@ -52,7 +52,11 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.models.models import Event, Sport
-from app.utils.event_twin_fold import _catchall_sport_prefix, fold_twin_events
+from app.utils.event_twin_fold import (
+    _catchall_sport_prefix,
+    cross_board_identity,
+    fold_twin_events,
+)
 from app.utils.kalshi_occurrence_start import loaded_sport_key
 from app.utils.sport_keys import league_identity
 
@@ -79,7 +83,8 @@ async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
 
     The same league (season variants included, via `league_identity`), plus the
     sport's `*_other` catch-all; a catch-all row itself can meet any league of
-    its sport (`_merge_catchall_leagues`). The `sports` table is small.
+    its sport (`_merge_catchall_leagues`). Plus the other board of a game listed
+    on two (`cross_board_identity`, #5774). The `sports` table is small.
     """
     prefix = _sport_prefix(sport_key)
     own_identity = league_identity(sport_key)
@@ -95,6 +100,8 @@ async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
             own_is_catchall
             or _catchall_sport_prefix(key) is not None
             or league_identity(key) == own_identity
+            or cross_board_identity(key) == own_identity
+            or cross_board_identity(sport_key) == league_identity(key)
         ):
             ids.append(sport_id)
     return ids
