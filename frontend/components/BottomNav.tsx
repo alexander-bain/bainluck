@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
-import PublishedCollectionsMenu from "@/components/collections/PublishedCollectionsMenu";
 
 const browsePages = [
   { label: "MMA", href: "/hub/mma", emoji: "🥊" },
@@ -13,7 +12,6 @@ const browsePages = [
   { label: "Tennis", href: "/hub/tennis", emoji: "🎾" },
   { label: "Esports", href: "/hub/esports", emoji: "🎮" },
   { label: "Politics", href: "/politics", emoji: "🏛" },
-  { label: "2026 Midterms", href: "/collections/midterms-2026", emoji: "🗳" },
   { label: "Entertainment", href: "/entertainment", emoji: "🎬" },
   { label: "Economics", href: "/economics", emoji: "📈" },
   { label: "Weather", href: "/weather", emoji: "🌤" },
@@ -27,8 +25,7 @@ export default function BottomNav() {
   const browseRef = useRef<HTMLDivElement>(null);
   const browseButtonRef = useRef<HTMLButtonElement>(null);
 
-  const isBrowseActive =
-    browsePages.some((p) => pathname === p.href) || !!pathname?.startsWith("/collections/");
+  const isBrowseActive = browsePages.some((p) => pathname === p.href);
 
   // #10476 — a page change (a followed link, Back) always leaves Browse shut.
   useEffect(() => {
@@ -113,19 +110,6 @@ export default function BottomNav() {
             id="mobile-browse-panel"
             className="relative z-50 mx-4 mb-2 max-h-[calc(100dvh-7rem)] overflow-y-auto overscroll-contain bg-surface-card rounded-2xl border border-surface-border shadow-lg"
           >
-            <PublishedCollectionsMenu
-              open={browseOpen}
-              pathname={pathname}
-              variant="mobile"
-              onNavigate={(href) => {
-                setBrowseOpen(false);
-                track("navigation_click", {
-                  click_type: "nav_tab" as const,
-                  from_page: pathname || "/",
-                  to_page: href,
-                });
-              }}
-            />
             {browsePages.map((page) => (
               <Link
                 key={page.href}
