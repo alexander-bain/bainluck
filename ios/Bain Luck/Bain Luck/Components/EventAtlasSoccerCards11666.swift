@@ -838,7 +838,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
                 let recent = NFLMilestoneCard9483.isRecent(observedAt, now: now)
                 let quoted = !finished && recent ? openChance(row.probability) : nil
                 let pregame: Double? = currentPhase == .before
-                    ? (recent ? openChance(row.probability) ?? openChance(row.pregameMark) : openChance(row.pregameMark))
+                    ? (recent ? openChance(row.probability) : nil)
                     : openChance(row.pregameMark)
                 let chance = finished ? pregame : (quoted ?? pregame)
                 let verdict = OutcomeVerdict.verdict(

@@ -993,6 +993,55 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
         XCTAssertEqual(afterTickPregameOnly.otherCell?.chance ?? -1, 0.06, accuracy: 1e-6)
         XCTAssertEqual(afterTickPregameOnly.defaultSelectedKey, "1-0")
 
+        // 3c. Pre-kickoff (.before) otherMarkets rows built when observed_at is already stale and an opening pregame_mark
+        // is present must NOT show the opening price as current; all-stale returns nil, and a mixed fresh/stale group
+        // resolves the stale cell (with pregame_mark: 0.15) to nil / "No recent probability".
+        XCTAssertNil(
+            EventAtlasSoccerCards11666.buildExactScoreCard(
+                matrix: nil,
+                otherMarkets: rows,
+                status: "scheduled",
+                commenceTime: "2026-11-06T23:30:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: staleNow
+            )
+        )
+        let mixedPreKickoffJSON = """
+        [
+            {"_market_id": 951, "market_name": "Exact Score", "outcome_name": "Draw 0-0", "probability": 0.22, "pregame_mark": 0.10, "observed_at": "2026-11-06T20:10:00Z", "source": "kalshi"},
+            {"_market_id": 951, "market_name": "Exact Score", "outcome_name": "Arsenal wins 1-0", "probability": 0.28, "pregame_mark": 0.15, "observed_at": "2026-11-05T12:00:00Z", "source": "kalshi"},
+            {"_market_id": 951, "market_name": "Exact Score", "outcome_name": "Draw 1-1", "probability": 0.16, "pregame_mark": 0.12, "observed_at": "2026-11-06T20:10:00Z", "source": "kalshi"},
+            {"_market_id": 951, "market_name": "Exact Score", "outcome_name": "Arsenal wins 2-1", "probability": 0.11, "observed_at": "2026-11-06T20:10:00Z", "source": "kalshi"},
+            {"_market_id": 951, "market_name": "Exact Score", "outcome_name": "Any other score", "probability": 0.08, "pregame_mark": 0.05, "observed_at": "2026-11-05T12:00:00Z", "source": "kalshi"}
+        ]
+        """
+        let mixedPreKickoffRows = try decoder.decode([GameMarketOther].self, from: Data(mixedPreKickoffJSON.utf8))
+        let stalePreKickoffCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildExactScoreCard(
+                matrix: nil,
+                otherMarkets: mixedPreKickoffRows,
+                status: "scheduled",
+                commenceTime: "2026-11-06T23:30:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: freshNow
+            )
+        )
+        let stalePreKickoff10 = try XCTUnwrap(stalePreKickoffCard.cells.first(where: { $0.key == "1-0" }))
+        XCTAssertNil(stalePreKickoff10.quotedChance)
+        XCTAssertNil(stalePreKickoff10.pregameChance)
+        XCTAssertNil(stalePreKickoff10.chance)
+        let stalePreKickoffDetails = EventAtlasSoccerCards11666.detailsModel(for: stalePreKickoff10, card: stalePreKickoffCard)
+        XCTAssertEqual(stalePreKickoffDetails.primaryReadingValue, EventAtlasStates11666.noRecentPrice)
+        XCTAssertNil(stalePreKickoffCard.otherCell?.quotedChance)
+        XCTAssertNil(stalePreKickoffCard.otherCell?.pregameChance)
+        XCTAssertNil(stalePreKickoffCard.otherCell?.chance)
+
         // 4. Render 390px captures of fresh live vs aged live Exact Score card
         let state = NFLCardDeckState9483()
         let freshView = EventAtlasSoccerExactScoreCardView11666(
