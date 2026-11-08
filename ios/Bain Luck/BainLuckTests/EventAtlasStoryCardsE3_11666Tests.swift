@@ -273,6 +273,8 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
         XCTAssertTrue(nflCards.contains("EventAtlasStoryCardMarkKeyView11666"))
         XCTAssertTrue(nflCards.contains("EventAtlasStoryCards11666.finishWinnerBadge"))
         XCTAssertTrue(nflCards.contains("EventAtlasStoryCards11666.milestoneVerdict"))
+        XCTAssertTrue(nflCards.contains("atlas-finish-card-details-button-11666"))
+        XCTAssertTrue(nflCards.contains("state.detailsRowID = \"finish\""))
         XCTAssertTrue(nbaCards.contains("EventAtlasStoryCards11666.ladderMarkKey"))
         XCTAssertTrue(nbaCards.contains("EventAtlasStoryCards11666.ladderReadout"))
         XCTAssertTrue(reader.contains("EventAtlasStoryCards11666.readerDetailsModel"))
@@ -293,6 +295,30 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
             "Mark key: Pregame, Recorded, Change"
         )
         XCTAssertEqual(EventAtlasStoryCards11666.markKeyAccessibilitySummary([]), "")
+
+        let earlierFinish = NFLFinishCard9483(
+            phase: .during,
+            pregame: .init(away: 21, home: 24.5, at: Date(timeIntervalSince1970: 1_762_440_000)),
+            projectedNow: .init(away: 17, home: 27, at: Date(timeIntervalSince1970: 1_762_455_000)),
+            final: nil
+        )
+        let earlierItems = EventAtlasStoryCards11666.finishMarkKey(for: earlierFinish)
+        XCTAssertEqual(
+            EventAtlasStoryCards11666.markKeyAccessibilitySummary(earlierItems),
+            "Mark key: Earlier forecast, Recorded, Change"
+        )
+        let finishSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: "finish",
+                cards: [.finish(earlierFinish)],
+                rows: [:],
+                awayName: "Eagles",
+                homeName: "Cowboys"
+            )
+        )
+        XCTAssertEqual(finishSheet.id, "finish-details")
+        XCTAssertEqual(finishSheet.primaryReadingLabel, "Projected now")
+        XCTAssertEqual(finishSheet.pregameBaseline, "Eagles 21 · Cowboys 24.5")
 
         // On a .pregamePrice milestone card, rung.chance is the current quote while prop.pregameMark is the pregame baseline
         let pregameCard = NFLMilestoneCard9483(

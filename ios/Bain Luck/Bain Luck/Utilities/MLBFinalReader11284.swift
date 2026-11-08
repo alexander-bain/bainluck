@@ -114,6 +114,8 @@ struct MLBOriginal11284: Equatable, Identifiable, Sendable {
     let id: String
     let title: String
     let sections: [Section]
+    var rawSource: String? = nil
+    var sourceCount: Int = 1
 
     static func stamp(_ iso: String?) -> String {
         SourceAge.preciseStamp(iso) ?? "time unavailable"
@@ -731,14 +733,8 @@ struct MLBExtraInningsCard11284: Equatable {
                 var fields: [MLBOriginal11284.Field] = [
                     .init(label: "Original side", value: entry.label)
                 ]
-                let venueValue: String? = (entry.source == nil && entry.sourceCount > 1)
-                    ? "\(entry.sourceCount) sources, not blended"
-                    : EventAtlasHeadline11666.sourceAttribution(
-                        source: entry.source,
-                        sourceCount: entry.sourceCount > 1 ? entry.sourceCount : 1
-                    )
-                if let venueValue {
-                    fields.append(.init(label: "Venue", value: venueValue))
+                if let venue = SourceLabels.label(for: entry.source) {
+                    fields.append(.init(label: "Venue", value: venue))
                 }
                 fields.append(
                     .init(
@@ -753,7 +749,9 @@ struct MLBExtraInningsCard11284: Equatable {
                 let original = MLBOriginal11284(
                     id: "mlb-o:\(eventID):\(entry.id)",
                     title: entry.marketTitle,
-                    sections: [.init(title: nil, fields: fields)]
+                    sections: [.init(title: nil, fields: fields)],
+                    rawSource: entry.source,
+                    sourceCount: entry.sourceCount
                 )
                 return Outcome(
                     label: entry.label,

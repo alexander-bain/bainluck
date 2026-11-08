@@ -360,5 +360,40 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
         XCTAssertEqual(noSheet.primaryReadingValue, EventAtlasStates11666.wonWithCheck)
         XCTAssertEqual(noSheet.pregameBaseline, "88%")
         XCTAssertEqual(noSheet.sourceLabel, "Blended (2 sources)")
+
+        // Single-source ("kalshi" -> "Kalshi") and unknown-source ("unknown_provider" -> nil)
+        let singleAndUnknownJSON = """
+        [
+            {"_market_id": 990, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "Yes", "probability": 0.01, "pregame_mark": 0.12, "observed_at": "2026-10-25T23:50:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 990, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "No", "probability": 0.99, "pregame_mark": 0.88, "observed_at": "2026-10-25T23:50:00Z", "source": "unknown_provider", "is_winner": true, "resolution_source": "api_settlement"}
+        ]
+        """
+        let singleRows = try decoder.decode([GameMarketOther].self, from: Data(singleAndUnknownJSON.utf8))
+        let singleCard = try XCTUnwrap(MLBExtraInningsCard11284.build(singleRows, eventID: 9902, now: now))
+        let singleCards: [NFLEventCard9483] = [.mlb(.extraInnings(singleCard))]
+
+        let singleYes = try XCTUnwrap(singleCard.outcomes.first(where: { $0.label == "Yes" }))
+        let singleYesSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: singleYes.id,
+                cards: singleCards,
+                rows: [:],
+                awayName: "Yankees",
+                homeName: "Dodgers"
+            )
+        )
+        XCTAssertEqual(singleYesSheet.sourceLabel, "Kalshi")
+
+        let unknownNo = try XCTUnwrap(singleCard.outcomes.first(where: { $0.label == "No" }))
+        let unknownNoSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: unknownNo.id,
+                cards: singleCards,
+                rows: [:],
+                awayName: "Yankees",
+                homeName: "Dodgers"
+            )
+        )
+        XCTAssertNil(unknownNoSheet.sourceLabel, "Unknown source with sourceCount == 1 must omit Venue and return nil sourceLabel")
     }
 }

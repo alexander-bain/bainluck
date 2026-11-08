@@ -428,13 +428,31 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
         XCTAssertEqual(details.sourceLabel, "Blended (2 sources)")
 
         let state = NFLCardDeckState9483()
-        let view = EventAtlasNhlScoringCardView11666(
-            card: card,
-            awayColor: .blue,
-            homeColor: .orange,
-            state: state,
-            expanded: true
+        let finishCard = NFLFinishCard9483(
+            phase: .during,
+            pregame: .init(away: 21, home: 24.5, at: Date(timeIntervalSince1970: 1_762_440_000)),
+            projectedNow: .init(away: 17, home: 27, at: Date(timeIntervalSince1970: 1_762_455_000)),
+            final: nil
         )
+        let view = VStack(alignment: .leading, spacing: 18) {
+            EventAtlasNhlScoringCardView11666(
+                card: card,
+                awayColor: .blue,
+                homeColor: .orange,
+                state: state,
+                expanded: true
+            )
+            Divider()
+            NFLFinishCardView9483(
+                card: finishCard,
+                awayName: "Eagles",
+                homeName: "Cowboys",
+                awayColor: .green,
+                homeColor: .blue,
+                state: state,
+                expanded: true
+            )
+        }
         .padding(16)
         .frame(width: 390)
         .background(Color(.systemBackground))
