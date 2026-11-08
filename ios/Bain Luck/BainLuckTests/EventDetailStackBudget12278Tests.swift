@@ -87,7 +87,7 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
         XCTAssertTrue(ReleaseSurfaces.isEventPageAtlasEnabled())
 
         let event = try sampleEventDetail()
-        let view = EventDetailView(eventId: event.id)
+        let view = EventDetailView(eventId: event.id).withLoadedEventForTest12278(event)
         let bodySize = MemoryLayout.size(ofValue: view.body)
         let contentSize = view.contentViewValueSizeForTest12278
         let heroSize = view.heroSectionValueSizeForTest12278(event)
@@ -109,8 +109,8 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
         let finishedEvent = try sampleEventDetail(status: "completed", sport: "americanfootball_nfl")
         let scheduledEvent = try sampleEventDetail(status: "scheduled", sport: "soccer_epl")
 
-        // 1. Host and lay out at 390x844 phone width on the main actor.
-        let view = EventDetailView(eventId: liveEvent.id)
+        // 1. Host and lay out at 390x844 phone width on the main actor with a loaded EventDetail.
+        let view = EventDetailView(eventId: liveEvent.id).withLoadedEventForTest12278(liveEvent)
         let host = UIHostingController(
             rootView: NavigationStack {
                 view
@@ -124,22 +124,22 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
         XCTAssertEqual(host.view.bounds.width, 390)
 
         // 2. Execute body, contentView, heroSection, and nflPairedHeadlineView
-        // across live, finished, and scheduled events on a secondary thread with
-        // a 256 KB stack (1/4 of the 1,008 KB iPhone Thread 0 stack that
-        // previously overflowed at 1,004,336 bytes).
+        // on the loaded EventDetail branch across live, finished, and scheduled
+        // events on a secondary thread with a 256 KB stack (1/4 of the 1,008 KB
+        // iPhone Thread 0 stack that previously overflowed at 1,004,336 bytes).
         let finished = expectation(description: "256 KB stack evaluation finished without overflow")
         let observedBox = LockedResultBox<(
             live: (bodySize: Int, contentSize: Int, heroSize: Int, pairedSize: Int?),
-            finishedHeroSize: Int,
-            scheduledHeroSize: Int
+            finished: (bodySize: Int, contentSize: Int, heroSize: Int, pairedSize: Int?),
+            scheduled: (bodySize: Int, contentSize: Int, heroSize: Int, pairedSize: Int?)
         )>()
         let thread = Thread {
             let workerView = EventDetailView(eventId: liveEvent.id)
-            // EventDetailViewModel.event is private(set) on a private @StateObject and cannot be mutated without touching EventDetailViewModel.swift; heroSection and nflPairedHeadlineView below exercise the decoded live/finished/scheduled EventDetail payloads on this 256 KB stack.
+            // evaluateViewTreeForTest12278 injects the decoded EventDetail via withLoadedEventForTest12278 so body and contentView execute the loaded event branch on this 256 KB stack.
             let liveSizes = workerView.evaluateViewTreeForTest12278(liveEvent)
-            let finishedHero = workerView.heroSectionValueSizeForTest12278(finishedEvent)
-            let scheduledHero = workerView.heroSectionValueSizeForTest12278(scheduledEvent)
-            observedBox.store((live: liveSizes, finishedHeroSize: finishedHero, scheduledHeroSize: scheduledHero))
+            let finishedSizes = workerView.evaluateViewTreeForTest12278(finishedEvent)
+            let scheduledSizes = workerView.evaluateViewTreeForTest12278(scheduledEvent)
+            observedBox.store((live: liveSizes, finished: finishedSizes, scheduled: scheduledSizes))
             finished.fulfill()
         }
         thread.stackSize = 256 * 1024
@@ -151,8 +151,33 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
         XCTAssertLessThanOrEqual(observed.live.contentSize, 64)
         XCTAssertLessThanOrEqual(observed.live.heroSize, 64)
         XCTAssertLessThanOrEqual(try XCTUnwrap(observed.live.pairedSize), 64)
-        XCTAssertLessThanOrEqual(observed.finishedHeroSize, 64)
-        XCTAssertLessThanOrEqual(observed.scheduledHeroSize, 64)
+        XCTAssertLessThanOrEqual(observed.finished.bodySize, 64)
+        XCTAssertLessThanOrEqual(observed.finished.contentSize, 64)
+        XCTAssertLessThanOrEqual(observed.finished.heroSize, 64)
+        XCTAssertLessThanOrEqual(observed.scheduled.bodySize, 64)
+        XCTAssertLessThanOrEqual(observed.scheduled.contentSize, 64)
+        XCTAssertLessThanOrEqual(observed.scheduled.heroSize, 64)
+    }
+
+    func testEventDetailViewSourcePreservesNonInlinedStackBoundaries() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck")
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Views/EventDetailView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            source.contains("@inline(never)\n    private func stackBoundary12278<V: View>(@ViewBuilder _ make: () -> V) -> AnyView"),
+            "EventDetailView must keep @inline(never) stackBoundary12278 so Release (-O) cannot inline child @ViewBuilder frames into body/contentView/heroSection"
+        )
+        let boundaryOccurrences = source.components(separatedBy: "stackBoundary12278 {").count - 1
+        XCTAssertGreaterThanOrEqual(
+            boundaryOccurrences,
+            24,
+            "EventDetailView must preserve all 24+ stackBoundary12278 seams across body, contentView, heroSection, and nflPairedHeadlineView (found \(boundaryOccurrences))"
+        )
     }
 
     @MainActor
