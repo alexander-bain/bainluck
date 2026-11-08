@@ -191,6 +191,17 @@ nonisolated struct BainLuckShortcuts10873: AppShortcutsProvider {
             shortTitle: "Open Game or Market",
             systemImageName: "magnifyingglass"
         )
+        // #11664: a team plus "this weekend". The team is the phrase's parameter
+        // (`SupportedTeam11664`, NFL only); the app's name stays in each phrase.
+        AppShortcut(
+            intent: GetWeekendChanceIntent11664(),
+            phrases: [
+                "Ask \(.applicationName) if the \(\.$team) win this weekend",
+                "\(\.$team) chances this weekend in \(.applicationName)",
+            ],
+            shortTitle: "Weekend Chance",
+            systemImageName: "calendar"
+        )
         AppShortcut(
             intent: OpenMyStuffIntent10873(),
             phrases: [
