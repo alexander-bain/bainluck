@@ -3019,7 +3019,15 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\bufc\b.*\b(title|champion|main event)\b", lower):
         return "story:ufc_events"
 
-    if re.search(
+    # #4554 — a Slam's NAME is tennis only when the MARKET is. "AFC Wimbledon vs.
+    # Blackpool FC" is an EFL League One fixture, and the bare word filed it, its
+    # O/U lines and its first-half total under "Grand Slam Tennis" on
+    # `/search?q=wimbledon` (Nov 7). Measured over 400 days (read-only,
+    # `109604098a09e9c3`): every real Slam market carries `llm_sport_category`
+    # "tennis" (2,332 rows, none null), and every other match was a mis-filing:
+    # 590 AFC Wimbledon soccer rows, golf's "career Grand Slam", a baseball grand
+    # slam and esports' "ESL Grand Slam". The same gate as the US Open rule below.
+    if category == "tennis" and re.search(
         r"\b(wimbledon|french open|australian open|roland garros|grand slam)\b", lower
     ):
         return "story:grand_slam_tennis"
