@@ -7,7 +7,7 @@ final class EventAtlasHeadlineE1_11666Tests: XCTestCase {
 
     // MARK: - Build flag & launch override
 
-    func testBuildFlagDefaultsOffAndHonoursLaunchOverride() {
+    func testBuildFlagDefaultsOnAndHonoursLaunchOverride() {
         XCTAssertTrue(
             ReleaseSurfaces.eventPageAtlasEnabled,
             "the shipping switch is enabled for Alex's TestFlight phone look (85-A / #12278)"

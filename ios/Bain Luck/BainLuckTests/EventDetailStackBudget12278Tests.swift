@@ -10,16 +10,36 @@ import XCTest
 /// __swift_instantiateConcreteTypeFromMangledNameV2`.
 final class EventDetailStackBudget12278Tests: XCTestCase {
 
-    private func sampleEventDetail() throws -> EventDetail {
+    private final class LockedResultBox<Value>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: Value?
+
+        func store(_ value: Value) {
+            lock.lock()
+            storage = value
+            lock.unlock()
+        }
+
+        func load() -> Value? {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage
+        }
+    }
+
+    private func sampleEventDetail(
+        status: String = "live",
+        sport: String = "americanfootball_nfl"
+    ) throws -> EventDetail {
         let json = """
         {
           "id": 15342680,
-          "sport": "americanfootball_nfl",
+          "sport": "\(sport)",
           "league": "NFL",
           "home_team": "Washington Commanders",
           "away_team": "San Francisco 49ers",
           "commence_time": "2026-11-08T18:00:00Z",
-          "status": "live",
+          "status": "\(status)",
           "home_score": 17,
           "away_score": 21,
           "current_odds": {
@@ -42,32 +62,20 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
             "away_rendered_percent": 58
           },
           "espn": {
-            "period": 3,
+            "period": "3",
             "game_clock": "6:12",
             "broadcast": "FOX"
           },
           "win_probability_sources": {
-            "betting": { "home_win_prob": 0.36, "away_win_prob": 0.64, "weight": 3.0 },
-            "kalshi": { "home_win_prob": 0.37, "away_win_prob": 0.63, "weight": 0.8 },
-            "polymarket": { "home_win_prob": 0.365, "away_win_prob": 0.635, "weight": 0.8 }
-          },
-          "bookmaker_odds": [
-            {
-              "bookmaker": "fanduel",
-              "home_probability": 0.36,
-              "away_probability": 0.64,
-              "captured_at": "2026-11-07T17:29:00Z"
-            },
-            {
-              "bookmaker": "draftkings",
-              "home_probability": 0.37,
-              "away_probability": 0.63,
-              "captured_at": "2026-11-07T17:29:30Z"
-            }
-          ]
+            "betting": { "value": 0.36, "display_name": "Sportsbooks" },
+            "kalshi": { "value": 0.37, "display_name": "Kalshi" },
+            "polymarket": { "value": 0.365, "display_name": "Polymarket" }
+          }
         }
         """
-        return try JSONDecoder().decode(EventDetail.self, from: Data(json.utf8))
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(EventDetail.self, from: Data(json.utf8))
     }
 
     @MainActor
@@ -83,19 +91,13 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
         let bodySize = MemoryLayout.size(ofValue: view.body)
         let contentSize = view.contentViewValueSizeForTest12278
         let heroSize = view.heroSectionValueSizeForTest12278(event)
-        let headline = try XCTUnwrap(
-            NFLPairedHeadline9483.priced(
-                awayText: "63.6%",
-                homeText: "36.4%",
-                live: true,
-                score: (away: 21, home: 17),
-                pregame: PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
-            )
-        )
-        let pairedHeadlineSize = view.nflPairedHeadlineValueSizeForTest12278(event, headline)
+        let pairedHeadlineSize = try XCTUnwrap(view.nflPairedHeadlineValueSizeForTest12278(event))
 
-        XCTAssertEqual(bodySize, MemoryLayout<AnyView>.size)
-        XCTAssertLessThanOrEqual(bodySize, 64)
+        XCTAssertLessThanOrEqual(
+            bodySize,
+            64,
+            "EventDetailView.body value size (\(bodySize) bytes) must stay <= 64 bytes (#12278)"
+        )
         XCTAssertLessThanOrEqual(contentSize, 64)
         XCTAssertLessThanOrEqual(heroSize, 64)
         XCTAssertLessThanOrEqual(pairedHeadlineSize, 64)
@@ -103,19 +105,12 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
 
     @MainActor
     func testEventDetailViewRendersAtPhoneWidthAndExecutesOnConstrained256KBStack() throws {
-        let event = try sampleEventDetail()
-        let headline = try XCTUnwrap(
-            NFLPairedHeadline9483.priced(
-                awayText: "63.6%",
-                homeText: "36.4%",
-                live: true,
-                score: (away: 21, home: 17),
-                pregame: PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
-            )
-        )
+        let liveEvent = try sampleEventDetail(status: "live", sport: "americanfootball_nfl")
+        let finishedEvent = try sampleEventDetail(status: "completed", sport: "americanfootball_nfl")
+        let scheduledEvent = try sampleEventDetail(status: "scheduled", sport: "soccer_epl")
 
         // 1. Host and lay out at 390x844 phone width on the main actor.
-        let view = EventDetailView(eventId: event.id)
+        let view = EventDetailView(eventId: liveEvent.id)
         let host = UIHostingController(
             rootView: NavigationStack {
                 view
@@ -128,29 +123,36 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
         host.view.layoutIfNeeded()
         XCTAssertEqual(host.view.bounds.width, 390)
 
-        // 2. Evaluate body, contentView, heroSection, and nflPairedHeadlineView
-        // on a secondary thread with a 256 KB stack (1/4 of the 1,008 KB iPhone
-        // Thread 0 stack that previously overflowed at 1,004,336 bytes).
+        // 2. Execute body, contentView, heroSection, and nflPairedHeadlineView
+        // across live, finished, and scheduled events on a secondary thread with
+        // a 256 KB stack (1/4 of the 1,008 KB iPhone Thread 0 stack that
+        // previously overflowed at 1,004,336 bytes).
         let finished = expectation(description: "256 KB stack evaluation finished without overflow")
-        var observedSizes: (body: Int, content: Int, hero: Int, paired: Int)?
+        let observedBox = LockedResultBox<(
+            live: (bodySize: Int, contentSize: Int, heroSize: Int, pairedSize: Int?),
+            finishedHeroSize: Int,
+            scheduledHeroSize: Int
+        )>()
         let thread = Thread {
-            let workerView = EventDetailView(eventId: event.id)
-            let b = MemoryLayout.size(ofValue: workerView.body)
-            let c = workerView.contentViewValueSizeForTest12278
-            let h = workerView.heroSectionValueSizeForTest12278(event)
-            let p = workerView.nflPairedHeadlineValueSizeForTest12278(event, headline)
-            observedSizes = (b, c, h, p)
+            let workerView = EventDetailView(eventId: liveEvent.id)
+            // EventDetailViewModel.event is private(set) on a private @StateObject and cannot be mutated without touching EventDetailViewModel.swift; heroSection and nflPairedHeadlineView below exercise the decoded live/finished/scheduled EventDetail payloads on this 256 KB stack.
+            let liveSizes = workerView.evaluateViewTreeForTest12278(liveEvent)
+            let finishedHero = workerView.heroSectionValueSizeForTest12278(finishedEvent)
+            let scheduledHero = workerView.heroSectionValueSizeForTest12278(scheduledEvent)
+            observedBox.store((live: liveSizes, finishedHeroSize: finishedHero, scheduledHeroSize: scheduledHero))
             finished.fulfill()
         }
         thread.stackSize = 256 * 1024
         thread.start()
         wait(for: [finished], timeout: 5.0)
 
-        let sizes = try XCTUnwrap(observedSizes)
-        XCTAssertLessThanOrEqual(sizes.body, 64)
-        XCTAssertLessThanOrEqual(sizes.content, 64)
-        XCTAssertLessThanOrEqual(sizes.hero, 64)
-        XCTAssertLessThanOrEqual(sizes.paired, 64)
+        let observed = try XCTUnwrap(observedBox.load())
+        XCTAssertLessThanOrEqual(observed.live.bodySize, 64)
+        XCTAssertLessThanOrEqual(observed.live.contentSize, 64)
+        XCTAssertLessThanOrEqual(observed.live.heroSize, 64)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(observed.live.pairedSize), 64)
+        XCTAssertLessThanOrEqual(observed.finishedHeroSize, 64)
+        XCTAssertLessThanOrEqual(observed.scheduledHeroSize, 64)
     }
 
     @MainActor

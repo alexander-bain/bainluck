@@ -327,91 +327,98 @@ struct EventDetailView: View {
         return builds
     }
 
+    @inline(never)
+    private func stackBoundary12278<V: View>(@ViewBuilder _ make: () -> V) -> AnyView {
+        AnyView(make())
+    }
+
     var body: some View {
         let builds = Self.countBuild()
-        contentView
-            .erasedForStackBudget12278()
-            .background {
-                if Self.countsBuilds {
-                    Text("\(builds)")
-                        .font(.system(size: 1))
-                        .opacity(0.01)
-                        .accessibilityIdentifier("page-build-count")
-                }
-            }
-            .navigationTitle(dynamicTitle)
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                #if os(iOS)
-                ToolbarItem(placement: .principal) {
-                    navTitleView
-                        .accessibilityFocused($duringPageTitleFocused)
-                }
-                #endif
-                // Delivery status sits beside Win Probability, where the fan is
-                // reading prices. Keep the manual refresh independently reachable.
-                if isLive {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button { Task { await loadPage() } } label: {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 13, weight: .medium))
-                                .frame(width: 22, height: 22)
+        stackBoundary12278 {
+            stackBoundary12278 {
+                stackBoundary12278 {
+                    contentView
+                        .background {
+                            if Self.countsBuilds {
+                                Text("\(builds)")
+                                    .font(.system(size: 1))
+                                    .opacity(0.01)
+                                    .accessibilityIdentifier("page-build-count")
+                            }
                         }
-                        .accessibilityLabel("Refresh now")
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    HStack(spacing: 4) {
-                        ShareLink(item: shareURL) {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.system(size: 14))
-                        }
-                        .recordsShareOpened {
-                            ShareInstrumentation.recordShareOpened(
-                                itemType: "event",
-                                itemId: String(eventId),
-                                itemName: vm.event.map { "\($0.awayTeam) vs \($0.homeTeam)" },
-                                category: DiscoverCategory.token(forSport: vm.event?.sport),
-                                surface: .eventDetail
-                            )
-                        }
-                        PinButton(type: "event", id: eventId)
+                        .navigationTitle(dynamicTitle)
                         #if os(iOS)
-                        // #10880 — present only on an eligible upcoming game.
-                        CalendarDetailMenu10880(pageEventId: eventId, event: vm.event)
+                        .navigationBarTitleDisplayMode(.inline)
                         #endif
-                    }
+                        .toolbar {
+                            #if os(iOS)
+                            ToolbarItem(placement: .principal) {
+                                navTitleView
+                                    .accessibilityFocused($duringPageTitleFocused)
+                            }
+                            #endif
+                            // Delivery status sits beside Win Probability, where the fan is
+                            // reading prices. Keep the manual refresh independently reachable.
+                            if isLive {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    Button { Task { await loadPage() } } label: {
+                                        Image(systemName: "arrow.clockwise")
+                                            .font(.system(size: 13, weight: .medium))
+                                            .frame(width: 22, height: 22)
+                                    }
+                                    .accessibilityLabel("Refresh now")
+                                }
+                            }
+                            ToolbarItem(placement: .confirmationAction) {
+                                HStack(spacing: 4) {
+                                    ShareLink(item: shareURL) {
+                                        Image(systemName: "square.and.arrow.up")
+                                            .font(.system(size: 14))
+                                    }
+                                    .recordsShareOpened {
+                                        ShareInstrumentation.recordShareOpened(
+                                            itemType: "event",
+                                            itemId: String(eventId),
+                                            itemName: vm.event.map { "\($0.awayTeam) vs \($0.homeTeam)" },
+                                            category: DiscoverCategory.token(forSport: vm.event?.sport),
+                                            surface: .eventDetail
+                                        )
+                                    }
+                                    PinButton(type: "event", id: eventId)
+                                    #if os(iOS)
+                                    // #10880 — present only on an eligible upcoming game.
+                                    CalendarDetailMenu10880(pageEventId: eventId, event: vm.event)
+                                    #endif
+                                }
+                            }
+                        }
+                }
+                // #4974 — the page's one checkpoint task. SwiftUI cancels the run
+                // in flight whenever the key moves and when the page leaves; a run
+                // calls the view model only for a ready appearance of this page's
+                // own view model (`PublicationTaskKey4974.action`).
+                .task(id: publicationTaskKey) {
+                    await Self.runPublicationTask(for: publicationTaskKey, vm: vm)
+                }
+                // Its own modifier so the existing disappearance block is untouched:
+                // a load still in flight can no longer reopen readiness.
+                .onDisappear { publicationCaller.suspend() }
+                // #10874 — a viewed game joins Spotlight's recent entries.
+                .spotlightViewed10874(vm.event.flatMap { event in
+                    event.id == eventId ? SpotlightSubject10874.game(
+                        id: event.id, away: event.awayTeam, home: event.homeTeam,
+                        sportKey: event.sport, commenceTime: event.commenceTime) : nil
+                })
+                .task {
+                    marketPageVisible = true
+                    vm.setMarketPageVisible(scenePhase == .active)
+                    await loadPage()
+                    AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
+                }
+                .refreshable {
+                    await loadPage()
                 }
             }
-            .erasedForStackBudget12278()
-            // #4974 — the page's one checkpoint task. SwiftUI cancels the run
-            // in flight whenever the key moves and when the page leaves; a run
-            // calls the view model only for a ready appearance of this page's
-            // own view model (`PublicationTaskKey4974.action`).
-            .task(id: publicationTaskKey) {
-                await Self.runPublicationTask(for: publicationTaskKey, vm: vm)
-            }
-            // Its own modifier so the existing disappearance block is untouched:
-            // a load still in flight can no longer reopen readiness.
-            .onDisappear { publicationCaller.suspend() }
-            // #10874 — a viewed game joins Spotlight's recent entries.
-            .spotlightViewed10874(vm.event.flatMap { event in
-                event.id == eventId ? SpotlightSubject10874.game(
-                    id: event.id, away: event.awayTeam, home: event.homeTeam,
-                    sportKey: event.sport, commenceTime: event.commenceTime) : nil
-            })
-            .task {
-                marketPageVisible = true
-                vm.setMarketPageVisible(scenePhase == .active)
-                await loadPage()
-                AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
-            }
-            .refreshable {
-                await loadPage()
-            }
-            .erasedForStackBudget12278()
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active {
                     duringPageAnchor.cancel()
@@ -457,11 +464,12 @@ struct EventDetailView: View {
                 duringPageTitleFocused = false
                 vm.stopRefresh()
             }
-            .erasedForStackBudget12278()
+        }
     }
 
     @ViewBuilder
     private var contentView: some View {
+        stackBoundary12278 {
         if vm.loading {
             if ReleaseSurfaces.isEventPageAtlasEnabled() {
                 ProgressView(EventAtlasStates11666.loading)
@@ -476,13 +484,17 @@ struct EventDetailView: View {
                 description: Text(error)
             )
         } else if let event = vm.event {
+            stackBoundary12278 {
+            stackBoundary12278 {
             ScrollView {
                 VStack(spacing: 12) {
+                    stackBoundary12278 {
                     VStack(spacing: usesApprovedHeadlinePresentation9483(event) ? 0 : 12) {
                     // #10090 — the hero may show a provisional blend; with
                     // none held this is `event` itself. The chart projects the
                     // same one (`vm.chartFrames`); every other section keeps
                     // committed truth.
+                    stackBoundary12278 {
                     heroSection(vm.headline(event))
                         .background(GeometryReader { proxy in
                             Color.clear.preference(
@@ -494,7 +506,8 @@ struct EventDetailView: View {
                         // #10876 — no tip (the bar's pin tip, the chart's tip)
                         // opens while this hero is on screen.
                         .contextualTipHero10876(type: "event", id: eventId, scrollSpace: Self.scrollSpace)
-                        .erasedForStackBudget12278()
+                    }
+                    stackBoundary12278 {
                     VStack(spacing: 0) {
                         TimelineView(.periodic(from: .now, by: 60)) { tick in
                             OddsChartView(eventId: event.id, teamColors: teamColors(event),
@@ -585,7 +598,6 @@ struct EventDetailView: View {
                                          publicationJourney: Self.chartPublicationJourney(
                                             vm.publicationJourney, key: publicationTaskKey))
                         }
-                        .erasedForStackBudget12278()
                         // Bookmaker table (collapsible Sources panel)
                         sourcesToggle(event)
 
@@ -613,7 +625,7 @@ struct EventDetailView: View {
                     }
                     .background(usesApprovedHeadlinePresentation9483(event) ? Color.clear : Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: usesApprovedHeadlinePresentation9483(event) ? 0 : 12))
-                    .erasedForStackBudget12278()
+                    }
                     }
                     // #9483 v476 — headline and chart are one rounded card on the
                     // adopted pair: one backdrop, one set of corners, no seam notch.
@@ -621,7 +633,10 @@ struct EventDetailView: View {
                         if usesApprovedHeadlinePresentation9483(event) { Self.heroBackdrop(teamColors(event)) }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: usesApprovedHeadlinePresentation9483(event) ? 16 : 0))
-                    .erasedForStackBudget12278()
+                    }
+                    let projectedInput = projectedPointsInput(event)
+                    let projectionReplacesDifferential = ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)
+                    stackBoundary12278 {
                     // #10830 — Alex, build 46: Start Live Activity sat between the
                     // hero and the chart and took "too much prime real estate".
                     // It follows the chart now, a small leading control.
@@ -632,8 +647,6 @@ struct EventDetailView: View {
                             .padding(.horizontal, 4)
                     }
                     #endif
-                    let projectedInput = projectedPointsInput(event)
-                    let projectionReplacesDifferential = ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)
                     // #9483 — the NFL cards sit directly under the paired chart:
                     // the forecast against what happened, and the top player
                     // milestones. Each opens full size. Every section below,
@@ -728,6 +741,8 @@ struct EventDetailView: View {
                         .background(Color.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                    }
+                    stackBoundary12278 {
                     // #9483 C2 — the player questions follow the score context
                     // (differential / projected points), ahead of the maps and
                     // the spectrum. The whole block moved as one, so it is still
@@ -763,7 +778,6 @@ struct EventDetailView: View {
                             }
                         )
                         .background(MatrixPageReadingAnchorMarker10236(anchor: afterPageAnchor))
-                        .erasedForStackBudget12278()
                     } else if !(vm.gameMarkets?.duringPlayerProps?.rows ?? []).isEmpty
                         || duringDetailEventID == eventId {
                         EventPropsMatrixView(
@@ -796,7 +810,6 @@ struct EventDetailView: View {
                             }
                         )
                         .background(MatrixPageReadingAnchorMarker10236(anchor: duringPageAnchor))
-                        .erasedForStackBudget12278()
                     }
                     // Player Props (from game-markets endpoint) — only the props
                     // the matrix above does not already draw.
@@ -886,6 +899,8 @@ struct EventDetailView: View {
                             awayScore: event.awayScore
                         )
                     }
+                    }
+                    stackBoundary12278 {
                     // Special Event Markets (game props, novelty, MVP)
                     if let gameMarkets = vm.gameMarkets,
                        let otherMarkets = gameMarkets.other,
@@ -966,6 +981,7 @@ struct EventDetailView: View {
                         )
                     }
                     espnSection(event)
+                    }
                 }
                 .padding(.horizontal)
                 .padding(.bottom)
@@ -974,7 +990,6 @@ struct EventDetailView: View {
                 .onPreferenceChange(PageAxisPlotWidthPreferenceKey.self) { width in
                     pageAxisPlotWidth = width
                 }
-                .erasedForStackBudget12278()
             }
             .coordinateSpace(name: Self.scrollSpace)
             // Where content stops being covered by the bar, in the same space.
@@ -992,7 +1007,7 @@ struct EventDetailView: View {
             .onPreferenceChange(UsableViewportPreferenceKey.self) { viewport in
                 if nbaStreamSignals.usableViewport != viewport { nbaStreamSignals.usableViewport = viewport }
             }
-            .erasedForStackBudget12278()
+            }
             // #9483 v445 — only the PAGE's scroll phase can say the page is
             // being scrolled; the stream nested in it cannot observe that.
             .modifier(PageScrollPhase9483(signals: nbaStreamSignals))
@@ -1008,7 +1023,8 @@ struct EventDetailView: View {
             #else
             .sheet(isPresented: nflReaderPresented) { nflReader(event).frame(minWidth: 420, minHeight: 640) }
             #endif
-            .erasedForStackBudget12278()
+            }
+        }
         }
     }
 
@@ -1168,7 +1184,6 @@ struct EventDetailView: View {
                     .presentationCompactAdaptation(.popover)
                     #endif
             }
-            .erasedForStackBudget12278()
         }
     }
 
@@ -1226,7 +1241,6 @@ struct EventDetailView: View {
                 .presentationCompactAdaptation(.popover)
                 #endif
         }
-        .erasedForStackBudget12278()
     }
 
     /// #10090 (Alex 69) — the info control has nothing to draw beside the EKG.
@@ -1574,7 +1588,9 @@ struct EventDetailView: View {
 
         // #9483 v476 phone fit — the adopted header's rows sit closer: its
         // overhanging disclosure fills exactly this gap (see below).
-        return VStack(spacing: approvedPair ? Self.adoptedDisclosureOverhang9483 : 12) {
+        return stackBoundary12278 {
+        VStack(spacing: approvedPair ? Self.adoptedDisclosureOverhang9483 : 12) {
+            stackBoundary12278 {
             // Top meta row: status badge + countdown + broadcast + date
             //
             // Stacks with the rest. Left as a row it is the SECOND thing that
@@ -1624,7 +1640,6 @@ struct EventDetailView: View {
                             .padding(.vertical, stacked ? 0 : -Self.adoptedDisclosureOverhang9483)
                     }
                 }
-                .erasedForStackBudget12278()
             } else {
             metaLayout {
                 // #6544 — THE TICK IS HERE NOW, and it has to be somewhere.
@@ -1693,10 +1708,11 @@ struct EventDetailView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .erasedForStackBudget12278()
 
             }
+            }
 
+            stackBoundary12278 {
             // #9483 — the recognizable NFL page (design ref #10868 v105/v107):
             // both chances lead, each under its own team with its pregame
             // number, the actual score between them. Arms the paired headline
@@ -1712,6 +1728,7 @@ struct EventDetailView: View {
             // row FIRST and the competitors share the row beneath it (#10796;
             // #9483 put the pair on top — `EventHeroTeamLayout`).
             heroLayout {
+                stackBoundary12278 {
                 // Away team logo + score
                 VStack(spacing: 6) {
                     TeamLogoView(
@@ -1746,11 +1763,13 @@ struct EventDetailView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .erasedForStackBudget12278()
+                }
 
                 // Giant probabilities centered
                 VStack(spacing: 4) {
+                    stackBoundary12278 {
                     if isFinished {
+                        stackBoundary12278 {
                         // Winner emphasis for completed games
                         let outcome = heroOutcome(event)
                         let homeWon = outcome == .home
@@ -1842,6 +1861,7 @@ struct EventDetailView: View {
                                     .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
                             }
                         }
+                        }
                     } else if EventState.showsVenueSettledVerdict(
                         event.status,
                         venueSettled: event.venueSettled,
@@ -1928,6 +1948,7 @@ struct EventDetailView: View {
                                 away: shown.awayProbability,
                                 home: shown.homeProbability,
                                 sport: event.sport) {
+                        stackBoundary12278 {
                         let home = pair.home
                         let oddsFontSize: CGFloat = sizeClass == .regular ? 36 : 28
                         if let away = pair.away {
@@ -1967,7 +1988,6 @@ struct EventDetailView: View {
                                                              valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
                                                              color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                             }
-                            .erasedForStackBudget12278()
                         } else {
                             // #5271 — a draw-priced sport. There is one price
                             // here, it is the home side's, and the slot the
@@ -2006,7 +2026,6 @@ struct EventDetailView: View {
                                                              valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
                                                              color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                             }
-                            .erasedForStackBudget12278()
                         }
                         // #10090 (Alex 67) — the heartbeat, under the big percentage.
                         heroEkg(event, isOpeningLine: shown.isOpeningLine)
@@ -2117,7 +2136,6 @@ struct EventDetailView: View {
                                             .alignmentGuide(.bottom) { $0[.top] }
                                     }
                                 }
-                                .erasedForStackBudget12278()
                         }
                         // #9500 — any streamable status moves the hero, but an
                         // opening line (#9470) still reports no delivery.
@@ -2127,6 +2145,7 @@ struct EventDetailView: View {
                         // #8320 — #3313's live sparkline was drawn here, and it
                         // is gone: it was a thumbnail of the full chart one card
                         // below, which since #8320 starts on the first screen.
+                        }
                     } else {
                         let heroNow = displayNow()
                         if ReleaseSurfaces.isEventPageAtlasEnabled(),
@@ -2184,6 +2203,7 @@ struct EventDetailView: View {
                             .font(.caption)
                             .foregroundStyle(Color.primary)
                     }
+                    }
                     // #6544 — THE COUNTDOWN USED TO BE PRINTED HERE TOO, and the
                     // two copies could not disagree: one `formatCountdown`
                     // (`FormattingUtilities.swift`), the same `commenceTime`, so
@@ -2215,8 +2235,8 @@ struct EventDetailView: View {
                 // off BOTH edges. Stacked, the column has the full width and needs no
                 // exemption; `horizontal: false` is a no-op, not a second behaviour.
                 .fixedSize(horizontal: !stacked, vertical: false)
-                .erasedForStackBudget12278()
 
+                stackBoundary12278 {
                 // Home team logo + score
                 VStack(spacing: 6) {
                     TeamLogoView(
@@ -2245,11 +2265,12 @@ struct EventDetailView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .erasedForStackBudget12278()
+                }
             }
-            .erasedForStackBudget12278()
+            }
             }
 
+            stackBoundary12278 {
             // #11296 — on a final, the sportsbooks' last pair before the
             // scheduled start, one quiet line under whichever arm printed the
             // actual result: the cards' one rule and one view, so the headline
@@ -2277,8 +2298,8 @@ struct EventDetailView: View {
                     ekgTracker: ekgTracker,
                     asOf: displayAsOf)
             }
+            }
         }
-        .erasedForStackBudget12278()
         // #9483 v476 — on the adopted pair the hero is the top of ONE card with
         // the chart (see the page body): no own backdrop or corners, a short
         // bottom inset and one hairline above the chart's title.
@@ -2292,7 +2313,7 @@ struct EventDetailView: View {
             if !approvedPair { Self.heroBackdrop(colors) }
         }
         .clipShape(RoundedRectangle(cornerRadius: approvedPair ? 0 : 16))
-        .erasedForStackBudget12278()
+        }
     }
 
     /// #11296 — the headline's forecast line, by the rule both finished cards
@@ -2682,7 +2703,9 @@ struct EventDetailView: View {
         let sides = adopted && dynamicTypeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
             : AnyLayout(HStackLayout(alignment: .nflPairedFigure9483, spacing: 8))
-        return VStack(spacing: adopted ? 8 : 6) {
+        return stackBoundary12278 {
+        VStack(spacing: adopted ? 8 : 6) {
+            stackBoundary12278 {
             sides {
                 nflPairedSide(event, headline.away, name: names.away, isAway: true,
                               color: colors.away, logo: event.awayTeamData?.logoSmall,
@@ -2711,6 +2734,8 @@ struct EventDetailView: View {
                         .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
                 }
             }
+            }
+            stackBoundary12278 {
             if priced && adopted {
                 // The pair's subject and the finite movement cue sit with the
                 // chances they describe, above the score/projection divider.
@@ -2808,8 +2833,9 @@ struct EventDetailView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.primary)
             }
+            }
         }
-        .erasedForStackBudget12278()
+        }
     }
 
     // MARK: - #9483 tennis completed-match headline
@@ -2860,7 +2886,6 @@ struct EventDetailView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(headline.accessibilityLabel)
         .accessibilityIdentifier("tennis-final-headline")
-        .erasedForStackBudget12278()
     }
 
     /// One player: full name (wrapping between words, never shrunk or cut),
@@ -2995,7 +3020,6 @@ struct EventDetailView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.projectionAccessibilityLabel9483(figure: figure, names: names))
         .accessibilityIdentifier("adopted-pregame-projection")
-        .erasedForStackBudget12278()
     }
 
     private func projectedTeam11285(_ name: String, color: Color) -> some View {
@@ -3096,7 +3120,6 @@ struct EventDetailView: View {
                 EventHeadlinePhaseLabel9483(phase: phase, baseline: baseline, maxWidth: maxWidth)
             }
         }
-        .erasedForStackBudget12278()
     }
 
     /// The NFL arrangement prints each side's pregame number under its own
@@ -3174,7 +3197,6 @@ struct EventDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: adopted || isAway ? .leading : .trailing)
-        .erasedForStackBudget12278()
     }
 
     /// The headline's figures are fixed sizes, so its captions stop growing
@@ -3231,7 +3253,6 @@ struct EventDetailView: View {
                     .accessibilityHidden(movement == .reserved)
             }
         }
-        .erasedForStackBudget12278()
     }
 
     /// The widest the hero's centre verdict may be, in points.
@@ -3445,7 +3466,6 @@ struct EventDetailView: View {
             .padding()
             .background(Color.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            .erasedForStackBudget12278()
         }
     }
 
@@ -3562,7 +3582,6 @@ struct EventDetailView: View {
             .onPreferenceChange(SourceRowWidthKey.self) { width in
                 sourceRowWidth = width
             }
-            .erasedForStackBudget12278()
         }
     }
 
@@ -3762,7 +3781,6 @@ struct EventDetailView: View {
             }
         }
         .padding(.vertical, 8)
-        .erasedForStackBudget12278()
     }
 
     private func legendItem(color: Color, label: String) -> some View {
@@ -4061,7 +4079,6 @@ struct EventDetailView: View {
             }
         }
         .padding(.vertical, 8)
-        .erasedForStackBudget12278()
     }
 
     // MARK: - League Page Link
@@ -5013,7 +5030,7 @@ extension EventDetailView {
         return held
     }
 
-    /// #12278 — Runtime value-size accessors for `EventDetailStackBudget12278Tests`.
+    #if DEBUG
     var contentViewValueSizeForTest12278: Int {
         MemoryLayout.size(ofValue: contentView)
     }
@@ -5022,10 +5039,26 @@ extension EventDetailView {
         MemoryLayout.size(ofValue: heroSection(event))
     }
 
-    func nflPairedHeadlineValueSizeForTest12278(_ event: EventDetail, _ headline: NFLPairedHeadline9483) -> Int {
-        MemoryLayout.size(ofValue: nflPairedHeadlineView(
-            event, headline, colors: teamColors(event), stacked: false, hasScore: true))
+    func nflPairedHeadlineValueSizeForTest12278(_ event: EventDetail) -> Int? {
+        let hasScore = Self.showsScore(status: event.status, away: event.awayScore, home: event.homeScore)
+        guard let paired = nflPairedHeadline(event, hasScore: hasScore) else { return nil }
+        return MemoryLayout.size(ofValue: nflPairedHeadlineView(
+            event,
+            paired,
+            colors: teamColors(event),
+            stacked: false,
+            hasScore: hasScore
+        ))
     }
+
+    func evaluateViewTreeForTest12278(_ event: EventDetail) -> (bodySize: Int, contentSize: Int, heroSize: Int, pairedSize: Int?) {
+        let b = MemoryLayout.size(ofValue: body)
+        let c = MemoryLayout.size(ofValue: contentView)
+        let h = MemoryLayout.size(ofValue: heroSection(event))
+        let p = nflPairedHeadlineValueSizeForTest12278(event)
+        return (b, c, h, p)
+    }
+    #endif
 }
 
 /// #9483 — the NFL paired headline's shared line: both chances and the score
@@ -5035,15 +5068,4 @@ private extension VerticalAlignment {
         static func defaultValue(in d: ViewDimensions) -> CGFloat { d[VerticalAlignment.center] }
     }
     static let nflPairedFigure9483 = VerticalAlignment(NFLPairedFigure9483.self)
-}
-
-/// #12278 — Type-erase large composite subtrees at modifier-chain and section
-/// boundaries so `EventDetailView.body`, `contentView`, and `heroSection` do
-/// not multiply a ~26 KB nested `ModifiedContent`/`TupleView`/`_ConditionalContent`
-/// value type across 40+ dynamic stack allocations and overflow the 1,008 KB
-/// iPhone main-thread stack in `Release` builds.
-private extension View {
-    func erasedForStackBudget12278() -> AnyView {
-        AnyView(self)
-    }
 }
