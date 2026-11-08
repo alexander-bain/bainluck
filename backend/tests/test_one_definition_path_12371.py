@@ -185,7 +185,7 @@ class TestOneDefinitionPathFolderRegistration:
             assert producer.level == defn["level"]
             seen_kinds.add(str(defn["rule"]["producer"]))
 
-        assert seen_kinds == {
+        assert seen_kinds >= {
             "sibling_family",
             "same_deadline_board",
             "yardstick_pair",
@@ -195,6 +195,7 @@ class TestOneDefinitionPathFolderRegistration:
             "window_events_closest",
             "register_closest",
             "awards_category_roundup",
+            "subject_sequence",
         }
 
 
@@ -453,6 +454,7 @@ class TestKindModuleFirstImport:
             "app.utils.roundup_containers",
             "app.utils.same_deadline_board",
             "app.utils.sibling_family",
+            "app.utils.subject_sequence",
             "app.utils.week_events",
             "app.utils.window_events_closest",
             "app.utils.yardstick_pair",

@@ -64,11 +64,57 @@ export function RoundupCard({
         className="grid min-w-0 gap-[14px] rounded-2xl border border-surface-border bg-surface-card pb-[13px] pl-[18px] pr-[18px] pt-[18px] text-left no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--series-1)]"
       >
         <RoundupHeader kicker={model.kicker} tag={model.tag} title={model.title} longHeadline={model.longHeadline} />
-        <div className="grid gap-[14px]" data-testid="roundup-rows">
-          {model.rows.map((row) => (
-            <RoundupRow key={row.marketId} row={row} nowMs={now} />
-          ))}
-        </div>
+        {model.presentation === "strip" ? (
+          <div className="grid grid-cols-3 gap-2.5" data-testid="roundup-rows" data-presentation="strip">
+            {model.rows.map((row) => (
+              <div
+                key={row.marketId}
+                className="flex min-w-0 flex-col justify-between rounded-xl border border-surface-border bg-surface-elevated/40 p-2.5"
+                data-testid="roundup-row"
+                data-market-id={row.marketId}
+              >
+                <div className="min-w-0" data-testid="roundup-row-label">
+                  <div className="truncate text-[13px] font-medium leading-[1.25] text-text-primary">
+                    {row.opponentLabel ?? row.label}
+                  </div>
+                  {row.dateLabel ? (
+                    <div className="mt-0.5 truncate text-[11.5px] leading-[1.2] text-text-secondary">
+                      {row.dateLabel}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="mt-2.5">
+                  <div className="flex items-baseline justify-between gap-1">
+                    <span className="font-mono text-[18px] font-bold leading-[1.15] tracking-[-0.03em] text-text-primary tabular-nums">
+                      {row.marker}
+                      {row.digits}
+                      <small className="ml-px text-[0.6em] font-medium tracking-normal text-text-secondary">%</small>
+                    </span>
+                    {row.rowMark ? (
+                      <PriceAgeMark observedAt={row.observedAt} nowMs={now} cadence={row.cadence} scope="row" />
+                    ) : null}
+                  </div>
+                  <span
+                    className="mt-1.5 block h-[5px] overflow-hidden rounded-[3px] bg-surface-elevated"
+                    aria-hidden="true"
+                  >
+                    <i
+                      className="block h-full min-w-[3px] rounded-r-[3px] bg-[var(--series-1)]"
+                      style={{ width: `${Math.max(0, Math.min(1, row.fill)) * 100}%` }}
+                      data-testid="roundup-row-bar"
+                    />
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-[14px]" data-testid="roundup-rows">
+            {model.rows.map((row) => (
+              <RoundupRow key={row.marketId} row={row} nowMs={now} />
+            ))}
+          </div>
+        )}
         {model.countLine ? (
           <div className="text-[12px] text-text-secondary" data-testid="roundup-count-line">
             {model.countLine}
