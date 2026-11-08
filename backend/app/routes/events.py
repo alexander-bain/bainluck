@@ -17056,7 +17056,11 @@ _SUGGESTION_MOVERS_POOLED = os.getenv(
 #: 12 rows) is already in production and is not in the model's own comment. An
 #: allowlist of `('field','duel')` would silently drop both classes; a denylist
 #: fails OPEN into `_mover_chips`, which is a real defense and not a hope.
-_SUGGESTION_MOVERS_EXCLUDED_SHAPES = ("quantity", "unshaped", "container_member")
+#:
+#: `claim` joined with classifier v3 (#12221): its outcome names are only ever
+#: `Yes`/`No`, and the 954 lone-`Yes` Kalshi binaries counted under `unshaped`
+#: above move to it.
+_SUGGESTION_MOVERS_EXCLUDED_SHAPES = ("quantity", "unshaped", "container_member", "claim")
 
 
 def _suggestion_movers_market_conditions() -> tuple:

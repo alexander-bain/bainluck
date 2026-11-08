@@ -141,6 +141,20 @@ def test_shape_and_frame_counts_read_every_open_market():
     assert (c.frames_written, c.frames_null, c.frames_never) == (1, 1, 1)
 
 
+def test_the_priced_floor_and_empty_rows_are_counted_apart_12221():
+    """#12221: Alex's floor is every open, PRICED market; an empty row has no shape to give."""
+    rows = [
+        row("KXA-1", market_type="unshaped", relation="unknown"),
+        row("KXA-2", market_type="unshaped", relation="unknown", priced=False, names=()),
+        row("KXA-3", market_type="field", relation="unknown"),
+        row("KXA-4"),
+    ]
+    c = counts(rows)
+    assert (c.unshaped, c.relation_unknown) == (2, 3)
+    assert (c.priced_markets, c.priced_unshaped, c.priced_relation_unknown) == (3, 1, 2)
+    assert c.no_outcomes == 1
+
+
 def test_new_series_candidates_are_young_uncovered_families_of_three():
     young = series("KXNEW", 3, created=YOUNG)
     old = series("KXOLD", 3)

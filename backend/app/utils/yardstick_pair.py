@@ -382,7 +382,9 @@ def _qualify_yardstick_member(
         return None, "deciding_within_48h"
 
     mtype = str(market.get("market_type") or "yes_no").strip().lower()
-    if mtype not in {"yes_no", "binary", "container_member", "unshaped", ""}:
+    # `claim` is the shape a lone-"Yes" Kalshi binary carries from classifier v3
+    # (#12221); before it, those rows read `unshaped`.
+    if mtype not in {"yes_no", "binary", "claim", "container_member", "unshaped", ""}:
         return None, f"non_binary_market_type:{mtype}"
 
     raw_outcomes = market.get("outcomes")

@@ -163,6 +163,12 @@ class Counts:
     relation_unknown: int = 0
     shape_unclassified: int = 0
     graph_unclassified: int = 0
+    #: #12221: the floor Alex ruled on (84 C) is every open, PRICED market; an
+    #: open row with no outcomes at all has no shape to give (Polymarket event
+    #: rows whose legs were never stored: 3,905 on Nov 7 2026, #12322).
+    priced_unshaped: int = 0
+    priced_relation_unknown: int = 0
+    no_outcomes: int = 0
     frames_written: int = 0
     #: ``"frame": null``: the writer stores null both when the title states no
     #: number and when the model's number failed the title check (#12249).
@@ -235,9 +241,13 @@ class CountsBuilder:
             c.frames_never += 1
         if row.get("event_id") is not None:
             self.event_ids.add(mid)
+        if not row.get("names"):
+            c.no_outcomes += 1
         if not row.get("priced"):
             return
         c.priced_markets += 1
+        c.priced_unshaped += shape == "unshaped"
+        c.priced_relation_unknown += row.get("outcome_relation") == "unknown"
         created = row["created_at"]
         source = str(row.get("source") or "")
         names = tuple(n for n in (row.get("names") or []) if n) if source == "polymarket" else ()
@@ -438,7 +448,11 @@ def compose_report(
         f"({_pct(counts.unshaped, counts.open_markets)}) · {_n(counts.relation_unknown)} with outcomes "
         f"`unknown` ({_pct(counts.relation_unknown, counts.open_markets)}) · "
         f"{_n(counts.shape_unclassified)} not yet classified · {_n(counts.graph_unclassified)} graph "
-        f"members `unclassified`"
+        f"members `unclassified`. Of {_n(counts.priced_markets)} open, priced markets: "
+        f"{_n(counts.priced_unshaped)} `unshaped` ({_pct(counts.priced_unshaped, counts.priced_markets)}) · "
+        f"{_n(counts.priced_relation_unknown)} `unknown` "
+        f"({_pct(counts.priced_relation_unknown, counts.priced_markets)}) · "
+        f"{_n(counts.no_outcomes)} open markets hold no outcomes at all"
     )
     lines.append(
         f"**4. New measures: UNKNOWN**: nothing reads the frame yet (#12249). Frames on open markets: "
