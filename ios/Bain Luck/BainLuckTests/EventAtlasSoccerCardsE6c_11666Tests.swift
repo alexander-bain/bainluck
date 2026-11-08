@@ -687,4 +687,122 @@ final class EventAtlasSoccerCardsE6c_11666Tests: XCTestCase {
             "Ambiguous shared-city token alone must return nil"
         )
     }
+
+    @MainActor
+    func testExactScoreReadsQuestionMatrixAndAnyOtherScoreBucket() throws {
+        let now = try XCTUnwrap("2026-11-06T22:00:00Z".asDate)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        // 1. Exact score from gameMarkets.other with "Any other score" winning bucket
+        let otherJSON = """
+        [
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Draw 0-0", "probability": 0.01, "pregame_mark": 0.08, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Arsenal wins 1-0", "probability": 0.01, "pregame_mark": 0.14, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Draw 1-1", "probability": 0.01, "pregame_mark": 0.12, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Chelsea wins 2-1", "probability": 0.01, "pregame_mark": 0.09, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "official_score"},
+            {"_market_id": 950, "market_name": "Exact Score", "outcome_name": "Any other score", "probability": 0.99, "pregame_mark": 0.04, "observed_at": "2026-11-06T19:55:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "official_score"}
+        ]
+        """
+        let otherRows = try decoder.decode([GameMarketOther].self, from: Data(otherJSON.utf8))
+        let settledCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildExactScoreCard(
+                matrix: nil,
+                otherMarkets: otherRows,
+                status: "completed",
+                commenceTime: "2026-11-06T20:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: now
+            )
+        )
+        let otherCell = try XCTUnwrap(settledCard.otherCell)
+        XCTAssertEqual(otherCell.outcomeLabel, "Any other score")
+        XCTAssertEqual(otherCell.chance ?? 0, 0.04, accuracy: 1e-6)
+        XCTAssertEqual(otherCell.result, .won)
+        XCTAssertEqual(settledCard.defaultSelectedKey, "other")
+
+        let otherSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: otherCell.id,
+                cards: [.soccerExactScore(settledCard)],
+                rows: [:],
+                awayName: "Chelsea FC",
+                homeName: "Arsenal FC"
+            )
+        )
+        XCTAssertEqual(otherSheet.outcomeTitle, "Any other score")
+        XCTAssertEqual(otherSheet.primaryReadingLabel, "Result")
+        XCTAssertEqual(otherSheet.primaryReadingValue, "✓ Won")
+        XCTAssertEqual(otherSheet.pregameBaseline, "4%")
+
+        // 2. Exact score read directly from EventQuestionMatrix (10238.v1) when gameMarkets.other is empty
+        let matrixJSON = """
+        {
+            "contract": "10238.v1",
+            "event_id": 951,
+            "questions": [
+                {
+                    "question_key": "q:exact_score",
+                    "kind": "named_options",
+                    "label": "Exact Score",
+                    "market_name": "Exact Score",
+                    "typing": {"state": "typed"},
+                    "options": [
+                        {
+                            "option_key": "0-0",
+                            "label": "Draw 0-0",
+                            "contributor_outcome_ids": [9501],
+                            "published": {"value_state": "quoted", "value": 0.10, "observed_at": "2026-11-06T21:55:00Z", "source": "polymarket"}
+                        },
+                        {
+                            "option_key": "1-0",
+                            "label": "Arsenal wins 1-0",
+                            "contributor_outcome_ids": [9502],
+                            "published": {"value_state": "quoted", "value": 0.16, "observed_at": "2026-11-06T21:55:00Z", "source": "polymarket"}
+                        },
+                        {
+                            "option_key": "1-1",
+                            "label": "Draw 1-1",
+                            "contributor_outcome_ids": [9503],
+                            "published": {"value_state": "quoted", "value": 0.13, "observed_at": "2026-11-06T21:55:00Z", "source": "polymarket"}
+                        },
+                        {
+                            "option_key": "0-1",
+                            "label": "Chelsea wins 1-0",
+                            "contributor_outcome_ids": [9504],
+                            "published": {"value_state": "quoted", "value": 0.09, "observed_at": "2026-11-06T21:55:00Z", "source": "polymarket"}
+                        },
+                        {
+                            "option_key": "other",
+                            "label": "Any other score",
+                            "contributor_outcome_ids": [9505],
+                            "published": {"value_state": "quoted", "value": 0.06, "observed_at": "2026-11-06T21:55:00Z", "source": "polymarket"}
+                        }
+                    ]
+                }
+            ]
+        }
+        """
+        let matrix = try decoder.decode(EventQuestionMatrix.self, from: Data(matrixJSON.utf8))
+        let matrixCard = try XCTUnwrap(
+            EventAtlasSoccerCards11666.buildExactScoreCard(
+                matrix: matrix,
+                otherMarkets: [],
+                status: "scheduled",
+                commenceTime: "2026-11-06T23:00:00Z".asDate,
+                homeTeam: "Arsenal FC",
+                awayTeam: "Chelsea FC",
+                homeShort: "Arsenal",
+                awayShort: "Chelsea",
+                now: now
+            )
+        )
+        XCTAssertEqual(matrixCard.cells.count, 4)
+        XCTAssertEqual(matrixCard.defaultSelectedKey, "1-0")
+        XCTAssertEqual(matrixCard.otherCell?.chance ?? 0, 0.06, accuracy: 1e-6)
+        XCTAssertEqual(matrixCard.source, "polymarket")
+    }
 }

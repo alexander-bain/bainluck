@@ -506,6 +506,18 @@ nonisolated enum EventAtlasSoccerCards11666 {
         let marketTitle: String
     }
 
+    nonisolated struct ExactScoreOtherCell: Equatable, Identifiable, Sendable {
+        var id: String { "soccer-exact:other" }
+        var key: String { "other" }
+        let outcomeLabel: String
+        let chance: Double?
+        let pregameChance: Double?
+        let observedAt: String?
+        let result: OutcomeVerdict?
+        let source: String?
+        let marketTitle: String
+    }
+
     nonisolated struct ExactScoreCard: Equatable, Identifiable, Sendable {
         var id: String { "soccer:exactScore" }
         let phase: NBALadderCard9483.Phase
@@ -516,6 +528,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
         let maxGoals: Int
         let maxChance: Double
         let cells: [ExactScoreCell]
+        let otherCell: ExactScoreOtherCell?
         let defaultSelectedKey: String
         let marketTitle: String
         let source: String?
@@ -609,11 +622,104 @@ nonisolated enum EventAtlasSoccerCards11666 {
             let marketTitle: String
             let source: String?
             let cellsByKey: [String: ExactScoreCell]
+            let otherCell: ExactScoreOtherCell?
             let score: Int
         }
 
         var candidates: [CandidateGrid] = []
 
+        // 1. Check game_question_matrix questions (10238.v1)
+        let gqmQuestions = (matrix?.contract == NBAEventCards9483.matrixContract)
+            ? (matrix?.questions ?? [])
+            : []
+        for q in gqmQuestions {
+            let title = (q.marketName ?? q.label).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isExactScoreMarketTitle(title) else { continue }
+            if let periodKey = q.period?.key, periodKey != "full_game" { continue }
+            var cellsByKey: [String: ExactScoreCell] = [:]
+            var otherCell: ExactScoreOtherCell?
+
+            for o in q.options {
+                guard let parsed = parseExactScoreOutcome(
+                    outcomeLabel: o.label,
+                    homeTeam: homeTeam,
+                    awayTeam: awayTeam,
+                    homeShort: homeShort,
+                    awayShort: awayShort
+                ) else { continue }
+
+                let quoted = !finished && NFLMilestoneCard9483.isRecent(o.published.observedAt, now: now)
+                    ? openChance(o.published.quotedValue)
+                    : nil
+                let pin = NBALadderCard9483.pin(o)
+                let settledReading: (probability: Double, at: String)? = {
+                    guard let r = o.pregameReading, r.state == "available", r.basis == "pregame_pin",
+                          let outId = r.outcomeId, o.contributorOutcomeIds == [outId],
+                          let prob = r.probability, prob.isFinite, prob > 0, prob < 1,
+                          let at = r.observedAt, !at.isEmpty else { return nil }
+                    return (prob, at)
+                }()
+                let pregame = finished ? settledReading?.probability : pin?.probability
+                let pregameAt = finished ? settledReading?.at : pin?.at
+                let chance = finished ? pregame : (quoted ?? pregame)
+                let verdict: OutcomeVerdict? = finished
+                    ? (o.result?.isWinner == true ? .won : o.result?.isWinner == false ? .lost : nil)
+                    : nil
+
+                if case .other = parsed {
+                    guard otherCell == nil else { continue }
+                    otherCell = ExactScoreOtherCell(
+                        outcomeLabel: o.label,
+                        chance: chance,
+                        pregameChance: pregame,
+                        observedAt: o.published.observedAt ?? pregameAt,
+                        result: verdict,
+                        source: o.published.source,
+                        marketTitle: title
+                    )
+                    continue
+                }
+
+                guard case .score(let hGoals, let aGoals) = parsed,
+                      hGoals <= 6, aGoals <= 6 else { continue }
+                let cellKey = "\(hGoals)-\(aGoals)"
+                guard cellsByKey[cellKey] == nil else { continue }
+
+                cellsByKey[cellKey] = ExactScoreCell(
+                    key: cellKey,
+                    homeGoals: hGoals,
+                    awayGoals: aGoals,
+                    outcomeLabel: o.label,
+                    chance: chance,
+                    pregameChance: pregame,
+                    observedAt: o.published.observedAt ?? pregameAt,
+                    result: verdict,
+                    source: o.published.source,
+                    marketTitle: title
+                )
+            }
+
+            if cellsByKey.count >= 4 {
+                let cells = cellsByKey.values.sorted { a, b in
+                    if a.awayGoals != b.awayGoals { return a.awayGoals < b.awayGoals }
+                    return a.homeGoals < b.homeGoals
+                }
+                let pricedCount = cells.filter { $0.chance != nil }.count + (otherCell?.chance != nil ? 1 : 0)
+                let wonCount = cells.filter { $0.result == .won }.count + (otherCell?.result == .won ? 1 : 0)
+                let resolvedSource = cells.compactMap(\.source).first ?? otherCell?.source
+                candidates.append(
+                    CandidateGrid(
+                        marketTitle: title,
+                        source: resolvedSource,
+                        cellsByKey: cellsByKey,
+                        otherCell: otherCell,
+                        score: pricedCount * 10 + wonCount * 20 + cells.count
+                    )
+                )
+            }
+        }
+
+        // 2. Also check gameMarkets.other grouped by marketId / source + marketName
         var byMarketKey: [String: (title: String, rows: [GameMarketOther])] = [:]
         var marketKeyOrder: [String] = []
         for row in otherMarkets {
@@ -632,6 +738,8 @@ nonisolated enum EventAtlasSoccerCards11666 {
         for key in marketKeyOrder {
             guard let group = byMarketKey[key] else { continue }
             var cellsByKey: [String: ExactScoreCell] = [:]
+            var otherCell: ExactScoreOtherCell?
+
             for row in group.rows {
                 let outLabel = row.outcomeName.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard let parsed = parseExactScoreOutcome(
@@ -641,11 +749,6 @@ nonisolated enum EventAtlasSoccerCards11666 {
                     homeShort: homeShort,
                     awayShort: awayShort
                 ) else { continue }
-                guard case .score(let hGoals, let aGoals) = parsed,
-                      hGoals <= 6, aGoals <= 6 else { continue }
-
-                let cellKey = "\(hGoals)-\(aGoals)"
-                guard cellsByKey[cellKey] == nil else { continue }
 
                 let observedAt = row.observedAt
                 let recent = NFLMilestoneCard9483.isRecent(observedAt, now: now)
@@ -659,6 +762,26 @@ nonisolated enum EventAtlasSoccerCards11666 {
                     resolutionSource: row.resolutionSource,
                     marketResolved: finished
                 )
+
+                if case .other = parsed {
+                    guard otherCell == nil else { continue }
+                    otherCell = ExactScoreOtherCell(
+                        outcomeLabel: outLabel,
+                        chance: chance,
+                        pregameChance: pregame,
+                        observedAt: observedAt,
+                        result: verdict,
+                        source: row.source,
+                        marketTitle: group.title
+                    )
+                    continue
+                }
+
+                guard case .score(let hGoals, let aGoals) = parsed,
+                      hGoals <= 6, aGoals <= 6 else { continue }
+
+                let cellKey = "\(hGoals)-\(aGoals)"
+                guard cellsByKey[cellKey] == nil else { continue }
 
                 cellsByKey[cellKey] = ExactScoreCell(
                     key: cellKey,
@@ -679,13 +802,15 @@ nonisolated enum EventAtlasSoccerCards11666 {
                     if a.awayGoals != b.awayGoals { return a.awayGoals < b.awayGoals }
                     return a.homeGoals < b.homeGoals
                 }
-                let pricedCount = cells.filter { $0.chance != nil }.count
-                let wonCount = cells.filter { $0.result == .won }.count
+                let pricedCount = cells.filter { $0.chance != nil }.count + (otherCell?.chance != nil ? 1 : 0)
+                let wonCount = cells.filter { $0.result == .won }.count + (otherCell?.result == .won ? 1 : 0)
+                let resolvedSource = cells.compactMap(\.source).first ?? otherCell?.source
                 candidates.append(
                     CandidateGrid(
                         marketTitle: group.title,
-                        source: cells.compactMap(\.source).first,
+                        source: resolvedSource,
                         cellsByKey: cellsByKey,
+                        otherCell: otherCell,
                         score: pricedCount * 10 + wonCount * 20 + cells.count
                     )
                 )
@@ -752,16 +877,47 @@ nonisolated enum EventAtlasSoccerCards11666 {
         }
 
         let anyCandidateSettled = deduped.contains { cand in
-            cand.cellsByKey.values.contains { $0.result != nil }
+            cand.cellsByKey.values.contains { $0.result != nil } || cand.otherCell?.result != nil
         }
-        guard cells.contains(where: { $0.chance != nil || $0.result != nil }) || (finished && multiUnblended && anyCandidateSettled) else { return nil }
+        let resolvedOtherCell: ExactScoreOtherCell? = {
+            guard let rawOther = best.otherCell else { return nil }
+            if !multiUnblended { return rawOther }
+            var verdicts = Set<OutcomeVerdict>()
+            for cand in deduped {
+                if let v = cand.otherCell?.result {
+                    verdicts.insert(v)
+                }
+            }
+            let agreed: OutcomeVerdict? = (verdicts.contains(.won) && verdicts.contains(.lost))
+                ? nil
+                : verdicts.contains(.won) ? .won : verdicts.contains(.lost) ? .lost : nil
+            return ExactScoreOtherCell(
+                outcomeLabel: rawOther.outcomeLabel,
+                chance: nil,
+                pregameChance: nil,
+                observedAt: rawOther.observedAt,
+                result: agreed,
+                source: nil,
+                marketTitle: rawOther.marketTitle
+            )
+        }()
+
+        guard cells.contains(where: { $0.chance != nil || $0.result != nil })
+            || resolvedOtherCell?.chance != nil
+            || resolvedOtherCell?.result != nil
+            || (finished && multiUnblended && anyCandidateSettled) else { return nil }
 
         let maxCoord = cells.reduce(3) { max($0, max($1.homeGoals, $1.awayGoals)) }
         let maxGoals = min(6, max(3, maxCoord))
         let maxChance = cells.reduce(0.05) { max($0, $1.chance ?? 0.0) }
         let winnerCell = finished ? cells.first(where: { $0.result == .won }) : nil
+        let otherWon = finished && resolvedOtherCell?.result == .won
         let highestCell = cells.first(where: { $0.chance != nil })
-        let defaultSelectedKey = winnerCell?.key ?? highestCell?.key ?? cells[0].key
+        let defaultSelectedKey = winnerCell?.key
+            ?? (otherWon ? "other" : nil)
+            ?? highestCell?.key
+            ?? (resolvedOtherCell?.chance != nil ? "other" : nil)
+            ?? cells[0].key
 
         return ExactScoreCard(
             phase: currentPhase,
@@ -772,6 +928,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
             maxGoals: maxGoals,
             maxChance: maxChance,
             cells: cells,
+            otherCell: resolvedOtherCell,
             defaultSelectedKey: defaultSelectedKey,
             marketTitle: best.marketTitle,
             source: multiUnblended ? nil : best.source,
@@ -869,7 +1026,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
     static func exactScoreMarkKey(for card: ExactScoreCard) -> [EventAtlasStoryCards11666.MarkKeyItem11666] {
         typealias Item = EventAtlasStoryCards11666.MarkKeyItem11666
         var items: [Item] = [Item(glyph: .hollowCircle, label: "Pregame")]
-        if card.cells.contains(where: { $0.result != nil }) {
+        if card.cells.contains(where: { $0.result != nil }) || card.otherCell?.result != nil {
             items.append(Item(glyph: .hitMissVerdict, label: "✓ Won / ✗ Lost"))
         }
         return items
@@ -961,6 +1118,51 @@ nonisolated enum EventAtlasSoccerCards11666 {
             id: cell.id,
             outcomeTitle: "\(card.homeShort) \(cell.homeGoals) – \(cell.awayGoals) \(card.awayShort)",
             marketTitle: cell.marketTitle,
+            primaryReadingLabel: primaryLabel,
+            primaryReadingValue: primaryValue,
+            pregameBaseline: pregameText,
+            observedAtText: observedText,
+            statusSummary: nil,
+            sourceLabel: sourceLabel
+        )
+    }
+
+    static func detailsModel(
+        for otherCell: ExactScoreOtherCell,
+        card: ExactScoreCard
+    ) -> EventAtlasDetailsSheetModel11666 {
+        let pregameText = otherCell.pregameChance.map { formatProbability($0) }
+        let primaryLabel: String
+        let primaryValue: String
+        if let res = otherCell.result {
+            primaryLabel = "Result"
+            primaryValue = res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
+        } else if card.phase == .after {
+            primaryLabel = "Result"
+            primaryValue = EventAtlasStates11666.pending
+        } else if let chance = otherCell.chance {
+            primaryLabel = "Last quote"
+            primaryValue = formatProbability(chance)
+        } else {
+            primaryLabel = "Reading"
+            primaryValue = EventAtlasStates11666.noRecentPrice
+        }
+
+        let observedText = SourceAge.preciseStamp(otherCell.observedAt)
+        let resolvedSource = otherCell.source ?? card.source
+        let sourceLabel: String?
+        if resolvedSource == nil && card.sourceCount > 1 {
+            sourceLabel = "\(card.sourceCount) sources, not blended"
+        } else {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: resolvedSource,
+                sourceCount: nil
+            )
+        }
+        return EventAtlasDetailsSheetModel11666(
+            id: otherCell.id,
+            outcomeTitle: "Any other score",
+            marketTitle: otherCell.marketTitle,
             primaryReadingLabel: primaryLabel,
             primaryReadingValue: primaryValue,
             pregameBaseline: pregameText,
@@ -1074,9 +1276,53 @@ struct EventAtlasSoccerExactScoreCardView11666: View {
                     cellView(cell)
                 }
             }
+            if let otherCell = card.otherCell {
+                otherCellView(otherCell)
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("atlas-soccer-exact-score-card-11666")
+    }
+
+    private func otherCellView(_ otherCell: EventAtlasSoccerCards11666.ExactScoreOtherCell) -> some View {
+        let rowBody = HStack(spacing: 8) {
+            Text("Any other score")
+                .font(.caption.weight(.semibold))
+            Spacer(minLength: 4)
+            if let chance = otherCell.chance {
+                Text(formatProbability(chance))
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            if card.phase == .after {
+                if let res = otherCell.result {
+                    Text(res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(res == .won ? Color.green : Color.secondary)
+                } else {
+                    Text(EventAtlasStates11666.pending)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("atlas-soccer-exact-score-other-cell-11666")
+
+        return Group {
+            if expanded {
+                Button {
+                    state.detailsRowID = otherCell.id
+                } label: {
+                    rowBody.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                rowBody
+            }
+        }
     }
 
     private func cellView(_ cell: EventAtlasSoccerCards11666.ExactScoreCell) -> some View {

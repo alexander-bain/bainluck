@@ -313,9 +313,14 @@ nonisolated enum EventAtlasStoryCards11666 {
                let leg = threeWay.legs.first(where: { $0.id == rowID }) {
                 return EventAtlasSoccerCards11666.detailsModel(for: leg, card: threeWay)
             }
-            if case .soccerExactScore(let exactScore) = card,
-               let cell = exactScore.cells.first(where: { $0.id == rowID || $0.key == rowID }) {
-                return EventAtlasSoccerCards11666.detailsModel(for: cell, card: exactScore)
+            if case .soccerExactScore(let exactScore) = card {
+                if let cell = exactScore.cells.first(where: { $0.id == rowID || $0.key == rowID }) {
+                    return EventAtlasSoccerCards11666.detailsModel(for: cell, card: exactScore)
+                }
+                if let otherCell = exactScore.otherCell,
+                   (otherCell.id == rowID || otherCell.key == rowID) {
+                    return EventAtlasSoccerCards11666.detailsModel(for: otherCell, card: exactScore)
+                }
             }
         }
         if rowID == "finish" {
