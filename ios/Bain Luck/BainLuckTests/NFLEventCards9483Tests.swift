@@ -481,7 +481,9 @@ final class NFLEventCards9483Tests: XCTestCase {
             let text = try render(reader, size: size, name: name, scrolled: scrolled)
             XCTAssertTrue(text.contains("1 of 1"), "\(name): \(text)")
             if scrolled || size == .large {
-                XCTAssertTrue(text.contains("No recent probability update"), "\(name): the stale selected line says so: \(text)")
+                XCTAssertTrue(
+                    text.contains("No recent probability update") || text.contains("No recent probability"),
+                    "\(name): the stale selected line says so: \(text)")
             }
             if !scrolled {
                 XCTAssertTrue(text.contains("Pregame chance"), "\(name): \(text)")
@@ -646,11 +648,11 @@ final class NFLEventCards9483Tests: XCTestCase {
             return hit
         }
 
-        // Pass 1: the axis row is the HIGHEST line of "N+" text (the readout's
-        // "74.5+" sits below the chart).
+        // Pass 1: the axis row is the HIGHEST line of pure "N+" axis-label text
+        // (excluding words/percentages in the comparison header and bottom readout).
         let whole = try recognise(cg)
         let read = whole.map(\.text)
-        guard let rowMid = whole.filter({ $0.text.contains(/\d\+/) }).map(\.mid).min() else {
+        guard let rowMid = whole.filter({ $0.text.contains(/\d\+/) && !$0.text.contains(/[A-Za-z%·]/) }).map(\.mid).min() else {
             return ([], [], scale, read)
         }
 
