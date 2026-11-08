@@ -805,7 +805,7 @@ jobs:
       - name: "#9550 the search dropdown says 'Settled · Pereira wins' (real Postgres)"
         id: db_029_9550_the_search_dropdown_says_settled_pe
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "set -o pipefail\npython -m pytest tests/integration/test_typeahead_venue_settled_pg_9550.py \\\n  -v -rs 2>&1 | tee /tmp/ta9550.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\nif grep -qiE \"no tests ran|collected 0 items\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate collected NOTHING\"\n  exit 1\nfi\nif ! grep -qE \"^=+ 6 passed\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate did not report exactly 6 passed\"\n  exit 1\nfi\n"
+        run: "set -o pipefail\npython -m pytest tests/integration/test_typeahead_venue_settled_pg_9550.py \\\n  -v -rs 2>&1 | tee /tmp/ta9550.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\nif grep -qiE \"no tests ran|collected 0 items\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate collected NOTHING\"\n  exit 1\nfi\nif ! grep -qE \"^=+ 7 passed\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate did not report exactly 7 passed\"\n  exit 1\nfi\n"
       - name: "#9527/#9522 'red sox vs yankees' finds the game; a tennis row reads 'v' (real Postgres)"
         id: db_030_9527_9522_red_sox_vs_yankees_finds_the_g
         # PILLAR: DISCOVER. SHIP: typing "red sox vs yankees" finds the game on

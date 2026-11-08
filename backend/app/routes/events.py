@@ -9192,6 +9192,68 @@ _TYPEAHEAD_FUTURES_POOL = 20
 _TYPEAHEAD_OPEN_NOW_SLICE = 200
 
 
+#: #4437: strong references to outcome arms running beside a request. asyncio
+#: holds a task WEAKLY, and a request that fails before collecting its arm must
+#: not leave the arm to be garbage-collected mid-statement.
+_TYPEAHEAD_BESIDE_TASKS: set = set()
+
+
+def _typeahead_beside_done(task) -> None:
+    _TYPEAHEAD_BESIDE_TASKS.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        # A collected arm also re-raises in the route, as the in-place call
+        # did; this line is what keeps an UNcollected one from failing silently.
+        logger.warning("typeahead outcome arm (beside) failed: %s", task.exception())
+
+
+def _typeahead_start_outcome_arm_beside(db, arm, open_now, deadline, pattern, outcome_cond):
+    """Start the outcome arm on its own session; the task, or ``None`` to run it in place.
+
+    #4437: the arm is the dropdown's costliest stage (1.1-2.4 s measured on
+    "mid"/"chi", Nov 7) and depends on nothing the teams and games lookups
+    produce, yet ran after them on the request's one session. Running beside
+    them, a first read pays the slower of the two chains, not their sum.
+
+    In place (``None``) when:
+    - there is no arm (a sub-trigram query);
+    - ``db`` is not a session on an ENGINE — a test double, or a session bound
+      to one connection, where a second concurrent session would share it;
+    - the pool has no free connection without overflow — a checkout that waits
+      would spend the arm's budget queueing, so it keeps today's path;
+    - the warmer is rebuilding (`_force_cache_rebuild`, the same signal
+      :func:`_typeahead_outcome_arm_budget_ms` reads): no reader waits on it, and
+      its own pool use stays what it was.
+    """
+    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+
+    if arm is None or not isinstance(db, AsyncSession):
+        return None
+    engine = db.bind
+    if not isinstance(engine, AsyncEngine) or _force_cache_rebuild.get():
+        return None
+    pool = engine.pool
+    try:
+        if pool.checkedout() >= pool.size():
+            return None
+    except Exception:  # noqa: BLE001 — a pool without counters keeps the old path
+        return None
+
+    import asyncio
+
+    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def _run():
+        async with maker() as side:
+            return await _resolve_typeahead_outcome_arm(
+                side, arm, open_now, deadline, pattern=pattern, outcome_cond=outcome_cond,
+            )
+
+    task = asyncio.ensure_future(_run())
+    _TYPEAHEAD_BESIDE_TASKS.add(task)
+    task.add_done_callback(_typeahead_beside_done)
+    return task
+
+
 async def _typeahead_sliced_futures(db, slice_query, futures_query):
     """#4437: run `futures_query` on the first `_TYPEAHEAD_OPEN_NOW_SLICE` ids of
     `slice_query` (the same candidates and order under the cheap filters), falling
@@ -14660,6 +14722,88 @@ async def typeahead_search(
         )
         .limit(_TEAM_POOL_FETCH_LIMIT)
     )
+    # LAT-P007/#1494: the outcome-name arm is NON-CORRELATED, and it is SKIPPED
+    # for a sub-3-character query. Both measured in production 2026-08-08.
+    #
+    # (1) The correlated form. `FuturesMarket.outcomes.any(...)` compiles to an
+    # EXISTS re-probed per candidate row of `futures_markets` (730K rows) against
+    # `futures_outcomes` (3.2M rows / 3 GB). /search replaced exactly this with a
+    # non-correlated IN in #993's Slice-Speed; /typeahead never got the change.
+    # For `%rec%`: correlated 3,468ms -> non-correlated 66.8ms, **52x, on
+    # IDENTICAL results** (n=254 either way). It is set-identical, so there is no
+    # recall or precision consequence — only the plan changes.
+    #
+    # (2) The sub-3-char skip. `min_length=2`, so the endpoint's MINIMUM allowed
+    # query is also its worst case, and it is the first thing every user fires.
+    # A 2-char infix pattern is unservable by a pg_trgm GIN (no complete trigram
+    # is extractable), so `%re%` seq-scans 3 GB: that arm ALONE measured 8,633ms,
+    # and the endpoint measured **12.06s** for `q=re`. The cliff is at exactly the
+    # trigram boundary, across six independent stems — 2-char 4.4-12.1s vs 3-char
+    # 1.85-2.67s — so it is pattern length, not query popularity.
+    #
+    # This is NOT a recall trade, and that was checked by LOOKING rather than
+    # assuming. For `re`, 17 of the 20 visible rows came from this arm alone, and
+    # all 17 were substring accidents: "3M Open Winner" (golfer Lamp-re-cht),
+    # "Pro Baseball Champion" (Baltimo-re), "Nobel Peace Prize Winner 2026"
+    # (Gute-rre-s), "Champions League Winner" (Villar-re-al). Not one is a
+    # plausible answer to "re". At two characters an outcome substring matches
+    # inside almost any name, so the arm is a noise generator that costs 8.6s.
+    #
+    # The market NAME arm still runs at 2 chars — a title match at least describes
+    # the thing being suggested. Scoped to the WHOLE query, not to individual
+    # terms: LAT-P006 pins that a short term still FILTERS inside a multi-term AND
+    # (`us recession` must not admit "Euro area growth"), and this must not
+    # contradict that guard.
+    #
+    # LAT-P013 widened the predicate here in lockstep with /search. The two
+    # surfaces sharing a CONSTANT was not enough to keep them in agreement — they
+    # have to share the RULE. `d'or` is 4 characters, so the old length test
+    # admitted it on both paths while pg_trgm could serve neither.
+    #
+    # LAT-P143: HELD BACK rather than appended. This is the one arm measured to
+    # cost 6-14 s, so it does not join the union until it has proved it can be
+    # served inside its own budget — see `_resolve_typeahead_outcome_arm` below.
+    # The subject, because this gates the recall `pattern` two lines down and
+    # the two must agree: testing the raw query for an extractable trigram while
+    # filtering on the subject would shed the arm on exactly the queries the
+    # subject was computed to rescue.
+    _ta_q_compact = _q_identity.strip()
+
+    # #9306: a round word matches an outcome only as a whole word, as on
+    # /search — `alds` put "Florida Governor winner?" (Byron Donalds) in the
+    # dropdown. The condition is also the probe's, so the two cannot disagree.
+    _ta_outcome_arm = None
+    _ta_outcome_cond = None
+    if _has_extractable_trigram(_ta_q_compact):
+        _ta_outcome_cond = (
+            _outcome_whole_word(_ta_q_compact)
+            if _ta_q_compact.lower() in _TEAM_PREFIX_REFUSED_TOKENS
+            else FuturesOutcome.name.ilike(pattern)
+        )
+        _ta_outcome_arm = FuturesMarket.id.in_(
+            select(FuturesOutcome.market_id).where(_ta_outcome_cond)
+        )
+
+    _ta_open_now = (
+        # #10769: the same inline constant as `_futures_open_now`.
+        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= now,
+        ),
+        # #4914: and the game itself is not already over — the dropdown stops
+        # offering a decided question at 100%. Same helper as /search's
+        # `_futures_open_now`, deliberately: one predicate, both surfaces.
+        _futures_game_already_played(),
+    )
+    # #4437: the outcome arm needs nothing the teams and games lookups produce,
+    # so a reader's request starts it here, on a session of its own, and collects
+    # it where it has always joined the futures stage. Its own bound and shed
+    # rules are unchanged; only the wait overlaps. `None` = it runs in place, on
+    # `db`, exactly as before (see the helper for when).
+    _ta_outcome_beside = _typeahead_start_outcome_arm_beside(
+        db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern, _ta_outcome_cond
+    )
     _ta_mark("setup")
     team_result = await db.execute(team_query)
     _ta_mark("teams_query")
@@ -15179,67 +15323,6 @@ async def typeahead_search(
     # WNBA substring-cousin. Prefix LIKE (index-friendly) — keystroke-budget-safe.
     ta_futures_where = [*futures_name_arms]
 
-    # LAT-P007/#1494: the outcome-name arm is NON-CORRELATED, and it is SKIPPED
-    # for a sub-3-character query. Both measured in production 2026-08-08.
-    #
-    # (1) The correlated form. `FuturesMarket.outcomes.any(...)` compiles to an
-    # EXISTS re-probed per candidate row of `futures_markets` (730K rows) against
-    # `futures_outcomes` (3.2M rows / 3 GB). /search replaced exactly this with a
-    # non-correlated IN in #993's Slice-Speed; /typeahead never got the change.
-    # For `%rec%`: correlated 3,468ms -> non-correlated 66.8ms, **52x, on
-    # IDENTICAL results** (n=254 either way). It is set-identical, so there is no
-    # recall or precision consequence — only the plan changes.
-    #
-    # (2) The sub-3-char skip. `min_length=2`, so the endpoint's MINIMUM allowed
-    # query is also its worst case, and it is the first thing every user fires.
-    # A 2-char infix pattern is unservable by a pg_trgm GIN (no complete trigram
-    # is extractable), so `%re%` seq-scans 3 GB: that arm ALONE measured 8,633ms,
-    # and the endpoint measured **12.06s** for `q=re`. The cliff is at exactly the
-    # trigram boundary, across six independent stems — 2-char 4.4-12.1s vs 3-char
-    # 1.85-2.67s — so it is pattern length, not query popularity.
-    #
-    # This is NOT a recall trade, and that was checked by LOOKING rather than
-    # assuming. For `re`, 17 of the 20 visible rows came from this arm alone, and
-    # all 17 were substring accidents: "3M Open Winner" (golfer Lamp-re-cht),
-    # "Pro Baseball Champion" (Baltimo-re), "Nobel Peace Prize Winner 2026"
-    # (Gute-rre-s), "Champions League Winner" (Villar-re-al). Not one is a
-    # plausible answer to "re". At two characters an outcome substring matches
-    # inside almost any name, so the arm is a noise generator that costs 8.6s.
-    #
-    # The market NAME arm still runs at 2 chars — a title match at least describes
-    # the thing being suggested. Scoped to the WHOLE query, not to individual
-    # terms: LAT-P006 pins that a short term still FILTERS inside a multi-term AND
-    # (`us recession` must not admit "Euro area growth"), and this must not
-    # contradict that guard.
-    #
-    # LAT-P013 widened the predicate here in lockstep with /search. The two
-    # surfaces sharing a CONSTANT was not enough to keep them in agreement — they
-    # have to share the RULE. `d'or` is 4 characters, so the old length test
-    # admitted it on both paths while pg_trgm could serve neither.
-    #
-    # LAT-P143: HELD BACK rather than appended. This is the one arm measured to
-    # cost 6-14 s, so it does not join the union until it has proved it can be
-    # served inside its own budget — see `_resolve_typeahead_outcome_arm` below.
-    # The subject, because this gates the recall `pattern` two lines down and
-    # the two must agree: testing the raw query for an extractable trigram while
-    # filtering on the subject would shed the arm on exactly the queries the
-    # subject was computed to rescue.
-    _ta_q_compact = _q_identity.strip()
-
-    # #9306: a round word matches an outcome only as a whole word, as on
-    # /search — `alds` put "Florida Governor winner?" (Byron Donalds) in the
-    # dropdown. The condition is also the probe's, so the two cannot disagree.
-    _ta_outcome_arm = None
-    _ta_outcome_cond = None
-    if _has_extractable_trigram(_ta_q_compact):
-        _ta_outcome_cond = (
-            _outcome_whole_word(_ta_q_compact)
-            if _ta_q_compact.lower() in _TEAM_PREFIX_REFUSED_TOKENS
-            else FuturesOutcome.name.ilike(pattern)
-        )
-        _ta_outcome_arm = FuturesMarket.id.in_(
-            select(FuturesOutcome.market_id).where(_ta_outcome_cond)
-        )
 
     ta_league_ticker_match = _build_league_ticker_match(ta_expanded)
     if ta_league_ticker_match is not None:
@@ -15264,18 +15347,8 @@ async def typeahead_search(
     # rows. UNION and OR are set-identical, so recall and precision are preserved
     # by construction. Filters pushed into each arm (AND distributes over UNION);
     # kept on the outer query as deliberate redundancy.
-    _ta_open_now = (
-        # #10769: the same inline constant as `_futures_open_now`.
-        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
-        or_(
-            FuturesMarket.resolution_date.is_(None),
-            FuturesMarket.resolution_date >= now,
-        ),
-        # #4914: and the game itself is not already over — the dropdown stops
-        # offering a decided question at 100%. Same helper as /search's
-        # `_futures_open_now`, deliberately: one predicate, both surfaces.
-        _futures_game_already_played(),
-    )
+    # `_ta_open_now` is defined above the teams lookup (#4437): the outcome arm
+    # starts there, beside it.
     # #4437: the arms carry only the two CHEAP open-now filters. The third,
     # `_futures_game_already_played()` (correlated NOT EXISTS over events, twins
     # and group siblings), is applied once, to a bounded ordered slice, below —
@@ -15297,9 +15370,13 @@ async def typeahead_search(
     _ta_outcome_arm_shed = False
     _ta_mark("events_assemble")
     if _ta_outcome_arm is not None:
-        _ta_outcome_ids = await _resolve_typeahead_outcome_arm(
-            db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern=pattern,
-            outcome_cond=_ta_outcome_cond,
+        _ta_outcome_ids = await (
+            _ta_outcome_beside
+            if _ta_outcome_beside is not None
+            else _resolve_typeahead_outcome_arm(
+                db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern=pattern,
+                outcome_cond=_ta_outcome_cond,
+            )
         )
         # ONE mark, labelled by outcome — the same grammar as
         # `futures_query` / `futures_query_TIMED_OUT` below, and for the same
