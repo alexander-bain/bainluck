@@ -213,7 +213,10 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
   const members = sections.flatMap((section) => section.members);
   if (members.length !== row.member_count) partial = true;
   const summarizedCount = members.reduce((total, member) => total + (member.relatedMarketCount ?? 0), 0);
-  if (summarizedCount !== (relatedSummary?.count ?? 0)) throw new Error("This collection isn't available right now.");
+  if (summarizedCount !== (relatedSummary?.count ?? 0)) {
+    relatedSummary = undefined;
+    partial = true;
+  }
   const related = relate(members);
   const relatedKeys = new Set(Object.values(related).flat().map((m) => m.key));
   const children: CollectionHub["children"] = [];

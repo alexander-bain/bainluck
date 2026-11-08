@@ -219,12 +219,37 @@ describe("the compact NFL page accounts for its long linked lists (#12337)", () 
   });
 
   test.each([
-    undefined,
     { count: -1, unclassified_count: 0 },
     { count: 4972, unclassified_count: 4973 },
-    { count: 4971, unclassified_count: 3487 },
-  ])("an invalid or mismatched summary is a failed read", (summary) => {
+  ])("an invalid summary is a failed read", (summary) => {
     expect(() => parseCollection({ ...compactWeek(), related_summary: summary }, "nfl-2026-week-4")).toThrow(/isn't available/);
+  });
+
+  test.each([
+    undefined,
+    { count: 4971, unclassified_count: 3487 },
+  ])("a mismatched summary keeps the page with its partial-read note", (summary) => {
+    const { hub, html } = draw({ ...compactWeek(), related_summary: summary }, "nfl-2026-week-4");
+    expect(hub.members).toHaveLength(4);
+    expect(hub.relatedSummary).toBeUndefined();
+    expect(hub.note).toBe("Some games or questions aren't available right now.");
+    expect(html).toContain('data-collection-member="event:7"');
+    expect(html).not.toContain("data-related-market-summary");
+  });
+
+  test("a rejected summarized game keeps its healthy siblings and hides the summary", () => {
+    const raw = compactWeek();
+    Object.assign(raw.sections[0].members[0].card, { home_team: "" });
+
+    const { hub, html } = draw(raw, "nfl-2026-week-4");
+
+    expect(hub.members).toHaveLength(3);
+    expect(hub.relatedSummary).toBeUndefined();
+    expect(hub.note).toBe("Some games or questions aren't available right now.");
+    expect(html).toContain('data-collection-member="event:8"');
+    expect(html).toContain('data-collection-member="market:72"');
+    expect(html).not.toContain('data-collection-member="event:7"');
+    expect(html).not.toContain("data-related-market-summary");
   });
 
   test("the normal NFL request opts into the compact response and accepts an older full response", async () => {
