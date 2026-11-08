@@ -49,6 +49,7 @@ nonisolated struct NBALadderCard9483: Equatable, Identifiable {
         let label: String
         let marketName: String
         let source: String?
+        var sourceCount: Int = 1
         /// The published value, only while `quoted`.
         let quoted: Double?
         let observedAt: String?

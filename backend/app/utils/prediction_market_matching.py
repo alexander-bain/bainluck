@@ -2246,10 +2246,22 @@ def find_moneyline_outcome(
 
     # Determine yes_is_home from matchup
     team_mapping = match_teams_to_event(matchup, event_home_team, event_away_team)
-    if not team_mapping:
-        return None
 
-    yes_is_home = team_mapping["yes_is_home"]
+    # #10523 — THE LEGS CAN ORIENT THE MARKET WHEN THE TITLE CANNOT. Kalshi
+    # titles some doubles with full names, `N. Sriram Balaji / Evan King vs
+    # Sander Arends / Luke Johnson`, against an event Polymarket named
+    # `Balaji/King` @ `Arends/Johnson`. `_fuzzy_team_match` cannot match the
+    # title's pair to ours, so the mapping is None, while each LEG names exactly
+    # one of our sides (`_outcome_names_team` reads a pair). The writer said
+    # nothing and the game's blend had no Kalshi entry: 4 of the 7 unwritten
+    # Kalshi doubles over 14 days (Nov 8, read-only).
+    #
+    # Only when the legs name BOTH sides, one leg each: then the market's two
+    # outcomes are exactly our two teams, so no orientation is borrowed from a
+    # title we could not read. A market sharing one team with this event names
+    # one side at most and still answers None, as before.
+    if not team_mapping and not (home_outcomes and away_outcomes):
+        return None
 
     # Sort for deterministic selection (highest probability first breaks ties stably)
     home_outcomes.sort(key=lambda o: float(o.current_probability or 0), reverse=True)
@@ -2263,6 +2275,10 @@ def find_moneyline_outcome(
         return (home_outcomes[0], True)
     if away_outcomes:
         return (away_outcomes[0], False)
+
+    # No leg named a side, so the gate above required the mapping: the
+    # fallbacks below orient from the title, exactly as before.
+    yes_is_home = team_mapping["yes_is_home"]
 
     # Fallback: outcome name IS the full matchup (Polymarket pattern)
     # e.g., outcome named "Pistons vs. Bulls" instead of a single team name

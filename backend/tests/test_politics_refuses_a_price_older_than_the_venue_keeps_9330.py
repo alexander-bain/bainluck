@@ -143,9 +143,12 @@ JUST_INSIDE = _market(
          _NOW - timedelta(days=PROVABLY_PURGED_AGE_DAYS - 1)),
     ],
 )
+# Synthetic future-cycle variant. #12336 retires 2026 forecasts after Election
+# Day, so this no-stamp control must keep isolating observation-age evidence.
+_FUTURE_YEAR = (_NOW + timedelta(days=1461)).year
 NO_STAMPS = _market(
-    "How many Senate seats will Independents win in the Midterms?",
-    "KXSENATEIND-26",
+    f"How many Senate seats will Independents win in the {_FUTURE_YEAR} Midterms?",
+    f"KXSENATEIND-{_FUTURE_YEAR % 100:02d}",
     [("At least 1", 0.23, ...), ("At least 2", 0.07, ...)],
 )
 # A naive (tz-less) stamp is read as UTC, not refused and not crashed on.

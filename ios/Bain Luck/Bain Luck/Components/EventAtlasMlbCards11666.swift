@@ -185,9 +185,9 @@ nonisolated enum EventAtlasMlbCards11666 {
     /// Builds Atlas extra-innings entries from `GameMarketOther` rows, matching
     /// web `#11974` Step E6a:
     /// - Uses a blended row (`source == "blended"` or `"blend"`) when served,
-    ///   or a single venue's `pregameMark` when only one source is present.
-    ///   Note: `GameMarketOther.pregameMark` is a forward-compatible optional
-    ///   field awaiting backend emission on `other` rows (`#11666` / `1.0.7`).
+    ///   or a single venue's `pregameMark` when only one source is present
+    ///   (emitted on `other` rows by `GET /api/events/{id}/game-markets` via
+    ///   `_resolve_pregame_mark`).
     /// - Withholds `pregameChance` when multiple unblended venues exist for an
     ///   outcome (never averages on the client).
     /// - Grades settled outcomes via `MLBVenueResult11284.venue` (`#11284`'s rule),

@@ -556,10 +556,12 @@ def build_window_events_closest_producer(
         footer=footer,
         produce=_produce,
         membership=membership,
+        relations=definition.get("relations"),
+        level=definition.get("level"),
         rule=frozen_def["rule"],
         tag=tag,
         story_key=story_key,
-        enabled=enabled,
+        enabled=enabled if enabled is not None else closest_games_tonight_enabled,
     )
 
 

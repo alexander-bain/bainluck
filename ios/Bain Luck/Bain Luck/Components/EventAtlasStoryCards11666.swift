@@ -274,10 +274,15 @@ nonisolated enum EventAtlasStoryCards11666 {
         }
 
         let observedText = SourceAge.preciseStamp(detail.observedAt)
-        let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: detail.source,
-            sourceCount: 1
-        )
+        let sourceLabel: String?
+        if detail.source == nil && detail.sourceCount > 1 {
+            sourceLabel = "\(detail.sourceCount) sources, not blended"
+        } else {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: detail.source,
+                sourceCount: 1
+            )
+        }
         return EventAtlasDetailsSheetModel11666(
             id: "ladder-\(detail.label)",
             outcomeTitle: detail.label,
@@ -313,9 +318,28 @@ nonisolated enum EventAtlasStoryCards11666 {
                let leg = threeWay.legs.first(where: { $0.id == rowID }) {
                 return EventAtlasSoccerCards11666.detailsModel(for: leg, card: threeWay)
             }
-            if case .soccerExactScore(let exactScore) = card,
-               let cell = exactScore.cells.first(where: { $0.id == rowID || $0.key == rowID }) {
-                return EventAtlasSoccerCards11666.detailsModel(for: cell, card: exactScore)
+            if case .soccerExactScore(let exactScore) = card {
+                if let cell = exactScore.cells.first(where: { $0.id == rowID || $0.key == rowID }) {
+                    return EventAtlasSoccerCards11666.detailsModel(for: cell, card: exactScore)
+                }
+                if let otherCell = exactScore.otherCell,
+                   (otherCell.id == rowID || otherCell.key == rowID) {
+                    return EventAtlasSoccerCards11666.detailsModel(for: otherCell, card: exactScore)
+                }
+            }
+            if case .tennisSets(let tennisSets) = card {
+                for step in tennisSets.sets {
+                    if step.home.id == rowID {
+                        return EventAtlasTennisCards11666.detailsModel(for: step.home, card: tennisSets)
+                    }
+                    if step.away.id == rowID {
+                        return EventAtlasTennisCards11666.detailsModel(for: step.away, card: tennisSets)
+                    }
+                }
+            }
+            if case .tennisExactScore(let tennisExactScore) = card,
+               let outcome = tennisExactScore.outcomes.first(where: { $0.id == rowID || $0.key == rowID }) {
+                return EventAtlasTennisCards11666.detailsModel(for: outcome, card: tennisExactScore)
             }
         }
         if rowID == "finish" {

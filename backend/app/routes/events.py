@@ -242,6 +242,7 @@ from app.utils.search_cache import (
     search_response_ttl_seconds,
     shed_answer_ttl_seconds,
 )
+from app.utils.open_futures_outcomes import market_ids_with_outcome, outcome_ids_named
 from app.utils.participant_images import participant_images_for_event
 from app.utils.search_collections import (
     attach_search_collections,
@@ -7211,12 +7212,31 @@ def _market_has_outcome(*outcome_where):
     order, and level with the IN form outside it (eight queries, identical rows).
     An `OFFSET 0` fence was measured too and rejected: 781-1,547 ms, most of it
     JIT compiling a hash join over the same 50k scan.
+
+    #4437 (Decide 89-A): the match set comes from :func:`_outcome_market_ids`,
+    which reads `open_futures_outcomes` while that copy is maintained.
     """
     return FuturesMarket.id == any_(
-        func.array(
-            select(FuturesOutcome.market_id).where(*outcome_where).scalar_subquery()
-        )
+        func.array(_outcome_market_ids(*outcome_where).scalar_subquery())
     )
+
+
+def _outcome_market_ids(*outcome_where):
+    """`SELECT market_id` of the outcomes matching ``outcome_where``.
+
+    #4437 (Decide 89-A, Alex 2026-11-08): over `open_futures_outcomes` — open
+    markets' outcome names, ~262 k rows instead of `futures_outcomes`' 8.8 M —
+    while its maintainer is current, plus outcomes newer than its watermark
+    matched on `futures_outcomes` directly
+    (`app.utils.open_futures_outcomes.market_ids_with_outcome`). Otherwise, or
+    for a predicate that reads more than the name, the original statement. Every
+    caller keeps its own `futures_markets` predicates, so the copy only ever
+    nominates markets; it never decides one is open.
+    """
+    over_open = market_ids_with_outcome(*outcome_where)
+    if over_open is not None:
+        return over_open
+    return select(FuturesOutcome.market_id).where(*outcome_where)
 
 
 def _outcome_whole_word_regex(term: str):
@@ -8825,11 +8845,23 @@ def _headline_contender_outcome_clause(pattern):
     lookup on the row the outer predicate already selected, inside a subquery
     the pg_trgm GIN on `futures_outcomes.name` still drives. It adds no scan.
     """
+    named = FuturesOutcome.name.op("~*")(pattern)
+    # #4437 (Decide 89-A): while `open_futures_outcomes` is maintained, the name
+    # match runs over open markets' outcomes there and this reads only those
+    # candidates, by primary key; the price floor and the team anchor below are
+    # still judged on the real rows. An InitPlan array, as `_market_has_outcome`.
+    candidates = outcome_ids_named(named)
+    narrowed = (
+        ()
+        if candidates is None
+        else (FuturesOutcome.id == any_(func.array(candidates.scalar_subquery())),)
+    )
     return FuturesMarket.id.in_(
         select(FuturesOutcome.market_id)
         .outerjoin(Team, Team.id == FuturesOutcome.team_id)
         .where(
-            FuturesOutcome.name.op("~*")(pattern),
+            *narrowed,
+            named,
             FuturesOutcome.current_probability.isnot(None),
             or_(
                 FuturesOutcome.current_probability >= MIN_CONTENDER_PROBABILITY,
@@ -9669,8 +9701,9 @@ async def _resolve_typeahead_outcome_arm(
         market_ids: list[int] | None = None
         if pattern is not None:
             probe = await db.execute(
-                select(FuturesOutcome.market_id)
-                .where(
+                # #4437 (Decide 89-A): over `open_futures_outcomes` while it is
+                # maintained, so "chi" counts its ~3,000 open matches, not 67 k.
+                _outcome_market_ids(
                     outcome_cond
                     if outcome_cond is not None
                     else FuturesOutcome.name.ilike(pattern)
@@ -14868,7 +14901,7 @@ async def typeahead_search(
             else FuturesOutcome.name.ilike(pattern)
         )
         _ta_outcome_arm = FuturesMarket.id.in_(
-            select(FuturesOutcome.market_id).where(_ta_outcome_cond)
+            _outcome_market_ids(_ta_outcome_cond)  # #4437 (Decide 89-A)
         )
 
     _ta_open_now = (
@@ -21632,11 +21665,18 @@ def _is_team_stat_market(name: str) -> bool:
 #: a rule measured only on team scoring races. All 94 rows in the table on
 #: 2026-09-11 match it, and they are all Kalshi NFL.
 _SCORING_RACE_RE = re.compile(r"\brace to\s+\d+(?:\.\d+)?\s+points?\b", re.IGNORECASE)
+_EXTRA_INNINGS_RE = re.compile(r"\bextra\s+innings?\b", re.IGNORECASE)
 
 
 def _is_scoring_race_market(name: str) -> bool:
     """True for "…: Race to 14 Points" — a team market, never a player prop."""
     return bool(_SCORING_RACE_RE.search(name or ""))
+
+
+def _is_extra_innings_market(name: str) -> bool:
+    """True for "…: Extra Innings" — "extRA" ends in RA (`_PLAYER_PROP_RE`),
+    but extra innings is a game-level other market, never a player prop."""
+    return bool(_EXTRA_INNINGS_RE.search(name or ""))
 
 
 #: One inning, not a run of them. `\binning\b` matches "2nd Inning Total" and
@@ -23259,7 +23299,11 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     # classify it exactly as they classify "Game 1: Chicago WS vs Cleveland".
     # The regex itself is NOT changed here: tests for #1588/#1735/#5088/#4189
     # reach their subject only through that same Tampa/Mirra match (see #10180).
-    if _PLAYER_PROP_RE.search(name) and not _is_kalshi_game_winner_series(external_id):
+    if (
+        _PLAYER_PROP_RE.search(name)
+        and not _is_kalshi_game_winner_series(external_id)
+        and not _is_extra_innings_market(name)
+    ):
         return "player_prop"
     if "moneyline" in lower or "winner" in lower or "win" in lower:
         if _SINGLE_INNING_RE.search(lower):
@@ -27225,6 +27269,16 @@ async def _build_game_markets(
                         # Same expression as the `other` branch below, so the
                         # two ways into this section cannot serve two shapes.
                         "probability": round(prob, 4) if prob else None,
+                        "pregame_mark": _resolve_pregame_mark(
+                            market,
+                            o,
+                            True,
+                            False,
+                            round(float(o.opening_probability), 4)
+                            if o.opening_probability is not None
+                            else None,
+                            event.commence_time,
+                        ),
                         "source": market.source,
                         **_grade,
                         "_market_id": market.id,
@@ -27526,6 +27580,7 @@ async def _build_game_markets(
                     and not _is_team_stat_market(market.name)
                     and not _is_scoring_race_market(market.name)
                     and not _is_kalshi_game_winner_series(market.external_id)
+                    and not _is_extra_innings_market(market.name)
                 ):
                     threshold = _extract_threshold(o.name)
                     name_lower = o.name.lower().strip()
@@ -27574,6 +27629,16 @@ async def _build_game_markets(
                     "observed_at": _observed(o),
                     "contributor_outcome_ids": [o.id],
                     "probability": round(prob, 4) if prob else None,
+                    "pregame_mark": _resolve_pregame_mark(
+                        market,
+                        o,
+                        True,
+                        False,
+                        round(float(o.opening_probability), 4)
+                        if o.opening_probability is not None
+                        else None,
+                        event.commence_time,
+                    ),
                     "source": market.source,
                     **_settled_grade_fields(market, o, **_grade_ctx),
                     **({"market_type": other_market_type} if other_market_type else {}),
@@ -40328,6 +40393,22 @@ _VERIFIED_TITLE_BACKGROUND: dict = {}
 _VERIFIED_TITLE_BACKGROUND_CEILING_S = 30.0
 
 
+def _search_verified_title_wait_s() -> float:
+    """How long this build may WAIT for a title market's composition.
+
+    A reader's build: :data:`_SEARCH_VERIFIED_TITLE_BUDGET_S` (1 s). The search
+    head warmer's rebuild (`_force_search_cache_rebuild`): the background ceiling,
+    still under the deadline floor, because no reader waits on it. #12335 step
+    5, measured Nov 8 7:12-7:15 AM PT after #12351: "chiefs", a head term whose
+    page the warmer builds, printed Polymarket's row on 6 of 6 reads. The
+    warmer's event loop ends with its pass, which cancelled the composition
+    the 1 s bound had left running, so the worker's verdict was never kept.
+    """
+    if _force_search_cache_rebuild.get():
+        return _VERIFIED_TITLE_BACKGROUND_CEILING_S
+    return _SEARCH_VERIFIED_TITLE_BUDGET_S
+
+
 async def _verified_title_row(side, market_id: int):
     """The title market's row read on the composition's OWN session, or ``None``.
 
@@ -40468,7 +40549,7 @@ async def _search_verified_titles(
         return out
     import asyncio
 
-    budget_ends = time.monotonic() + _SEARCH_VERIFIED_TITLE_BUDGET_S
+    budget_ends = time.monotonic() + _search_verified_title_wait_s()
     floor_ends = (
         deadline - _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S if deadline is not None else None
     )

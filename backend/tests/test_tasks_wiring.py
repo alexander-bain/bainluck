@@ -371,6 +371,9 @@ class TestBeatScheduleCompleteness:
         # cannot land silently.
         "rebuild-typeahead-index",
         "typeahead-index-sentinel",
+        # #4437 Decide 89-A — keeps `open_futures_outcomes` equal to open
+        # markets' outcome names, every 5 minutes. Gotcha #12.
+        "refresh-open-futures-outcomes",
         # LAT-P090 (#2211) — the `/search` response-cache head warmer. Gotcha
         # #12: this allowlist is the reason a new beat entry cannot land
         # silently.

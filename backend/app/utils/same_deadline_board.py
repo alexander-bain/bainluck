@@ -1326,6 +1326,8 @@ def build_same_deadline_board_producer(
         footer=footer,
         produce=_produce,
         membership=str(definition.get("membership") or "computed-produced"),
+        relations=definition.get("relations"),
+        level=definition.get("level"),
         rule=dict(rule),
         tag=tag,
         kicker=kicker,
@@ -1351,6 +1353,7 @@ BY_DECEMBER_31_PRODUCER: Any = build_same_deadline_board_producer(
     enabled=by_december_31_enabled,
 )
 _rc().register_roundup_producer(BY_DECEMBER_31_PRODUCER)
+_rc()._register_builtin_producers()
 
 
 async def by_november_30(

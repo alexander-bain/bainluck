@@ -29,6 +29,31 @@ nonisolated enum EventAtlasHeadline11666 {
         let isUpset: Bool
     }
 
+    /// Resolves the settled `EventOutcome` for the Atlas headline and details sheet.
+    ///
+    /// When `isFinished` is true (`status` is `completed`/`closed`), resolves via
+    /// `EventOutcome.resolve` (served result first, then final scoreboard).
+    /// When `isFinished` is false (`venueSettledVerdict` is true while `status` is
+    /// not yet `completed`/`closed`), uses only `heroSettledResult` (`homeScore: nil`,
+    /// `awayScore: nil`) so a venue-settled live row without `heroSettledResult`
+    /// never guesses a winner from mid-game scores.
+    static func settledOutcome(for event: EventDetail, isFinished: Bool) -> EventOutcome {
+        if isFinished {
+            return EventOutcome.resolve(
+                status: event.status,
+                homeScore: event.homeScore,
+                awayScore: event.awayScore,
+                servedResult: event.heroSettledResult
+            )
+        }
+        return EventOutcome.resolve(
+            status: event.heroSettledResult != nil ? "completed" : event.status,
+            homeScore: nil,
+            awayScore: nil,
+            servedResult: event.heroSettledResult
+        )
+    }
+
     /// Resolves the settled Atlas headline badge and hollow pregame mark `○`.
     static func settledBadge(
         outcome: EventOutcome,
@@ -207,14 +232,16 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
         event: EventDetail,
         phase: EventHeadlinePhase9483?,
         observedAt: Date?,
-        liveStatus: LiveUpdateStatus
+        liveStatus: LiveUpdateStatus,
+        now: Date? = nil
     ) -> EventAtlasDetailsSheetModel11666 {
+        let effectiveNow = now ?? observedAt ?? Date()
         let isFinished = EventState.isFinished(event.status)
         let venueSettledVerdict = EventState.showsVenueSettledVerdict(
             event.status,
             venueSettled: event.venueSettled,
             commenceTime: event.commenceTime?.asDate,
-            now: observedAt ?? Date()
+            now: effectiveNow
         )
         let isSettled = isFinished || venueSettledVerdict
         let isOpening = event.currentOdds.map {
@@ -240,12 +267,7 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
         if isSettled {
             primaryLabel = "Result"
             let badge = EventAtlasHeadline11666.settledBadge(
-                outcome: EventOutcome.resolve(
-                    status: event.status,
-                    homeScore: event.homeScore,
-                    awayScore: event.awayScore,
-                    servedResult: event.heroSettledResult
-                ),
+                outcome: EventAtlasHeadline11666.settledOutcome(for: event, isFinished: isFinished),
                 awayTeam: event.awayTeam,
                 homeTeam: event.homeTeam,
                 sportKey: event.sport,
@@ -288,14 +310,33 @@ nonisolated struct EventAtlasDetailsSheetModel11666: Identifiable, Equatable, Se
         }
 
         let observedText = observedAt.map {
-            $0.formatted(date: .abbreviated, time: .shortened)
+            EventAtlasChartMarks11666.formatExactTimestampPT($0)
         }
 
-        let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: event.heroProbabilitySource,
-            sourceCount: nil,
-            winProbSources: event.winProbabilitySources
-        )
+        let sourceLabel: String? = {
+            if isSettled {
+                let rawBaselineSource = event.prematchOdds?.source ?? event.heroProbabilitySource
+                let trimmed = rawBaselineSource?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let effectiveSingleSource: String?
+                if let trimmed, !trimmed.isEmpty, trimmed != "blend", trimmed != "blended", trimmed != "final_result" {
+                    effectiveSingleSource = trimmed
+                } else if event.prematchOdds != nil || event.openingOdds != nil {
+                    effectiveSingleSource = "sportsbooks"
+                } else {
+                    effectiveSingleSource = nil
+                }
+                return EventAtlasHeadline11666.sourceAttribution(
+                    source: effectiveSingleSource,
+                    sourceCount: effectiveSingleSource != nil ? 1 : nil,
+                    winProbSources: nil
+                )
+            }
+            return EventAtlasHeadline11666.sourceAttribution(
+                source: event.heroProbabilitySource,
+                sourceCount: nil,
+                winProbSources: event.winProbabilitySources
+            )
+        }()
 
         return EventAtlasDetailsSheetModel11666(
             id: "headline-\(event.id)",
@@ -341,6 +382,13 @@ struct EventAtlasHeadlineControlRow11666: View {
     let liveStatus: LiveUpdateStatus
     var ekgTracker: EkgTracker = .empty
     var asOf: Date? = nil
+    /// When `true` (mounted inside `EventDetailView.heroSection`), omits repeating
+    /// elements the hero above already renders (phase label, live tenths pair,
+    /// live pregame mark via `EventHeadlinePhaseLabel9483`, `heroEkg`, and the
+    /// active-game `probabilityDetails`/`nflPairedDetails` control), keeping only
+    /// the settled hollow pregame mark (`Upset · X% pregame` / `X% pregame`) and
+    /// the single `(i)` Market details button where the hero has none.
+    var embeddedInHero: Bool = false
 
     @State private var activeSheet: EventAtlasDetailsSheetModel11666?
 
@@ -387,6 +435,49 @@ struct EventAtlasHeadlineControlRow11666: View {
         )
     }
 
+    /// Decides which elements of `EventAtlasHeadlineControlRow11666` render when
+    /// `embeddedInHero == true` so the hero never duplicates its phase label,
+    /// pregame baseline, EKG dot, or `(i)` details button.
+    static func embeddedHeroVisibility(
+        event: EventDetail,
+        now: Date
+    ) -> (showsSettledWinner: Bool, showsSettledMark: Bool, showsPhaseAndLiveMark: Bool, showsEkg: Bool, showsDetailsButton: Bool) {
+        let isFinished = EventState.isFinished(event.status)
+        let venueSettledVerdict = EventState.showsVenueSettledVerdict(
+            event.status,
+            venueSettled: event.venueSettled,
+            commenceTime: event.commenceTime?.asDate,
+            now: now
+        )
+        let isSettled = isFinished || venueSettledVerdict
+        let isOpening = event.currentOdds.map {
+            OpeningLineHero.resolve($0, for: event).isOpeningLine
+        } ?? false
+        if isSettled {
+            // The hero above already prints `<Winner> Win` / `Draw` / `Final`;
+            // keep the hollow pregame mark (`Upset · X% pregame` / `X% pregame`)
+            // and the single `(i)` Market details button.
+            return (
+                showsSettledWinner: false,
+                showsSettledMark: true,
+                showsPhaseAndLiveMark: false,
+                showsEkg: false,
+                showsDetailsButton: true
+            )
+        }
+        // On an active/scheduled game, `EventDetailView` already renders `headlinePhaseLabel`
+        // (including `EventAtlasPregameMarkView11666` on live games), `heroEkg`, and
+        // `probabilityDetails` / `nflPairedDetails` — except on an opening-line hero,
+        // which has no `(i)` button of its own.
+        return (
+            showsSettledWinner: false,
+            showsSettledMark: false,
+            showsPhaseAndLiveMark: false,
+            showsEkg: false,
+            showsDetailsButton: isOpening
+        )
+    }
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { context in
             rowContent(now: asOf ?? context.date)
@@ -406,6 +497,20 @@ struct EventAtlasHeadlineControlRow11666: View {
         let isOpening = event.currentOdds.map {
             OpeningLineHero.resolve($0, for: event).isOpeningLine
         } ?? false
+        let visibility = embeddedInHero
+            ? Self.embeddedHeroVisibility(event: event, now: now)
+            : (
+                showsSettledWinner: true,
+                showsSettledMark: true,
+                showsPhaseAndLiveMark: true,
+                showsEkg: EventAtlasLivePath11666.ekgDraws(
+                    eventStatus: event.status,
+                    finished: isFinished,
+                    venueSettledVerdict: venueSettledVerdict,
+                    isOpeningLine: isOpening
+                ),
+                showsDetailsButton: true
+            )
         let overlaidReading = Self.rowOverlaidReading(
             event: event,
             preview: preview,
@@ -429,20 +534,9 @@ struct EventAtlasHeadlineControlRow11666: View {
                 deliveryInterrupted: liveStatus == .interrupted,
                 now: now
             )
-        let showsEkg = EventAtlasLivePath11666.ekgDraws(
-            eventStatus: event.status,
-            finished: isFinished,
-            venueSettledVerdict: venueSettledVerdict,
-            isOpeningLine: isOpening
-        )
         let settledBadge: EventAtlasHeadline11666.SettledBadge? = isSettled
             ? EventAtlasHeadline11666.settledBadge(
-                outcome: EventOutcome.resolve(
-                    status: event.status,
-                    homeScore: event.homeScore,
-                    awayScore: event.awayScore,
-                    servedResult: event.heroSettledResult
-                ),
+                outcome: EventAtlasHeadline11666.settledOutcome(for: event, isFinished: isFinished),
                 awayTeam: event.awayTeam,
                 homeTeam: event.homeTeam,
                 sportKey: event.sport,
@@ -451,71 +545,83 @@ struct EventAtlasHeadlineControlRow11666: View {
             )
             : nil
 
-        HStack(spacing: 8) {
-            if let badge = settledBadge {
-                if let icon = badge.systemImage {
-                    Label(badge.winnerLabel, systemImage: icon)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.primary)
-                } else {
-                    Text(badge.winnerLabel)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.primary)
-                }
-                if let markText = badge.pregameMarkText {
-                    EventAtlasPregameMarkView11666(text: markText)
-                }
-            } else if let phase {
-                Text(phase.label)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                if let reading = overlaidReading {
-                    Text(Self.tenthsSummary(for: reading, event: event))
-                        .font(.caption2.monospacedDigit())
+        let hasAnyVisibleElement = (settledBadge != nil && (visibility.showsSettledWinner || (visibility.showsSettledMark && settledBadge?.pregameMarkText != nil)))
+            || (phase != nil && visibility.showsPhaseAndLiveMark)
+            || visibility.showsEkg
+            || visibility.showsDetailsButton
+
+        if hasAnyVisibleElement {
+            HStack(spacing: 8) {
+                if let badge = settledBadge {
+                    if visibility.showsSettledWinner {
+                        if let icon = badge.systemImage {
+                            Label(badge.winnerLabel, systemImage: icon)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.primary)
+                        } else {
+                            Text(badge.winnerLabel)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                    if visibility.showsSettledMark, let markText = badge.pregameMarkText {
+                        EventAtlasPregameMarkView11666(text: markText)
+                    }
+                } else if let phase, visibility.showsPhaseAndLiveMark {
+                    Text(phase.label)
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("atlas-headline-tenths-11666")
+                    if let reading = overlaidReading {
+                        Text(Self.tenthsSummary(for: reading, event: event))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("atlas-headline-tenths-11666")
+                    }
+                    if event.status == "live",
+                       let baseline = EventHeadlinePhase9483.baselineText(
+                        prematch: event.prematchOdds,
+                        opening: event.openingOdds,
+                        sport: event.sport,
+                        awayTeam: event.awayTeam,
+                        homeTeam: event.homeTeam
+                       ) {
+                        EventAtlasPregameMarkView11666(text: baseline)
+                    }
                 }
-                if event.status == "live",
-                   let baseline = EventHeadlinePhase9483.baselineText(
-                    prematch: event.prematchOdds,
-                    opening: event.openingOdds,
-                    sport: event.sport,
-                    awayTeam: event.awayTeam,
-                    homeTeam: event.homeTeam
-                   ) {
-                    EventAtlasPregameMarkView11666(text: baseline)
+                Spacer(minLength: 0)
+                if visibility.showsEkg {
+                    let presentation = EkgHeartbeat.present(ekgTracker, status: liveStatus, now: now)
+                    Circle()
+                        .fill(EkgHeartbeatView.tone(presentation.mode))
+                        .frame(width: 6, height: 6)
+                        .accessibilityLabel(presentation.label)
+                        .accessibilityIdentifier("atlas-ekg-indicator-11666")
+                }
+                if visibility.showsDetailsButton {
+                    Button {
+                        activeSheet = EventAtlasDetailsSheetModel11666.fromHeadline(
+                            event: event,
+                            phase: phase,
+                            observedAt: effectiveObservedAt,
+                            liveStatus: liveStatus,
+                            now: now
+                        )
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Market details")
+                    .accessibilityIdentifier("event-atlas-headline-details-button-11666")
                 }
             }
-            Spacer(minLength: 0)
-            if showsEkg {
-                let presentation = EkgHeartbeat.present(ekgTracker, status: liveStatus, now: now)
-                Circle()
-                    .fill(EkgHeartbeatView.tone(presentation.mode))
-                    .frame(width: 6, height: 6)
-                    .accessibilityLabel(presentation.label)
-                    .accessibilityIdentifier("atlas-ekg-indicator-11666")
+            .accessibilityIdentifier("event-atlas-headline-row-11666")
+            .sheet(item: $activeSheet) { model in
+                EventAtlasDetailsSheet11666(model: model)
             }
-            Button {
-                activeSheet = EventAtlasDetailsSheetModel11666.fromHeadline(
-                    event: event,
-                    phase: phase,
-                    observedAt: effectiveObservedAt,
-                    liveStatus: liveStatus
-                )
-            } label: {
-                Image(systemName: "info.circle")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Market details")
-            .accessibilityIdentifier("event-atlas-headline-details-button-11666")
-        }
-        .accessibilityIdentifier("event-atlas-headline-row-11666")
-        .sheet(item: $activeSheet) { model in
-            EventAtlasDetailsSheet11666(model: model)
         }
     }
 }

@@ -2,6 +2,12 @@
   "slug": "gta-vi-album-features",
   "membership": "sibling-family",
   "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
   "kicker": "GTA VI · NOV 26",
   "name": "Will they be featured on GTA VI: The Album?",
   "category": "entertainment",

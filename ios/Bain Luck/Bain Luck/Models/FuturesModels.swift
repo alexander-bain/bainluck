@@ -227,6 +227,7 @@ nonisolated struct GameMarketOutcome: Decodable, Equatable, Identifiable, Sendab
     /// #9483 — as on ``GameMarketPlayerProp``: read only by the All markets
     /// catalog. Absent on older payloads, decoding to `nil`.
     var observedAt: String? = nil
+    var pregameMark: Double? = nil
     var _inverted: Bool? = nil
 }
 

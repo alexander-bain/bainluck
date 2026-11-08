@@ -965,6 +965,8 @@ def build_field_leaders_producer(
         footer=footer,
         produce=_produce,
         membership=membership,
+        relations=definition.get("relations"),
+        level=definition.get("level"),
         rule=rule if isinstance(rule, Mapping) else None,
         tag=tag,
         kicker=kicker,

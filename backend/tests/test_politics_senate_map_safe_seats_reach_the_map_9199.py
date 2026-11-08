@@ -31,13 +31,21 @@ import pytest
 
 from app.routes.politics import get_politics
 
-_NOW = datetime.now(timezone.utc)
-# Offset from the clock, never a calendar date (gotcha #44): a fixed Nov-2026
-# resolution goes stale a week after election day and fails every arm. Every
-# specimen resolves in 30 days, and the Kalshi tickers carry that same cycle's
-# year, so `_build_senate_map`'s nearest-cycle cut keeps them all on any clock.
+_NOW = datetime(2026, 9, 27, 22, 30, tzinfo=timezone.utc)
+# This is the pre-election map contract. #12336 separately covers retirement
+# after Election Day, so the route and its dated specimens share this clock.
 _RESOLVES = _NOW + timedelta(days=30)
 _YY = f"{(_RESOLVES.year - _RESOLVES.year % 2) % 100:02d}"
+
+
+@pytest.fixture(autouse=True)
+def pre_election_clock(monkeypatch):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _NOW.astimezone(tz) if tz else _NOW.replace(tzinfo=None)
+
+    monkeypatch.setattr("app.routes.politics.datetime", Clock)
 
 
 class _Scalars:

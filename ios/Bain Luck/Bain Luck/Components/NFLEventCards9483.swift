@@ -821,6 +821,12 @@ struct NFLEventCardView9483: View {
                                                       state: state, expanded: expanded)
             case .soccerExactScore(let exactScore):
                 EventAtlasSoccerExactScoreCardView11666(card: exactScore, state: state, expanded: expanded)
+            case .tennisSets(let tennisSets):
+                EventAtlasTennisSetsCardView11666(card: tennisSets, awayColor: awayColor, homeColor: homeColor,
+                                                  state: state, expanded: expanded)
+            case .tennisExactScore(let tennisExactScore):
+                EventAtlasTennisExactScoreCardView11666(card: tennisExactScore, awayColor: awayColor, homeColor: homeColor,
+                                                        state: state, expanded: expanded)
             }
         }
         .padding(16)
