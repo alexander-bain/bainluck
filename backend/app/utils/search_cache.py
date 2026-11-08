@@ -192,6 +192,44 @@ def search_response_ttl_seconds(
         return SEARCH_THIN_RESPONSE_TTL_SECONDS
     return SEARCH_RESPONSE_TTL_SECONDS
 
+#: #4437 (b): the ONE degraded stage whose answer may still be cached, briefly.
+#:
+#: LAT-P007 keeps every degraded answer out of the cache, and the headline lane
+#: joined that rule (#7243) because its shed was RARE — `red sox` 1/45 on
+#: 2026-09-19 — so the next build would almost always be fuller. For a term
+#: whose headline lane sheds on EVERY build that premise is false, the
+#: #3399/LAT-P241 case: `chi` timed out its headline lane on every read on
+#: 2026-11-07 (2,031-2,094 ms) and so paid a 3.3-3.4 s build on every repeat,
+#: never a hit. Such an answer still carries its teams, games and futures —
+#: only the championship card the lane promotes is missing.
+#:
+#: So it lives :data:`SEARCH_THIN_RESPONSE_TTL_SECONDS` — the same short life as a
+#: thin outcome-arm answer, long enough to absorb a burst of repeats, never the
+#: freshness ceiling — and only when it has content, so a cut-short answer can
+#: never be served back as "No results". Any OTHER shed stage, alone or beside
+#: this one, keeps the answer out of the cache exactly as before.
+SEARCH_CACHEABLE_SHED_STAGES = frozenset({"headline_contenders"})
+
+
+def shed_answer_ttl_seconds(degraded: list, payload: dict, *, debug_timing: bool) -> int | None:
+    """The cache life of a DEGRADED answer, or ``None`` = do not write it.
+
+    Never a timing request; only an answer whose every shed stage is in
+    :data:`SEARCH_CACHEABLE_SHED_STAGES` and which still shows something. The
+    life is the short one whoever built it: a warmer rebuild that sheds gets
+    30 s too, never the head's 600 s, because the warmer's long life is for
+    complete answers (and the warmer flag stays off every write condition —
+    `test_search_head_warmer_overwrites_not_deletes`).
+    """
+    if not degraded or debug_timing:
+        return None
+    if not set(degraded) <= SEARCH_CACHEABLE_SHED_STAGES:
+        return None
+    if not any(payload.get(k) for k in ("results", "futures", "teams", "event_concepts")):
+        return None
+    return SEARCH_THIN_RESPONSE_TTL_SECONDS
+
+
 #: Operator kill switch, mirroring ``FEED_INERT_PRINCIPAL_SHARE`` (ruling from
 #: LAT-P089: *an operator lever must be faster than a release when the failure
 #: mode is "the wrong person's answer"*).
