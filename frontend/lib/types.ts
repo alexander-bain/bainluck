@@ -2309,6 +2309,10 @@ export interface FeedItem {
   reason: string;
   headline: string | null;
   context_summary?: string | null;
+  /** #12279 — the current percent a live event's movement sentence states, and
+   *  whose. Absent when the sentence states none (an underdog lead quotes only
+   *  the kickoff price). */
+  live_claim_percent?: { side: "home" | "away"; percent: number } | null;
   data:
     | FeedEventData
     | FeedFuturesData

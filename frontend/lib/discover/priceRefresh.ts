@@ -166,8 +166,9 @@ function retainedMarketFence(incoming: FeedItem, held: FeedItem, previous?: Mark
 
 // An event leaf's sentence is the producer's claim about that leaf's own
 // price and score, so it travels with them; holding it beside a newer chance
-// paints "91%" next to a "90%" claim (#5439).
-const EVENT_LEAF_COPY = ['headline', 'reason', 'context_summary'] as const;
+// paints "91%" next to a "90%" claim (#5439). The percent it states travels
+// with it too (#12279), so the preview overlay judges the sentence it is shown.
+const EVENT_LEAF_COPY = ['headline', 'reason', 'context_summary', 'live_claim_percent'] as const;
 
 function withPriceBody(held: FeedItem, fresh: FeedItem): FeedItem {
   // Keep editorial identity/copy and image treatment while replacing the whole

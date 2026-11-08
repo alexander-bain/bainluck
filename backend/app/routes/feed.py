@@ -12499,6 +12499,20 @@ async def _score_events(
             # `generate_event_reason`, which calls the same composer) and as the
             # `headline` the web caption chain actually renders. None on every
             # non-live card and on any live card whose evidence supports nothing.
+            #
+            # #12279 — and its current percent is the one the card prints. The
+            # serializer below rounds this same pair once, as a duel, into
+            # `current_odds.*_rendered_percent`; the sentence used to round its
+            # own side alone, which is one point higher on a trailing side that
+            # sits on a half-percent (0.335: card 33, sentence 34).
+            _live_percents = (
+                duel_percents_by_side(
+                    away_probability=current_away_prob,
+                    home_probability=current_home_prob,
+                )
+                if current_home_prob is not None
+                else None
+            )
             _live_claim = compose_live_claim(
                 home_team=event.home_team_name,
                 away_team=event.away_team_name,
@@ -12523,6 +12537,7 @@ async def _score_events(
                 score_source=getattr(event, "score_source", None),
                 score_observed_at=getattr(event, "score_observed_at", None),
                 now=now,
+                live_percents=_live_percents,
             )
 
             # #6181 — THE PRE-MATCH ROW AND THE SENTENCE UNDER IT ARE ONE ANSWER.
@@ -12577,6 +12592,8 @@ async def _score_events(
                 score_source=getattr(event, "score_source", None),
                 score_observed_at=getattr(event, "score_observed_at", None),
                 now=now,
+                # #12279 — same printed percents as the claim above.
+                live_percents=_live_percents,
             )
 
             # Compute event_tags on-the-fly (fresh, not stale persisted)
@@ -12767,6 +12784,17 @@ async def _score_events(
                     highlight_result, for_ranking=True
                 ),
             }
+            # #12279 — which current percent the sentence above states, and whose.
+            # The web card repaints its number when a venue moves (#10090's
+            # preview) before the next read brings a sentence for that number;
+            # this lets it hide a sentence that no longer states the number on
+            # the card instead of printing two numbers for one team. Absent when
+            # the sentence states no current percent.
+            if _live_claim is not None and _live_claim.stated_side is not None:
+                item["live_claim_percent"] = {
+                    "side": _live_claim.stated_side,
+                    "percent": _live_claim.stated_percent,
+                }
 
             # #4541: a marquee GAME leads the tab on its OCCASION, not on its drama.
             #

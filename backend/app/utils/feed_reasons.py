@@ -1328,6 +1328,13 @@ class LiveClaim(NamedTuple):
 
     claim_type: str
     sentence: str
+    # #12279 — the CURRENT percent a movement sentence states, and whose it is
+    # ("home" or "away"). None on a claim that states no current percent (an
+    # underdog lead quotes only the kickoff price). Served beside the sentence
+    # so a client that repaints the card's number can tell whether the sentence
+    # still states the number on the card.
+    stated_side: Optional[str] = None
+    stated_percent: Optional[int] = None
 
 
 def _away_kickoff_price(
@@ -1385,6 +1392,7 @@ def compose_live_claim(
     score_source: Optional[str] = None,
     score_observed_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
+    live_percents: Optional[Mapping[str, Optional[int]]] = None,
 ) -> Optional[LiveClaim]:
     """The one supported claim this live card may make, or None. (T10-1, #5439)
 
@@ -1403,6 +1411,15 @@ def compose_live_claim(
     observation stamp and ``now`` is the caller's fixed clock. Without all three
     a current-leading claim is refused (see `score_observation_is_current`);
     the price sentence is unaffected.
+
+    #12279 — ``live_percents`` is ``{"home": int|None, "away": int|None}``, the
+    two whole percents this LIVE card prints, rounded once as a duel by
+    `graded_card.duel_percents_by_side` over the card's own `current_odds`
+    pair. A movement sentence states its current percent from here, the live
+    twin of #6181's ``prematch_percents``: the card derives its trailing side
+    as ``100 - leader``, so on a half-percent the raw probability rounds one
+    point above the number printed beside it (0.335: the card prints 33, the
+    probability rounds to 34).
     """
     claim = select_live_claim(
         status=status,
@@ -1479,7 +1496,8 @@ def compose_live_claim(
     # this evidence is about.
     change = home_probability - opening_home_prob
     if change > 0:
-        mover, was, now_prob = home_team, opening_home_prob, home_probability
+        mover, side = home_team, "home"
+        was, now_prob = opening_home_prob, home_probability
     else:
         # #6238 — BOTH ENDPOINTS OF AN AWAY MOVE ARE THE COMPLEMENT ON A
         # DRAW-PRICED SPORT: `was` is `1 − home` by construction here, and the
@@ -1491,20 +1509,41 @@ def compose_live_claim(
         # move: the home team's chance falling IS the reason the away team's
         # rose, and both numbers here are the honest home leg.
         if sport_prices_a_draw(sport):
+            now_text, now_pct = _stated_now("home", home_probability, live_percents)
             return LiveClaim(
                 "movement",
                 f"{home_team} chance fell from {_display_pct(opening_home_prob)}% "
-                f"to {_display_pct(home_probability)}%",
+                f"to {now_text}%",
+                "home",
+                now_pct,
             )
-        mover = away_team
+        mover, side = away_team, "away"
         was = 1 - opening_home_prob
         now_prob = (
             away_probability if away_probability is not None else 1 - home_probability
         )
+    now_text, now_pct = _stated_now(side, now_prob, live_percents)
     return LiveClaim(
         "movement",
-        f"{mover} chance rose from {_display_pct(was)}% to {_display_pct(now_prob)}%",
+        f"{mover} chance rose from {_display_pct(was)}% to {now_text}%",
+        side,
+        now_pct,
     )
+
+
+def _stated_now(
+    side: str,
+    probability: float,
+    live_percents: Optional[Mapping[str, Optional[int]]],
+) -> tuple[str, Optional[int]]:
+    """A movement sentence's current percent, as written and as an integer. (#12279)
+
+    The card's own printed percent for ``side`` when the caller has it, so the
+    sentence states the number beside it; `rendered_percent` otherwise, as before.
+    """
+    printed = live_percents.get(side) if live_percents else None
+    stated = int(printed) if printed is not None else rendered_percent(probability)
+    return _display_pct(probability, printed), stated
 
 
 def generate_event_reason(
@@ -1524,6 +1563,7 @@ def generate_event_reason(
     score_source: Optional[str] = None,
     score_observed_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
+    live_percents: Optional[Mapping[str, Optional[int]]] = None,
 ) -> str:
     """
     Generate a one-line explanation for why an event is interesting.
@@ -1544,6 +1584,9 @@ def generate_event_reason(
     ``score_source``/``score_observed_at``/``now`` (#10561) reach only the live
     composer: a live "leading" sentence needs a current score observation. The
     settled sentences read a final score, which does not expire.
+
+    ``live_percents`` (#12279) reaches only the live composer too: the two whole
+    percents the LIVE card prints, so its movement sentence states them.
     """
     reasons = set(highlight_reasons)
 
@@ -1799,6 +1842,9 @@ def generate_event_reason(
             score_source=score_source,
             score_observed_at=score_observed_at,
             now=now,
+            # #12279 — the card's printed percents, so `reason` and `headline`
+            # state the same number.
+            live_percents=live_percents,
         )
 
         if claim is not None and claim.claim_type == "underdog_lead":

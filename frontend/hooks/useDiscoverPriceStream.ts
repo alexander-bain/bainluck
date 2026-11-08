@@ -16,6 +16,7 @@ import {
 } from '@/lib/authorityPreview';
 import { overlayBlendPreview, type BlendPreviewState } from '@/lib/blendPreview';
 import { parseFoldRevision } from '@/lib/foldRevision';
+import { servedDuelPercents } from '@/lib/servedDuelPercents';
 import { useMarketPreviews } from './useMarketPreviews';
 import { useMarketStream } from './useMarketStream';
 
@@ -58,12 +59,39 @@ function overlayPreviews(groups: DiscoverGroupedItem[], previews: Previews): Dis
     if (overlaid === data) return item;
     changed = true;
     const p = state.p;
-    return { ...item, data: { ...data, current_odds: { ...data.current_odds, home_probability: p, away_probability: 1 - p,
-      home_rendered_percent: null, away_rendered_percent: null } } };
+    const odds = { ...data.current_odds, home_probability: p, away_probability: 1 - p,
+      home_rendered_percent: null, away_rendered_percent: null };
+    return withoutStaleClaim({ ...item, data: { ...data, current_odds: odds } }, odds);
   };
   const next = groups.map(group => group.type === 'single' ? { ...group, item: group.item && project(group.item) }
     : { ...group, items: group.items?.map(project) });
   return changed ? next : groups;
+}
+
+/**
+ * #12279: the sentence under the number is the feed's claim about the COMMITTED
+ * price, and it states one percent for one side (`live_claim_percent`). When the
+ * preview prints a different percent for that side, the card shows two numbers
+ * for one team — "Arsenal 67%" over "Arsenal chance fell from 83% to 66%", served
+ * Sat Nov 7 — so the sentence is withdrawn wherever it is carried until the read
+ * that commits the move brings the one for the new number (`withPriceBody` moves
+ * copy and price together). Copy that is not that sentence is left alone.
+ */
+function withoutStaleClaim(item: FeedItem, odds: NonNullable<FeedEventData['current_odds']>): FeedItem {
+  const stated = item.live_claim_percent;
+  if (!stated) return item;
+  // The card's own call (`components/discover/EventCard`), on the overlaid odds.
+  const [away, home] = servedDuelPercents(odds.away_probability, odds.home_probability,
+    odds.away_rendered_percent, odds.home_rendered_percent);
+  if ((stated.side === 'home' ? home : away) === stated.percent) return item;
+  const sentence = item.headline;
+  return {
+    ...item,
+    headline: null,
+    reason: item.reason === sentence ? '' : item.reason,
+    context_summary: item.context_summary === sentence ? null : item.context_summary,
+    live_claim_percent: null,
+  };
 }
 
 /** Price bodies are projected AFTER editorial ranking/filtering/grouping. */
