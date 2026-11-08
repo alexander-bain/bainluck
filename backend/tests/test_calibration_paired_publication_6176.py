@@ -714,6 +714,9 @@ class TestTheRealRunAsyncBoundary:
         monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.05)
         published = []
         logging_s = 0.0
+        core_times = []
+        gc_started = None
+        gc_s = 0.0
         original_exception = cpp.logger.exception
 
         def timed_exception(*args, **kwargs):
@@ -726,18 +729,39 @@ class TestTheRealRunAsyncBoundary:
 
         monkeypatch.setattr(cpp.logger, "exception", timed_exception)
 
+        def time_gc(phase, info):
+            nonlocal gc_started, gc_s
+            if phase == "start":
+                gc_started = time.monotonic()
+            elif phase == "stop" and gc_started is not None:
+                gc_s += time.monotonic() - gc_started
+                gc_started = None
+
         async def build_then_publish():
+            core_times.append(time.monotonic())
             block = await cpp.build_paired_accuracy(generated_at="GEN")
             published.append(block["reason"])
+            core_times.append(time.monotonic())
             return block
 
-        block, elapsed = _run_task_boundary(build_then_publish)
+        import gc
+
+        gc.callbacks.append(time_gc)
+        try:
+            before_run = time.monotonic()
+            block, elapsed = _run_task_boundary(build_then_publish)
+            after_run = time.monotonic()
+        finally:
+            gc.callbacks.remove(time_gc)
 
         assert published == [cpp.REASON_TIMEOUT], "the core coroutine did not reach its publish"
         assert block["status"] == cpp.STATUS_UNAVAILABLE
         assert elapsed < 0.3, (
             f"run_async returned {elapsed:.3f}s on a 0.10s wall, "
-            f"error logging took {logging_s:.3f}s, teardown log {harness.log!r}"
+            f"loop startup {core_times[0] - before_run:.3f}s, "
+            f"coroutine {core_times[1] - core_times[0]:.3f}s, "
+            f"loop shutdown {after_run - core_times[1]:.3f}s, "
+            f"error logging {logging_s:.3f}s, observed GC {gc_s:.3f}s, teardown log {harness.log!r}"
         )
         assert not cpp._ABANDONED
         assert harness.log.count("execute") == 1, "a query ran after the wall"
