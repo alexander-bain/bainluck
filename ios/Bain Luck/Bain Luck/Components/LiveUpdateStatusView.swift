@@ -51,6 +51,11 @@ struct LiveUpdateStatusView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(status.accessibilityText)
             .accessibilityIdentifier("live-update-status")
+            // #12304 — a run that showed "Update interrupted" never asks for a rating.
+            .onAppear { if status == .interrupted { ReviewPromptSignals12304.shared.noteTrouble() } }
+            .onChange(of: status) { _, now in
+                if now == .interrupted { ReviewPromptSignals12304.shared.noteTrouble() }
+            }
         }
     }
 }
