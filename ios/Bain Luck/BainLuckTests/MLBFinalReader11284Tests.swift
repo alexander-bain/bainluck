@@ -413,6 +413,24 @@ final class MLBFinalReader11284Tests: XCTestCase {
         XCTAssertEqual(card.outcomes.count, 1)
     }
 
+    func testAServedExtraInningsRowWithPregameMarkKeepsItsPregameChance() throws {
+        var body = try object(Self.capturedMarkets)
+        var other = try XCTUnwrap(body["other"] as? [[String: Any]])
+        other.append([
+            "market_name": "Chicago White Sox vs Houston: Extra Innings", "outcome_name": "Yes",
+            "observed_at": "2026-09-30T23:04:20.681782+00:00", "contributor_outcome_ids": [237550051],
+            "probability": 0.16, "pregame_mark": 0.11, "source": "kalshi",
+            "is_winner": false, "resolution_source": "api_settlement",
+            "_market_id": 62972332,
+        ])
+        body["other"] = other
+        let cards = try deck(markets: body, related: object(Self.capturedRelated))
+        let card = try XCTUnwrap(extra(cards))
+        XCTAssertEqual(card.outcomes.first?.pregameChance, 0.11)
+        XCTAssertEqual(value("Pregame chance", in: card.outcomes[0].original), [formatProbability(0.11)])
+        XCTAssertEqual(card.outcomes[0].venueResult, .notConfirmed)
+    }
+
     // MARK: - R1: no withheld, terminal or undated quote in Details
 
     func testR1CapturedSeriesAndTotalsDetailsCarryNoRecordedQuote() throws {

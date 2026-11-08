@@ -21665,11 +21665,18 @@ def _is_team_stat_market(name: str) -> bool:
 #: a rule measured only on team scoring races. All 94 rows in the table on
 #: 2026-09-11 match it, and they are all Kalshi NFL.
 _SCORING_RACE_RE = re.compile(r"\brace to\s+\d+(?:\.\d+)?\s+points?\b", re.IGNORECASE)
+_EXTRA_INNINGS_RE = re.compile(r"\bextra\s+innings?\b", re.IGNORECASE)
 
 
 def _is_scoring_race_market(name: str) -> bool:
     """True for "…: Race to 14 Points" — a team market, never a player prop."""
     return bool(_SCORING_RACE_RE.search(name or ""))
+
+
+def _is_extra_innings_market(name: str) -> bool:
+    """True for "…: Extra Innings" — "extRA" ends in RA (`_PLAYER_PROP_RE`),
+    but extra innings is a game-level other market, never a player prop."""
+    return bool(_EXTRA_INNINGS_RE.search(name or ""))
 
 
 #: One inning, not a run of them. `\binning\b` matches "2nd Inning Total" and
@@ -23292,7 +23299,11 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     # classify it exactly as they classify "Game 1: Chicago WS vs Cleveland".
     # The regex itself is NOT changed here: tests for #1588/#1735/#5088/#4189
     # reach their subject only through that same Tampa/Mirra match (see #10180).
-    if _PLAYER_PROP_RE.search(name) and not _is_kalshi_game_winner_series(external_id):
+    if (
+        _PLAYER_PROP_RE.search(name)
+        and not _is_kalshi_game_winner_series(external_id)
+        and not _is_extra_innings_market(name)
+    ):
         return "player_prop"
     if "moneyline" in lower or "winner" in lower or "win" in lower:
         if _SINGLE_INNING_RE.search(lower):
@@ -27258,6 +27269,16 @@ async def _build_game_markets(
                         # Same expression as the `other` branch below, so the
                         # two ways into this section cannot serve two shapes.
                         "probability": round(prob, 4) if prob else None,
+                        "pregame_mark": _resolve_pregame_mark(
+                            market,
+                            o,
+                            True,
+                            False,
+                            round(float(o.opening_probability), 4)
+                            if o.opening_probability is not None
+                            else None,
+                            event.commence_time,
+                        ),
                         "source": market.source,
                         **_grade,
                         "_market_id": market.id,
@@ -27559,6 +27580,7 @@ async def _build_game_markets(
                     and not _is_team_stat_market(market.name)
                     and not _is_scoring_race_market(market.name)
                     and not _is_kalshi_game_winner_series(market.external_id)
+                    and not _is_extra_innings_market(market.name)
                 ):
                     threshold = _extract_threshold(o.name)
                     name_lower = o.name.lower().strip()
@@ -27607,6 +27629,16 @@ async def _build_game_markets(
                     "observed_at": _observed(o),
                     "contributor_outcome_ids": [o.id],
                     "probability": round(prob, 4) if prob else None,
+                    "pregame_mark": _resolve_pregame_mark(
+                        market,
+                        o,
+                        True,
+                        False,
+                        round(float(o.opening_probability), 4)
+                        if o.opening_probability is not None
+                        else None,
+                        event.commence_time,
+                    ),
                     "source": market.source,
                     **_settled_grade_fields(market, o, **_grade_ctx),
                     **({"market_type": other_market_type} if other_market_type else {}),

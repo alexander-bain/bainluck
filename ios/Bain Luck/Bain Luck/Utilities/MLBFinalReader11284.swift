@@ -206,7 +206,8 @@ struct MLBOriginal11284: Equatable, Identifiable, Sendable {
         if let venue = SourceLabels.label(for: row.source) {
             fields.append(Field(label: "Venue", value: venue))
         }
-        fields.append(Field(label: "Pregame chance", value: "Unavailable"))
+        fields.append(Field(label: "Pregame chance",
+                            value: openChance(row.pregameMark).map { formatProbability($0) } ?? "Unavailable"))
         fields.append(Field(label: "Venue result",
                             value: MLBVenueResult11284.venue(isWinner: row.isWinner,
                                                              resolutionSource: row.resolutionSource).label))
@@ -761,7 +762,8 @@ struct MLBExtraInningsCard11284: Equatable {
         let outcomes = rows.filter { isExtraInnings($0) }.map { row in
             Outcome(label: row.outcomeName, venue: SourceLabels.label(for: row.source),
                     venueResult: .venue(isWinner: row.isWinner, resolutionSource: row.resolutionSource),
-                    original: MLBOriginal11284.other(row, eventID: eventID))
+                    original: MLBOriginal11284.other(row, eventID: eventID),
+                    pregameChance: MLBOriginal11284.openChance(row.pregameMark))
         }
         return outcomes.isEmpty ? nil : MLBExtraInningsCard11284(eventID: eventID, outcomes: outcomes)
     }
