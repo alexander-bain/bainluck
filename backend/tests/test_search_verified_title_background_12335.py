@@ -1,6 +1,6 @@
 """#12335 step 4: a composition the Search bound leaves running finishes, and the next build prints it.
 
-THE DEFECT, measured on production after #12346 (2026-11-08, 3:25 and 5:53 AM
+THE DEFECT, measured on production after #12346 (Nov 8, 3:25 and 5:53 AM
 PT): 0 of 20 searches for the NFL title teams ("chiefs", "49ers", "bears",
 "jaguars", "eagles", first read and repeat) carried the page's blend. Every
 build tripped the 1 s bound, the bound CANCELLED the composition, so nothing
