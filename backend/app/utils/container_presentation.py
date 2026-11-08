@@ -38,10 +38,13 @@ state (the event card already carries ``served_event_status``).
 from __future__ import annotations
 
 import re
+from collections import Counter
 from datetime import datetime
 from typing import Callable, Iterable, Mapping, Optional
 from zoneinfo import ZoneInfo
 
+from app.utils.container_game_winner import RELATED_LINK_LIMIT
+from app.utils.container_graph import CLASS_UNCLASSIFIED
 from app.utils.container_mlb_playoffs import MlbPostseason
 from app.utils.container_nfl import (
     STAGE_POSTSEASON,
@@ -193,6 +196,42 @@ def _kickoff_key(entry: dict) -> tuple:
     card = entry.get("card") or {}
     kickoff = card.get("commence_time")
     return (0, kickoff, entry["id"]) if isinstance(kickoff, str) else (1, "", entry["id"])
+
+
+def compact_related_members(
+    members: list[dict],
+    market_event_ids: Mapping[int, Optional[int]],
+    rendered_event_ids: set[int],
+) -> tuple[list[dict], dict[int, int], int]:
+    """Represent a long attached list by counts on its rendered game (#12337)."""
+    member_market_ids = {
+        int(member["id"]) for member in members if member.get("type") == MEMBER_MARKET
+    }
+    related = {
+        market_id: event_id
+        for market_id, event_id in market_event_ids.items()
+        if market_id in member_market_ids and event_id is not None and event_id in rendered_event_ids
+    }
+    by_event = Counter(related.values())
+    counts = {
+        event_id: count for event_id, count in by_event.items() if count > RELATED_LINK_LIMIT
+    }
+    summarized_ids = {
+        market_id for market_id, event_id in related.items() if event_id in counts
+    }
+    kept = []
+    seen = set()
+    unclassified_count = 0
+    for member in members:
+        market_id = int(member["id"])
+        if member.get("type") != MEMBER_MARKET or market_id not in summarized_ids:
+            kept.append(member)
+            continue
+        if market_id not in seen:
+            seen.add(market_id)
+            if (member.get("class") or CLASS_UNCLASSIFIED) == CLASS_UNCLASSIFIED:
+                unclassified_count += 1
+    return kept, counts, unclassified_count
 
 
 def present_sections(

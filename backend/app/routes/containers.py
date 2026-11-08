@@ -92,6 +92,7 @@ from app.utils.container_presentation import (
     MEMBER_MARKET,
     WITHHELD_UNSERIALIZABLE,
     container_destination,
+    compact_related_members,
     edition_for_slug,
     present_sections,
 )
@@ -444,6 +445,7 @@ async def get_container(
     limit: Optional[str] = Query(
         None, description="Theme collections: members per page."
     ),
+    compact: bool = False,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """One published collection: header, nested collections, and its members as
@@ -453,6 +455,10 @@ async def get_container(
     published read itself is unchanged, so the revision still covers the draws.
     ``revision`` / ``cursor`` / ``limit`` page a theme collection and are
     ignored for every other slug.
+
+    ``compact=true`` serves an NFL week's games and short linked lists as
+    cards, with counts for long linked groups and their unclassified members.
+    Both representations read the published membership before caching.
     """
     if not containers_read_enabled() or (slug == MIDTERMS_SLUG and not midterms_enabled()):
         raise HTTPException(status_code=404, detail="Not found")
@@ -494,12 +500,15 @@ async def get_container(
         result["discover_pin"] = midterms_pin(result)
         return result
 
+    compact = compact and (edition or {}).get("kind") == EDITION_NFL_WEEK
     if not container_read_cache_enabled():
-        return await _build_published_payload(db, published, include_children)
-    return await _serve_cached(db, slug, published, include_children)
+        return await _build_published_payload(db, published, include_children, compact=compact)
+    return await _serve_cached(db, slug, published, include_children, compact=compact)
 
 
-async def _build_published_payload(db: AsyncSession, published, include_children: bool) -> dict:
+async def _build_published_payload(
+    db: AsyncSession, published, include_children: bool, compact: bool = False
+) -> dict:
     """The full 200 for a ``published`` / ``empty`` read — the uncached build."""
     payload = _state_payload(published, edition_for_slug(published.slug))
     # Header and nested collections in ONE statement, keyed on the id the
@@ -545,10 +554,24 @@ async def _build_published_payload(db: AsyncSession, published, include_children
     event_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_EVENT})
     market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
     event_cards, event_failed = await _hydrate_event_cards(db, event_ids)
+    related_counts = {}
+    unclassified_count = 0
+    if compact and market_ids:
+        rows = (
+            await db.execute(
+                text("SELECT id, event_id FROM futures_markets WHERE id = ANY(:market_ids)"),
+                {"market_ids": market_ids},
+            )
+        ).fetchall()
+        members, related_counts, unclassified_count = compact_related_members(
+            members,
+            {int(row[0]): int(row[1]) if row[1] is not None else None for row in rows},
+            set(event_cards),
+        )
+        market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
     market_cards, market_event_ids, market_failed = await _hydrate_market_cards(
         db, market_ids, nfl_week=(payload["edition"] or {}).get("kind") == EDITION_NFL_WEEK
     )
-
     sections, withheld = present_sections(
         members,
         event_cards=event_cards,
@@ -558,6 +581,10 @@ async def _build_published_payload(db: AsyncSession, published, include_children
         order_classes=order_classes,
         unclassified=CLASS_UNCLASSIFIED,
     )
+    for section in sections:
+        for member in section["members"]:
+            if member["type"] == MEMBER_EVENT and member["id"] in related_counts:
+                member["related_count"] = related_counts[member["id"]]
     member_count = sum(s["count"] for s in sections)
     header = _container_header(head) if head is not None else None
     if header is not None and len(event_cards) == len(event_ids):
@@ -567,7 +594,7 @@ async def _build_published_payload(db: AsyncSession, published, include_children
             header["name"], published.slug,
             (card.get("commence_time") for card in event_cards.values()),
         )
-    return {
+    result = {
         **payload,
         "container": header,
         "children": children,
@@ -580,6 +607,12 @@ async def _build_published_payload(db: AsyncSession, published, include_children
         "assembled": bool(members),
         "known_classes": sorted(EDGE_CLASSES if published.slug == MIDTERMS_SLUG else EDGE_CLASSES - SECTION_CLASSES),
     }
+    if compact:
+        result["related_summary"] = {
+            "count": sum(related_counts.values()),
+            "unclassified_count": unclassified_count,
+        }
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -687,10 +720,12 @@ def _store_entry(key: str, entry: CachedRead) -> None:
     schedule_background(_publish_shared(key, entry))
 
 
-async def _build_entry(db: AsyncSession, published, include_children: bool) -> CachedRead:
+async def _build_entry(
+    db: AsyncSession, published, include_children: bool, compact: bool = False
+) -> CachedRead:
     # The age origin is when the build STARTED reading, not when it finished.
     built_at = time.time()
-    payload = await _build_published_payload(db, published, include_children)
+    payload = await _build_published_payload(db, published, include_children, compact=compact)
     fresh_until, stale_until = payload_deadlines(payload, built_at)
     return CachedRead(
         body=_render(payload), built_at=built_at, fresh_until=fresh_until, stale_until=stale_until
@@ -732,7 +767,8 @@ def _cached_response(entry: CachedRead, label: str) -> Response:
 
 
 async def _refresh_in_background(
-    slug: str, include_children: bool, key: str, future, container_id: Optional[int]
+    slug: str, include_children: bool, key: str, future, container_id: Optional[int],
+    compact: bool = False,
 ) -> None:
     """Rebuild a stale entry on its own session.
 
@@ -748,8 +784,8 @@ async def _refresh_in_background(
         async with async_session_maker() as session:
             published = await read_published(session, slug)
             if published.state in (READ_PUBLISHED, READ_EMPTY):
-                entry = await _build_entry(session, published, include_children)
-                fresh_key = container_read_cache_key(slug, published.revision, include_children)
+                entry = await _build_entry(session, published, include_children, compact=compact)
+                fresh_key = container_read_cache_key(slug, published.revision, include_children, compact)
                 _store_entry(fresh_key, entry)
                 if fresh_key == key:
                     result = entry
@@ -766,10 +802,12 @@ async def _refresh_in_background(
         finish_build(key, future, result=result)
 
 
-async def _serve_cached(db: AsyncSession, slug: str, published, include_children: bool) -> Response:
+async def _serve_cached(
+    db: AsyncSession, slug: str, published, include_children: bool, compact: bool = False
+) -> Response:
     from app.utils.request_cache import begin_build, finish_build, schedule_background
 
-    key = container_read_cache_key(slug, published.revision, include_children)
+    key = container_read_cache_key(slug, published.revision, include_children, compact)
     now = time.time()
     entry, from_shared = await _load_entry(key, now)
     if entry is not None and not entry.is_fresh(now):
@@ -786,7 +824,7 @@ async def _serve_cached(db: AsyncSession, slug: str, published, include_children
         if leader:
             schedule_background(
                 _refresh_in_background(
-                    slug, include_children, key, future, published.container_id
+                    slug, include_children, key, future, published.container_id, compact
                 )
             )
         return _cached_response(entry, "shared_stale_hit" if from_shared else "stale_hit")
@@ -831,7 +869,7 @@ async def _serve_cached(db: AsyncSession, slug: str, published, include_children
 
     entry = None
     try:
-        entry = await _build_entry(db, published, include_children)
+        entry = await _build_entry(db, published, include_children, compact=compact)
     finally:
         # Resolved on EVERY exit (request_cache's single-owner invariant); a
         # failed or cancelled build hands waiters None and they elect a new owner.

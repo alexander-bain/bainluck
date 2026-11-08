@@ -11,6 +11,7 @@ export interface CollectionMember {
   questionIds: number[];
   eventId: number | null;
   linkPresentation?: "game" | "inline" | "secondary";
+  relatedMarketCount?: number;
 }
 export interface CollectionSection { key: string; cls: string; title: string; note: string | null; layout?: string; members: CollectionMember[] }
 export interface CollectionPin { slug: string; name: string; href: string; subtitle: string; pin_until: string }
@@ -34,6 +35,7 @@ export interface CollectionHub {
   theme: { totalCount: number; nextCursor: string | null; inventoryComplete: boolean; revisionMoved: boolean } | null;
   subtitle?: string | null;
   pin?: CollectionPin | null;
+  relatedSummary?: { count: number; unclassifiedCount: number };
 }
 export interface CollectionReadingContext {
   slug: string;
@@ -48,6 +50,7 @@ const text = (value: unknown): value is string => typeof value === "string" && v
 const positive = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 export const safeCollectionSlug = (value: unknown): value is string => typeof value === "string" && value.length <= 200 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+export const isNflWeekCollectionSlug = (slug: string): boolean => /^nfl-\d{4}-(?:preseason-|postseason-)?week-[1-9]\d?$/.test(slug);
 export const collectionPath = (slug: string): string | null => safeCollectionSlug(slug) ? `/collections/${slug}` : null;
 export const collectionMemberDomId = (key: string): string => `collection-member-${key}`;
 
@@ -62,6 +65,7 @@ function member(value: unknown, quiet = false): CollectionMember | null {
   if (type === "event") {
     if (!text(card.home_team) || !text(card.away_team) || !text(card.commence_time) || !text(card.status)) return null;
     if (card.current_odds != null && !object(card.current_odds)) return null;
+    if (row.related_count != null && !count(row.related_count)) return null;
   } else {
     if (!text(card.name) || !text(card.status) || !Array.isArray(card.top_outcomes)) return null;
     if (!card.top_outcomes.every((value) => {
@@ -83,6 +87,7 @@ function member(value: unknown, quiet = false): CollectionMember | null {
   return { key: `${type}:${row.id}`, id: row.id, type, href, item,
     questionIds: Array.isArray(row.question_ids) ? row.question_ids.filter(positive) : [],
     eventId: positive(row.event_id) ? row.event_id : null,
+    relatedMarketCount: type === "event" && count(row.related_count) ? row.related_count : undefined,
     linkPresentation: linkPresentation === "game" || linkPresentation === "inline" || linkPresentation === "secondary"
       ? linkPresentation : undefined };
 }
@@ -166,6 +171,13 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
     return { ...base, note: notes[state] };
   }
   if (!base.revision || (!base.edition && !isRoundup) || !title || !Array.isArray(row.sections)) throw new Error("This collection isn't available right now.");
+  let relatedSummary: CollectionHub["relatedSummary"];
+  if (row.related_summary != null) {
+    const summary = object(row.related_summary);
+    if (!summary || !count(summary.count) || !count(summary.unclassified_count) || summary.unclassified_count > summary.count)
+      throw new Error("This collection isn't available right now.");
+    relatedSummary = { count: summary.count, unclassifiedCount: summary.unclassified_count };
+  }
   // A theme page's `member_count` is this page; the whole collection's count is
   // the snapshot's `counts.shown_count`, the same on every page of a revision.
   const counts = object(row.counts), page = object(row.page);
@@ -200,6 +212,8 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
   });
   const members = sections.flatMap((section) => section.members);
   if (members.length !== row.member_count) partial = true;
+  const summarizedCount = members.reduce((total, member) => total + (member.relatedMarketCount ?? 0), 0);
+  if (summarizedCount !== (relatedSummary?.count ?? 0)) throw new Error("This collection isn't available right now.");
   const related = relate(members);
   const relatedKeys = new Set(Object.values(related).flat().map((m) => m.key));
   const children: CollectionHub["children"] = [];
@@ -214,7 +228,7 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
   }
   const pin = object(row.discover_pin);
   const admittedPin = slug === "midterms-2026" && pin?.slug === slug && pin.href === collectionPath(slug) && text(pin.name) && text(pin.subtitle) && text(pin.pin_until) && Number.isFinite(Date.parse(pin.pin_until)) ? pin as unknown as CollectionPin : null;
-  return { ...base, members, related, children, theme, family, dek: family ? familyDek[family] ?? null : null,
+  return { ...base, members, related, children, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
     subtitle: text(row.subtitle) ? row.subtitle : null, pin: admittedPin,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
     note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or questions aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
@@ -251,8 +265,16 @@ export interface CollectionPageRequest { revision: number; cursor: string }
 export async function fetchCollection(slug: string, signal?: AbortSignal, page?: CollectionPageRequest): Promise<CollectionHub> {
   if (!safeCollectionSlug(slug)) throw new Error("This collection isn't available right now.");
   // The cursor is opaque and belongs to its revision; both travel together.
-  const query = page ? `?${new URLSearchParams({ revision: String(page.revision), cursor: page.cursor })}` : "";
-  const response = await fetch(`${API_URL}/api/containers/${slug}${query}`, { cache: "no-store", signal });
+  const params = new URLSearchParams();
+  if (page) {
+    params.set("revision", String(page.revision));
+    params.set("cursor", page.cursor);
+  }
+  if (isNflWeekCollectionSlug(slug)) params.set("compact", "true");
+  const query = params.toString();
+  const path = `${API_URL}/api/containers/${slug}`;
+  const url = query ? `${path}?${query}` : path;
+  const response = await fetch(url, { cache: "no-store", signal });
   if (response.status === 404) return parseCollection({ slug, state: "unavailable" }, slug);
   if (!response.ok) throw new Error("Couldn't load this collection. Please try again.");
   return parseCollection(await response.json(), slug);

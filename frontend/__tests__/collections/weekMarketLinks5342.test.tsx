@@ -29,7 +29,7 @@ jest.mock("@/components/Analytics", () => ({ useAnalyticsContext: () => ({ track
 
 import CollectionHub from "@/components/collections/CollectionHub";
 import {
-  forgetAcceptedCollections, parseCollection, reconcileCollectionContext, RELATED_LINK_LIMIT, relatedMarketLinks, settleCollectionPage, settleCollectionRead,
+  fetchCollection, forgetAcceptedCollections, parseCollection, reconcileCollectionContext, RELATED_LINK_LIMIT, relatedMarketLinks, settleCollectionPage, settleCollectionRead,
 } from "@/lib/collections";
 import savedWeek5 from "../fixtures/nflWeek5Rev34Container5342.20261020.json";
 import { event, nflHub, question } from "./fixtures";
@@ -188,6 +188,57 @@ describe("NFL related links use the shared presentation decision (#12337)", () =
     const { hub, html } = draw(raw, "nfl-2026-week-4");
     expect(hub.sections.flatMap((section) => section.members).some((member) => member.id === 700)).toBe(true);
     expect(html).toContain('data-collection-member="market:700"');
+  });
+});
+
+describe("the compact NFL page accounts for its long linked lists (#12337)", () => {
+  const compactWeek = () => {
+    const raw = nflHub();
+    const game = event(7);
+    game.question_ids = [];
+    Object.assign(game, { related_count: 4972 });
+    raw.sections[0].members[0] = game;
+    raw.sections = [raw.sections[0], raw.sections[2]];
+    raw.member_count = 4;
+    return { ...raw, related_summary: { count: 4972, unclassified_count: 3487 } };
+  };
+
+  test("games and standalone cards render with an explicit unclassified count and game-page link", () => {
+    const { hub, html } = draw(compactWeek(), "nfl-2026-week-4");
+    expect(hub.note).toBeNull();
+    expect(hub.members).toHaveLength(4);
+    expect(hub.relatedSummary).toEqual({ count: 4972, unclassifiedCount: 3487 });
+    expect(html).toContain("4,972");
+    expect(html).toContain("more linked markets");
+    expect(html).toContain("3,487");
+    expect(html).toContain("uncategorized");
+    expect(html.indexOf("data-related-market-summary")).toBeGreaterThan(html.lastIndexOf("data-collection-member="));
+    expect(html).toContain('data-more-on-game="event:7"');
+    expect(html).toContain('data-collection-member="market:72"');
+    expect(html).not.toContain('data-collection-member="market:70"');
+  });
+
+  test.each([
+    undefined,
+    { count: -1, unclassified_count: 0 },
+    { count: 4972, unclassified_count: 4973 },
+    { count: 4971, unclassified_count: 3487 },
+  ])("an invalid or mismatched summary is a failed read", (summary) => {
+    expect(() => parseCollection({ ...compactWeek(), related_summary: summary }, "nfl-2026-week-4")).toThrow(/isn't available/);
+  });
+
+  test("the normal NFL request opts into the compact response and accepts an older full response", async () => {
+    const savedFetch = global.fetch;
+    const read = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => nflHub() });
+    global.fetch = read;
+    try {
+      expect((await fetchCollection("nfl-2026-week-4")).state).toBe("published");
+      const url = new URL(String(read.mock.calls[0][0]));
+      expect(url.pathname).toBe("/api/containers/nfl-2026-week-4");
+      expect(url.searchParams.get("compact")).toBe("true");
+    } finally {
+      global.fetch = savedFetch;
+    }
   });
 });
 

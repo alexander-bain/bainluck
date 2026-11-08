@@ -107,8 +107,10 @@ async def _drain_background():
         await asyncio.gather(*list(request_cache._background_tasks), return_exceptions=True)
 
 
-async def _get(session, slug="nfl-2026-week-5", include_children=True):
-    return await route.get_container(slug=slug, include_children=include_children, db=session)
+async def _get(session, slug="nfl-2026-week-5", include_children=True, compact=False):
+    return await route.get_container(
+        slug=slug, include_children=include_children, compact=compact, db=session
+    )
 
 
 def _session(revision=4, cls=_Session):
@@ -174,15 +176,34 @@ async def test_the_scope_is_part_of_the_key(redis, clock):
     assert _cards_hydrated(session)
 
 
+async def test_compact_and_full_bodies_have_separate_cache_entries(redis, clock):
+    full = await _get(_session())
+    compact = await _get(_session(), compact=True)
+    await _drain_background()
+
+    assert "related_summary" not in json.loads(full.body)
+    assert json.loads(compact.body)["related_summary"] == {"count": 0, "unclassified_count": 0}
+    assert full.body != compact.body
+    assert len(redis.store) == 2
+    for mode, expected in [(False, full.body), (True, compact.body)]:
+        session = _session()
+        response = await _get(session, compact=mode)
+        assert response.headers["X-Feed-Cache"] == "hit"
+        assert response.body == expected
+        assert _cards_hydrated(session) == []
+
+
+@pytest.mark.parametrize("compact", [False, True])
 async def test_stale_is_served_at_once_and_rebuilt_once_in_the_background(
-    monkeypatch, redis, clock
+    monkeypatch, redis, clock, compact
 ):
-    first = await _get(_session())
+    first = await _get(_session(), compact=compact)
     # Published to Redis too, as it is in production by the time anyone is
     # stale: the local copy and its shared twin must read as the SAME entry.
     await _drain_background()
     assert redis.store
     built = json.loads(first.body)
+    assert ("related_summary" in built) is compact
     # Week 5 carries a live game, so the payload ages on the LIVE windows.
     assert any(
         m["card"]["status"] == "live"
@@ -214,19 +235,20 @@ async def test_stale_is_served_at_once_and_rebuilt_once_in_the_background(
     monkeypatch.setattr(database, "async_session_maker", _Maker())
 
     session = _session()
-    stale = await _get(session)
+    stale = await _get(session, compact=compact)
     assert stale.headers["X-Feed-Cache"] == "stale_hit"
     assert stale.body == first.body
     assert _cards_hydrated(session) == []
     # A second stale reader before the rebuild lands does not start another.
-    assert (await _get(_session())).headers["X-Feed-Cache"] == "stale_hit"
+    assert (await _get(_session(), compact=compact)).headers["X-Feed-Cache"] == "stale_hit"
     gate.set()
     await _drain_background()
     assert len(rebuilds) == 1
     assert _cards_hydrated(rebuilds[0])
 
-    after = await _get(_session())
+    after = await _get(_session(), compact=compact)
     assert after.headers["X-Feed-Cache"] == "hit"
+    assert ("related_summary" in json.loads(after.body)) is compact
 
 
 async def test_a_rebuild_that_lands_during_the_shared_read_is_served_not_restarted(
@@ -389,6 +411,7 @@ def test_the_key_names_slug_revision_and_scope():
     assert key == "container_read:v3:nfl-2026-week-4:r2:all"
     assert cache.container_read_cache_key("nfl-2026-week-4", 3, True) != key
     assert cache.container_read_cache_key("nfl-2026-week-4", 2, False) != key
+    assert cache.container_read_cache_key("nfl-2026-week-4", 2, True, compact=True) == f"{key}:compact"
 
 
 async def test_a_failed_background_rebuild_keeps_the_stale_copy_and_frees_the_slot(
@@ -433,13 +456,13 @@ def _held_builds(monkeypatch, *, fail_first=False):
     starts = []
     gate = asyncio.Event()
 
-    async def _build(db, published, include_children):
+    async def _build(db, published, include_children, compact=False):
         starts.append(db)
         if len(starts) == 1:
             await gate.wait()
             if fail_first:
                 raise RuntimeError("owner failed")
-        return await real(db, published, include_children)
+        return await real(db, published, include_children, compact=compact)
 
     monkeypatch.setattr(route, "_build_entry", _build)
     return starts, gate
