@@ -15,10 +15,23 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     let homeRenderedPercent: Int?
     let scoreObservedAt: Date?
     let probabilityObservedAt: Date?
+    /// #10864 — display fields for the Live Activity's matchup layout. All are
+    /// optional: a pushed state from a server that predates them carries none,
+    /// and the views fall back to the team names above. `awayRenderedPercent`
+    /// exists only for two-way sports (a priced draw leaves it empty), and the
+    /// period is a label only — a running clock would freeze between updates.
+    let awayRenderedPercent: Int?
+    let homeAbbreviation: String?
+    let awayAbbreviation: String?
+    let homeColorHex: String?
+    let awayColorHex: String?
+    let periodLabel: String?
 
     private enum CodingKeys: String, CodingKey {
         case eventID, homeTeam, awayTeam, homeScore, awayScore, lifecycle
         case homeRenderedPercent, scoreObservedAt, probabilityObservedAt
+        case awayRenderedPercent, homeAbbreviation, awayAbbreviation
+        case homeColorHex, awayColorHex, periodLabel
     }
 
     init(from decoder: Decoder) throws {
@@ -33,6 +46,17 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         scoreObservedAt = try c.decodeIfPresent(Date.self, forKey: .scoreObservedAt)
         probabilityObservedAt = try c.decodeIfPresent(Date.self, forKey: .probabilityObservedAt)
         let hasForecast = lifecycle == .live || lifecycle == .scheduled
+        // Display-only fields are cleaned, never fatal: a bad badge or colour
+        // must not cost the reader the score and chance that decoded fine.
+        let away = (try? c.decodeIfPresent(Int.self, forKey: .awayRenderedPercent)) ?? nil
+        let hasHome = homeRenderedPercent != nil
+        awayRenderedPercent = away.flatMap { hasForecast && hasHome && (0...100).contains($0) ? $0 : nil }
+        homeAbbreviation = Self.cleanBadge((try? c.decodeIfPresent(String.self, forKey: .homeAbbreviation)) ?? nil)
+        awayAbbreviation = Self.cleanBadge((try? c.decodeIfPresent(String.self, forKey: .awayAbbreviation)) ?? nil)
+        homeColorHex = Self.cleanHex((try? c.decodeIfPresent(String.self, forKey: .homeColorHex)) ?? nil)
+        awayColorHex = Self.cleanHex((try? c.decodeIfPresent(String.self, forKey: .awayColorHex)) ?? nil)
+        periodLabel = Self.cleanPeriod((try? c.decodeIfPresent(String.self, forKey: .periodLabel)) ?? nil,
+                                       lifecycle: lifecycle)
         guard eventID > 0,
               !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -52,7 +76,10 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
           homeScore: Int? = nil, awayScore: Int? = nil,
           homeProbability: Double? = nil, awayProbability: Double? = nil,
           drawProbability: Double? = nil, sport: String? = nil,
-          scoreObservedAt: Date? = nil, probabilityObservedAt: Date? = nil) {
+          scoreObservedAt: Date? = nil, probabilityObservedAt: Date? = nil,
+          homeAbbreviation: String? = nil, awayAbbreviation: String? = nil,
+          homeColorHex: String? = nil, awayColorHex: String? = nil,
+          periodLabel: String? = nil) {
         let home = homeTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         let away = awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         guard eventID > 0, !home.isEmpty, !away.isEmpty else { return nil }
@@ -69,14 +96,23 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         if lifecycle == .live || lifecycle == .scheduled {
             if !hasSport || DrawPricedWinner.sportPricesADraw(sport) || Self.validProbability(drawProbability) != nil {
                 homeRenderedPercent = renderedPercent(validHome)
+                awayRenderedPercent = nil
             } else {
-                homeRenderedPercent = renderedDuelPercents(away: validAway, home: validHome)[1]
+                let duel = renderedDuelPercents(away: validAway, home: validHome)
+                homeRenderedPercent = duel[1]
+                awayRenderedPercent = duel[1] == nil ? nil : duel[0]
             }
             self.probabilityObservedAt = homeRenderedPercent == nil ? nil : Self.validDate(probabilityObservedAt)
         } else {
             homeRenderedPercent = nil
+            awayRenderedPercent = nil
             self.probabilityObservedAt = nil
         }
+        self.homeAbbreviation = Self.cleanBadge(homeAbbreviation)
+        self.awayAbbreviation = Self.cleanBadge(awayAbbreviation)
+        self.homeColorHex = Self.cleanHex(homeColorHex)
+        self.awayColorHex = Self.cleanHex(awayColorHex)
+        self.periodLabel = Self.cleanPeriod(periodLabel, lifecycle: lifecycle)
     }
 
     var isTerminal: Bool { lifecycle == .final || lifecycle == .closed }
@@ -110,6 +146,25 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     func scoreAge(at now: Date) -> TimeInterval? { Self.age(scoreObservedAt, at: now) }
     func probabilityAge(at now: Date) -> TimeInterval? { Self.age(probabilityObservedAt, at: now) }
 
+    /// A served team badge ("KC"), never a guess: one to six visible characters.
+    private static func cleanBadge(_ value: String?) -> String? {
+        guard let text = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              (1...6).contains(text.count) else { return nil }
+        return text
+    }
+    /// A served team colour as `#RRGGBB`, or nothing.
+    private static func cleanHex(_ value: String?) -> String? {
+        guard let text = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              text.range(of: #"^#?[0-9A-Fa-f]{6}$"#, options: .regularExpression) != nil else { return nil }
+        return (text.hasPrefix("#") ? text : "#" + text).uppercased()
+    }
+    /// The period chip ("Q4", "2nd Half") while a game is under way; nothing otherwise.
+    private static func cleanPeriod(_ value: String?, lifecycle: Lifecycle) -> String? {
+        guard lifecycle == .live || lifecycle == .suspended,
+              let text = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              (1...24).contains(text.count) else { return nil }
+        return text
+    }
     private static func validProbability(_ value: Double?) -> Double? {
         value.flatMap { $0.isFinite && (0...1).contains($0) ? $0 : nil }
     }
