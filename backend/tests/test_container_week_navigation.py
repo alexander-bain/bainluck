@@ -23,6 +23,9 @@ def row(slug, **changes):
         game_count=1,
         question_count=0,
         matched_event_ids=[],
+        first_game_at=None,
+        last_game_at=None,
+        sport_matches=True,
     )
     return {**data, **changes}
 

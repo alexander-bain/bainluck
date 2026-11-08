@@ -128,7 +128,7 @@ struct MyStuffView: View {
         .task {
             predictionStats = try? await APIClient.shared.fetchPredictionStats()
         }
-        .onChange(of: navCoordinator.pendingRoute) { _, _ in
+        .onChange(of: navCoordinator.pendingRoute, initial: true) { _, _ in
             if navCoordinator.selectedTab == .myStuff,
                let route = navCoordinator.consumeRoute() {
                 path.append(route)

@@ -7,10 +7,10 @@ final class EventAtlasHeadlineE1_11666Tests: XCTestCase {
 
     // MARK: - Build flag & launch override
 
-    func testBuildFlagDefaultsOffAndHonoursLaunchOverride() {
-        XCTAssertFalse(
+    func testBuildFlagDefaultsOnAndHonoursLaunchOverride() {
+        XCTAssertTrue(
             ReleaseSurfaces.eventPageAtlasEnabled,
-            "the shipping switch stays off until Alex's phone look"
+            "the shipping switch is enabled for Alex's TestFlight phone look (85-A / #12278)"
         )
         let suiteName = "bainluck.test.atlas.11666.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

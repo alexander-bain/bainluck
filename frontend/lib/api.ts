@@ -645,6 +645,7 @@ export interface TypeaheadOutcome {
 
 export interface TypeaheadResponse {
   suggestions: TypeaheadSuggestion[];
+  collections?: SearchResponse["collections"];
   query: string;
   did_you_mean?: string;
 }

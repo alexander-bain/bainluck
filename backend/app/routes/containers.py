@@ -545,9 +545,17 @@ async def _build_published_payload(db: AsyncSession, published, include_children
         unclassified=CLASS_UNCLASSIFIED,
     )
     member_count = sum(s["count"] for s in sections)
+    header = _container_header(head) if head is not None else None
+    if header is not None and len(event_cards) == len(event_ids):
+        from app.utils.container_presentation import nfl_week_title
+
+        header["name"] = nfl_week_title(
+            header["name"], published.slug,
+            (card.get("commence_time") for card in event_cards.values()),
+        )
     return {
         **payload,
-        "container": _container_header(head) if head is not None else None,
+        "container": header,
         "children": children,
         "sections": sections,
         "member_count": member_count,
