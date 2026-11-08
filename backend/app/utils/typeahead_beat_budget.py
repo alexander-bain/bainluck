@@ -2148,7 +2148,12 @@ def free_background_slots(
 #: lateness is safe by construction: readers stop using the copy 15 minutes
 #: after its last pass. The census RUN over the tree branched from `dfb64a5dd5`
 #: printed `explicit 104 implicit 39 total 143`.
-BACKGROUND_BEAT_COUNT = 143
+#: 🔴 RE-DERIVED at Atlas (2026-11-08, #12372): 143 → 142, explicit UNMOVED at
+#: 104, fall-through 39 → 38. `generate-discover-comparison-candidates` (a
+#: default-queue fall-through beat) was taken off its timer per #12372 / #12221
+#: Part 1 §2. The census RUN over the tree rebased onto `ec6b8b3f04` printed
+#: `explicit 104 implicit 38 total 142`.
+BACKGROUND_BEAT_COUNT = 142
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
