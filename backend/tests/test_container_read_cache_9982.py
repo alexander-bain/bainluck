@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import types
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -93,6 +94,13 @@ def redis(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _enabled(monkeypatch):
+    from app.services import database
+
+    @asynccontextmanager
+    async def reference_session():
+        yield _Session()
+
+    monkeypatch.setattr(database, "async_session_maker", reference_session)
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
     monkeypatch.delenv("CONTAINERS_READ_CACHE_ENABLED", raising=False)
     route._reset_read_cache_for_tests()
@@ -243,8 +251,9 @@ async def test_stale_is_served_at_once_and_rebuilt_once_in_the_background(
     assert (await _get(_session(), compact=compact)).headers["X-Feed-Cache"] == "stale_hit"
     gate.set()
     await _drain_background()
-    assert len(rebuilds) == 1
+    assert len(rebuilds) == (2 if compact else 1)
     assert _cards_hydrated(rebuilds[0])
+    assert sum(bool(_cards_hydrated(session)) for session in rebuilds) == 1
 
     after = await _get(_session(), compact=compact)
     assert after.headers["X-Feed-Cache"] == "hit"
