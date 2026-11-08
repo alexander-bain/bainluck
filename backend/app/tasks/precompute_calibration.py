@@ -3876,7 +3876,7 @@ def _futures_generation_sql() -> str:
 ROSTER_STREAM_BATCH = 20_000
 
 
-async def _read_futures_roster(db) -> list:
+async def _read_futures_roster(db, timings: dict | None = None) -> list:
     """Run the Stage A roster read and return it as slim :class:`RosterRow` tuples.
 
     Streamed in batches, so the driver never holds every record at once, and each
@@ -3888,21 +3888,82 @@ async def _read_futures_roster(db) -> list:
 
     A session with no ``stream`` (the test doubles) is read with ``execute`` and
     converted the same way.
+
+    #12340: ``timings``, when given, is filled as the read goes — and kept on a
+    raise, because the read that hit the statement timeout is the one worth
+    splitting. ``first_batch_ms`` is the wait for the first rows (the statement
+    ends in ``ORDER BY market_id``, so this is close to the database's whole
+    cost); ``fetch_ms`` is every wait on the database, first batch included;
+    ``convert_ms`` is the worker copying rows into :class:`RosterRow`. A large
+    ``fetch_ms - first_batch_ms`` with a small ``convert_ms`` would point at the
+    wire or a starved worker rather than the plan.
     """
     from app.utils.calibration_staged_futures import slim_roster
 
+    t = timings if timings is not None else {}
+    t.update(first_batch_ms=None, fetch_ms=0, convert_ms=0, batches=0)
     statement = text(_futures_generation_sql())
     stream = getattr(db, "stream", None)
     if stream is None:
-        return slim_roster((await db.execute(statement)).all())
+        started = time.monotonic()
+        rows = (await db.execute(statement)).all()
+        t["first_batch_ms"] = t["fetch_ms"] = int((time.monotonic() - started) * 1000)
+        started = time.monotonic()
+        roster = slim_roster(rows)
+        t["convert_ms"] = int((time.monotonic() - started) * 1000)
+        t["batches"] = 1
+        return roster
+    started = time.monotonic()
     result = await stream(statement.execution_options(yield_per=ROSTER_STREAM_BATCH))
     roster: list = []
     try:
-        async for batch in result.partitions(ROSTER_STREAM_BATCH):
+        batches = result.partitions(ROSTER_STREAM_BATCH).__aiter__()
+        while True:
+            try:
+                batch = await batches.__anext__()
+            except StopAsyncIteration:
+                t["fetch_ms"] += int((time.monotonic() - started) * 1000)
+                break
+            waited = int((time.monotonic() - started) * 1000)
+            t["fetch_ms"] += waited
+            if t["first_batch_ms"] is None:
+                t["first_batch_ms"] = t["fetch_ms"]
+            started = time.monotonic()
             slim_roster(batch, into=roster)
+            t["convert_ms"] += int((time.monotonic() - started) * 1000)
+            t["batches"] += 1
+            started = time.monotonic()
+    except BaseException:
+        # The wait that was cut short (a statement timeout lands here) counts.
+        t["fetch_ms"] += int((time.monotonic() - started) * 1000)
+        raise
     finally:
         await result.close()
     return roster
+
+
+#: #12340 gauge names for the roster read's split. Gauges, not stages: one
+#: reading per beat, replaced each time (``record_gauge``).
+ROSTER_TIMING_GAUGES = {
+    "first_batch_ms": "roster:first_batch_ms",
+    "fetch_ms": "roster:fetch_ms",
+    "convert_ms": "roster:convert_ms",
+    "batches": "roster:batches",
+}
+
+
+def _record_roster_timings(runner, timings: dict) -> None:
+    """Write :func:`_read_futures_roster`'s split to the ledger. Never raises."""
+    ledger = getattr(runner, "ledger", None)
+    if ledger is None:
+        return
+    try:
+        for key, gauge in ROSTER_TIMING_GAUGES.items():
+            value = timings.get(key)
+            if value is not None:
+                ledger.record_gauge(gauge, int(value))
+    except Exception:  # noqa: BLE001 — instrumentation never costs a publish
+        logger.warning("calibration: could not record roster timings", exc_info=True)
 
 
 def _calibration_population_ctes(
@@ -6409,8 +6470,12 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
     )
 
     # -- Stage 1: freeze the generation ---------------------------------------
-    with runner.stage("read:futures_generation"):
-        roster = await _read_futures_roster(db)
+    roster_timings: dict = {}
+    try:
+        with runner.stage("read:futures_generation"):
+            roster = await _read_futures_roster(db, roster_timings)
+    finally:
+        _record_roster_timings(runner, roster_timings)
     await runner.commit(db)
 
     gen_digest = generation_fingerprint(roster)
