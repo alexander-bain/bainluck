@@ -327,6 +327,21 @@ nonisolated enum EventAtlasStoryCards11666 {
                let leg = threeWay.legs.first(where: { $0.id == rowID }) {
                 return EventAtlasSoccerCards11666.detailsModel(for: leg, card: threeWay)
             }
+            if case .soccerBothTeams(let bothTeams) = card,
+               let leg = bothTeams.legs.first(where: { $0.id == rowID }) {
+                return EventAtlasSoccerCards11666.detailsModel(for: leg, card: bothTeams)
+            }
+            if case .soccerFirstTeam(let firstTeam) = card,
+               let leg = firstTeam.legs.first(where: { $0.id == rowID }) {
+                return EventAtlasSoccerCards11666.detailsModel(for: leg, card: firstTeam)
+            }
+            if case .soccerHalves(let halves) = card {
+                for section in halves.sections {
+                    if let leg = section.legs.first(where: { $0.id == rowID }) {
+                        return EventAtlasSoccerCards11666.detailsModel(for: leg, section: section, card: halves)
+                    }
+                }
+            }
             if case .soccerExactScore(let exactScore) = card {
                 if let cell = exactScore.cells.first(where: { $0.id == rowID || $0.key == rowID }) {
                     return EventAtlasSoccerCards11666.detailsModel(for: cell, card: exactScore)

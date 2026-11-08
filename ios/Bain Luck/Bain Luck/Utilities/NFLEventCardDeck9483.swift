@@ -23,6 +23,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
     case mlb(MLBFinalCard11284)
     case nhlScoring(EventAtlasNhlCards11666.ScoringCard)
     case soccerThreeWay(EventAtlasSoccerCards11666.ThreeWayCard)
+    case soccerBothTeams(EventAtlasSoccerCards11666.BothTeamsToScoreCard)
+    case soccerFirstTeam(EventAtlasSoccerCards11666.FirstTeamToScoreCard)
+    case soccerHalves(EventAtlasSoccerCards11666.HalvesCard)
     case soccerExactScore(EventAtlasSoccerCards11666.ExactScoreCard)
     case tennisSets(EventAtlasTennisCards11666.SetsCard)
     case tennisExactScore(EventAtlasTennisCards11666.ExactScoreCard)
@@ -38,6 +41,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .mlb(let card): return card.id
         case .nhlScoring(let card): return card.id
         case .soccerThreeWay(let card): return card.id
+        case .soccerBothTeams(let card): return card.id
+        case .soccerFirstTeam(let card): return card.id
+        case .soccerHalves(let card): return card.id
         case .soccerExactScore(let card): return card.id
         case .tennisSets(let card): return card.id
         case .tennisExactScore(let card): return card.id
@@ -55,6 +61,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .mlb(let card): return card.title
         case .nhlScoring(let card): return card.title
         case .soccerThreeWay(let card): return card.title
+        case .soccerBothTeams(let card): return card.title
+        case .soccerFirstTeam(let card): return card.title
+        case .soccerHalves(let card): return card.title
         case .soccerExactScore(let card): return card.title
         case .tennisSets(let card): return card.title
         case .tennisExactScore(let card): return card.title
@@ -76,6 +85,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .mlb: return self
         case .nhlScoring(let card): return .nhlScoring(card.current(at: now))
         case .soccerThreeWay(let card): return .soccerThreeWay(card.current(at: now))
+        case .soccerBothTeams(let card): return .soccerBothTeams(card.current(at: now))
+        case .soccerFirstTeam(let card): return .soccerFirstTeam(card.current(at: now))
+        case .soccerHalves(let card): return .soccerHalves(card.current(at: now))
         case .soccerExactScore(let card): return .soccerExactScore(card.current(at: now))
         case .tennisSets(let card): return .tennisSets(card.current(at: now))
         case .tennisExactScore(let card): return .tennisExactScore(card.current(at: now))
