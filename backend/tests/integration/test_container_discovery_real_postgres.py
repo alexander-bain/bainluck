@@ -364,6 +364,36 @@ class TestNflWeekAuthorityStatus11906:
 
 
 class TestCollectionTitleAndMembers12090:
+    async def test_full_title_search_counts_only_its_selected_headings(self, pg_session):
+        await _seed(pg_session)
+        session = _Counting(pg_session)
+        read = await discovery.discover_collections(session, query="Week", limit=2)
+        assert [card["slug"] for card in read.collections] == [
+            "nfl-2026-week-6", "nfl-2026-week-5"
+        ]
+        assert session.count == 3
+        assert all("question_count" in card and "has_members" not in card for card in read.collections)
+
+    @pytest.mark.parametrize("keep_market", [False, True])
+    async def test_typeahead_heading_proves_a_live_member_without_full_counts(
+        self, pg_session, keep_market
+    ):
+        await _seed(pg_session)
+        await pg_session.execute(text("UPDATE futures_markets SET event_id = NULL"))
+        await pg_session.execute(text("DELETE FROM events"))
+        if not keep_market:
+            await pg_session.execute(text("DELETE FROM futures_markets"))
+        await pg_session.commit()
+        read = await discovery.discover_collections(
+            pg_session, query="Week 5", titles_only=True
+        )
+        assert bool(read.collections) == keep_market
+        if keep_market:
+            heading = read.collections[0]
+            assert heading["has_members"] is True
+            assert heading["name"] == "NFL 2026 · Week 5"
+            assert "game_count" not in heading and "question_count" not in heading
+
     async def test_search_member_ids_scope_the_lookup_to_its_matched_markets(
         self, pg_session
     ):

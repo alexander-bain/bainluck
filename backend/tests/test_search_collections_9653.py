@@ -77,10 +77,20 @@ class _Session:
         if "to_regclass('public.container_corrections')" in text_:
             return _Result([(True, True)])
         if text_.startswith("WITH hub AS"):
-            if self.delay:
+            if self.delay and "AS has_member" not in text_:
                 await asyncio.sleep(self.delay)
             if self.fail:
                 raise RuntimeError("statement failed")
+            if "AS has_member" in text_:
+                columns = sc.container_discovery._COLUMNS
+                rows = []
+                for raw in self.rows:
+                    row = dict(zip(columns, raw))
+                    row["has_member"] = bool(
+                        row.get("game_count", 0) + row.get("question_count", 0)
+                    )
+                    rows.append(tuple(row.get(k) for k in sc.container_discovery._BRIEF_COLUMNS))
+                return _Result(rows)
             return _Result(self.rows)
         raise AssertionError(f"unexpected statement: {text_[:120]}")
 

@@ -47,3 +47,15 @@ test("web typeahead composes collection destinations and removes duplicate links
   expect(ordinary).toEqual(before);
   expect(typeaheadWithCollections(combined, [card()])).toEqual(combined);
 });
+
+test("typeahead uses verified headings while full cards require member counts", () => {
+  const { game_count, question_count, ...heading } = card();
+  expect(game_count + question_count).toBeGreaterThan(0);
+  expect(typeaheadWithCollections([], [{ ...heading, has_members: true }])).toEqual([
+    { type: "hub", text: heading.name, href: heading.destination.web },
+  ]);
+  expect(admitSearchCollection(heading)).toBeNull();
+  expect(typeaheadWithCollections([], [heading])).toEqual([]);
+  expect(typeaheadWithCollections([], [{ ...card(), game_count: 0, question_count: 0 }])).toEqual([]);
+  expect(typeaheadWithCollections([], [{ ...heading, has_members: true, state: "withdrawn" }])).toEqual([]);
+});

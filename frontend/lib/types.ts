@@ -2277,6 +2277,8 @@ export interface FeedThemeCollectionRef {
 // `collection_card`). Every field is optional because the client admits the
 // card only after checking it — see `lib/discover/collectionFeed.ts`.
 export interface FeedCollectionData {
+  /** Typeahead heading verified non-empty by the live publication reader. */
+  has_members?: boolean;
   type?: "collection";
   id?: number;
   slug?: string;

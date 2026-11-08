@@ -86,6 +86,20 @@ export function admitCollection(item: FeedItem | null | undefined): DiscoverColl
 
 /** Search receives published summaries from the same stored/computed page producers. */
 export function admitSearchCollection(value: unknown): DiscoverCollectionEntry | null {
+  const heading = admitCollectionHeading(value);
+  if (!heading) return null;
+  const card = value as FeedCollectionData;
+  const games = card.game_count;
+  const markets = card.question_count;
+  if (!isCount(games) || !isCount(markets) || games + markets === 0) return null;
+
+  const parts: string[] = [];
+  if (games > 0) parts.push(plural(games, "game"));
+  if (markets > 0) parts.push(plural(markets, "market"));
+  return { ...heading, subtitle: parts.join(" · ") };
+}
+
+function admitCollectionHeading(value: unknown): Omit<DiscoverCollectionEntry, "subtitle"> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const card = value as FeedCollectionData;
 
@@ -97,18 +111,11 @@ export function admitSearchCollection(value: unknown): DiscoverCollectionEntry |
   const slug = card.slug;
   if (typeof slug !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return null;
 
-  const games = card.game_count;
-  const markets = card.question_count;
-  if (!isCount(games) || !isCount(markets) || games + markets === 0) return null;
-
   const href = `/collections/${slug}`;
   const dest = card.destination;
   if (!dest || dest.kind !== "container" || dest.slug !== slug || dest.web !== href) return null;
 
-  const parts: string[] = [];
-  if (games > 0) parts.push(plural(games, "game"));
-  if (markets > 0) parts.push(plural(markets, "market"));
-  return { slug, name, href, subtitle: parts.join(" · ") };
+  return { slug, name, href };
 }
 
 export interface AnchoredCollection {
@@ -122,8 +129,10 @@ export function typeaheadWithCollections(
   cards: unknown,
 ): TypeaheadSuggestion[] {
   const collections: TypeaheadSuggestion[] = (Array.isArray(cards) ? cards : []).flatMap((card) => {
-    const entry = admitSearchCollection(card);
-    return entry ? [{ type: "hub" as const, text: entry.name, href: entry.href }] : [];
+    const entry = admitCollectionHeading(card);
+    if (!entry) return [];
+    if ((card as FeedCollectionData).has_members !== true && !admitSearchCollection(card)) return [];
+    return [{ type: "hub" as const, text: entry.name, href: entry.href }];
   });
   const destinations = new Set(collections.map((entry) => entry.href));
   return [

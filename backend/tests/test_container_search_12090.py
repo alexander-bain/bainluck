@@ -73,6 +73,25 @@ def test_other_collection_titles_keep_their_producers_name():
     )
 
 
+@pytest.mark.parametrize("has_member", [False, True])
+def test_typeahead_headings_require_live_members_and_omit_counts(has_member):
+    row = {
+        "id": 10,
+        "name": "NFL 2026 · Week 10",
+        "slug": "nfl-2026-week-10",
+        "revision": 3,
+        "publication_state": "published",
+        "has_member": has_member,
+    }
+    card, reason = discovery.collection_card(row, search=True, include_counts=False)
+    if not has_member:
+        assert card is None and reason == discovery.EXCLUDED_EMPTY
+        return
+    assert reason is None and card["has_members"] is True
+    assert "game_count" not in card and "question_count" not in card
+    assert card["destination"]["web"] == "/collections/nfl-2026-week-10"
+
+
 async def test_a_title_query_finds_a_collection_without_returned_games(
     enabled, monkeypatch
 ):
@@ -178,6 +197,8 @@ async def test_matched_outcomes_use_membership_without_a_second_outcome_search(
     assert "futures_outcomes" not in title_sql
     assert "futures_outcomes" not in member_sql
     assert "member_edge.child_id = ANY(:market_ids)" in member_sql
+    assert "member_markets AS MATERIALIZED" in member_sql
+    assert "SELECT id FROM futures_markets" in member_sql
     assert "ev.id = CASE WHEN m.child_type = 'event' THEN m.child_id END" in member_sql
     assert "fm.id = CASE WHEN m.child_type = 'market' THEN m.child_id END" in member_sql
 
