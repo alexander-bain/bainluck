@@ -72,6 +72,11 @@ extension GameActivitySnapshot {
         // that IS a clock is dropped.
         let chip = PeriodLabel.normalize(event.espn?.period ?? "", sport: event.sport)
         let period = chip.isEmpty || chip.contains(":") || chip.contains("'") ? nil : chip
+        // #10864 — the page's own admitted in-play pair (Alex, Oct 23: "Prominent
+        // probabilities and projected final scores"). A withheld or absent
+        // object prints nothing here, as it prints nothing on the page.
+        var projected: LiveProjectedFinalAdmission2920.Printed?
+        if case .admitted(let printed) = LiveProjectedFinal2920.page(event, now: now) { projected = printed }
         return GameActivitySnapshot(
             eventID: event.id, homeTeam: event.homeTeam, awayTeam: event.awayTeam,
             lifecycle: lifecycle, homeScore: event.homeScore, awayScore: event.awayScore,
@@ -88,7 +93,10 @@ extension GameActivitySnapshot {
             awayAbbreviation: event.awayTeamData?.abbreviation,
             homeColorHex: event.homeTeamData?.primaryColor,
             awayColorHex: event.awayTeamData?.primaryColor,
-            periodLabel: period
+            periodLabel: period,
+            projectedHomeScore: projected?.home,
+            projectedAwayScore: projected?.away,
+            projectionLabel: projected?.label
         )
     }
 }

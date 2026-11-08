@@ -111,4 +111,46 @@ final class GameActivitySnapshotTests: XCTestCase {
             status: "completed", homeScore: 1, awayScore: 1, sport: "soccer_epl"))
         XCTAssertEqual(value.resultText, "Final · Arsenal 1, Chelsea 1")
     }
+
+    /// #10864 — a state pushed by a server that predates the display fields still
+    /// decodes, and a bad display field never costs the reader the score and chance.
+    func testDisplayFieldsAreOptionalAndCleanedNeverFatal() throws {
+        let legacy = #"{"eventID":7,"homeTeam":"Chiefs","awayTeam":"Jets","lifecycle":"live","#
+            + #""homeScore":7,"awayScore":9,"homeRenderedPercent":77}"#
+        let old = try JSONDecoder().decode(GameActivitySnapshot.self, from: Data(legacy.utf8))
+        XCTAssertEqual(old.homeRenderedPercent, 77)
+        XCTAssertNil(old.awayRenderedPercent)
+        XCTAssertNil(old.homeAbbreviation)
+        XCTAssertNil(old.periodLabel)
+        XCTAssertNil(old.projectionLabel)
+        let bad = #"{"eventID":7,"homeTeam":"Chiefs","awayTeam":"Jets","lifecycle":"live","homeRenderedPercent":77,"#
+            + #""awayRenderedPercent":140,"homeColorHex":"red","awayColorHex":"125740","homeAbbreviation":"","#
+            + #""periodLabel":4,"projectedHomeScore":26}"#
+        let cleaned = try JSONDecoder().decode(GameActivitySnapshot.self, from: Data(bad.utf8))
+        XCTAssertEqual(cleaned.homeRenderedPercent, 77)
+        XCTAssertNil(cleaned.awayRenderedPercent)
+        XCTAssertNil(cleaned.homeColorHex)
+        XCTAssertEqual(cleaned.awayColorHex, "#125740")
+        XCTAssertNil(cleaned.homeAbbreviation)
+        XCTAssertNil(cleaned.periodLabel)
+        XCTAssertNil(cleaned.projectedHomeScore, "Half a projected pair is no pair")
+    }
+
+    /// #10864 — the projected final travels whole, labeled, and only beside a live reading.
+    func testProjectedFinalIsWholeAndLiveOnly() throws {
+        let live = try XCTUnwrap(GameActivitySnapshot(eventID: 7, homeTeam: "Chiefs", awayTeam: "Jets",
+            lifecycle: .live, homeScore: 7, awayScore: 9, homeProbability: 0.77, awayProbability: 0.23,
+            sport: "americanfootball_nfl", projectedHomeScore: 26, projectedAwayScore: 19,
+            projectionLabel: "Projected final"))
+        XCTAssertEqual(live.awayRenderedPercent, 23)
+        XCTAssertEqual(live.projectedHomeScore, 26)
+        XCTAssertEqual(live.projectedAwayScore, 19)
+        XCTAssertEqual(try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONEncoder().encode(live)), live)
+        let final = try XCTUnwrap(GameActivitySnapshot(eventID: 7, homeTeam: "Chiefs", awayTeam: "Jets",
+            lifecycle: .final, homeScore: 27, awayScore: 20, projectedHomeScore: 26,
+            projectedAwayScore: 19, projectionLabel: "Projected final"))
+        XCTAssertNil(final.projectedHomeScore)
+        XCTAssertNil(final.projectionLabel)
+        XCTAssertNil(final.awayRenderedPercent)
+    }
 }
