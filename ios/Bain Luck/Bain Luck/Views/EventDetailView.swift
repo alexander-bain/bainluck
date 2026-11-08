@@ -387,10 +387,9 @@ struct EventDetailView: View {
                                 )
                             }
                             PinButton(type: "event", id: eventId)
-                            #if os(iOS)
-                            // #10880 — present only on an eligible upcoming game.
+                            // #10880 — present only on an eligible upcoming game;
+                            // the system editor on iPhone, Calendar's import on the Mac.
                             CalendarDetailMenu10880(pageEventId: eventId, event: vm.event)
-                            #endif
                         }
                     }
                 }

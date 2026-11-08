@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// #10880 — the event page's quiet way into "Add to Calendar".
@@ -13,6 +12,9 @@ import SwiftUI
 /// new page loads, or after a duplicate drains to its canonical row, the view
 /// model can hold another event; an entry must link the game the reader opened,
 /// the same id Share sends.
+///
+/// The same menu on the Mac reads "Add to Calendar…": the item opens the
+/// game in the reader's calendar app for review (``CalendarHandoff10880``).
 struct CalendarDetailMenu10880: View {
     let pageEventId: Int
     let event: EventDetail?
@@ -24,10 +26,14 @@ struct CalendarDetailMenu10880: View {
                     // Asked again at the tap: a menu drawn before the start
                     // can be opened after it.
                     if let draft = Self.draft(pageEventId: pageEventId, event: event, now: Date()) {
-                        CalendarEditorPresenter10880.shared.present(draft)
+                        CalendarHandoff10880.add(draft, eventID: pageEventId)
                     }
                 } label: {
+                    #if os(macOS)
+                    Label("Add to Calendar…", systemImage: "calendar.badge.plus")
+                    #else
                     Label("Add to Calendar", systemImage: "calendar.badge.plus")
+                    #endif
                 }
             } label: {
                 // Pin's 44 pt tap target, beside it in the same group.
@@ -46,6 +52,10 @@ struct CalendarDetailMenu10880: View {
             // Menu takes the same, so its control is the label's 44×44.
             .menuStyle(.button)
             .buttonStyle(.plain)
+            #if os(macOS)
+            // Pin beside it has no chevron either.
+            .menuIndicator(.hidden)
+            #endif
             .accessibilityLabel("More")
         }
     }
@@ -59,4 +69,18 @@ struct CalendarDetailMenu10880: View {
         return draft
     }
 }
-#endif
+
+/// #10880 — each platform's way to put a draft in front of the reader: the
+/// system's own editor on iPhone and iPad (``CalendarEditorPresenter10880``),
+/// and on the Mac an .ics opened in the reader's calendar app
+/// (``CalendarICSHandoff10880``). Neither asks for calendar access, and
+/// neither tells the reader the event was saved.
+enum CalendarHandoff10880 {
+    static func add(_ draft: CalendarEntryDraft10880, eventID: Int) {
+        #if os(iOS)
+        CalendarEditorPresenter10880.shared.present(draft)
+        #elseif os(macOS)
+        CalendarICSHandoff10880.shared.open(draft, eventID: eventID)
+        #endif
+    }
+}
