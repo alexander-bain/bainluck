@@ -10,7 +10,7 @@ import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 import type { FeedFuturesData } from "@/lib/types";
 import {
   acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
-  relatedMarketLinks, settleCollectionPage, settleCollectionRead,
+  isNflWeekCollectionSlug, relatedMarketLinks, settleCollectionPage, settleCollectionRead,
   type CollectionHub as Hub, type CollectionMember, type CollectionPageRequest, type CollectionReadingContext,
 } from "@/lib/collections";
 
@@ -217,7 +217,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
       <p className="text-text-secondary">{error}</p>
       <button type="button" onClick={() => void load()} className="text-accent-brand hover:underline">Try again</button>
     </div>}
-    {shown?.state === "published" && /^nfl-\d{4}-(?:preseason-|postseason-)?week-[1-9]\d?$/.test(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onSettle={settleWeekNavigation} onNavigate={() => {
+    {shown?.state === "published" && isNflWeekCollectionSlug(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onSettle={settleWeekNavigation} onNavigate={() => {
       const member = shown.members.find((member) => (document.getElementById(collectionMemberDomId(member.key))?.getBoundingClientRect().bottom ?? 0) > 0);
       if (member) remember(member.key);
     }} />}
@@ -254,12 +254,16 @@ export default function CollectionHub({ slug }: { slug: string }) {
             {/* #5342: a short list of the game's attached markets, each to its own page. */}
             {relatedLinks(member)}
             {/* #10146: a game's questions open deliberately on its own page, never as hundreds of contracts inline. */}
-            {!!shown.related[member.key]?.length && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
+            {!!(shown.related[member.key]?.length || member.relatedMarketCount) && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
           </div>)}
         </div>
       )}
     </section>;
     })}
+    {shown?.relatedSummary && shown.relatedSummary.count > 0 && <p data-related-market-summary className="text-sm text-text-secondary">
+      {shown.relatedSummary.count.toLocaleString()} more linked markets
+      {shown.relatedSummary.unclassifiedCount > 0 && <> · {shown.relatedSummary.unclassifiedCount.toLocaleString()} uncategorized</>}
+    </p>}
     {shown?.theme && shown.members.length > 0 && <div className="flex flex-col items-center gap-2 pb-6" data-collection-pager={shown.revision ?? ""}>
       <p className="text-sm text-text-secondary">{shown.members.length} of {Math.max(shown.theme.totalCount, shown.members.length)} markets</p>
       {shown.theme.nextCursor && <button type="button" disabled={paging} onClick={() => void loadMore()} className="rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm font-semibold text-text-primary hover:bg-surface-elevated disabled:text-text-muted">{paging ? "Loading…" : "Load more"}</button>}

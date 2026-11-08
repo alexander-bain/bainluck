@@ -17,7 +17,8 @@ def client(monkeypatch):
         return SimpleNamespace(state=route.READ_PUBLISHED, slug=slug, revision=7,
                                reason=None, container_id=1, members=[])
 
-    async def sports_payload(*args):
+    async def sports_payload(*args, compact=False):
+        assert compact is False
         return {"state": "published", "revision": 7, "sections": []}
 
     monkeypatch.setattr(route, "containers_read_enabled", lambda: True)
