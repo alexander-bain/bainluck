@@ -438,12 +438,25 @@ export function activeCollectionPin(hub: CollectionHub | null | undefined, now =
 }
 
 /**
+ * #10090: a member the page already settled by the official result
+ * (`settled_winner`, e.g. a called midterm race). It shows that winner, so it
+ * never takes a streamed price: a venue card resolved later carries no
+ * `settled_winner` and would turn the winner back into 100% / 0%.
+ */
+export function servedSettledMember(member: CollectionMember): boolean {
+  const winner = (member.item.data as { settled_winner?: string | null } | null)?.settled_winner;
+  return typeof winner === "string" && winner.trim() !== "";
+}
+
+/**
  * #10090: one member with its card re-priced by the price stream, matched by
  * price key (`event-<id>` / `futures-<id>`). The hub itself is never rewritten:
  * revisions, paging and reading context keep reading the served members.
- * Returns `member` itself when the stream holds nothing newer for it.
+ * Returns `member` itself when the stream holds nothing newer for it, or when
+ * the served card is already settled (`servedSettledMember`).
  */
 export function pricedCollectionMember(member: CollectionMember, priced: ReadonlyMap<string, FeedItem>): CollectionMember {
+  if (servedSettledMember(member)) return member;
   const key = priceKey(member.item);
   const item = key ? priced.get(key) : undefined;
   return item && item !== member.item ? { ...member, item } : member;

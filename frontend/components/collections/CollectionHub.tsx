@@ -13,7 +13,7 @@ import { usePriceVisibility } from "@/hooks/usePriceVisibility";
 import { priceKey } from "@/lib/discover/priceRefresh";
 import {
   acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
-  isNflWeekCollectionSlug, pricedCollectionMember, relatedMarketLinks, settleCollectionPage, settleCollectionRead,
+  isNflWeekCollectionSlug, pricedCollectionMember, relatedMarketLinks, servedSettledMember, settleCollectionPage, settleCollectionRead,
   type CollectionHub as Hub, type CollectionMember, type CollectionPageRequest, type CollectionReadingContext,
 } from "@/lib/collections";
 
@@ -103,8 +103,12 @@ export default function CollectionHub({ slug }: { slug: string }) {
   // no refresh at all (`collectionRefreshInterval` is 0 without games).
   // A collection reads the same for every reader, so the book is keyed on the
   // slug rather than the signed-in user: a new slug starts from its own prices.
+  // A member already settled by the official result keeps its winner, so it
+  // is never read (`servedSettledMember`).
   const priceGroups = useMemo(
-    () => (shown?.members ?? []).map((member) => ({ type: "single" as const, item: member.item })),
+    () => (shown?.members ?? [])
+      .filter((member) => !servedSettledMember(member))
+      .map((member) => ({ type: "single" as const, item: member.item })),
     [shown],
   );
   const streamed = useDiscoverPriceStream(priceGroups, `collection:${slug}`);
