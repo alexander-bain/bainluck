@@ -13,12 +13,13 @@ from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import case, func, select, tuple_
+from sqlalchemy import and_, case, func, or_, select
 
 from app.services.awards_occasion_source import AwardsOccasionSourceError
 from app.utils.awards_occasion_finder import (
     AwardsOccasion,
     OccasionDiscovery,
+    awards_ceremony_key,
     validate_awards_selector,
 )
 from app.utils.container_presentation import MEMBER_MARKET, market_destination
@@ -35,7 +36,9 @@ def awards_ceremony_slug(label: str) -> str:
     validate_awards_selector(
         {"evidence": "primary_rules_ordinal_awards", "label": label}
     )
-    return "roundup-awards-" + re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+    return "roundup-awards-" + re.sub(
+        r"[^a-z0-9]+", "-", awards_ceremony_key(label)
+    ).strip("-")
 
 
 def awards_ceremony_definition(selector: Mapping[str, str]) -> dict[str, Any]:
@@ -71,19 +74,19 @@ async def _ceremony_members(
     if not occasion.events:
         return RoundupRefusal(((occasion.label, "occasion_empty"),))
     keys = [(event.provider, event.event_id) for event in occasion.events]
-    provider_event = case(
-        (
-            FuturesMarket.source == "kalshi",
-            func.coalesce(
-                FuturesMarket.market_metadata["kalshi_event_ticker"].astext,
-                FuturesMarket.external_id,
-            ),
-        ),
-        (
-            FuturesMarket.source == "polymarket",
-            FuturesMarket.market_metadata["polymarket_event_id"].astext,
-        ),
+    kalshi_ids = [event_id for provider, event_id in keys if provider == "kalshi"]
+    polymarket_ids = [
+        event_id for provider, event_id in keys if provider == "polymarket"
+    ]
+    kalshi_event = func.coalesce(
+        FuturesMarket.market_metadata["kalshi_event_ticker"].astext,
+        FuturesMarket.external_id,
     )
+    polymarket_event = FuturesMarket.market_metadata["polymarket_event_id"].astext
+    provider_event = case(
+        (FuturesMarket.source == "kalshi", kalshi_event),
+        (FuturesMarket.source == "polymarket", polymarket_event),
+    ).label("provider_event_id")
     rows = (
         await db.execute(
             select(
@@ -92,7 +95,17 @@ async def _ceremony_members(
                 provider_event,
                 FuturesMarket.mutually_exclusive,
             )
-            .where(tuple_(FuturesMarket.source, provider_event).in_(keys))
+            .where(
+                or_(
+                    and_(
+                        FuturesMarket.source == "kalshi", kalshi_event.in_(kalshi_ids)
+                    ),
+                    and_(
+                        FuturesMarket.source == "polymarket",
+                        polymarket_event.in_(polymarket_ids),
+                    ),
+                )
+            )
             .order_by(FuturesMarket.id)
         )
     ).all()
@@ -212,7 +225,13 @@ def build_awards_ceremony_producer(
         except AwardsOccasionSourceError as error:
             return RoundupRefusal((("source", str(error)),))
         occasion = next(
-            (row for row in discovery.occasions if row.selector == parameters), None
+            (
+                row
+                for row in discovery.occasions
+                if awards_ceremony_key(row.label)
+                == awards_ceremony_key(parameters["label"])
+            ),
+            None,
         )
         if occasion is None:
             return RoundupRefusal(((parameters["label"], "occasion_unavailable"),))

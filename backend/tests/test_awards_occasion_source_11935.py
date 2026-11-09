@@ -46,6 +46,25 @@ def database(tickers):
     return SimpleNamespace(execute=AsyncMock(return_value=result))
 
 
+def test_provider_discoveries_merge_annual_and_case_variants_with_their_quotes():
+    first = source.find_awards_occasions(
+        [source.kalshi_occasion_event(envelope(label="69th Grammy Awards"), TICKER)]
+    )
+    second = source.find_awards_occasions(
+        [
+            {
+                "provider": "polymarket",
+                "id": "123456",
+                "markets": [{"rules_primary": "At the 69th Annual GRAMMY Awards."}],
+            }
+        ]
+    )
+    merged = source._merge_discoveries((first, second))
+    assert merged.refused == () and len(merged.occasions) == 1
+    assert len(merged.occasions[0].events) == 2
+    assert source._merge_discoveries((second, first)) == merged
+
+
 @pytest.mark.parametrize(
     "shape", ["separate", "nested", "both", "empty_separate", "empty_nested"]
 )
@@ -200,6 +219,35 @@ async def test_an_empty_stored_pool_does_not_call_the_venue():
     service.client.get.assert_not_awaited()
 
 
+async def test_retained_events_are_revalidated_after_the_open_pool_empties():
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json=envelope())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        service = SimpleNamespace(client=client, BASE_URL=KalshiAPIService.BASE_URL)
+        found = await source.read_kalshi_awards_occasions(
+            database([]), service, retained_ids=(TICKER, TICKER)
+        )
+    assert len(requests) == 1
+    assert found.occasions[0].events[0].event_id == TICKER
+    assert found.occasions[0].events[0].evidence == (RULE,)
+
+
+async def test_retained_events_share_the_candidate_ceiling(monkeypatch):
+    monkeypatch.setattr(source, "MAX_AWARDS_EVENT_CANDIDATES", 1)
+    service = SimpleNamespace(client=SimpleNamespace(get=AsyncMock()))
+    with pytest.raises(
+        source.AwardsOccasionSourceError, match="candidate_limit_exceeded"
+    ):
+        await source.read_kalshi_awards_occasions(
+            database([TICKER]), service, retained_ids=("KXRETAINED-27",)
+        )
+    service.client.get.assert_not_awaited()
+
+
 async def test_the_total_budget_includes_the_database_read(monkeypatch):
     monkeypatch.setattr(source, "AWARDS_SOURCE_BUDGET_SECONDS", 0.01)
 
@@ -340,18 +388,25 @@ async def test_live_entrypoint_enforces_connection_bounds_and_always_disposes(
         side_effect=TimeoutError("source deadline") if failed_read else None
     )
     monkeypatch.setitem(read_live.__globals__, "read_kalshi_awards_occasions", reader)
+    retained_events = (
+        source.find_awards_occasions([source.kalshi_occasion_event(envelope(), TICKER)])
+        .occasions[0]
+        .events
+    )
 
     if failed_read:
         with pytest.raises(TimeoutError, match="source deadline"):
-            await read_live()
+            await read_live(retained_events=retained_events)
     else:
-        assert await read_live() is reader.return_value
+        assert await read_live(retained_events=retained_events) is reader.return_value
 
     settings = captured["connect_args"]["server_settings"]
     assert settings["default_transaction_read_only"] == "on"
     assert int(settings["statement_timeout"]) == 2000
     assert int(settings["lock_timeout"]) == 250
     assert captured["hide_parameters"] is True
-    reader.assert_awaited_once_with(db, service)
+    reader.assert_awaited_once()
+    assert reader.await_args.args == (db, service)
+    assert tuple(reader.await_args.kwargs["retained_ids"]) == (TICKER,)
     service.close.assert_awaited_once()
     engine.dispose.assert_awaited_once()

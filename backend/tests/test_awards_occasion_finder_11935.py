@@ -78,6 +78,48 @@ def test_provider_events_establish_membership_without_claiming_equivalent_market
     assert all(member.evidence for member in occasion.events)
 
 
+def test_case_and_optional_annual_keep_one_ceremony_and_a_stable_selector():
+    from app.utils.awards_ceremony import awards_ceremony_slug
+
+    labels = (
+        "69th Annual GRAMMY Awards",
+        "69th Annual Grammy Awards",
+        "69th Grammy Awards",
+    )
+    candidates = [
+        event(f"KXGRAMMY-CATEGORY{index}", label) for index, label in enumerate(labels)
+    ]
+    result = find_awards_occasions(candidates)
+    assert result.refused == () and len(result.occasions) == 1
+    occasion = result.occasions[0]
+    assert len(occasion.events) == 3
+    assert {quote for member in occasion.events for quote in member.evidence} == {
+        candidate["markets"][0]["rules_primary"] for candidate in candidates
+    }
+    assert len({awards_ceremony_slug(label) for label in labels}) == 1
+    assert find_awards_occasions(reversed(candidates)) == result
+    for label in labels:
+        selector = {"evidence": "primary_rules_ordinal_awards", "label": label}
+        assert select_awards_occasion(selector, candidates) == occasion
+
+
+def test_one_event_can_use_both_spellings_of_the_same_ordinal_ceremony():
+    candidate = event("KXGRAMMY-27", "69th Annual GRAMMY Awards")
+    candidate["markets"].extend(event("KXGRAMMY-27", "69th Grammy Awards")["markets"])
+    found = find_awards_occasions([candidate])
+    assert found.refused == () and len(found.occasions) == 1
+    assert len(found.occasions[0].events[0].evidence) == 2
+
+
+def test_ceremony_spelling_rules_keep_different_ordinals_and_names_separate():
+    candidates = [
+        event("KXGRAMMY-27", "69th Annual GRAMMY Awards"),
+        event("KXGRAMMY-28", "70th Grammy Awards"),
+        event("KXOTHER-27", "69th Other Music Awards"),
+    ]
+    assert len(find_awards_occasions(candidates).occasions) == 3
+
+
 @pytest.mark.parametrize(
     "change",
     [

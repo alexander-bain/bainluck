@@ -29,6 +29,31 @@ def database(event_ids):
     return SimpleNamespace(execute=AsyncMock(return_value=result))
 
 
+async def test_retained_events_are_revalidated_after_the_open_pool_empties():
+    service = SimpleNamespace(
+        get_events_by_ids=AsyncMock(return_value=[envelope()]),
+        get_event_by_id=AsyncMock(),
+    )
+    found = await source.read_polymarket_awards_occasions(
+        database([]), service, retained_ids=(EVENT_ID, EVENT_ID)
+    )
+    service.get_events_by_ids.assert_awaited_once_with([EVENT_ID])
+    service.get_event_by_id.assert_not_awaited()
+    assert found.occasions[0].events[0].evidence == (RULE,)
+
+
+async def test_retained_events_share_the_candidate_ceiling(monkeypatch):
+    monkeypatch.setattr(source, "MAX_AWARDS_EVENT_CANDIDATES", 1)
+    service = SimpleNamespace(get_events_by_ids=AsyncMock())
+    with pytest.raises(
+        source.AwardsOccasionSourceError, match="candidate_limit_exceeded"
+    ):
+        await source.read_polymarket_awards_occasions(
+            database([EVENT_ID]), service, retained_ids=("999999",)
+        )
+    service.get_events_by_ids.assert_not_awaited()
+
+
 def test_native_description_is_retained_as_verbatim_primary_evidence():
     payload = envelope()
     normalized = source.polymarket_occasion_event(payload, EVENT_ID)

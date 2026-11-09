@@ -130,6 +130,7 @@ async def test_a_new_ceremony_and_its_venue_sections_use_the_same_set(monkeypatc
     )
     assert "kalshi_event_ticker" in sql and "polymarket_event_id" in sql
     assert "ILIKE" not in sql and "New Film Awards" not in sql
+    assert "CASE" not in sql.partition("WHERE")[2]
 
 
 async def test_the_normal_http_entrypoint_serves_the_shared_ceremony_payload(
@@ -194,6 +195,27 @@ async def test_a_new_category_joins_the_existing_selector_and_both_presentations
         member["id"] for section in updated["sections"] for member in section["members"]
     }
     assert page_ids == set(feed["data"]["member_ids"]) == {10, 11}
+
+
+async def test_a_definition_keeps_its_link_when_venue_ceremony_spelling_changes(
+    monkeypatch,
+):
+    original = discovery("KXGRAMMY-27", label="69th Annual GRAMMY Awards")
+    _, db, _, _ = setup_members(monkeypatch, original)
+    current = discovery("KXGRAMMY-27", label="69th Grammy Awards")
+    producer = build_awards_ceremony_producer(
+        original.occasions[0].selector,
+        load_occasions=AsyncMock(return_value=current),
+    )
+    members = await producer.produce(db)
+    page = roundups.compose_roundup_container(producer, members)
+    feed = roundups.compose_roundup_feed_item(producer, members)
+    assert page["slug"] == "roundup-awards-69th-grammy-awards"
+    assert feed["data"]["collection_ref"]["href"] == "/collections/" + page["slug"]
+    assert page["member_count"] == feed["data"]["item_count"] == 1
+    assert (
+        page["container"]["name"] == feed["data"]["title"] == current.occasions[0].label
+    )
 
 
 @pytest.mark.parametrize(

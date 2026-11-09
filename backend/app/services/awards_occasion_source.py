@@ -11,6 +11,7 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
+from itertools import chain
 from time import monotonic
 from typing import Any
 
@@ -19,7 +20,9 @@ from sqlalchemy import func, or_, select
 from app.utils.awards_occasion_finder import (
     AwardsOccasion,
     OccasionDiscovery,
+    OccasionEvent,
     _identity,
+    awards_ceremony_key,
     find_awards_occasions,
 )
 
@@ -43,11 +46,17 @@ def _merge_discoveries(
     for discovery in discoveries:
         all_refused.update(discovery.refused)
         for occasion in discovery.occasions:
-            events_by_label[occasion.label].update(occasion.events)
+            events_by_label[awards_ceremony_key(occasion.label)].update(occasion.events)
     return OccasionDiscovery(
         occasions=tuple(
-            AwardsOccasion(label, tuple(sorted(events)))
-            for label, events in sorted(events_by_label.items())
+            AwardsOccasion(
+                min(
+                    (event.label for event in events),
+                    key=lambda label: (len(label), label),
+                ),
+                tuple(sorted(events)),
+            )
+            for _, events in sorted(events_by_label.items())
         ),
         refused=tuple(sorted(all_refused)),
     )
@@ -117,7 +126,9 @@ async def _read_kalshi_event(service: Any, event_ticker: str) -> dict[str, Any] 
     return kalshi_occasion_event(response.json(), event_ticker)
 
 
-async def read_kalshi_awards_occasions(db: Any, service: Any) -> OccasionDiscovery:
+async def read_kalshi_awards_occasions(
+    db: Any, service: Any, *, retained_ids: Iterable[str] = ()
+) -> OccasionDiscovery:
     """Read bounded, current venue evidence for stored entertainment candidates.
 
     No ceremony names or ticker stems are declared. A candidate ceiling, bad
@@ -151,11 +162,14 @@ async def read_kalshi_awards_occasions(db: Any, service: Any) -> OccasionDiscove
         if len(tickers) > MAX_AWARDS_EVENT_CANDIDATES:
             raise AwardsOccasionSourceError("candidate_limit_exceeded")
         valid_tickers = []
-        for event_ticker in tickers:
+        for event_ticker in chain(tickers, retained_ids):
             if _identity({"provider": "kalshi", "event_ticker": event_ticker}) is None:
                 refused.append(("kalshi", str(event_ticker or ""), "invalid_identity"))
             else:
                 valid_tickers.append(event_ticker)
+        valid_tickers = sorted(set(valid_tickers))
+        if len(valid_tickers) > MAX_AWARDS_EVENT_CANDIDATES:
+            raise AwardsOccasionSourceError("candidate_limit_exceeded")
         for offset in range(0, len(valid_tickers), AWARDS_KALSHI_CONCURRENCY):
             batch = valid_tickers[offset : offset + AWARDS_KALSHI_CONCURRENCY]
             started = monotonic()
@@ -185,7 +199,9 @@ async def read_kalshi_awards_occasions(db: Any, service: Any) -> OccasionDiscove
     return _merge_discoveries(discoveries, refused)
 
 
-async def read_polymarket_awards_occasions(db: Any, service: Any) -> OccasionDiscovery:
+async def read_polymarket_awards_occasions(
+    db: Any, service: Any, *, retained_ids: Iterable[str] = ()
+) -> OccasionDiscovery:
     """Read stored open entertainment event IDs with the same bounds as Kalshi."""
     from app.models.models import FuturesMarket
 
@@ -213,12 +229,15 @@ async def read_polymarket_awards_occasions(db: Any, service: Any) -> OccasionDis
         if len(event_ids) > MAX_AWARDS_EVENT_CANDIDATES:
             raise AwardsOccasionSourceError("candidate_limit_exceeded")
         valid_ids = []
-        for stored_id in event_ids:
+        for stored_id in chain(event_ids, retained_ids):
             identity = _identity({"provider": "polymarket", "id": stored_id})
             if identity is None:
                 refused.append(("polymarket", str(stored_id or ""), "invalid_identity"))
                 continue
             valid_ids.append(identity[1])
+        valid_ids = sorted(set(valid_ids))
+        if len(valid_ids) > MAX_AWARDS_EVENT_CANDIDATES:
+            raise AwardsOccasionSourceError("candidate_limit_exceeded")
         for offset in range(0, len(valid_ids), AWARDS_POLYMARKET_BATCH_SIZE):
             batch = valid_ids[offset : offset + AWARDS_POLYMARKET_BATCH_SIZE]
             payloads = await service.get_events_by_ids(batch)
@@ -260,12 +279,33 @@ async def read_polymarket_awards_occasions(db: Any, service: Any) -> OccasionDis
 
 
 async def read_awards_occasions(
-    db: Any, kalshi_service: Any, polymarket_service: Any
+    db: Any,
+    kalshi_service: Any,
+    polymarket_service: Any,
+    *,
+    retained_events: Iterable[OccasionEvent] = (),
 ) -> OccasionDiscovery:
     """One bounded discovery combines event membership, preserving each venue's rules."""
     async with asyncio.timeout(AWARDS_SOURCE_BUDGET_SECONDS):
-        kalshi = await read_kalshi_awards_occasions(db, kalshi_service)
-        polymarket = await read_polymarket_awards_occasions(db, polymarket_service)
+        retained_events = tuple(retained_events)
+        kalshi = await read_kalshi_awards_occasions(
+            db,
+            kalshi_service,
+            retained_ids=(
+                event.event_id
+                for event in retained_events
+                if event.provider == "kalshi"
+            ),
+        )
+        polymarket = await read_polymarket_awards_occasions(
+            db,
+            polymarket_service,
+            retained_ids=(
+                event.event_id
+                for event in retained_events
+                if event.provider == "polymarket"
+            ),
+        )
     return _merge_discoveries((kalshi, polymarket))
 
 
@@ -295,14 +335,21 @@ async def read_only_session():
         await engine.dispose()
 
 
-async def read_live(provider: str = "kalshi") -> OccasionDiscovery:
+async def read_live(
+    provider: str = "kalshi",
+    *,
+    retained_events: Iterable[OccasionEvent] = (),
+) -> OccasionDiscovery:
     """The CLI and worker share client cleanup and the read-only source boundary."""
     from app.services.kalshi_api import KalshiAPIService
     from app.services.polymarket_api import PolymarketAPIService
 
     if provider not in {"kalshi", "polymarket", "all"}:
         raise ValueError("Unsupported awards provider")
-    async with AsyncExitStack() as clients:
+    async with (
+        asyncio.timeout(AWARDS_SOURCE_BUDGET_SECONDS),
+        AsyncExitStack() as clients,
+    ):
         kalshi = polymarket = None
         if provider in {"kalshi", "all"}:
             kalshi = KalshiAPIService()
@@ -312,7 +359,27 @@ async def read_live(provider: str = "kalshi") -> OccasionDiscovery:
             clients.push_async_callback(polymarket.close)
         async with read_only_session() as db:
             if provider == "all":
-                return await read_awards_occasions(db, kalshi, polymarket)
-            if provider == "polymarket":
-                return await read_polymarket_awards_occasions(db, polymarket)
-            return await read_kalshi_awards_occasions(db, kalshi)
+                discovery = await read_awards_occasions(
+                    db, kalshi, polymarket, retained_events=retained_events
+                )
+            elif provider == "polymarket":
+                discovery = await read_polymarket_awards_occasions(
+                    db,
+                    polymarket,
+                    retained_ids=(
+                        event.event_id
+                        for event in retained_events
+                        if event.provider == "polymarket"
+                    ),
+                )
+            else:
+                discovery = await read_kalshi_awards_occasions(
+                    db,
+                    kalshi,
+                    retained_ids=(
+                        event.event_id
+                        for event in retained_events
+                        if event.provider == "kalshi"
+                    ),
+                )
+        return discovery

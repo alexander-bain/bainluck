@@ -12,6 +12,35 @@ from app.services import awards_occasion_snapshot as snapshot
 from app.services.awards_occasion_source import AwardsOccasionSourceError
 from app.tasks import awards_occasions as worker, redis_state
 from app.utils.awards_occasion_finder import find_awards_occasions
+from app.utils.durable_state import EnvelopeRead
+
+
+@pytest.fixture(autouse=True)
+def retained_store(monkeypatch):
+    stored = {}
+
+    async def read(identity, *, expected_version, max_age_s):
+        assert expected_version == "v1" and max_age_s == float("inf")
+        envelope = stored.get("envelope")
+        return EnvelopeRead(
+            status="ok" if envelope else "missing",
+            tier="durable",
+            envelope=envelope,
+        )
+
+    async def publish(envelope, *, expected_generation):
+        previous = stored.get("envelope")
+        generation = previous.generation if previous else None
+        if expected_generation != generation:
+            return {"status": "cas-miss"}
+        stored["envelope"] = envelope
+        return {"status": "ok"}
+
+    monkeypatch.setattr(worker, "read_snapshot_standalone", read, raising=False)
+    monkeypatch.setattr(
+        worker, "publish_cas_snapshot_standalone", publish, raising=False
+    )
+    return stored
 
 
 def discovered():
@@ -35,7 +64,7 @@ async def test_complete_pass_publishes_reproducible_proposals_without_licensing_
     reader = AsyncMock(return_value=discovered())
     monkeypatch.setattr(worker, "read_live", reader)
     result = await worker.refresh_awards_occasions()
-    reader.assert_awaited_once_with("all")
+    reader.assert_awaited_once_with("all", retained_events=())
     assert result["terminal"] == "complete"
     assert result["occasions"] == result["provider_events"] == 1
     assert result["model_cost_usd"] == 0
@@ -48,6 +77,113 @@ async def test_complete_pass_publishes_reproducible_proposals_without_licensing_
         == discovered()
     )
     assert payload["state"] == "proposed"
+
+
+async def test_cache_loss_keeps_source_seeds_and_requires_fresh_venue_evidence(
+    monkeypatch, retained_store
+):
+    client = SimpleNamespace(setex=Mock(return_value=True))
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda: client)
+    found = discovered()
+    reader = AsyncMock(return_value=found)
+    monkeypatch.setattr(worker, "read_live", reader)
+    await worker.refresh_awards_occasions()
+    previous = retained_store["envelope"]
+    assert previous.payload["events"][0]["markets"][0]["rules_primary"]
+
+    monkeypatch.setattr(
+        worker.time, "time", lambda: previous.payload["observed_at"] + 7201
+    )
+    client.setex.reset_mock()
+    await worker.refresh_awards_occasions()
+    reader.assert_awaited_with("all", retained_events=found.occasions[0].events)
+    assert retained_store["envelope"].generation > previous.generation
+    assert json.loads(client.setex.call_args.args[2])["state"] == "proposed"
+
+
+async def test_a_retained_event_cannot_disappear_as_an_empty_success(
+    monkeypatch, retained_store
+):
+    from app.utils.awards_occasion_finder import OccasionDiscovery
+
+    client = SimpleNamespace(setex=Mock(return_value=True))
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda: client)
+    reader = AsyncMock(return_value=discovered())
+    monkeypatch.setattr(worker, "read_live", reader)
+    await worker.refresh_awards_occasions()
+    previous = retained_store["envelope"]
+    reader.return_value = OccasionDiscovery(
+        (), (("kalshi", "KXNEW-PIC27", "provider_event_missing"),)
+    )
+    with pytest.raises(AwardsOccasionSourceError, match="retained_event_unavailable"):
+        await worker.refresh_awards_occasions()
+    assert retained_store["envelope"] is previous
+    assert json.loads(client.setex.call_args.args[2])["state"] == "unavailable"
+
+
+@pytest.mark.parametrize("status", ["unavailable", "malformed", "wrong-version"])
+async def test_an_untrusted_archive_refuses_before_reading_or_replacing_sources(
+    monkeypatch, status
+):
+    client = SimpleNamespace(setex=Mock(return_value=True))
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda: client)
+    monkeypatch.setattr(
+        worker,
+        "read_snapshot_standalone",
+        AsyncMock(return_value=EnvelopeRead(status=status, tier="durable")),
+    )
+    reader = AsyncMock(return_value=discovered())
+    monkeypatch.setattr(worker, "read_live", reader)
+    with pytest.raises(AwardsOccasionSourceError, match="retained_source_" + status):
+        await worker.refresh_awards_occasions()
+    reader.assert_not_awaited()
+    assert json.loads(client.setex.call_args.args[2])["state"] == "unavailable"
+
+
+async def test_a_concurrent_writer_keeps_its_newer_cache_publication(monkeypatch):
+    client = SimpleNamespace(setex=Mock(return_value=True))
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda: client)
+    monkeypatch.setattr(worker, "read_live", AsyncMock(return_value=discovered()))
+    monkeypatch.setattr(
+        worker,
+        "publish_cas_snapshot_standalone",
+        AsyncMock(return_value={"status": "cas-miss"}),
+    )
+    assert await worker.refresh_awards_occasions() == {
+        "terminal": "skipped",
+        "reason": "retained_source_changed",
+        "model_cost_usd": 0,
+    }
+    client.setex.assert_not_called()
+
+
+async def test_a_failed_durable_write_withdraws_the_served_snapshot(monkeypatch):
+    client = SimpleNamespace(setex=Mock(return_value=True))
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda: client)
+    monkeypatch.setattr(worker, "read_live", AsyncMock(return_value=discovered()))
+    monkeypatch.setattr(
+        worker,
+        "publish_cas_snapshot_standalone",
+        AsyncMock(return_value={"status": "error"}),
+    )
+    with pytest.raises(
+        AwardsOccasionSourceError, match="retained_source_publish:error"
+    ):
+        await worker.refresh_awards_occasions()
+    assert json.loads(client.setex.call_args.args[2])["state"] == "unavailable"
+
+
+async def test_oversized_source_evidence_is_refused_before_durable_publication(
+    monkeypatch, retained_store
+):
+    client = SimpleNamespace(setex=Mock(return_value=True))
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda: client)
+    monkeypatch.setattr(worker, "read_live", AsyncMock(return_value=discovered()))
+    monkeypatch.setattr(worker, "AWARDS_OCCASION_MAX_BYTES", 1)
+    with pytest.raises(AwardsOccasionSourceError, match="source_snapshot_too_large"):
+        await worker.refresh_awards_occasions()
+    assert retained_store == {}
+    assert json.loads(client.setex.call_args.args[2])["state"] == "unavailable"
 
 
 async def test_failed_source_withdraws_the_previous_snapshot_and_preserves_the_error(

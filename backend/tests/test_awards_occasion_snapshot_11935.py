@@ -1,6 +1,7 @@
 """A source outage or expired proposal cannot become a current ceremony set."""
 
 from copy import deepcopy
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -111,4 +112,31 @@ async def test_bad_cache_json_is_a_failure(monkeypatch, raw):
         lambda: SimpleNamespace(get=Mock(return_value=raw)),
     )
     with pytest.raises(AwardsOccasionSourceError, match="source_snapshot_malformed"):
+        await snapshot.read_cached_awards_occasions(object())
+
+
+def test_expired_evidence_can_only_supply_worker_fetch_seeds():
+    payload = snapshot.occasion_snapshot(discovery(), observed_at=NOW)
+    later = NOW + snapshot.AWARDS_OCCASION_CACHE_SECONDS + 1
+    with pytest.raises(AwardsOccasionSourceError, match="source_snapshot_stale"):
+        snapshot.discovery_from_snapshot(payload, now=later)
+    assert (
+        snapshot.discovery_from_snapshot(payload, now=later, allow_expired=True)
+        == discovery()
+    )
+    with pytest.raises(AwardsOccasionSourceError, match="source_snapshot_malformed"):
+        snapshot.discovery_from_snapshot(payload, now=NOW - 1, allow_expired=True)
+
+
+async def test_oversized_cache_is_refused_before_decoding(monkeypatch):
+    from app.tasks import redis_state
+
+    raw = json.dumps(snapshot.occasion_snapshot(discovery(), observed_at=NOW))
+    raw += " " * snapshot.AWARDS_OCCASION_MAX_BYTES
+    monkeypatch.setattr(
+        redis_state,
+        "get_redis_client",
+        lambda: SimpleNamespace(get=Mock(return_value=raw)),
+    )
+    with pytest.raises(AwardsOccasionSourceError, match="source_snapshot_too_large"):
         await snapshot.read_cached_awards_occasions(object())

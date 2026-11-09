@@ -10,10 +10,14 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.services.awards_occasion_source import AwardsOccasionSourceError
-from app.utils.awards_occasion_finder import OccasionDiscovery, find_awards_occasions
+from app.utils.awards_occasion_finder import (
+    OccasionDiscovery,
+    find_awards_occasions,
+)
 
 AWARDS_OCCASION_CACHE_KEY = "awards_occasions:v1"
 AWARDS_OCCASION_CACHE_SECONDS = 7200
+AWARDS_OCCASION_MAX_BYTES = 1024 * 1024
 
 
 def occasion_snapshot(
@@ -41,8 +45,14 @@ def occasion_snapshot(
     }
 
 
-def discovery_from_snapshot(payload: Any, *, now: float) -> OccasionDiscovery:
-    """Refuse missing, stale, failed or malformed evidence before any member read."""
+def discovery_from_snapshot(
+    payload: Any, *, now: float, allow_expired: bool = False
+) -> OccasionDiscovery:
+    """Validate source evidence before a member read.
+
+    Page reads require a fresh snapshot. The worker can recover expired fetch
+    identities for venue revalidation with ``allow_expired``.
+    """
     if (
         not isinstance(payload, Mapping)
         or type(payload.get("version")) is not int
@@ -57,7 +67,7 @@ def discovery_from_snapshot(payload: Any, *, now: float) -> OccasionDiscovery:
         or observed_at > now
     ):
         raise AwardsOccasionSourceError("source_snapshot_malformed")
-    if now - observed_at >= AWARDS_OCCASION_CACHE_SECONDS:
+    if not allow_expired and now - observed_at >= AWARDS_OCCASION_CACHE_SECONDS:
         raise AwardsOccasionSourceError("source_snapshot_stale")
     if payload.get("state") == "unavailable":
         raise AwardsOccasionSourceError(
@@ -96,6 +106,11 @@ async def read_cached_awards_occasions(db: Any) -> OccasionDiscovery:
     raw = await asyncio.to_thread(client.get, AWARDS_OCCASION_CACHE_KEY)
     if raw is None:
         raise AwardsOccasionSourceError("source_snapshot_missing")
+    if (
+        isinstance(raw, (str, bytes, bytearray))
+        and len(raw) > AWARDS_OCCASION_MAX_BYTES
+    ):
+        raise AwardsOccasionSourceError("source_snapshot_too_large")
     try:
         payload = json.loads(raw)
     except (TypeError, ValueError) as error:

@@ -19,7 +19,8 @@ from typing import Any, Iterable, Mapping
 
 _CEREMONY = re.compile(
     r"\b(?P<label>[1-9][0-9]{0,2}(?:st|nd|rd|th)\s+"
-    r"[A-Z][A-Za-z’'&. -]{1,70}?\bAwards)\b"
+    r"[A-Z][A-Za-z’'&. -]{1,70}?\bAwards)\b",
+    re.IGNORECASE,
 )
 _KALSHI_EVENT = re.compile(r"[A-Z0-9]+(?:-[A-Z0-9]+)+")
 _POLYMARKET_EVENT = re.compile(r"[1-9][0-9]{0,17}")
@@ -56,6 +57,17 @@ class AwardsOccasion:
 class OccasionDiscovery:
     occasions: tuple[AwardsOccasion, ...]
     refused: tuple[tuple[str, str, str], ...]
+
+
+def awards_ceremony_key(label: str) -> str:
+    """Ignore letter case and the optional Annual immediately after the ordinal."""
+    normalized = " ".join(label.split())
+    return re.sub(
+        r"^([1-9][0-9]{0,2}(?:st|nd|rd|th)) annual ",
+        r"\1 ",
+        normalized,
+        flags=re.IGNORECASE,
+    ).casefold()
 
 
 def _identity(event: Mapping[str, Any]) -> tuple[str, str] | None:
@@ -114,7 +126,10 @@ def find_awards_occasions(events: Iterable[Mapping[str, Any]]) -> OccasionDiscov
     grouped: dict[str, list[OccasionEvent]] = defaultdict(list)
     for (provider, event_id), observations in sorted(by_identity.items()):
         observations_evidence = [_evidence(event) for event in observations]
-        keys = {tuple(sorted(evidence)) for evidence in observations_evidence}
+        keys = {
+            tuple(sorted({awards_ceremony_key(label) for label in evidence}))
+            for evidence in observations_evidence
+        }
         if len(keys) != 1:
             refused.add((provider, event_id, "conflicting_event_evidence"))
             continue
@@ -131,23 +146,33 @@ def find_awards_occasions(events: Iterable[Mapping[str, Any]]) -> OccasionDiscov
         if len(titles) > 1:
             refused.add((provider, event_id, "conflicting_event_title"))
             continue
-        label = labels[0]
+        label = min(
+            (label for evidence in observations_evidence for label in evidence),
+            key=lambda label: (len(label), label),
+        )
         quotes = tuple(
             sorted(
                 {
                     quote
                     for evidence in observations_evidence
-                    for quote in evidence[label]
+                    for matching_quotes in evidence.values()
+                    for quote in matching_quotes
                 }
             )
         )
-        grouped[label].append(
+        grouped[labels[0]].append(
             OccasionEvent(provider, event_id, label, quotes, next(iter(titles), None))
         )
     return OccasionDiscovery(
         occasions=tuple(
-            AwardsOccasion(label, tuple(sorted(members)))
-            for label, members in sorted(grouped.items())
+            AwardsOccasion(
+                min(
+                    (member.label for member in members),
+                    key=lambda label: (len(label), label),
+                ),
+                tuple(sorted(members)),
+            )
+            for _, members in sorted(grouped.items())
         ),
         refused=tuple(sorted(refused)),
     )
@@ -175,7 +200,8 @@ def select_awards_occasion(
         (
             occasion
             for occasion in find_awards_occasions(events).occasions
-            if occasion.label == selector["label"]
+            if awards_ceremony_key(occasion.label)
+            == awards_ceremony_key(selector["label"])
         ),
         None,
     )
