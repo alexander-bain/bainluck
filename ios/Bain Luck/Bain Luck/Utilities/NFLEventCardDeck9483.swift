@@ -21,6 +21,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
     case milestone(NFLMilestoneCard9483)
     case ladder(NBALadderCard9483)
     case mlb(MLBFinalCard11284)
+    case cricket(EventAtlasCricketCards11666.Card)
+    case esports(EventAtlasEsportsCards11666.Card)
     case nhlScoring(EventAtlasNhlCards11666.ScoringCard)
     case soccerThreeWay(EventAtlasSoccerCards11666.ThreeWayCard)
     case soccerBothTeams(EventAtlasSoccerCards11666.BothTeamsToScoreCard)
@@ -32,6 +34,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
     case nflPeriodWinners(EventAtlasFootballCards11666.PeriodWinnersCard)
     case nflPairedMilestones(EventAtlasFootballCards11666.PairedMilestonesCard)
     case nflCombinedYards(EventAtlasFootballCards11666.CombinedYardsCard)
+    case combatMethod(EventAtlasCombatCards11666.MethodCard)
+    case combatRounds(EventAtlasCombatCards11666.RoundCard)
+    case combatDuration(EventAtlasCombatCards11666.DurationCard)
 
     var id: String {
         switch self {
@@ -39,6 +44,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .milestone(let card): return "milestone:\(card.id)"
         case .ladder(let card): return card.id
         case .mlb(let card): return card.id
+        case .cricket(let card): return card.id
+        case .esports(let card): return card.id
         case .nhlScoring(let card): return card.id
         case .soccerThreeWay(let card): return card.id
         case .soccerBothTeams(let card): return card.id
@@ -50,6 +57,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .nflPeriodWinners(let card): return card.id
         case .nflPairedMilestones(let card): return card.id
         case .nflCombinedYards(let card): return card.id
+        case .combatMethod(let card): return card.id
+        case .combatRounds(let card): return card.id
+        case .combatDuration(let card): return card.id
         }
     }
 
@@ -59,6 +69,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .milestone(let card): return "\(card.player) · \(card.stat)"
         case .ladder(let card): return card.title
         case .mlb(let card): return card.title
+        case .cricket(let card): return card.title
+        case .esports(let card): return card.title
         case .nhlScoring(let card): return card.title
         case .soccerThreeWay(let card): return card.title
         case .soccerBothTeams(let card): return card.title
@@ -70,6 +82,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .nflPeriodWinners(let card): return card.title
         case .nflPairedMilestones(let card): return card.title
         case .nflCombinedYards(let card): return card.title
+        case .combatMethod(let card): return card.title
+        case .combatRounds(let card): return card.title
+        case .combatDuration(let card): return card.title
         }
     }
 
@@ -83,6 +98,8 @@ enum NFLEventCard9483: Equatable, Identifiable {
         // A finished game's saved chances, finals and results are history:
         // nothing on these cards is a current quote that can expire.
         case .mlb: return self
+        case .cricket(let card): return .cricket(card.current(at: now))
+        case .esports(let card): return .esports(card.current(at: now))
         case .nhlScoring(let card): return .nhlScoring(card.current(at: now))
         case .soccerThreeWay(let card): return .soccerThreeWay(card.current(at: now))
         case .soccerBothTeams(let card): return .soccerBothTeams(card.current(at: now))
@@ -94,6 +111,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .nflPeriodWinners(let card): return .nflPeriodWinners(card.current(at: now))
         case .nflPairedMilestones(let card): return .nflPairedMilestones(card.current(at: now))
         case .nflCombinedYards(let card): return .nflCombinedYards(card.current(at: now))
+        case .combatMethod(let card): return .combatMethod(card.current(at: now))
+        case .combatRounds(let card): return .combatRounds(card.current(at: now))
+        case .combatDuration(let card): return .combatDuration(card.current(at: now))
         }
     }
 }

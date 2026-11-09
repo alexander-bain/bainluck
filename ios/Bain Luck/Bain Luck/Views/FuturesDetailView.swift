@@ -193,6 +193,11 @@ struct FuturesDetailView: View {
                             // Market metadata (status, outcomes, dates, bookmakers)
                             metadataSection(market)
 
+                            // #11666 (Item 16a, Decide 91-C) — Native Motorsport / F1 Atlas Story Cards
+                            if EventAtlasRacingCards11666.applies(market: market) {
+                                EventAtlasRacingSectionView11666(market: market)
+                            }
+
                             // Probability evolution chart
                             if market.outcomes.count >= 1 {
                                 // #9387: the chart asks for the same mode and is
