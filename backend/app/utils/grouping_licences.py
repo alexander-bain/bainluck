@@ -180,23 +180,37 @@ def default_grouping_licences_registry() -> dict[str, Any]:
     }
 
 
+_RUNTIME_SUSPENDED_KINDS: dict[str, dict[str, Any]] = {}
+
+
+def reset_runtime_kind_suspensions() -> None:
+    """Clear in-memory runtime kind suspensions (for tests)."""
+    _RUNTIME_SUSPENDED_KINDS.clear()
+
+
 def load_grouping_licences(
     path: Path | str | None = None,
 ) -> dict[str, Any]:
     """Load and validate the grouping licences registry from disk."""
     target = Path(path) if path is not None else DEFAULT_LICENCES_PATH
     if not target.exists():
-        return default_grouping_licences_registry()
-    data = json.loads(target.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or data.get("schema") != LICENCES_SCHEMA_VERSION:
-        raise ValueError(f"Invalid grouping licences schema in {target}")
-    kinds = data.get("kinds")
-    if not isinstance(kinds, dict):
-        raise ValueError(f"Missing kinds map in {target}")
-    for k, entry in kinds.items():
-        status = str((entry or {}).get("status") or "")
-        if status not in VALID_LICENCE_STATUSES:
-            raise ValueError(f"Kind {k!r} has invalid licence status {status!r}")
+        data = default_grouping_licences_registry()
+    else:
+        data = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("schema") != LICENCES_SCHEMA_VERSION:
+            raise ValueError(f"Invalid grouping licences schema in {target}")
+        kinds = data.get("kinds")
+        if not isinstance(kinds, dict):
+            raise ValueError(f"Missing kinds map in {target}")
+        for k, entry in kinds.items():
+            status = str((entry or {}).get("status") or "")
+            if status not in VALID_LICENCE_STATUSES:
+                raise ValueError(f"Kind {k!r} has invalid licence status {status!r}")
+    if path is None and _RUNTIME_SUSPENDED_KINDS:
+        kinds_map = data.setdefault("kinds", {})
+        for k, overlay in _RUNTIME_SUSPENDED_KINDS.items():
+            if k in kinds_map:
+                kinds_map[k] = copy.deepcopy(overlay)
     return data
 
 
@@ -240,7 +254,7 @@ def suspend_grouping_kind(
     *,
     wrong_card_slug: str,
     reason: str,
-    suspended_at: str = "2026-11-08T22:00:00Z",
+    suspended_at: str | None = None,
 ) -> dict[str, Any]:
     """Suspend a grouping kind after one wrong card served (``grouping-primitives.md`` §5).
 
@@ -254,6 +268,11 @@ def suspend_grouping_kind(
     if not reason_clean:
         raise ValueError("suspend_grouping_kind requires reason")
 
+    effective_suspended_at = (
+        suspended_at
+        if suspended_at is not None
+        else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
     updated = copy.deepcopy(dict(registry))
     kinds = updated.setdefault("kinds", {})
     if kind not in kinds:
@@ -262,10 +281,42 @@ def suspend_grouping_kind(
     entry = dict(kinds[kind])
     entry["previous_status"] = entry.get("status")
     entry["status"] = "SUSPENDED"
-    entry["suspended_at"] = suspended_at
+    entry["suspended_at"] = effective_suspended_at
     entry["suspended_by_card_slug"] = slug_clean
     entry["suspended_reason"] = reason_clean
     kinds[kind] = entry
+    return updated
+
+
+def record_runtime_kind_suspension(
+    kind: str,
+    *,
+    wrong_card_slug: str,
+    reason: str,
+    suspended_at: str | None = None,
+    registry: dict[str, Any] | None = None,
+    licences_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Suspend ``kind`` after a served card violation at runtime and persist when configured."""
+    base_reg = (
+        registry
+        if registry is not None
+        else load_grouping_licences(licences_path)
+    )
+    updated = suspend_grouping_kind(
+        base_reg,
+        kind,
+        wrong_card_slug=wrong_card_slug,
+        reason=reason,
+        suspended_at=suspended_at,
+    )
+    if registry is not None:
+        registry.clear()
+        registry.update(updated)
+    if licences_path is not None:
+        save_grouping_licences(updated, licences_path)
+    if registry is None and licences_path is None:
+        _RUNTIME_SUSPENDED_KINDS[kind] = copy.deepcopy(updated["kinds"][kind])
     return updated
 
 
@@ -332,7 +383,7 @@ def promote_licensed_proposal_to_definition(
     *,
     registry: Mapping[str, Any] | None = None,
     output_dir: Path | str | None = None,
-    proposed_at: str = "2026-11-08",
+    proposed_at: str | None = None,
 ) -> PromotionOutcome:
     """Promote a licensed kind's proposal into a reviewed container definition file.
 
@@ -380,6 +431,11 @@ def promote_licensed_proposal_to_definition(
             reason="missing_exam_receipt",
         )
 
+    effective_proposed_at = (
+        proposed_at
+        if proposed_at is not None
+        else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    )
     relations = list(
         proposal.get("relations")
         or kind_entry.get("relations")
@@ -388,10 +444,14 @@ def promote_licensed_proposal_to_definition(
     level = str(proposal.get("level") or kind_entry.get("level") or "member")
     rule = dict(proposal.get("rule") or {})
     rule.setdefault("producer", kind)
+    membership = str(
+        proposal.get("membership")
+        or ("subject_sequence" if kind == "subject_sequence" else "computed-produced")
+    )
 
     definition: dict[str, Any] = {
         "slug": slug,
-        "membership": "computed-produced",
+        "membership": membership,
         "kind": "roundup",
         "relations": relations,
         "level": level,
@@ -416,7 +476,7 @@ def promote_licensed_proposal_to_definition(
         "licence_status": "PASS",
         "exam_receipt": exam_receipt,
         "review_path": "tier-b-pr",
-        "proposed_at": proposed_at,
+        "proposed_at": effective_proposed_at,
     }
     definition["rule"] = rule
 
@@ -449,7 +509,7 @@ def run_licensed_promotion_pass(
     registry: Mapping[str, Any] | None = None,
     licences_path: Path | str | None = None,
     output_dir: Path | str | None = None,
-    proposed_at: str = "2026-11-08",
+    proposed_at: str | None = None,
 ) -> dict[str, Any]:
     """Run one batch promotion pass for ``kind``.
 
@@ -459,6 +519,11 @@ def run_licensed_promotion_pass(
     stops new cards immediately. Also stops immediately if ``kind`` is already
     ``SUSPENDED`` or unlicensed (``FAIL`` / ``HELD``).
     """
+    effective_proposed_at = (
+        proposed_at
+        if proposed_at is not None
+        else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    )
     reg: dict[str, Any] = copy.deepcopy(
         dict(registry if registry is not None else load_grouping_licences(licences_path))
     )
@@ -472,7 +537,11 @@ def run_licensed_promotion_pass(
                 kind,
                 wrong_card_slug=bad_slug,
                 reason=bad_reason,
-                suspended_at=f"{proposed_at}T22:30:00Z",
+                suspended_at=(
+                    f"{effective_proposed_at}T22:30:00Z"
+                    if proposed_at is not None
+                    else None
+                ),
             )
             if licences_path is not None:
                 save_grouping_licences(reg, licences_path)
@@ -516,7 +585,7 @@ def run_licensed_promotion_pass(
             prop_with_kind,
             registry=reg,
             output_dir=output_dir,
-            proposed_at=proposed_at,
+            proposed_at=effective_proposed_at,
         )
         if outcome.promoted and outcome.definition is not None:
             promoted_defs.append(outcome.definition)
@@ -646,6 +715,8 @@ def _inspect_selected_board(
 
 def build_default_same_deadline_board_exam_cases(
     dataset_path: Path | str | None = None,
+    *,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Evaluate 20 coming calendar deadlines through ``select_same_deadline_board`` over real live markets (#12375 Exit 3).
 
@@ -659,6 +730,7 @@ def build_default_same_deadline_board_exam_cases(
     while the other 13 coming deadlines refuse on supply or category diversity ->
     explicit ``FAIL``.
     """
+    effective_now = now if now is not None else EXAM_NOW
     path = (
         Path(dataset_path)
         if dataset_path is not None
@@ -679,7 +751,7 @@ def build_default_same_deadline_board_exam_cases(
                 cand_markets,
                 deadline=d_iso,
                 deadline_phrase=phrase,
-                now=EXAM_NOW,
+                now=effective_now,
             )
             for _ in range(3)
         ]

@@ -741,6 +741,8 @@ async def evaluate_roundup_producer(
     db: Any,
     *,
     now: Optional[float] = None,
+    licences_registry: Optional[dict[str, Any]] = None,
+    licences_path: Optional[Path | str] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     """Run ``producer`` once and return ``(feed_item, container_payload)``, cached 60s per slug."""
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -759,6 +761,28 @@ async def evaluate_roundup_producer(
     ):
         return None, None
     rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
+    producer_kind = str(rule_cfg.get("producer") or "").strip()
+    if producer_kind:
+        from app.utils.grouping_licences import (
+            get_kind_licence_status,
+            load_grouping_licences,
+        )
+
+        active_licences = (
+            licences_registry
+            if licences_registry is not None
+            else load_grouping_licences(licences_path)
+        )
+        if (
+            producer_kind in (active_licences.get("kinds") or {})
+            and get_kind_licence_status(active_licences, producer_kind) == "SUSPENDED"
+        ):
+            logger.warning(
+                "flow_sentinel matching_defect: roundup %s skipped because kind %s is SUSPENDED",
+                producer.slug,
+                producer_kind,
+            )
+            return None, None
     no_cache = (
         rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair"
     )
@@ -834,6 +858,39 @@ async def evaluate_roundup_producer(
                 cache_key, producer.slug, ts, None, None, db
             )
         return None, None
+
+    if producer_kind:
+        from app.utils.grouping_licences import (
+            detect_served_card_violation,
+            load_grouping_licences,
+            record_runtime_kind_suspension,
+        )
+
+        active_licences = (
+            licences_registry
+            if licences_registry is not None
+            else load_grouping_licences(licences_path)
+        )
+        if producer_kind in (active_licences.get("kinds") or {}):
+            violation = detect_served_card_violation(
+                container_payload
+            ) or detect_served_card_violation(feed_item)
+            if violation is not None:
+                bad_slug, bad_reason = violation
+                record_runtime_kind_suspension(
+                    producer_kind,
+                    wrong_card_slug=bad_slug or producer.slug,
+                    reason=bad_reason,
+                    registry=licences_registry,
+                    licences_path=licences_path,
+                )
+                logger.warning(
+                    "flow_sentinel matching_defect: roundup %s suspended kind %s (%s)",
+                    producer.slug,
+                    producer_kind,
+                    bad_reason,
+                )
+                return None, None
 
     if use_cache:
         await _store_roundup_cache_entry(

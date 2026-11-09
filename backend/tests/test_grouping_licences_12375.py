@@ -168,10 +168,12 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
             proposal,
             registry=licensed_reg,
             output_dir=tmp_path,
+            proposed_at="2026-11-08",
         )
         assert outcome.promoted is True
         assert outcome.slug == "lakers-next-3-games"
         assert outcome.definition is not None
+        assert outcome.definition["membership"] == defn["membership"] == "subject_sequence"
         assert outcome.definition["authored_by"] == {
             "kind": "proposer",
             "proposer_kind": "subject_sequence",
@@ -425,3 +427,127 @@ class TestExit3SecondKindExamVerdict:
         )
         with pytest.raises(ValueError, match="Unmapped sport/league"):
             canonical_team_page_href("mystery-fc", sport="curling_world")
+
+    async def test_produce_and_build_subject_sequence_refuse_unmapped_sport_without_raising(
+        self,
+    ) -> None:
+        from app.utils.roundup_containers import RoundupRefusal
+        from app.utils.subject_sequence import (
+            build_subject_sequence_producer,
+            produce_subject_sequence,
+        )
+
+        unmapped_defn = {
+            "slug": "mystery-fc-next-3-games",
+            "membership": "subject_sequence",
+            "kind": "roundup",
+            "relations": ["same_subject", "same_measure", "same_window"],
+            "level": "member",
+            "kicker": "NEXT 3 GAMES",
+            "name": "Mystery FC: next 3 games",
+            "category": "curling",
+            "tag": "CURLING",
+            "section_title": "Next 3 games",
+            "footer": "Combined win probability · next 3 games in schedule order",
+            "rule": {
+                "producer": "subject_sequence",
+                "sport": "curling_world",
+                "team_name": "Mystery FC",
+                "team_short_name": "Mystery",
+                "team_slug": "mystery-fc",
+                "league": "curling",
+                "window_days": 21,
+                "count": 3,
+            },
+        }
+        # 1. Construction must not raise ValueError on unmapped sport
+        producer = build_subject_sequence_producer(
+            unmapped_defn, now_fn=lambda: NOW_NOV_8
+        )
+        assert producer.slug == "mystery-fc-next-3-games"
+        assert producer.destination_href == "/collections/mystery-fc-next-3-games"
+
+        # 2. produce_subject_sequence must return RoundupRefusal(("unmapped_team_sport", ...))
+        refusal = await produce_subject_sequence(
+            unmapped_defn, _sample_lakers_events(), now=NOW_NOV_8
+        )
+        assert isinstance(refusal, RoundupRefusal)
+        assert refusal.reasons == (("unmapped_team_sport", "curling_world"),)
+
+        # 3. producer.produce(db) also returns RoundupRefusal cleanly
+        prod_outcome = await producer.produce(_sample_lakers_events())
+        assert isinstance(prod_outcome, RoundupRefusal)
+        assert prod_outcome.reasons == (("unmapped_team_sport", "curling_world"),)
+
+    async def test_evaluate_roundup_producer_suspends_kind_on_wrong_served_card_and_blocks_next_run(
+        self, tmp_path: Path
+    ) -> None:
+        from app.utils.grouping_licences import save_grouping_licences
+        from app.utils.roundup_containers import (
+            RoundupProducer,
+            evaluate_roundup_producer,
+        )
+
+        reg = _licensed_subject_sequence_registry()
+        licences_file = tmp_path / "grouping_licences.json"
+        save_grouping_licences(reg, licences_file)
+
+        # Build a producer for subject_sequence that emits a violating card (a completed member)
+        violating_producer = RoundupProducer(
+            slug="violating-lakers-card",
+            name="Los Angeles Lakers: next 3 games",
+            kind="roundup",
+            membership="subject_sequence",
+            relations=("same_subject", "same_measure", "same_window"),
+            level="member",
+            category="nba",
+            section_title="Next 3 games",
+            footer="Combined win probability · next 3 games in schedule order",
+            kicker="NEXT 3 GAMES",
+            tag="NBA",
+            destination_href="/sport/basketball/nba/team/los-angeles-lakers",
+            rule={"producer": "subject_sequence", "cache": "none"},
+            produce=lambda _db: RoundupMembers(
+                members=[
+                    {"id": 1, "event_id": 1, "status": "completed", "card": {"id": 1, "status": "completed"}},
+                    {"id": 2, "event_id": 2, "status": "scheduled", "card": {"id": 2, "status": "scheduled"}},
+                    {"id": 3, "event_id": 3, "status": "scheduled", "card": {"id": 3, "status": "scheduled"}},
+                ],
+                rows=[
+                    {"event_id": 1, "label": "vs Grizzlies · Nov 10", "probability": 0.64},
+                    {"event_id": 2, "label": "@ Pelicans · Nov 13", "probability": 0.58},
+                    {"event_id": 3, "label": "vs Spurs · Nov 15", "probability": 0.53},
+                ],
+                footer="Combined win probability · next 3 games in schedule order",
+                destination_href="/sport/basketball/nba/team/los-angeles-lakers",
+            ),
+        )
+
+        # Evaluate the violating producer: it must refuse to serve and suspend subject_sequence
+        fi_1, cp_1 = await evaluate_roundup_producer(
+            violating_producer,
+            [],
+            licences_registry=reg,
+            licences_path=licences_file,
+        )
+        assert fi_1 is None
+        assert cp_1 is None
+        assert get_kind_licence_status(reg, "subject_sequence") == "SUSPENDED"
+        assert (
+            reg["kinds"]["subject_sequence"]["suspended_by_card_slug"]
+            == "violating-lakers-card"
+        )
+
+        # Next run of a valid subject_sequence producer is now skipped because the kind is SUSPENDED
+        valid_defn = load_roundup_definition(
+            DEFAULT_CONTAINERS_DIR / "lakers-next-3-games.json"
+        )
+        valid_producer = build_roundup_producer_from_definition(valid_defn)
+        fi_2, cp_2 = await evaluate_roundup_producer(
+            valid_producer,
+            _sample_lakers_events(),
+            licences_registry=reg,
+            licences_path=licences_file,
+        )
+        assert fi_2 is None
+        assert cp_2 is None

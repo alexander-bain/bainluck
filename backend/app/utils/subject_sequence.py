@@ -763,12 +763,16 @@ async def produce_subject_sequence(
             return loaded
         ordered_cards = loaded
 
-    defined_href = _normalize_team_destination_href(
-        rule.get("destination_href") or definition.get("destination_href"),
-        team_slug=team_slug,
-        sport=sport,
-        league=str(rule.get("league") or definition.get("category") or ""),
-    )
+    league_val = str(rule.get("league") or definition.get("category") or "")
+    try:
+        defined_href = _normalize_team_destination_href(
+            rule.get("destination_href") or definition.get("destination_href"),
+            team_slug=team_slug,
+            sport=sport,
+            league=league_val,
+        )
+    except ValueError:
+        return _rc().RoundupRefusal([("unmapped_team_sport", sport or league_val)])
     return select_subject_sequence(
         ordered_cards,
         now=effective_now,
@@ -825,20 +829,26 @@ def build_subject_sequence_producer(
     _validate_narrative_copy(name, footer, kicker, section_title)
     tag = str(definition.get("tag") or category.upper())
     team_slug = str(rule.get("team_slug") or "").strip()
-    destination_href = (
-        _normalize_team_destination_href(
-            rule.get("destination_href") or definition.get("destination_href"),
-            team_slug=team_slug,
-            sport=str(rule.get("sport") or ""),
-            league=str(rule.get("league") or category),
-        )
-        if team_slug
-        else str(
+    if team_slug:
+        try:
+            destination_href = _normalize_team_destination_href(
+                rule.get("destination_href") or definition.get("destination_href"),
+                team_slug=team_slug,
+                sport=str(rule.get("sport") or ""),
+                league=str(rule.get("league") or category),
+            )
+        except ValueError:
+            destination_href = str(
+                rule.get("destination_href")
+                or definition.get("destination_href")
+                or f"/collections/{slug}"
+            )
+    else:
+        destination_href = str(
             rule.get("destination_href")
             or definition.get("destination_href")
             or f"/collections/{slug}"
         )
-    )
     order = str(rule.get("order") or "sequence")
     presentation = str(rule.get("presentation") or "strip")
     story_key = f"roundup:{slug.removeprefix('roundup-')}"
