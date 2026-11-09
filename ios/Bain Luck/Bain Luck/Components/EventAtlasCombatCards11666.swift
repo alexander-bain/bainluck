@@ -1594,8 +1594,8 @@ enum EventAtlasCombatCards11666 {
         let lower = text.lowercased()
         let aLower = fighterA.lowercased()
         let bLower = fighterB.lowercased()
-        let aLast = aLower.split(separator: " ").last.map(String.init) ?? aLower
-        let bLast = bLower.split(separator: " ").last.map(String.init) ?? bLower
+        let aLast = TeamShortName.short(fighterA, sportKey: "mma_mixed_martial_arts").lowercased()
+        let bLast = TeamShortName.short(fighterB, sportKey: "mma_mixed_martial_arts").lowercased()
 
         let matchesA = lower.contains(aLower) || (aLast.count >= 3 && lower.contains(aLast))
         let matchesB = lower.contains(bLower) || (bLast.count >= 3 && lower.contains(bLast))
@@ -1915,7 +1915,9 @@ struct EventAtlasCombatDetailsSheet11666: View {
                 }
             }
             .navigationTitle("Market Details")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
