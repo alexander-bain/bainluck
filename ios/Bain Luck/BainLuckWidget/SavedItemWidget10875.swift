@@ -227,6 +227,10 @@ struct SavedMedium10875: View {
     let entry: SavedItemWidgetEntry10875
 
     var body: some View {
+        let caption = SavedClock10875.caption(reading, entry: entry)
+        // #12305: with no caption line (a result, or no chance to show) the
+        // last row is the bottom line, so the rows keep clear of the ↻ there.
+        let clearsRefresh = caption == nil && entry.isRefreshable12305
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(reading.subject)
@@ -257,8 +261,9 @@ struct SavedMedium10875: View {
                         Text("—").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                .padding(.trailing, clearsRefresh ? 24 : 0)
             }
-            if let caption = SavedClock10875.caption(reading, entry: entry) {
+            if let caption {
                 Text(reading.priceCaption.map { "\($0) · \(caption)" } ?? caption)
                     .font(.caption2)
                     .foregroundStyle(.secondary)

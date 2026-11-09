@@ -70,4 +70,32 @@ final class SavedItemControl12305Tests: XCTestCase {
         XCTAssertTrue(navigation.handleURL(SavedWidgetControlLink12305.myStuff))
         XCTAssertEqual(navigation.selectedTab, .myStuff)
     }
+
+    /// The ↻ sits in the widget's bottom-trailing corner. A medium widget for a
+    /// finished game has no caption line, so its last row ("35 Won") was the
+    /// bottom line and the ↻ was drawn over "Won" (simulator, Jets at Chiefs,
+    /// Nov 9). Every bottom line keeps clear of it: the small widget's caption
+    /// always, the medium's caption when it has one, otherwise its rows.
+    func testNoBottomLineRunsUnderTheRefreshButton() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BainLuckWidget/SavedItemWidget10875.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        func body(_ start: String, _ end: String) throws -> String {
+            let from = try XCTUnwrap(source.range(of: start), start)
+            let to = try XCTUnwrap(source.range(of: end, range: from.upperBound..<source.endIndex), end)
+            return String(source[from.upperBound..<to.lowerBound])
+        }
+        let small = try body("struct SavedSmall10875: View {", "struct SavedMedium10875: View {")
+        XCTAssertTrue(small.contains(".padding(.trailing, entry.isRefreshable12305 ? 24 : 0)"),
+                      "the small widget's caption no longer keeps clear of the ↻")
+        let medium = try body("struct SavedMedium10875: View {", "#if os(iOS)")
+        XCTAssertTrue(medium.contains("let clearsRefresh = caption == nil && entry.isRefreshable12305"),
+                      "the medium widget no longer knows when its rows are the bottom line")
+        let rows = try XCTUnwrap(medium.range(of: "ForEach(Array(reading.rows.enumerated())"))
+        let captionLine = try XCTUnwrap(medium.range(of: "if let caption {"))
+        XCTAssertTrue(medium[rows.upperBound..<captionLine.lowerBound].contains(".padding(.trailing, clearsRefresh ? 24 : 0)"),
+                      "the medium widget's rows run under the ↻ when there is no caption line")
+        XCTAssertTrue(medium[captionLine.upperBound...].contains(".padding(.trailing, entry.isRefreshable12305 ? 24 : 0)"),
+                      "the medium widget's caption no longer keeps clear of the ↻")
+    }
 }
