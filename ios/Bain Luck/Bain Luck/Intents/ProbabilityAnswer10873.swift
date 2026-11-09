@@ -48,6 +48,14 @@ struct ProbabilityAnswer10873: Equatable, Sendable {
     let text: String
     /// The printed figure ("62%", "<1%"), when the answer carries one.
     let figure: String?
+    /// Both teams' printed figures, on a both-teams game answer
+    /// (`gameBothSides`). The away figure is nil when the detail withholds it.
+    var figures: Figures? = nil
+
+    struct Figures: Equatable, Sendable {
+        let away: String?
+        let home: String
+    }
 }
 
 /// Which side of a game an outcome names.
@@ -65,7 +73,94 @@ extension ProbabilityAnswer10873 {
     // MARK: - Games
 
     static func game(_ event: EventDetail, side: GameSide10873, now: Date = Date()) -> Self {
+        if let settled = settledGame(event, side: side, now: now) { return settled }
         let team = side == .home ? event.homeTeam : event.awayTeam
+        let subject = matchup(away: event.awayTeam, home: event.homeTeam)
+        let stopped = stoppedStatus(event, now: now)
+        guard let pair = pricePair(event, now: now) else {
+            return unavailableGame(subject: subject, team: team, status: stopped)
+        }
+
+        let figure: String
+        switch side {
+        case .home:
+            figure = pair.homeFigure
+        case .away:
+            guard let away = pair.awayFigure else {
+                // #5271: the slot is withheld on the detail, so it is here.
+                return Self(kind: .unavailable,
+                            text: joined(stopped, "Bain Luck doesn't show a separate chance for \(team) in \(subject). It shows \(event.homeTeam)'s chance only."),
+                            figure: nil)
+            }
+            figure = away
+        }
+
+        switch pair.reading {
+        case .openingLine:
+            return Self(kind: .openingLine,
+                        text: joined(stopped, "\(subject): \(team) \(figure), from the opening line. No newer price has been quoted."),
+                        figure: figure)
+        case .current(let context):
+            return Self(kind: .current,
+                        text: joined(stopped, "\(subject): \(team) \(figure), current win chance.\(context)"),
+                        figure: figure)
+        case .lastRecorded(let when):
+            return Self(kind: .lastRecorded,
+                        text: joined(stopped, "\(subject): \(team) \(figure), last recorded win chance\(when)."),
+                        figure: figure)
+        }
+    }
+
+    /// Both teams in one answer, the game page's "60% vs 40%", so Siri has
+    /// nothing more to ask once a game is picked. On Alex's phone (1.0.6
+    /// TestFlight, Nov 9) Siri stopped on "Running your shortcut" right where
+    /// the action used to ask "Which team?". Each figure, its clock and its
+    /// wording come from the same `pricePair` read `game(_:side:)` uses, so the
+    /// two can never print different numbers; a settled game answers with its
+    /// result in the winner's words, and a draw-priced match still prints the
+    /// home chance alone (#5271).
+    static func gameBothSides(_ event: EventDetail, now: Date = Date()) -> Self {
+        if let settled = settledGame(event, side: nil, now: now) { return settled }
+        let subject = matchup(away: event.awayTeam, home: event.homeTeam)
+        let stopped = stoppedStatus(event, now: now)
+        guard let pair = pricePair(event, now: now) else {
+            return Self(kind: .unavailable,
+                        text: joined(stopped, "Bain Luck has no chances to show for \(subject) right now."),
+                        figure: nil)
+        }
+
+        let named: String
+        let chance: String
+        var note = ""
+        if let away = pair.awayFigure {
+            named = "\(event.awayTeam) \(away), \(event.homeTeam) \(pair.homeFigure)"
+            chance = "chances"
+        } else {
+            named = "\(event.homeTeam) \(pair.homeFigure)"
+            chance = "chance"
+            note = " Bain Luck doesn't show a separate chance for \(event.awayTeam)."
+        }
+        let figures = Figures(away: pair.awayFigure, home: pair.homeFigure)
+        switch pair.reading {
+        case .openingLine:
+            return Self(kind: .openingLine,
+                        text: joined(stopped, "\(subject): \(named), from the opening line.\(note) No newer price has been quoted."),
+                        figure: nil, figures: figures)
+        case .current(let context):
+            return Self(kind: .current,
+                        text: joined(stopped, "\(subject): \(named), current win \(chance).\(note)\(context)"),
+                        figure: nil, figures: figures)
+        case .lastRecorded(let when):
+            return Self(kind: .lastRecorded,
+                        text: joined(stopped, "\(subject): \(named), last recorded win \(chance)\(when).\(note)"),
+                        figure: nil, figures: figures)
+        }
+    }
+
+    /// The hero's first three branches: finished, settled at the venue, closed
+    /// with no winner. Nil while the game is priced. A finished game is worded
+    /// for `side`, or for its winner when `side` is nil.
+    private static func settledGame(_ event: EventDetail, side: GameSide10873?, now: Date) -> Self? {
         let subject = matchup(away: event.awayTeam, home: event.homeTeam)
         let commence = event.commenceTime?.asDate
 
@@ -90,7 +185,9 @@ extension ProbabilityAnswer10873 {
             case .home, .away:
                 let winnerSide: GameSide10873 = outcome == .home ? .home : .away
                 let winner = winnerSide == .home ? event.homeTeam : event.awayTeam
-                let text = winnerSide == side
+                let asked = side ?? winnerSide
+                let team = asked == .home ? event.homeTeam : event.awayTeam
+                let text = winnerSide == asked
                     ? "\(team) won \(subject)\(score)."
                     : "\(team) lost \(subject). \(winner) won\(score)."
                 return Self(kind: .result, text: text, figure: nil)
@@ -118,51 +215,54 @@ extension ProbabilityAnswer10873 {
             commenceTime: commence, now: now) {
             return Self(kind: .noResult, text: "\(subject) ended with no winner.", figure: nil)
         }
+        return nil
+    }
 
-        // A stopped game keeps its badge word beside whatever the pair says —
-        // only once it has started (#4021: the hero asks the clock too).
-        let stopped = EventState.isSuspendedAndStarted(event.status, commenceTime: commence, now: now)
+    /// A stopped game keeps its badge word beside whatever the pair says —
+    /// only once it has started (#4021: the hero asks the clock too).
+    private static func stoppedStatus(_ event: EventDetail, now: Date) -> String? {
+        EventState.isSuspendedAndStarted(event.status, commenceTime: event.commenceTime?.asDate, now: now)
             ? "Game status: \(EventState.suspendedLabel(authorityPeriod: event.espn?.period))."
             : nil
+    }
 
-        // 4. The price pair, exactly as the hero resolves it.
-        guard let odds = event.currentOdds else {
-            return unavailableGame(subject: subject, team: team, status: stopped)
+    /// The hero's price pair (step 4), decided once for either answer.
+    private struct PricePair {
+        enum Reading {
+            case openingLine
+            case current(context: String)
+            case lastRecorded(when: String)
         }
+        /// Nil on a draw-priced match: the detail withholds the away slot (#5271).
+        let awayFigure: String?
+        let homeFigure: String
+        let reading: Reading
+    }
+
+    /// The pair exactly as the hero resolves it; nil when it has none.
+    private static func pricePair(_ event: EventDetail, now: Date) -> PricePair? {
+        guard let odds = event.currentOdds else { return nil }
         let shown = OpeningLineHero.resolve(odds, for: event)
         guard let pair = DrawPricedWinner.printablePair(
             away: shown.awayProbability, home: shown.homeProbability, sport: event.sport)
-        else {
-            return unavailableGame(subject: subject, team: team, status: stopped)
-        }
+        else { return nil }
 
-        let figure: String
-        switch side {
-        case .home:
-            if let away = pair.away {
-                let percents = EventDetailView.heroPairPercents(shown, away: away, home: pair.home)
-                figure = formatProbability(pair.home, renderedPercent: percents.home)
-            } else {
-                // Draw-priced: the lone home number, rounded alone (#5271).
-                figure = formatProbability(pair.home)
-            }
-        case .away:
-            guard let away = pair.away else {
-                // #5271: the slot is withheld on the detail, so it is here.
-                return Self(kind: .unavailable,
-                            text: joined(stopped, "Bain Luck doesn't show a separate chance for \(team) in \(subject). It shows \(event.homeTeam)'s chance only."),
-                            figure: nil)
-            }
+        let awayFigure: String?
+        let homeFigure: String
+        if let away = pair.away {
             let percents = EventDetailView.heroPairPercents(shown, away: away, home: pair.home)
-            figure = formatProbability(away, renderedPercent: percents.away)
+            awayFigure = formatProbability(away, renderedPercent: percents.away)
+            homeFigure = formatProbability(pair.home, renderedPercent: percents.home)
+        } else {
+            // Draw-priced: the lone home number, rounded alone (#5271).
+            awayFigure = nil
+            homeFigure = formatProbability(pair.home)
         }
 
         if shown.isOpeningLine {
-            return Self(kind: .openingLine,
-                        text: joined(stopped, "\(subject): \(team) \(figure), from the opening line. No newer price has been quoted."),
-                        figure: figure)
+            return PricePair(awayFigure: awayFigure, homeFigure: homeFigure, reading: .openingLine)
         }
-
+        let commence = event.commenceTime?.asDate
         let observedAt = event.heroProbabilityObservedAt?.asDate
         let phase = EventHeadlinePhase9483.resolve(
             status: event.status, commenceTime: commence, isOpeningLine: false,
@@ -176,15 +276,11 @@ extension ProbabilityAnswer10873 {
             } else {
                 context = ""
             }
-            return Self(kind: .current,
-                        text: joined(stopped, "\(subject): \(team) \(figure), current win chance.\(context)"),
-                        figure: figure)
+            return PricePair(awayFigure: awayFigure, homeFigure: homeFigure, reading: .current(context: context))
         }
         let when = Liquidity.preciseObservedAt(observedAt).map { ", recorded \($0)" }
             ?? ". No time was recorded for it"
-        return Self(kind: .lastRecorded,
-                    text: joined(stopped, "\(subject): \(team) \(figure), last recorded win chance\(when)."),
-                    figure: figure)
+        return PricePair(awayFigure: awayFigure, homeFigure: homeFigure, reading: .lastRecorded(when: when))
     }
 
     private static func unavailableGame(subject: String, team: String, status: String?) -> Self {
