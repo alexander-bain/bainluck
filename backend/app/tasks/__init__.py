@@ -8515,11 +8515,8 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 125},
         "options": {"queue": "background"},
     },
-    "generate-discover-comparison-candidates": {
-        "task": "app.tasks.generate_discover_comparison_candidates",
-        "schedule": crontab(minute=20, hour=9),
-        "kwargs": {"limit": 60},
-    },
+    # "generate-discover-comparison-candidates" retired off its timer by #12372
+    # (2026-11-08, #12221 Part 1 §1): replaced by the offline sibling-family proposer.
     "evaluate-discover-with-llm-daily": {
         "task": "app.tasks.evaluate_discover_with_llm",
         "schedule": crontab(minute=35, hour=9),

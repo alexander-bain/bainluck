@@ -1251,9 +1251,14 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     # #11935: refresh-awards-occasions-hourly names background. The assembled
     # configuration on the owned branch based on 46851401d3 reads explicit 105,
     # implicit 39, total 144. Its enabled/disabled wiring is guarded separately.
+    # #12372: `generate-discover-comparison-candidates` (default queue) taken
+    # off its timer; census on the tree rebased onto ec6b8b3f04 printed
+    # explicit 104 implicit 38 total 142.
+    # #11935 composed with a68d05abe1: the assembled configuration reads
+    # explicit 105 implicit 38 total 143, retaining the timer removal.
     assert explicit == 105, f"explicitly-routed background beats moved: {explicit}"
-    assert implicit == 39, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 144
+    assert implicit == 38, f"default-queue fall-through moved: {implicit}"
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 143
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

@@ -296,7 +296,8 @@ class TestBeatScheduleCompleteness:
         "enrich-discover-llm-metadata",
         "enrich-snippet-angles",
         "enrich-cu-v2-profiles",
-        "generate-discover-comparison-candidates",
+        # "generate-discover-comparison-candidates" retired off its timer by #12372
+        # (2026-11-08): replaced by the sibling-family proposer.
         "evaluate-discover-with-llm-daily",
         "snapshot-discover-ground-truth-diagnostics-daily",
         "snapshot-discover-label-eval-run-daily",

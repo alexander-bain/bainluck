@@ -530,6 +530,11 @@ _DERIVATIVE_MARKET_TYPE = (
     r'(?:Exact\s+Score|Correct\s+Score|Halftime\s+Result|Half\s+Time\s+Result'
     r'|First\s+Team\s+to\s+Score|Both\s+Teams\s+to\s+Score|Total\s+Corners'
     r'|Total\s+Goals|Total\s+Points|Winner|Result'
+    # #11649: two more prop labels, measured minting games. "Lakers vs. Pistons -
+    # Exact Margin" put a live "Pistons - Exact Margin" @ "Lakers" in search on
+    # 2026-11-08; 237 such basketball_other events commenced within 30 days of
+    # that date. "- First Touchdown Scorer" minted 20 more until 2026-10-18.
+    r'|Exact\s+Margin|First\s+Touchdown\s+Scorer'
     # #4242: the one label still minting rows after #2871 shipped. "Patriots vs.
     # Seahawks - Highest Scoring Quarter" named an away team on production
     # 2026-09-05, twice. The segment alternation above cannot reach it — the
