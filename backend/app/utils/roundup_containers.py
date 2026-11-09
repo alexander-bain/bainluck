@@ -162,6 +162,7 @@ class RoundupMembers:
     sections: tuple[dict[str, Any], ...] = ()
     revision_ids: tuple[int, ...] = ()
     suppress_feed_item: bool = False
+    caption: Optional[dict[str, Any]] = None
 
     def __init__(
         self,
@@ -177,6 +178,7 @@ class RoundupMembers:
         sections: Sequence[dict[str, Any]] = (),
         revision_ids: Sequence[int] = (),
         suppress_feed_item: bool = False,
+        caption: Optional[Mapping[str, Any]] = None,
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
@@ -203,6 +205,9 @@ class RoundupMembers:
             self, "revision_ids", tuple(int(rid) for rid in revision_ids)
         )
         object.__setattr__(self, "suppress_feed_item", bool(suppress_feed_item))
+        object.__setattr__(
+            self, "caption", dict(caption) if isinstance(caption, Mapping) else None
+        )
 
 
 @dataclass(frozen=True)
@@ -263,6 +268,7 @@ class RoundupProducer:
     destination_href: Optional[str] = None
     order: Optional[str] = None
     presentation: Optional[str] = None
+    caption: Optional[Any] = None
     score: float = 0.0
     enabled: Optional[Callable[[], bool]] = None
     valid_from: Optional[float] = None
@@ -288,6 +294,7 @@ class RoundupProducer:
         destination_href: Optional[str] = None,
         order: Optional[str] = None,
         presentation: Optional[str] = None,
+        caption: Optional[Any] = None,
         score: float = 0.0,
         enabled: Optional[Callable[[], bool]] = None,
     ) -> None:
@@ -392,6 +399,12 @@ class RoundupProducer:
             "presentation",
             str(raw_presentation).strip() if raw_presentation else None,
         )
+        raw_caption = (
+            caption
+            if caption is not None
+            else (rule.get("caption") if isinstance(rule, Mapping) else None)
+        )
+        object.__setattr__(self, "caption", raw_caption)
         object.__setattr__(self, "score", float(score))
         object.__setattr__(self, "enabled", enabled)
         start, end = _definition_window(rule or {})
@@ -516,6 +529,26 @@ def compose_roundup_container(
     }
     if effective_dest_href:
         container_obj["destination_href"] = effective_dest_href
+    raw_caption = (
+        members.caption
+        if isinstance(members, RoundupMembers) and members.caption is not None
+        else producer.caption
+    )
+    verified_caption: Optional[dict[str, Any]] = None
+    if raw_caption is not None:
+        from app.utils.grouping_captions import compose_container_caption
+
+        caption_members: Sequence[Mapping[str, Any]] = (
+            members.rows
+            if isinstance(members, RoundupMembers) and members.rows
+            else normalized
+        )
+        verified_caption = compose_container_caption(
+            {"caption": raw_caption},
+            members=caption_members,
+        )
+    if verified_caption is not None:
+        container_obj["caption"] = verified_caption
     out_payload: dict[str, Any] = {
         "state": "published",
         "slug": producer.slug,
@@ -526,6 +559,7 @@ def compose_roundup_container(
         "edition": None,
         "container": container_obj,
         "subtitle": subtitle,
+        "caption": verified_caption,
         "sections": sections,
         "member_count": total_members,
         "withheld": [],
@@ -622,6 +656,21 @@ def compose_roundup_feed_item(
         roundup_contract["presentation"] = producer.presentation
     if members.count_line:
         roundup_contract["count_line"] = members.count_line
+    raw_caption = (
+        members.caption if members.caption is not None else producer.caption
+    )
+    if raw_caption is not None:
+        from app.utils.grouping_captions import compose_container_caption
+
+        caption_members: Sequence[Mapping[str, Any]] = (
+            rows if rows else normalized
+        )
+        verified_caption = compose_container_caption(
+            {"caption": raw_caption},
+            members=caption_members,
+        )
+        if verified_caption is not None:
+            roundup_contract["caption"] = verified_caption
     return {
         "type": "bundle",
         "score": base_score,
