@@ -73,7 +73,11 @@ SMART_STACK_PUBLISHER = (
     'WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")\n'
     "        // #12316: the Smart Stack keeps drawing the card's first entry until it is asked for a\n"
     "        // new one, so a new saved reading asks (else mid-game it shows the pregame reading).\n"
-    '        WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckYourGame")\n'
+    "        // Only a reading asks: back-to-back asks are throttled, and choosing a game writes an\n"
+    "        // empty file seconds before its first reading, which would spend the ask on no game.\n"
+    "        if snapshot != nil {\n"
+    '            WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckYourGame")\n'
+    "        }\n"
     "        // #12316: the game-day window may have moved, so the Smart Stack asks again.\n"
     "        if #available(iOS 18.0, macOS 15.0, watchOS 11.0, *) {\n"
     '            WidgetCenter.shared.invalidateRelevance(ofKind: "BainLuckYourGame")',
@@ -223,7 +227,8 @@ class SelectedGameScopeTests(unittest.TestCase):
                 "reading.accessibilityDescription(at: now)",
             ),
             (2, 'invalidateRelevance(ofKind: "BainLuckYourGame")', 'invalidateRelevance(ofKind: "BainLuckComplication")'),
-            (2, '        WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckYourGame")\n', ""),
+            (2, '            WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckYourGame")\n', ""),
+            (2, "        if snapshot != nil {\n            WidgetCenter", "        if true {\n            WidgetCenter"),
             (2, "sportKey: game.sportKey, status: game.status)", "sportKey: nil, status: game.status)"),
         ):
             with self.subTest(index=index, old=old):
