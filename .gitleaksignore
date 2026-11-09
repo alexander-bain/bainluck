@@ -124,3 +124,7 @@ aeeb6fe11415997b649e57a6beee611d26d1f459:artifacts/web-event-quotes-9484/INDEPEN
 # #12102: SHA256 of frozen adjudicated labels, not a credential.
 # Exact historical finding; recomputed from the original private JSON.
 d54c97d3403d8973d11dd640a39ee7105c74e638:frontend/lib/evals/data/twin-exam-2026-11-05.json:generic-api-key:246
+
+# #11935: the settled-champion fixture contains a result-provenance constant.
+# Exact historical finding from gitleaks run 42534884899.
+05cc7ced000adb545e7c1290ffb1c9ffa7233d6d:backend/tests/test_field_selection_11935.py:generic-api-key:131
