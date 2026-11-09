@@ -56,17 +56,18 @@ describe("parseCollection caption contract (#12233)", () => {
     const hub = parseCollection(
       makeRoundupPayload({
         commentary:
-          "Boston's upcoming stretch pairs eastern division tests with immediate tip-off readings for each game in schedule order.",
+          "Two Atlantic Division road games, then Dallas visits Boston.",
         no_number_verified: true,
+        member_ids: [15344730],
         figures: [
           {
-            member_id: "15343971",
-            label: "at Bucks · Sun Nov 8",
-            value: "86%",
-            observed_at: "2026-11-08T19:20:00Z",
-            as_of_label: "as of Nov 08, 19:20 UTC",
+            member_id: "15344730",
+            label: "at 76ers · Tue Nov 10",
+            value: "52%",
+            observed_at: "2026-11-09T20:25:35Z",
+            as_of_label: "as of Nov 09, 20:25 UTC",
             source: "blended",
-            source_href: "/events/15343971",
+            source_href: "/events/15344730",
           },
         ],
       }),
@@ -74,16 +75,16 @@ describe("parseCollection caption contract (#12233)", () => {
     );
     expect(hub.caption).not.toBeNull();
     expect(hub.caption?.noNumberVerified).toBe(true);
-    expect(hub.caption?.commentary).toContain("Boston's upcoming stretch");
+    expect(hub.caption?.commentary).toContain("Two Atlantic Division road games");
     expect(hub.caption?.figures).toEqual([
       {
-        memberId: "15343971",
-        label: "at Bucks · Sun Nov 8",
-        value: "86%",
-        observedAt: "2026-11-08T19:20:00Z",
-        asOfLabel: "as of Nov 08, 19:20 UTC",
+        memberId: "15344730",
+        label: "at 76ers · Tue Nov 10",
+        value: "52%",
+        observedAt: "2026-11-09T20:25:35Z",
+        asOfLabel: "as of Nov 09, 20:25 UTC",
         source: "blended",
-        sourceHref: "/events/15343971",
+        sourceHref: "/events/15344730",
       },
     ]);
   });

@@ -605,15 +605,13 @@ def select_subject_sequence(
         )
     except ValueError:
         return _rc().RoundupRefusal([("unmapped_team_sport", effective_sport)])
-    default_commentary = (
-        f"{effective_short or team_name} faces an upcoming slate in schedule order, "
-        f"with each pre-game win reading linked to its matchup."
-    )
-    caption_input = caption if caption is not None else {"commentary": default_commentary}
-    verified_caption = compose_container_caption(
-        {"caption": caption_input},
-        members=rows,
-        default_observed_at=effective_now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    verified_caption = (
+        compose_container_caption(
+            {"caption": caption},
+            members=rows,
+        )
+        if caption is not None
+        else None
     )
     return _rc().RoundupMembers(
         members=members,
