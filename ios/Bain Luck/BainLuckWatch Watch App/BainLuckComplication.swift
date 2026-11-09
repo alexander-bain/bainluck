@@ -113,9 +113,11 @@ nonisolated struct YourGameRelevanceProvider: RelevanceEntriesProvider {
         let now = Date()
         guard let saved = BainLuckProvider.saved(now: now), let window = saved.relevanceWindow,
               window.end > now else { return WidgetRelevance([]) }
+        // Informational, not scheduled: the Smart Stack treats a scheduled interval as a
+        // calendar event and drops the card 15 minutes after the window opens, at the start.
         return WidgetRelevance([
             WidgetRelevanceAttribute(configuration: YourGameIntent(eventID: saved.eventID),
-                                     context: .date(interval: window, kind: .scheduled))
+                                     context: .date(interval: window, kind: .informational))
         ])
     }
 

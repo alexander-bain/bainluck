@@ -47,7 +47,8 @@ SMART_STACK_WIDGET = (
     "        // The Smart Stack draws rectangular cards; the reading is laid out for no other size.\n"
     "        .supportedFamilies([.accessoryRectangular])",
     "WidgetRelevanceAttribute(configuration: YourGameIntent(eventID: saved.eventID),",
-    "context: .date(interval: window, kind: .scheduled)",
+    # .scheduled reads as a calendar event: the Smart Stack drops the card at the start.
+    "context: .date(interval: window, kind: .informational)",
     "window.end > now else { return WidgetRelevance([]) }",
     "guard let saved, saved.eventID == configuration.eventID else {\n"
     "            return YourGameEntry(date: now, snapshot: nil)",
@@ -201,7 +202,7 @@ class SelectedGameScopeTests(unittest.TestCase):
             (1, "        BainLuckYourGameWidget()\n    }", "    }"),
             (1, "        BainLuckWidget()\n", ""),
             (1, 'let kind = "BainLuckYourGame"', 'let kind = "BainLuckComplication"'),
-            (1, "kind: .scheduled)", "kind: .informational)"),
+            (1, "kind: .informational)", "kind: .scheduled)"),
             (1, "        .supportedFamilies([.accessoryRectangular])\n", ""),
             (1, "window.end > now else", "true else"),
             (1, "guard let saved, saved.eventID == configuration.eventID else", "guard let saved else"),
