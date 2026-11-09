@@ -24,6 +24,8 @@ final class ReaderScreenFontsScale12312Tests: XCTestCase {
         "Views/MyStuffView.swift",
         "Views/SearchView.swift",
         "Components/EventCardView.swift",
+        "Components/FuturesCardView.swift",
+        "Components/PinButton.swift",
         "Components/StatusBadge.swift",
         "Components/SportFilterChips.swift",
         "Components/PriceAgeMarkView.swift",

@@ -1513,6 +1513,11 @@ private struct MyTeamFuturesCard: View {
     @ScaledMetric(relativeTo: .caption2) private var movementArrowSize: CGFloat = 8
     @ScaledMetric(relativeTo: .caption2) private var movementSize: CGFloat = 9
 
+    /// #12312 — at accessibility sizes the market, team and leader names wrap
+    /// instead of stopping at one or two lines, as `FuturesCardView`'s do.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private var namesWrap: Bool { dynamicTypeSize.isAccessibilitySize }
+
     init(futures: FeedFuturesData, matchedOutcomes: [MatchedOutcome]) {
         self.futures = futures
         self.matchedOutcomes = matchedOutcomes
@@ -1545,36 +1550,39 @@ private struct MyTeamFuturesCard: View {
             Text(futures.name)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .lineLimit(2)
+                .lineLimit(namesWrap ? nil : 2)
 
             // User's matched team outcomes — shown prominently
+            // #12312 — at accessibility sizes the number moves under the
+            // name, as on `FuturesCardView`'s rows.
             ForEach(matchedOutcomes) { outcome in
-                HStack(spacing: 8) {
+                HStack(alignment: namesWrap ? .firstTextBaseline : .center, spacing: 8) {
                     if let rank = outcome.rank {
                         Text("#\(rank)")
                             .font(.system(size: rankSize, weight: .semibold, design: .rounded))
                             .foregroundStyle(.blue)
                             .frame(width: rankColumnWidth, alignment: .trailing)
                     }
-                    Text(outcome.name)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                    Spacer()
-                    if let m = outcome.movement, abs(m) >= 0.005 {
-                        HStack(spacing: 1) {
-                            Image(systemName: m > 0 ? "arrow.up" : "arrow.down")
-                                .font(.system(size: movementArrowSize))
-                            Text(formatProbability(abs(m)))
-                                .font(.system(size: movementSize))
+                    if namesWrap {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(outcome.name)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack(spacing: 8) {
+                                outcomeProbability(outcome)
+                                outcomeMovement(outcome)
+                            }
                         }
-                        .foregroundStyle(m > 0 ? .green : .red)
-                    }
-                    if let prob = outcome.probability {
-                        Text(formatProbability(prob))
+                        Spacer(minLength: 0)
+                    } else {
+                        Text(outcome.name)
                             .font(.subheadline)
-                            .fontWeight(.bold)
-                            .monospacedDigit()
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                        Spacer()
+                        outcomeMovement(outcome)
+                        outcomeProbability(outcome)
                     }
                 }
                 .padding(.vertical, 4)
@@ -1592,7 +1600,7 @@ private struct MyTeamFuturesCard: View {
                         .foregroundStyle(.tertiary)
                     Text(leader.name)
                         .font(.caption)
-                        .lineLimit(1)
+                        .lineLimit(namesWrap ? nil : 1)
                     Spacer()
                     if let prob = leader.probability {
                         Text(formatProbability(prob))
@@ -1613,5 +1621,28 @@ private struct MyTeamFuturesCard: View {
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func outcomeMovement(_ outcome: MatchedOutcome) -> some View {
+        if let m = outcome.movement, abs(m) >= 0.005 {
+            HStack(spacing: 1) {
+                Image(systemName: m > 0 ? "arrow.up" : "arrow.down")
+                    .font(.system(size: movementArrowSize))
+                Text(formatProbability(abs(m)))
+                    .font(.system(size: movementSize))
+            }
+            .foregroundStyle(m > 0 ? .green : .red)
+        }
+    }
+
+    @ViewBuilder
+    private func outcomeProbability(_ outcome: MatchedOutcome) -> some View {
+        if let prob = outcome.probability {
+            Text(formatProbability(prob))
+                .font(.subheadline)
+                .fontWeight(.bold)
+                .monospacedDigit()
+        }
     }
 }

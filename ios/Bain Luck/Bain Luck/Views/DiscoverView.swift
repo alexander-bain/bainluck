@@ -2999,32 +2999,43 @@ private struct NativeGroupCard: View {
         .accessibilityIdentifier("discover.group.collection")
     }
 
+    /// #12312 — at accessibility sizes the number's column left the name a
+    /// third of the row, and three lines of that cut it ("Oscar Winner: /
+    /// Best Pict…"). There the row stacks, as `collectionRow` does: the whole
+    /// name, its leader, then the number beneath them.
     private func compactRow(_ data: FeedFuturesData) -> some View {
         let summary = DiscoverGroupRows.compactSummary(for: data)
-        return HStack(alignment: .center, spacing: 12) {
+        let stacked = dynamicTypeSize.isAccessibilitySize
+        let layout = stacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+        let numberLayout = stacked
+            ? AnyLayout(HStackLayout(spacing: 8))
+            : AnyLayout(VStackLayout(alignment: .trailing, spacing: 4))
+        return layout {
             VStack(alignment: .leading, spacing: 4) {
                 Text(data.name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(DS.textPrimary)
-                    .lineLimit(3)
+                    .lineLimit(stacked ? nil : 3)
                     .fixedSize(horizontal: false, vertical: true)
                 if let label = summary.label {
                     Text(label)
                         .font(.caption)
                         .foregroundStyle(DS.textSecondary)
-                        .lineLimit(2)
+                        .lineLimit(stacked ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let probability = summary.probability {
-                VStack(alignment: .trailing, spacing: 4) {
+                numberLayout {
                     Text(formatProbability(probability))
                         .font(.title2.weight(.bold).monospacedDigit())
                         .foregroundStyle(DS.textPrimary)
                     MovementBadge(movement: summary.movement)
                 }
-                .frame(minWidth: 58, alignment: .trailing)
+                .frame(minWidth: stacked ? nil : 58, alignment: stacked ? .leading : .trailing)
                 .layoutPriority(1)
             }
         }

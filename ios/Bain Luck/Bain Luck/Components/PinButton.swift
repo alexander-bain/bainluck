@@ -14,6 +14,14 @@ struct PinButton: View {
     @State private var managementMessage = ""
     @State private var managementAlertTitle = "Manage pins"
 
+    /// #12312 — the bookmark: exactly 12 pt (14 pt full size) at the default
+    /// text size, growing with the text around it but never past its own tap
+    /// frame, which stays 28 (44) pt — so it no longer shrinks to a dot beside
+    /// AX5 text, and no row it sits in gets wider.
+    @ScaledMetric(relativeTo: .caption) private var compactGlyph: CGFloat = 12
+    @ScaledMetric(relativeTo: .body) private var fullGlyph: CGFloat = 14
+    private var glyphSize: CGFloat { compact ? min(compactGlyph, 22) : min(fullGlyph, 30) }
+
     private var pinned: Bool { pinManager.isPinned(type: type, id: id) }
     private var saving: Bool { pinManager.isSaving(type: type, id: id) }
 
@@ -43,7 +51,7 @@ struct PinButton: View {
                         .controlSize(.small)
                 } else {
                     Image(systemName: pinned ? "bookmark.fill" : "bookmark")
-                        .font(.system(size: compact ? 12 : 14))
+                        .font(.system(size: glyphSize))
                         .foregroundStyle(pinned ? .orange : .secondary)
                 }
             }

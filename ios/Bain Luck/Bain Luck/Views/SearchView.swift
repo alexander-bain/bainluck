@@ -107,6 +107,16 @@ struct SearchView: View {
     @ScaledMetric(relativeTo: .caption2) private var domainSize: CGFloat = 10
     @ScaledMetric(relativeTo: .caption2) private var sourceBadgeSize: CGFloat = 9
 
+    /// #12312 — chooses the field's prompt; see `searchPrompt`.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// #12312 — at accessibility sizes the long prompt is wider than the
+    /// field, and the field shrank it to fit: small print at the largest
+    /// setting. There it is the one word, at full size.
+    private var searchPrompt: String {
+        dynamicTypeSize.isAccessibilitySize ? "Search" : "Search teams, games, futures..."
+    }
+
     private let quickSearches: [QuickSearchItem] = [
         .init(icon: "basketball.fill", label: "NBA", query: "NBA"),
         .init(icon: "football.fill", label: "NFL", query: "NFL"),
@@ -342,7 +352,7 @@ struct SearchView: View {
             Image(systemName: "magnifyingglass")
                 .font(.subheadline)
                 .foregroundStyle(isSearchFocused ? .primary : .secondary)
-            TextField("Search teams, games, futures...", text: $viewModel.query)
+            TextField(searchPrompt, text: $viewModel.query)
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
                 .focused($isSearchFocused)
