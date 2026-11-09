@@ -133,6 +133,9 @@ nonisolated enum WatchComplicationPublisher {
         guard write(snapshot, to: directory) else { return }
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")
+        // #12316: the Smart Stack keeps drawing the card's first entry until it is asked for a
+        // new one, so a new saved reading asks (else mid-game it shows the pregame reading).
+        WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckYourGame")
         // #12316: the game-day window may have moved, so the Smart Stack asks again.
         if #available(iOS 18.0, macOS 15.0, watchOS 11.0, *) {
             WidgetCenter.shared.invalidateRelevance(ofKind: "BainLuckYourGame")
