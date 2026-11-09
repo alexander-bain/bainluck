@@ -335,16 +335,12 @@ enum RacingWinPodiumAdapter10868 {
             aboutHint: Words.aboutHint)
     }
 
-    /// How to read the comparison, in plain words. Each market and venue is
-    /// named from its own body; the stale bound is said from
-    /// `SourceAge.futuresStaleAfter` itself.
+    /// How to read the comparison, in plain words. Each market is named from
+    /// its own body; the stale bound is said from `SourceAge.futuresStaleAfter`.
     static func about(race: FuturesMarketDetail, podium: FuturesMarketDetail) -> RacingEventPageAbout10868 {
-        func own(_ market: FuturesMarketDetail) -> String {
-            SourceLabels.label(for: market.source).map { "own \($0) probability" } ?? "own probability"
-        }
         let hours = Int(SourceAge.futuresStaleAfter / 3600)
         var paragraphs = [
-            "The win chance is each driver’s \(own(race)) in “\(race.name)”. The podium chance is that driver’s \(own(podium)) in “\(podium.name)”. A podium means finishing in the top three.",
+            "The win chance is the market’s own probability in “\(race.name)”. The podium chance is the market’s own probability in “\(podium.name)”. A podium means finishing in the top three.",
             "They are two separate markets, each recorded at its own time. They are never added together or adjusted to match, and the line between a driver’s two marks is only a visual comparison.",
             "A reading not updated in the last \(hours) hours is not shown as a current chance; its last recorded value stays in that original’s Details. The race start time is unavailable here, so no reading is shown as a pre-race chance.",
         ]

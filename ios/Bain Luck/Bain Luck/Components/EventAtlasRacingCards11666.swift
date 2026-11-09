@@ -5,7 +5,7 @@ import SwiftUI
 ///      `RacingFieldPageAdapter10868.headline` over `FuturesMarketDetail`, showing each
 ///      displayed driver's named win chance (or `"No recent probability"` when stale, or
 ///      `"Settled · no current chance"` when resolved) with its own recorded clock and
-///      venue label, plus the `"About this race"` disclosure sheet.
+///      an `"About this race"` disclosure sheet.
 ///   2. **Field Win-Chance Outlook Bars (`FieldOutlookBarsPresentation10868`)**: Zero-based
 ///      shared-scale bar comparison across the displayed driver window with `Previous` /
 ///      `Next` traversal through the full roster and source-provenance Details sheets.

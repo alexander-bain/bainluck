@@ -528,11 +528,11 @@ final class RacingFieldPageAdapter10868Tests: XCTestCase {
         let about = A.raceAbout(before)
         XCTAssertEqual(about.title, "How this race is recorded")
         XCTAssertEqual(about.paragraphs.count, 3)
-        XCTAssertTrue(about.paragraphs[0].contains("own Polymarket probability"))
+        XCTAssertTrue(about.paragraphs[0].contains("the market's own probability"))
         XCTAssertTrue(about.paragraphs[0].contains("not adjusted to add up to 100%"))
         XCTAssertTrue(about.paragraphs[2].contains("last 6 hours"))
         let final = A.raceAbout(try F.market(F.winnerFinal))
         XCTAssertEqual(final.paragraphs.count, 4)
-        XCTAssertTrue(final.paragraphs[3].hasPrefix("Results come only from Polymarket's settlement"))
+        XCTAssertTrue(final.paragraphs[3].hasPrefix("Results come only from the settlement of each original"))
     }
 }

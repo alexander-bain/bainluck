@@ -103,6 +103,46 @@ final class EventAtlasRacingCards11666Tests: XCTestCase {
         XCTAssertEqual(detailsFinal.resultWords, "Won")
     }
 
+    func testRaceAboutAndWinPodiumAboutContainNoVenueNamesAcrossAllKnownSources() throws {
+        let knownSources = [
+            "polymarket",
+            "kalshi",
+            "the_odds_api",
+            "betting",
+            "espn",
+            "stat_model",
+            "datagolf",
+            "mlb_stats",
+            "bovada"
+        ]
+        let knownVenueLabels = knownSources.compactMap { SourceLabels.label(for: $0) }
+        XCTAssertFalse(knownVenueLabels.isEmpty)
+
+        for sourceName in knownSources {
+            let openWinnerJSON = F.replacing(F.winnerBefore, #""source":"polymarket""#, with: #""source":"\#(sourceName)""#)
+            let finalWinnerJSON = F.replacing(F.winnerFinal, #""source":"polymarket""#, with: #""source":"\#(sourceName)""#)
+            let openPodiumJSON = F.replacing(P.podiumBeforePaired, #""source":"polymarket""#, with: #""source":"\#(sourceName)""#)
+
+            let openWinner = try F.market(openWinnerJSON)
+            let finalWinner = try F.market(finalWinnerJSON)
+            let openPodium = try F.market(openPodiumJSON)
+
+            let openAbout = RacingFieldPageAdapter10868.raceAbout(openWinner)
+            let finalAbout = RacingFieldPageAdapter10868.raceAbout(finalWinner)
+            let podiumAbout = RacingWinPodiumAdapter10868.about(race: openWinner, podium: openPodium)
+
+            let allParagraphs = openAbout.paragraphs + finalAbout.paragraphs + podiumAbout.paragraphs
+            for paragraph in allParagraphs {
+                for venueLabel in knownVenueLabels {
+                    XCTAssertFalse(
+                        paragraph.localizedCaseInsensitiveContains(venueLabel),
+                        "About prose for source \(sourceName) must not contain venue name '\(venueLabel)': \(paragraph)"
+                    )
+                }
+            }
+        }
+    }
+
     func testRenders390pxSnapshotDefaultAndAccessibility3() throws {
         let market = try F.market(F.winnerBefore)
         let podiumMarket = try F.market(P.podiumBeforePaired)
