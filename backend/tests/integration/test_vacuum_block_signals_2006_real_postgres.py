@@ -440,7 +440,8 @@ class TestTheShippedSqlRunsOnARealServer:
         """#7712: the nightly Heroku backup is not named pg_dump. Read on
         production Mon Nov 9 at 2:05 AM PT, its session was our application role
         (so the wall-clock read sees it), ``application_name`` 'Heroku Postgres
-        Backups', running ``COPY … TO stdout`` with no xid, open since 2:02 AM.
+        Backups', running ``COPY "public"."futures_odds_snapshots" (…`` with no
+        xid, open since 2:02 AM.
         Both directions on one backend; a near-miss name is still shown, so only
         the backup's exact name is exempt."""
         from app.tasks.watchdog import Q_VACUUM_OLDEST_XACT
