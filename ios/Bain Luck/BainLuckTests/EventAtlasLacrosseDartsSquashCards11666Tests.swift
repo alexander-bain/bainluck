@@ -577,7 +577,7 @@ final class EventAtlasLacrosseDartsSquashCards11666Tests: XCTestCase {
             ),
             GameMarketOther(
                 _marketId: 920020,
-                marketName: "PDC World Championship Match Winner: Luke Littler vs Luke Humphries",
+                marketName: "PDC World Championship Round 2: Luke Littler vs Luke Humphries",
                 outcomeName: "Luke Littler",
                 probability: 0.64,
                 source: "kalshi",
@@ -586,7 +586,7 @@ final class EventAtlasLacrosseDartsSquashCards11666Tests: XCTestCase {
             ),
             GameMarketOther(
                 _marketId: 920020,
-                marketName: "PDC World Championship Match Winner: Luke Littler vs Luke Humphries",
+                marketName: "PDC World Championship Round 2: Luke Littler vs Luke Humphries",
                 outcomeName: "Luke Humphries",
                 probability: 0.36,
                 source: "kalshi",
@@ -598,7 +598,7 @@ final class EventAtlasLacrosseDartsSquashCards11666Tests: XCTestCase {
         guard case .matchOutlook(let dartsOutlook) = dartsCards.first else {
             return XCTFail("Expected Darts matchOutlook card")
         }
-        XCTAssertEqual(dartsOutlook.marketId, 920020, "'Set 1 Winner: Littler vs Humphries' must be ignored as partial scope")
+        XCTAssertEqual(dartsOutlook.marketId, 920020, "'Set 1 Winner: Littler vs Humphries' must be ignored as partial scope while 'PDC World Championship Round 2: Luke Littler vs Luke Humphries' builds its Match Outcome card")
     }
 
     // MARK: - 5. 30-Minute Live Quote Aging (.before and .during)
