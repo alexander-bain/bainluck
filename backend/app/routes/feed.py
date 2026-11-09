@@ -335,6 +335,7 @@ from app.utils.personalization import (
     compute_futures_multiplier,
     compute_sport_affinity_multiplier,
     followed_sport_categories,
+    is_returning_reader,
     my_stuff_admits_followed_sport,
 )
 from app.routes.admin_utils import _check_admin_auth, _resolve_admin_email
@@ -6399,6 +6400,20 @@ async def get_feed(
                     else ROUNDUP_READ_BUDGET_SECONDS
                 ),
                 now=now,
+                returning_reader=(
+                    not _prewarm_rebuild and is_returning_reader(ctx)
+                ),
+                seen_card_keys=(
+                    set(ctx.recent_seen_keys) | set(ctx.recent_dismissed_keys)
+                ),
+                seen_futures_ids=(
+                    set(ctx.recent_seen_futures_ids)
+                    | set(ctx.recent_dismissed_futures_ids)
+                ),
+                seen_event_ids=(
+                    set(ctx.recent_seen_event_ids)
+                    | set(ctx.recent_dismissed_event_ids)
+                ),
             )
             if _capture is not None and feed_items is not _before_roundups:
                 _capture.abandon("roundup_containers")
@@ -11041,6 +11056,7 @@ async def _load_personalization_context(
     feature_affinities = _build_discover_feature_affinities(feature_interaction_rows)
     recent_seen_event_ids: set[int] = set()
     recent_seen_futures_ids: set[int] = set()
+    recent_seen_keys: set[str] = set()
     recent_seen_event_at: dict[int, datetime] = {}
     recent_seen_futures_at: dict[int, datetime] = {}
     recent_dismissed_event_ids: set[int] = set()
@@ -11105,15 +11121,15 @@ async def _load_personalization_context(
                 action == "impression"
                 and last_seen_dt
                 and last_seen_dt >= seen_cutoff
-                # The seen sets and their timestamp maps are keyed by ROW ID and
-                # are read as such (`market.id in …`, `.get(market.id)`). A
-                # key-shaped impression has no row id to contribute, so it is
-                # counted as seen by nothing rather than inserted as `None` —
-                # which would not have matched anything anyway, and would have
-                # put a junk `None` key in the recycling timestamps.
-                and item_id is not None
             ):
-                if item_type == "event":
+                # The numeric seen sets and their timestamp maps are keyed by
+                # ROW ID and are read as such (`market.id in …`,
+                # `.get(market.id)`). A key-shaped impression is recorded in
+                # `recent_seen_keys` (#12376, Decide 32-C) and never inserted
+                # as `None` into the row-id sets or recycling timestamps.
+                if item_id is None:
+                    recent_seen_keys.add(str(item_id_raw).strip())
+                elif item_type == "event":
                     recent_seen_event_ids.add(item_id)
                     recent_seen_event_at[item_id] = last_seen_dt
                 elif item_type == "futures":
@@ -11193,6 +11209,7 @@ async def _load_personalization_context(
         discover_feature_affinities=feature_affinities,
         recent_seen_event_ids=recent_seen_event_ids,
         recent_seen_futures_ids=recent_seen_futures_ids,
+        recent_seen_keys=recent_seen_keys,
         recent_seen_event_at=recent_seen_event_at,
         recent_seen_futures_at=recent_seen_futures_at,
         recent_dismissed_event_ids=recent_dismissed_event_ids,
