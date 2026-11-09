@@ -402,7 +402,87 @@ final class EventAtlasRugbyAflCards11666Tests: XCTestCase {
         XCTAssertTrue(droppedCards.isEmpty, "Rows missing _marketId and _marketIds must be dropped, never given invented IDs")
     }
 
-    // MARK: - 4. 30-Minute Live Quote Aging (.before and .during)
+    // MARK: - 4. Single-Market Full-Match Scope & Moneyline Guard
+
+    func testWinnerExtractionIgnoresPartialScopeMarketsNeverMixesMarketIDsAndAcceptsMoneyline() throws {
+        let preEvent = makeEvent(
+            status: "upcoming",
+            commenceTime: "2026-11-09T14:00:00Z",
+            homeScore: nil,
+            awayScore: nil
+        )
+
+        var gm = makeRugbyGameMarkets()
+        gm.spreads = []
+        gm.totals = []
+        gm.other = [
+            // 1. Partial-scope market listed BEFORE the full-match market — must be ignored!
+            GameMarketOther(
+                _marketId: 770001,
+                marketName: "First Half Winner: France vs England",
+                outcomeName: "France",
+                probability: 0.12,
+                source: "polymarket",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.12
+            ),
+            GameMarketOther(
+                _marketId: 770001,
+                marketName: "First Half Winner: France vs England",
+                outcomeName: "England",
+                probability: 0.88,
+                source: "polymarket",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.88
+            ),
+            // 2. Single-leg orphan market with a different marketId (770005) — must never mix with 770010!
+            GameMarketOther(
+                _marketId: 770005,
+                marketName: "Six Nations Winner: France",
+                outcomeName: "France",
+                probability: 0.25,
+                source: "polymarket",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.25
+            ),
+            // 3. Complete full-match Moneyline winner market (marketId: 770010)
+            GameMarketOther(
+                _marketId: 770010,
+                marketName: "Six Nations: France vs England — Moneyline",
+                outcomeName: "France",
+                probability: 0.64,
+                source: "polymarket",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.81
+            ),
+            GameMarketOther(
+                _marketId: 770010,
+                marketName: "Six Nations: France vs England — Moneyline",
+                outcomeName: "England",
+                probability: 0.36,
+                source: "polymarket",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.19
+            )
+        ]
+
+        let cards = EventAtlasRugbyAflCards11666.buildCards(event: preEvent, gameMarkets: gm, now: baseNow)
+        XCTAssertEqual(cards.count, 1, "Moneyline market builds Match Outlook card and is not misclassified as a Line prop")
+        guard case .matchOutlook(let outlook) = cards.first else {
+            return XCTFail("Expected matchOutlook card")
+        }
+        XCTAssertEqual(outlook.marketId, 770010)
+        XCTAssertEqual(outlook.title, "Six Nations: France vs England — Moneyline")
+        XCTAssertTrue(outlook.rows.allSatisfy { $0.marketID == 770010 }, "All legs must come from one marketId")
+        let model = FieldHeadlineModel10868(outlook.headlineInput)
+        XCTAssertEqual(
+            model.competitors.map { $0.metrics.compactMap(FieldChaseModel10868.figure) },
+            [["64%"], ["36%"]],
+            "First Half Winner (12%/88%) and orphan leg (25%) must never mix into the full-match Moneyline card"
+        )
+    }
+
+    // MARK: - 5. 30-Minute Live Quote Aging (.before and .during)
 
     func testCurrentAtAgesLiveQuotesAfter30MinutesAndLeavesFinalUnchanged() {
         let gm = makeRugbyGameMarkets(observedAt: "2026-11-09T11:50:00Z")
@@ -457,7 +537,7 @@ final class EventAtlasRugbyAflCards11666Tests: XCTestCase {
         XCTAssertEqual(finalCards, finalAfterHours)
     }
 
-    // MARK: - 5. Venue-Free Narrative Copy Guard
+    // MARK: - 6. Venue-Free Narrative Copy Guard
 
     func testNarrativeCopyContainsNoVenueNamesAcrossAllKnownSources() {
         let forbiddenVenues = ["Kalshi", "Polymarket", "DraftKings", "FanDuel", "BetMGM", "Caesars", "Pinnacle"]
@@ -494,7 +574,7 @@ final class EventAtlasRugbyAflCards11666Tests: XCTestCase {
         }
     }
 
-    // MARK: - 6. 390 px Default & Accessibility3 Snapshots
+    // MARK: - 7. 390 px Default & Accessibility3 Snapshots
 
     @MainActor
     func testRenderRugbyAndAflCards390pxDefaultAndAccessibility3Snapshots() throws {

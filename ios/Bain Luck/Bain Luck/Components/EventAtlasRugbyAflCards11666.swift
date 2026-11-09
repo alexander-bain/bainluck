@@ -263,13 +263,16 @@ enum EventAtlasRugbyAflCards11666 {
         }
     }
 
+    /// `GameMarketsResponse` serves probabilities (`probability`, `pregameMark`, `overProbability`)
+    /// as unit fractions in `0.0...1.0`. Values outside `0.0...1.0` or non-finite values are rejected.
     nonisolated static func validProbability(_ raw: Double?) -> Double? {
-        guard let raw, raw.isFinite else { return nil }
-        let unit = raw > 1.0 ? raw / 100.0 : raw
-        guard unit >= 0.0, unit <= 1.0 else { return nil }
-        return unit
+        guard let raw, raw.isFinite, raw >= 0.0, raw <= 1.0 else { return nil }
+        return raw
     }
 
+    /// Returns `true` when an unfinished event's quote is older than `staleThresholdSeconds` (30m).
+    /// Per gotcha #53 (`FuturesModels.swift`), when `observedAt` is `nil` the server did not
+    /// supply a timestamp for the row, so `isQuoteStale` answers `false` rather than inventing one.
     nonisolated static func isQuoteStale(
         observedAt: Date?,
         now: Date,
@@ -333,6 +336,9 @@ enum EventAtlasRugbyAflCards11666 {
 
     // MARK: - Outcome & Prop Extraction from GameMarketsResponse
 
+    /// Extracts full-match winner outcome rows grouped strictly by a single `marketId` so legs from
+    /// different markets or partial-scope markets (e.g. `"First Half Winner"`, `"Halftime Result"`)
+    /// are never mixed into the Match Outcome card.
     nonisolated static func extractWinnerOutcomeRows(
         event: EventDetail,
         gameMarkets: GameMarketsResponse
@@ -341,14 +347,15 @@ enum EventAtlasRugbyAflCards11666 {
         let awayName = event.awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !homeName.isEmpty, !awayName.isEmpty else { return [] }
 
-        var byRole: [OutcomeRole: OutcomeRow] = [:]
+        var marketOrder: [Int] = []
+        var byMarketAndRole: [Int: [OutcomeRole: OutcomeRow]] = [:]
 
         for row in gameMarkets.other ?? [] {
             guard let marketId = row._marketId ?? row._marketIds?.first else {
                 continue
             }
             let marketLower = row.marketName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if isMarginOrTotalName(marketLower) {
+            guard isFullMatchWinnerMarketName(marketLower, homeTeam: homeName, awayTeam: awayName) else {
                 continue
             }
             let outcomeRaw = row.outcomeName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -360,7 +367,15 @@ enum EventAtlasRugbyAflCards11666 {
                 outcomeName: outcomeRaw,
                 homeTeam: homeName,
                 awayTeam: awayName
-            ), byRole[role] == nil else {
+            ) else {
+                continue
+            }
+
+            if byMarketAndRole[marketId] == nil {
+                marketOrder.append(marketId)
+                byMarketAndRole[marketId] = [:]
+            }
+            guard byMarketAndRole[marketId]?[role] == nil else {
                 continue
             }
 
@@ -372,7 +387,7 @@ enum EventAtlasRugbyAflCards11666 {
                 }
             }()
 
-            byRole[role] = OutcomeRow(
+            byMarketAndRole[marketId]?[role] = OutcomeRow(
                 id: "winner-\(role.rawValue)-\(marketId)",
                 marketID: marketId,
                 marketTitle: row.marketName,
@@ -388,7 +403,18 @@ enum EventAtlasRugbyAflCards11666 {
         }
 
         let orderedRoles: [OutcomeRole] = [.home, .away, .draw]
-        return orderedRoles.compactMap { byRole[$0] }
+        if let completeMarketId = marketOrder.first(where: { id in
+            let roles = byMarketAndRole[id]
+            return roles?[.home] != nil && roles?[.away] != nil
+        }), let byRole = byMarketAndRole[completeMarketId] {
+            return orderedRoles.compactMap { byRole[$0] }
+        }
+
+        if let firstMarketId = marketOrder.first, let byRole = byMarketAndRole[firstMarketId] {
+            return orderedRoles.compactMap { byRole[$0] }
+        }
+
+        return []
     }
 
     nonisolated private static func classifyOutcomeRole(
@@ -398,14 +424,18 @@ enum EventAtlasRugbyAflCards11666 {
         awayTeam: String
     ) -> OutcomeRole? {
         let outLower = outcomeName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let textLower = text.lowercased()
+        let outWords = Set(
+            outLower.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        )
         if outLower == "draw"
             || outLower == "tie"
             || outLower == "the draw"
-            || outLower.contains("draw")
-            || outLower.contains("tie") {
+            || outLower == "draw / tie"
+            || outWords.contains("draw")
+            || outWords.contains("tie") {
             return .draw
         }
+        let textLower = text.lowercased()
         let homeLower = homeTeam.lowercased()
         let awayLower = awayTeam.lowercased()
         let (awayShortRaw, homeShortRaw) = TeamShortName.shortPair(away: awayTeam, home: homeTeam)
@@ -433,13 +463,67 @@ enum EventAtlasRugbyAflCards11666 {
         return nil
     }
 
-    nonisolated private static func isMarginOrTotalName(_ lower: String) -> Bool {
-        lower.contains("spread")
+    nonisolated static func isPartialScopeMarketName(_ lower: String) -> Bool {
+        if lower.contains("half")
+            || lower.contains("period")
+            || lower.contains("first try")
+            || lower.contains("first goal")
+            || lower.contains("next try")
+            || lower.contains("next goal") {
+            return true
+        }
+        let words = Set(
+            lower.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        )
+        return words.contains("1st")
+            || words.contains("2nd")
+            || words.contains("3rd")
+            || words.contains("4th")
+            || words.contains("q1")
+            || words.contains("q2")
+            || words.contains("q3")
+            || words.contains("q4")
+    }
+
+    nonisolated static func isFullMatchWinnerMarketName(
+        _ lower: String,
+        homeTeam: String,
+        awayTeam: String
+    ) -> Bool {
+        if isPartialScopeMarketName(lower) || isMarginOrTotalName(lower) {
+            return false
+        }
+        let homeLower = homeTeam.lowercased()
+        let awayLower = awayTeam.lowercased()
+        return lower.contains("winner")
+            || lower.contains("match result")
+            || lower.contains("match outcome")
+            || lower.contains("match odds")
+            || lower.contains("moneyline")
+            || lower.contains("money line")
+            || lower.contains("head to head")
+            || lower.contains("h2h")
+            || lower.contains("3-way")
+            || lower.contains("three-way")
+            || lower.contains("premiership")
+            || lower.contains("six nations")
+            || lower.contains("who will win")
+            || (lower.contains(homeLower) && lower.contains(awayLower))
+    }
+
+    nonisolated static func isMarginOrTotalName(_ lower: String) -> Bool {
+        if lower.contains("moneyline") || lower.contains("money line") {
+            return false
+        }
+        if lower.contains("spread")
             || lower.contains("handicap")
-            || lower.contains("line")
             || lower.contains("margin")
             || lower.contains("total")
-            || lower.contains("over/under")
+            || lower.contains("over/under") {
+            return true
+        }
+        let words = lower.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        return words.contains("line")
     }
 
     private struct PropGroup {
@@ -541,7 +625,9 @@ enum EventAtlasRugbyAflCards11666 {
                 )
             }
             if let first = rows.first {
-                groups.append(PropGroup(marketId: first.marketID, title: first.marketTitle, rows: rows))
+                let firstMarketId = first.marketID
+                let singleMarketRows = rows.filter { $0.marketID == firstMarketId }
+                groups.append(PropGroup(marketId: firstMarketId, title: first.marketTitle, rows: singleMarketRows))
             }
         }
 
