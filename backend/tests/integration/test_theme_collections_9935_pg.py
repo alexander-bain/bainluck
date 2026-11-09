@@ -1658,3 +1658,312 @@ async def test_9936_operator_undo_refuses_an_ai_result_the_clock_moved_beyond_re
     assert await _edge_rows(world, cid) == edges and await _ledger_ids(world, cid) == ledger
     assert await _live_revision(world, cid) == live and world["sent"] == []
     assert world["store"] == store and gone not in _page_ids(await _get(world, AI_SLUG))
+
+
+@pytest.mark.asyncio
+async def test_11935_ceremony_sources_use_bounded_read_only_connections(
+    world, monkeypatch
+):
+    """Both venue selectors execute on real Postgres through the worker's reader."""
+    from functools import partial
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import httpx
+    from sqlalchemy.exc import DBAPIError
+
+    from app.models.models import FuturesMarket
+    from app.services import awards_occasion_source as source, database
+    from app.services.kalshi_api import KalshiAPIService
+    from app.services.polymarket_api import PolymarketAPIService
+    from tests.test_awards_occasion_source_11935 import RULE, TICKER, envelope
+
+    async with world["Session"]() as db:
+        db.add_all(
+            [
+                FuturesMarket(
+                    source="kalshi",
+                    external_id="KXPG11935-A",
+                    name="Category A",
+                    category="entertainment",
+                    status="open",
+                    market_metadata={"kalshi_event_ticker": TICKER},
+                ),
+                FuturesMarket(
+                    source="kalshi",
+                    external_id="KXPG11935-B",
+                    name="Category B",
+                    llm_sport_category="entertainment",
+                    status="open",
+                    market_metadata={"kalshi_event_ticker": TICKER},
+                ),
+                FuturesMarket(
+                    source="polymarket",
+                    external_id="PG11935-POLY",
+                    name="Category C",
+                    category="entertainment",
+                    status="open",
+                    market_metadata={"polymarket_event_id": "123456"},
+                ),
+                FuturesMarket(
+                    source="kalshi",
+                    external_id="KXPG11935-SPORT",
+                    name="Sports control",
+                    category="sports",
+                    status="open",
+                ),
+                FuturesMarket(
+                    source="kalshi",
+                    external_id="KXPG11935-PAST",
+                    name="Resolved control",
+                    category="entertainment",
+                    status="resolved",
+                ),
+            ]
+        )
+        await db.commit()
+
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        if request.url.path.rsplit("/", 1)[-1] in (TICKER, "KXPG11935-PAST"):
+            return httpx.Response(
+                200, json=envelope(ticker=request.url.path.rsplit("/", 1)[-1])
+            )
+        assert request.url.path == "/events"
+        assert request.url.params.get_list("id") == ["123456"]
+        assert request.url.params["limit"] == "1"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "123456",
+                    "title": "Best Picture",
+                    "markets": [{"id": "123457", "description": RULE}],
+                }
+            ],
+        )
+
+    monkeypatch.setattr(database, "DATABASE_URL", DB_URL)
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(respond)) as kalshi_http,
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(respond),
+            base_url=PolymarketAPIService.GAMMA_BASE_URL,
+        ) as gamma_http,
+    ):
+        kalshi = SimpleNamespace(client=kalshi_http, BASE_URL=KalshiAPIService.BASE_URL)
+        polymarket = SimpleNamespace(
+            gamma_client=gamma_http, get_event_by_id=AsyncMock()
+        )
+        polymarket.get_events_by_ids = partial(
+            PolymarketAPIService.get_events_by_ids, polymarket
+        )
+        async with source.read_only_session() as db:
+            settings = (
+                await db.execute(
+                    text(
+                        "SELECT current_setting('transaction_read_only'), "
+                        "current_setting('default_transaction_read_only'), "
+                        "current_setting('statement_timeout'), current_setting('lock_timeout')"
+                    )
+                )
+            ).one()
+            assert tuple(settings) == ("on", "on", "2s", "250ms")
+            with pytest.raises(DBAPIError) as refused:
+                await db.execute(
+                    text("UPDATE futures_markets SET name = name WHERE false")
+                )
+            assert refused.value.orig.sqlstate == "25006"
+            await db.rollback()
+            assert (
+                await db.execute(text("SHOW transaction_read_only"))
+            ).scalar_one() == "on"
+            found = await source.read_awards_occasions(db, kalshi, polymarket)
+            assert (
+                await db.execute(text("SELECT count(*) FROM futures_markets"))
+            ).scalar_one() == 5
+            assert len(calls) == 2
+            prior = source.find_awards_occasions(
+                [
+                    source.kalshi_occasion_event(
+                        envelope(ticker="KXPG11935-PAST"), "KXPG11935-PAST"
+                    )
+                ]
+            )
+            retained = await source.read_awards_occasions(
+                db, kalshi, polymarket, retained_events=prior.occasions[0].events
+            )
+
+    assert len(calls) == 5
+    assert {event.event_id for event in retained.occasions[0].events} == {
+        TICKER,
+        "KXPG11935-PAST",
+        "123456",
+    }
+    assert found.refused == ()
+    assert len(found.occasions) == 1
+    occasion = found.occasions[0]
+    assert occasion.label == "84th Golden Globe Awards"
+    assert [event.provider for event in occasion.events] == ["kalshi", "polymarket"]
+    assert all(event.evidence == (RULE,) for event in occasion.events)
+    assert occasion.ceremony_date is occasion.completed_at is None
+    assert occasion.level == "member" and occasion.state == "proposed"
+    assert world["store"] == {}
+
+
+@pytest.mark.asyncio
+async def test_11935_worker_retains_ceremony_evidence_on_postgres_after_cache_loss(
+    world, monkeypatch
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.tasks import awards_occasions as worker, redis_state
+    from app.services.awards_occasion_source import kalshi_occasion_event
+    from app.utils.awards_occasion_finder import find_awards_occasions
+    from tests.test_awards_occasion_source_11935 import TICKER, envelope
+
+    cache = {}
+
+    def setex(key, ttl, raw):
+        cache[key] = raw
+        return True
+
+    monkeypatch.setattr(
+        redis_state, "get_redis_client", lambda: SimpleNamespace(setex=setex)
+    )
+    found = find_awards_occasions([kalshi_occasion_event(envelope(), TICKER)])
+    reader = AsyncMock(return_value=found)
+    monkeypatch.setattr(worker, "read_live", reader)
+    assert (await worker.refresh_awards_occasions())["terminal"] == "complete"
+
+    async with world["Session"]() as db:
+        first_generation = (
+            await db.execute(
+                text(
+                    "SELECT generation FROM durable_state_snapshots WHERE identity = :identity"
+                ),
+                {"identity": worker.AWARDS_OCCASION_EVIDENCE_ID},
+            )
+        ).scalar_one()
+    cache.clear()
+    assert (await worker.refresh_awards_occasions())["terminal"] == "complete"
+    reader.assert_awaited_with("all", retained_events=found.occasions[0].events)
+    assert cache
+    async with world["Session"]() as db:
+        current = (
+            await db.execute(
+                text(
+                    "SELECT generation, payload FROM durable_state_snapshots WHERE identity = :identity"
+                ),
+                {"identity": worker.AWARDS_OCCASION_EVIDENCE_ID},
+            )
+        ).one()
+    assert current[0] > first_generation
+    assert current[1]["events"][0]["markets"][0]["rules_primary"]
+
+
+@pytest.mark.asyncio
+async def test_11935_event_identity_indexes_install_concurrently_and_retry_cleanly(
+    world,
+):
+    import asyncio
+    import subprocess
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy.dialects import postgresql
+
+    from app.models.models import FuturesMarket
+    from app.services.awards_occasion_source import kalshi_occasion_event
+    from app.utils.awards_ceremony import build_awards_ceremony_producer
+    from app.utils.awards_occasion_finder import find_awards_occasions
+    from tests.test_awards_occasion_source_11935 import RULE, TICKER, envelope
+
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "awards_event_identity_indexes_11935.sql"
+    )
+    connection = DB_URL.replace("postgresql+asyncpg://", "postgresql://", 1)
+    for _ in range(2):
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["psql", connection, "-v", "ON_ERROR_STOP=1", "-f", str(script)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+    async with world["Session"]() as db:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT c.relname, i.indisvalid, i.indisready, pg_get_indexdef(c.oid) "
+                    "FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid "
+                    "WHERE c.relname IN ('ix_fm_kalshi_event_identity_11935', "
+                    "'ix_fm_polymarket_event_identity_11935') ORDER BY c.relname"
+                )
+            )
+        ).all()
+    assert len(rows) == 2 and all(row[1] and row[2] for row in rows)
+    assert "kalshi_event_ticker" in rows[0][3] and "external_id" in rows[0][3]
+    assert "polymarket_event_id" in rows[1][3]
+
+    # Give the planner a populated source cohort so a full scan has a cost.
+    async with world["Session"]() as db:
+        db.add_all(
+            FuturesMarket(
+                source="kalshi" if index % 2 else "polymarket",
+                external_id=f"11935-index-control-{index}",
+                name="Index control",
+                category="sports",
+                status="open",
+            )
+            for index in range(2000)
+        )
+        await db.commit()
+        await db.execute(text("ANALYZE futures_markets"))
+        await db.commit()
+
+    found = find_awards_occasions(
+        [
+            kalshi_occasion_event(envelope(), TICKER),
+            {
+                "provider": "polymarket",
+                "id": "123456",
+                "markets": [{"rules_primary": RULE}],
+            },
+        ]
+    )
+
+    class Capture:
+        async def execute(self, statement):
+            self.statement = statement
+            return SimpleNamespace(all=lambda: [])
+
+    capture = Capture()
+    producer = build_awards_ceremony_producer(
+        found.occasions[0].selector, load_occasions=AsyncMock(return_value=found)
+    )
+    await producer.produce(capture)
+    statement = str(
+        capture.statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    async with world["Session"]() as db:
+        await db.execute(text("SET LOCAL enable_seqscan = off"))
+        plan = (
+            await db.execute(text("EXPLAIN (FORMAT JSON) " + statement))
+        ).scalar_one()
+    if isinstance(plan, str):
+        plan = json.loads(plan)
+    rendered = json.dumps(plan)
+    for index_name in (
+        "ix_fm_kalshi_event_identity_11935",
+        "ix_fm_polymarket_event_identity_11935",
+    ):
+        assert f'"Index Name": "{index_name}"' in rendered, rendered
