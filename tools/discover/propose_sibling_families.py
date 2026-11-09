@@ -25,12 +25,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
 from app.utils.sibling_family_proposer import (  # noqa: E402
+    DEFAULT_BACKEND_DATA_JSON_OUT,
     DEFAULT_JSON_OUT,
     DEFAULT_MD_OUT,
     DEFAULT_PROPOSER_MODEL,
-     format_grouping_candidates_markdown,
     nominate_sibling_families,
     propose_sibling_families,
+    write_grouping_candidate_reports,
 )
 
 DEFAULT_API_BASE = "https://api.bainluck.com"
@@ -217,6 +218,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--no-llm", action="store_true", help="Run rules-only ($0.00) without calling OpenAI")
     parser.add_argument("--november-spent-prior-usd", type=float, default=0.0)
     parser.add_argument("--json-out", type=Path, default=DEFAULT_JSON_OUT)
+    parser.add_argument("--backend-json-out", type=Path, default=DEFAULT_BACKEND_DATA_JSON_OUT)
     parser.add_argument("--md-out", type=Path, default=DEFAULT_MD_OUT)
     args = parser.parse_args(argv)
 
@@ -242,12 +244,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         november_spent_prior_usd=args.november_spent_prior_usd,
         now=now_utc,
     )
-    md_text = format_grouping_candidates_markdown(report)
-
-    args.json_out.parent.mkdir(parents=True, exist_ok=True)
-    args.md_out.parent.mkdir(parents=True, exist_ok=True)
-    args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    args.md_out.write_text(md_text, encoding="utf-8")
+    write_grouping_candidate_reports(
+        report,
+        json_out=args.json_out,
+        backend_json_out=args.backend_json_out,
+        md_out=args.md_out,
+    )
     return 0
 
 

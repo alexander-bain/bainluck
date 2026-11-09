@@ -42,6 +42,7 @@ from app.utils.sibling_family import (
 from app.utils.week_events import export_roundup_card_words_390px
 
 __all__ = [
+    "DEFAULT_BACKEND_DATA_JSON_OUT",
     "DEFAULT_JSON_OUT",
     "DEFAULT_MD_OUT",
     "DEFAULT_PROPOSER_MODEL",
@@ -59,10 +60,14 @@ __all__ = [
     "propose_sibling_families",
     "verify_heading_from_market_words",
     "verify_word_for_word_quote",
+    "write_grouping_candidate_reports",
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_JSON_OUT = REPO_ROOT / "docs" / "discover" / "grouping-candidates-2026-11.json"
+DEFAULT_BACKEND_DATA_JSON_OUT = (
+    REPO_ROOT / "backend" / "data" / "discover" / "grouping-candidates-2026-11.json"
+)
 DEFAULT_MD_OUT = REPO_ROOT / "docs" / "discover" / "grouping-candidates-2026-11.md"
 
 # Decide 61-A spend caps ($5 per run, $30 for November; December requires Alex's word).
@@ -1069,3 +1074,23 @@ def format_grouping_candidates_markdown(report: Mapping[str, Any]) -> str:
 
     lines.append("")
     return "\n".join(lines)
+
+
+def write_grouping_candidate_reports(
+    report: Mapping[str, Any],
+    *,
+    json_out: Path = DEFAULT_JSON_OUT,
+    backend_json_out: Path | None = DEFAULT_BACKEND_DATA_JSON_OUT,
+    md_out: Path = DEFAULT_MD_OUT,
+) -> None:
+    """Write ``docs/discover/`` and ``backend/data/discover/`` candidate files together so they never drift."""
+    encoded = json.dumps(dict(report), indent=2) + "\n"
+    md_text = format_grouping_candidates_markdown(report)
+    json_out.parent.mkdir(parents=True, exist_ok=True)
+    json_out.write_text(encoded, encoding="utf-8")
+    if backend_json_out is not None:
+        backend_json_out.parent.mkdir(parents=True, exist_ok=True)
+        backend_json_out.write_text(encoded, encoding="utf-8")
+    md_out.parent.mkdir(parents=True, exist_ok=True)
+    md_out.write_text(md_text, encoding="utf-8")
+
