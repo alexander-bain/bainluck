@@ -201,14 +201,21 @@ final class EventAtlasGolfTournament11666Tests: XCTestCase {
         )
         XCTAssertEqual(input5.slots.count, 5)
         XCTAssertEqual(input5.slots.map(\.name), ["Win", "Top 5", "Top 10", "Top 20", "Make cut"])
+        XCTAssertEqual(input5.beforeLabel, "Opened")
+        XCTAssertEqual(input5.beforeColumnLabel, "Opened")
         XCTAssertEqual(input5.win.before?.text, "18%")
         XCTAssertEqual(input5.win.recorded?.text, "24%")
+        XCTAssertEqual(input5.win.deltaText, "+6.0 pts since open")
+        XCTAssertTrue(input5.accessibilityValue(for: input5.win).contains("Opened: 18%"))
+        XCTAssertTrue(input5.accessibilityValue(for: input5.win).contains("+6.0 pts since open"))
         XCTAssertEqual(input5.makeCut?.before?.text, "89%")
         XCTAssertEqual(input5.makeCut?.recorded?.text, "92%")
+        XCTAssertEqual(input5.makeCut?.deltaText, "+3.0 pts since open")
         // Stale quote (>30m old during play) ages to nil with "No recent probability"
         XCTAssertNil(input5.top20.recorded)
         XCTAssertEqual(input5.top20.recordedMissing, "No recent probability")
         XCTAssertEqual(input5.top20.before?.text, "76%")
+        XCTAssertNil(input5.top20.deltaText)
 
         // Without makeCutMarket: exactly 4 slots
         let withoutMakeCut = EventAtlasGolfTournament11666.TournamentAtlasData(
@@ -226,6 +233,76 @@ final class EventAtlasGolfTournament11666Tests: XCTestCase {
         )
         XCTAssertEqual(input4.slots.count, 4)
         XCTAssertNil(input4.makeCut)
+    }
+
+    func testLoadAtlasDataRecordsFailedMarketFetchesAndSurfacesLoadFailureInsteadOfNotRecorded() async throws {
+        let dict: [String: Any] = [
+            "tournament": [
+                "name": "The Masters",
+                "slug": "the-masters",
+                "key": "the_masters",
+                "is_major": true,
+                "start_date": "2025-11-06",
+                "end_date": "2025-11-09",
+                "schedule_status": "in_progress",
+                "commence_time": "2025-11-06T12:00:00Z",
+            ],
+            "golfers": [
+                ["name": "Scottie Scheffler", "probability": 0.24, "opening_probability": 0.18, "rank": 1],
+            ],
+            "evolution_market_id": 9001,
+            "markets": [
+                ["type": "winner", "label": "Tournament Winner", "market_ids": [9001], "market_names": ["The Masters Winner"]],
+                ["type": "top_5", "label": "Top 5 Finish", "market_ids": [9002], "market_names": ["The Masters Top 5"]],
+                ["type": "top_10", "label": "Top 10 Finish", "market_ids": [9003], "market_names": ["The Masters Top 10"]],
+                ["type": "top_20", "label": "Top 20 Finish", "market_ids": [9004], "market_names": ["The Masters Top 20"]],
+                ["type": "make_cut", "label": "Make the Cut", "market_ids": [9005], "market_names": ["The Masters Make Cut"]],
+            ],
+            "round_top_groups": [],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: dict)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let response = try decoder.decode(GolfTournamentDetailResponse.self, from: data)
+        let presentation = GolfTournamentPresentation(response: response)
+
+        let winMarket = try makeMarket(
+            id: 9001,
+            name: "The Masters Winner",
+            outcomes: [try makeOutcome(id: 1, name: "Scottie Scheffler", probability: 0.24, openingProbability: 0.18, observedAt: freshISO)]
+        )
+
+        struct SimulatedNetworkError: Error {}
+        let loadedAtlas = await GolfTournamentViewModel.loadAtlasData(
+            for: response,
+            fetchMarket: { id in
+                if id == 9001 { return winMarket }
+                throw SimulatedNetworkError()
+            },
+            fetchTimeline: { _ in
+                throw SimulatedNetworkError()
+            }
+        )
+
+        XCTAssertTrue(loadedAtlas.winnerTimelineFailed)
+        XCTAssertTrue(loadedAtlas.hasMakeCutMarket)
+        XCTAssertEqual(loadedAtlas.failedMarketSlots, ["top5", "top10", "top20", "makeCut"])
+
+        let input = EventAtlasGolfTournament11666.buildFinishExpectations(
+            selectedGolferName: "Scottie Scheffler",
+            presentation: presentation,
+            atlasData: loadedAtlas,
+            selectedFinish: "top5",
+            now: refNow
+        )
+        XCTAssertEqual(input.slots.count, 5, "Make cut slot must remain visible with load failure when its market fetch failed")
+        XCTAssertEqual(input.win.recorded?.text, "24%")
+        XCTAssertNil(input.top5.before)
+        XCTAssertNil(input.top5.recorded)
+        XCTAssertEqual(input.top5.beforeMissing, "Couldn’t load market")
+        XCTAssertEqual(input.top5.recordedMissing, "Couldn’t load market")
+        XCTAssertEqual(input.makeCut?.beforeMissing, "Couldn’t load market")
+        XCTAssertEqual(input.makeCut?.recordedMissing, "Couldn’t load market")
     }
 
     func testBeforePhaseNeverReadsOpeningProbabilityAndFinalPhaseGradesStrictlyFromVenue() throws {

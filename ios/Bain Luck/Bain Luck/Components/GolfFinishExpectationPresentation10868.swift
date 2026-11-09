@@ -70,6 +70,29 @@ nonisolated struct GolfFinishSlot10868: Equatable {
     let beforeMissing: String
     let recordedMissing: String
     let actual: GolfFinishResult10868
+    let deltaText: String?
+
+    init(
+        selection: String,
+        name: String,
+        color: Color,
+        before: GolfFinishObservation10868?,
+        recorded: GolfFinishObservation10868?,
+        beforeMissing: String,
+        recordedMissing: String,
+        actual: GolfFinishResult10868,
+        deltaText: String? = nil
+    ) {
+        self.selection = selection
+        self.name = name
+        self.color = color
+        self.before = before
+        self.recorded = recorded
+        self.beforeMissing = beforeMissing
+        self.recordedMissing = recordedMissing
+        self.actual = actual
+        self.deltaText = deltaText
+    }
 }
 
 nonisolated enum GolfFinishPhase10868: Equatable {
@@ -129,6 +152,12 @@ nonisolated struct GolfFinishExpectationInput10868: Equatable {
     let actualSummary: String?
     /// The owner's selected finish; read only while recorded.
     let selected: String?
+    let beforeLabel: String
+    let beforeColumnLabel: String
+    let finalBarsExplanation: String
+    let missingBaselinesExplanation: String
+    let missingRecordedExplanation: String
+    let finalFootnotePrefix: String
 
     static let beforeTitle = "Before tournament"
     static let recordedTitle = "Recorded estimate"
@@ -145,7 +174,13 @@ nonisolated struct GolfFinishExpectationInput10868: Equatable {
         context: String?,
         actualSummary: String?,
         selected: String?,
-        makeCut: GolfFinishSlot10868? = nil
+        makeCut: GolfFinishSlot10868? = nil,
+        beforeLabel: String = Self.beforeTitle,
+        beforeColumnLabel: String = "Before",
+        finalBarsExplanation: String = "Bars show recorded pre-tournament chances.",
+        missingBaselinesExplanation: String = "Pre-tournament chances weren’t recorded.",
+        missingRecordedExplanation: String = "No recorded finish estimates for this golfer at this moment.",
+        finalFootnotePrefix: String = "Actual finish is separate from each pre-tournament chance."
     ) {
         self.win = win
         self.top5 = top5
@@ -158,6 +193,12 @@ nonisolated struct GolfFinishExpectationInput10868: Equatable {
         self.context = context
         self.actualSummary = actualSummary
         self.selected = selected
+        self.beforeLabel = beforeLabel
+        self.beforeColumnLabel = beforeColumnLabel
+        self.finalBarsExplanation = finalBarsExplanation
+        self.missingBaselinesExplanation = missingBaselinesExplanation
+        self.missingRecordedExplanation = missingRecordedExplanation
+        self.finalFootnotePrefix = finalFootnotePrefix
     }
 
     var slots: [GolfFinishSlot10868] { [win, top5, top10, top20] + (makeCut.map { [$0] } ?? []) }
@@ -207,9 +248,9 @@ nonisolated struct GolfFinishExpectationInput10868: Equatable {
     /// The sentence above the plot or tiles; nil when the chart speaks for itself.
     var explanation: String? {
         switch (phase, layout) {
-        case (.before, .missingEstimates), (_, .resultTiles): "Pre-tournament chances weren’t recorded."
-        case (.recorded, .missingEstimates): "No recorded finish estimates for this golfer at this moment."
-        case (.final, .bars): "Bars show recorded pre-tournament chances."
+        case (.before, .missingEstimates), (_, .resultTiles): missingBaselinesExplanation
+        case (.recorded, .missingEstimates): missingRecordedExplanation
+        case (.final, .bars): finalBarsExplanation
         default: nil
         }
     }
@@ -217,7 +258,7 @@ nonisolated struct GolfFinishExpectationInput10868: Equatable {
     /// Always explains the overlap; asks for a tap only when one does something.
     func footnote(canSelect: Bool, canOpenDetails: Bool) -> String {
         var parts: [String] = []
-        if phase == .final { parts.append("Actual finish is separate from each pre-tournament chance.") }
+        if phase == .final { parts.append(finalFootnotePrefix) }
         parts.append("Finishes overlap; winning also counts as \(top5.name).")
         switch (phase, layout) {
         case (.recorded, _) where canSelect: parts.append("Select a finish to compare its chances.")
@@ -250,13 +291,16 @@ nonisolated struct GolfFinishExpectationInput10868: Equatable {
     }
 
     func accessibilityValue(for slot: GolfFinishSlot10868) -> String {
-        let before = Self.spoken(slot.before, missing: slot.beforeMissing, title: Self.beforeTitle)
+        let before = Self.spoken(slot.before, missing: slot.beforeMissing, title: beforeLabel)
         switch phase {
         case .before:
             return before
         case .recorded:
-            return [before, Self.spoken(slot.recorded, missing: slot.recordedMissing, title: Self.recordedTitle)]
-                .joined(separator: "; ")
+            var parts = [before, Self.spoken(slot.recorded, missing: slot.recordedMissing, title: Self.recordedTitle)]
+            if let delta = slot.deltaText {
+                parts.append(delta)
+            }
+            return parts.joined(separator: "; ")
         case .final:
             return [before, "Actual finish: \(slot.actual.text)"].joined(separator: "; ")
         }
@@ -446,7 +490,7 @@ struct GolfFinishExpectationPresentation10868: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if input.phase == .recorded {
                     VStack(spacing: 4) {
-                        Text("Before").foregroundStyle(DS.textSecondary)
+                        Text(input.beforeColumnLabel).foregroundStyle(DS.textSecondary)
                         Text(input.beforeReading(slot).text).bold()
                     }
                     .font(.footnote)
@@ -547,11 +591,11 @@ struct GolfFinishExpectationPresentation10868: View {
     }
 
     @ViewBuilder private func comparisonValues(_ slot: GolfFinishSlot10868) -> some View {
-        comparisonValue(input.beforeReading(slot), title: GolfFinishExpectationInput10868.beforeTitle, hollow: true)
-        comparisonValue(input.recordedReading(slot), title: GolfFinishExpectationInput10868.recordedTitle, hollow: false)
+        comparisonValue(input.beforeReading(slot), title: input.beforeLabel, hollow: true)
+        comparisonValue(input.recordedReading(slot), title: GolfFinishExpectationInput10868.recordedTitle, hollow: false, deltaText: slot.deltaText)
     }
 
-    private func comparisonValue(_ reading: GolfFinishReading10868, title: String, hollow: Bool) -> some View {
+    private func comparisonValue(_ reading: GolfFinishReading10868, title: String, hollow: Bool, deltaText: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
                 keyMark(hollow: hollow)
@@ -565,6 +609,9 @@ struct GolfFinishExpectationPresentation10868: View {
                     .fixedSize(horizontal: true, vertical: false)
             case .missing(let text):
                 Text(text).font(.subheadline.weight(.semibold)).foregroundStyle(DS.textSecondary)
+            }
+            if let deltaText {
+                Text(deltaText).font(.caption).foregroundStyle(DS.textSecondary).monospacedDigit()
             }
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -582,7 +629,7 @@ struct GolfFinishExpectationPresentation10868: View {
     private func key(hollow: Bool) -> some View {
         HStack(spacing: 6) {
             keyMark(hollow: hollow)
-            Text(hollow ? GolfFinishExpectationInput10868.beforeTitle : GolfFinishExpectationInput10868.recordedTitle)
+            Text(hollow ? input.beforeLabel : GolfFinishExpectationInput10868.recordedTitle)
                 .font(.footnote)
                 .foregroundStyle(DS.textSecondary)
         }
