@@ -508,7 +508,7 @@ enum EventAtlasLacrosseDartsSquashCards11666 {
             return true
         }
         if lower.range(
-            of: #"\b(set|leg|game|round|map|period)\s*\d+\b"#,
+            of: #"\b(set|leg|game|map|period)\s*\d+\b"#,
             options: .regularExpression
         ) != nil {
             return true
