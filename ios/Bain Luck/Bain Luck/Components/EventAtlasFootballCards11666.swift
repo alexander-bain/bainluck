@@ -38,7 +38,7 @@ enum EventAtlasFootballCards11666 {
         case after
 
         static func resolve(status: String?, commenceTime: Date?, now: Date) -> Phase {
-            if status == "completed" || status == "closed" {
+            if EventState.isFinished(status) {
                 return .after
             }
             if status == "live" || status == "in_progress" {
