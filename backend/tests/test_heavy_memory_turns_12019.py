@@ -229,3 +229,104 @@ def test_memory_line_names_the_task(rig, caplog):
     assert len(lines) == 1
     assert "task=match_prediction_markets" in lines[0]
     assert "peak_mb=" in lines[0]
+
+
+# --- Nov 9: the calibration beat takes the same turns -----------------------
+#
+# Measured that morning: matcher peaks 1,021 / 1,008 / 1,022 MB, calibration
+# 999 MB, one 1 GB dyno; R15 at 2:27:52 AM PT with both mid-run.
+
+
+@pytest.fixture
+def cal_rig(rig):
+    rc, ran, seen_lease, retry_calls = rig
+
+    async def fake_cal():  # pragma: no cover - closed unawaited
+        return {}
+
+    with patch(
+        "app.tasks.precompute_calibration._precompute_calibration_main", side_effect=fake_cal
+    ), patch.object(
+        tasks.precompute_calibration_main,
+        "retry",
+        side_effect=lambda **kw: (retry_calls.append(kw), _Retry())[1],
+    ):
+        yield rc, ran, seen_lease, retry_calls
+
+
+def _cal(retries=0):
+    task = tasks.precompute_calibration_main
+    task.push_request(retries=retries)
+    try:
+        return task.run()
+    finally:
+        task.pop_request()
+
+
+def test_idle_dyno_runs_the_calibration_beat_under_the_lease_and_frees_it(cal_rig):
+    rc, ran, seen_lease, retry_calls = cal_rig
+    assert _cal() == {"ran": "precompute_calibration_main"}
+    assert ran == ["precompute_calibration_main"] and seen_lease == [True]
+    assert retry_calls == []
+    assert LEASE_KEY not in rc.store
+    assert rc.ttls[LEASE_KEY] == turns.CALIBRATION_LEASE_TTL_S
+
+
+def test_calibration_waits_while_the_matcher_holds_the_dyno(cal_rig):
+    rc, ran, _, retry_calls = cal_rig
+    _hold_lease(rc, "matcher:0")
+    with pytest.raises(_Retry):
+        _cal()
+    assert ran == []
+    assert retry_calls == [
+        {
+            "countdown": turns.CALIBRATION_RETRY_COUNTDOWN_S,
+            "max_retries": turns.CALIBRATION_MAX_RETRIES,
+        }
+    ]
+    assert rc.exists(turns.CALIBRATION_PENDING_KEY)
+    assert rc.store[LEASE_KEY] == b"matcher:0"
+
+
+def test_matcher_declines_while_the_calibration_beat_is_pending(cal_rig):
+    rc, ran, _, _ = cal_rig
+    turns.mark_calibration_pending(rc)
+    out = _match()
+    assert out["skipped"] is True and out["reason"] == "calibration_pending"
+    assert ran == []
+    assert LEASE_KEY not in rc.store
+
+
+def test_matcher_declines_while_the_calibration_beat_runs(cal_rig):
+    rc, ran, _, _ = cal_rig
+    _hold_lease(rc, "calibration:0")
+    out = _match()
+    assert out["skipped"] is True and out["reason"] == "already_running"
+    assert ran == []
+
+
+def test_the_calibration_beat_clears_its_mark_once_it_runs(cal_rig):
+    rc, ran, _, _ = cal_rig
+    turns.mark_calibration_pending(rc)
+    _cal(retries=2)
+    assert ran == ["precompute_calibration_main"]
+    assert not rc.exists(turns.CALIBRATION_PENDING_KEY)
+    _match()
+    assert ran == ["precompute_calibration_main", "prediction_market_match"]
+
+
+def test_a_calibration_beat_that_waited_out_its_retries_runs_anyway(cal_rig):
+    rc, ran, _, retry_calls = cal_rig
+    _hold_lease(rc, "matcher:0")
+    assert _cal(retries=turns.CALIBRATION_MAX_RETRIES) == {"ran": "precompute_calibration_main"}
+    assert retry_calls == [] and ran == ["precompute_calibration_main"]
+    assert rc.store[LEASE_KEY] == b"matcher:0"
+
+
+def test_no_redis_runs_the_calibration_beat_as_before(cal_rig):
+    _rc, ran, _, retry_calls = cal_rig
+    with patch.object(single_flight, "_client", return_value=None), patch.object(
+        turns, "_client", return_value=None
+    ):
+        assert _cal() == {"ran": "precompute_calibration_main"}
+    assert ran == ["precompute_calibration_main"] and retry_calls == []

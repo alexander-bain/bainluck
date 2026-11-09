@@ -1361,7 +1361,7 @@ def poll_kalshi_markets(self, event_ticker=None):
                     max_retries=turns.POLL_MAX_RETRIES,
                 )
             logger.warning(
-                "poll_kalshi_markets: matcher still holds %s after %d retries; polling anyway",
+                "poll_kalshi_markets: %s still held after %d retries; polling anyway",
                 lease.key,
                 self.request.retries,
             )
@@ -2587,8 +2587,9 @@ def backfill_market_shapes(self, limit: int = 40000, dry_run: bool = False):
 def match_prediction_markets(self, limit: int = 500):
     """Match game-level prediction markets to events and write win_prob_snapshots.
 
-    #12019: declines a tick while the full Kalshi poll runs or waits for the
-    dyno (`app.tasks.heavy_memory_turns`); the next tick is 15 minutes away.
+    #12019: declines a tick while the full Kalshi poll or the calibration beat
+    runs or waits for the dyno (`app.tasks.heavy_memory_turns`); the next tick
+    is 15 minutes away.
     """
     from app.tasks import heavy_memory_turns as turns
     from app.tasks.prediction_market_matching import _match_prediction_markets
@@ -2596,6 +2597,8 @@ def match_prediction_markets(self, limit: int = 500):
 
     if turns.poll_is_pending():
         return {"skipped": True, "reason": "kalshi_poll_pending", "task": turns.LEASE_TASK}
+    if turns.calibration_is_pending():
+        return {"skipped": True, "reason": "calibration_pending", "task": turns.LEASE_TASK}
     start_mb = turns.rss_mb()
     with single_flight(turns.LEASE_TASK, ttl_seconds=turns.MATCH_LEASE_TTL_S) as lease:
         if not lease.acquired:
@@ -6939,9 +6942,35 @@ def send_morning_digest(self):
 # open) — this queue restores availability, not compute speed.
 @celery_app.task(bind=True, soft_time_limit=1500, time_limit=1560, name="app.tasks.precompute_calibration_main")
 def precompute_calibration_main(self):
-    """Precompute main /api/calibration response and cache in Redis (every 1h)."""
+    """Precompute main /api/calibration response and cache in Redis (every 1h).
+
+    #12019 (Nov 9): never starts beside the matcher on worker-heavy — each
+    reaches about 1 GB alone and the pair were R15-killed together. It takes the
+    poll's turn rules (`app.tasks.heavy_memory_turns`).
+    """
+    from app.tasks import heavy_memory_turns as turns
     from app.tasks.precompute_calibration import _precompute_calibration_main
-    return _tracked_run("precompute_calibration_main", _precompute_calibration_main())
+    from app.utils.single_flight import single_flight
+
+    start_mb = turns.rss_mb()
+    with single_flight(turns.LEASE_TASK, ttl_seconds=turns.CALIBRATION_LEASE_TTL_S) as lease:
+        if not lease.acquired:
+            if self.request.retries < turns.CALIBRATION_MAX_RETRIES:
+                turns.mark_calibration_pending()
+                raise self.retry(
+                    countdown=turns.CALIBRATION_RETRY_COUNTDOWN_S,
+                    max_retries=turns.CALIBRATION_MAX_RETRIES,
+                )
+            logger.warning(
+                "precompute_calibration_main: %s still held after %d retries; running anyway",
+                lease.key,
+                self.request.retries,
+            )
+        turns.clear_calibration_pending()
+        try:
+            return _tracked_run("precompute_calibration_main", _precompute_calibration_main())
+        finally:
+            turns.log_memory("precompute_calibration_main", start_mb)
 
 
 @celery_app.task(bind=True, soft_time_limit=1500, time_limit=1560,
