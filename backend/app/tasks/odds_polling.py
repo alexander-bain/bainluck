@@ -2081,6 +2081,21 @@ async def _poll_all_odds():
 
                             # Parse scores from the API response
                             event_scores = score_event.get("scores")
+                            # #12379: the scores feed flips home/away the way the
+                            # odds feed does (#8530), and each score is read off
+                            # the FEED's home_team, so a flip put every score on
+                            # the other club: San Diego St 66, Colorado 77 for a
+                            # game San Diego State won 77-66 (15343426 flipped
+                            # mid-game, 32-14 to 17-33). The scores are listed by
+                            # NAME, so orienting the two names to the row is the
+                            # whole fix, exactly as it is for the prices.
+                            _score_row = _score_events_by_ext.get(external_id)
+                            if _score_row is not None:
+                                score_event = _orient_feed_to_row(
+                                    score_event,
+                                    _score_row.home_team_name,
+                                    _score_row.away_team_name,
+                                )
                             home_team = score_event.get("home_team")
                             away_team = score_event.get("away_team")
 
