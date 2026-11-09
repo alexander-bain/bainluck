@@ -197,7 +197,7 @@ async def test_session_without_stream_reads_through_execute():
 
 def test_the_beat_reads_its_roster_through_the_lean_reader():
     source = inspect.getsource(pc._run_staged_futures)
-    assert "await _read_futures_roster(db)" in source
+    assert "await _read_futures_roster(db, roster_timings)" in source
     assert "_futures_generation_sql()))).all()" not in source
 
 

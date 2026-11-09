@@ -1047,6 +1047,8 @@ nonisolated enum EventAtlasSoccerCards11666 {
         homeScore: Int?,
         awayScore: Int?,
         gameMarkets: GameMarketsResponse?,
+        boxScoreData: EventBoxScoreData? = nil,
+        scoreHistory: [ScoreHistoryPoint]? = nil,
         now: Date = Date()
     ) -> [NFLEventCard9483] {
         guard applies(sportKey: sportKey, atlasEnabled: atlasEnabled),
@@ -1056,6 +1058,41 @@ nonisolated enum EventAtlasSoccerCards11666 {
         let threeWay = buildThreeWayCard(
             matrix: gm.gameQuestionMatrix,
             otherMarkets: others,
+            status: status,
+            commenceTime: commenceTime,
+            homeTeam: homeTeam,
+            awayTeam: awayTeam,
+            homeShort: homeShort,
+            awayShort: awayShort,
+            now: now
+        )
+        let bothTeams = buildBothTeamsToScoreCard(
+            matrix: gm.gameQuestionMatrix,
+            otherMarkets: others,
+            status: status,
+            commenceTime: commenceTime,
+            homeShort: homeShort,
+            awayShort: awayShort,
+            homeScore: homeScore,
+            awayScore: awayScore,
+            now: now
+        )
+        let firstTeam = buildFirstTeamToScoreCard(
+            matrix: gm.gameQuestionMatrix,
+            otherMarkets: others,
+            scoreHistory: scoreHistory,
+            status: status,
+            commenceTime: commenceTime,
+            homeTeam: homeTeam,
+            awayTeam: awayTeam,
+            homeShort: homeShort,
+            awayShort: awayShort,
+            now: now
+        )
+        let halves = buildHalvesCard(
+            matrix: gm.gameQuestionMatrix,
+            otherMarkets: others,
+            boxScoreData: boxScoreData,
             status: status,
             commenceTime: commenceTime,
             homeTeam: homeTeam,
@@ -1090,6 +1127,9 @@ nonisolated enum EventAtlasSoccerCards11666 {
 
         var deck: [NFLEventCard9483] = []
         if let threeWay { deck.append(.soccerThreeWay(threeWay)) }
+        if let bothTeams { deck.append(.soccerBothTeams(bothTeams)) }
+        if let firstTeam { deck.append(.soccerFirstTeam(firstTeam)) }
+        if let halves { deck.append(.soccerHalves(halves)) }
         if let exactScore { deck.append(.soccerExactScore(exactScore)) }
         if let total { deck.append(.ladder(total)) }
         return deck

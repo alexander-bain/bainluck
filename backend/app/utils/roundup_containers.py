@@ -105,6 +105,7 @@ SELECTOR_RULE_KEYS: tuple[str, ...] = (
     "category_name",
     "subject",
     "selector",
+    "team_slug",
 )
 
 #: Rule keys that name an occasion/field/register/anchor ("an id, never a member", Decide 73-A).
@@ -150,6 +151,7 @@ class RoundupMembers:
     count_line: Optional[str] = None
     title: Optional[str] = None
     kicker: Optional[str] = None
+    destination_href: Optional[str] = None
     sections: tuple[dict[str, Any], ...] = ()
     revision_ids: tuple[int, ...] = ()
 
@@ -163,6 +165,7 @@ class RoundupMembers:
         count_line: Optional[str] = None,
         title: Optional[str] = None,
         kicker: Optional[str] = None,
+        destination_href: Optional[str] = None,
         sections: Sequence[dict[str, Any]] = (),
         revision_ids: Sequence[int] = (),
     ) -> None:
@@ -180,6 +183,11 @@ class RoundupMembers:
         )
         object.__setattr__(
             self, "kicker", str(kicker) if kicker is not None else None
+        )
+        object.__setattr__(
+            self,
+            "destination_href",
+            str(destination_href) if destination_href is not None else None,
         )
         object.__setattr__(self, "sections", tuple(sections))
         object.__setattr__(
@@ -216,6 +224,9 @@ class RoundupProducer:
     tag: Optional[str] = None
     kicker: str = "Round-up"
     story_key: Optional[str] = None
+    destination_href: Optional[str] = None
+    order: Optional[str] = None
+    presentation: Optional[str] = None
     score: float = 0.0
     enabled: Optional[Callable[[], bool]] = None
 
@@ -236,6 +247,9 @@ class RoundupProducer:
         tag: Optional[str] = None,
         kicker: str = "Round-up",
         story_key: Optional[str] = None,
+        destination_href: Optional[str] = None,
+        order: Optional[str] = None,
+        presentation: Optional[str] = None,
         score: float = 0.0,
         enabled: Optional[Callable[[], bool]] = None,
     ) -> None:
@@ -269,6 +283,35 @@ class RoundupProducer:
                 else "member"
             )
         )
+        raw_dest_href = (
+            destination_href
+            if destination_href is not None
+            else (
+                rule.get("destination_href")
+                if isinstance(rule, Mapping)
+                and isinstance(rule.get("destination_href"), str)
+                else None
+            )
+        )
+        raw_order = (
+            order
+            if order is not None
+            else (
+                rule.get("order")
+                if isinstance(rule, Mapping) and isinstance(rule.get("order"), str)
+                else None
+            )
+        )
+        raw_presentation = (
+            presentation
+            if presentation is not None
+            else (
+                rule.get("presentation")
+                if isinstance(rule, Mapping)
+                and isinstance(rule.get("presentation"), str)
+                else None
+            )
+        )
         object.__setattr__(self, "slug", str(slug))
         object.__setattr__(self, "name", str(name))
         object.__setattr__(self, "kind", str(kind or "roundup"))
@@ -295,6 +338,21 @@ class RoundupProducer:
             self,
             "story_key",
             story_key or f"roundup:{str(slug).removeprefix('roundup-')}",
+        )
+        object.__setattr__(
+            self,
+            "destination_href",
+            str(raw_dest_href).strip() if raw_dest_href else None,
+        )
+        object.__setattr__(
+            self,
+            "order",
+            str(raw_order).strip() if raw_order else None,
+        )
+        object.__setattr__(
+            self,
+            "presentation",
+            str(raw_presentation).strip() if raw_presentation else None,
         )
         object.__setattr__(self, "score", float(score))
         object.__setattr__(self, "enabled", enabled)
@@ -396,7 +454,28 @@ def compose_roundup_container(
             }
         ]
         total_members = len(normalized)
-    return {
+    effective_dest_href = (
+        (
+            members.destination_href
+            if isinstance(members, RoundupMembers) and members.destination_href
+            else None
+        )
+        or producer.destination_href
+    )
+    container_obj: dict[str, Any] = {
+        "id": roundup_container_id(producer.slug),
+        "slug": producer.slug,
+        "name": container_name,
+        "kind": producer.kind,
+        "category": producer.category,
+        "status": "open",
+        "window_start": None,
+        "window_end": None,
+        "parent_container_id": None,
+    }
+    if effective_dest_href:
+        container_obj["destination_href"] = effective_dest_href
+    out_payload: dict[str, Any] = {
         "state": "published",
         "slug": producer.slug,
         "revision": roundup_revision(rev_ids),
@@ -404,17 +483,7 @@ def compose_roundup_container(
         "level": producer.level,
         "reason": None,
         "edition": None,
-        "container": {
-            "id": roundup_container_id(producer.slug),
-            "slug": producer.slug,
-            "name": container_name,
-            "kind": producer.kind,
-            "category": producer.category,
-            "status": "open",
-            "window_start": None,
-            "window_end": None,
-            "parent_container_id": None,
-        },
+        "container": container_obj,
         "subtitle": subtitle,
         "sections": sections,
         "member_count": total_members,
@@ -423,6 +492,9 @@ def compose_roundup_container(
         "children": [],
         "assembled": True,
     }
+    if effective_dest_href:
+        out_payload["destination_href"] = effective_dest_href
+    return out_payload
 
 
 def compose_roundup_feed_item(
@@ -440,6 +512,11 @@ def compose_roundup_feed_item(
     footer = members.footer or producer.footer
     effective_title = members.title or producer.name
     effective_kicker = members.kicker or producer.kicker
+    effective_href = (
+        members.destination_href
+        or producer.destination_href
+        or f"/collections/{producer.slug}"
+    )
     base_score = (
         float(members.feed_item.get("score", producer.score) or 0.0)
         if isinstance(members.feed_item, Mapping)
@@ -472,7 +549,7 @@ def compose_roundup_feed_item(
     ]
     collection_ref = {
         "slug": producer.slug,
-        "href": f"/collections/{producer.slug}",
+        "href": effective_href,
         "name": effective_title,
         "revision": roundup_revision(rev_ids),
         "collection_count": len(member_ids),
@@ -494,6 +571,12 @@ def compose_roundup_feed_item(
         "relations": list(producer.relations),
         "level": producer.level,
     }
+    if members.destination_href or producer.destination_href:
+        roundup_contract["destination_href"] = effective_href
+    if producer.order:
+        roundup_contract["order"] = producer.order
+    if producer.presentation:
+        roundup_contract["presentation"] = producer.presentation
     if members.count_line:
         roundup_contract["count_line"] = members.count_line
     return {
@@ -1262,6 +1345,10 @@ _KIND_TO_MODULE_BUILDER: dict[str, tuple[str, str]] = {
         "app.utils.awards_category_roundup",
         "build_awards_category_producer",
     ),
+    "subject_sequence": (
+        "app.utils.subject_sequence",
+        "build_subject_sequence_producer",
+    ),
 }
 
 
@@ -1360,6 +1447,10 @@ _BUILTIN_SLUG_TO_MODULE_ATTR: dict[str, tuple[str, str]] = {
     "for-scale-us-recession-2026": (
         "app.utils.yardstick_pair",
         "FOR_SCALE_US_RECESSION_2026_PRODUCER",
+    ),
+    "celtics-next-3-games": (
+        "app.utils.subject_sequence",
+        "CELTICS_NEXT_3_GAMES_PRODUCER",
     ),
 }
 

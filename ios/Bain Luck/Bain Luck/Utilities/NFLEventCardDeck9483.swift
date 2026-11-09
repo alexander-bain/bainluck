@@ -23,6 +23,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
     case mlb(MLBFinalCard11284)
     case nhlScoring(EventAtlasNhlCards11666.ScoringCard)
     case soccerThreeWay(EventAtlasSoccerCards11666.ThreeWayCard)
+    case soccerBothTeams(EventAtlasSoccerCards11666.BothTeamsToScoreCard)
+    case soccerFirstTeam(EventAtlasSoccerCards11666.FirstTeamToScoreCard)
+    case soccerHalves(EventAtlasSoccerCards11666.HalvesCard)
     case soccerExactScore(EventAtlasSoccerCards11666.ExactScoreCard)
     case tennisSets(EventAtlasTennisCards11666.SetsCard)
     case tennisExactScore(EventAtlasTennisCards11666.ExactScoreCard)
@@ -38,6 +41,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .mlb(let card): return card.id
         case .nhlScoring(let card): return card.id
         case .soccerThreeWay(let card): return card.id
+        case .soccerBothTeams(let card): return card.id
+        case .soccerFirstTeam(let card): return card.id
+        case .soccerHalves(let card): return card.id
         case .soccerExactScore(let card): return card.id
         case .tennisSets(let card): return card.id
         case .tennisExactScore(let card): return card.id
@@ -55,6 +61,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .mlb(let card): return card.title
         case .nhlScoring(let card): return card.title
         case .soccerThreeWay(let card): return card.title
+        case .soccerBothTeams(let card): return card.title
+        case .soccerFirstTeam(let card): return card.title
+        case .soccerHalves(let card): return card.title
         case .soccerExactScore(let card): return card.title
         case .tennisSets(let card): return card.title
         case .tennisExactScore(let card): return card.title
@@ -76,6 +85,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .mlb: return self
         case .nhlScoring(let card): return .nhlScoring(card.current(at: now))
         case .soccerThreeWay(let card): return .soccerThreeWay(card.current(at: now))
+        case .soccerBothTeams(let card): return .soccerBothTeams(card.current(at: now))
+        case .soccerFirstTeam(let card): return .soccerFirstTeam(card.current(at: now))
+        case .soccerHalves(let card): return .soccerHalves(card.current(at: now))
         case .soccerExactScore(let card): return .soccerExactScore(card.current(at: now))
         case .tennisSets(let card): return .tennisSets(card.current(at: now))
         case .tennisExactScore(let card): return .tennisExactScore(card.current(at: now))
@@ -400,6 +412,8 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
     /// (`GameMarketPlayerProp.playerHeadshot`), never a name join; nil when
     /// none is served or the rows disagree (`headshot(of:)`).
     var headshot: URL? = nil
+    /// Whether the host event has reached a final state (`EventState.isFinished`).
+    var isFinal: Bool = false
 
     /// The one https headshot a ladder's rows agree on, or nil.
     static func headshot(of rows: [GameMarketPlayerProp]) -> URL? {
@@ -440,7 +454,7 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
                         rowID: rung.rowID, hit: rung.hit)
         }
         return NFLMilestoneCard9483(id: id, player: player, stat: stat, side: side, basis: basis,
-                                    rungs: aged, actual: actual, headshot: headshot)
+                                    rungs: aged, actual: actual, headshot: headshot, isFinal: isFinal)
     }
 
     /// A quote is recent when its observation clock is readable and no older
@@ -513,7 +527,8 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
                 side: PlayerPropsTeam.side(for: ladder.rows.compactMap(\.playerTeam).first),
                 basis: basis, rungs: rungs,
                 actual: finished ? ladder.rows.compactMap(\.actual).first : nil,
-                headshot: headshot(of: ladder.rows))
+                headshot: headshot(of: ladder.rows),
+                isFinal: finished)
             guard card.profile != nil else { return nil }
             return (card, PlayerPropsFamily.family(statLabel: stat, isPriced: true))
         }

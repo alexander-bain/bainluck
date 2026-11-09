@@ -2234,6 +2234,12 @@ export interface FeedBundleData {
 export type FeedRoundupRow = {
   /** "NFC East: Cowboys" — the division, game, or outcome label. */
   label: string;
+  /** Optional short opponent label for subject_sequence strip cards (e.g. "at Bucks"). */
+  opponent_label?: string | null;
+  /** Optional short date label for subject_sequence strip cards (e.g. "Sun Nov 8"). */
+  date_label?: string | null;
+  /** Optional UTC ISO kickoff timestamp for sequence ordering. */
+  commence_time?: string | null;
   /** The row's probability, a fraction in [0, 1]. */
   probability: number;
   /** The server's whole-percent rendering of `probability`, when it sent one. */
@@ -2258,6 +2264,11 @@ export interface FeedRoundupContract {
   tag?: string | null;
   footer: string;
   count_line?: string | null;
+  relations?: string[];
+  level?: string | null;
+  order?: string | null;
+  presentation?: string | null;
+  destination_href?: string | null;
   rows: FeedRoundupRow[];
 }
 
@@ -2267,6 +2278,7 @@ export interface FeedRoundupContract {
 // card's preview `item_count`.
 export interface FeedThemeCollectionRef {
   slug: string;
+  href?: string;
   name: string;
   revision: number;
   collection_count: number;
