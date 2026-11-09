@@ -260,6 +260,22 @@ CHILD_REPOINT_TABLES = ("futures_markets",)
 BAK_PREFIX = "bak_2871_"
 LEDGER = BAK_PREFIX + "market_repoint"
 
+# #11649: a second run must not share the first run's backup tables. The
+# September run's `bak_2871_*` rows are still in production (12,266 events),
+# and the restore restores EVERYTHING it finds, so a second run's undo appending
+# there would also undo September's repair. `--backup-prefix` gives a run its
+# own tables; the restore takes the same flag.
+BACKUP_PREFIX_RE = re.compile(r"bak_[a-z0-9_]+_")
+
+
+def use_backup_prefix(prefix):
+    """Point the backup and the write-ahead ledger at ``prefix``'s tables."""
+    global BAK_PREFIX, LEDGER
+    if not BACKUP_PREFIX_RE.fullmatch(prefix):
+        raise ValueError(f"--backup-prefix {prefix!r} must match {BACKUP_PREFIX_RE.pattern}")
+    BAK_PREFIX = prefix
+    LEDGER = prefix + "market_repoint"
+
 # `:scope_re` narrows the net to the `--labels` an operator was cleared for
 # (#11649: ruling 97 cleared "Exact Margin" and "First Touchdown Scorer" only,
 # while the full net also held 537 older rows of other labels). Without
@@ -417,6 +433,20 @@ SQL = {
         "WHERE id = :survivor AND win_probability_sources IS NOT NULL"
     ),
     "event_delete": "DELETE FROM events WHERE id = ANY(CAST(:doomed AS int[]))",
+    # #11649 `--delete-unmatched`: a Branch B fixture is deleted whole instead of
+    # renamed, and its markets are left with no event. `new_event_id = 0` is the
+    # ledger's "unlinked" (the column is NOT NULL on the existing tables); the
+    # restore reads it back as `event_id IS NULL`.
+    "ledger_unlink_insert": (
+        "INSERT INTO {ledger} (market_id, old_event_id, new_event_id) "
+        "SELECT f.id, f.event_id, 0 FROM futures_markets f "
+        "WHERE f.event_id = ANY(CAST(:members AS int[])) "
+        "ON CONFLICT (market_id) DO NOTHING"
+    ),
+    "unlink": (
+        "UPDATE futures_markets SET event_id = NULL, updated_at = NOW() "
+        "WHERE event_id = ANY(CAST(:members AS int[]))"
+    ),
 }
 
 
@@ -636,8 +666,15 @@ async def reconcile_backup(session, event_ids):
 # PHASE 2 — apply, one transaction per fixture
 # --------------------------------------------------------------------------
 
-async def apply_group(session, g):
+async def apply_group(session, g, delete_unmatched=False):
     """Collapse one fixture. One transaction; a failure isolates to this group.
+
+    ``delete_unmatched`` (#11649): a Branch B fixture is deleted whole and its
+    markets unlinked, instead of its oldest row being renamed. On Nov 9 every
+    Exact Margin fake planned as Branch B already had its real game in the
+    table under full team names ("Lakers" vs "Pistons - Exact Margin" beside
+    Detroit Pistons vs Los Angeles Lakers), so a rename would have produced a
+    clean-looking duplicate of a real game (CERT-880).
 
     `events` is write-hot (constant poller locks), so the unit of work is one
     fixture — ~2.3 event rows — with the DEFAULT lock wait. A batch UPDATE over
@@ -654,6 +691,23 @@ async def apply_group(session, g):
     if g.branch == "DEFER":
         # A plausible but unresolvable nearby counterpart. Renaming it would
         # manufacture a clean-looking fake beside the real fixture (CERT-880).
+        return counts
+
+    if delete_unmatched and g.branch == "B":
+        counts["unlinked"] = 0
+        await session.execute(
+            text(SQL["ledger_unlink_insert"].format(ledger=LEDGER)), {"members": members}
+        )
+        res = await session.execute(text(SQL["unlink"]), {"members": members})
+        counts["unlinked"] = res.rowcount or 0
+        for tbl in CHILD_DELETE_TABLES:
+            res = await session.execute(
+                text(SQL["child_delete"].format(tbl=tbl)), {"members": members}
+            )
+            counts["deleted_children"] += res.rowcount or 0
+        res = await session.execute(text(SQL["event_delete"]), {"doomed": members})
+        counts["deleted_events"] = res.rowcount or 0
+        await session.commit()
         return counts
 
     # 1. Markets move off the doomed rows onto the survivor, ledgered first.
@@ -716,6 +770,8 @@ async def run(args):
     labels = [x for x in (args.labels or "").split(",") if x.strip()]
     scope_re = label_scope_re(labels)
     binds = {"deriv_re": DERIV_RE, "scope_re": scope_re}
+    use_backup_prefix(args.backup_prefix)
+    delete_unmatched = bool(args.delete_unmatched)
 
     async with get_task_session() as s:
         census = (await s.execute(text(_CENSUS_SQL), binds)).all()
@@ -723,6 +779,10 @@ async def run(args):
         print("=== #2871 phantom derivative events — population ===")
         if labels:
             print(f"  scoped to --labels: {', '.join(' '.join(x.split()) for x in labels)}")
+        print(f"  backup tables: {BAK_PREFIX}*")
+        if delete_unmatched:
+            print("  --delete-unmatched: Branch B fixtures are DELETED and their markets "
+                  "unlinked, never renamed")
         for r in census:
             print(f"  {r.status:>12}: {r.n:>7}")
         print(f"  {'TOTAL':>12}: {total:>7}")
@@ -743,8 +803,13 @@ async def run(args):
             actionable = actionable[:args.limit]
 
         by = {b: [g for g in actionable if g.branch == b] for b in ("A", "A'", "B")}
-        n_delete = sum(len(g.doomed_ids) for g in actionable)
-        n_rename = len(by["B"])
+        if delete_unmatched:
+            n_delete = sum(len(g.member_ids if g.branch == "B" else g.doomed_ids)
+                           for g in actionable)
+            n_rename = 0
+        else:
+            n_delete = sum(len(g.doomed_ids) for g in actionable)
+            n_rename = len(by["B"])
 
         n_a, n_alias, n_b = len(by["A"]), len(by["A'"]), len(by["B"])
         print(f"\n=== plan: {len(actionable)} fixtures "
@@ -767,8 +832,10 @@ async def run(args):
 
         print("\n  first 10 fixtures:")
         for g in actionable[:10]:
+            fate = ("deleted, markets unlinked" if delete_unmatched and g.branch == "B"
+                    else f"survivor {g.survivor_id}")
             print(f"    [{g.branch}] {g.home} vs {g.clean_away} {g.date} "
-                  f"| {len(g.members)} rows -> survivor {g.survivor_id}")
+                  f"| {len(g.members)} rows -> {fate}")
 
         event_ids = [i for g in actionable for i in g.member_ids]
 
@@ -801,13 +868,13 @@ async def run(args):
         # ---- apply ----
         print(f"\n=== applying to {len(actionable)} fixtures ===")
         tot = {"repointed": 0, "deleted_children": 0, "renamed": 0,
-               "blend_cleared": 0, "deleted_events": 0}
+               "blend_cleared": 0, "deleted_events": 0, "unlinked": 0}
         failures = []
         for i, g in enumerate(actionable, 1):
             # One bad fixture must never wipe the pass (gotcha #42).
             for attempt in (1, 2):
                 try:
-                    c = await apply_group(s, g)
+                    c = await apply_group(s, g, delete_unmatched=delete_unmatched)
                     for k, v in c.items():
                         tot[k] += v
                     break
@@ -847,6 +914,12 @@ def main():
                    help="process at most N fixtures — for a staged first slice")
     p.add_argument("--allow-small", action="store_true",
                    help="proceed even though the population is below the sanity floor")
+    p.add_argument("--delete-unmatched", action="store_true",
+                   help="#11649: delete Branch B fixtures and unlink their markets "
+                        "instead of renaming a survivor")
+    p.add_argument("--backup-prefix", default="bak_2871_",
+                   help="this run's backup tables (default bak_2871_, the "
+                        "September run's); the restore takes the same flag")
     p.add_argument("--labels", default="",
                    help="comma-separated market types to repair, e.g. "
                         "'Exact Margin,First Touchdown Scorer' (default: every "

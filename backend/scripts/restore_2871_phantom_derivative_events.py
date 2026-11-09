@@ -50,6 +50,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BAK_PREFIX = "bak_2871_"
 
+
+def use_backup_prefix(prefix):
+    """#11649: restore one run's tables (the repair's ``--backup-prefix``)."""
+    global BAK_PREFIX
+    import re
+
+    if not re.fullmatch(r"bak_[a-z0-9_]+_", prefix):
+        raise ValueError(f"--backup-prefix {prefix!r} must match bak_[a-z0-9_]+_")
+    BAK_PREFIX = prefix
+
 # Restored parents-first: each of these has an FK to `events`, so `events` has
 # to be back before any of them can be.
 CHILD_TABLES = (
@@ -149,7 +159,9 @@ async def run(apply, drop_backups):
             repoint = (await s.execute(text(f"""
                 SELECT COUNT(*) FROM {BAK_PREFIX}market_repoint r
                 JOIN futures_markets f ON f.id = r.market_id
-                WHERE f.event_id = r.new_event_id AND r.old_event_id <> r.new_event_id
+                WHERE (f.event_id = r.new_event_id
+                       OR (r.new_event_id = 0 AND f.event_id IS NULL))
+                  AND r.old_event_id <> r.new_event_id
             """))).scalar() or 0
         print(f"  {'futures_markets.event_id':>24}: {repoint:>7} markets moved back")
 
@@ -194,7 +206,8 @@ async def run(apply, drop_backups):
                 UPDATE futures_markets f SET event_id = r.old_event_id, updated_at = NOW()
                 FROM {BAK_PREFIX}market_repoint r
                 WHERE f.id = r.market_id
-                  AND f.event_id = r.new_event_id
+                  AND (f.event_id = r.new_event_id
+                       OR (r.new_event_id = 0 AND f.event_id IS NULL))
                   AND r.old_event_id <> r.new_event_id
             """))).rowcount or 0
             await s.commit()
@@ -204,7 +217,7 @@ async def run(apply, drop_backups):
             for t in [*tables, "market_repoint"]:
                 await s.execute(text(f"DROP TABLE IF EXISTS {BAK_PREFIX}{t}"))
             await s.commit()
-            print("dropped all bak_2871_* tables")
+            print(f"dropped all {BAK_PREFIX}* tables")
 
         print("\n✅ restore complete.")
 
@@ -213,8 +226,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--apply", action="store_true", help="actually restore")
     p.add_argument("--drop-backups", action="store_true",
-                   help="DROP the bak_2871_* tables after restoring (or on their own)")
+                   help="DROP this run's backup tables after restoring (or on their own)")
+    p.add_argument("--backup-prefix", default="bak_2871_",
+                   help="#11649: the repair run's --backup-prefix (default: September's)")
     a = p.parse_args()
+    use_backup_prefix(a.backup_prefix)
     asyncio.run(run(a.apply, a.drop_backups))
 
 
