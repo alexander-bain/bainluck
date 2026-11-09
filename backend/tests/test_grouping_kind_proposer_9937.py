@@ -20,10 +20,18 @@ Covers:
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
+from fastapi import HTTPException
 import pytest
 
+from app.routes.admin_ranking_eval import (
+    get_grouping_kind_proposals,
+    load_grouping_grade_deck,
+)
 from app.services.llm_models import LEGACY_MODEL
 from app.utils.grouping_kind_proposer import (
     DEFAULT_KIND_PROPOSALS_JSON_PATH,
@@ -39,7 +47,7 @@ from app.utils.grouping_kind_proposer import (
     propose_new_grouping_kinds,
     validate_proposed_grouping_kind,
 )
-from app.utils.grouping_licences import is_kind_licensed
+from app.utils.grouping_licences import UNLICENSED_PROPOSED_KINDS, is_kind_licensed
 from app.utils.roundup_containers import ROUNDUP_PRODUCERS, _KIND_TO_MODULE_BUILDER
 
 
@@ -68,12 +76,33 @@ class TestCommittedNewKindProposalsForAlex:
             assert len(prop["example_cards"]) == 5
             assert prop["licence_status"] == "UNLICENSED"
             assert prop["reader_reachable"] is False
+            assert prop["kind"] in UNLICENSED_PROPOSED_KINDS
             assert is_kind_licensed(prop["kind"]) is False
             assert prop["kind"] not in _KIND_TO_MODULE_BUILDER
             for card in prop["example_cards"]:
                 assert len(card["rows"]) >= 3
                 assert card["stronger_single_alternative"]["market_id"] > 0
+                assert card["as_of"] == "2026-11-09T21:15:00Z"
+                assert card["as_of_label"] == "as of Nov 09, 21:15 UTC"
                 assert card["slug"] not in ROUNDUP_PRODUCERS
+
+    def test_grading_deck_mounts_ten_new_kind_example_cards_with_as_of_labels(
+        self,
+    ) -> None:
+        deck = load_grouping_grade_deck()
+        nk_items = [
+            it
+            for it in deck["items"]
+            if it.get("proposed_kind")
+            in ("season_stat_leaders", "qualification_stage_board")
+        ]
+        assert len(nk_items) == 10
+        for it in nk_items:
+            assert it["as_of"] == "2026-11-09T21:15:00Z"
+            assert it["as_of_label"] == "as of Nov 09, 21:15 UTC"
+            assert it["proposed_card"]["as_of_label"] == "as of Nov 09, 21:15 UTC"
+            assert it["best_single"]["id"] > 0
+            assert 0 < it["best_single"]["rendered_percent"] < 100
 
 
 class TestKindProposalValidationAndGuardrails:
@@ -127,6 +156,72 @@ class TestKindProposalValidationAndGuardrails:
         res_q = validate_proposed_grouping_kind(cand_q)
         assert res_q["ok"] is False
         assert res_q["reason"] == "forbidden_question_word"
+
+        cand_missing_single_prob = self._base_valid_kind()
+        cand_missing_single_prob["example_cards"][0]["stronger_single_alternative"][
+            "probability"
+        ] = None
+        res_sp = validate_proposed_grouping_kind(cand_missing_single_prob)
+        assert res_sp["ok"] is False
+        assert "invalid_stronger_single_probability" in str(res_sp["reason"])
+
+        cand_six_cards = self._base_valid_kind()
+        cand_six_cards["example_cards"].append(
+            copy.deepcopy(cand_six_cards["example_cards"][0])
+        )
+        res_six = validate_proposed_grouping_kind(cand_six_cards)
+        assert res_six["ok"] is False
+        assert res_six["reason"] == "requires_5_example_cards_got_6"
+
+    @pytest.mark.asyncio
+    async def test_load_committed_kind_proposals_and_route_fail_loudly_on_missing_or_invalid_data(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        missing_path = tmp_path / "does-not-exist.json"
+        with pytest.raises(FileNotFoundError):
+            load_committed_kind_proposals(path=missing_path)
+
+        bad_json_path = tmp_path / "bad.json"
+        bad_json_path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+        with pytest.raises(ValueError, match="expected mapping"):
+            load_committed_kind_proposals(path=bad_json_path)
+
+        bad_prop_path = tmp_path / "refused.json"
+        bad_prop = self._base_valid_kind()
+        bad_prop["example_cards"] = bad_prop["example_cards"][:3]
+        bad_prop_path.write_text(
+            json.dumps({"generated_at": "2026-11-09T21:15:00Z", "proposals": [bad_prop]}),
+            encoding="utf-8",
+        )
+        loaded_refused = load_committed_kind_proposals(path=bad_prop_path)
+        assert loaded_refused["accepted_count"] == 0
+        assert loaded_refused["refused_count"] == 1
+        assert loaded_refused["refused"] == [
+            {
+                "kind": "season_stat_leaders",
+                "reason": "requires_5_example_cards_got_3",
+            }
+        ]
+
+        monkeypatch.setattr(
+            "app.routes.admin_ranking_eval._check_admin_secret", lambda *_a, **_kw: None
+        )
+        monkeypatch.setattr(
+            "app.utils.grouping_kind_proposer.load_committed_kind_proposals",
+            lambda: load_committed_kind_proposals(path=missing_path),
+        )
+        with pytest.raises(HTTPException) as exc_404:
+            await get_grouping_kind_proposals(request=MagicMock(), secret="ok")
+        assert exc_404.value.status_code == 404
+
+        monkeypatch.setattr(
+            "app.utils.grouping_kind_proposer.load_committed_kind_proposals",
+            lambda: load_committed_kind_proposals(path=bad_prop_path),
+        )
+        with pytest.raises(HTTPException) as exc_500:
+            await get_grouping_kind_proposals(request=MagicMock(), secret="ok")
+        assert exc_500.value.status_code == 500
+        assert exc_500.value.detail["reason"] == "committed_kind_proposals_refused"
 
 
 class TestKindProposerSpendAndCatalogAdmission:

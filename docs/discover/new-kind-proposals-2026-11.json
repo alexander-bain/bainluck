@@ -49,9 +49,9 @@
         {
           "slug": "nhl-2026-teams-100-points-benchmark",
           "kind": "season_stat_leaders",
-          "title": "NHL 2026–27: Which clubs reach 100+ regular-season points?",
+          "title": "NHL 2026\u201327: Which clubs reach 100+ regular-season points?",
           "kicker": "SEASON BENCHMARK",
-          "footer": "Independent club probabilities · 2026–27 NHL regular season",
+          "footer": "Independent club probabilities \u00b7 2026\u201327 NHL regular season",
           "selector": {
             "sport": "icehockey_nhl",
             "title_ilike": "Will the % record 100+ points?",
@@ -97,14 +97,16 @@
               "source": "polymarket",
               "destination_href": "/futures/63218579"
             }
-          ]
+          ],
+          "as_of": "2026-11-09T21:15:00Z",
+          "as_of_label": "as of Nov 09, 21:15 UTC"
         },
         {
           "slug": "nhl-2026-teams-110-points-benchmark",
           "kind": "season_stat_leaders",
-          "title": "NHL 2026–27: Which clubs reach 110+ regular-season points?",
+          "title": "NHL 2026\u201327: Which clubs reach 110+ regular-season points?",
           "kicker": "SEASON BENCHMARK",
-          "footer": "Independent club probabilities · 2026–27 NHL regular season",
+          "footer": "Independent club probabilities \u00b7 2026\u201327 NHL regular season",
           "selector": {
             "sport": "icehockey_nhl",
             "title_ilike": "Will the % record 110+ points?",
@@ -150,14 +152,16 @@
               "source": "polymarket",
               "destination_href": "/futures/63218552"
             }
-          ]
+          ],
+          "as_of": "2026-11-09T21:15:00Z",
+          "as_of_label": "as of Nov 09, 21:15 UTC"
         },
         {
           "slug": "nhl-2026-players-100-points-leaders",
           "kind": "season_stat_leaders",
-          "title": "NHL 2026–27: Which players reach 100+ regular-season points?",
+          "title": "NHL 2026\u201327: Which players reach 100+ regular-season points?",
           "kicker": "SEASON MILESTONE",
-          "footer": "Independent milestone probabilities · 2026–27 NHL regular season",
+          "footer": "Independent milestone probabilities \u00b7 2026\u201327 NHL regular season",
           "selector": {
             "sport": "icehockey_nhl",
             "title_ilike": "Will % record 100+ points?",
@@ -203,14 +207,16 @@
               "source": "polymarket",
               "destination_href": "/futures/63218800"
             }
-          ]
+          ],
+          "as_of": "2026-11-09T21:15:00Z",
+          "as_of_label": "as of Nov 09, 21:15 UTC"
         },
         {
           "slug": "nfl-2026-receiving-td-8-leaders",
           "kind": "season_stat_leaders",
-          "title": "NFL 2026–27: Who catches 7.5+ regular-season receiving touchdowns?",
+          "title": "NFL 2026\u201327: Who catches 7.5+ regular-season receiving touchdowns?",
           "kicker": "SEASON MILESTONE",
-          "footer": "Independent milestone probabilities · 2026–27 NFL regular season",
+          "footer": "Independent milestone probabilities \u00b7 2026\u201327 NFL regular season",
           "selector": {
             "sport": "americanfootball_nfl",
             "title_ilike": "Pro Football: % 2026-27 Regular Season Receiving Touchdowns",
@@ -256,14 +262,16 @@
               "source": "polymarket",
               "destination_href": "/futures/58836270"
             }
-          ]
+          ],
+          "as_of": "2026-11-09T21:15:00Z",
+          "as_of_label": "as of Nov 09, 21:15 UTC"
         },
         {
           "slug": "nfl-2026-teams-10-wins-benchmark",
           "kind": "season_stat_leaders",
           "title": "NFL 2026: Which teams reach 9.5+ regular-season wins?",
           "kicker": "SEASON BENCHMARK",
-          "footer": "Independent team probabilities · 2026 NFL regular season",
+          "footer": "Independent team probabilities \u00b7 2026 NFL regular season",
           "selector": {
             "sport": "americanfootball_nfl",
             "title_ilike": "Pro Football: % 2026 Win Total",
@@ -309,7 +317,9 @@
               "source": "polymarket",
               "destination_href": "/futures/59566028"
             }
-          ]
+          ],
+          "as_of": "2026-11-09T21:15:00Z",
+          "as_of_label": "as of Nov 09, 21:15 UTC"
         }
       ]
     },
@@ -344,9 +354,9 @@
         {
           "slug": "laliga-2027-champions-league-qualifiers",
           "kind": "qualification_stage_board",
-          "title": "LaLiga: Who qualifies for the 2027–28 UEFA Champions League?",
+          "title": "LaLiga: Who qualifies for the 2027\u201328 UEFA Champions League?",
           "kicker": "EUROPEAN QUALIFICATION",
-          "footer": "Multi-berth qualification probabilities · 2026–27 LaLiga table",
+          "footer": "Multi-berth qualification probabilities \u00b7 2026\u201327 LaLiga table",
           "selector": {
             "sport": "soccer_spain_la_liga",
             "title_ilike": "Will % qualify for the 2027-28 UEFA Champions League?",
@@ -355,14 +365,14 @@
           },
           "stronger_single_alternative": {
             "market_id": 61366351,
-            "title": "Will Atlético de Madrid qualify for the 2027-28 UEFA Champions League?",
+            "title": "Will Atl\u00e9tico de Madrid qualify for the 2027-28 UEFA Champions League?",
             "probability": 0.895,
             "destination_href": "/futures/61366351"
           },
           "rows": [
             {
               "market_id": 61366351,
-              "label": "Atlético de Madrid",
+              "label": "Atl\u00e9tico de Madrid",
               "probability": 0.895,
               "rendered_percent": 90,
               "source": "polymarket",
@@ -392,14 +402,16 @@
               "source": "polymarket",
               "destination_href": "/futures/61366356"
             }
-          ]
+          ],
+          "as_of": "2026-11-09T21:15:00Z",
+          "as_of_label": "as of Nov 09, 21:15 UTC"
         },
         {
           "slug": "epl-2027-conference-league-qualifiers",
           "kind": "qualification_stage_board",
-          "title": "Premier League: Who qualifies for the 2027–28 UEFA Conference League?",
+          "title": "Premier League: Who qualifies for the 2027\u201328 UEFA Conference League?",
           "kicker": "EUROPEAN QUALIFICATION",
-          "footer": "Independent club qualification probabilities · 2026–27 Premier League",
+          "footer": "Independent club qualification probabilities \u00b7 2026\u201327 Premier League",
           "selector": {
             "sport": "soccer_epl",
             "title_ilike": "Will % qualify for the 2027-28 UEFA Conference League?",
@@ -445,14 +457,16 @@
               "source": "polymarket",
               "destination_href": "/futures/61366368"
             }
-          ]
+          ],
+          "as_of": "2026-11-09T21:15:00Z",
+          "as_of_label": "as of Nov 09, 21:15 UTC"
         },
         {
           "slug": "nhl-2027-second-round-advancement",
           "kind": "qualification_stage_board",
           "title": "NHL Playoffs: Who advances to the 2027 Second Round?",
           "kicker": "STAGE ADVANCEMENT",
-          "footer": "Eight-berth advancement probabilities · 2027 Stanley Cup Playoffs",
+          "footer": "Eight-berth advancement probabilities \u00b7 2027 Stanley Cup Playoffs",
           "selector": {
             "sport": "icehockey_nhl",
             "title_ilike": "Will % advance to the Second Round of the 2027 Stanley Cup Playoffs?",
@@ -498,14 +512,16 @@
               "source": "polymarket",
               "destination_href": "/futures/61380688"
             }
-          ]
+          ],
+          "as_of": "2026-11-09T21:15:00Z",
+          "as_of_label": "as of Nov 09, 21:15 UTC"
         },
         {
           "slug": "nfl-2027-playoff-berth-contenders",
           "kind": "qualification_stage_board",
           "title": "NFL: Who makes the 2027 Playoffs?",
           "kicker": "PLAYOFF QUALIFICATION",
-          "footer": "Multi-berth playoff probabilities · 2026–27 NFL season",
+          "footer": "Multi-berth playoff probabilities \u00b7 2026\u201327 NFL season",
           "selector": {
             "sport": "americanfootball_nfl",
             "title_ilike": "Will the % make the 2027 NFL Playoffs?",
@@ -551,14 +567,16 @@
               "source": "polymarket",
               "destination_href": "/futures/16630441"
             }
-          ]
+          ],
+          "as_of": "2026-11-09T21:15:00Z",
+          "as_of_label": "as of Nov 09, 21:15 UTC"
         },
         {
           "slug": "cfb-2027-playoff-top-4-seed-board",
           "kind": "qualification_stage_board",
           "title": "College Football Playoff: Who earns a 2027 Top-4 Seed?",
           "kicker": "PLAYOFF SEEDING",
-          "footer": "Four-berth first-round bye probabilities · 2026–27 CFB season",
+          "footer": "Four-berth first-round bye probabilities \u00b7 2026\u201327 CFB season",
           "selector": {
             "sport": "americanfootball_ncaaf",
             "title_ilike": "Will % be a top 4 seed in the 2027 College Football Playoffs?",
@@ -604,7 +622,9 @@
               "source": "polymarket",
               "destination_href": "/futures/58427161"
             }
-          ]
+          ],
+          "as_of": "2026-11-09T21:15:00Z",
+          "as_of_label": "as of Nov 09, 21:15 UTC"
         }
       ]
     }

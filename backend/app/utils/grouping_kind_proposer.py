@@ -27,7 +27,7 @@ import re
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from app.services.llm_models import LEGACY_MODEL
-from app.utils.grouping_licences import is_kind_licensed
+from app.utils.grouping_licences import UNLICENSED_PROPOSED_KINDS, is_kind_licensed
 from app.utils.roundup_containers import (
     CLOSED_GROUPING_RELATIONS,
     CLOSED_PERMISSION_LEVELS,
@@ -132,10 +132,25 @@ def format_kind_proposal_pre_run_spend_line(estimate: Mapping[str, Any]) -> str:
     )
 
 
+def _format_as_of_label(as_of_iso: str) -> str:
+    """Format an ISO-8601 UTC timestamp into ``as of Mon DD, HH:MM UTC``."""
+    cleaned = str(as_of_iso or "").strip()
+    if not cleaned:
+        return ""
+    try:
+        dt = datetime.fromisoformat(cleaned.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
+        return f"as of {dt.strftime('%b %d, %H:%M UTC')}"
+    except ValueError:
+        return f"as of {cleaned}"
+
+
 def _validate_example_card(
     card: Mapping[str, Any],
     *,
     kind_name: str,
+    default_as_of: str = "",
 ) -> tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
     """Validate one example card inside a proposed grouping kind."""
     slug = str(card.get("slug") or "").strip()
@@ -174,6 +189,15 @@ def _validate_example_card(
         stronger_single.get("title") or ""
     ).strip():
         return False, f"missing_stronger_single_alternative:{slug}", None
+
+    single_prob = stronger_single.get("probability")
+    if (
+        not isinstance(single_prob, (int, float))
+        or isinstance(single_prob, bool)
+        or float(single_prob) <= 0.0
+        or float(single_prob) >= 1.0
+    ):
+        return False, f"invalid_stronger_single_probability:{slug}", None
 
     raw_rows = card.get("rows")
     if not isinstance(raw_rows, Sequence) or isinstance(raw_rows, (str, bytes)):
@@ -220,6 +244,11 @@ def _validate_example_card(
             }
         )
 
+    as_of_val = str(card.get("as_of") or default_as_of or "").strip()
+    as_of_label_val = str(
+        card.get("as_of_label") or _format_as_of_label(as_of_val)
+    ).strip()
+
     return (
         True,
         None,
@@ -229,11 +258,13 @@ def _validate_example_card(
             "title": title,
             "kicker": kicker,
             "footer": footer,
+            "as_of": as_of_val or None,
+            "as_of_label": as_of_label_val or None,
             "selector": dict(selector),
             "stronger_single_alternative": {
                 "market_id": int(stronger_single["market_id"]),
                 "title": str(stronger_single["title"]).strip(),
-                "probability": round(float(stronger_single.get("probability") or 0.5), 4),
+                "probability": round(float(single_prob), 4),
                 "destination_href": str(
                     stronger_single.get("destination_href")
                     or f"/futures/{int(stronger_single['market_id'])}"
@@ -248,6 +279,7 @@ def validate_proposed_grouping_kind(
     raw: Mapping[str, Any],
     *,
     licences_path: Optional[Path | str] = None,
+    default_as_of: str = "",
 ) -> Dict[str, Any]:
     """Validate a candidate new grouping kind proposal (#9937).
 
@@ -256,8 +288,8 @@ def validate_proposed_grouping_kind(
       ``ALLOWED_CARD_FORMS``.
     - ``relations`` in ``CLOSED_GROUPING_RELATIONS`` and ``level`` in
       ``CLOSED_PERMISSION_LEVELS`` (71-A).
-    - At least ``REQUIRED_EXAMPLE_CARDS_PER_KIND`` (5) valid example cards, each
-      with a reproducible selector (73-A), a ``stronger_single_alternative``,
+    - Exactly ``REQUIRED_EXAMPLE_CARDS_PER_KIND`` (5) valid example cards, each
+      with a reproducible selector (73-A), a priced ``stronger_single_alternative``,
       and ``>= 3`` priced rows from current market IDs.
     - ``audience == "alex_only"`` and ``reader_reachable == False`` whenever the
       kind does not hold a ``PASS`` licence in ``grouping_licences.json``.
@@ -311,19 +343,22 @@ def validate_proposed_grouping_kind(
     raw_cards = raw.get("example_cards")
     if not isinstance(raw_cards, Sequence) or isinstance(raw_cards, (str, bytes)):
         return {"ok": False, "reason": "missing_example_cards", "proposal": None}
-    if len(raw_cards) < REQUIRED_EXAMPLE_CARDS_PER_KIND:
+    if len(raw_cards) != REQUIRED_EXAMPLE_CARDS_PER_KIND:
         return {
             "ok": False,
             "reason": f"requires_{REQUIRED_EXAMPLE_CARDS_PER_KIND}_example_cards_got_{len(raw_cards)}",
             "proposal": None,
         }
 
+    prop_as_of = str(raw.get("as_of") or default_as_of or "").strip()
     validated_cards: List[Dict[str, Any]] = []
     seen_slugs: set[str] = set()
-    for c in raw_cards[:REQUIRED_EXAMPLE_CARDS_PER_KIND]:
+    for c in raw_cards:
         if not isinstance(c, Mapping):
             return {"ok": False, "reason": "invalid_example_card_entry", "proposal": None}
-        ok, err, norm_card = _validate_example_card(c, kind_name=kind)
+        ok, err, norm_card = _validate_example_card(
+            c, kind_name=kind, default_as_of=prop_as_of
+        )
         if not ok or norm_card is None:
             return {"ok": False, "reason": err or "invalid_example_card", "proposal": None}
         if norm_card["slug"] in seen_slugs:
@@ -471,33 +506,48 @@ def propose_new_grouping_kinds(
 def load_committed_kind_proposals(
     path: Path | str = DEFAULT_KIND_PROPOSALS_JSON_PATH,
 ) -> Dict[str, Any]:
-    """Load and re-validate the committed new-kind proposals artifact for Alex's grading."""
+    """Load and re-validate the committed new-kind proposals artifact for Alex's grading.
+
+    Raises ``FileNotFoundError`` when ``path`` is missing and ``ValueError``
+    when the JSON payload is not a valid mapping with a non-empty ``proposals``
+    list. Never silently drops a refused proposal: any proposal that fails
+    re-validation is returned in ``refused`` with its explicit refusal reason.
+    """
     p = Path(path)
     if not p.exists():
-        return {
-            "audience": "alex_only",
-            "accepted_count": 0,
-            "proposals": [],
-        }
+        raise FileNotFoundError(f"New-kind proposals file not found: {p}")
     raw = json.loads(p.read_text(encoding="utf-8"))
     if not isinstance(raw, Mapping):
-        return {
-            "audience": "alex_only",
-            "accepted_count": 0,
-            "proposals": [],
-        }
-    raw_proposals = raw.get("proposals") or []
+        raise ValueError(f"Invalid new-kind proposals payload in {p}: expected mapping")
+    raw_proposals = raw.get("proposals")
+    if not isinstance(raw_proposals, list) or not raw_proposals:
+        raise ValueError(
+            f"Invalid new-kind proposals payload in {p}: expected non-empty proposals list"
+        )
+    generated_at = str(raw.get("generated_at") or "").strip()
     verified: List[Dict[str, Any]] = []
+    refused: List[Dict[str, Any]] = []
     for item in raw_proposals:
-        if isinstance(item, Mapping):
-            res = validate_proposed_grouping_kind(item)
-            if res["ok"] and res["proposal"] is not None:
-                verified.append(res["proposal"])
+        if not isinstance(item, Mapping):
+            refused.append({"kind": "", "reason": "invalid_payload"})
+            continue
+        res = validate_proposed_grouping_kind(item, default_as_of=generated_at)
+        if res["ok"] and res["proposal"] is not None:
+            verified.append(res["proposal"])
+        else:
+            refused.append(
+                {
+                    "kind": str(item.get("kind") or "").strip(),
+                    "reason": res["reason"],
+                }
+            )
     return {
         "generated_at": raw.get("generated_at"),
         "audience": "alex_only",
         "spend_estimate": raw.get("spend_estimate"),
         "pre_run_spend_line": raw.get("pre_run_spend_line"),
         "accepted_count": len(verified),
+        "refused_count": len(refused),
         "proposals": verified,
+        "refused": refused,
     }

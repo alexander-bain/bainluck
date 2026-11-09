@@ -260,12 +260,23 @@ def is_kind_licensed_for_promotion(
     return bool(receipt)
 
 
+UNLICENSED_PROPOSED_KINDS: frozenset[str] = frozenset(
+    {
+        "season_stat_leaders",
+        "qualification_stage_board",
+    }
+)
+
+
 def is_kind_licensed(
     kind: str,
     *,
     path: Path | str | None = None,
 ) -> bool:
     """Return True only when ``kind`` holds an active ``PASS`` licence in the licences registry."""
+    if kind in UNLICENSED_PROPOSED_KINDS and path is None:
+        registry = load_grouping_licences(path=path)
+        return is_kind_licensed_for_promotion(registry, kind)
     registry = load_grouping_licences(path=path)
     return is_kind_licensed_for_promotion(registry, kind)
 

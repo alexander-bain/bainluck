@@ -36,6 +36,8 @@ export interface ProposedCardPreview {
   footer: string;
   relations: string[];
   level: string;
+  as_of_label?: string | null;
+  proposed_kind?: string | null;
 }
 
 export interface BestSingleMember {
@@ -61,6 +63,9 @@ export interface GroupingDeckItem {
   kind_verdict: "serve" | "refuse";
   refusal_reasons: string[];
   trust_pass: boolean;
+  proposed_kind?: string | null;
+  as_of?: string | null;
+  as_of_label?: string | null;
   proposed_card: ProposedCardPreview;
   best_single: BestSingleMember;
 }
