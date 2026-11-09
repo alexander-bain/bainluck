@@ -8539,6 +8539,9 @@ async def _match_prediction_markets(limit: int = 500):
                 )
             )
             linked_rows = linked_result.all()
+            # #12042: Phase 2 carries the whole ~590 MB climb (215 -> 802 MB on
+            # Nov 9). This mark says whether it is this load or the loop below.
+            _mem(stats, "phase2_load")
 
         # DEDUP: Kalshi creates separate binary markets per team outcome
         # (e.g., "Celtics win?" and "76ers win?" for the same game). If both
