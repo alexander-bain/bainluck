@@ -6,16 +6,39 @@ import Foundation
 /// reading is past the face's two-minute live threshold, the card fetches the public event
 /// once, with a short bound, and shows a newer reading of the same game. Any failure shows
 /// the saved reading with its age. It never writes the shared file: the app stays its only
-/// writer, and the face slot keeps drawing what the app saved.
+/// writer, and the face slot keeps drawing what the app saved. With the app closed, only a
+/// Bain Luck complication on the active face asks the card again (`faceRecheck`).
 nonisolated enum WatchYourGameRefresh {
     static let timeoutSeconds: TimeInterval = 8
+    /// How soon the face asks again while the game is under way: when a saved reading stops
+    /// being live, so the card is asked for a newer one about as soon as it could show one.
+    static let faceRecheckSeconds: TimeInterval = WatchRectangularReading.liveStaleThresholdSeconds
+
+    private static func isFinal(_ saved: WatchComplicationSnapshot) -> Bool {
+        ["completed", "final"].contains(saved.status?.lowercased() ?? "")
+    }
+
+    /// Under way by its schedule: the game-day window is open, it has started, and it is not final.
+    static func isUnderway(_ saved: WatchComplicationSnapshot, now: Date) -> Bool {
+        guard let window = saved.relevanceWindow, window.contains(now),
+              let start = saved.commenceTime, now >= start, !isFinal(saved) else { return false }
+        return true
+    }
 
     static func wantsRefresh(_ saved: WatchComplicationSnapshot, now: Date) -> Bool {
-        guard let window = saved.relevanceWindow, window.contains(now),
-              let start = saved.commenceTime, now >= start,
-              !["completed", "final"].contains(saved.status?.lowercased() ?? "") else { return false }
+        guard isUnderway(saved, now: now) else { return false }
         let age = now.timeIntervalSince(saved.observedAt)
         return age.isFinite && age > WatchRectangularReading.liveStaleThresholdSeconds
+    }
+
+    /// When the face asks for its next timeline. The card has no timeline of its own, so with
+    /// the app closed nothing else asks it for a new entry: a game not started yet is asked
+    /// about at its start, one under way every `faceRecheckSeconds`, and an ask whose saved
+    /// reading `wantsRefresh` asks the card, which fetches. nil: the face keeps its own end.
+    static func faceRecheck(_ saved: WatchComplicationSnapshot?, now: Date) -> Date? {
+        guard let saved, !isFinal(saved), let start = saved.commenceTime else { return nil }
+        if start > now { return start }
+        return isUnderway(saved, now: now) ? now.addingTimeInterval(faceRecheckSeconds) : nil
     }
 
     static func request(eventID: Int) -> URLRequest {

@@ -60,6 +60,16 @@ SMART_STACK_WIDGET = (
     "                .widgetURL(WatchLaunchRoute.url)\n        }",
     '#Preview("Your game in the Smart Stack", widget: { BainLuckYourGameWidget() },\n'
     "         relevanceProvider: { YourGameRelevanceProvider() })",
+    # With the app closed only the face slot runs: mid-game it asks again soon, and a saved
+    # reading past two minutes asks the card (no timeline of its own) for an entry, which fetches.
+    "if let saved = current.snapshot, WatchYourGameRefresh.wantsRefresh(saved, now: current.date) {\n"
+    '            WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckYourGame")\n'
+    "        }\n"
+    "        if let recheck = WatchYourGameRefresh.faceRecheck(current.snapshot, now: current.date) {\n"
+    "            completion(Timeline(entries: entries, policy: .after(recheck)))\n"
+    "            return\n"
+    "        }\n"
+    "        completion(Timeline(entries: entries, policy: dates.count > 1 ? .atEnd : .never))",
 )
 SMART_STACK_CONTENT = (
     "var liveAge: Bool = false",
@@ -218,6 +228,17 @@ class SelectedGameScopeTests(unittest.TestCase):
             (1, "                .widgetURL(WatchLaunchRoute.url)\n        }", "        }"),
             (1, "relevanceProvider: { YourGameRelevanceProvider() })", "relevanceEntries: { [] })"),
             (1, "\nstruct YourGameIntent", "\nnonisolated struct YourGameIntent"),
+            (1, "            completion(Timeline(entries: entries, policy: .after(recheck)))\n            return\n", ""),
+            (
+                1,
+                '            WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckYourGame")\n        }\n        if let recheck',
+                "        }\n        if let recheck",
+            ),
+            (
+                1,
+                "if let saved = current.snapshot, WatchYourGameRefresh.wantsRefresh(saved, now: current.date) {",
+                "if current.snapshot != nil {",
+            ),
             (0, "if liveAge, let leadIn", "if false, let leadIn"),
             (0, "            .truncationMode(.middle)\n", ""),
             (0, "(.currentDate, format: age)", "(reading.observedAt, format: .dateTime)"),

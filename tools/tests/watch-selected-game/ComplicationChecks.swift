@@ -815,6 +815,30 @@ private final class SmartStackHTTPProtocol: URLProtocol, @unchecked Sendable {
     let noStart = try project(body(live(observed: "2026-10-04T17:58:00Z", home: 3, start: "")))
     precondition(!WatchYourGameRefresh.wantsRefresh(noStart, now: later), "No start time, no window, no fetch")
 
+    // With the app closed, the face slot asks again while the game is under way; each ask whose
+    // saved reading wants a refresh asks the card, which has no timeline of its own.
+    precondition(WatchYourGameRefresh.faceRecheck(saved, now: later) == later.addingTimeInterval(120),
+                 "Mid-game the face asks again two minutes on")
+    let freshNow = saved.observedAt.addingTimeInterval(60)
+    precondition(WatchYourGameRefresh.faceRecheck(saved, now: freshNow) == freshNow.addingTimeInterval(120)
+                 && !WatchYourGameRefresh.wantsRefresh(saved, now: freshNow),
+                 "A fresh reading asks nothing yet, but the face asks again, so the card is asked once it is not")
+    precondition(WatchYourGameRefresh.faceRecheck(nil, now: later) == nil, "No game: the face keeps its own end")
+    precondition(WatchYourGameRefresh.faceRecheck(final, now: later) == nil, "A final: the face keeps its own end")
+    let finalLaterStart = try project(body("\"status\":\"final\",\"sport\":\"baseball_mlb\",\"commence_time\":\"2026-10-05T17:00:00Z\",\"home_score\":4,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:58:00Z\""))
+    precondition(WatchYourGameRefresh.faceRecheck(finalLaterStart, now: later) == nil,
+                 "A final never brings the face back, even with a later start on file")
+    let start = iso.date(from: "2026-10-04T18:20:00Z")!
+    precondition(WatchYourGameRefresh.faceRecheck(scheduled, now: iso.date(from: "2026-10-04T18:10:00Z")!) == start
+                 && WatchYourGameRefresh.faceRecheck(scheduled, now: iso.date(from: "2026-10-03T18:10:00Z")!) == start,
+                 "A game chosen before its start is asked about at the start, the day before too")
+    precondition(WatchYourGameRefresh.faceRecheck(scheduled, now: iso.date(from: "2026-10-04T18:25:00Z")!)
+                 == iso.date(from: "2026-10-04T18:27:00Z")!,
+                 "Once it has started, the face asks every two minutes")
+    precondition(WatchYourGameRefresh.faceRecheck(saved, now: iso.date(from: "2026-10-04T21:00:01Z")!) == nil,
+                 "After the window closes the card is gone, so the face stops asking")
+    precondition(WatchYourGameRefresh.faceRecheck(noStart, now: later) == nil, "No start time, no recheck")
+
     // What: the same public endpoint, bounded and uncached.
     let request = WatchYourGameRefresh.request(eventID: 101)
     precondition(request.url?.absoluteString == "https://api.bainluck.com/api/events/101"
@@ -858,5 +882,5 @@ private final class SmartStackHTTPProtocol: URLProtocol, @unchecked Sendable {
         session: session(json: body(live(observed: "2026-10-04T17:58:30Z", home: 5))), clock: { fetchedAt })
     precondition(SmartStackHTTPProtocol.seen.isEmpty && stillFresh.savedAt == saved.savedAt,
                  "No request while the saved reading is fresh")
-    print("PASS: Smart Stack card refresh only mid-game past two minutes, one bounded uncached GET of the same game, newer readings and finals only, saved reading on every failure")
+    print("PASS: Smart Stack card refresh only mid-game past two minutes, one bounded uncached GET of the same game, newer readings and finals only, saved reading on every failure; the face asks again at the start and then every two minutes only while the game is under way")
 }

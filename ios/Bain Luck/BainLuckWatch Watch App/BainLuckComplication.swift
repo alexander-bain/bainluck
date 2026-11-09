@@ -3,7 +3,7 @@ import RelevanceKit
 import WidgetKit
 import SwiftUI
 
-/// A timeless launcher; readings and refresh stay in the selected-game app.
+/// The face slot: the app's saved reading (the app stays its only writer).
 nonisolated struct BainLuckEntry: TimelineEntry {
     let date: Date
     let snapshot: WatchComplicationSnapshot?
@@ -20,6 +20,16 @@ nonisolated struct BainLuckProvider: TimelineProvider {
         let current = entry()
         let dates = WatchRectangularReading.timelineDates(for: current.snapshot, now: current.date)
         let entries = dates.map { BainLuckEntry(date: $0, snapshot: current.snapshot) }
+        // #12316: with the app closed, this face slot is what keeps the Smart Stack card current.
+        // A saved reading past the live threshold asks the card for a new entry (it fetches),
+        // and while the game is under way the face asks again soon.
+        if let saved = current.snapshot, WatchYourGameRefresh.wantsRefresh(saved, now: current.date) {
+            WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckYourGame")
+        }
+        if let recheck = WatchYourGameRefresh.faceRecheck(current.snapshot, now: current.date) {
+            completion(Timeline(entries: entries, policy: .after(recheck)))
+            return
+        }
         completion(Timeline(entries: entries, policy: dates.count > 1 ? .atEnd : .never))
     }
     private func entry() -> BainLuckEntry {
