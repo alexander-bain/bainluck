@@ -31,6 +31,22 @@ nonisolated enum EventAtlasSoccerCards11666 {
 
     /// Ruling 49-A: one-winner fields scale both ways only when all three legs are present
     /// and the raw total is >= 90%. Partial fields or fields totaling < 90% withhold all leg numbers.
+    /// Decide 80-A (`#12274`, `#12449`): on a fallback `GameMarketOther` row, the market's
+    /// resolution status is not served beside the row, so `OutcomeVerdict` is asked as
+    /// for an open market (`marketResolved: false`): only an authoritative win becomes
+    /// `.won`, and a row grade never mints `.lost`.
+    nonisolated static func otherRowVerdict(
+        _ row: GameMarketOther,
+        finished: Bool
+    ) -> OutcomeVerdict? {
+        guard finished else { return nil }
+        return OutcomeVerdict.verdict(
+            isWinner: row.isWinner,
+            resolutionSource: row.resolutionSource,
+            marketResolved: false
+        ) == .won ? .won : nil
+    }
+
     static func scaleThreeWayField(
         home: Double?,
         draw: Double?,
@@ -349,11 +365,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
                 let pregameChance: Double? = currentPhase == .before
                     ? (recent ? openChance(row.probability) : nil)
                     : openChance(row.pregameMark)
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: finished
-                )
+                let verdict = otherRowVerdict(row, finished: finished)
 
                 legsByRole[role] = ThreeWayLeg(
                     role: role,
@@ -369,6 +381,34 @@ nonisolated enum EventAtlasSoccerCards11666 {
             }
 
             if legsByRole.count == 3 {
+                // Decide 80-A (#12449): a loss may print on the other legs of this 3-way
+                // one-winner market only when the market's winner is venue-confirmed (.won).
+                let hasConfirmedWinner = legsByRole.values.filter { $0.result == .won }.count == 1
+                if hasConfirmedWinner {
+                    for row in group.rows {
+                        let outLabel = row.outcomeName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard let role = classifyThreeWayRole(
+                            outcomeLabel: outLabel,
+                            homeTeam: homeTeam,
+                            awayTeam: awayTeam,
+                            homeShort: homeShort,
+                            awayShort: awayShort
+                        ), let existing = legsByRole[role], existing.result == nil,
+                        row.isWinner == false,
+                        OutcomeVerdict.isAuthoritative(row.resolutionSource) else { continue }
+                        legsByRole[role] = ThreeWayLeg(
+                            role: existing.role,
+                            label: existing.label,
+                            rawOutcomeLabel: existing.rawOutcomeLabel,
+                            quotedChance: existing.quotedChance,
+                            pregameChance: existing.pregameChance,
+                            observedAt: existing.observedAt,
+                            pregameObservedAt: existing.pregameObservedAt,
+                            result: .lost,
+                            source: existing.source
+                        )
+                    }
+                }
                 let allLegs = [ThreeWayRole.home, .draw, .away].compactMap { legsByRole[$0] }
                 let pricedCount = allLegs.filter { $0.quotedChance != nil || $0.pregameChance != nil }.count
                 let settledCount = allLegs.filter { $0.result != nil }.count
@@ -841,11 +881,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
                     ? (recent ? openChance(row.probability) : nil)
                     : openChance(row.pregameMark)
                 let chance = finished ? pregame : (quoted ?? pregame)
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: finished
-                )
+                let verdict = otherRowVerdict(row, finished: finished)
 
                 if case .other = parsed {
                     guard otherCell == nil else { continue }
@@ -1173,7 +1209,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
             primaryValue = res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
         } else if card.phase == .after {
             primaryLabel = "Result"
-            primaryValue = EventAtlasStates11666.pending
+            primaryValue = EventAtlasStates11666.resultNotConfirmed
         } else if let quoted = leg.quotedChance {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quoted)
@@ -1223,7 +1259,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
             primaryValue = res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
         } else if card.phase == .after {
             primaryLabel = "Result"
-            primaryValue = EventAtlasStates11666.pending
+            primaryValue = EventAtlasStates11666.resultNotConfirmed
         } else if let quoted = cell.quotedChance {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quoted)
@@ -1274,7 +1310,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
             primaryValue = res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
         } else if card.phase == .after {
             primaryLabel = "Result"
-            primaryValue = EventAtlasStates11666.pending
+            primaryValue = EventAtlasStates11666.resultNotConfirmed
         } else if let quoted = otherCell.quotedChance {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quoted)
@@ -1371,7 +1407,7 @@ struct EventAtlasSoccerThreeWayCardView11666: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(res == .won ? Color.green : Color.secondary)
                 } else {
-                    Text(EventAtlasStates11666.pending)
+                    Text(EventAtlasStates11666.resultNotConfirmed)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -1441,7 +1477,7 @@ struct EventAtlasSoccerExactScoreCardView11666: View {
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(res == .won ? Color.green : Color.secondary)
                 } else {
-                    Text(EventAtlasStates11666.pending)
+                    Text(EventAtlasStates11666.resultNotConfirmed)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -1481,7 +1517,7 @@ struct EventAtlasSoccerExactScoreCardView11666: View {
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(res == .won ? Color.green : Color.secondary)
                 } else {
-                    Text(EventAtlasStates11666.pending)
+                    Text(EventAtlasStates11666.resultNotConfirmed)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }

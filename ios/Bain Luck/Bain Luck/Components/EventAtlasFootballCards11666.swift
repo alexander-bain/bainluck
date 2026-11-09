@@ -730,19 +730,13 @@ enum EventAtlasFootballCards11666 {
                 }()
 
                 let verdict: Verdict? = {
+                    guard phase == .after else { return nil }
                     let v = OutcomeVerdict.verdict(
                         isWinner: first.isWinner,
                         resolutionSource: first.resolutionSource,
-                        marketResolved: phase == .after
+                        marketResolved: false
                     )
-                    switch v {
-                    case .won:
-                        return .won
-                    case .lost:
-                        return .lost
-                    case nil:
-                        return phase == .after ? .unconfirmed : nil
-                    }
+                    return v == .won ? .won : .unconfirmed
                 }()
 
                 let label: String = {
@@ -940,19 +934,15 @@ enum EventAtlasFootballCards11666 {
                 let settlementVerdict = OutcomeVerdict.verdict(
                     isWinner: first.isWinner,
                     resolutionSource: first.resolutionSource,
-                    marketResolved: true
+                    marketResolved: false
                 )
+                if first.resolutionSource != nil || first.isWinner != nil {
+                    return settlementVerdict == .won ? .won : .unconfirmed
+                }
                 if let hit = first.hit {
-                    // If both channels are present and disagree, refuse both as unconfirmed.
-                    if settlementVerdict == .won && !hit { return .unconfirmed }
-                    if settlementVerdict == .lost && hit { return .unconfirmed }
                     return hit ? .won : .lost
                 }
-                switch settlementVerdict {
-                case .won: return .won
-                case .lost: return .lost
-                case nil: return .unconfirmed
-                }
+                return .unconfirmed
             }()
 
             let teamLabel = side == .away ? awayShort : homeShort

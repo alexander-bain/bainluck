@@ -181,14 +181,89 @@ final class EventAtlasCricketCards11666Tests: XCTestCase {
 
         let outlookInput = outlookCard.presentationInput(selectedRowID: nil, now: now)
         XCTAssertEqual(outlookInput.rows[0].finish?.outcome.word?.text, "✓ Won")
-        XCTAssertEqual(outlookInput.rows[1].finish?.outcome.word?.text, "✗ Lost")
-        XCTAssertEqual(outlookInput.rows[2].finish?.outcome.word?.text, "No draw / tie")
+        XCTAssertEqual(outlookInput.rows[1].finish?.outcome, .unavailable("Result not confirmed"))
+        XCTAssertEqual(outlookInput.rows[2].finish?.outcome, .unavailable("Result not confirmed"))
 
         let chaseInput = chaseCard.presentationInput(now: now)
         if case .graded(let fig) = chaseInput.contractResult {
             XCTAssertEqual(fig.text, "✓ Won")
         } else {
             XCTFail("Expected graded chase contract result")
+        }
+
+        // Decide 80-A (#12449): tier 0 (binary_higher_wins), tier 1 (clean_resolution),
+        // and tier 2 (game_score) rows with is_winner: false at the final read
+        // "Result not confirmed", and an authoritative winner reads "✓ Won".
+        for nonAuthSource in ["binary_higher_wins", "clean_resolution", "game_score"] {
+            var nonAuthMarkets = makeCricketGameMarkets(
+                observedAt: "2026-11-08T21:40:00Z",
+                settled: false,
+                includeDraw: true
+            )
+            nonAuthMarkets.other = [
+                GameMarketOther(
+                    _marketId: 801,
+                    isWinner: false,
+                    resolutionSource: nonAuthSource,
+                    marketName: "Match Winner",
+                    outcomeName: "India",
+                    probability: 0.99,
+                    source: "kalshi",
+                    observedAt: "2026-11-08T21:40:00Z",
+                    pregameMark: 0.44
+                ),
+                GameMarketOther(
+                    _marketId: 801,
+                    isWinner: false,
+                    resolutionSource: nonAuthSource,
+                    marketName: "Match Winner",
+                    outcomeName: "Australia",
+                    probability: 0.01,
+                    source: "kalshi",
+                    observedAt: "2026-11-08T21:40:00Z",
+                    pregameMark: 0.36
+                )
+            ]
+            nonAuthMarkets.teamTotals = [
+                GameMarketOutcome(
+                    _marketId: 802,
+                    marketName: "India 2nd Innings Target Runs",
+                    outcomeName: "Over",
+                    probability: 0.01,
+                    source: "kalshi",
+                    threshold: 186.0,
+                    overProbability: 0.01,
+                    marketType: "team_total",
+                    movement: nil,
+                    period: nil,
+                    isWinner: false,
+                    resolutionSource: nonAuthSource,
+                    observedAt: "2026-11-08T21:40:00Z",
+                    pregameMark: 0.42
+                )
+            ]
+            let nonAuthCards = EventAtlasCricketCards11666.buildCards(
+                event: finalEvent,
+                gameMarkets: nonAuthMarkets,
+                now: now,
+                atlasEnabled: true
+            )
+            guard case .outlook(let nonAuthOutlook) = nonAuthCards[0],
+                  case .chase(let nonAuthChase) = nonAuthCards[1] else {
+                return XCTFail("Expected outlook and chase cards for \(nonAuthSource)")
+            }
+            let nonAuthOutlookInput = nonAuthOutlook.presentationInput(selectedRowID: nil, now: now)
+            XCTAssertTrue(
+                nonAuthOutlookInput.rows.allSatisfy {
+                    $0.finish?.outcome == .unavailable("Result not confirmed")
+                },
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+            XCTAssertEqual(
+                nonAuthChase.presentationInput(now: now).contractResult,
+                .unconfirmed("Result not confirmed"),
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
         }
 
         // Unconfirmed markets on a completed match must yield "Result not confirmed", never "✗ Lost"

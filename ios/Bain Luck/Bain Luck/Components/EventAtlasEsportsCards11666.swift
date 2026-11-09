@@ -758,6 +758,23 @@ enum EventAtlasEsportsCards11666 {
         )
     }
 
+    /// Decide 80-A (`#12274`, `#12449`): a `GameMarketOther` / `GameMarketOutcome` row
+    /// does not carry its market's resolution status, so `OutcomeVerdict` is asked as
+    /// for an open market (`marketResolved: false`): only an authoritative win becomes
+    /// `.won`, and a row grade never mints `.lost`.
+    nonisolated private static func otherRowVerdict(
+        isWinner: Bool?,
+        resolutionSource: String?,
+        phase: Phase
+    ) -> OutcomeVerdict? {
+        guard phase == .final else { return nil }
+        return OutcomeVerdict.verdict(
+            isWinner: isWinner,
+            resolutionSource: resolutionSource,
+            marketResolved: false
+        ) == .won ? .won : nil
+    }
+
     nonisolated private static func makeWinnerSide(
         row: GameMarketOther,
         teamName: String,
@@ -777,13 +794,11 @@ enum EventAtlasEsportsCards11666 {
             phase: phase,
             isStale: isStale
         )
-        let verdict: OutcomeVerdict? = (phase == .final)
-            ? OutcomeVerdict.verdict(
-                isWinner: row.isWinner,
-                resolutionSource: row.resolutionSource,
-                marketResolved: true
-            )
-            : nil
+        let verdict = otherRowVerdict(
+            isWinner: row.isWinner,
+            resolutionSource: row.resolutionSource,
+            phase: phase
+        )
 
         let marketIDVal = row._marketId ?? row._marketIds?.first ?? 0
         let outcomeIDVal = isHome ? "home:\(teamName)" : "away:\(teamName)"
@@ -833,13 +848,11 @@ enum EventAtlasEsportsCards11666 {
             phase: phase,
             isStale: isStale
         )
-        let verdict: OutcomeVerdict? = (phase == .final)
-            ? OutcomeVerdict.verdict(
-                isWinner: candidate.row.isWinner,
-                resolutionSource: candidate.row.resolutionSource,
-                marketResolved: true
-            )
-            : nil
+        let verdict = otherRowVerdict(
+            isWinner: candidate.row.isWinner,
+            resolutionSource: candidate.row.resolutionSource,
+            phase: phase
+        )
 
         let actualMargin: Int? = {
             guard phase == .final,

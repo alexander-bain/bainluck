@@ -232,6 +232,15 @@ Q_VACUUM_OLDEST_XMIN = (
 #: make the alarm actionable instead of merely true. `query` is deliberately NOT
 #: selected: it is nulled for other roles anyway, and it is the one column here
 #: that could carry row data.
+#:
+#: #7712: the nightly Heroku backup is NOT named pg_dump, so the filter above
+#: never matched it. On a night its snapshot runs past the hour, it pages at
+#: about 3 AM PT: 9 of the issue's first 315 posts, on 4 of 26 nights (the other
+#: 306 are other sessions, which this keeps paging). Read on production Mon Nov 9
+#: at 2:05 AM PT: our own application role (so this same-role read sees it),
+#: `application_name` 'Heroku Postgres Backups', a table `COPY`, no xid, open
+#: since 2:02 AM. Exempt by that exact name; the xid read above still
+#: counts it.
 Q_VACUUM_OLDEST_XACT = (
     "SELECT pid, backend_type, coalesce(application_name, '') AS application_name, "
     "EXTRACT(EPOCH FROM (now() - xact_start)) AS xact_age_s "
@@ -239,6 +248,7 @@ Q_VACUUM_OLDEST_XACT = (
     "WHERE xact_start IS NOT NULL AND state <> 'idle' "
     "AND backend_type IS DISTINCT FROM 'autovacuum worker' "
     "AND coalesce(application_name, '') NOT LIKE 'pg_dump%' "
+    "AND coalesce(application_name, '') <> 'Heroku Postgres Backups' "
     "ORDER BY xact_start ASC LIMIT 1"
 )
 #: A table qualifies for the dead-tuple signal only with at least this many dead

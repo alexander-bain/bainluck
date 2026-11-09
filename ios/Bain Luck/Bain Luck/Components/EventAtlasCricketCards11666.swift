@@ -763,6 +763,23 @@ enum EventAtlasCricketCards11666 {
 
     // MARK: - Outcome Row Extraction
 
+    /// Decide 80-A (`#12274`, `#12449`): a `GameMarketOther` / `GameMarketOutcome` row
+    /// does not carry its market's resolution status, so `OutcomeVerdict` is asked as
+    /// for an open market (`marketResolved: false`): only an authoritative win becomes
+    /// `.won`, and a row grade never mints `.lost`.
+    private nonisolated static func otherRowVerdict(
+        isWinner: Bool?,
+        resolutionSource: String?,
+        phase: Phase
+    ) -> OutcomeVerdict? {
+        guard phase == .final else { return nil }
+        return OutcomeVerdict.verdict(
+            isWinner: isWinner,
+            resolutionSource: resolutionSource,
+            marketResolved: false
+        ) == .won ? .won : nil
+    }
+
     private nonisolated static func extractOutcomeRows(
         event: EventDetail,
         gameMarkets: GameMarketsResponse,
@@ -810,13 +827,11 @@ enum EventAtlasCricketCards11666 {
                 pregameMark: row.pregameMark,
                 phase: phase
             )
-            let verdict: OutcomeVerdict? = phase == .final
-                ? OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: true
-                )
-                : nil
+            let verdict = otherRowVerdict(
+                isWinner: row.isWinner,
+                resolutionSource: row.resolutionSource,
+                phase: phase
+            )
             let marketIDValue = row._marketId ?? row._marketIds?.first ?? 0
 
             byRole[role] = CandidateOutcome(
@@ -974,13 +989,11 @@ enum EventAtlasCricketCards11666 {
                 pregameMark: pregame,
                 phase: phase
             )
-            let verdict: OutcomeVerdict? = phase == .final
-                ? OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: true
-                )
-                : nil
+            let verdict = otherRowVerdict(
+                isWinner: row.isWinner,
+                resolutionSource: row.resolutionSource,
+                phase: phase
+            )
 
             let targetInt = Int(threshold.rounded())
             let headline: String? = phase == .during ? "Target \(targetInt) runs" : nil
@@ -1045,13 +1058,11 @@ enum EventAtlasCricketCards11666 {
                 pregameMark: row.pregameMark,
                 phase: phase
             )
-            let verdict: OutcomeVerdict? = phase == .final
-                ? OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: true
-                )
-                : nil
+            let verdict = otherRowVerdict(
+                isWinner: row.isWinner,
+                resolutionSource: row.resolutionSource,
+                phase: phase
+            )
             let headline: String? = {
                 guard phase == .during else { return nil }
                 if let targetRuns {

@@ -509,19 +509,68 @@ final class EventAtlasCombatCards11666Tests: XCTestCase {
 
         XCTAssertEqual(methodCard.phase, .final)
         XCTAssertEqual(methodCard.officialFinishSummary, "Official result: Submission")
-        XCTAssertEqual(methodCard.tiles[0].verdict, .lost)
+        XCTAssertNil(methodCard.tiles[0].verdict)
         XCTAssertEqual(methodCard.tiles[1].verdict, .won)
-        XCTAssertEqual(methodCard.tiles[2].verdict, .lost)
+        XCTAssertNil(methodCard.tiles[2].verdict)
+        let methodInput = methodCard.presentationInput(selectedMethodID: nil, now: now)
+        XCTAssertEqual(methodInput.methods[1].originals.first?.result, .won("✓ Won"))
+        XCTAssertEqual(methodInput.methods[0].originals.first?.result, .unconfirmed("Result not confirmed"))
 
         XCTAssertEqual(roundCard.phase, .final)
         XCTAssertEqual(roundCard.officialFinishSummary, "Official finish: Islam Makhachev in Round 3")
         XCTAssertEqual(roundCard.fighterASlots[2].verdict, .won)
-        XCTAssertEqual(roundCard.fighterASlots[0].verdict, .lost)
+        XCTAssertNil(roundCard.fighterASlots[0].verdict)
 
         XCTAssertEqual(durationCard.phase, .final)
         XCTAssertEqual(durationCard.officialDurationSummary, "Official duration: Inside the distance")
-        XCTAssertEqual(durationCard.rows[0].verdict, .lost)
+        XCTAssertNil(durationCard.rows[0].verdict)
         XCTAssertEqual(durationCard.rows[1].verdict, .won)
+
+        // Decide 80-A (#12449): tier 0 (binary_higher_wins), tier 1 (clean_resolution),
+        // and tier 2 (game_score) rows with is_winner: false at the final read
+        // "Result not confirmed", and never "✓ Won" or "✗ Lost".
+        for nonAuthSource in ["binary_higher_wins", "clean_resolution", "game_score"] {
+            let nonAuthMarkets = makeMMAGameMarkets(
+                observedAt: "2026-11-08T21:30:00Z",
+                settled: true,
+                resolutionSourceOverride: nonAuthSource
+            )
+            let nonAuthCards = EventAtlasCombatCards11666.buildCards(
+                event: event,
+                gameMarkets: nonAuthMarkets,
+                now: now,
+                atlasEnabled: true
+            )
+            guard case .combatMethod(let nonAuthMethod) = nonAuthCards[0],
+                  case .combatRounds(let nonAuthRounds) = nonAuthCards[1],
+                  case .combatDuration(let nonAuthDuration) = nonAuthCards[2] else {
+                return XCTFail("Expected all 3 combat cards for \(nonAuthSource)")
+            }
+            let nonAuthMethodInput = nonAuthMethod.presentationInput(selectedMethodID: nil, now: now)
+            XCTAssertTrue(
+                nonAuthMethodInput.methods.allSatisfy {
+                    $0.originals.first?.result == .unconfirmed("Result not confirmed")
+                },
+                "Tier 0/1/2 source \(nonAuthSource) must read 'Result not confirmed'"
+            )
+            let nonAuthRoundsInput = nonAuthRounds.presentationInput(selectedSlotID: nil, now: now)
+            XCTAssertTrue(
+                nonAuthRoundsInput.groups.allSatisfy { group in
+                    group.slots.allSatisfy { slot in
+                        guard case .market(let market) = slot.state else { return true }
+                        return market.originals.first?.result == .unconfirmed("Result not confirmed")
+                    }
+                },
+                "Tier 0/1/2 source \(nonAuthSource) must read 'Result not confirmed'"
+            )
+            let nonAuthDurationInput = nonAuthDuration.presentationInput(selectedMarketID: nil, now: now)
+            XCTAssertTrue(
+                nonAuthDurationInput.markets.allSatisfy {
+                    $0.originals.first?.result == .unconfirmed("Result not confirmed")
+                },
+                "Tier 0/1/2 source \(nonAuthSource) must read 'Result not confirmed'"
+            )
+        }
 
         // Verify an unsettled/unconfirmed market on a completed fight yields `nil` (`Result not confirmed`), never `.lost`
         let unconfirmedMarkets = makeMMAGameMarkets(
@@ -769,9 +818,10 @@ final class EventAtlasCombatCards11666Tests: XCTestCase {
 
     private func makeMMAGameMarkets(
         observedAt: String,
-        settled: Bool
+        settled: Bool,
+        resolutionSourceOverride: String? = nil
     ) -> GameMarketsResponse {
-        let resSource: String? = settled ? "api_settlement" : nil
+        let resSource: String? = settled ? (resolutionSourceOverride ?? "api_settlement") : nil
         return GameMarketsResponse(
             eventId: 77101,
             homeTeam: "Islam Makhachev",

@@ -436,6 +436,26 @@ class TestTheShippedSqlRunsOnARealServer:
             "case must leave a trace"
         )
 
+    async def test_the_nightly_backup_is_excluded_by_its_own_name(self, pg):
+        """#7712: the nightly Heroku backup is not named pg_dump. Read on
+        production Mon Nov 9 at 2:05 AM PT, its session was our application role
+        (so the wall-clock read sees it), ``application_name`` 'Heroku Postgres
+        Backups', running ``COPY "public"."futures_odds_snapshots" (…`` with no
+        xid, open since 2:02 AM.
+        Both directions on one backend; a near-miss name is still shown, so only
+        the backup's exact name is exempt."""
+        from app.tasks.watchdog import Q_VACUUM_OLDEST_XACT
+
+        async with _HeldTransaction(_gate_dsn()) as held:
+            await held.set_application_name("Heroku Postgres Backups")
+            hidden = {r["pid"] for r in await pg.fetch(Q_VACUUM_OLDEST_XACT)}
+
+            await held.set_application_name("Heroku Postgres Backups (not)")
+            shown = {r["pid"] for r in await pg.fetch(Q_VACUUM_OLDEST_XACT)}
+
+        assert held.pid not in hidden, "the nightly backup must not page the on-call"
+        assert held.pid in shown, "only the backup's exact name is exempt"
+
 
 @needs_postgres
 class TestTheDeadTupleReadingIsGenuinelyOptional:

@@ -927,11 +927,16 @@ enum EventAtlasCombatCards11666 {
                         entry.updatedAt = obsDate
                     }
                 }
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: isWinner,
-                    resolutionSource: resolutionSource,
-                    marketResolved: eventSettled
-                )
+                // Decide 80-A (#12274, #12449): ask OutcomeVerdict as for an open market
+                // (`marketResolved: false`) so only an authoritative win becomes `.won`,
+                // and a row grade never mints `.lost`.
+                let verdict: OutcomeVerdict? = eventSettled
+                    ? (OutcomeVerdict.verdict(
+                        isWinner: isWinner,
+                        resolutionSource: resolutionSource,
+                        marketResolved: false
+                    ) == .won ? .won : nil)
+                    : nil
                 entry.outcomes.append(
                     NormalizedOutcome(
                         name: outcomeName,
