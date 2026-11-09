@@ -1,0 +1,13 @@
+{
+  "captured_at_utc": "2026-11-09T17:22:31.187420+00:00",
+  "url": "https://www.bainluck.com/search?q=bears",
+  "scope": "Served web at 390 CSS px; not installed-phone acceptance",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "phase": "before",
+  "finding": "Chicago Bears final, then California Golden Bears final, then Chicago Bears upcoming game",
+  "file": "bears-before-390.png",
+  "sha256": "14b55041227654ccfc281623706f145ca86e8f68a4ce45fb20d191e94bc15a3b"
+}
