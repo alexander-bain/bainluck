@@ -510,6 +510,95 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
         )
     }
 
+    func testWithheldCurrentOutcomeIdsWithholdsStaleSourceModeChartProbabilities108629() throws {
+        // Production 108629 ("Closest Governor race"): representation is "source", and Kansas
+        // (1594085) + Nebraska (235955688) are older than 30 minutes while Alaska (235955685) is fresh.
+        let market = makeMarket(
+            id: 108629,
+            name: "Closest Governor race",
+            category: "politics",
+            status: "open",
+            outcomes: [
+                makeOutcomeDict(
+                    id: 1594085,
+                    name: "Kansas",
+                    probability: 0.92125984,
+                    openingProbability: 0.85,
+                    observedAt: "2026-11-04T00:35:00Z" // 1h50m before referenceNow (stale)
+                ),
+                makeOutcomeDict(
+                    id: 235955685,
+                    name: "Alaska",
+                    probability: 0.0246063,
+                    openingProbability: 0.03,
+                    observedAt: "2026-11-04T02:20:00Z" // 13m before referenceNow (fresh)
+                ),
+                makeOutcomeDict(
+                    id: 235955688,
+                    name: "Nebraska",
+                    probability: 0.01968504,
+                    openingProbability: 0.02,
+                    observedAt: "2026-11-03T20:30:00Z" // 6h before referenceNow (stale)
+                ),
+            ]
+        )
+
+        let presentation = FuturesAtlasPresentation11666.build(market: market, now: referenceNow)
+        XCTAssertEqual(presentation.header.selectedOutcomeId, 1594085)
+        XCTAssertEqual(presentation.header.primaryDisplay.primaryLabel, "No recent probability")
+
+        let withheldIds = FuturesAtlasPresentation11666.withheldCurrentOutcomeIds(presentation: presentation)
+        XCTAssertEqual(withheldIds, Set([1594085, 235955688]))
+
+        let timelineOutcomesJSON: [[String: Any]] = [
+            [
+                "id": 1594085,
+                "name": "Kansas",
+                "current_probability": 0.92125984,
+                "probability_change_24h": 0.01,
+            ],
+            [
+                "id": 235955685,
+                "name": "Alaska",
+                "current_probability": 0.0246063,
+                "probability_change_24h": -0.005,
+            ],
+            [
+                "id": 235955688,
+                "name": "Nebraska",
+                "current_probability": 0.01968504,
+                "probability_change_24h": 0.0,
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: timelineOutcomesJSON)
+        let rawOutcomes = try makeDecoder().decode([TimelineOutcomeMeta].self, from: data)
+
+        let resolved = EvolutionChartView.resolveServedOutcomes(
+            rawOutcomes,
+            withholdsCurrent: false,
+            withheldCurrentOutcomeIds: withheldIds
+        )
+        XCTAssertEqual(resolved.count, 3)
+        // Stale Kansas and Nebraska have their currentProbability withheld (nil -> "—")
+        XCTAssertNil(resolved[0].currentProbability)
+        XCTAssertNil(resolved[0].probabilityChange24h)
+        // Fresh Alaska keeps its currentProbability (2%)
+        XCTAssertEqual(resolved[1].currentProbability ?? 0, 0.0246063, accuracy: 0.0001)
+        // Stale Nebraska has its currentProbability withheld (nil -> "—")
+        XCTAssertNil(resolved[2].currentProbability)
+
+        let percents = EvolutionLeaderboardGeometry.renderedPercents(forServedField: resolved)
+        XCTAssertEqual(percents, [nil, 2, nil])
+        XCTAssertEqual(
+            EvolutionLeaderboardGeometry.probLabel(resolved[0].currentProbability.map { $0 * 100 }, renderedPercent: percents[0]),
+            "—"
+        )
+        XCTAssertEqual(
+            EvolutionLeaderboardGeometry.probLabel(resolved[1].currentProbability.map { $0 * 100 }, renderedPercent: percents[1]),
+            "2%"
+        )
+    }
+
     // MARK: - 7. 390px Default & Accessibility3 Snapshot Verification
 
     @MainActor
