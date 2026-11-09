@@ -1269,6 +1269,7 @@ async def _prewarm_feed_shape(
         FEED_PREWARM_OPENING_SCOPE_KEY,
         FEED_PREWARM_SCOPE_KEY,
         FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
+        dumps_feed_cache,
         feed_payload_was_built_by_this_request,
         feed_response_cache_ttls,
         payload_contains_live_event,
@@ -1535,7 +1536,8 @@ async def _prewarm_feed_shape(
             max(0.0, _time.time() - float(_cache_meta["built_at"])), 3
         )
 
-    body = json.dumps(payload, default=str)
+    # #12361: this is a second writer on the feed route's numeric cache keys.
+    body = dumps_feed_cache(payload)
     rc.setex(cache_key, ttl, body)
     rc.setex(f"{cache_key}:stale", stale_ttl, body)
     # #2236: the shape's liveness is recorded by the writer that just measured
