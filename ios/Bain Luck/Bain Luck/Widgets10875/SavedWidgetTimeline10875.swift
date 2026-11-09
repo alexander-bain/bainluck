@@ -166,9 +166,10 @@ enum SavedWidgetTimeline10875 {
     /// (another id), and the event page adopts it with no id check, so the
     /// widget does too — held under the id the reader saved. The market page
     /// refuses an answer for another id (`fetched.id == marketId`), so a market
-    /// widget refuses it too.
-    private static func answers(_ subject: SavedWidgetSubject10875,
-                                with payload: SavedWidgetDetailPayload10875) -> Bool {
+    /// widget refuses it too. A Bain Luck card in Messages reads by the same
+    /// rule (#12308).
+    static func answers(_ subject: SavedWidgetSubject10875,
+                        with payload: SavedWidgetDetailPayload10875) -> Bool {
         switch subject.kind {
         case .game: return true
         case .market: return payload.id == subject.id
