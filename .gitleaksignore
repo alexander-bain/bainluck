@@ -134,3 +134,10 @@ d54c97d3403d8973d11dd640a39ee7105c74e638:frontend/lib/evals/data/twin-exam-2026-
 7379c1ebe40fd8c21763c664dde9802f8eb39829:ios/Bain Luck/Bain Luck/Components/CombatRoundPresentation10868.swift:generic-api-key:1136
 7379c1ebe40fd8c21763c664dde9802f8eb39829:ios/Bain Luck/Bain Luck/Components/CombatDurationPresentation10868.swift:generic-api-key:1178
 
+# #11666: sportKey parameter literal ("cricket_international_t20"), not a credential.
+# Exact historical findings from gitleaks run 42613076969.
+3d552281ed303532becac7fb00d38063e26138e7:ios/Bain Luck/Bain Luck/Components/EventAtlasCricketCards11666.swift:generic-api-key:908
+3d552281ed303532becac7fb00d38063e26138e7:ios/Bain Luck/Bain Luck/Components/EventAtlasCricketCards11666.swift:generic-api-key:1109
+3d552281ed303532becac7fb00d38063e26138e7:ios/Bain Luck/BainLuckTests/EventAtlasCricketCards11666Tests.swift:generic-api-key:13
+3d552281ed303532becac7fb00d38063e26138e7:ios/Bain Luck/BainLuckTests/EventAtlasCricketCards11666Tests.swift:generic-api-key:20
+3d552281ed303532becac7fb00d38063e26138e7:ios/Bain Luck/BainLuckTests/EventAtlasCricketCards11666Tests.swift:generic-api-key:27
