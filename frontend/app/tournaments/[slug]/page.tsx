@@ -129,7 +129,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -161,7 +161,8 @@ import TournamentMatches from "@/components/tournament/TournamentMatches";
 import TournamentProps from "@/components/tournament/TournamentProps";
 import TournamentResults from "@/components/tournament/TournamentResults";
 import { TOURNAMENT_PROPS_ENABLED } from "@/lib/tournamentFlags";
-import { fetchTournament } from "@/lib/api";
+import { fetchEventConcept, fetchTournament, type ApiError } from "@/lib/api";
+import { eventPath } from "@/lib/eventKey";
 import HubBootScript from "@/components/tournament/HubBootScript";
 import {
   HUB_SECTIONS_FIRST,
@@ -206,6 +207,7 @@ import {
 
 export default function TournamentPage() {
   const params = useParams();
+  const router = useRouter();
   const slug = typeof params?.slug === "string" ? params.slug : "";
 
   usePageTracking({ pageType: "tournament", pageTitle: `Tournament: ${slug}` });
@@ -213,7 +215,7 @@ export default function TournamentPage() {
   useEngagementTime({ pageType: "tournament" });
 
   const [data, setData] = useState<TournamentPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ title: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
   /**
    * The draw on screen, or `null` for "the payload has not opened one yet".
@@ -323,18 +325,46 @@ export default function TournamentPage() {
             if (!cancelled) setRestLoaded(true);
           });
       })
-      .catch(() => {
-        // No partial page assembled from whatever loaded. A tournament hub that
-        // half-renders is worse than one that says it could not load.
+      .catch(async (failure: ApiError) => {
         if (cancelled) return;
-        setError("We could not load this tournament right now.");
+        // #12363: other tennis tournaments already have generic event hubs.
+        // Only an absent registered route earns this second existence lookup.
+        if (failure?.status === 404) {
+          try {
+            const concept = await fetchEventConcept(`event:tennis:${slug}-winner`);
+            if (cancelled) return;
+            const key = concept.event?.key;
+            if (
+              concept.event?.domain === "tennis" &&
+              typeof key === "string" &&
+              /^event:tennis:[a-z0-9]+(?:-[a-z0-9]+)*$/.test(key)
+            ) {
+              router.replace(eventPath(key));
+              return;
+            }
+          } catch (fallbackFailure) {
+            if (cancelled) return;
+            if ((fallbackFailure as ApiError)?.status === 404) {
+              setError({
+                title: "Tournament not found",
+                message: "We could not find this tournament.",
+              });
+              setLoading(false);
+              return;
+            }
+          }
+        }
+        setError({
+          title: "Tournament unavailable",
+          message: "We could not load this tournament right now.",
+        });
         setLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [slug]);
+  }, [slug, router]);
 
   // Everything derived, computed BEFORE the loading/error returns so the hook
   // order never changes between renders. Each guards on `data` being null
@@ -494,8 +524,8 @@ export default function TournamentPage() {
   if (error || !data) {
     return (
       <div className="mx-auto max-w-[560px] px-4 py-10 text-center">
-        <h1 className="text-lg font-semibold text-text-primary">Tournament unavailable</h1>
-        <p className="mt-1 text-sm text-text-secondary">{error ?? "Nothing to show."}</p>
+        <h1 className="text-lg font-semibold text-text-primary">{error?.title ?? "Tournament unavailable"}</h1>
+        <p className="mt-1 text-sm text-text-secondary">{error?.message ?? "Nothing to show."}</p>
       </div>
     );
   }
