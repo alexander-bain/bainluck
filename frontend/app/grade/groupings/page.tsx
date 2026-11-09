@@ -301,7 +301,11 @@ function GroupingGradeSession() {
                 : ""}
             </span>
             <span>
-              {item.kind_verdict === "serve" ? "Kind: SERVE" : `Kind: REFUSE (${item.refusal_reasons.join(", ")})`}
+              {item.proposed_kind && item.proposed_kind !== "sibling_family"
+                ? "Kind: PROPOSED · not licensed"
+                : item.kind_verdict === "serve"
+                  ? "Kind: SERVE"
+                  : `Kind: REFUSE (${item.refusal_reasons.join(", ")})`}
             </span>
           </div>
           {(item.as_of_label || card.as_of_label) && (

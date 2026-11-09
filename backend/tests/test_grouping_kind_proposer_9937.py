@@ -37,6 +37,7 @@ from app.utils.grouping_kind_proposer import (
     DEFAULT_KIND_PROPOSALS_JSON_PATH,
     DEFAULT_KIND_PROPOSALS_MD_PATH,
     DEFAULT_KIND_PROPOSER_MODEL,
+    DOCS_KIND_PROPOSALS_JSON_PATH,
     KIND_PROPOSER_MONTHLY_CAP_USD,
     KIND_PROPOSER_RUN_CAP_USD,
     MIN_GRADED_CARDS_FOR_CATALOG,
@@ -50,9 +51,25 @@ from app.utils.grouping_kind_proposer import (
 from app.utils.grouping_licences import UNLICENSED_PROPOSED_KINDS, is_kind_licensed
 from app.utils.roundup_containers import ROUNDUP_PRODUCERS, _KIND_TO_MODULE_BUILDER
 
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+
 
 class TestCommittedNewKindProposalsForAlex:
     """#9937 Exit: a proposal with five example cards each is committed for Alex's grading."""
+
+    def test_backend_data_copy_exists_inside_backend_and_matches_docs_copy(
+        self,
+    ) -> None:
+        assert DEFAULT_KIND_PROPOSALS_JSON_PATH.is_absolute()
+        assert DEFAULT_KIND_PROPOSALS_JSON_PATH == (
+            _BACKEND_DIR / "data" / "discover" / "new-kind-proposals-2026-11.json"
+        )
+        assert _BACKEND_DIR in DEFAULT_KIND_PROPOSALS_JSON_PATH.parents
+        assert DEFAULT_KIND_PROPOSALS_JSON_PATH.exists()
+        assert DOCS_KIND_PROPOSALS_JSON_PATH.exists()
+        assert DEFAULT_KIND_PROPOSALS_JSON_PATH.read_text(
+            encoding="utf-8"
+        ) == DOCS_KIND_PROPOSALS_JSON_PATH.read_text(encoding="utf-8")
 
     def test_committed_proposals_load_with_five_example_cards_each_and_alex_only_audience(
         self,
@@ -83,7 +100,7 @@ class TestCommittedNewKindProposalsForAlex:
                 assert len(card["rows"]) >= 3
                 assert card["stronger_single_alternative"]["market_id"] > 0
                 assert card["as_of"] == "2026-11-09T21:15:00Z"
-                assert card["as_of_label"] == "as of Nov 09, 21:15 UTC"
+                assert card["as_of_label"] == "as of Nov 9, 1:15 PM PT"
                 assert card["slug"] not in ROUNDUP_PRODUCERS
 
     def test_grading_deck_mounts_ten_new_kind_example_cards_with_as_of_labels(
@@ -99,8 +116,11 @@ class TestCommittedNewKindProposalsForAlex:
         assert len(nk_items) == 10
         for it in nk_items:
             assert it["as_of"] == "2026-11-09T21:15:00Z"
-            assert it["as_of_label"] == "as of Nov 09, 21:15 UTC"
-            assert it["proposed_card"]["as_of_label"] == "as of Nov 09, 21:15 UTC"
+            assert it["as_of_label"] == "as of Nov 9, 1:15 PM PT"
+            assert it["proposed_card"]["as_of_label"] == "as of Nov 9, 1:15 PM PT"
+            assert it["kind_verdict"] == "refuse"
+            assert it["refusal_reasons"] == ["not_licensed"]
+            assert "trust_pass" not in it
             assert it["best_single"]["id"] > 0
             assert 0 < it["best_single"]["rendered_percent"] < 100
 
@@ -288,3 +308,20 @@ class TestKindProposerSpendAndCatalogAdmission:
         assert verdict_6["joins_catalog"] is True
         assert verdict_6["is_licensed"] is False
         assert verdict_6["can_reach_readers"] is False
+
+        # Also maps /grade/groupings RankingGrade rows by item_key and amazing/fine/no grade
+        page_rows = [
+            {
+                "item_key": "nhl-2026-teams-100-points-benchmark",
+                "grader": "Alex",
+                "grade": "amazing",
+            },
+            {
+                "item_key": "nhl-2026-teams-110-points-benchmark",
+                "grader": "Alex",
+                "grade": "fine",
+            },
+        ]
+        verdict_page = evaluate_kind_catalog_admission("season_stat_leaders", page_rows)
+        assert verdict_page["yes_count"] == 2
+        assert verdict_page["no_count"] == 0

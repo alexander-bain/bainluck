@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 import re
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from app.services.llm_models import LEGACY_MODEL
 from app.utils.grouping_licences import UNLICENSED_PROPOSED_KINDS, is_kind_licensed
@@ -69,10 +70,20 @@ _KIND_SLUG_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 _CARD_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 DEFAULT_KIND_PROPOSALS_JSON_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "discover"
+    / "new-kind-proposals-2026-11.json"
+)
+DOCS_KIND_PROPOSALS_JSON_PATH = (
     Path(__file__).resolve().parents[3]
     / "docs"
     / "discover"
     / "new-kind-proposals-2026-11.json"
+)
+_KIND_PROPOSALS_PATHS: tuple[Path, ...] = (
+    DEFAULT_KIND_PROPOSALS_JSON_PATH,
+    DOCS_KIND_PROPOSALS_JSON_PATH,
 )
 DEFAULT_KIND_PROPOSALS_MD_PATH = (
     Path(__file__).resolve().parents[3]
@@ -80,6 +91,7 @@ DEFAULT_KIND_PROPOSALS_MD_PATH = (
     / "discover"
     / "new-kind-proposals-2026-11.md"
 )
+_PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 
 
 class KindProposalSpendCapExceededError(RuntimeError):
@@ -133,15 +145,15 @@ def format_kind_proposal_pre_run_spend_line(estimate: Mapping[str, Any]) -> str:
 
 
 def _format_as_of_label(as_of_iso: str) -> str:
-    """Format an ISO-8601 UTC timestamp into ``as of Mon DD, HH:MM UTC``."""
+    """Format an ISO-8601 timestamp into Pacific Time (``as of Mon D, H:MM AM/PM PT``)."""
     cleaned = str(as_of_iso or "").strip()
     if not cleaned:
         return ""
     try:
         dt = datetime.fromisoformat(cleaned.replace("Z", "+00:00")).astimezone(
-            timezone.utc
+            _PACIFIC_TZ
         )
-        return f"as of {dt.strftime('%b %d, %H:%M UTC')}"
+        return f"as of {dt.strftime('%b %-d, %-I:%M %p PT')}"
     except ValueError:
         return f"as of {cleaned}"
 
@@ -397,11 +409,30 @@ def validate_proposed_grouping_kind(
     }
 
 
+def _card_slug_to_kind_map(
+    proposals_path: Optional[Path | str] = None,
+) -> Dict[str, str]:
+    """Return mapping of committed example card ``slug`` -> ``kind``."""
+    try:
+        loaded = load_committed_kind_proposals(path=proposals_path)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+        return {}
+    mapping: Dict[str, str] = {}
+    for prop in loaded.get("proposals") or []:
+        k = str(prop.get("kind") or "").strip()
+        for card in prop.get("example_cards") or []:
+            c_slug = str(card.get("slug") or "").strip()
+            if k and c_slug:
+                mapping[c_slug] = k
+    return mapping
+
+
 def evaluate_kind_catalog_admission(
     kind: str,
     grades: Sequence[Mapping[str, Any]],
     *,
     licences_path: Optional[Path | str] = None,
+    proposals_path: Optional[Path | str] = None,
 ) -> Dict[str, Any]:
     """Evaluate whether a proposed kind can join the catalog and/or reach readers (#9937).
 
@@ -410,20 +441,30 @@ def evaluate_kind_catalog_admission(
     - Licence rule: "nothing reaches readers without a licence." Even after
       joining the catalog, ``can_reach_readers`` is ``False`` unless
       ``is_kind_licensed(kind)`` is ``True``.
+    - Accepts both explicit ``{"kind": kind, "grader": "alex", "verdict": "yes"|"no"}``
+      entries and `/grade/groupings` ``RankingGrade`` rows
+      (``{"item_key": slug, "grader": "Alex", "grade": "amazing"|"fine"|"no"}``).
     """
-    alex_grades = [
-        g
-        for g in (grades or [])
-        if isinstance(g, Mapping)
-        and str(g.get("kind") or "").strip() == kind
-        and str(g.get("grader") or "alex").strip().lower() == "alex"
-    ]
-    yes_count = sum(
-        1 for g in alex_grades if str(g.get("verdict") or "").strip().lower() == "yes"
-    )
-    no_count = sum(
-        1 for g in alex_grades if str(g.get("verdict") or "").strip().lower() == "no"
-    )
+    slug_to_kind = _card_slug_to_kind_map(proposals_path=proposals_path)
+    yes_count = 0
+    no_count = 0
+    for g in grades or []:
+        if not isinstance(g, Mapping):
+            continue
+        grader = str(g.get("grader") or "alex").strip().lower()
+        if grader != "alex":
+            continue
+        row_kind = str(g.get("kind") or "").strip()
+        if not row_kind:
+            item_key = str(g.get("item_key") or "").strip()
+            row_kind = slug_to_kind.get(item_key, "")
+        if row_kind != kind:
+            continue
+        raw_verdict = str(g.get("verdict") or g.get("grade") or "").strip().lower()
+        if raw_verdict in ("yes", "amazing", "fine", "shareable", "interesting"):
+            yes_count += 1
+        elif raw_verdict in ("no", "neither"):
+            no_count += 1
     total_graded = yes_count + no_count
     joins_catalog = (
         total_graded >= MIN_GRADED_CARDS_FOR_CATALOG and no_count == 0
@@ -504,16 +545,26 @@ def propose_new_grouping_kinds(
 
 
 def load_committed_kind_proposals(
-    path: Path | str = DEFAULT_KIND_PROPOSALS_JSON_PATH,
+    path: Optional[Path | str] = None,
 ) -> Dict[str, Any]:
     """Load and re-validate the committed new-kind proposals artifact for Alex's grading.
 
+    Reads ``backend/data/discover/new-kind-proposals-2026-11.json`` first (so
+    Heroku ``PROJECT_PATH=backend`` builds ship the artifact), falling back to
+    ``docs/discover/new-kind-proposals-2026-11.json`` when ``path is None``.
     Raises ``FileNotFoundError`` when ``path`` is missing and ``ValueError``
     when the JSON payload is not a valid mapping with a non-empty ``proposals``
     list. Never silently drops a refused proposal: any proposal that fails
     re-validation is returned in ``refused`` with its explicit refusal reason.
     """
-    p = Path(path)
+    if path is not None:
+        p = Path(path)
+    else:
+        p = DEFAULT_KIND_PROPOSALS_JSON_PATH
+        for candidate in _KIND_PROPOSALS_PATHS:
+            if candidate.exists():
+                p = candidate
+                break
     if not p.exists():
         raise FileNotFoundError(f"New-kind proposals file not found: {p}")
     raw = json.loads(p.read_text(encoding="utf-8"))

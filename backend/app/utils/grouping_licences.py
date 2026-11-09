@@ -260,6 +260,8 @@ def is_kind_licensed_for_promotion(
     return bool(receipt)
 
 
+#: Proposed grouping kinds (#9937) that are unlicensed andAlex-only until they
+#: pass their scored exam and human grading (Decide 63-A, 78, 102-A).
 UNLICENSED_PROPOSED_KINDS: frozenset[str] = frozenset(
     {
         "season_stat_leaders",
@@ -274,9 +276,6 @@ def is_kind_licensed(
     path: Path | str | None = None,
 ) -> bool:
     """Return True only when ``kind`` holds an active ``PASS`` licence in the licences registry."""
-    if kind in UNLICENSED_PROPOSED_KINDS and path is None:
-        registry = load_grouping_licences(path=path)
-        return is_kind_licensed_for_promotion(registry, kind)
     registry = load_grouping_licences(path=path)
     return is_kind_licensed_for_promotion(registry, kind)
 

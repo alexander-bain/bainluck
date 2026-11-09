@@ -463,13 +463,9 @@ def _build_new_kind_deck_items(
     proposals_path: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Build `/grade/groupings` deck items from committed new-kind proposals (#9937)."""
-    from app.utils.grouping_kind_proposer import (
-        DEFAULT_KIND_PROPOSALS_JSON_PATH,
-        load_committed_kind_proposals,
-    )
+    from app.utils.grouping_kind_proposer import load_committed_kind_proposals
 
-    target = proposals_path if proposals_path is not None else DEFAULT_KIND_PROPOSALS_JSON_PATH
-    loaded = load_committed_kind_proposals(path=target)
+    loaded = load_committed_kind_proposals(path=proposals_path)
     if loaded.get("refused_count", 0) > 0 or loaded.get("accepted_count", 0) == 0:
         raise HTTPException(
             status_code=500,
@@ -491,13 +487,13 @@ def _build_new_kind_deck_items(
             preview_rows = [
                 {
                     "label": str(r.get("label") or ""),
-                    "value": f"{int(r.get('rendered_percent', round(float(r.get('probability') or 0) * 100)))}%",
+                    "value": f"{int(r.get('rendered_percent', round(float(r['probability']) * 100)))}%",
                     "market_id": int(r.get("market_id") or 0),
                 }
                 for r in raw_rows
             ]
             single = card.get("stronger_single_alternative") or {}
-            s_prob = float(single.get("probability") or 0.5)
+            s_prob = float(single["probability"])
             s_pct = int(round(s_prob * 100))
             as_of_val = card.get("as_of") or loaded.get("generated_at")
             as_of_label = str(card.get("as_of_label") or "")
@@ -512,9 +508,8 @@ def _build_new_kind_deck_items(
                     "category": sport_cat,
                     "template_key": str((card.get("selector") or {}).get("title_ilike") or ""),
                     "member_count": len(raw_rows),
-                    "kind_verdict": "serve",
-                    "refusal_reasons": [],
-                    "trust_pass": True,
+                    "kind_verdict": "refuse",
+                    "refusal_reasons": ["not_licensed"],
                     "proposed_kind": kind_slug,
                     "as_of": as_of_val,
                     "as_of_label": as_of_label,

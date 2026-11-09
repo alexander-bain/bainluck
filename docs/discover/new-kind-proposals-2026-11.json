@@ -99,7 +99,7 @@
             }
           ],
           "as_of": "2026-11-09T21:15:00Z",
-          "as_of_label": "as of Nov 09, 21:15 UTC"
+          "as_of_label": "as of Nov 9, 1:15 PM PT"
         },
         {
           "slug": "nhl-2026-teams-110-points-benchmark",
@@ -154,7 +154,7 @@
             }
           ],
           "as_of": "2026-11-09T21:15:00Z",
-          "as_of_label": "as of Nov 09, 21:15 UTC"
+          "as_of_label": "as of Nov 9, 1:15 PM PT"
         },
         {
           "slug": "nhl-2026-players-100-points-leaders",
@@ -209,7 +209,7 @@
             }
           ],
           "as_of": "2026-11-09T21:15:00Z",
-          "as_of_label": "as of Nov 09, 21:15 UTC"
+          "as_of_label": "as of Nov 9, 1:15 PM PT"
         },
         {
           "slug": "nfl-2026-receiving-td-8-leaders",
@@ -264,7 +264,7 @@
             }
           ],
           "as_of": "2026-11-09T21:15:00Z",
-          "as_of_label": "as of Nov 09, 21:15 UTC"
+          "as_of_label": "as of Nov 9, 1:15 PM PT"
         },
         {
           "slug": "nfl-2026-teams-10-wins-benchmark",
@@ -319,7 +319,7 @@
             }
           ],
           "as_of": "2026-11-09T21:15:00Z",
-          "as_of_label": "as of Nov 09, 21:15 UTC"
+          "as_of_label": "as of Nov 9, 1:15 PM PT"
         }
       ]
     },
@@ -404,7 +404,7 @@
             }
           ],
           "as_of": "2026-11-09T21:15:00Z",
-          "as_of_label": "as of Nov 09, 21:15 UTC"
+          "as_of_label": "as of Nov 9, 1:15 PM PT"
         },
         {
           "slug": "epl-2027-conference-league-qualifiers",
@@ -459,7 +459,7 @@
             }
           ],
           "as_of": "2026-11-09T21:15:00Z",
-          "as_of_label": "as of Nov 09, 21:15 UTC"
+          "as_of_label": "as of Nov 9, 1:15 PM PT"
         },
         {
           "slug": "nhl-2027-second-round-advancement",
@@ -514,7 +514,7 @@
             }
           ],
           "as_of": "2026-11-09T21:15:00Z",
-          "as_of_label": "as of Nov 09, 21:15 UTC"
+          "as_of_label": "as of Nov 9, 1:15 PM PT"
         },
         {
           "slug": "nfl-2027-playoff-berth-contenders",
@@ -569,7 +569,7 @@
             }
           ],
           "as_of": "2026-11-09T21:15:00Z",
-          "as_of_label": "as of Nov 09, 21:15 UTC"
+          "as_of_label": "as of Nov 9, 1:15 PM PT"
         },
         {
           "slug": "cfb-2027-playoff-top-4-seed-board",
@@ -624,7 +624,7 @@
             }
           ],
           "as_of": "2026-11-09T21:15:00Z",
-          "as_of_label": "as of Nov 09, 21:15 UTC"
+          "as_of_label": "as of Nov 9, 1:15 PM PT"
         }
       ]
     }
