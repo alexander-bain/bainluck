@@ -1493,6 +1493,7 @@ async def _backfill_kalshi_winners(
         "not_found": 0,
         "no_result": 0,
         "api_miss": 0,
+        "api_errors": 0,
         "fresh_selected": 0,
         "fresh_graded": 0,
         # #1853 band 7 — never-graded markets nearest the purge. Its own
@@ -1791,7 +1792,24 @@ async def _backfill_kalshi_winners(
         batch_size = 100
         for batch_start in range(0, len(tickers), batch_size):
             batch = tickers[batch_start : batch_start + batch_size]
-            results = await asyncio.gather(*[_fetch(t) for t in batch])
+            fetched = await asyncio.gather(
+                *[_fetch(t) for t in batch], return_exceptions=True
+            )
+            results = []
+            for ticker, response in zip(batch, fetched):
+                if isinstance(response, asyncio.CancelledError):
+                    raise response
+                if isinstance(response, Exception):
+                    # A failed read proves neither absence nor an empty archive.
+                    # Keep healthy siblings grading and retain the refusal reason.
+                    stats["tickers_queried"] += 1
+                    stats["api_errors"] += 1
+                    reason = getattr(response, "reason", type(response).__name__)
+                    failure = f"{ticker}: {reason}"
+                    stats["errors"].append(failure)
+                    logger.warning("Kalshi winner backfill event read failed: %s", failure)
+                    continue
+                results.append(response)
 
             # #1853: an event the live read FOUND but returned legless has moved
             # its markets to the archive tier; the price-crown fallback below can
@@ -2146,8 +2164,10 @@ async def _backfill_kalshi_winners(
                     await session.commit()
 
             # #1853: only now, with this batch fetched and committed, may band 7's
-            # cursor step past its rows.
-            _advance_expiring_cursor(batch_start + len(batch))
+            # cursor step past its rows. A failed read keeps its batch reachable
+            # even though healthy siblings have still been graded (#12365).
+            if not stats["api_errors"]:
+                _advance_expiring_cursor(batch_start + len(batch))
 
             logger.info(
                 "Kalshi backfill: %d/%d tickers, %d found, %d winners, %d losers",

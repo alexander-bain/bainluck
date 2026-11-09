@@ -64,32 +64,16 @@ def _merge_discoveries(
 
 def kalshi_occasion_event(payload: Any, event_ticker: str) -> dict[str, Any]:
     """Normalize Kalshi's separate or nested market envelope without losing rules."""
-    event = payload.get("event") if isinstance(payload, Mapping) else None
-    if not isinstance(event, Mapping) or event.get("event_ticker") != event_ticker:
-        raise AwardsOccasionSourceError(f"{event_ticker}: event_identity_mismatch")
+    from app.utils.kalshi_event_envelope import (
+        KalshiEventEnvelopeError,
+        kalshi_event_envelope,
+    )
 
-    nested = event.get("markets")
-    separate = payload.get("markets")
-    if any(
-        value is not None and not isinstance(value, list)
-        for value in (nested, separate)
-    ):
-        raise AwardsOccasionSourceError(f"{event_ticker}: missing_market_envelope")
-    if nested and separate and nested != separate:
-        raise AwardsOccasionSourceError(f"{event_ticker}: conflicting_market_envelopes")
-    # With nested markets requested the venue can put the complete list in
-    # event.markets and leave the sibling markets list empty, or vice versa.
-    markets = separate or nested
-    if markets is None and (separate == [] or nested == []):
-        markets = []
-    if not isinstance(markets, list):
-        raise AwardsOccasionSourceError(f"{event_ticker}: missing_market_envelope")
-    if any(
-        not isinstance(market, Mapping) or market.get("event_ticker") != event_ticker
-        for market in markets
-    ):
-        raise AwardsOccasionSourceError(f"{event_ticker}: market_identity_mismatch")
-    return {**event, "provider": "kalshi", "markets": markets}
+    try:
+        event = kalshi_event_envelope(payload, event_ticker)
+    except KalshiEventEnvelopeError as error:
+        raise AwardsOccasionSourceError(str(error)) from error
+    return {**event, "provider": "kalshi"}
 
 
 def polymarket_occasion_event(payload: Any, event_id: str) -> dict[str, Any]:
