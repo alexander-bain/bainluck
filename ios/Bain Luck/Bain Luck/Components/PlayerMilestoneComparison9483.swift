@@ -236,8 +236,8 @@ extension PlayerMilestoneComparison9483 {
         var pregameCaption: String {
             switch pregame {
             case .figure: return "Chance to reach \(target ?? "")"
-            case .noRecentUpdate: return "No recent probability update"
-            case .noPregameChance: return "No pregame chance"
+            case .noRecentUpdate: return EventAtlasStoryCards11666.milestoneNoChanceLabel(basis: .pregamePrice)
+            case .noPregameChance: return EventAtlasStoryCards11666.milestoneNoChanceLabel(basis: .pregameMark)
             case .noLine: return "No chance to show"
             }
         }

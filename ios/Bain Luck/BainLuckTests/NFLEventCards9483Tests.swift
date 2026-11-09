@@ -481,9 +481,7 @@ final class NFLEventCards9483Tests: XCTestCase {
             let text = try render(reader, size: size, name: name, scrolled: scrolled)
             XCTAssertTrue(text.contains("1 of 1"), "\(name): \(text)")
             if scrolled || size == .large {
-                XCTAssertTrue(
-                    text.contains("No recent probability update") || text.contains("No recent probability"),
-                    "\(name): the stale selected line says so: \(text)")
+                XCTAssertTrue(text.contains("No recent probability"), "\(name): the stale selected line says so: \(text)")
             }
             if !scrolled {
                 XCTAssertTrue(text.contains("Pregame chance"), "\(name): \(text)")

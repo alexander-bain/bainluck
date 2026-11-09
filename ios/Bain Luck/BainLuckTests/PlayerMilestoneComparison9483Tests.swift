@@ -270,7 +270,7 @@ final class PlayerMilestoneComparison9483Tests: XCTestCase {
         let a = PlayerMilestoneComparison9483.readout(card: quoteGone, selectedRowID: try rowID(before, line: 300), isFinal: false)
         let b = PlayerMilestoneComparison9483.readout(card: markMissing, selectedRowID: try rowID(after, line: 300), isFinal: false)
         XCTAssertEqual(a.pregame, .noRecentUpdate)
-        XCTAssertEqual(a.pregameCaption, "No recent probability update")
+        XCTAssertEqual(a.pregameCaption, "No recent probability")
         XCTAssertEqual(b.pregame, .noPregameChance)
         XCTAssertEqual(b.pregameCaption, "No pregame chance")
         for readout in [a, b] {
