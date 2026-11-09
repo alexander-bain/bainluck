@@ -480,6 +480,20 @@ final class EventAtlasRugbyAflCards11666Tests: XCTestCase {
             [["64%"], ["36%"]],
             "First Half Winner (12%/88%) and orphan leg (25%) must never mix into the full-match Moneyline card"
         )
+
+        // 4. Without complete market 770010, the orphan tournament leg ("Six Nations Winner: France")
+        //    and partial-scope First Half legs build no Match Outcome card.
+        var gmWithout770010 = gm
+        gmWithout770010.other = gm.other?.filter { $0._marketId != 770010 }
+        let cardsWithout770010 = EventAtlasRugbyAflCards11666.buildCards(
+            event: preEvent,
+            gameMarkets: gmWithout770010,
+            now: baseNow
+        )
+        XCTAssertTrue(
+            cardsWithout770010.isEmpty,
+            "Without a complete full-match market pricing both teams, no Match Outcome card is built"
+        )
     }
 
     // MARK: - 5. 30-Minute Live Quote Aging (.before and .during)

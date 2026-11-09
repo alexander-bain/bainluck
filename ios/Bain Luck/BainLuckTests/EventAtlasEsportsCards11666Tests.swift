@@ -203,11 +203,13 @@ final class EventAtlasEsportsCards11666Tests: XCTestCase {
         XCTAssertEqual(liveModel.sides.map { $0.readings.last?.text }, ["80%", "22%"])
         XCTAssertTrue(liveModel.sides.allSatisfy { $0.report == nil && $0.settlement == nil })
 
-        // 3. Final match: home unconfirmed (nil), away confirmed Lost (false + api_settlement)
+        // 3. Final match (Decide 80-A, #12449): authoritative winner (true + api_settlement) reads "✓ Won",
+        //    and non-winning / unconfirmed rows read "Result not confirmed" (never "✗ Lost").
         let finalEvent = makeEvent(status: "completed", homeScore: 13, awayScore: 1)
         let finalGM = makeGameMarkets(
-            homeWinnerIsWinner: nil,
+            homeWinnerIsWinner: true,
             awayWinnerIsWinner: false,
+            homeWinnerResolutionSource: "api_settlement",
             awayWinnerResolutionSource: "api_settlement",
             marginIsWinner: true,
             marginResolutionSource: "api_settlement"
@@ -225,11 +227,45 @@ final class EventAtlasEsportsCards11666Tests: XCTestCase {
         XCTAssertEqual(finalModel.sides.map { $0.report?.outcome }, ["Won match", "Lost match"])
         XCTAssertEqual(finalModel.sides.map { $0.report?.figure }, ["13", "1"])
         XCTAssertEqual(finalModel.sides.map { $0.report?.unit }, ["rounds", "round"])
-        XCTAssertEqual(finalModel.sides[0].settlement?.text, "Result not confirmed",
-                       "Unconfirmed contract never fabricates Won or Lost from scoreboard")
-        XCTAssertEqual(finalModel.sides[0].settlement?.isValue, false)
-        XCTAssertEqual(finalModel.sides[1].settlement?.text, "✗ Lost")
-        XCTAssertEqual(finalModel.sides[1].settlement?.isValue, true)
+        XCTAssertEqual(finalModel.sides[0].settlement?.text, "✓ Won")
+        XCTAssertEqual(finalModel.sides[0].settlement?.isValue, true)
+        XCTAssertEqual(finalModel.sides[1].settlement?.text, "Result not confirmed",
+                       "Decide 80-A: a row grade with is_winner: false never mints '✗ Lost'")
+        XCTAssertEqual(finalModel.sides[1].settlement?.isValue, false)
+
+        // 4. Tier 0 (binary_higher_wins), tier 1 (clean_resolution), and tier 2 (game_score) rows
+        //    with is_winner: false at the final read "Result not confirmed" on both Winner and Margin cards.
+        for nonAuthSource in ["binary_higher_wins", "clean_resolution", "game_score"] {
+            let nonAuthGM = makeGameMarkets(
+                homeWinnerIsWinner: false,
+                awayWinnerIsWinner: false,
+                homeWinnerResolutionSource: nonAuthSource,
+                awayWinnerResolutionSource: nonAuthSource,
+                marginIsWinner: false,
+                marginResolutionSource: nonAuthSource
+            )
+            let nonAuthCards = EventAtlasEsportsCards11666.buildCards(
+                event: finalEvent,
+                gameMarkets: nonAuthGM,
+                now: baseNow
+            )
+            guard nonAuthCards.count == 2,
+                  case .winner(let nonAuthWinner) = nonAuthCards[0],
+                  case .margin(let nonAuthMargin) = nonAuthCards[1] else {
+                return XCTFail("Expected winner and margin cards for \(nonAuthSource)")
+            }
+            let nonAuthWinnerModel = nonAuthWinner.toWinnerModel()
+            XCTAssertEqual(
+                nonAuthWinnerModel.sides.map { $0.settlement?.text },
+                ["Result not confirmed", "Result not confirmed"],
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+            XCTAssertEqual(
+                nonAuthMargin.toMarginModel().result?.text,
+                "Result not confirmed",
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+        }
     }
 
     // MARK: - 3. Margin Story Card Geometry & Blocks
