@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
-import { APP_STORE_URL, BRAND_TAGLINE } from "@/lib/brandCopy";
+import { APP_STORE_CAMPAIGNS, appStoreCampaignUrl, BRAND_TAGLINE } from "@/lib/brandCopy";
 
 const FOOTER_LINKS: { heading: string; links: { label: string; href: string }[] }[] = [
   {
@@ -64,7 +64,7 @@ export default function Footer() {
         >
           <span className="text-text-secondary">Bain Luck for iPhone</span>
           <a
-            href={APP_STORE_URL}
+            href={appStoreCampaignUrl(APP_STORE_CAMPAIGNS.footerGetTheApp)}
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => onClick("/app-store")}
@@ -89,7 +89,7 @@ export default function Footer() {
             </p>
             <div className="pt-1">
               <a
-                href={APP_STORE_URL}
+                href={appStoreCampaignUrl(APP_STORE_CAMPAIGNS.footerBadge)}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => onClick("/app-store")}

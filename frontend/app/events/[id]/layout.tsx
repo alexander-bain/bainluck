@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import type { EventDetailResponse } from "@/lib/types";
 import { buildShareUrl } from "@/lib/share";
-import { APP_STORE_APP_ID } from "@/lib/brandCopy";
+import { APP_STORE_CAMPAIGNS, smartAppBannerContent } from "@/lib/brandCopy";
 import {
   buildEventShareCopy,
   isFinishedForShare,
@@ -159,7 +159,11 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical: url },
-    itunes: { appId: APP_STORE_APP_ID, appArgument: url },
+    // #12311: replaces the root layout's banner key (`other` merges by key), so
+    // the page still carries one banner tag, now with its own campaign and URL.
+    other: {
+      "apple-itunes-app": smartAppBannerContent(APP_STORE_CAMPAIGNS.bannerEventPage, url),
+    },
     openGraph: {
       title: socialTitle,
       description,
