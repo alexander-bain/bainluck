@@ -457,6 +457,22 @@ jobs:
           COUNT="$(grep -oE '[0-9]+ passed' /tmp/native-readers.txt | tail -1)"
           echo "native-backend-readers: ${COUNT:-0 passed}"
 
+      # Fable, Nov 9: frontend-build is skipped on native, and it was the only
+      # job running the jest suites that read Swift sources (frontend/__tests__/ios,
+      # the single-source guards). #12436, #12441 and #12443 skipped them.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Run the iOS guard suites (frontend/__tests__/ios)
+        working-directory: frontend
+        run: |
+          set -o pipefail
+          npm ci
+          npx jest --ci __tests__/ios/
+
   shard-completeness:
     # #5007 — this proves the SHARD PARTITION is complete, so it is meaningful
     # only when the shards run. Skipped with them, never independently.
