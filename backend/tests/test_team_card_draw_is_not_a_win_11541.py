@@ -1,6 +1,6 @@
 """#11541 — a soccer team page must not count the draw as its club's win.
 
-WHAT A READER SAW (production, 2026-11-08 16:01 PT). Arsenal's team page said
+WHAT A READER SAW (production, Sun Nov 8, 4:01 PM PT). Arsenal's team page said
 82% to win at Newcastle (event 15340934). The game's own page had Newcastle at
 18% and printed no Arsenal number; Arsenal's own three-way price was 59%.
 
@@ -17,8 +17,9 @@ stored away leg, which since #1011 is de-vigged over the whole board, but only
 while its pair still leaves a draw (`printable_away`). Otherwise it serves
 nothing, because a pre-kickoff price is not a live chance.
 
-The fixture is the production row, verbatim. Times are offsets from the real
-clock because the formatter reads the real clock (gotcha #44).
+The fixture is the production row: its values verbatim, its times as offsets
+from the real clock, because the formatter and the blend read the real clock
+(gotcha #44).
 """
 
 from __future__ import annotations
@@ -31,11 +32,16 @@ import pytest
 from app.routes.teams import _format_event_brief
 from app.utils.aggregation import compute_aggregate_probability
 
-#: Verbatim from production event 15340934 (Newcastle United v Arsenal, EPL),
-#: read 2026-11-08 16:05 PT.
+#: Production event 15340934 (Newcastle United v Arsenal, EPL), read Sun Nov 8,
+#: 4:05 PM PT. Values verbatim; each stamp keeps its age at the read (the books
+#: 20 minutes old, Polymarket 10 h 26 min older).
+READ_AT = datetime.now(timezone.utc) - timedelta(minutes=20)
 NEWCASTLE_ARSENAL_SOURCES = {
-    "betting": {"value": 0.1779, "updated_at": "2026-11-08T23:45:35.418007+00:00"},
-    "polymarket": {"value": 0.16, "updated_at": "2026-11-08T13:19:41.150070+00:00"},
+    "betting": {"value": 0.1779, "updated_at": READ_AT.isoformat()},
+    "polymarket": {
+        "value": 0.16,
+        "updated_at": (READ_AT - timedelta(hours=10, minutes=26)).isoformat(),
+    },
     "betting_book_count": 7,
 }
 OPENING_HOME = Decimal("0.1779")
