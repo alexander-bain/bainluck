@@ -153,27 +153,27 @@ class TestTheUnwatchedMatchLeavesAtItsTimeout:
     async def test_suspended_at_the_reading_production_still_served_live(self):
         # 20:40 UTC Mon Nov 9: 2.67h after kickoff, venue decided, still LIVE.
         row = _botosani()
-        stats = await _run([row], _at(2.67))
+        stats = await _run([row], now=_at(2.67))
         assert row.status == event_completion.EVENT_SUSPENDED
         assert stats["suspended_unobserved"] == 1
 
     @pytest.mark.asyncio
     async def test_just_past_the_timeout_it_is_suspended(self):
         row = _botosani()
-        await _run([row], _at(TIMEOUT + 0.05))
+        await _run([row], now=_at(TIMEOUT + 0.05))
         assert row.status == event_completion.EVENT_SUSPENDED
 
     @pytest.mark.asyncio
     async def test_inside_the_timeout_it_stays_live(self):
         row = _botosani()
-        await _run([row], _at(TIMEOUT - 0.05))
+        await _run([row], now=_at(TIMEOUT - 0.05))
         assert row.status == "live"
 
     @pytest.mark.asyncio
     async def test_nothing_is_written_but_the_status(self):
         # Suspended, not closed: no completion time, no score, no result.
         row = _botosani()
-        await _run([row], _at(2.67))
+        await _run([row], now=_at(2.67))
         assert row.completed_at is None
         assert (row.home_score, row.away_score) == (None, None)
 
@@ -183,9 +183,9 @@ class TestEveryOtherRowKeepsItsBuffer:
     async def test_an_observed_soccer_row_keeps_its_maximum_and_buffer(self):
         # A score means something reported on play: 4.0h maximum + 0.5h.
         row = _Ev(1, SOCCER, KICKOFF, home_score=1, away_score=0)
-        await _run([row], _at(SOCCER_MAX + 0.4))
+        await _run([row], now=_at(SOCCER_MAX + 0.4))
         assert row.status == "live"
-        await _run([row], _at(SOCCER_MAX + 0.6))
+        await _run([row], now=_at(SOCCER_MAX + 0.6))
         assert row.status == event_completion.EVENT_SUSPENDED
 
     @pytest.mark.parametrize("sport_key", ["americanfootball_ncaaf", "golf_pga_championship"])
@@ -197,9 +197,9 @@ class TestEveryOtherRowKeepsItsBuffer:
             sport_key, SPORT_MAX_DURATIONS[sport_key.split("_")[0]], True
         )
         row = _Ev(2, sport_key, KICKOFF)
-        await _run([row], _at(top + 0.4))
+        await _run([row], now=_at(top + 0.4))
         assert row.status == "live"
-        await _run([row], _at(top + 0.6))
+        await _run([row], now=_at(top + 0.6))
         assert row.status == event_completion.EVENT_SUSPENDED
 
 
@@ -225,9 +225,9 @@ class TestTheTwoNetsAgreeOnSoccer:
         )
         assert bound < _max_hours(sport_key)  # the timeout narrowed it
         row = _Ev(3, sport_key, KICKOFF)
-        await _run([row], _at(bound - 0.05))
+        await _run([row], now=_at(bound - 0.05))
         assert row.status == "live"
-        await _run([row], _at(bound + 0.05))
+        await _run([row], now=_at(bound + 0.05))
         assert row.status == event_completion.EVENT_SUSPENDED
 
 
@@ -242,7 +242,7 @@ class TestTennisAndTheDefaultKeepTheirBuffer:
         )
         assert bound < _max_hours(sport_key)
         row = _Ev(4, sport_key, KICKOFF)
-        await _run([row], _at(bound + 0.4))
+        await _run([row], now=_at(bound + 0.4))
         assert row.status == "live"
-        await _run([row], _at(bound + 0.6))
+        await _run([row], now=_at(bound + 0.6))
         assert row.status == event_completion.EVENT_SUSPENDED
