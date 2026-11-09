@@ -8418,6 +8418,9 @@ async def _match_prediction_markets(limit: int = 500):
     }
 
     import time as _time
+
+    # #12042: which phase grows the pass to ~1 GB (see `mark_memory`).
+    from app.tasks.heavy_memory_turns import mark_memory as _mem
     _task_start = _time.monotonic()
 
     def _time_remaining() -> float:
@@ -8435,13 +8438,16 @@ async def _match_prediction_markets(limit: int = 500):
         # visiting, and a record of an exclusion that only gets written when
         # there is budget left over is a record that reliably goes missing on
         # exactly the busy nights it is wanted for.
+        _mem(stats, "start")
         await _settled_sweep(session, stats, now, _time_remaining)
+        _mem(stats, "settled_sweep")
 
         # Phase 1, Pass 1: Kalshi ticker scan
         logger.info("Phase 1 starting — %.0fs budget remaining", _time_remaining())
         processed_ids = await _phase1_pass1_ticker_scan(
             session, stats, now, polymarket_backfill_queue, _time_remaining,
         )
+        _mem(stats, "pass1_ticker_scan")
 
         # Phase 1, Pass 2: General scan
         stats["funnel"]["total_unlinked"] = (
@@ -8452,6 +8458,7 @@ async def _match_prediction_markets(limit: int = 500):
             polymarket_backfill_queue, _time_remaining,
         )
         stats["funnel"]["total_unlinked"] += stats["funnel"].get("general_scan_count", 0)
+        _mem(stats, "pass2_general_scan")
 
         # Phase 1, Pass 3: the backlog sweep (#2705). Passes 1 and 2 are
         # recency-ordered and capped, so the tail of the unlinked population is
@@ -8464,6 +8471,7 @@ async def _match_prediction_markets(limit: int = 500):
             session, stats, now, processed_ids,
             polymarket_backfill_queue, _time_remaining,
         )
+        _mem(stats, "pass3_backlog_scan")
 
         # Phase 1.5: Re-validate linked markets
         logger.info("Phase 1 done (%d scanned, %d linked) — %.0fs remaining",
@@ -8482,6 +8490,7 @@ async def _match_prediction_markets(limit: int = 500):
         await _flush_pass_receipts(
             session, link_changes, stats, _receipts.PHASE_PHASE15_REVALIDATE,
         )
+        _mem(stats, "phase15_revalidate")
 
         # #944: correct Kalshi game markets that collapsed onto the last game's
         # event (commence_time = resolution date). Idempotent + write-on-change,
@@ -8494,6 +8503,7 @@ async def _match_prediction_markets(limit: int = 500):
         stats["funnel"]["kalshi_segment_reconcile"] = (
             await _reconcile_kalshi_match_segments(session)
         )
+        _mem(stats, "relink_and_reconcile")
 
         # ── Phase 2: Write win_prob_snapshots for active linked markets ────
         #
@@ -8811,6 +8821,7 @@ async def _match_prediction_markets(limit: int = 500):
                     stats["errors"].append(f"market {market.market_id}: {err_str[:100]}")
                 continue
 
+        _mem(stats, "phase2")
         # ── Phase 2b: the completed cohort Phase 2's 24-hour window aged past ─
         # Blend key only, holes only, bounded at both ends — see the helper.
         try:
@@ -8832,6 +8843,7 @@ async def _match_prediction_markets(limit: int = 500):
         except Exception as e:
             await session.rollback()
             stats["errors"].append(f"phase2c: {str(e)[:100]}")
+        _mem(stats, "phase2b_2c")
 
     # Published after the matcher's session is closed, on the receipts' own
     # session. Phase 2 commits each unlink inline, so by here every claim in the
@@ -8868,6 +8880,8 @@ async def _match_prediction_markets(limit: int = 500):
                 except Exception as e:
                     stats["errors"].append(f"backfill_{market_id}: {str(e)[:100]}")
 
+    _mem(stats, "phase3_backfill")
+
     # ── #1163: self-heal phantom blend sources ─────────────────────────────
     # Sweep events whose win_probability_sources carries a kalshi/polymarket key
     # with no linked market of that source (orphans left by pre-guard unlinks).
@@ -8884,6 +8898,7 @@ async def _match_prediction_markets(limit: int = 500):
         except Exception as e:
             stats["errors"].append(f"phantom_cleanup: {str(e)[:100]}")
 
+    _mem(stats, "phantom_cleanup")
     logger.info(
         "Prediction market matching: scanned=%d, linked=%d, "
         "snapshots_written=%d, deduped=%d, stale_refused=%d, errors=%d, "

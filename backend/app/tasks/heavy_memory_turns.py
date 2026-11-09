@@ -167,3 +167,23 @@ def log_memory(task: str, start_mb: float | None) -> None:
         )
     except Exception:  # noqa: BLE001 — instrumentation never raises
         pass
+
+
+def mark_memory(stats: dict, phase: str) -> None:
+    """#12042: record ``[rss_mb, peak_mb]`` after ``phase`` in ``stats['memory_mb']``.
+
+    The matcher reaches ~1 GB in one pass (1,021 / 1,008 / 1,022 MB peaks on
+    Nov 9) and nothing said which phase grows it. Peak is the process
+    high-water mark, so the first phase whose peak jumps is the one to shrink.
+    Rides the task result, so the worker's "succeeded" line carries it.
+    Never raises.
+    """
+    try:
+        rss, peak = rss_mb(), peak_rss_mb()
+        stats.setdefault("memory_mb", {})[phase] = [
+            None if rss is None else round(rss),
+            None if peak is None else round(peak),
+        ]
+    except Exception:  # noqa: BLE001 — instrumentation never costs a pass
+        return
+
