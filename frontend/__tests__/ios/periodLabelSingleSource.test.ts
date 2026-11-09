@@ -154,6 +154,17 @@ const NOT_PERIOD_PARSERS = new Map([
     // producer's.
     "ports the producer's SOCCER REGULATION PHASES ('1st half', 'halftime', minutes) to decide whether a 90-minute forecast still applies — returns a phase, never labels a period",
   ],
+  [
+    join(IOS_ROOT, "Components/EventAtlasFootballCards11666.swift"),
+    // #12404 / #11666 (12a). Same market-name classification reason as
+    // `SpecialEventMarketsView.swift` and `MarketMapRail.swift`: this file
+    // classifies quarter-winner MARKET NAMES ('1st Quarter Winner', 'First
+    // Quarter Moneyline', excluding overtime) into the four regulation quarter
+    // panels (Q1–Q4) and titles the quarter-winner card ('Quarter by quarter',
+    // 'Regulation quarters (Q1–Q4); overtime excluded'). Those names belong to
+    // the quarter-winner markets and never come from ESPN's period string.
+    "classifies quarter-winner MARKET NAMES ('1st Quarter …', excluding overtime) into the four regulation quarter panels (Q1–Q4) and titles the quarter-winner card — never reads ESPN's period string",
+  ],
 ]);
 
 // The whole suite is meaningless if it is pointed at nothing — a path typo
