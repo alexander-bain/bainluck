@@ -562,6 +562,66 @@ class _LinkedMarketRef:
         return feeds_win_prob_blend(self.external_id)
 
 
+def _phase2_linked_select(now: datetime):
+    """Phase 2's load: every venue market linked to a live-or-recent event.
+
+    #12042: only the columns `_LinkedMarketRef` copies. Whole FuturesMarket +
+    Event ORM rows (22,328 of them on Nov 9) took the matcher from 212 to 612 MB
+    at this load. The decoded `market_metadata` dicts are ~108 MB of that (#9348
+    needs them); the rest was ORM state for columns Phase 2 never reads.
+    """
+    from app.models.models import Event, FuturesMarket
+
+    return (
+        select(
+            FuturesMarket.id.label("market_id"),
+            FuturesMarket.source,
+            FuturesMarket.external_id,
+            FuturesMarket.name,
+            FuturesMarket.status,
+            FuturesMarket.market_metadata,
+            Event.id.label("event_id"),
+            Event.commence_time.label("event_commence_time"),
+            Event.home_team_name,
+            Event.away_team_name,
+            Event.completed_at.label("event_completed_at"),
+        )
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.isnot(None),
+            or_(
+                Event.status.in_(["scheduled", "live"]),
+                and_(
+                    Event.status.in_(["completed", "closed"]),
+                    Event.commence_time >= now - timedelta(hours=24),
+                ),
+            ),
+        )
+    )
+
+
+def _linked_ref_from_row(row) -> _LinkedMarketRef:
+    """One `_phase2_linked_select` row as the scalar copy Phase 2 loops over."""
+    return _LinkedMarketRef(
+        market_id=row.market_id,
+        source=row.source,
+        external_id=row.external_id,
+        name=row.name,
+        event_id=row.event_id,
+        event_commence_time=row.event_commence_time,
+        home_team_name=row.home_team_name,
+        away_team_name=row.away_team_name,
+        status=row.status,
+        market_metadata=row.market_metadata,  # #9348
+        # #5820. Measured from the row that is already joined here, so the
+        # clause costs no query. False is the armed state and it is the honest
+        # reading of this join: a scheduled or live event with no
+        # `completed_at` is one we have no result for.
+        event_has_result=row.event_completed_at is not None,
+    )
+
+
 def _derive_sport_category(external_id: str | None) -> str | None:
     """Derive llm_sport_category from a Kalshi ticker's sport key.
 
@@ -8523,24 +8583,10 @@ async def _match_prediction_markets(limit: int = 500):
             logger.info("Skipping Phase 2 — only %.0fs remaining", _time_remaining())
             stats["funnel"]["phase2_skipped_budget"] = True
         else:
-            linked_result = await session.execute(
-                select(FuturesMarket, Event)
-                .join(Event, FuturesMarket.event_id == Event.id)
-                .where(
-                    FuturesMarket.source.in_(["kalshi", "polymarket"]),
-                    FuturesMarket.event_id.isnot(None),
-                    or_(
-                        Event.status.in_(["scheduled", "live"]),
-                        and_(
-                            Event.status.in_(["completed", "closed"]),
-                            Event.commence_time >= now - timedelta(hours=24),
-                        ),
-                    ),
-                )
-            )
+            linked_result = await session.execute(_phase2_linked_select(now))
             linked_rows = linked_result.all()
-            # #12042: Phase 2 carries the whole ~590 MB climb (215 -> 802 MB on
-            # Nov 9). This mark says whether it is this load or the loop below.
+            # #12042: this load was the whole climb (212 -> 612 MB, Nov 9 22:13Z,
+            # loop +3 MB). The mark stays so the narrowed load stays measured.
             _mem(stats, "phase2_load")
 
         # DEDUP: Kalshi creates separate binary markets per team outcome
@@ -8549,26 +8595,7 @@ async def _match_prediction_markets(limit: int = 500):
         # home probabilities to cancel out vig. Pick a primary market for
         # processing (matchup extraction, ticker validation), and store all
         # sibling markets for probability averaging.
-        linked_refs = [
-            _LinkedMarketRef(
-                market_id=market.id,
-                source=market.source,
-                external_id=market.external_id,
-                name=market.name,
-                event_id=event.id,
-                event_commence_time=event.commence_time,
-                home_team_name=event.home_team_name,
-                away_team_name=event.away_team_name,
-                status=market.status,
-                market_metadata=getattr(market, "market_metadata", None),  # #9348
-                # #5820. Measured from the row that is already joined here, so
-                # the clause costs no query. False is the armed state and it is
-                # the honest reading of this join: a scheduled or live event
-                # with no `completed_at` is one we have no result for.
-                event_has_result=event.completed_at is not None,
-            )
-            for market, event in linked_rows
-        ]
+        linked_refs = [_linked_ref_from_row(row) for row in linked_rows]
 
         all_per_event_source: dict[tuple[int, str], list[_LinkedMarketRef]] = {}
         for market_ref in linked_refs:
