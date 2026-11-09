@@ -677,6 +677,31 @@ enum FuturesAtlasPresentation11666 {
         )
     }
 
+    /// Outcome IDs whose current probability is withheld in the Atlas header/body (`Decide 10-C`
+    /// `.noRecentProbability` after 30 minutes, or `Decide 80-A` settled states `.won`, `.lost`,
+    /// `.resultUnconfirmed`). Handed to `EvolutionChartView` so its `Prob` leaderboard column
+    /// withholds the current probability (`"—"`) for the exact same outcomes across both `.source`
+    /// (`108629`) and `.verifiedTitle` markets.
+    nonisolated static func withheldCurrentOutcomeIds(
+        presentation: PagePresentation
+    ) -> Set<Int> {
+        var ids = Set<Int>()
+        for row in presentation.body.allRows {
+            if case .chance = row.displayValue {
+                continue
+            }
+            ids.insert(row.id)
+        }
+        if let selectedId = presentation.header.selectedOutcomeId {
+            if case .chance = presentation.header.primaryDisplay {
+                // Fresh open probability
+            } else {
+                ids.insert(selectedId)
+            }
+        }
+        return ids
+    }
+
     // MARK: - Formatting Helpers
 
     nonisolated private static func formatWholePercent(_ pct: Double) -> Int {
@@ -767,6 +792,9 @@ struct FuturesAtlasPageView11666: View {
                         market: market,
                         presentation: presentation,
                         representation: representation
+                    ),
+                    withheldCurrentOutcomeIds: FuturesAtlasPresentation11666.withheldCurrentOutcomeIds(
+                        presentation: presentation
                     )
                 )
             }
