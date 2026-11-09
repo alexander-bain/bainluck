@@ -107,7 +107,8 @@ def test_run_binds_the_scope_on_the_census(monkeypatch, capsys):
                         types.SimpleNamespace(get_task_session=session))
     args = argparse.Namespace(labels="Exact Margin, First Touchdown Scorer",
                               allow_small=True, backup=False, apply=False,
-                              include_live=False, limit=0)
+                              include_live=False, limit=0,
+                              backup_prefix="bak_2871_", delete_unmatched=False)
     asyncio.run(repair.run(args))
     assert s.binds[0]["scope_re"] == repair.label_scope_re(RULED)
     out = capsys.readouterr().out
