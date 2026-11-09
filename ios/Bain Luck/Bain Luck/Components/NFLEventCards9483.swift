@@ -842,6 +842,8 @@ struct NFLEventCardView9483: View {
                 EventAtlasCricketCardView11666(card: cricket)
             case .esports(let esports):
                 EventAtlasEsportsCardView11666(card: esports, awayColor: awayColor, homeColor: homeColor)
+            case .rugbyAfl(let rugbyAfl):
+                EventAtlasRugbyAflCardView11666(card: rugbyAfl)
             case .nhlScoring(let nhl):
                 EventAtlasNhlScoringCardView11666(card: nhl, awayColor: awayColor, homeColor: homeColor,
                                                   state: state, expanded: expanded)
