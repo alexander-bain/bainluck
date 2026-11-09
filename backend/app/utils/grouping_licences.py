@@ -260,6 +260,16 @@ def is_kind_licensed_for_promotion(
     return bool(receipt)
 
 
+def is_kind_licensed(
+    kind: str,
+    *,
+    path: Path | str | None = None,
+) -> bool:
+    """Return True only when ``kind`` holds an active ``PASS`` licence in the licences registry."""
+    registry = load_grouping_licences(path=path)
+    return is_kind_licensed_for_promotion(registry, kind)
+
+
 def suspend_grouping_kind(
     registry: Mapping[str, Any],
     kind: str,

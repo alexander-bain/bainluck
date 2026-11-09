@@ -624,3 +624,16 @@ async def get_grouping_grades(
         "summary": summarize_grouping_grades(grades),
     }
 
+
+@router.get("/grouping-kind-proposals")
+async def get_grouping_kind_proposals(
+    request: Request,
+    secret: str = Query(None),
+) -> dict:
+    """Return Alex-only proposed new grouping kinds with five example cards each (#9937)."""
+    from app.utils.grouping_kind_proposer import load_committed_kind_proposals
+
+    _check_admin_secret(secret, request=request)
+    return load_committed_kind_proposals()
+
+
