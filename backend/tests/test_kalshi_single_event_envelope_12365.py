@@ -2,8 +2,10 @@
 
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 import asyncio
+import importlib
 
 import httpx
 import pytest
@@ -13,6 +15,19 @@ from app.tasks.futures_price_refresh import VENUE_SETTLED, _fetch_kalshi_prices
 from app.tasks.kalshi import _fetch_exact_kalshi_game_event
 
 TICKER = "KXEUROLEAGUEGAME-26OCT081200CZVDUB"
+
+
+class FixtureDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        instant = cls(2026, 10, 8, 12, tzinfo=timezone.utc)
+        return (
+            instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+        )
+
+    @classmethod
+    def utcnow(cls):
+        return cls.now(timezone.utc).replace(tzinfo=None)
 
 
 def packet():
@@ -63,8 +78,16 @@ async def native_reader(payload=None, *, status=200, transport_error=None):
 
 
 @pytest.fixture(autouse=True)
-def no_retry_wait(monkeypatch):
+def fixed_fixture_clock(monkeypatch):
     monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    # Pin the readers' wall clocks while keeping the event loop's clock real.
+    for name in (
+        "app.services.kalshi_api",
+        "app.tasks.futures_price_refresh",
+        "app.tasks.backfill_winners",
+    ):
+        module = importlib.import_module(name)
+        monkeypatch.setattr(module, "datetime", FixtureDateTime)
 
 
 @pytest.mark.parametrize(
