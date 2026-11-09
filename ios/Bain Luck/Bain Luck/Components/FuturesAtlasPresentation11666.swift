@@ -1,11 +1,12 @@
 import Foundation
 import SwiftUI
 
-/// #11666 (Item 17, Decide 91-C) — Native Title-Race / Futures Page Presentation (`F1–F4`).
+/// #11666 (Item 17, Decide 91-C) — Native Title-Race / Futures Page Presentation (`F1`, `F2`, `F4`).
 ///
-/// Implements the approved Title-Race / Futures Page design (`docs/designs/futures-page-2026-11.md`)
-/// and carries the non-sport/special-event futures categories (`horse_racing`, `olympics`, `poker`,
-/// `entertainment`, `economics`, `weather`) behind `ReleaseSurfaces.isEventPageAtlasEnabled()`:
+/// Implements the approved Title-Race / Futures Page header, market-shape-adaptive body, and
+/// venue-free attribution (`docs/designs/futures-page-2026-11.md`) and carries the non-sport /
+/// special-event futures categories (`horse_racing`, `olympics`, `poker`, `entertainment`,
+/// `economics`, `weather`) behind `ReleaseSurfaces.isEventPageAtlasEnabled()`:
 ///
 /// - **F1 (`HeaderModel` & `DetailsSheetModel`)**:
 ///   - Category + market-state eyebrow (`"Politics · Open"`, `"Politics · Settled"`, etc.).
@@ -36,10 +37,10 @@ import SwiftUI
 ///   5. `.singleLegPredicate`: Single supplied outcome card (`outcomes.count == 1`), never inventing
 ///      a synthetic second leg.
 ///
-/// - **F3 (`JourneySeries` & `buildJourneySeries`)**:
-///   - Excludes `bookmaker == "settlement"` points from historical probability series (`#10955`).
-///   - Connects observed points as a continuous solid series (`#11929` — no blank gap call-outs).
-///   - Places terminal `"✓ Won"` / `"✗ Lost"` result marks at the last real price observation.
+/// - **Chart Agreement (`chartExpectation`)**:
+///   - Mounts `EvolutionChartView` with a `VerifiedTitleChartExpectation` that follows the reader's
+///     selected outcome (`header.selectedOutcomeId`) and withholds `heroProbability` (`nil`) when the
+///     headline reads `"No recent probability"` (`Decide 10-C`).
 ///
 /// - **F4 (`narrativeCopy` & `AttributionModel`)**:
 ///   - Venue-free narrative copy + attribution-only footer via `SourceLabels.attribution(for:)` and
@@ -151,30 +152,6 @@ enum FuturesAtlasPresentation11666 {
         let body: BodyModel
         let detailsSheet: DetailsSheetModel
         let attribution: AttributionModel?
-    }
-
-    // MARK: - Probability Journey Model (F3)
-
-    nonisolated struct RawSnapshot: Decodable, Equatable, Sendable {
-        let timestamp: String
-        let outcomes: [String: Double]
-        let bookmaker: String?
-    }
-
-    struct JourneyPoint: Equatable, Identifiable {
-        var id: String { "\(outcomeName)-\(date.timeIntervalSince1970)" }
-        let outcomeName: String
-        let date: Date
-        let probabilityPercent: Double
-    }
-
-    struct JourneySeries: Equatable, Identifiable {
-        var id: String { outcomeName }
-        let outcomeName: String
-        /// Continuous solid series (#11929) with `bookmaker == "settlement"` excluded (#10955).
-        let points: [JourneyPoint]
-        let terminalResultMark: String?
-        let terminalResultCaption: String?
     }
 
     // MARK: - Public Builder
@@ -670,66 +647,40 @@ enum FuturesAtlasPresentation11666 {
         return trimmed
     }
 
-    // MARK: - Journey Series Builder (F3 — #11929 & #10955)
+    // MARK: - Chart Agreement Expectation (EvolutionChartView #9387 + Decide 10-C)
 
-    nonisolated static func buildJourneySeries(
-        from snapshots: [RawSnapshot],
-        market: FuturesMarketDetail
-    ) -> [JourneySeries] {
-        var pointsByOutcome: [String: [JourneyPoint]] = [:]
-        for snapshot in snapshots {
-            // #10955: `bookmaker: "settlement"` rows are settlement markers, never historical prices.
-            if snapshot.bookmaker?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "settlement" {
-                continue
-            }
-            guard let date = snapshot.timestamp.asDate else { continue }
-            for (name, prob) in snapshot.outcomes where prob.isFinite {
-                pointsByOutcome[name, default: []].append(
-                    JourneyPoint(outcomeName: name, date: date, probabilityPercent: prob * 100.0)
-                )
-            }
+    /// Builds the `VerifiedTitleChartExpectation` handed to `EvolutionChartView` on the Atlas
+    /// futures page:
+    /// - Follows the currently selected or leading headline outcome (`presentation.header.selectedOutcomeId`).
+    /// - Withholds `heroProbability` (`nil`) when the headline outcome is stale (`Decide 10-C`:
+    ///   `.noRecentProbability`) so a verified-title chart does not claim agreement with a stale
+    ///   current probability column.
+    nonisolated static func chartExpectation(
+        market: FuturesMarketDetail,
+        presentation: PagePresentation,
+        representation: FuturesRepresentation
+    ) -> VerifiedTitleChartExpectation? {
+        guard representation != .source else { return nil }
+        let selectedOutcome = market.outcomes.first(where: { $0.id == presentation.header.selectedOutcomeId })
+            ?? futuresDetailHeroOutcome(market)
+        let effectiveProbability: Double?
+        if case .noRecentProbability = presentation.header.primaryDisplay {
+            effectiveProbability = nil
+        } else {
+            effectiveProbability = selectedOutcome?.probability
         }
-
-        let isResolved = market.status == "resolved"
-        return market.outcomes.compactMap { outcome in
-            let sortedPoints = (pointsByOutcome[outcome.name] ?? []).sorted { $0.date < $1.date }
-            guard !sortedPoints.isEmpty else { return nil }
-
-            var terminalMark: String? = nil
-            var terminalCaption: String? = nil
-            if isResolved {
-                let rowValue = resolveRowDisplayValue(
-                    outcome: outcome,
-                    market: market,
-                    isResolved: true,
-                    renderedPercent: nil,
-                    now: Date()
-                )
-                switch rowValue {
-                case .won:
-                    terminalMark = EventAtlasStates11666.wonWithCheck
-                    terminalCaption = "\(outcome.name) · Won. The result adds no probability point."
-                case .lost:
-                    terminalMark = EventAtlasStates11666.lostWithCross
-                    terminalCaption = "\(outcome.name) · Lost. The result adds no probability point."
-                default:
-                    break
-                }
-            }
-
-            return JourneySeries(
-                outcomeName: outcome.name,
-                points: sortedPoints,
-                terminalResultMark: terminalMark,
-                terminalResultCaption: terminalCaption
-            )
-        }
+        return VerifiedTitleChartExpectation(
+            representation: market.effectiveRepresentation,
+            heroOutcomeId: selectedOutcome?.id,
+            heroProbability: effectiveProbability,
+            heroContributors: selectedOutcome?.contributingSources ?? []
+        )
     }
 
     // MARK: - Formatting Helpers
 
     nonisolated private static func formatWholePercent(_ pct: Double) -> Int {
-        Int((pct * 10.0 / 10.0).rounded())
+        Int(pct.rounded())
     }
 
     nonisolated private static let timestampFormatter: DateFormatter = {
@@ -741,7 +692,7 @@ enum FuturesAtlasPresentation11666 {
     }()
 }
 
-// MARK: - SwiftUI Views (F1–F4)
+// MARK: - SwiftUI Views (F1, F2, F4)
 
 struct FuturesAtlasPageView11666: View {
     let market: FuturesMarketDetail
@@ -812,11 +763,11 @@ struct FuturesAtlasPageView11666: View {
                     tournamentEnd: golfTournamentEnd,
                     refreshToken: chartRefreshToken,
                     representation: representation,
-                    expectation: representation == .source ? nil
-                        : VerifiedTitleChartExpectation(
-                            market: market,
-                            hero: futuresDetailHeroOutcome(market)
-                        )
+                    expectation: FuturesAtlasPresentation11666.chartExpectation(
+                        market: market,
+                        presentation: presentation,
+                        representation: representation
+                    )
                 )
             }
 

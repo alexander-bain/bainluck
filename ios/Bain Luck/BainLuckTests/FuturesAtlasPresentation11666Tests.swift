@@ -422,64 +422,91 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
         XCTAssertEqual(stalePage.header.primaryDisplay.primaryLabel, "No recent probability")
     }
 
-    // MARK: - 6. Journey Series Excludes `bookmaker: settlement` Points (#10955 & #11929)
+    // MARK: - 6. Chart Agreement Expectation Follows Selected Outcome & Withholds Stale Headline (#9387 + Decide 10-C)
 
-    func testBuildJourneySeriesExcludesSettlementBookmakerAndAttachesTerminalResultMark() throws {
+    func testChartExpectationFollowsSelectedOutcomeAndWithholdsStaleHeadlineProbability() throws {
         let market = makeMarket(
-            id: 108645,
-            name: "Georgia Governor winner",
+            id: 108629,
+            name: "Closest Governor race in 2026",
             category: "politics",
-            status: "resolved",
-            mutuallyExclusive: true,
+            status: "active",
             outcomes: [
                 makeOutcomeDict(
-                    id: 301,
-                    name: "Keisha Lance Bottoms",
-                    probability: 1.0,
-                    openingProbability: 0.56,
-                    isWinner: true,
-                    resolutionSource: "kalshi"
+                    id: 1,
+                    name: "Florida",
+                    probability: 0.29,
+                    openingProbability: 0.24,
+                    observedAt: "2026-11-04T02:25:00Z"
                 ),
                 makeOutcomeDict(
-                    id: 302,
-                    name: "Burt Jones",
-                    probability: 0.0,
-                    openingProbability: 0.45,
-                    isWinner: false,
-                    resolutionSource: "kalshi"
+                    id: 2,
+                    name: "Georgia",
+                    probability: 0.21,
+                    openingProbability: 0.22,
+                    observedAt: "2026-11-04T02:25:00Z"
+                ),
+                makeOutcomeDict(
+                    id: 3,
+                    name: "Wisconsin",
+                    probability: 0.16,
+                    openingProbability: 0.15,
+                    observedAt: "2026-11-04T01:00:00Z" // > 30m before referenceNow (stale)
                 ),
             ]
         )
 
-        let snapshotsJSON: [[String: Any]] = [
-            [
-                "timestamp": "2026-11-03T17:57:00Z",
-                "outcomes": ["Keisha Lance Bottoms": 0.70, "Burt Jones": 0.30],
-                "bookmaker": "kalshi",
-            ],
-            [
-                "timestamp": "2026-11-04T01:55:24Z",
-                "outcomes": ["Keisha Lance Bottoms": 0.96, "Burt Jones": 0.04],
-                "bookmaker": "kalshi",
-            ],
-            [
-                "timestamp": "2026-11-04T02:27:00Z",
-                "outcomes": ["Keisha Lance Bottoms": 1.0, "Burt Jones": 0.0],
-                "bookmaker": "settlement",
-            ],
-        ]
-        let data = try JSONSerialization.data(withJSONObject: snapshotsJSON)
-        let snapshots = try makeDecoder().decode([FuturesAtlasPresentation11666.RawSnapshot].self, from: data)
+        // Default headline follows leading outcome (id: 1, probability: 0.29)
+        let defaultPresentation = FuturesAtlasPresentation11666.build(market: market, now: referenceNow)
+        let defaultExpectation = try XCTUnwrap(
+            FuturesAtlasPresentation11666.chartExpectation(
+                market: market,
+                presentation: defaultPresentation,
+                representation: .verifiedTitle
+            )
+        )
+        XCTAssertEqual(defaultExpectation.heroOutcomeId, 1)
+        XCTAssertEqual(defaultExpectation.heroProbability, 0.29)
 
-        let series = FuturesAtlasPresentation11666.buildJourneySeries(from: snapshots, market: market)
-        XCTAssertEqual(series.count, 2)
-        let winnerSeries = try XCTUnwrap(series.first(where: { $0.outcomeName == "Keisha Lance Bottoms" }))
-        XCTAssertEqual(winnerSeries.points.count, 2)
-        XCTAssertEqual(winnerSeries.points.map(\.probabilityPercent), [70.0, 96.0])
-        XCTAssertEqual(winnerSeries.terminalResultMark, "✓ Won")
-        XCTAssertEqual(
-            winnerSeries.terminalResultCaption,
-            "Keisha Lance Bottoms · Won. The result adds no probability point."
+        // Picking another fresh outcome updates the chart expectation to follow the pick (id: 2, probability: 0.21)
+        let pickedPresentation = FuturesAtlasPresentation11666.build(
+            market: market,
+            selectedOutcomeId: 2,
+            now: referenceNow
+        )
+        let pickedExpectation = try XCTUnwrap(
+            FuturesAtlasPresentation11666.chartExpectation(
+                market: market,
+                presentation: pickedPresentation,
+                representation: .verifiedTitle
+            )
+        )
+        XCTAssertEqual(pickedExpectation.heroOutcomeId, 2)
+        XCTAssertEqual(pickedExpectation.heroProbability, 0.21)
+
+        // Picking a stale outcome whose headline reads "No recent probability" withholds heroProbability (nil)
+        let stalePickedPresentation = FuturesAtlasPresentation11666.build(
+            market: market,
+            selectedOutcomeId: 3,
+            now: referenceNow
+        )
+        XCTAssertEqual(stalePickedPresentation.header.primaryDisplay.primaryLabel, "No recent probability")
+        let staleExpectation = try XCTUnwrap(
+            FuturesAtlasPresentation11666.chartExpectation(
+                market: market,
+                presentation: stalePickedPresentation,
+                representation: .verifiedTitle
+            )
+        )
+        XCTAssertEqual(staleExpectation.heroOutcomeId, 3)
+        XCTAssertNil(staleExpectation.heroProbability)
+
+        // Source representation continues to pass nil expectation
+        XCTAssertNil(
+            FuturesAtlasPresentation11666.chartExpectation(
+                market: market,
+                presentation: defaultPresentation,
+                representation: .source
+            )
         )
     }
 
