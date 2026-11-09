@@ -1,20 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CollectionWeekNavigation } from "./CollectionWeekNavigation";
 import { CollectionMemberCard } from "./CollectionMemberCard";
 import PartyControlRow from "@/components/politics/PartyControlRow";
 import { MidtermsAtlasChamberControl, MidtermsAtlasMemberCard } from "./MidtermsAtlasSection";
 import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
-import type { FeedFuturesData } from "@/lib/types";
+import type { FeedFuturesData, FeedItem } from "@/lib/types";
+import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
+import { usePriceVisibility } from "@/hooks/usePriceVisibility";
+import { priceKey } from "@/lib/discover/priceRefresh";
 import {
   acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
-  isNflWeekCollectionSlug, relatedMarketLinks, settleCollectionPage, settleCollectionRead,
+  isNflWeekCollectionSlug, pricedCollectionMember, relatedMarketLinks, servedSettledMember, settleCollectionPage, settleCollectionRead,
   type CollectionHub as Hub, type CollectionMember, type CollectionPageRequest, type CollectionReadingContext,
 } from "@/lib/collections";
 
 const storageKey = (slug: string) => `collection-reading:${slug}`;
+
+/**
+ * #10090: tells the price stream this member is on screen, so it is re-read
+ * and streamed like a Discover card (the same `usePriceVisibility` rule).
+ */
+function PricedMemberShell({ owner, item, report, children }: {
+  owner: string;
+  item: FeedItem;
+  report: (owner: string, keys: string[], visible: boolean) => void;
+  children: ReactNode;
+}) {
+  const items = useMemo(() => [item], [item]);
+  const ref = usePriceVisibility(owner, items, report);
+  return <div ref={ref}>{children}</div>;
+}
 
 export default function CollectionHub({ slug }: { slug: string }) {
   const atlasEnabled = useAtlasPageOptIn();
@@ -78,6 +96,31 @@ export default function CollectionHub({ slug }: { slug: string }) {
   // Never draw another slug's hub, even for the frame before the reset effect.
   const shown = hub?.slug === slug ? hub : null;
   latest.current = shown;
+
+  // #10090: the same price stream Discover and Sports run. On-screen members
+  // get a fresh price read, then live pushes (event frames, market
+  // invalidations) re-read them within seconds. A futures-only collection had
+  // no refresh at all (`collectionRefreshInterval` is 0 without games).
+  // A collection reads the same for every reader, so the book is keyed on the
+  // slug rather than the signed-in user: a new slug starts from its own prices.
+  // A member already settled by the official result keeps its winner, so it
+  // is never read (`servedSettledMember`).
+  const priceGroups = useMemo(
+    () => (shown?.members ?? [])
+      .filter((member) => !servedSettledMember(member))
+      .map((member) => ({ type: "single" as const, item: member.item })),
+    [shown],
+  );
+  const streamed = useDiscoverPriceStream(priceGroups, `collection:${slug}`);
+  const reportPriceVisibility = streamed.setPriceVisibility;
+  const pricedByKey = useMemo(
+    () => new Map(streamed.items.flatMap((group) => {
+      const key = group.item ? priceKey(group.item) : null;
+      return group.item && key ? [[key, group.item] as const] : [];
+    })),
+    [streamed.items],
+  );
+  const priced = (member: CollectionMember) => pricedCollectionMember(member, pricedByKey);
 
   // #9925: one more page of a theme collection, only when the reader asks.
   const loadMore = async () => {
@@ -166,11 +209,14 @@ export default function CollectionHub({ slug }: { slug: string }) {
   const card = (member: CollectionMember, presentation?: string) => <div id={collectionMemberDomId(member.key)} key={member.key} data-collection-member={member.key} onClickCapture={(event) => {
     const anchor = (event.target as Element).closest("a");
     if (anchor?.getAttribute("href") === member.href) remember(member.key);
-  }}><CollectionMemberCard member={member} presentation={presentation} /></div>;
+  }}><PricedMemberShell owner={member.key} item={member.item} report={reportPriceVisibility}>
+    <CollectionMemberCard member={priced(member)} presentation={presentation} />
+  </PricedMemberShell></div>;
 
   const control = (id: number) => {
-    const member = shown?.members.find(m => m.id === id);
-    if (!member) return null;
+    const served = shown?.members.find(m => m.id === id);
+    if (!served) return null;
+    const member = priced(served);
     const data = member.item.data as FeedFuturesData & { settled_winner?: string };
     const gop = data.top_outcomes.find(o => /^republican(?:s| party)?$|^gop$/i.test(o.name))?.probability;
     const dem = data.top_outcomes.find(o => /^democrat(?:s|ic(?: party)?)?$/i.test(o.name))?.probability;
@@ -246,7 +292,9 @@ export default function CollectionHub({ slug }: { slug: string }) {
           {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
             {midterms && atlasEnabled && member.item.type === "futures" ? (
               <div id={collectionMemberDomId(member.key)} data-collection-member={member.key}>
-                <MidtermsAtlasMemberCard member={member} sectionTitle={section.title} />
+                <PricedMemberShell owner={member.key} item={member.item} report={reportPriceVisibility}>
+                  <MidtermsAtlasMemberCard member={priced(member)} sectionTitle={section.title} />
+                </PricedMemberShell>
               </div>
             ) : (
               card(member, midterms ? section.layout ?? "auto" : undefined)
