@@ -22,6 +22,16 @@ THE RULE. One shared lease, so the two never run at the same time:
 Both log their resident memory at the end (``heavy_memory_turn``), so the next
 R14 names which task was large. Every Redis problem fails OPEN: the task runs,
 as it did before this module.
+
+THE CALIBRATION BEAT (Nov 9). ``precompute_calibration_main`` joins the same
+lease with the poll's rules (pending mark, one-minute retries, runs anyway after
+the last). Measured that morning: the matcher's last three passes peaked at
+1,021, 1,008 and 1,022 MB and the calibration beat's last recorded peak was
+999 MB, on the same 1 GB dyno. The 2:15 AM PT beat started when the 2:05
+matcher finished, the 2:20 matcher started in the other slot, and R15 killed
+the dyno at 2:27:52 with both mid-run. In the 48 h before, 33 of 48 hourly
+beats left no record (#12322). The matcher declines a tick while the beat holds
+the lease or waits for it, which costs about two matcher passes an hour.
 """
 
 from __future__ import annotations
@@ -48,6 +58,13 @@ MATCH_LEASE_TTL_S = 930
 POLL_RETRY_COUNTDOWN_S = 60
 POLL_MAX_RETRIES = 15
 
+#: The calibration beat's turn. Its Celery hard limit is 1,560 s; the retry
+#: window is the poll's, sized to one matching pass.
+CALIBRATION_PENDING_KEY = "bainluck:heavy:calibration_pending"
+CALIBRATION_LEASE_TTL_S = 1620
+CALIBRATION_RETRY_COUNTDOWN_S = POLL_RETRY_COUNTDOWN_S
+CALIBRATION_MAX_RETRIES = POLL_MAX_RETRIES
+
 
 def _client():
     try:
@@ -58,35 +75,60 @@ def _client():
         return None
 
 
-def poll_is_pending(rc=None) -> bool:
-    """True while a poll is waiting for the matcher to finish. False on any error."""
+def _is_pending(key: str, rc=None) -> bool:
     client = rc if rc is not None else _client()
     if client is None:
         return False
     try:
-        return bool(client.exists(PENDING_KEY))
+        return bool(client.exists(key))
     except Exception:  # noqa: BLE001
         return False
+
+
+def _mark_pending(key: str, rc=None) -> None:
+    client = rc if rc is not None else _client()
+    if client is None:
+        return
+    try:
+        client.set(key, "1", ex=PENDING_TTL_S)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _clear_pending(key: str, rc=None) -> None:
+    client = rc if rc is not None else _client()
+    if client is None:
+        return
+    try:
+        client.delete(key)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def poll_is_pending(rc=None) -> bool:
+    """True while a poll is waiting for the matcher to finish. False on any error."""
+    return _is_pending(PENDING_KEY, rc)
 
 
 def mark_poll_pending(rc=None) -> None:
-    client = rc if rc is not None else _client()
-    if client is None:
-        return
-    try:
-        client.set(PENDING_KEY, "1", ex=PENDING_TTL_S)
-    except Exception:  # noqa: BLE001
-        pass
+    _mark_pending(PENDING_KEY, rc)
 
 
 def clear_poll_pending(rc=None) -> None:
-    client = rc if rc is not None else _client()
-    if client is None:
-        return
-    try:
-        client.delete(PENDING_KEY)
-    except Exception:  # noqa: BLE001
-        pass
+    _clear_pending(PENDING_KEY, rc)
+
+
+def calibration_is_pending(rc=None) -> bool:
+    """True while the calibration beat is waiting for the dyno. False on any error."""
+    return _is_pending(CALIBRATION_PENDING_KEY, rc)
+
+
+def mark_calibration_pending(rc=None) -> None:
+    _mark_pending(CALIBRATION_PENDING_KEY, rc)
+
+
+def clear_calibration_pending(rc=None) -> None:
+    _clear_pending(CALIBRATION_PENDING_KEY, rc)
 
 
 def rss_mb() -> float | None:
