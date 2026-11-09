@@ -3653,6 +3653,34 @@ def _team_card_lead_order_key(lead_keys: frozenset | None):
     return case((Sport.key.in_(sorted(lead_keys)), 0), else_=1)
 
 
+def _exact_marquee_team_order_key(team_rows, query: str, lead_keys: frozenset | None):
+    """#12366: an exact, unambiguous franchise leads across game states.
+
+    `bears` resolves Chicago, but a live Maine game and yesterday's college
+    final split Chicago's schedule because #8738 orders only within a state.
+    Reuse that key ahead of status when one marquee club owns the exact name
+    or alias. Tied franchises (`giants`) keep today's ordering. Removing city
+    prefix aliases also keeps `chicago` and `texas` on their existing rules.
+    The reader's explicit day still comes first; no game is filtered out.
+    """
+    from app.utils.search_match_class import MC0_EXACT, match_class
+
+    if not lead_keys:
+        return None
+    keyed = _team_card_keyed(team_rows, query, cap=None, restated_aliases=False)
+    if not keyed:
+        return None
+    first_key, first = keyed[0]
+    if (
+        match_class(query, _search_team_evidence(first, query)) != MC0_EXACT
+        or first["sport_key"] not in lead_keys
+        or not _is_marquee_team_sport_key(first["sport_key"])
+        or len({card["name"].casefold() for key, card in keyed if key == first_key}) != 1
+    ):
+        return None
+    return _team_card_lead_order_key(lead_keys)
+
+
 def _settled_day_order_key(lead_keys: frozenset | None):
     """#9040: a finished game's Eastern DAY, newest first — above #8738's key.
 
@@ -10721,6 +10749,9 @@ async def search_events(
     # #8738: the games list follows the TEAMS card's leader (see the key).
     _team_card_lead_sports = _team_card_lead_sport_keys(_early_team_rows, _q_identity)
     _team_card_lead_key = _team_card_lead_order_key(_team_card_lead_sports)
+    _exact_marquee_key = _exact_marquee_team_order_key(
+        _early_team_rows, _q_identity, _team_card_lead_sports,
+    )
     # #9040: ...except among finished games, where the newest day leads first.
     _settled_day_key = _settled_day_order_key(_team_card_lead_sports)
     _mark("team_evidence")
@@ -10811,6 +10842,9 @@ async def search_events(
     _day_boost = _intent_day_order_key(_intent, now)
     query = query.order_by(
         *( (_day_boost,) if _day_boost is not None else () ),
+        # #12366: an exact, unambiguous franchise stays ahead of namesake
+        # colleges across states, before the paginated window is cut.
+        *( (_exact_marquee_key,) if _exact_marquee_key is not None else () ),
         # #8697: below a named day (the reader's own constraint), above
         # everything else — a namesake's LIVE game still sits under the resolved
         # team's games. Absent when disarmed, like `_day_boost`.
