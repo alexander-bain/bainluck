@@ -824,7 +824,7 @@ struct EventAtlasGolfTournamentSection11666: View {
                     )
                 }
                 .padding(14)
-                .background(Color(UIColor.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+                .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 14))
                 .accessibilityIdentifier("golf.atlas.finishExpectationsCard")
             }
 
@@ -986,7 +986,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
             }
         }
         .padding(14)
-        .background(Color(UIColor.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 14))
         .accessibilityIdentifier("golf.atlas.journeyCard")
     }
 
@@ -1003,7 +1003,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
                 .padding(.vertical, 6)
                 .frame(minHeight: 36)
                 .background(
-                    active ? Color(UIColor.tertiarySystemFill) : Color.clear,
+                    active ? Color.systemGray5 : Color.clear,
                     in: Capsule()
                 )
         }
@@ -1051,7 +1051,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .background(
-                isSelected ? color.opacity(0.12) : Color(UIColor.systemGroupedBackground),
+                isSelected ? color.opacity(0.12) : Color.groupedBackground,
                 in: RoundedRectangle(cornerRadius: 10)
             )
             .overlay(
@@ -1144,7 +1144,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
             strokesPlot
         }
         .padding(14)
-        .background(Color(UIColor.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 14))
         .accessibilityIdentifier("golf.atlas.closingRoundCard")
     }
 
@@ -1193,7 +1193,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
             }
         }
         .padding(10)
-        .background(Color(UIColor.systemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color.groupedBackground, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var strokesPlot: some View {
@@ -1207,7 +1207,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
                 let zeroX = width * CGFloat(Double(0 - minS) / span)
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color(UIColor.separator).opacity(0.35))
+                        .fill(Color.barTrack.opacity(0.35))
                         .frame(height: 2)
                         .offset(y: 22)
 
@@ -1307,7 +1307,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
                                 .padding(.vertical, 6)
                                 .frame(minHeight: 36)
                                 .background(
-                                    active ? Color(UIColor.tertiarySystemFill) : Color(UIColor.systemGroupedBackground),
+                                    active ? Color.systemGray5 : Color.groupedBackground,
                                     in: Capsule()
                                 )
                         }
@@ -1321,7 +1321,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
             }
         }
         .padding(14)
-        .background(Color(UIColor.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 14))
         .accessibilityIdentifier("golf.atlas.roundsCard")
     }
 
@@ -1439,7 +1439,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
             }
         }
         .padding(10)
-        .background(Color(UIColor.systemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color.groupedBackground, in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -1503,7 +1503,7 @@ struct EventAtlasGolfContenderChooserView11666: View {
                             .padding(.vertical, 6)
                             .frame(minHeight: 36)
                             .background(
-                                active ? Color(UIColor.tertiarySystemFill) : Color(UIColor.systemGroupedBackground),
+                                active ? Color.systemGray5 : Color.groupedBackground,
                                 in: Capsule()
                             )
                     }
@@ -1527,7 +1527,7 @@ struct EventAtlasGolfContenderChooserView11666: View {
                                 .padding(.vertical, 5)
                                 .frame(minHeight: 32)
                                 .background(
-                                    active ? Color(UIColor.tertiarySystemFill) : Color(UIColor.systemGroupedBackground),
+                                    active ? Color.systemGray5 : Color.groupedBackground,
                                     in: Capsule()
                                 )
                         }
@@ -1585,7 +1585,7 @@ struct EventAtlasGolfContenderChooserView11666: View {
             }
         }
         .padding(14)
-        .background(Color(UIColor.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 14))
         .accessibilityIdentifier("golf.atlas.chooserCard")
     }
 
@@ -1626,7 +1626,7 @@ struct EventAtlasGolfContenderChooserView11666: View {
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .background(
-                isSelected ? EventAtlasGolfTournament11666.palette[0].opacity(0.12) : Color(UIColor.systemGroupedBackground),
+                isSelected ? EventAtlasGolfTournament11666.palette[0].opacity(0.12) : Color.groupedBackground,
                 in: RoundedRectangle(cornerRadius: 10)
             )
             .overlay(
