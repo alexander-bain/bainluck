@@ -1175,7 +1175,8 @@ private struct CombatDurationWrappedText10868: View {
 
 /// Stable ids so the owner can return focus to the exact originating control.
 nonisolated enum CombatDurationAccessibilityID10868 {
-    static let key = "combatDuration10868.key"
+    private static let prefix = "combatDuration10868"
+    static var key: String { "\(prefix).key" }
     static let comparison = "combatDuration10868.comparison"
     static let finish = "combatDuration10868.finish"
     static func tile(_ marketID: String) -> String { "combatDuration10868.tile.\(marketID)" }

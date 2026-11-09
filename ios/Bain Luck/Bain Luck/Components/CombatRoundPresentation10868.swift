@@ -1159,7 +1159,8 @@ private struct CombatRoundTrack10868: View {
 
 /// Stable ids so the owner can return focus to the exact originating control.
 nonisolated enum CombatRoundAccessibilityID10868 {
-    static let key = "combatRound10868.key"
+    private static let prefix = "combatRound10868"
+    static var key: String { "\(prefix).key" }
     static let comparison = "combatRound10868.comparison"
     static let finish = "combatRound10868.finish"
     static func group(_ groupID: String) -> String { "combatRound10868.group.\(groupID)" }
