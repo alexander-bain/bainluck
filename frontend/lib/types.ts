@@ -3495,6 +3495,9 @@ export interface CompetitionEdition {
   concept_key: string | null;
   start: string | null; // ISO date (YYYY-MM-DD)
   end: string | null; // ISO date (YYYY-MM-DD)
+  // #12201: "approximate" is a conventional window nobody has announced. It
+  // prints as a month ("September 2027"), never a day, and no days count to it.
+  date_confidence?: "confirmed" | "approximate" | null;
 }
 
 /* ─── Tournament extensions on a standard event page (UX-P152) ───
