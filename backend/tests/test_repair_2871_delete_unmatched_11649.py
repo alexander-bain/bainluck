@@ -121,3 +121,45 @@ def test_the_new_statements_parse_as_postgres():
     for name in ("ledger_unlink_insert", "unlink"):
         sql = repair.SQL[name].format(ledger=repair.LEDGER)
         assert sqlglot.parse(sql, dialect="postgres")[0] is not None, name
+
+
+def _args(**over):
+    import argparse
+    base = dict(labels="Exact Margin,First Touchdown Scorer", allow_small=True, backup=False,
+                apply=False, include_live=False, limit=0, backup_prefix="bak_2871_",
+                delete_unmatched=True)
+    base.update(over)
+    return argparse.Namespace(**base)
+
+
+def test_delete_unmatched_refuses_septembers_tables_before_reading_anything(monkeypatch, capsys, prefix_restored):
+    import sys
+    import types
+
+    def no_session():
+        raise AssertionError("opened a database session")
+
+    monkeypatch.setitem(sys.modules, "app.tasks.base", types.SimpleNamespace(get_task_session=no_session))
+    asyncio.run(repair.run(_args(backup=True, apply=True)))
+    out = capsys.readouterr().out
+    assert "REFUSING" in out and "bak_2871_" in out
+
+
+def test_delete_unmatched_with_its_own_prefix_proceeds(monkeypatch, capsys, prefix_restored):
+    import contextlib
+    import sys
+    import types
+
+    class _S:
+        async def execute(self, *_a, **_k):
+            return types.SimpleNamespace(all=lambda: [])
+
+    @contextlib.asynccontextmanager
+    async def session():
+        yield _S()
+
+    monkeypatch.setitem(sys.modules, "app.tasks.base", types.SimpleNamespace(get_task_session=session))
+    asyncio.run(repair.run(_args(backup_prefix="bak_11649_")))
+    out = capsys.readouterr().out
+    assert "REFUSING" not in out
+    assert "backup tables: bak_11649_*" in out

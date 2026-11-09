@@ -259,6 +259,8 @@ CHILD_REPOINT_TABLES = ("futures_markets",)
 
 BAK_PREFIX = "bak_2871_"
 LEDGER = BAK_PREFIX + "market_repoint"
+#: The September run's tables. A `--delete-unmatched` run may not use them.
+SEPTEMBER_BAK_PREFIX = "bak_2871_"
 
 # #11649: a second run must not share the first run's backup tables. The
 # September run's `bak_2871_*` rows are still in production (12,266 events),
@@ -772,6 +774,12 @@ async def run(args):
     binds = {"deriv_re": DERIV_RE, "scope_re": scope_re}
     use_backup_prefix(args.backup_prefix)
     delete_unmatched = bool(args.delete_unmatched)
+    if delete_unmatched and BAK_PREFIX == SEPTEMBER_BAK_PREFIX:
+        # Fable, #12448 review: one forgotten flag would put this run's undo in
+        # September's tables, whose restore would also undo September's repair.
+        print(f"❌ REFUSING: --delete-unmatched needs its own --backup-prefix, not "
+              f"{SEPTEMBER_BAK_PREFIX!r} (the September run's tables). Nothing was read or written.")
+        return
 
     async with get_task_session() as s:
         census = (await s.execute(text(_CENSUS_SQL), binds)).all()
