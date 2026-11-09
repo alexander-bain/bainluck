@@ -7,8 +7,8 @@ struct EventCardView: View {
     var personalizationReasons: [String]? = nil
     var headline: String? = nil
 
-    /// #11325 — selects the finished card's accessibility arm; see
-    /// `FinishedCardAccessibility11325`.
+    /// #11325 / #12312 — selects the card's accessibility arm; see
+    /// `AccessibilityCardLayout12312`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var isLive: Bool { event.status == "live" }
@@ -222,11 +222,10 @@ struct EventCardView: View {
         }
     }
 
-    /// #11325 — true only on a finished card at an accessibility text size.
-    /// Every other card, Large included, keeps the single-row arms below.
-    private var usesFinishedAccessibilityLayout: Bool {
-        FinishedCardAccessibility11325.applies(
-            isFinished: isFinished, typeSize: dynamicTypeSize)
+    /// #11325 / #12312 — true on every card at an accessibility text size.
+    /// Large and below keep the single-row arms below.
+    private var usesAccessibilityLayout: Bool {
+        AccessibilityCardLayout12312.applies(typeSize: dynamicTypeSize)
     }
 
     private var leagueName: String {
@@ -247,10 +246,53 @@ struct EventCardView: View {
 
     @ViewBuilder
     private var topBar: some View {
-        if usesFinishedAccessibilityLayout {
-            finishedAccessibilityTopBar
+        if usesAccessibilityLayout {
+            accessibilityTopBar
         } else {
             singleRowTopBar
+        }
+    }
+
+    /// The broadcaster a scheduled or live card names, if the feed sent one.
+    private var broadcastName: String? {
+        guard isScheduled || isLive,
+              let first = event.espn?.broadcast?.split(separator: ",").first else { return nil }
+        let name = first.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
+    }
+
+    /// When the game is: the start for an upcoming card, the date for a
+    /// finished one, and the suspended detail for a stopped one. Both top bars
+    /// draw it, so the states cannot drift apart between them; only how the
+    /// suspended detail wraps differs.
+    @ViewBuilder
+    private func whenText(wrapping: Bool) -> some View {
+        if isScheduled {
+            // Upcoming: Show "Today 7:00 PM" or "Mar 8 7:00 PM"
+            formattedDateTime
+        } else if isFinished {
+            // Finished: Show date only "Mar 5"
+            formattedDate
+        } else if isSuspended, let detail = EventState.suspendedCardDetail(
+            away: event.awayScore, home: event.homeScore, date: formattedDateString,
+            authorityPeriod: event.espn?.period) {
+            // live/048: no start time, no Final. The words themselves now sit
+            // in the `StatusBadge` six points to the left — this slot carried
+            // a verbatim second copy of them on 1,786 of 1,788 suspended rows
+            // (both scores null ⇒ `suspendedSummary` IS `suspendedLabel`).
+            // `suspendedCardDetail` is where that reasoning lives, along with
+            // why the date arrives here and not from `formattedDateTime`.
+            if wrapping {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
         }
     }
 
@@ -279,56 +321,39 @@ struct EventCardView: View {
                     .clipShape(Capsule())
             }
             Spacer()
-            if let broadcast = event.espn?.broadcast?.split(separator: ",").first.map(String.init),
-               !broadcast.isEmpty, isScheduled || isLive {
+            if let broadcast = broadcastName {
                 HStack(spacing: 2) {
                     Image(systemName: "tv")
                         .font(.system(size: 8))
-                    Text(broadcast.trimmingCharacters(in: .whitespaces))
+                    Text(broadcast)
                         .font(.caption2)
                 }
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
-            if isScheduled {
-                // Upcoming: Show "Today 7:00 PM" or "Mar 8 7:00 PM"
-                formattedDateTime
-            } else if isFinished {
-                // Finished: Show date only "Mar 5"
-                formattedDate
-            } else if isSuspended, let detail = EventState.suspendedCardDetail(
-                away: event.awayScore, home: event.homeScore, date: formattedDateString,
-                authorityPeriod: event.espn?.period) {
-                // live/048: no start time, no Final. The words themselves now sit
-                // in the `StatusBadge` six points to the left — this slot carried
-                // a verbatim second copy of them on 1,786 of 1,788 suspended rows
-                // (both scores null ⇒ `suspendedSummary` IS `suspendedLabel`).
-                // `suspendedCardDetail` is where that reasoning lives, along with
-                // why the date arrives here and not from `formattedDateTime`.
-                Text(detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
+            whenText(wrapping: false)
             PinButton(type: "event", id: event.id, compact: true)
         }
     }
 
-    /// #11325 — the finished card's top bar at accessibility sizes.
+    /// #11325 — the card's top bar at accessibility sizes, first for finished
+    /// cards; #12312 — now for every card.
     ///
     /// One row held the league, FINAL, the date and the pin, so at AX5 on a
     /// 320pt phone the row squeezed the badge until "FINAL" broke as "FI-/NAL"
-    /// and the league broke mid-word beside it. Here the league takes the full
-    /// width and wraps only between words; FINAL sits whole on the row below,
-    /// with the date and pin at trailing, and the date drops to its own line
-    /// when the three cannot share one. The badge itself is the shared
+    /// and the league broke mid-word beside it. An upcoming card's row crushed
+    /// the same way: on My Stuff at AX5 the countdown pill "In 14 h 47 m" stood
+    /// one letter wide. Here the league takes the full width and wraps only
+    /// between words; the badge sits whole on the row below, with the start or
+    /// date and the pin at trailing, and that time drops to its own line when
+    /// the three cannot share one. The badge itself is the shared
     /// `StatusBadge`, unchanged — the caller gives it the room.
     ///
-    /// A finished card draws no EI badge, broadcast or suspended detail (each
-    /// is gated off `isFinished` above), so the only optional pieces are the
-    /// confidence bars, the personalization badge and the headline pill, which
-    /// keep their exact conditions on the rows beneath.
-    private var finishedAccessibilityTopBar: some View {
+    /// Then the broadcaster, on its own line, and the optional pieces: the EI
+    /// badge (never on a finished card), the confidence bars, the
+    /// personalization badge and the headline pill, each on its single row's
+    /// exact condition.
+    private var accessibilityTopBar: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(leagueName)
                 .font(.caption)
@@ -339,7 +364,7 @@ struct EventCardView: View {
                 HStack(spacing: 6) {
                     statusBadge.fixedSize()
                     Spacer(minLength: 6)
-                    formattedDate
+                    whenText(wrapping: true)
                     PinButton(type: "event", id: event.id, compact: true)
                 }
                 VStack(alignment: .leading, spacing: 4) {
@@ -348,8 +373,14 @@ struct EventCardView: View {
                         Spacer(minLength: 6)
                         PinButton(type: "event", id: event.id, compact: true)
                     }
-                    formattedDate
+                    whenText(wrapping: true)
                 }
+            }
+            if let broadcast = broadcastName {
+                Label(broadcast, systemImage: "tv")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if hasTopBarMetadata {
                 ViewThatFits(in: .horizontal) {
@@ -361,13 +392,17 @@ struct EventCardView: View {
     }
 
     private var hasTopBarMetadata: Bool {
-        Confidence.normalize(event.confidenceTier) != nil
+        (!isFinished && (event.ei ?? event.pulse) != nil)
+            || Confidence.normalize(event.confidenceTier) != nil
             || personalizationBadge != nil
             || EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive)
     }
 
     @ViewBuilder
     private var topBarMetadata: some View {
+        if !isFinished, let ei = event.ei ?? event.pulse {
+            EIBadgeView(ei: ei, size: .sm)
+        }
         SignalBarsView(tier: event.confidenceTier)
         if let badge = personalizationBadge {
             badge
@@ -488,9 +523,9 @@ struct EventCardView: View {
 
     @ViewBuilder
     private func teamRow(name: String, avatar: ParticipantAvatar, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
-        if usesFinishedAccessibilityLayout {
-            finishedAccessibilityTeamRow(
-                name: name, avatar: avatar, color: color, score: score, won: won, side: side)
+        if usesAccessibilityLayout {
+            accessibilityTeamRow(
+                name: name, avatar: avatar, color: color, record: record, score: score, won: won, side: side)
         } else {
             singleRowTeamRow(
                 name: name, avatar: avatar, color: color, record: record, score: score, won: won, side: side)
@@ -547,17 +582,19 @@ struct EventCardView: View {
         }
     }
 
-    /// #11325 — one team's group on a finished card at accessibility sizes.
+    /// #11325 — one team's group at accessibility sizes, first on finished
+    /// cards; #12312 — now on every card.
     ///
     /// The single row gave the name whatever the score and pre-match number
     /// left over, under `lineLimit(1)`, so at AX5 both sides read
-    /// "Washingt…" / "San Fran…" and a reader could not say who played. Here
-    /// the crest and the COMPLETE name share the first row and the name wraps
-    /// as far as it needs; the score sits on its own line beneath, under the
-    /// name, inside this team's group — so each value stays with its own side.
-    /// Fonts, weights and colours are the single row's expressions, verbatim,
-    /// so the two arms cannot drift. A finished card draws no record, so there
-    /// is none here.
+    /// "Washingt…" / "San Fran…" (and, on an upcoming card, "Buffal…" /
+    /// "Minn…") and a reader could not say who played. Here the crest and the
+    /// COMPLETE name share the first row and the name wraps as far as it needs;
+    /// the record, the score and the number sit on their own lines beneath,
+    /// under the name, inside this team's group — so each value stays with its
+    /// own side. Fonts, weights and colours are the single row's expressions,
+    /// verbatim, so the two arms cannot drift. A finished card draws no record,
+    /// as on its single row.
     ///
     /// Design's REVISE (2026-10-20): "17" and "24%" side by side read as one
     /// unexplained pair of numbers — FINAL says the game is over, nothing says
@@ -565,7 +602,7 @@ struct EventCardView: View {
     /// below the score, under a visible "Pregame win chance" label that wraps
     /// downward rather than squeezing the number. Same selection, rounding,
     /// withholding and colour as the single row; no number, no block.
-    private func finishedAccessibilityTeamRow(name: String, avatar: ParticipantAvatar, color: Color, score: Int?, won: Bool, side: TeamSide) -> some View {
+    private func accessibilityTeamRow(name: String, avatar: ParticipantAvatar, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .top, spacing: 8) {
                 TeamLogoView(
@@ -585,6 +622,11 @@ struct EventCardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             VStack(alignment: .leading, spacing: 4) {
+                if let record, !isFinished {
+                    Text(record)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 if let score {
                     Text("\(score)")
                         .font(isLive ? .title3.monospacedDigit() : .subheadline.monospacedDigit())
@@ -1032,16 +1074,19 @@ struct EventCardView: View {
     }
 }
 
-/// #11325 — when a finished game card takes its accessibility layout.
+/// When a game card takes its stacked accessibility layout.
 ///
-/// At accessibility text sizes the finished Sports card broke "FINAL" mid-word
-/// and cut both team names to "Washingt…" / "San Fran…", and the finished
-/// Discover card's two-line title stopped at "Washing-/ton Com…". Both cards
-/// ask this one question, so they cannot disagree about which cards change:
-/// a FINISHED card at an ACCESSIBILITY size. Large and below, and every
-/// scheduled, live, suspended or unknown card, keep the layout they had.
-enum FinishedCardAccessibility11325 {
-    static func applies(isFinished: Bool, typeSize: DynamicTypeSize) -> Bool {
-        isFinished && typeSize.isAccessibilitySize
+/// #11325 gave it to finished cards: at accessibility text sizes the finished
+/// Sports card broke "FINAL" mid-word and cut both team names to
+/// "Washingt…" / "San Fran…", and the finished Discover card's two-line title
+/// stopped at "Washing-/ton Com…". #12312 gives it to every card, because the
+/// single row fails the same way before and during a game: on My Stuff at AX5
+/// an upcoming Bills at Vikings read "Buffal…" / "Minn…" beside a countdown
+/// one letter wide. Both cards ask this one question, so they cannot disagree
+/// about which cards change: any card at an ACCESSIBILITY size. Large and
+/// below keep the single rows.
+enum AccessibilityCardLayout12312 {
+    static func applies(typeSize: DynamicTypeSize) -> Bool {
+        typeSize.isAccessibilitySize
     }
 }

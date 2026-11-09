@@ -134,16 +134,17 @@ struct NativeEventDiscoverCard: View {
         "\(away) @ \(home)"
     }
 
-    /// #11325 — the title's line cap; nil is no cap.
+    /// #11325 / #12312 — the title's line cap; nil is no cap.
     ///
     /// On a finished card the score lives in the hero, whose names truncate,
     /// so this title is the one place the reader learns who played. At AX5 the
     /// two-line cap cut it to "Washing-/ton Com…" (320pt) and to a partial
-    /// "Commanders" (393pt). A finished card at an accessibility size drops
-    /// the cap so both full names print above the forecast line; every other
-    /// card keeps its two lines (`FinishedCardAccessibility11325`).
-    static func matchTitleLineLimit(isDone: Bool, typeSize: DynamicTypeSize) -> Int? {
-        FinishedCardAccessibility11325.applies(isFinished: isDone, typeSize: typeSize) ? nil : 2
+    /// "Commanders" (393pt). #11325 dropped the cap on finished cards; #12312
+    /// drops it on every card at an accessibility size, because an upcoming
+    /// card's title is cut the same way. Large and below keep their two lines
+    /// (`AccessibilityCardLayout12312`).
+    static func matchTitleLineLimit(typeSize: DynamicTypeSize) -> Int? {
+        AccessibilityCardLayout12312.applies(typeSize: typeSize) ? nil : 2
     }
 
     /// live/048 + CERT-786. The `statusText` default arm below is the literal
@@ -286,8 +287,7 @@ struct NativeEventDiscoverCard: View {
                 // Team names
                 Text(NativeEventDiscoverCard.matchTitle(away: event.awayTeam, home: event.homeTeam))
                     .font(.headline.weight(.bold))
-                    .lineLimit(NativeEventDiscoverCard.matchTitleLineLimit(
-                        isDone: isDone, typeSize: dynamicTypeSize))
+                    .lineLimit(NativeEventDiscoverCard.matchTitleLineLimit(typeSize: dynamicTypeSize))
                     .fixedSize(horizontal: false, vertical: true)
 
                 // #11296 — the final score is the hero above; the forecast

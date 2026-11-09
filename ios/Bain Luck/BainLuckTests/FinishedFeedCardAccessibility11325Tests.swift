@@ -15,7 +15,10 @@ import XCTest
 ///
 /// Controls, each able to fail in the other direction:
 ///   - Large keeps the single rows: the score sits on its team's name row.
-///   - A LIVE card at AX5 keeps the single rows too: only finished cards move.
+///   - #12312 widened the rule: a LIVE card at AX5 now stacks like the
+///     finished one (it kept its single rows under #11325), and an upcoming
+///     card does too — My Stuff's Bills at Vikings read "Buffal…" / "Minn…"
+///     beside a countdown one letter wide.
 ///   - The forecast line still prints, labelled, below both actual scores, and
 ///     the soccer final (whose forecast is withheld) prints no forecast at all.
 ///
@@ -30,19 +33,16 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
 
     // MARK: - Branch selection
 
-    func testOnlyAFinishedCardAtAnAccessibilitySizeTakesTheNewLayout() {
-        XCTAssertTrue(EventState.isFinished("completed"), "precondition: the served final is finished")
-        let statuses: [String?] = ["completed", "scheduled", "live", "suspended", nil]
-        let sizes: [DynamicTypeSize] = [.large, .xxxLarge, .accessibility1, .accessibility5]
-        for status in statuses {
-            for size in sizes {
-                let expected = status == "completed" && size.isAccessibilitySize
-                let finished = EventState.isFinished(status)
-                XCTAssertEqual(FinishedCardAccessibility11325.applies(isFinished: finished, typeSize: size),
-                               expected, "\(status ?? "nil") at \(size)")
-                XCTAssertEqual(NativeEventDiscoverCard.matchTitleLineLimit(isDone: finished, typeSize: size),
-                               expected ? nil : 2, "Discover title cap, \(status ?? "nil") at \(size)")
-            }
+    /// #12312 — every card at an accessibility size takes the stacked layout,
+    /// whatever its state; Large and below keep the single rows. (Under
+    /// #11325 only a finished card moved.)
+    func testEveryCardAtAnAccessibilitySizeTakesTheStackedLayout() {
+        let sizes: [DynamicTypeSize] = [.large, .xLarge, .xxxLarge, .accessibility1, .accessibility3, .accessibility5]
+        for size in sizes {
+            let expected = size.isAccessibilitySize
+            XCTAssertEqual(AccessibilityCardLayout12312.applies(typeSize: size), expected, "\(size)")
+            XCTAssertEqual(NativeEventDiscoverCard.matchTitleLineLimit(typeSize: size),
+                           expected ? nil : 2, "Discover title cap at \(size)")
         }
     }
 
@@ -169,18 +169,65 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         XCTAssertTrue(read.contains { $0.text.contains("Projection") }, "\(name): forecast line gone — \(all)")
     }
 
-    func testALiveSportsCardAtAX5KeepsItsSingleRows() throws {
+    /// #12312 — the live card stacks like the finished one: each complete
+    /// name directly above its own score, nothing beside the score.
+    func testALiveSportsCardAtAX5StacksLikeTheFinishedOne() throws {
         let name = "sports-nfl-320-ax5-live"
         let live = try served(14780563, editing: #""status": "completed""#, to: #""status": "live""#)
         XCTAssertEqual(live.status, "live")
         let read = try sportsLines(live, width: 320, size: .accessibility5, name: name)
         let all = describe(read)
         let away = try XCTUnwrap(scoreLine("17", in: read), "\(name): no 17 — \(all)")
-        // The single row puts the (truncated) name to the score's LEFT on the
-        // same row; the finished layout puts the score under the name, with
-        // nothing beside it. How far the name is cut is not this test's claim.
-        XCTAssertTrue(read.map { clearOfCrest($0, columnEdge: 40) }.contains { $0.box.minX >= 40 && $0.box.maxX < away.box.minX && sameRow(away, $0) },
-                      "\(name): a live card took the finished layout — \(all)")
+        let home = try XCTUnwrap(scoreLine("23", in: read), "\(name): no 23 — \(all)")
+        XCTAssertTrue(nameSitsAbove(away, reading: "WashingtonCommanders", in: read),
+                      "\(name): the complete away name does not sit directly above its 17 — \(all)")
+        XCTAssertTrue(nameSitsAbove(home, reading: "SanFrancisco49ers", in: read),
+                      "\(name): the complete home name does not sit directly above its 23 — \(all)")
+        // The single row put the (truncated) name to the score's LEFT on the
+        // same row; the stacked layout leaves nothing beside it.
+        XCTAssertFalse(read.map { clearOfCrest($0, columnEdge: 40) }.contains { $0.box.minX >= 40 && $0.box.maxX < away.box.minX && sameRow(away, $0) },
+                       "\(name): a name still shares the live score's row — \(all)")
+    }
+
+    /// #12312 — the specimen: an upcoming game in My Stuff at AX5 read
+    /// "Buffal…" / "Minn…" beside a countdown pill one letter wide. Stacked,
+    /// the countdown reads on one line and each complete name sits directly
+    /// above its own number. CONSTRUCTED from the served final: status,
+    /// a start 14 h 47 m from now, and a current price.
+    func testAnUpcomingSportsCardAtAX5ReadsItsCountdownAndBothCompleteNames() throws {
+        let start = ISO8601DateFormatter().string(from: Date().addingTimeInterval(14 * 3600 + 47 * 60))
+        let upcoming = try served(14780563, edits: [
+            (#""status": "completed""#, #""status": "scheduled""#),
+            (#""commence_time": "2026-10-20T00:15:00+00:00""#, #""commence_time": "\#(start)""#),
+            (#""start_is_tbd": false,"#,
+             #""start_is_tbd": false, "current_odds": {"home_probability": 0.385, "away_probability": 0.615},"#),
+        ])
+        XCTAssertEqual(upcoming.status, "scheduled")
+        for width: CGFloat in [320, 393] {
+            let name = "sports-nfl-\(Int(width))-ax5-upcoming"
+            let read = try sportsLines(upcoming, width: width, size: .accessibility5, name: name)
+            let all = describe(read)
+            // The league leads its own row (Vision has glued a stray mark to
+            // it: "NFLR"), and no piece of it sits on a line of its own.
+            XCTAssertTrue(read.contains { normalized($0.text).hasPrefix("NFL") }, "\(name): no NFL — \(all)")
+            XCTAssertFalse(read.contains { ["N", "NF", "NF-", "FL", "L"].contains($0.text.trimmingCharacters(in: .whitespaces)) },
+                           "\(name): the league broke across lines — \(all)")
+            // Hours and minutes on one line (the clock mark and "In" read as "o|n").
+            XCTAssertTrue(read.contains { $0.text.range(of: #"\d+ ?h \d+ ?m"#, options: .regularExpression) != nil },
+                          "\(name): the countdown does not read on one line — \(all)")
+            XCTAssertFalse(read.contains { ["h", "m", "In"].contains($0.text.trimmingCharacters(in: .whitespaces)) },
+                           "\(name): the countdown broke into single letters — \(all)")
+            let away = try XCTUnwrap(read.first { valueTokens($0.text).contains("62%") }, "\(name): no 62% — \(all)")
+            let home = try XCTUnwrap(read.first { valueTokens($0.text).contains("38%") }, "\(name): no 38% — \(all)")
+            XCTAssertLessThan(away.box.minY, home.box.minY, "\(name): team order moved — \(all)")
+            XCTAssertTrue(nameSitsAbove(away, reading: "WashingtonCommanders", in: read),
+                          "\(name): the complete away name does not sit directly above its 62% — \(all)")
+            XCTAssertTrue(nameSitsAbove(home, reading: "SanFrancisco49ers", in: read),
+                          "\(name): the complete home name does not sit directly above its 38% — \(all)")
+            for line in read where isElided(line.text) {
+                XCTFail("\(name): '\(line.text)' is cut short — \(all)")
+            }
+        }
     }
 
     // MARK: - The hosted pill-edge misread (Watch MVP run 39990600534)
@@ -431,7 +478,16 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let upper = try bandLines(frame, band: CGRect(x: 0, y: 0, width: bounds.width, height: mid + overlap / 2))
         let lower = try bandLines(frame, band: CGRect(x: 0, y: mid - overlap / 2, width: bounds.width,
                                                       height: bounds.height - mid + overlap / 2))
-        return upper.filter { $0.box.midY < mid } + lower.filter { $0.box.midY >= mid }
+        var kept = upper.filter { $0.box.midY < mid } + lower.filter { $0.box.midY >= mid }
+        // #12312 — a line ACROSS the middle is boxed a point or so differently
+        // by each half, so each can put its middle on the other's side and
+        // neither keeps it (the live card's 23 at AX5, ink 679–719 pt). Such a
+        // line is kept once, from whichever half read it.
+        for line in upper + lower where line.box.minY < mid && line.box.maxY > mid
+            && !kept.contains(where: { $0.box.intersects(line.box) }) {
+            kept.append(line)
+        }
+        return kept
     }
 
     private func bandLines(_ frame: RenderedFrame11325, band: CGRect) throws -> [Line] {
