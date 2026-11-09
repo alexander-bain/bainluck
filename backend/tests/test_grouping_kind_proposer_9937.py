@@ -99,13 +99,14 @@ class TestCommittedNewKindProposalsForAlex:
             for card in prop["example_cards"]:
                 assert len(card["rows"]) >= 3
                 assert card["stronger_single_alternative"]["market_id"] > 0
-                assert card["as_of"] == "2026-11-09T21:15:00Z"
+                assert card["as_of"] == data["generated_at"]
                 assert card["as_of_label"] == "as of Nov 9, 1:15 PM PT"
                 assert card["slug"] not in ROUNDUP_PRODUCERS
 
     def test_grading_deck_mounts_ten_new_kind_example_cards_with_as_of_labels(
         self,
     ) -> None:
+        data = load_committed_kind_proposals()
         deck = load_grouping_grade_deck()
         nk_items = [
             it
@@ -115,7 +116,7 @@ class TestCommittedNewKindProposalsForAlex:
         ]
         assert len(nk_items) == 10
         for it in nk_items:
-            assert it["as_of"] == "2026-11-09T21:15:00Z"
+            assert it["as_of"] == data["generated_at"]
             assert it["as_of_label"] == "as of Nov 9, 1:15 PM PT"
             assert it["proposed_card"]["as_of_label"] == "as of Nov 9, 1:15 PM PT"
             assert it["kind_verdict"] == "refuse"
@@ -210,7 +211,7 @@ class TestKindProposalValidationAndGuardrails:
         bad_prop = self._base_valid_kind()
         bad_prop["example_cards"] = bad_prop["example_cards"][:3]
         bad_prop_path.write_text(
-            json.dumps({"generated_at": "2026-11-09T21:15:00Z", "proposals": [bad_prop]}),
+            json.dumps({"generated_at": "2027-01-15T21:15:00Z", "proposals": [bad_prop]}),
             encoding="utf-8",
         )
         loaded_refused = load_committed_kind_proposals(path=bad_prop_path)
@@ -313,7 +314,7 @@ class TestKindProposerSpendAndCatalogAdmission:
         page_rows = [
             {
                 "item_key": "nhl-2026-teams-100-points-benchmark",
-                "grader": "Alex",
+                "grader": "Alex Bain",
                 "grade": "amazing",
             },
             {

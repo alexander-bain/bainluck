@@ -452,7 +452,7 @@ def evaluate_kind_catalog_admission(
         if not isinstance(g, Mapping):
             continue
         grader = str(g.get("grader") or "alex").strip().lower()
-        if grader != "alex":
+        if grader not in ("alex", "alex bain"):
             continue
         row_kind = str(g.get("kind") or "").strip()
         if not row_kind:

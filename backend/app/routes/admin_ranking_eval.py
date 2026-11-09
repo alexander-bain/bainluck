@@ -549,12 +549,14 @@ def load_grouping_grade_deck(
 ) -> dict[str, Any]:
     """Load the proposed grouping deck (sibling-family + new-kind proposals) for `/grade/groupings`."""
     if slate_id == "new-kind-proposals-2026-11":
+        from app.utils.grouping_kind_proposer import DEFAULT_KIND_PROPOSER_MODEL
+
         nk_items = _build_new_kind_deck_items(start_position=1)
         return {
             "slate_id": slate_id,
             "surface": SURFACE_GROUPING,
             "generated_at": nk_items[0].get("as_of") if nk_items else None,
-            "model": "gpt-4o-mini",
+            "model": DEFAULT_KIND_PROPOSER_MODEL,
             "question": "Is the grouping card worth more than its best single member?",
             "items": nk_items,
         }
