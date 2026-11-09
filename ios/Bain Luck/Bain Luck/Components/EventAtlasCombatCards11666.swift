@@ -100,48 +100,27 @@ enum EventAtlasCombatCards11666 {
         let sourceCount: Int
 
         func current(at now: Date, phase: Phase) -> MethodTileRecord {
-            guard phase != .final else { return self }
+            guard phase == .during else { return self }
             let isStale: Bool = {
                 guard let observedAt else { return true }
                 return now.timeIntervalSince(observedAt) > EventAtlasCombatCards11666.liveQuoteMaxAgeSeconds
             }()
             guard isStale else { return self }
-            switch phase {
-            case .before:
-                guard beforeChance != nil || currentChance != nil else { return self }
-                return MethodTileRecord(
-                    id: id,
-                    marketID: marketID,
-                    label: label,
-                    shortLabel: shortLabel,
-                    question: question,
-                    beforeChance: nil,
-                    currentChance: nil,
-                    observedAt: observedAt,
-                    isStaleLive: isStaleLive,
-                    verdict: verdict,
-                    rawSource: rawSource,
-                    sourceCount: sourceCount
-                )
-            case .during:
-                guard currentChance != nil || !isStaleLive else { return self }
-                return MethodTileRecord(
-                    id: id,
-                    marketID: marketID,
-                    label: label,
-                    shortLabel: shortLabel,
-                    question: question,
-                    beforeChance: beforeChance,
-                    currentChance: nil,
-                    observedAt: observedAt,
-                    isStaleLive: true,
-                    verdict: verdict,
-                    rawSource: rawSource,
-                    sourceCount: sourceCount
-                )
-            case .final:
-                return self
-            }
+            guard currentChance != nil || !isStaleLive else { return self }
+            return MethodTileRecord(
+                id: id,
+                marketID: marketID,
+                label: label,
+                shortLabel: shortLabel,
+                question: question,
+                beforeChance: beforeChance,
+                currentChance: nil,
+                observedAt: observedAt,
+                isStaleLive: true,
+                verdict: verdict,
+                rawSource: rawSource,
+                sourceCount: sourceCount
+            )
         }
 
         func toPresentationMethod(phase: Phase, now: Date) -> CombatMethod10868 {
@@ -225,7 +204,7 @@ enum EventAtlasCombatCards11666 {
         let scheduledStartSummary: String?
 
         func current(at now: Date) -> MethodCard {
-            guard phase != .final else { return self }
+            guard phase == .during else { return self }
             return MethodCard(
                 id: id,
                 eventID: eventID,
@@ -311,52 +290,29 @@ enum EventAtlasCombatCards11666 {
         let sourceCount: Int
 
         func current(at now: Date, phase: Phase) -> RoundSlotRecord {
-            guard phase != .final else { return self }
+            guard phase == .during else { return self }
             let isStale: Bool = {
                 guard let observedAt else { return true }
                 return now.timeIntervalSince(observedAt) > EventAtlasCombatCards11666.liveQuoteMaxAgeSeconds
             }()
             guard isStale else { return self }
-            switch phase {
-            case .before:
-                guard beforeChance != nil || currentChance != nil else { return self }
-                return RoundSlotRecord(
-                    id: id,
-                    marketID: marketID,
-                    fighterName: fighterName,
-                    roundNumber: roundNumber,
-                    roundLabel: roundLabel,
-                    hasMarket: hasMarket,
-                    beforeChance: nil,
-                    currentChance: nil,
-                    observedAt: observedAt,
-                    isStaleLive: isStaleLive,
-                    isElapsedRound: isElapsedRound,
-                    verdict: verdict,
-                    rawSource: rawSource,
-                    sourceCount: sourceCount
-                )
-            case .during:
-                guard currentChance != nil || !isStaleLive else { return self }
-                return RoundSlotRecord(
-                    id: id,
-                    marketID: marketID,
-                    fighterName: fighterName,
-                    roundNumber: roundNumber,
-                    roundLabel: roundLabel,
-                    hasMarket: hasMarket,
-                    beforeChance: beforeChance,
-                    currentChance: nil,
-                    observedAt: observedAt,
-                    isStaleLive: true,
-                    isElapsedRound: isElapsedRound,
-                    verdict: verdict,
-                    rawSource: rawSource,
-                    sourceCount: sourceCount
-                )
-            case .final:
-                return self
-            }
+            guard currentChance != nil || !isStaleLive else { return self }
+            return RoundSlotRecord(
+                id: id,
+                marketID: marketID,
+                fighterName: fighterName,
+                roundNumber: roundNumber,
+                roundLabel: roundLabel,
+                hasMarket: hasMarket,
+                beforeChance: beforeChance,
+                currentChance: nil,
+                observedAt: observedAt,
+                isStaleLive: true,
+                isElapsedRound: isElapsedRound,
+                verdict: verdict,
+                rawSource: rawSource,
+                sourceCount: sourceCount
+            )
         }
 
         func toPresentationSlot(phase: Phase, now: Date) -> CombatRoundSlot10868 {
@@ -456,7 +412,7 @@ enum EventAtlasCombatCards11666 {
         let scheduledStartSummary: String?
 
         func current(at now: Date) -> RoundCard {
-            guard phase != .final else { return self }
+            guard phase == .during else { return self }
             return RoundCard(
                 eventID: eventID,
                 eyebrow: eyebrow,
@@ -555,54 +511,30 @@ enum EventAtlasCombatCards11666 {
         let sourceCount: Int
 
         func current(at now: Date, phase: Phase) -> DurationRowRecord {
-            guard phase != .final else { return self }
+            guard phase == .during else { return self }
             let isStale: Bool = {
                 guard let observedAt else { return true }
                 return now.timeIntervalSince(observedAt) > EventAtlasCombatCards11666.liveQuoteMaxAgeSeconds
             }()
             guard isStale else { return self }
-            switch phase {
-            case .before:
-                guard beforeChance != nil || currentChance != nil else { return self }
-                return DurationRowRecord(
-                    id: id,
-                    marketID: marketID,
-                    title: title,
-                    subtitle: subtitle,
-                    sideLabel: sideLabel,
-                    windowStart: windowStart,
-                    windowEnd: windowEnd,
-                    includesFinalBell: includesFinalBell,
-                    beforeChance: nil,
-                    currentChance: nil,
-                    observedAt: observedAt,
-                    isStaleLive: isStaleLive,
-                    verdict: verdict,
-                    rawSource: rawSource,
-                    sourceCount: sourceCount
-                )
-            case .during:
-                guard currentChance != nil || !isStaleLive else { return self }
-                return DurationRowRecord(
-                    id: id,
-                    marketID: marketID,
-                    title: title,
-                    subtitle: subtitle,
-                    sideLabel: sideLabel,
-                    windowStart: windowStart,
-                    windowEnd: windowEnd,
-                    includesFinalBell: includesFinalBell,
-                    beforeChance: beforeChance,
-                    currentChance: nil,
-                    observedAt: observedAt,
-                    isStaleLive: true,
-                    verdict: verdict,
-                    rawSource: rawSource,
-                    sourceCount: sourceCount
-                )
-            case .final:
-                return self
-            }
+            guard currentChance != nil || !isStaleLive else { return self }
+            return DurationRowRecord(
+                id: id,
+                marketID: marketID,
+                title: title,
+                subtitle: subtitle,
+                sideLabel: sideLabel,
+                windowStart: windowStart,
+                windowEnd: windowEnd,
+                includesFinalBell: includesFinalBell,
+                beforeChance: beforeChance,
+                currentChance: nil,
+                observedAt: observedAt,
+                isStaleLive: true,
+                verdict: verdict,
+                rawSource: rawSource,
+                sourceCount: sourceCount
+            )
         }
 
         func toPresentationMarket(phase: Phase, now: Date) -> CombatDurationMarket10868 {
@@ -700,7 +632,7 @@ enum EventAtlasCombatCards11666 {
         let scheduledStartSummary: String?
 
         func current(at now: Date) -> DurationCard {
-            guard phase != .final else { return self }
+            guard phase == .during else { return self }
             return DurationCard(
                 eventID: eventID,
                 eyebrow: eyebrow,
@@ -956,13 +888,30 @@ enum EventAtlasCombatCards11666 {
                     }
                     return row.outcomeName
                 }()
+                let lowerOutcome = row.outcomeName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let isUnder = lowerOutcome.hasPrefix("under") || lowerOutcome == "u"
+                let resolvedProbability: Double? = {
+                    if isUnder {
+                        if let overProb = row.overProbability, overProb.isFinite {
+                            return 1.0 - overProb
+                        }
+                        return row.probability
+                    }
+                    return row.overProbability ?? row.probability
+                }()
+                let resolvedPregameMark: Double? = {
+                    if isUnder, row.overProbability != nil {
+                        return row.pregameMark.map { 1.0 - $0 }
+                    }
+                    return row.pregameMark
+                }()
                 appendOutcome(
                     marketID: row._marketId ?? row._marketIds?.first,
                     marketName: row.marketName,
                     marketType: row.marketType ?? "total_rounds",
                     outcomeName: label,
-                    probability: row.overProbability ?? row.probability,
-                    pregameMark: row.pregameMark,
+                    probability: resolvedProbability,
+                    pregameMark: resolvedPregameMark,
                     source: row.source,
                     observedAt: row.observedAt,
                     isWinner: row.isWinner,
@@ -1043,18 +992,43 @@ enum EventAtlasCombatCards11666 {
             }
         }
 
-        static func classify(_ raw: String) -> CanonicalMethodBucket? {
-            let lower = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if lower.contains("ko") || lower.contains("tko") || lower.contains("knockout") || lower.contains("stoppage") || lower.contains("dq") {
+        static func classify(
+            _ raw: String,
+            fighterA: String = "",
+            fighterB: String = ""
+        ) -> CanonicalMethodBucket? {
+            var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let fighterStrings: [String] = [
+                fighterA,
+                fighterB,
+                fighterA.isEmpty ? "" : TeamShortName.short(fighterA, sportKey: "mma_mixed_martial_arts"),
+                fighterB.isEmpty ? "" : TeamShortName.short(fighterB, sportKey: "mma_mixed_martial_arts")
+            ]
+            for name in fighterStrings {
+                let lowerName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard lowerName.count >= 2 else { continue }
+                cleaned = cleaned.replacingOccurrences(of: lowerName, with: " ")
+            }
+            if let byRange = cleaned.range(of: " by ") {
+                cleaned = String(cleaned[byRange.upperBound...])
+            } else if let viaRange = cleaned.range(of: " via ") {
+                cleaned = String(cleaned[viaRange.upperBound...])
+            }
+            let words = Set(
+                cleaned
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                    .filter { !$0.isEmpty }
+            )
+            if !words.isDisjoint(with: ["ko", "tko", "knockout", "stoppage", "dq", "disqualification"]) {
                 return .koTKO
             }
-            if lower.contains("sub") || lower.contains("choke") || lower.contains("armbar") || lower.contains("tap") {
+            if !words.isDisjoint(with: ["submission", "submissions", "sub", "choke", "armbar", "tap", "tapout", "guillotine", "triangle", "kimura"]) {
                 return .submission
             }
-            if lower.contains("dec") || lower.contains("points") || lower.contains("unanimous") || lower.contains("split") || lower.contains("majority") || lower.contains("scorecard") {
+            if !words.isDisjoint(with: ["decision", "dec", "points", "unanimous", "split", "majority", "scorecard", "scorecards", "judges"]) {
                 return .decision
             }
-            if lower == "draw" || lower.contains("technical draw") || lower.contains("majority draw") {
+            if words.contains("draw") {
                 return .draw
             }
             return nil
@@ -1094,52 +1068,58 @@ enum EventAtlasCombatCards11666 {
         let methodMarkets = candidates.filter { isMethodMarket($0) }
         guard !methodMarkets.isEmpty else { return nil }
 
-        struct BucketAccumulator {
-            var marketID: String = "0"
-            var beforeChance: Double?
-            var currentChance: Double?
-            var observedAt: Date?
-            var verdict: OutcomeVerdict?
-            var rawSource: String?
-            var sourceCount: Int = 1
+        let fighterAName = event.homeTeam.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fighterBName = event.awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        struct BucketEntry {
+            let marketID: String
+            let beforeChance: Double?
+            let currentChance: Double?
+            let observedAt: Date?
+            let verdict: OutcomeVerdict?
+            let rawSource: String?
+            let sourceCount: Int
         }
 
-        var byBucket: [CanonicalMethodBucket: BucketAccumulator] = [:]
+        var byBucket: [CanonicalMethodBucket: BucketEntry] = [:]
 
         for market in methodMarkets {
             for outcome in market.outcomes {
-                let bucket = CanonicalMethodBucket.classify(outcome.name)
-                    ?? (Self.isAffirmativeOutcome(outcome.name) ? CanonicalMethodBucket.classify(market.title) : nil)
-                guard let bucket else { continue }
+                let bucket = CanonicalMethodBucket.classify(
+                    outcome.name,
+                    fighterA: fighterAName,
+                    fighterB: fighterBName
+                ) ?? (
+                    Self.isAffirmativeOutcome(outcome.name)
+                        ? CanonicalMethodBucket.classify(
+                            market.title,
+                            fighterA: fighterAName,
+                            fighterB: fighterBName
+                        )
+                        : nil
+                )
+                guard let bucket, byBucket[bucket] == nil else { continue }
                 guard Self.isAffirmativeOrNamedOutcome(outcome.name) else { continue }
 
-                var acc = byBucket[bucket] ?? BucketAccumulator(marketID: String(market.id))
                 let resolvedVerdict = phase == .final ? outcome.verdict : nil
                 let (beforeVal, currentVal) = Self.resolveChances(
                     outcome: outcome,
                     phase: phase
                 )
-                if let beforeVal {
-                    acc.beforeChance = (acc.beforeChance ?? 0) + beforeVal
+                let admittedBefore = beforeVal.flatMap { $0 >= 0.0 && $0 <= 1.0 ? $0 : nil }
+                let admittedCurrent = currentVal.flatMap { $0 >= 0.0 && $0 <= 1.0 ? $0 : nil }
+                guard admittedBefore != nil || admittedCurrent != nil || resolvedVerdict != nil else {
+                    continue
                 }
-                if let currentVal {
-                    acc.currentChance = (acc.currentChance ?? 0) + currentVal
-                }
-                if let updatedAt = market.updatedAt {
-                    if let existing = acc.observedAt {
-                        acc.observedAt = max(existing, updatedAt)
-                    } else {
-                        acc.observedAt = updatedAt
-                    }
-                }
-                if let resolvedVerdict {
-                    if acc.verdict != .won {
-                        acc.verdict = resolvedVerdict
-                    }
-                }
-                acc.rawSource = acc.rawSource ?? market.source
-                acc.sourceCount = max(acc.sourceCount, market.sourceCount)
-                byBucket[bucket] = acc
+                byBucket[bucket] = BucketEntry(
+                    marketID: String(market.id),
+                    beforeChance: admittedBefore,
+                    currentChance: admittedCurrent,
+                    observedAt: market.updatedAt,
+                    verdict: resolvedVerdict,
+                    rawSource: market.source,
+                    sourceCount: market.sourceCount
+                )
             }
         }
 
@@ -1150,22 +1130,20 @@ enum EventAtlasCombatCards11666 {
 
         var tiles: [MethodTileRecord] = []
         for bucket in orderedBuckets {
-            guard let acc = byBucket[bucket] else { continue }
-            let clampedBefore = acc.beforeChance.map { min(1.0, max(0.0, $0)) }
-            let clampedCurrent = acc.currentChance.map { min(1.0, max(0.0, $0)) }
+            guard let entry = byBucket[bucket] else { continue }
             let record = MethodTileRecord(
                 id: bucket.rawValue,
-                marketID: acc.marketID,
+                marketID: entry.marketID,
                 label: bucket.label,
                 shortLabel: bucket.shortLabel,
                 question: bucket.question,
-                beforeChance: clampedBefore,
-                currentChance: clampedCurrent,
-                observedAt: acc.observedAt,
+                beforeChance: entry.beforeChance,
+                currentChance: entry.currentChance,
+                observedAt: entry.observedAt,
                 isStaleLive: false,
-                verdict: acc.verdict,
-                rawSource: acc.rawSource,
-                sourceCount: acc.sourceCount
+                verdict: entry.verdict,
+                rawSource: entry.rawSource,
+                sourceCount: entry.sourceCount
             ).current(at: now, phase: phase)
             tiles.append(record)
         }
@@ -1525,11 +1503,13 @@ enum EventAtlasCombatCards11666 {
     nonisolated static func formatMovement(before: Double?, current: Double?) -> String? {
         guard let before, let current else { return nil }
         let deltaPts = (current - before) * 100.0
-        if abs(deltaPts) < 0.05 {
+        let roundedPts = Int(deltaPts.rounded())
+        if roundedPts == 0 {
             return "Unchanged vs before fight"
         }
-        let sign = deltaPts > 0 ? "+" : "−"
-        return String(format: "%@%.1f pts vs before fight", sign, abs(deltaPts))
+        let sign = roundedPts > 0 ? "+" : "−"
+        let unit = abs(roundedPts) == 1 ? "pt" : "pts"
+        return "\(sign)\(abs(roundedPts)) \(unit) vs before fight"
     }
 
     private nonisolated static func resolveChances(
@@ -1674,10 +1654,8 @@ enum EventAtlasCombatCards11666 {
                 return "Market blend"
             }
             switch raw.lowercased() {
-            case "kalshi": return "Kalshi"
-            case "polymarket": return "Polymarket"
             case "betting", "sportsbook", "the_odds_api": return "Sportsbook blend"
-            default: return raw.capitalized
+            default: return "Market blend"
             }
         }()
 

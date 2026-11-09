@@ -76,6 +76,171 @@ final class EventAtlasCombatCards11666Tests: XCTestCase {
         )
         XCTAssertEqual(durationCard.rows[0].beforeChance ?? -1, 0.32, accuracy: 0.001)
         XCTAssertEqual(durationCard.rows[2].beforeChance ?? -1, 0.58, accuracy: 0.001)
+        XCTAssertEqual(durationCard.rows[3].beforeChance ?? -1, 0.42, accuracy: 0.001)
+        let durationInput = durationCard.presentationInput(selectedMarketID: nil, now: now)
+        let underOrig = try XCTUnwrap(durationInput.markets[3].originals.first)
+        XCTAssertEqual(underOrig.before?.text, "42%")
+    }
+
+    func testBeforeFightPreservesBeforeChanceEvenWhenObservedAtIsHoursOldOrNil() throws {
+        let event = makeCombatEvent(
+            sport: "mma_mixed_martial_arts",
+            status: "scheduled",
+            commenceTime: "2026-11-12T03:00:00Z"
+        )
+        let markets = makeMMAGameMarkets(
+            observedAt: "2026-11-06T12:00:00Z",
+            settled: false
+        )
+        let cards = EventAtlasCombatCards11666.buildCards(
+            event: event,
+            gameMarkets: markets,
+            now: now,
+            atlasEnabled: true
+        )
+        guard case .combatMethod(let methodCard) = cards[0],
+              case .combatRounds(let roundCard) = cards[1],
+              case .combatDuration(let durationCard) = cards[2] else {
+            return XCTFail("Expected all 3 combat cards")
+        }
+        let methodInput = methodCard.presentationInput(selectedMethodID: nil, now: now)
+        XCTAssertEqual(methodInput.methods.first?.originals.first?.before?.text, "46%")
+        let roundInput = roundCard.presentationInput(selectedSlotID: nil, now: now)
+        XCTAssertEqual(roundInput.groups.first?.slots.first?.state.market?.originals.first?.before?.text, "14%")
+        let durationInput = durationCard.presentationInput(selectedMarketID: nil, now: now)
+        XCTAssertEqual(durationInput.markets[3].originals.first?.before?.text, "42%")
+    }
+
+    func testMethodClassificationStripsFighterNamesAndMatchesWordBoundaries() throws {
+        let event = makeCombatEvent(
+            sport: "mma_mixed_martial_arts",
+            status: "live",
+            commenceTime: "2026-11-08T21:15:00Z",
+            homeTeam: "Alexander Volkov",
+            awayTeam: "Kyle Decker",
+            gamePeriod: "Round 1"
+        )
+        let markets = GameMarketsResponse(
+            eventId: event.id,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            status: event.status,
+            homeScore: nil,
+            awayScore: nil,
+            playerProps: [],
+            spreads: [],
+            totals: [],
+            teamTotals: [],
+            periodMarkets: [],
+            other: [
+                GameMarketOther(
+                    _marketId: 801,
+                    marketName: "Method of Victory",
+                    outcomeName: "Volkov by Decision",
+                    probability: 0.38,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.34
+                ),
+                GameMarketOther(
+                    _marketId: 801,
+                    marketName: "Method of Victory",
+                    outcomeName: "Volkov by Submission",
+                    probability: 0.16,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.18
+                ),
+                GameMarketOther(
+                    _marketId: 801,
+                    marketName: "Method of Victory",
+                    outcomeName: "Decker by KO/TKO",
+                    probability: 0.44,
+                    source: "kalshi",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.46
+                ),
+            ],
+            pace: nil
+        )
+        let cards = EventAtlasCombatCards11666.buildCards(
+            event: event,
+            gameMarkets: markets,
+            now: now,
+            atlasEnabled: true
+        )
+        guard let first = cards.first, case .combatMethod(let methodCard) = first else {
+            return XCTFail("Expected method card")
+        }
+        XCTAssertEqual(methodCard.tiles.map(\.label), ["KO / TKO", "Submission", "Decision"])
+        XCTAssertEqual(methodCard.tiles[0].currentChance ?? -1, 0.44, accuracy: 0.001)
+        XCTAssertEqual(methodCard.tiles[1].currentChance ?? -1, 0.16, accuracy: 0.001)
+        XCTAssertEqual(methodCard.tiles[2].currentChance ?? -1, 0.38, accuracy: 0.001)
+    }
+
+    func testWholePointMovementVenueNeutralProvenanceAndSilentSkipGuards() {
+        XCTAssertEqual(
+            EventAtlasCombatCards11666.formatMovement(before: 0.40, current: 0.436),
+            "+4 pts vs before fight"
+        )
+        XCTAssertEqual(
+            EventAtlasCombatCards11666.formatMovement(before: 0.40, current: 0.391),
+            "−1 pt vs before fight"
+        )
+        XCTAssertEqual(
+            EventAtlasCombatCards11666.formatMovement(before: 0.40, current: 0.402),
+            "Unchanged vs before fight"
+        )
+
+        let provenance = EventAtlasCombatCards11666.formatSourceDetail(
+            rawSource: "kalshi",
+            sourceCount: 1,
+            observedAt: now,
+            isStaleLive: false,
+            phase: .during,
+            now: now
+        )
+        XCTAssertFalse(provenance.lowercased().contains("kalshi"))
+        XCTAssertFalse(provenance.lowercased().contains("polymarket"))
+
+        let event = makeCombatEvent(
+            sport: "mma_mixed_martial_arts",
+            status: "scheduled",
+            commenceTime: "2026-11-09T03:00:00Z"
+        )
+        let emptyMarkets = GameMarketsResponse(
+            eventId: event.id,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            status: event.status,
+            homeScore: nil,
+            awayScore: nil,
+            playerProps: [],
+            spreads: [],
+            totals: [],
+            teamTotals: [],
+            periodMarkets: [],
+            other: [
+                GameMarketOther(
+                    _marketId: 999,
+                    marketName: "Unrelated Prop",
+                    outcomeName: "No",
+                    probability: 0.50,
+                    source: "kalshi",
+                    observedAt: "2026-11-08T21:55:00Z",
+                    pregameMark: 0.50
+                )
+            ],
+            pace: nil
+        )
+        XCTAssertTrue(
+            EventAtlasCombatCards11666.buildCards(
+                event: event,
+                gameMarkets: emptyMarkets,
+                now: now,
+                atlasEnabled: true
+            ).isEmpty
+        )
     }
 
     // MARK: - 3. Live Quote 30-Minute Aging ("No recent probability")
@@ -476,14 +641,14 @@ final class EventAtlasCombatCards11666Tests: XCTestCase {
                     probability: 0.42,
                     source: "polymarket",
                     threshold: 2.5,
-                    overProbability: 0.42,
+                    overProbability: 0.58,
                     marketType: "total_rounds",
                     movement: nil,
                     period: nil,
                     isWinner: settled ? false : nil,
                     resolutionSource: resSource,
                     observedAt: observedAt,
-                    pregameMark: 0.46
+                    pregameMark: 0.54
                 ),
             ],
             teamTotals: [],
