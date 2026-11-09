@@ -113,7 +113,8 @@ nonisolated enum WatchComplicationProjection {
         return WatchComplicationSnapshot(version: 1, eventID: game.id, title: title,
             detail: detail, observedAt: observed, savedAt: savedAt,
             circularReading: compact.matches(parent) ? compact : nil,
-            rectangularReading: rectangular.matches(parent) ? rectangular : nil)
+            rectangularReading: rectangular.matches(parent) ? rectangular : nil,
+            commenceTime: game.commenceTime, sportKey: game.sportKey, status: game.status)
     }
 
     private static func validObservation(_ observed: Date, savedAt: Date) -> Bool {
@@ -132,6 +133,10 @@ nonisolated enum WatchComplicationPublisher {
         guard write(snapshot, to: directory) else { return }
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")
+        // #12316: the game-day window may have moved, so the Smart Stack asks again.
+        if #available(iOS 18.0, macOS 15.0, watchOS 11.0, *) {
+            WidgetCenter.shared.invalidateRelevance(ofKind: "BainLuckYourGame")
+        }
         #endif
     }
 
@@ -147,7 +152,12 @@ nonisolated enum WatchComplicationPublisher {
                existing.title == valid.title, existing.detail == valid.detail,
                existing.observedAt == valid.observedAt,
                existing.circularReading == valid.circularReading,
-               (valid.rectangularReading == nil || existing.rectangularReading == valid.rectangularReading) {
+               (valid.rectangularReading == nil || existing.rectangularReading == valid.rectangularReading),
+               // #12316: like the reading above, a missing field claims nothing; a new or
+               // changed one rewrites, so the Smart Stack asks for the game-day window again.
+               (valid.commenceTime == nil || existing.commenceTime == valid.commenceTime),
+               (valid.sportKey == nil || existing.sportKey == valid.sportKey),
+               (valid.status == nil || existing.status == valid.status) {
                 return false // A newer fetch alone is not a newer reading.
             }
             // A tombstone replaces the previous reading atomically on selection change.

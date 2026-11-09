@@ -12,6 +12,7 @@ swiftc -parse-as-library -swift-version 5 -D DEBUG \
   "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchLaunchRoute.swift" \
   "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchComplicationSnapshot.swift" \
   "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchComplicationPublisher.swift" \
+  "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchYourGameRefresh.swift" \
   "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchSelectedGameModels.swift" \
   "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchSelectedGameStore.swift" \
   "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchFeedModels.swift" \

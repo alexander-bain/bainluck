@@ -147,6 +147,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				BainLuckComplication.swift,
+				WatchYourGameRefresh.swift,
 			);
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
 		};
@@ -185,12 +186,19 @@
 				WatchSavedComplicationContent.swift,
 				WatchComplicationSnapshot.swift,
 				WatchLaunchRoute.swift,
+				WatchComplicationPublisher.swift,
+				WatchSelectedGameModels.swift,
+				WatchYourGameRefresh.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
 		A7C0000000000000000000DF /* Exceptions for "Bain Luck" folder in "BainLuckComplication" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Utilities/DrawPricedWinner.swift,
+				Utilities/PeriodLabel.swift,
+				Utilities/RenderedPercent.swift,
+				Utilities/SportVocab.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};

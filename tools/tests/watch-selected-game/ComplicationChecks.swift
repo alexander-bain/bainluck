@@ -262,6 +262,7 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     }
     print("PASS: restored-to-fresh shared final, same-clock corrected winner replacement, clear-race tombstone, wrong-ID/version app-cache rejection and shared invalidation")
     print("PASS: complication shared projection, producer age, final winner, fail-closed reads, tombstone, store publication and stale-response suppression")
+    try await runSmartStackRefreshChecks()
 }
 
 
@@ -355,6 +356,7 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     print("PASS: corner forecast-only, capability fallback, bounded canonical identity, original clock and independent circular/rectangular contracts")
     print("PASS: circular canonical identity, original clocks, rounding/draw, final/score, old/malformed/wrong compact payload, offline and one-time enrichment")
     try runRectangularComplicationChecks()
+    try runSmartStackRelevanceChecks()
 }
 
 /// Deterministic #4933 checks for all six large-rectangular (`accessoryRectangular`) states and line/character budgets.
@@ -598,4 +600,263 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
         }
     }
     print("PASS: rectangular complication live probability+score, live score-only, scheduled forecast/start without fake 0–0, final winner without stale probability, and explicit saved/stale age")
+}
+
+/// #12316: the Smart Stack window, files saved before it, the publisher's new fields and the
+/// card's counting-age words. No WidgetKit here; watch-build compiles the relevance provider.
+@MainActor func runSmartStackRelevanceChecks() throws {
+    let iso = ISO8601DateFormatter()
+    let now = iso.date(from: "2026-10-04T18:00:00Z")!
+    let minute: TimeInterval = 60
+    let hour: TimeInterval = 3600
+    let teams = "\"home_team_data\":{\"team_id\":1,\"abbreviation\":\"SF\"},\"away_team_data\":{\"team_id\":2,\"abbreviation\":\"LA\"}"
+    func project(_ fields: String) throws -> WatchComplicationSnapshot {
+        let data = Data("{\"id\":101,\"home_team\":\"San Francisco Giants\",\"away_team\":\"Los Angeles Dodgers\",\(fields),\(teams)}".utf8)
+        return WatchComplicationProjection.snapshot(game: try JSONDecoder().decode(WatchSelectedGame.self, from: data), savedAt: now)!
+    }
+
+    // The brief's simulator case: a game chosen 20 minutes before it starts, with no chance yet.
+    let start = iso.date(from: "2026-10-04T18:20:00Z")!
+    let scheduled = try project("\"status\":\"scheduled\",\"sport\":\"baseball_mlb\",\"commence_time\":\"2026-10-04T18:20:00Z\"")
+    precondition(scheduled.rectangularReading?.kind == .scheduledStart)
+    precondition(scheduled.commenceTime == start && scheduled.sportKey == "baseball_mlb" && scheduled.status == "scheduled",
+                 "A scheduled game's file carries its start, sport and status")
+    let window = scheduled.relevanceWindow!
+    precondition(window.start == start.addingTimeInterval(-15 * minute) && window.end == start.addingTimeInterval(4 * hour),
+                 "Suggested from 15 minutes before the start until start + 4 h")
+    precondition(!window.contains(now) && !window.contains(window.start.addingTimeInterval(-1)),
+                 "Twenty minutes out, the card is not suggested yet")
+    precondition(window.contains(window.start) && window.contains(start.addingTimeInterval(2 * hour)))
+    precondition(!window.contains(window.end.addingTimeInterval(1)), "The cap ends a game whose final the watch never saw")
+
+    // Per-sport cap: soccer is shorter; other and unknown sports take the default.
+    let caps: [(String?, TimeInterval)] = [
+        ("soccer_epl", 2.5 * hour), ("SOCCER_usa_mls", 2.5 * hour), ("basketball_nba", 4 * hour),
+        ("americanfootball_nfl", 4 * hour), (nil, 4 * hour),
+    ]
+    for (sport, cap) in caps {
+        precondition(WatchComplicationSnapshot.relevanceCapSeconds(sportKey: sport) == cap, "Window cap for \(sport ?? "no sport")")
+    }
+    let soccer = try project("\"status\":\"scheduled\",\"sport\":\"soccer_epl\",\"commence_time\":\"2026-10-04T18:20:00Z\"")
+    precondition(soccer.relevanceWindow?.end == start.addingTimeInterval(2.5 * hour))
+
+    // Live: the window runs to the cap, because the watch cannot know the game has ended.
+    let liveStart = iso.date(from: "2026-10-04T17:00:00Z")!
+    let liveFields = "\"sport\":\"baseball_mlb\",\"hero_probability\":0.64,\"hero_probability_away\":0.36,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\",\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\""
+    let live = try project("\"status\":\"live\",\"commence_time\":\"2026-10-04T17:00:00Z\",\(liveFields)")
+    precondition(live.rectangularReading?.kind == .liveForecast && live.status == "live")
+    precondition(live.relevanceWindow == DateInterval(start: liveStart.addingTimeInterval(-15 * minute),
+                                                      end: liveStart.addingTimeInterval(4 * hour)))
+    precondition(live.relevanceWindow!.contains(now))
+    let noStart = try project("\"status\":\"live\",\(liveFields)")
+    precondition(noStart.commenceTime == nil && noStart.relevanceWindow == nil, "No start time, no suggestion")
+
+    // Final: leaves 30 minutes after the final was seen, never later than the cap.
+    let final = try project("\"status\":\"completed\",\"sport\":\"baseball_mlb\",\"commence_time\":\"2026-10-04T15:00:00Z\",\"home_score\":4,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:58:00Z\"")
+    precondition(final.rectangularReading?.kind == .finalResult)
+    precondition(final.relevanceWindow?.end == final.observedAt.addingTimeInterval(30 * minute) && final.relevanceWindow!.contains(now),
+                 "A final seen at 17:58 leaves at 18:28")
+    let lateFinal = try project("\"status\":\"Final\",\"sport\":\"baseball_mlb\",\"commence_time\":\"2026-10-04T13:00:00Z\",\"home_score\":4,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:58:00Z\"")
+    precondition(lateFinal.relevanceWindow?.end == iso.date(from: "2026-10-04T17:00:00Z")! && !lateFinal.relevanceWindow!.contains(now),
+                 "A final seen after the cap never extends the window past start + 4 h")
+
+    // Files saved before #12316 still decode and draw; they are simply never suggested.
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("watch-relevance-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent(WatchComplicationSnapshot.filename)
+    var old = try JSONSerialization.jsonObject(with: JSONEncoder().encode(live)) as! [String: Any]
+    precondition(old["commenceTime"] != nil && old["sportKey"] != nil && old["status"] != nil)
+    for key in ["commenceTime", "sportKey", "status"] { old.removeValue(forKey: key) }
+    try JSONSerialization.data(withJSONObject: old).write(to: file)
+    let restoredOld = WatchComplicationSnapshot.read(from: directory, now: now)!
+    precondition(restoredOld.validatedRectangularReading(now: now) == live.validatedRectangularReading(now: now),
+                 "An old file keeps its face reading")
+    precondition(restoredOld.commenceTime == nil && restoredOld.sportKey == nil && restoredOld.status == nil
+                 && restoredOld.relevanceWindow == nil)
+    var malformed = try JSONSerialization.jsonObject(with: JSONEncoder().encode(live)) as! [String: Any]
+    malformed["commenceTime"] = "tonight"
+    malformed["sportKey"] = 7
+    malformed["status"] = ["live"]
+    try JSONSerialization.data(withJSONObject: malformed).write(to: file)
+    let tolerated = WatchComplicationSnapshot.read(from: directory, now: now)!
+    precondition(tolerated.validatedRectangularReading(now: now) != nil && tolerated.relevanceWindow == nil
+                 && tolerated.sportKey == nil && tolerated.status == nil,
+                 "Malformed game-day fields drop only themselves, never the reading")
+
+    // The publisher writes the fields, and any change to them rewrites the file (reload + new relevance).
+    try FileManager.default.removeItem(at: file)
+    precondition(WatchComplicationPublisher.write(live, to: directory, now: now))
+    let written = WatchComplicationSnapshot.read(from: directory, now: now)!
+    precondition(written.commenceTime == liveStart && written.sportKey == "baseball_mlb" && written.status == "live"
+                 && written.relevanceWindow == live.relevanceWindow)
+    precondition(!WatchComplicationPublisher.write(live, to: directory, now: now), "Unchanged fields do not rewrite")
+    let moved = try project("\"status\":\"live\",\"commence_time\":\"2026-10-04T17:10:00Z\",\(liveFields)")
+    let inProgress = try project("\"status\":\"in_progress\",\"commence_time\":\"2026-10-04T17:10:00Z\",\(liveFields)")
+    let resported = try project("\"status\":\"in_progress\",\"commence_time\":\"2026-10-04T17:10:00Z\",\(liveFields.replacingOccurrences(of: "baseball_mlb", with: "soccer_epl"))")
+    for (label, next) in [("start", moved), ("status", inProgress), ("sport", resported)] {
+        let current = WatchComplicationSnapshot.read(from: directory, now: now)!
+        precondition(next.title == current.title && next.detail == current.detail && next.observedAt == current.observedAt
+                     && next.rectangularReading == current.rectangularReading,
+                     "Only the \(label) changed")
+        precondition(WatchComplicationPublisher.write(next, to: directory, now: now),
+                     "A changed \(label) rewrites the file so the Smart Stack asks again")
+    }
+    precondition(WatchComplicationSnapshot.read(from: directory, now: now)?.relevanceWindow?.end
+                 == iso.date(from: "2026-10-04T17:10:00Z")!.addingTimeInterval(2.5 * hour))
+
+    // The card says the face's words, with a counting clock in place of the age, and a spoken
+    // observation time that cannot go out of date.
+    let specimens = [
+        live, noStart, scheduled, final,
+        try project("\"status\":\"live\",\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\""),
+        try project("\"status\":\"scheduled\",\"commence_time\":\"2026-10-04T23:00:00Z\",\"hero_probability\":0.55,\"hero_probability_away\":0.45,\"hero_probability_observed_at\":\"2026-10-04T17:57:00Z\""),
+    ]
+    var kinds = Set<String>()
+    for snapshot in specimens {
+        let reading = snapshot.validatedRectangularReading(now: now)!
+        kinds.insert("\(reading.kind)")
+        let clock = WatchRectangularReading.spokenClock(observedAt: reading.observedAt)
+        precondition(clock == "at \(reading.observedAt.formatted(.dateTime.month(.abbreviated).day().hour().minute()))")
+        for date in WatchRectangularReading.timelineDates(for: snapshot, now: now) + [
+            reading.observedAt.addingTimeInterval(30), reading.observedAt.addingTimeInterval(121),
+            reading.observedAt.addingTimeInterval(59 * minute), start.addingTimeInterval(1),
+            reading.observedAt.addingTimeInterval(23 * hour), reading.observedAt.addingTimeInterval(7 * 24 * hour),
+        ] {
+            let leadIn = reading.metadataLeadIn(at: date)
+            let age = WatchRectangularReading.compactAge(observedAt: reading.observedAt, now: date) ?? "no time"
+            precondition(reading.metadataLine(at: date) == (leadIn.map { $0 + age } ?? "Saved · No win prob"),
+                         "Card words differ from the face: \(reading.metadataLine(at: date)) vs \(leadIn ?? "nil")")
+            if let leadIn { precondition(leadIn.hasPrefix("Saved · ") && leadIn.hasSuffix(" · ")) }
+            let face = reading.accessibilityDescription(at: date)
+            let card = reading.accessibilityDescription(at: date, observedClock: clock)
+            if let spoken = WatchRectangularReading.spokenAge(observedAt: reading.observedAt, now: date), face.contains(spoken) {
+                precondition(card == face.replacingOccurrences(of: spoken, with: clock) && !card.contains(" ago."),
+                             "The card's spoken age must be a time of day: \(card)")
+            } else {
+                precondition(card == face, "A spoken label without an age stays unchanged")
+            }
+        }
+    }
+    precondition(kinds == ["liveForecast", "liveScoreOnly", "scheduledForecast", "scheduledStart", "finalResult"], "\(kinds)")
+    print("PASS: Smart Stack window (15 min lead, sport cap, 30 min after a final), old and malformed files, publisher fields and rewrite, and the card's counting-age words")
+}
+
+/// Every request is intercepted; the Smart Stack refresh checks never contact the public API.
+private final class SmartStackHTTPProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var requests: [URLRequest] = []
+
+    static func reset() { lock.lock(); requests = []; lock.unlock() }
+    static var seen: [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.lock.lock()
+        Self.requests.append(request)
+        Self.lock.unlock()
+        if let error = request.value(forHTTPHeaderField: "X-Watch-Test-Network-Error") {
+            client?.urlProtocol(self, didFailWithError: URLError(URLError.Code(rawValue: Int(error)!)))
+            return
+        }
+        let status = Int(request.value(forHTTPHeaderField: "X-Watch-Test-Status")!)!
+        let body = request.value(forHTTPHeaderField: "X-Watch-Test-Body")!
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+/// #12316 step 4: the Smart Stack card's one bounded refresh of the chosen game.
+@MainActor func runSmartStackRefreshChecks() async throws {
+    let iso = ISO8601DateFormatter()
+    let savedAt = iso.date(from: "2026-10-04T18:00:00Z")!
+    let teams = "\"home_team_data\":{\"team_id\":1,\"abbreviation\":\"SF\"},\"away_team_data\":{\"team_id\":2,\"abbreviation\":\"LA\"}"
+    func body(_ fields: String, id: Int = 101) -> String {
+        "{\"id\":\(id),\"home_team\":\"San Francisco Giants\",\"away_team\":\"Los Angeles Dodgers\",\(fields),\(teams)}"
+    }
+    func project(_ json: String) throws -> WatchComplicationSnapshot {
+        let game = try JSONDecoder().decode(WatchSelectedGame.self, from: Data(json.utf8))
+        return WatchComplicationProjection.snapshot(game: game, savedAt: savedAt)!
+    }
+    func live(observed: String, home: Int, start: String = "\"commence_time\":\"2026-10-04T17:00:00Z\",") -> String {
+        "\"status\":\"live\",\"sport\":\"baseball_mlb\",\(start)\"hero_probability\":0.64,\"hero_probability_away\":0.36,\"hero_probability_observed_at\":\"\(observed)\",\"home_score\":\(home),\"away_score\":2,\"score_observed_at\":\"\(observed)\""
+    }
+    func session(status: Int = 200, json: String = "{}", networkError: URLError.Code? = nil) -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SmartStackHTTPProtocol.self]
+        var headers = ["X-Watch-Test-Status": String(status), "X-Watch-Test-Body": json]
+        if let networkError { headers["X-Watch-Test-Network-Error"] = String(networkError.rawValue) }
+        configuration.httpAdditionalHeaders = headers
+        return URLSession(configuration: configuration)
+    }
+
+    // When: mid-game (started by its schedule, not final, window open) and past two minutes.
+    let saved = try project(body(live(observed: "2026-10-04T17:58:00Z", home: 3)))
+    let later = iso.date(from: "2026-10-04T18:20:00Z")!
+    precondition(WatchYourGameRefresh.wantsRefresh(saved, now: later))
+    precondition(!WatchYourGameRefresh.wantsRefresh(saved, now: saved.observedAt.addingTimeInterval(120)),
+                 "Within two minutes the saved reading is shown as it is")
+    precondition(WatchYourGameRefresh.wantsRefresh(saved, now: saved.observedAt.addingTimeInterval(121)))
+    precondition(!WatchYourGameRefresh.wantsRefresh(saved, now: iso.date(from: "2026-10-04T21:00:01Z")!),
+                 "After the window closes the card is gone, so nothing is fetched")
+    let scheduled = try project(body("\"status\":\"scheduled\",\"sport\":\"baseball_mlb\",\"commence_time\":\"2026-10-04T18:20:00Z\""))
+    precondition(!WatchYourGameRefresh.wantsRefresh(scheduled, now: iso.date(from: "2026-10-04T18:10:00Z")!),
+                 "In the 15 minutes before the start, the saved reading is shown")
+    precondition(WatchYourGameRefresh.wantsRefresh(scheduled, now: iso.date(from: "2026-10-04T18:25:00Z")!),
+                 "A game saved before it started is refreshed once it has started")
+    let final = try project(body("\"status\":\"completed\",\"sport\":\"baseball_mlb\",\"commence_time\":\"2026-10-04T15:00:00Z\",\"home_score\":4,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:58:00Z\""))
+    precondition(!WatchYourGameRefresh.wantsRefresh(final, now: later), "A final is never refreshed")
+    let noStart = try project(body(live(observed: "2026-10-04T17:58:00Z", home: 3, start: "")))
+    precondition(!WatchYourGameRefresh.wantsRefresh(noStart, now: later), "No start time, no window, no fetch")
+
+    // What: the same public endpoint, bounded and uncached.
+    let request = WatchYourGameRefresh.request(eventID: 101)
+    precondition(request.url?.absoluteString == "https://api.bainluck.com/api/events/101"
+                 && request.timeoutInterval == 8 && request.cachePolicy == .reloadIgnoringLocalCacheData)
+    precondition(WatchYourGameRefresh.session.configuration.timeoutIntervalForResource == 8)
+
+    // A newer reading of the same game replaces the saved one on the card.
+    let fetchedAt = later.addingTimeInterval(1)
+    SmartStackHTTPProtocol.reset()
+    let newer = await WatchYourGameRefresh.reading(saved: saved, now: later,
+        session: session(json: body(live(observed: "2026-10-04T18:19:30Z", home: 5))), clock: { fetchedAt })
+    precondition(SmartStackHTTPProtocol.seen.count == 1 && SmartStackHTTPProtocol.seen[0].url?.path == "/api/events/101"
+                 && SmartStackHTTPProtocol.seen[0].timeoutInterval == 8, "One bounded request for the chosen game")
+    precondition(newer.observedAt == iso.date(from: "2026-10-04T18:19:30Z")! && newer.savedAt == fetchedAt
+                 && newer.rectangularReading?.homeScore == 5 && newer.commenceTime == saved.commenceTime)
+    precondition(newer.validatedRectangularReading(now: fetchedAt)?.metadataLine(at: fetchedAt) == "Saved · Live · <1m ago")
+    let wentFinal = await WatchYourGameRefresh.reading(saved: saved, now: later,
+        session: session(json: body("\"status\":\"completed\",\"sport\":\"baseball_mlb\",\"commence_time\":\"2026-10-04T17:00:00Z\",\"home_score\":5,\"away_score\":2,\"score_observed_at\":\"2026-10-04T18:15:00Z\"")),
+        clock: { fetchedAt })
+    precondition(wentFinal.rectangularReading?.kind == .finalResult && wentFinal.title == "San Francisco Giants won",
+                 "A game that ended while the app was closed shows its final")
+
+    // Every failure, and anything not newer for the same game, shows the saved reading.
+    let failures: [(String, URLSession)] = [
+        ("not found", session(status: 404)), ("busy", session(status: 503)),
+        ("offline", session(networkError: .notConnectedToInternet)), ("timeout", session(networkError: .timedOut)),
+        ("malformed", session(json: "{\"id\":")),
+        ("another game", session(json: body(live(observed: "2026-10-04T18:19:30Z", home: 5), id: 202))),
+        ("older reading", session(json: body(live(observed: "2026-10-04T17:50:00Z", home: 5)))),
+        ("same reading", session(json: body(live(observed: "2026-10-04T17:58:00Z", home: 3)))),
+        ("no reading", session(json: body("\"status\":\"delayed\",\"commence_time\":\"2026-10-04T17:00:00Z\""))),
+    ]
+    for (label, failing) in failures {
+        let shown = await WatchYourGameRefresh.reading(saved: saved, now: later, session: failing, clock: { fetchedAt })
+        precondition(shown.savedAt == saved.savedAt && shown.observedAt == saved.observedAt
+                     && shown.rectangularReading == saved.rectangularReading, "\(label) keeps the saved reading")
+        failing.invalidateAndCancel()
+    }
+    SmartStackHTTPProtocol.reset()
+    let stillFresh = await WatchYourGameRefresh.reading(saved: saved, now: saved.observedAt.addingTimeInterval(60),
+        session: session(json: body(live(observed: "2026-10-04T17:58:30Z", home: 5))), clock: { fetchedAt })
+    precondition(SmartStackHTTPProtocol.seen.isEmpty && stillFresh.savedAt == saved.savedAt,
+                 "No request while the saved reading is fresh")
+    print("PASS: Smart Stack card refresh only mid-game past two minutes, one bounded uncached GET of the same game, newer readings and finals only, saved reading on every failure")
 }

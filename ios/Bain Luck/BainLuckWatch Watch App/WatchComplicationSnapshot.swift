@@ -12,10 +12,16 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
     let savedAt: Date
     let circularReading: WatchCircularReading?
     let rectangularReading: WatchRectangularReading?
+    /// #12316 game-day metadata for Smart Stack relevance. Optional: files saved before it
+    /// existed still decode, and a game without a start time is simply never suggested.
+    let commenceTime: Date?
+    let sportKey: String?
+    let status: String?
 
     init(version: Int = 1, eventID: Int, title: String, detail: String,
          observedAt: Date, savedAt: Date, circularReading: WatchCircularReading? = nil,
-         rectangularReading: WatchRectangularReading? = nil) {
+         rectangularReading: WatchRectangularReading? = nil,
+         commenceTime: Date? = nil, sportKey: String? = nil, status: String? = nil) {
         self.version = version
         self.eventID = eventID
         self.title = title
@@ -24,10 +30,14 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
         self.savedAt = savedAt
         self.circularReading = circularReading
         self.rectangularReading = rectangularReading
+        self.commenceTime = commenceTime
+        self.sportKey = sportKey
+        self.status = status
     }
 
     private enum CodingKeys: String, CodingKey {
         case version, eventID, title, detail, observedAt, savedAt, circularReading, rectangularReading
+        case commenceTime, sportKey, status
     }
 
     init(from decoder: Decoder) throws {
@@ -41,6 +51,32 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
         // Unknown or malformed optional compact data cannot hide the rectangular reading.
         circularReading = try? c.decode(WatchCircularReading.self, forKey: .circularReading)
         rectangularReading = try? c.decode(WatchRectangularReading.self, forKey: .rectangularReading)
+        // Absent or malformed game-day metadata only withholds the Smart Stack suggestion.
+        let start = try? c.decodeIfPresent(Date.self, forKey: .commenceTime)
+        commenceTime = start.flatMap { $0.timeIntervalSinceReferenceDate.isFinite ? $0 : nil }
+        sportKey = try? c.decodeIfPresent(String.self, forKey: .sportKey)
+        status = try? c.decodeIfPresent(String.self, forKey: .status)
+    }
+
+    /// #12316: when the chosen game belongs at the top of the Smart Stack. From 15 minutes
+    /// before its start to a per-sport cap; a final ends it 30 minutes after it was seen,
+    /// never later than the cap. No start time, no suggestion.
+    static let relevanceLeadSeconds: TimeInterval = 15 * 60
+    static let relevanceAfterFinalSeconds: TimeInterval = 30 * 60
+
+    static func relevanceCapSeconds(sportKey: String?) -> TimeInterval {
+        (sportKey?.lowercased().hasPrefix("soccer") ?? false) ? 2.5 * 3600 : 4 * 3600
+    }
+
+    var relevanceWindow: DateInterval? {
+        guard isValid(now: savedAt), let start = commenceTime,
+              start.timeIntervalSinceReferenceDate.isFinite else { return nil }
+        let opens = start.addingTimeInterval(-Self.relevanceLeadSeconds)
+        let cap = start.addingTimeInterval(Self.relevanceCapSeconds(sportKey: sportKey))
+        let isFinal = ["completed", "final"].contains(status?.lowercased() ?? "")
+        let closes = isFinal ? min(cap, observedAt.addingTimeInterval(Self.relevanceAfterFinalSeconds)) : cap
+        guard closes > opens else { return nil }
+        return DateInterval(start: opens, end: closes)
     }
 
     var validatedCircularReading: WatchCircularReading? {
@@ -367,7 +403,31 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         return "Saved · \(stateLabel) · \(age)"
     }
 
-    func accessibilityDescription(at now: Date) -> String {
+    /// #12316: the words `metadataLine(at:)` puts before its age, or nil when that line has
+    /// no age. The Smart Stack card has one entry rather than a timeline, so it draws these
+    /// words beside a clock that keeps counting instead of an age frozen at the entry's date.
+    func metadataLeadIn(at now: Date) -> String? {
+        if kind == .scheduledStart {
+            guard let start = commenceTime, now >= start else { return nil }
+            return "Saved · Past start · "
+        }
+        if kind == .scheduledForecast, let start = commenceTime, now >= start {
+            return "Saved · Past start · "
+        }
+        if isStale(at: now) {
+            return "Saved · Stale · "
+        }
+        return "Saved · \(stateLabel) · "
+    }
+
+    /// #12316: an observation time that stays true however long a card shows it.
+    static func spokenClock(observedAt: Date) -> String {
+        "at \(observedAt.formatted(.dateTime.month(.abbreviated).day().hour().minute()))"
+    }
+
+    /// `observedClock` replaces the spoken age (#12316: a one-entry Smart Stack card says
+    /// "at <time>", which cannot go out of date).
+    func accessibilityDescription(at now: Date, observedClock: String? = nil) -> String {
         let staleNote = isStale(at: now) ? " Stale reading." : ""
         switch kind {
         case .liveForecast:
@@ -376,16 +436,16 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
                 return " Score \(awayName) \(ascore), \(homeName) \(hs)."
             }()
             let pct = formattedHomePercent ?? "unavailable"
-            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
+            let age = observedClock ?? Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
             return "Saved reading. \(awayName) at \(homeName).\(scorePart) \(homeName) win probability \(pct). Live. Observed \(age).\(staleNote) Open your game in Bain Luck."
         case .liveScoreOnly:
             let ascore = awayScore ?? 0
             let hs = homeScore ?? 0
-            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
+            let age = observedClock ?? Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
             return "Saved reading. \(awayName), score \(ascore). \(homeName), score \(hs). Win probability unavailable. Live. Observed \(age).\(staleNote) Open your game in Bain Luck."
         case .scheduledForecast:
             let pct = formattedHomePercent ?? "unavailable"
-            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
+            let age = observedClock ?? Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
             if let start = commenceTime, now >= start {
                 return "Saved reading. \(awayName) at \(homeName). \(homeName) win probability \(pct). Scheduled start has passed; game status unconfirmed. Observed \(age). Open your game in Bain Luck."
             }
@@ -393,14 +453,14 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         case .scheduledStart:
             let startText = commenceTime.map { $0.formatted(.dateTime.month(.abbreviated).day().hour().minute()) } ?? "time unavailable"
             if let start = commenceTime, now >= start {
-                let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
+                let age = observedClock ?? Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
                 return "Saved reading. \(awayName) at \(homeName). Scheduled start \(startText) has passed; game status unconfirmed. Win probability unavailable. Saved \(age). Open your game in Bain Luck."
             }
             return "Saved reading. \(awayName) at \(homeName). \(stateLabel) \(startText). Win probability unavailable. Open your game in Bain Luck."
         case .finalResult:
             let hs = homeScore ?? 0
             let ascore = awayScore ?? 0
-            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
+            let age = observedClock ?? Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
             if hs > ascore {
                 return "Saved reading. \(awayName), score \(ascore). \(homeName) won, score \(hs). Final. Observed \(age). Open your game in Bain Luck."
             }

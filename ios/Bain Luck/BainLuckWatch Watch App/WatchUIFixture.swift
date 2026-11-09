@@ -185,6 +185,11 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
                     payload.removeValue(forKey: "hero_probability")
                     payload.removeValue(forKey: "hero_probability_observed_at")
                 }
+            } else if face == "started", let start = environment["BAINLUCK_WATCH_UI_RECTANGULAR_FACE_START"] {
+                // #12316: the game keeps its state (live, or final with the score host) and gains a
+                // start and sport, so its Smart Stack window can open.
+                payload["commence_time"] = start
+                payload["sport"] = "baseball_mlb"
             }
         }
         // RECTANGULAR_FACE_STATES_END

@@ -7,6 +7,9 @@ import WidgetKit
 struct WatchSavedComplicationContent: View {
     let snapshot: WatchComplicationSnapshot?
     var now: Date = Date()
+    /// #12316 Smart Stack card: one entry and no timeline, so the age is a clock that keeps
+    /// counting. The face slot keeps `false` and redraws its age from its timeline.
+    var liveAge: Bool = false
     @Environment(\.widgetRenderingMode) private var renderingMode
 
     private var accentColor: Color { renderingMode == .fullColor ? .cyan : .primary }
@@ -19,7 +22,10 @@ struct WatchSavedComplicationContent: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(reading.accessibilityDescription(at: now))
+            .accessibilityLabel(liveAge
+                ? reading.accessibilityDescription(
+                    at: now, observedClock: WatchRectangularReading.spokenClock(observedAt: reading.observedAt))
+                : reading.accessibilityDescription(at: now))
             .accessibilityIdentifier("watch.complication.rectangular.reading")
         } else if let snapshot, snapshot.isValid(now: now) {
             legacyCard(snapshot)
@@ -62,14 +68,33 @@ struct WatchSavedComplicationContent: View {
                 .minimumScaleFactor(0.85)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("watch.complication.rectangular.primary")
-            Text(reading.metadataLine(at: now))
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("watch.complication.rectangular.metadata")
+            if liveAge, let leadIn = reading.metadataLeadIn(at: now) {
+                liveMetadata(reading, leadIn: leadIn)
+            } else {
+                Text(reading.metadataLine(at: now))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("watch.complication.rectangular.metadata")
+            }
         }
+    }
+
+    /// #12316 Smart Stack card: the face's words, then an age that keeps counting. A long
+    /// line loses its middle, so both "Saved" and the age stay visible.
+    private func liveMetadata(_ reading: WatchRectangularReading, leadIn: String) -> some View {
+        let age = SystemFormatStyle.DateReference(
+            to: reading.observedAt, allowedFields: [.day, .hour, .minute], maxFieldCount: 1)
+        return Text("\(leadIn)\(.currentDate, format: age)")
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .truncationMode(.middle)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("watch.complication.rectangular.metadata")
     }
 
     private func legacyCard(_ snapshot: WatchComplicationSnapshot) -> some View {

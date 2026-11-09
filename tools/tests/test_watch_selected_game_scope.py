@@ -36,6 +36,58 @@ LAUNCHERS = (
     ),
 )
 
+# #12316: the followed game's Smart Stack card. The bundle keeps the installed face kind and
+# adds a relevance-only kind; the card reuses the face reading with an age that keeps counting.
+SMART_STACK_WIDGET = (
+    "@main\nstruct BainLuckWidgets: WidgetBundle {\n    var body: some Widget {\n"
+    "        BainLuckWidget()\n        BainLuckYourGameWidget()\n    }\n}",
+    'let kind = "BainLuckYourGame"',
+    "RelevanceConfiguration(kind: kind, provider: YourGameRelevanceProvider())",
+    '.description("Your chosen game on game day, with its saved reading and its age.")\n'
+    "        // The Smart Stack draws rectangular cards; the reading is laid out for no other size.\n"
+    "        .supportedFamilies([.accessoryRectangular])",
+    "WidgetRelevanceAttribute(configuration: YourGameIntent(eventID: saved.eventID),",
+    "context: .date(interval: window, kind: .scheduled)",
+    "window.end > now else { return WidgetRelevance([]) }",
+    "guard let saved, saved.eventID == configuration.eventID else {\n"
+    "            return YourGameEntry(date: now, snapshot: nil)",
+    "guard !context.isPreview else { return YourGameEntry(date: now, snapshot: saved) }",
+    "let shown = await WatchYourGameRefresh.reading(saved: saved, now: now)\n"
+    "        return YourGameEntry(date: max(now, shown.savedAt), snapshot: shown)",
+    "WatchSavedComplicationContent(snapshot: entry.snapshot, now: entry.date, liveAge: true)",
+    ".containerBackground(.fill.tertiary, for: .widget)\n"
+    "                .widgetURL(WatchLaunchRoute.url)\n        }",
+    '#Preview("Your game in the Smart Stack", widget: { BainLuckYourGameWidget() },\n'
+    "         relevanceProvider: { YourGameRelevanceProvider() })",
+)
+SMART_STACK_CONTENT = (
+    "var liveAge: Bool = false",
+    "if liveAge, let leadIn = reading.metadataLeadIn(at: now) {\n"
+    "                liveMetadata(reading, leadIn: leadIn)",
+    'return Text("\\(leadIn)\\(.currentDate, format: age)")',
+    ".minimumScaleFactor(0.85)\n            .truncationMode(.middle)",
+    "observedClock: WatchRectangularReading.spokenClock(observedAt: reading.observedAt))",
+)
+SMART_STACK_PUBLISHER = (
+    'WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")\n'
+    "        // #12316: the game-day window may have moved, so the Smart Stack asks again.\n"
+    "        if #available(iOS 18.0, macOS 15.0, watchOS 11.0, *) {\n"
+    '            WidgetCenter.shared.invalidateRelevance(ofKind: "BainLuckYourGame")',
+    "commenceTime: game.commenceTime, sportKey: game.sportKey, status: game.status)",
+)
+
+
+def require_smart_stack(content, widget, publisher):
+    for pin in SMART_STACK_WIDGET:
+        assert pin in widget, pin
+    assert widget.count("@main") == 1
+    # A nonisolated intent cannot hold an @Parameter (a warning today, an error in Swift 6).
+    assert "\nstruct YourGameIntent: WidgetConfigurationIntent {" in widget
+    for pin in SMART_STACK_CONTENT:
+        assert pin in content, pin
+    for pin in SMART_STACK_PUBLISHER:
+        assert pin in publisher, pin
+
 
 def require_product(view, content, widget):
     for removed in ("showingDiscoveries", "WatchDiscoverView(", 'Text("Discoveries")'):
@@ -77,7 +129,11 @@ def require_product(view, content, widget):
     assert "WatchComplicationSnapshot.read(from: directory, now: now)" in widget
     assert "else if family == .accessoryCorner" in widget
     assert 'let kind = "BainLuckComplication"' in widget
-    assert ".widgetURL(WatchLaunchRoute.url)" in widget
+    # The face view's own tap route; the #12316 Smart Stack card carries a second one.
+    assert (
+        ".widgetURL(WatchLaunchRoute.url)\n    }\n    private var accessibilityDescription"
+        in widget
+    )
     assert (
         ".supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryCorner])"
         in widget
@@ -130,6 +186,47 @@ class SelectedGameScopeTests(unittest.TestCase):
                 altered[index] = altered[index].replace(old, new, 1)
                 with self.assertRaises(AssertionError):
                     require_product(*altered)
+
+    def test_smart_stack_card_keeps_face_kind_relevance_window_and_counting_age(self):
+        sources = [
+            (ROOT / (APP + name)).read_text()
+            for name in (
+                "WatchSavedComplicationContent.swift",
+                "BainLuckComplication.swift",
+                "WatchComplicationPublisher.swift",
+            )
+        ]
+        require_smart_stack(*sources)
+        for index, old, new in (
+            (1, "        BainLuckYourGameWidget()\n    }", "    }"),
+            (1, "        BainLuckWidget()\n", ""),
+            (1, 'let kind = "BainLuckYourGame"', 'let kind = "BainLuckComplication"'),
+            (1, "kind: .scheduled)", "kind: .informational)"),
+            (1, "        .supportedFamilies([.accessoryRectangular])\n", ""),
+            (1, "window.end > now else", "true else"),
+            (1, "guard let saved, saved.eventID == configuration.eventID else", "guard let saved else"),
+            (1, "await WatchYourGameRefresh.reading(saved: saved, now: now)", "saved"),
+            (1, "liveAge: true", "liveAge: false"),
+            (1, "                .widgetURL(WatchLaunchRoute.url)\n        }", "        }"),
+            (1, "relevanceProvider: { YourGameRelevanceProvider() })", "relevanceEntries: { [] })"),
+            (1, "\nstruct YourGameIntent", "\nnonisolated struct YourGameIntent"),
+            (0, "if liveAge, let leadIn", "if false, let leadIn"),
+            (0, "            .truncationMode(.middle)\n", ""),
+            (0, "(.currentDate, format: age)", "(reading.observedAt, format: .dateTime)"),
+            (
+                0,
+                "reading.accessibilityDescription(\n                    at: now, observedClock: WatchRectangularReading.spokenClock(observedAt: reading.observedAt))",
+                "reading.accessibilityDescription(at: now)",
+            ),
+            (2, 'invalidateRelevance(ofKind: "BainLuckYourGame")', 'invalidateRelevance(ofKind: "BainLuckComplication")'),
+            (2, "sportKey: game.sportKey, status: game.status)", "sportKey: nil, status: game.status)"),
+        ):
+            with self.subTest(index=index, old=old):
+                altered = sources.copy()
+                self.assertIn(old, altered[index])
+                altered[index] = altered[index].replace(old, new, 1)
+                with self.assertRaises(AssertionError):
+                    require_smart_stack(*altered)
 
     def test_exact_scope_accounts_for_every_original_identity(self):
         groups = SHARDS.manifest()
