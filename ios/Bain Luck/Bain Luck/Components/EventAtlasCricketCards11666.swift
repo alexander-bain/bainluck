@@ -1160,7 +1160,7 @@ enum EventAtlasCricketCards11666 {
         case .during:
             return (pregame, prob)
         case .final:
-            return (pregame, prob ?? pregame)
+            return (pregame, nil)
         }
     }
 
