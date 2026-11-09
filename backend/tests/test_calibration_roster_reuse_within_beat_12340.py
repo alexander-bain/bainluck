@@ -1,6 +1,6 @@
 """#12340: a beat reads the futures roster once, not twice.
 
-Measured on the 2026-11-09 07:49Z beat: ``stage_counts['read:futures_generation']``
+Measured on the Nov 9, 07:49Z beat: ``stage_counts['read:futures_generation']``
 was 2 and the two reads cost 345,971 ms between them. The publish pass reads the
 roster, defers the unit loop (CAL-P994 / D45(A)), and the rebuild pass of the
 SAME beat used to read it again. Now the rebuild pass takes the publish pass's
