@@ -1,8 +1,8 @@
 """#11649: the #2871 repair can be scoped to the labels a ruling cleared.
 
 Ruling 97 cleared the attended repair of the "Exact Margin" and "First
-Touchdown Scorer" games only. The script's full net held 820 rows on
-2026-11-08: those 283 plus 537 older closed or voided rows of other #2871
+Touchdown Scorer" games only. The script's full net held 820 rows in
+Speed's Nov 8 census: those 283 plus 537 older closed or voided rows of other #2871
 labels, which nobody ruled on. `--labels` narrows the POPULATION to the named
 labels and nothing else: the counterpart exclusion keeps the whole vocabulary,
 because an "Exact Score" row is never a real fixture whichever labels a run
