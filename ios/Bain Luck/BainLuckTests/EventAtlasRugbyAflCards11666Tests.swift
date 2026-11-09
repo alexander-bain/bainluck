@@ -252,9 +252,9 @@ final class EventAtlasRugbyAflCards11666Tests: XCTestCase {
         }
     }
 
-    // MARK: - 2. Decide 10-C Lifecycle (.before, .during, .final) & 3-Way Unscaled Probabilities
+    // MARK: - 2. Decide 10-C Lifecycle (.before, .during, .final), Decide 80-A Grades & 3-Way Unscaled Probabilities
 
-    func testRugbyLifecycleObeysDecide10CAndPreservesThreeWayUnscaledProbabilities() throws {
+    func testRugbyLifecycleObeysDecide10CAndDecide80APreservingThreeWayUnscaledProbabilities() throws {
         let gm = makeRugbyGameMarkets()
 
         // 1. Before match (.before): shows ONLY live probability (0.64 / 0.33 / 0.05 -> 64% / 33% / 5%)
@@ -296,7 +296,10 @@ final class EventAtlasRugbyAflCards11666Tests: XCTestCase {
             [["81%", "64%"], ["16%", "33%"], ["3%", "5%"]]
         )
 
-        // 3. Final match (.final): shows pregameMark beside venue-confirmed contract grade + mounts Chance → Result card
+        // 3. Final match (.final) with Decide 80-A:
+        //    - Authoritative win (api_settlement, isWinner: true) prints "✓ Won"
+        //    - Non-winning row (isWinner: false) never mints "✗ Lost"; prints "Result not confirmed"
+        //    - Unsettled row (isWinner: nil) prints "Result not confirmed"
         let finalEvent = makeEvent(status: "completed", homeScore: 48, awayScore: 46)
         let finalGM = makeRugbyGameMarkets(
             homeIsWinner: true,
@@ -309,34 +312,97 @@ final class EventAtlasRugbyAflCards11666Tests: XCTestCase {
             spreadResolutionSource: "api_settlement"
         )
         let finalCards = EventAtlasRugbyAflCards11666.buildCards(event: finalEvent, gameMarkets: finalGM, now: baseNow)
-        XCTAssertEqual(finalCards.count, 4, "Final match mounts Match Outlook + Chance → Result + Handicap + Total")
-        guard case .matchOutlook(let finalOutlook) = finalCards[0],
-              case .chanceToResult(let chanceToResult) = finalCards[1] else {
-            return XCTFail("Expected matchOutlook and chanceToResult")
+        XCTAssertEqual(finalCards.count, 3, "Final match mounts Match Outlook + Handicap + Total")
+        guard case .matchOutlook(let finalOutlook) = finalCards[0] else {
+            return XCTFail("Expected matchOutlook")
         }
         let finalHeadlineModel = FieldHeadlineModel10868(finalOutlook.headlineInput)
         XCTAssertEqual(
             finalHeadlineModel.competitors.map { $0.metrics.compactMap(FieldChaseModel10868.figure) },
-            [["81%", "✓ Won"], ["16%", "✗ Lost"], ["3%"]],
-            "Unsettled Draw leg prints words ('Result not confirmed'), never a fabricated grade"
+            [["81%", "✓ Won"], ["16%"], ["3%"]],
+            "Decide 80-A: only authoritative win becomes '✓ Won'; row grades never mint '✗ Lost'"
+        )
+        XCTAssertEqual(
+            FieldChaseModel10868.words(finalHeadlineModel.competitors[1].metrics.last!),
+            "Result not confirmed"
         )
         XCTAssertEqual(
             FieldChaseModel10868.words(finalHeadlineModel.competitors[2].metrics.last!),
             "Result not confirmed"
         )
-
-        let storyModel = HistoricalChanceModel10868(chanceToResult.input)
-        XCTAssertTrue(storyModel.isShown)
-        XCTAssertEqual(storyModel.subjectName, "France")
-        XCTAssertEqual(
-            storyModel.sides.compactMap { FieldChaseModel10868.figure($0.endpoint) },
-            ["81%", "64%"]
-        )
-        XCTAssertEqual(FieldChaseModel10868.figure(try XCTUnwrap(storyModel.actual)), "France 48–46 England")
-        XCTAssertEqual(storyModel.outcome, "France · ✓ Won")
     }
 
-    // MARK: - 3. 30-Minute Live Quote Aging (.before and .during)
+    // MARK: - 3. Decide 80-A Non-Authoritative Resolution Sources & Missing Market ID Guard
+
+    func testDecide80ARejectsNonAuthoritativeResolutionSourcesAndDropsMissingMarketIDs() throws {
+        let finalEvent = makeEvent(status: "completed", homeScore: 24, awayScore: 21)
+
+        // Price guesses (binary_higher_wins, multi_max_prob), soft closes (clean_resolution),
+        // and score reads (game_score, box_score) must never become .won or .lost under Decide 80-A.
+        for nonAuthSource in ["binary_higher_wins", "multi_max_prob", "clean_resolution", "game_score", "box_score"] {
+            let gm = makeRugbyGameMarkets(
+                homeIsWinner: true,
+                awayIsWinner: false,
+                drawIsWinner: false,
+                homeResolutionSource: nonAuthSource,
+                awayResolutionSource: nonAuthSource,
+                drawResolutionSource: nonAuthSource,
+                spreadIsWinner: true,
+                spreadResolutionSource: nonAuthSource
+            )
+            let cards = EventAtlasRugbyAflCards11666.buildCards(event: finalEvent, gameMarkets: gm, now: baseNow)
+            guard case .matchOutlook(let outlook) = cards.first else {
+                return XCTFail("Expected matchOutlook for \(nonAuthSource)")
+            }
+            let model = FieldHeadlineModel10868(outlook.headlineInput)
+            for comp in model.competitors {
+                let lastMetric = try XCTUnwrap(comp.metrics.last)
+                XCTAssertNil(FieldChaseModel10868.figure(lastMetric), "Must not print '✓ Won' or '✗ Lost' for \(nonAuthSource)")
+                XCTAssertEqual(FieldChaseModel10868.words(lastMetric), "Result not confirmed")
+            }
+        }
+
+        // Rows without _marketId or _marketIds are dropped instead of inventing fallback IDs.
+        var missingIDMarkets = makeRugbyGameMarkets()
+        missingIDMarkets.other = [
+            GameMarketOther(
+                _marketId: nil,
+                _marketIds: nil,
+                isWinner: true,
+                resolutionSource: "api_settlement",
+                marketName: "Six Nations: France vs England Match Result",
+                outcomeName: "France",
+                probability: 0.64,
+                source: "polymarket",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.81
+            )
+        ]
+        missingIDMarkets.spreads = [
+            GameMarketOutcome(
+                _marketId: nil,
+                _marketIds: nil,
+                marketName: "Point Handicap",
+                outcomeName: "France -6.5",
+                probability: 0.44,
+                source: "polymarket",
+                threshold: -6.5,
+                overProbability: nil,
+                marketType: "spreads",
+                movement: nil,
+                period: nil,
+                isWinner: nil,
+                resolutionSource: nil,
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.52
+            )
+        ]
+        missingIDMarkets.totals = []
+        let droppedCards = EventAtlasRugbyAflCards11666.buildCards(event: finalEvent, gameMarkets: missingIDMarkets, now: baseNow)
+        XCTAssertTrue(droppedCards.isEmpty, "Rows missing _marketId and _marketIds must be dropped, never given invented IDs")
+    }
+
+    // MARK: - 4. 30-Minute Live Quote Aging (.before and .during)
 
     func testCurrentAtAgesLiveQuotesAfter30MinutesAndLeavesFinalUnchanged() {
         let gm = makeRugbyGameMarkets(observedAt: "2026-11-09T11:50:00Z")
@@ -391,7 +457,7 @@ final class EventAtlasRugbyAflCards11666Tests: XCTestCase {
         XCTAssertEqual(finalCards, finalAfterHours)
     }
 
-    // MARK: - 4. Venue-Free Narrative Copy Guard
+    // MARK: - 5. Venue-Free Narrative Copy Guard
 
     func testNarrativeCopyContainsNoVenueNamesAcrossAllKnownSources() {
         let forbiddenVenues = ["Kalshi", "Polymarket", "DraftKings", "FanDuel", "BetMGM", "Caesars", "Pinnacle"]
@@ -415,14 +481,6 @@ final class EventAtlasRugbyAflCards11666Tests: XCTestCase {
                     for venue in forbiddenVenues {
                         XCTAssertFalse(narrative.localizedCaseInsensitiveContains(venue))
                     }
-                case .chanceToResult(let story):
-                    let copy = story.input.copy
-                    let narrative = [copy.eyebrow, copy.title, copy.context, copy.beforeKey, copy.checkpointKey]
-                        .compactMap { $0 }
-                        .joined(separator: " ")
-                    for venue in forbiddenVenues {
-                        XCTAssertFalse(narrative.localizedCaseInsensitiveContains(venue))
-                    }
                 case .marginOrTotal(let prop):
                     let copy = prop.headlineInput.copy
                     let narrative = [copy.eyebrow, copy.title, copy.graphicLabel]
@@ -436,7 +494,7 @@ final class EventAtlasRugbyAflCards11666Tests: XCTestCase {
         }
     }
 
-    // MARK: - 5. 390 px Default & Accessibility3 Snapshots
+    // MARK: - 6. 390 px Default & Accessibility3 Snapshots
 
     @MainActor
     func testRenderRugbyAndAflCards390pxDefaultAndAccessibility3Snapshots() throws {

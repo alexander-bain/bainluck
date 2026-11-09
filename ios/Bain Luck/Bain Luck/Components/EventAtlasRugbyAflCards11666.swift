@@ -14,17 +14,12 @@ import SwiftUI
 ///          to `"No recent probability"`. Never uses `pregameMark` before match start.
 ///        - `.during`: Shows `pregameMark` (`"Pre-match chance"`) as the fixed reference beside
 ///          the live reading (`"Live chance"`, aged after 30 minutes to `"No recent probability"`).
-///        - `.final`: Shows `pregameMark` (`"Pre-match chance"`) beside the venue-confirmed
-///          contract grade (`"✓ Won"` / `"✗ Lost"`, or `"Result not confirmed"` when unsettled).
-///   2. **Chance → Result Story Card (`HistoricalChanceResultPresentation10868`)**:
-///      - Mounted at `.final` (`phase == .final`) for both Rugby and AFL matches, comparing the
-///        featured/winning team's `"Before match"` chance (`pregameMark`, outline bar on 0–100%)
-///        with its `"Later recorded chance"` checkpoint (filled bar on 0–100%), above the
-///        separately reported final score (`"Home X–Y Away"`, or `"Result not confirmed"`) and
-///        venue-confirmed outcome words.
-///   3. **Handicap / Line & Total Points Story Card (`FieldPhaseHeadlinePresentation10868`)**:
+///        - `.final`: Shows `pregameMark` (`"Pre-match chance"`) beside the Decide 80-A
+///          venue-confirmed contract grade (`"✓ Won"` only when authoritatively settled, else
+///          `"Result not confirmed"`; a row without its market's status never mints `"✗ Lost"`).
+///   2. **Handicap / Line & Total Points Story Card (`FieldPhaseHeadlinePresentation10868`)**:
 ///      - Surfaces Rugby handicap/total-points and AFL line/margin/total-points markets with
-///        Decide 10-C `.before` / `.during` / `.final` rules and venue-confirmed settlement grades.
+///        Decide 10-C `.before` / `.during` / `.final` rules and Decide 80-A settlement grades.
 enum EventAtlasRugbyAflCards11666 {
 
     /// 30-minute live-quote staleness window per Decide 10-C.
@@ -107,10 +102,27 @@ enum EventAtlasRugbyAflCards11666 {
         let role: OutcomeRole?
         let probability: Double?
         let pregameMark: Double?
+        let source: String?
         let observedAt: Date?
         let isWinner: Bool?
         let resolutionSource: String?
-        let marketResolved: Bool
+    }
+
+    /// Decide 80-A (`#12274`): on a `GameMarketsResponse` row (`spreads`, `totals`, `other`),
+    /// the market's resolution status is not served beside the row, so `OutcomeVerdict` is
+    /// asked as for an open market (`marketResolved: false`): only an authoritative win
+    /// becomes `.won`, and a row grade never mints `.lost`.
+    nonisolated static func otherRowVerdict(
+        isWinner: Bool?,
+        resolutionSource: String?,
+        finished: Bool
+    ) -> OutcomeVerdict? {
+        guard finished else { return nil }
+        return OutcomeVerdict.verdict(
+            isWinner: isWinner,
+            resolutionSource: resolutionSource,
+            marketResolved: false
+        ) == .won ? .won : nil
     }
 
     // MARK: - Card Models
@@ -141,14 +153,6 @@ enum EventAtlasRugbyAflCards11666 {
             }
             return rebuilt
         }
-    }
-
-    nonisolated struct ChanceToResultCard: Identifiable, Equatable {
-        let id: String
-        let marketId: Int
-        let title: String
-        let sportKind: SportKind
-        let input: HistoricalChanceInput10868
     }
 
     nonisolated struct MarginOrTotalCard: Identifiable, Equatable {
@@ -182,13 +186,11 @@ enum EventAtlasRugbyAflCards11666 {
 
     nonisolated enum Card: Identifiable, Equatable {
         case matchOutlook(MatchOutlookCard)
-        case chanceToResult(ChanceToResultCard)
         case marginOrTotal(MarginOrTotalCard)
 
         var id: String {
             switch self {
             case .matchOutlook(let card): return card.id
-            case .chanceToResult(let card): return card.id
             case .marginOrTotal(let card): return card.id
             }
         }
@@ -196,7 +198,6 @@ enum EventAtlasRugbyAflCards11666 {
         var marketId: Int {
             switch self {
             case .matchOutlook(let card): return card.marketId
-            case .chanceToResult(let card): return card.marketId
             case .marginOrTotal(let card): return card.marketId
             }
         }
@@ -204,7 +205,6 @@ enum EventAtlasRugbyAflCards11666 {
         var title: String {
             switch self {
             case .matchOutlook(let card): return card.title
-            case .chanceToResult(let card): return card.title
             case .marginOrTotal(let card): return card.title
             }
         }
@@ -212,7 +212,6 @@ enum EventAtlasRugbyAflCards11666 {
         func current(at now: Date) -> Card {
             switch self {
             case .matchOutlook(let card): return .matchOutlook(card.current(at: now))
-            case .chanceToResult(let card): return .chanceToResult(card)
             case .marginOrTotal(let card): return .marginOrTotal(card.current(at: now))
             }
         }
@@ -302,7 +301,7 @@ enum EventAtlasRugbyAflCards11666 {
         let phase = resolvePhase(event: event, now: now)
         var cards: [Card] = []
 
-        let winnerRows = extractWinnerOutcomeRows(event: event, gameMarkets: gm, phase: phase)
+        let winnerRows = extractWinnerOutcomeRows(event: event, gameMarkets: gm)
         if !winnerRows.isEmpty,
            let outlookCard = buildMatchOutlookCard(
                event: event,
@@ -312,18 +311,9 @@ enum EventAtlasRugbyAflCards11666 {
                now: now
            ) {
             cards.append(.matchOutlook(outlookCard))
-
-            if phase == .final,
-               let storyCard = buildChanceToResultCard(
-                   event: event,
-                   rows: winnerRows,
-                   sportKind: sportKind
-               ) {
-                cards.append(.chanceToResult(storyCard))
-            }
         }
 
-        let propGroups = extractPropGroups(gameMarkets: gm, phase: phase)
+        let propGroups = extractPropGroups(gameMarkets: gm)
         for group in propGroups.prefix(2) {
             if let propCard = buildMarginOrTotalCard(
                 event: event,
@@ -345,8 +335,7 @@ enum EventAtlasRugbyAflCards11666 {
 
     nonisolated static func extractWinnerOutcomeRows(
         event: EventDetail,
-        gameMarkets: GameMarketsResponse,
-        phase: FieldOutlookPhase10868
+        gameMarkets: GameMarketsResponse
     ) -> [OutcomeRow] {
         let homeName = event.homeTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         let awayName = event.awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -354,7 +343,10 @@ enum EventAtlasRugbyAflCards11666 {
 
         var byRole: [OutcomeRole: OutcomeRow] = [:]
 
-        for (index, row) in (gameMarkets.other ?? []).enumerated() {
+        for row in gameMarkets.other ?? [] {
+            guard let marketId = row._marketId ?? row._marketIds?.first else {
+                continue
+            }
             let marketLower = row.marketName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if isMarginOrTotalName(marketLower) {
                 continue
@@ -372,7 +364,6 @@ enum EventAtlasRugbyAflCards11666 {
                 continue
             }
 
-            let marketId = row._marketId ?? row._marketIds?.first ?? (index + 1)
             let displayName: String = {
                 switch role {
                 case .home: return homeName
@@ -389,10 +380,10 @@ enum EventAtlasRugbyAflCards11666 {
                 role: role,
                 probability: row.probability,
                 pregameMark: row.pregameMark,
+                source: row.source,
                 observedAt: row.observedAt?.asDate,
                 isWinner: row.isWinner,
-                resolutionSource: row.resolutionSource,
-                marketResolved: phase == .final
+                resolutionSource: row.resolutionSource
             )
         }
 
@@ -458,15 +449,13 @@ enum EventAtlasRugbyAflCards11666 {
     }
 
     nonisolated private static func extractPropGroups(
-        gameMarkets: GameMarketsResponse,
-        phase: FieldOutlookPhase10868
+        gameMarkets: GameMarketsResponse
     ) -> [PropGroup] {
         var groups: [PropGroup] = []
 
         if let spreads = gameMarkets.spreads, !spreads.isEmpty {
-            let marketId = spreads.first?._marketId ?? spreads.first?._marketIds?.first ?? 101
-            let title = spreads.first?.marketName ?? "Point handicap & line"
-            let rows: [OutcomeRow] = spreads.prefix(4).enumerated().map { idx, row in
+            let rows: [OutcomeRow] = spreads.prefix(4).enumerated().compactMap { idx, row in
+                guard let rowMarketId = row._marketId ?? row._marketIds?.first else { return nil }
                 let label: String = {
                     if let t = row.threshold {
                         let sign = t >= 0 ? "+" : ""
@@ -480,26 +469,27 @@ enum EventAtlasRugbyAflCards11666 {
                     return row.outcomeName
                 }()
                 return OutcomeRow(
-                    id: "spread-\(marketId)-\(idx)",
-                    marketID: marketId,
-                    marketTitle: title,
+                    id: "spread-\(rowMarketId)-\(idx)",
+                    marketID: rowMarketId,
+                    marketTitle: row.marketName,
                     outcomeName: label,
                     role: nil,
                     probability: row.probability,
                     pregameMark: row.pregameMark,
+                    source: row.source,
                     observedAt: row.observedAt?.asDate,
                     isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: phase == .final
+                    resolutionSource: row.resolutionSource
                 )
             }
-            groups.append(PropGroup(marketId: marketId, title: title, rows: rows))
+            if let first = rows.first {
+                groups.append(PropGroup(marketId: first.marketID, title: first.marketTitle, rows: rows))
+            }
         }
 
         if let totals = gameMarkets.totals, !totals.isEmpty {
-            let marketId = totals.first?._marketId ?? totals.first?._marketIds?.first ?? 102
-            let title = totals.first?.marketName ?? "Total points"
-            let rows: [OutcomeRow] = totals.prefix(4).enumerated().map { idx, row in
+            let rows: [OutcomeRow] = totals.prefix(4).enumerated().compactMap { idx, row in
+                guard let rowMarketId = row._marketId ?? row._marketIds?.first else { return nil }
                 let label: String = {
                     if let t = row.threshold {
                         let formatted = t.truncatingRemainder(dividingBy: 1) == 0
@@ -512,45 +502,46 @@ enum EventAtlasRugbyAflCards11666 {
                     return row.outcomeName
                 }()
                 return OutcomeRow(
-                    id: "total-\(marketId)-\(idx)",
-                    marketID: marketId,
-                    marketTitle: title,
+                    id: "total-\(rowMarketId)-\(idx)",
+                    marketID: rowMarketId,
+                    marketTitle: row.marketName,
                     outcomeName: label,
                     role: nil,
                     probability: row.overProbability ?? row.probability,
                     pregameMark: row.pregameMark,
+                    source: row.source,
                     observedAt: row.observedAt?.asDate,
                     isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: phase == .final
+                    resolutionSource: row.resolutionSource
                 )
             }
-            groups.append(PropGroup(marketId: marketId, title: title, rows: rows))
+            if let first = rows.first {
+                groups.append(PropGroup(marketId: first.marketID, title: first.marketTitle, rows: rows))
+            }
         }
 
         if groups.isEmpty {
             let propOthers = (gameMarkets.other ?? []).filter {
                 isMarginOrTotalName($0.marketName.lowercased())
             }
-            if !propOthers.isEmpty {
-                let marketId = propOthers.first?._marketId ?? propOthers.first?._marketIds?.first ?? 103
-                let title = propOthers.first?.marketName ?? "Match line"
-                let rows: [OutcomeRow] = propOthers.prefix(4).enumerated().map { idx, row in
-                    OutcomeRow(
-                        id: "other-prop-\(marketId)-\(idx)",
-                        marketID: marketId,
-                        marketTitle: row.marketName,
-                        outcomeName: row.outcomeName,
-                        role: nil,
-                        probability: row.probability,
-                        pregameMark: row.pregameMark,
-                        observedAt: row.observedAt?.asDate,
-                        isWinner: row.isWinner,
-                        resolutionSource: row.resolutionSource,
-                        marketResolved: phase == .final
-                    )
-                }
-                groups.append(PropGroup(marketId: marketId, title: title, rows: rows))
+            let rows: [OutcomeRow] = propOthers.prefix(4).enumerated().compactMap { idx, row in
+                guard let rowMarketId = row._marketId ?? row._marketIds?.first else { return nil }
+                return OutcomeRow(
+                    id: "other-prop-\(rowMarketId)-\(idx)",
+                    marketID: rowMarketId,
+                    marketTitle: row.marketName,
+                    outcomeName: row.outcomeName,
+                    role: nil,
+                    probability: row.probability,
+                    pregameMark: row.pregameMark,
+                    source: row.source,
+                    observedAt: row.observedAt?.asDate,
+                    isWinner: row.isWinner,
+                    resolutionSource: row.resolutionSource
+                )
+            }
+            if let first = rows.first {
+                groups.append(PropGroup(marketId: first.marketID, title: first.marketTitle, rows: rows))
             }
         }
 
@@ -614,13 +605,22 @@ enum EventAtlasRugbyAflCards11666 {
                 isStale: isStale
             )
 
-            let clockLine = provenanceClockLine(phase: phase)
+            let earlierDetail = readingDetailLine(
+                observedAt: phase == .before ? row.observedAt : nil,
+                source: row.source,
+                fallback: phase == .before ? "Recorded quote" : "Pre-match quote"
+            )
+            let laterDetail = readingDetailLine(
+                observedAt: row.observedAt,
+                source: row.source,
+                fallback: "Live quote"
+            )
 
             let earlierReading: FieldChooserReading10868 = {
                 if let p = earlierProb {
                     return FieldChooserReading10868(
                         label: earlierLabel,
-                        value: .recorded(text: formatPercent(p), detail: clockLine)
+                        value: .recorded(text: formatPercent(p), detail: earlierDetail)
                     )
                 }
                 let missingWords = phase == .before ? "No recent probability" : "Not recorded"
@@ -634,7 +634,7 @@ enum EventAtlasRugbyAflCards11666 {
                 if let p = laterProb {
                     return FieldChooserReading10868(
                         label: laterLabel,
-                        value: .recorded(text: formatPercent(p), detail: clockLine)
+                        value: .recorded(text: formatPercent(p), detail: laterDetail)
                     )
                 }
                 return FieldChooserReading10868(
@@ -695,30 +695,23 @@ enum EventAtlasRugbyAflCards11666 {
             )
 
             if phase == .final {
-                let verdict = OutcomeVerdict.verdict(
+                let verdict = otherRowVerdict(
                     isWinner: row.isWinner,
                     resolutionSource: row.resolutionSource,
-                    marketResolved: row.marketResolved
+                    finished: true
                 )
-                let finishDetail = scoreSummary ?? "Official settlement"
+                let finishDetail = scoreSummary ?? "Final score"
                 let finishReading: FieldChooserReading10868 = {
-                    switch verdict {
-                    case .won:
+                    if verdict == .won {
                         return FieldChooserReading10868(
                             label: "Contract result",
                             value: .recorded(text: "✓ Won", detail: finishDetail)
                         )
-                    case .lost:
-                        return FieldChooserReading10868(
-                            label: "Contract result",
-                            value: .recorded(text: "✗ Lost", detail: finishDetail)
-                        )
-                    case nil:
-                        return FieldChooserReading10868(
-                            label: "Contract result",
-                            value: .missing("Result not confirmed")
-                        )
                     }
+                    return FieldChooserReading10868(
+                        label: "Contract result",
+                        value: .missing("Result not confirmed")
+                    )
                 }()
                 finishes.append(FieldFinishPlace10868(ref: ref, reading: finishReading))
             }
@@ -836,225 +829,7 @@ enum EventAtlasRugbyAflCards11666 {
         )
     }
 
-    // MARK: - 2. Chance → Result Story Card Builder (.final)
-
-    static func buildChanceToResultCard(
-        event: EventDetail,
-        rows: [OutcomeRow],
-        sportKind: SportKind
-    ) -> ChanceToResultCard? {
-        guard !rows.isEmpty else { return nil }
-        let marketId = rows[0].marketID
-        let scope = "rugby-afl-chance-result-\(event.id)-\(marketId)"
-
-        // Elect the winning outcome if venue-confirmed, otherwise the outcome with the highest pregame/final probability.
-        let subjectRow: OutcomeRow = {
-            if let winner = rows.first(where: { row in
-                OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: row.marketResolved
-                ) == .won
-            }) {
-                return winner
-            }
-            return rows.max(by: {
-                (validProbability($0.pregameMark) ?? validProbability($0.probability) ?? 0)
-                    < (validProbability($1.pregameMark) ?? validProbability($1.probability) ?? 0)
-            }) ?? rows[0]
-        }()
-
-        let subjectRef = FieldChooserOriginalRef10868(
-            scope: scope,
-            source: "market",
-            marketID: "\(marketId)",
-            outcomeID: "subject-\(subjectRow.id)"
-        )
-
-        let pregameProb = validProbability(subjectRow.pregameMark)
-        let checkpointProb = validProbability(subjectRow.probability) ?? pregameProb
-
-        let pregameClock = "Before listed start · Recorded baseline"
-        let checkpointClock = "Recorded match checkpoint"
-
-        let beforeReading: FieldChooserReading10868 = {
-            if let p = pregameProb {
-                return FieldChooserReading10868(
-                    label: "Before match",
-                    value: .recorded(text: formatPercent(p), detail: pregameClock)
-                )
-            }
-            return FieldChooserReading10868(
-                label: "Before match",
-                value: .missing("Not recorded before start")
-            )
-        }()
-
-        let checkpointReading: FieldChooserReading10868 = {
-            if let p = checkpointProb {
-                return FieldChooserReading10868(
-                    label: "Later recorded chance",
-                    value: .recorded(text: formatPercent(p), detail: checkpointClock)
-                )
-            }
-            return FieldChooserReading10868(
-                label: "Later recorded chance",
-                value: .missing("Not recorded")
-            )
-        }()
-
-        let catalogue = [
-            FieldChooserOriginal10868(
-                ref: subjectRef,
-                name: subjectRow.outcomeName,
-                plan: .comparison(before: beforeReading, later: checkpointReading),
-                preview: FieldChooserPreview10868(history: nil, absence: "No captured history"),
-                movement: nil,
-                clock: nil,
-                result: nil,
-                browseStatus: "Recorded history"
-            )
-        ]
-
-        let readings: [HistoricalChanceReading10868] = [
-            HistoricalChanceReading10868(
-                ref: subjectRef,
-                endpoint: .before,
-                reading: beforeReading
-            ),
-            HistoricalChanceReading10868(
-                ref: subjectRef,
-                endpoint: .checkpoint,
-                reading: checkpointReading
-            )
-        ]
-
-        var observations: [HistoricalChanceObservation10868] = []
-        let beforeObsID = ["before", subjectRow.id].joined(separator: "-")
-        let checkpointObsID = ["checkpoint", subjectRow.id].joined(separator: "-")
-        if let p = pregameProb {
-            observations.append(
-                HistoricalChanceObservation10868(
-                    ref: subjectRef,
-                    endpoint: .before,
-                    observation: FieldMovementObservation10868(
-                        probability: p,
-                        reading: beforeReading
-                    ),
-                    key: beforeObsID
-                )
-            )
-        }
-        if let p = checkpointProb {
-            observations.append(
-                HistoricalChanceObservation10868(
-                    ref: subjectRef,
-                    endpoint: .checkpoint,
-                    observation: FieldMovementObservation10868(
-                        probability: p,
-                        reading: checkpointReading
-                    ),
-                    key: checkpointObsID
-                )
-            )
-        }
-
-        let verdict = OutcomeVerdict.verdict(
-            isWinner: subjectRow.isWinner,
-            resolutionSource: subjectRow.resolutionSource,
-            marketResolved: subjectRow.marketResolved
-        )
-
-        let scoreSummary = finalScoreSummary(event: event)
-        let actualReading: FieldChooserReading10868 = {
-            if let scoreSummary {
-                return FieldChooserReading10868(
-                    label: "Reported final score",
-                    value: .recorded(text: scoreSummary, detail: "Official final scoreboard")
-                )
-            }
-            return FieldChooserReading10868(
-                label: "Reported final score",
-                value: .missing("Result not confirmed")
-            )
-        }()
-
-        let outcomeWords: String = {
-            switch verdict {
-            case .won:
-                return "\(subjectRow.outcomeName) · ✓ Won"
-            case .lost:
-                return "\(subjectRow.outcomeName) · ✗ Lost"
-            case nil:
-                return "Result not confirmed"
-            }
-        }()
-
-        let actuals = [
-            HistoricalChanceActual10868(
-                place: FieldFinishPlace10868(ref: subjectRef, reading: actualReading),
-                outcome: outcomeWords
-            )
-        ]
-
-        let scale = FieldOutlookScale10868(
-            ceiling: 1.0,
-            ticks: [
-                FieldOutlookTick10868(probability: 0.25, label: "25%"),
-                FieldOutlookTick10868(probability: 0.50, label: "50%"),
-                FieldOutlookTick10868(probability: 0.75, label: "75%"),
-                FieldOutlookTick10868(probability: 1.00, label: "100%")
-            ],
-            words: "0–100% win chance scale"
-        )
-
-        let outlineLegendText = "Outline: last recorded chance before start"
-        let filledLegendText = "Filled: later recorded match chance"
-        let copy = HistoricalChanceCopy10868(
-            eyebrow: "\(sportKind.badgeTitle.uppercased()) · CHANCE → RESULT",
-            title: "\(subjectRow.outcomeName) — expectation vs final result",
-            beforeLabel: "Before match",
-            checkpointLabel: "Later recorded chance",
-            endpointUnavailable: "Not recorded for this comparison",
-            beforeKey: outlineLegendText,
-            checkpointKey: filledLegendText,
-            graphicLabel: "Before match and later recorded win chances",
-            chanceUnplaced: "Not drawn on this scale",
-            offScale: "Above this scale",
-            actualTitle: "ACTUAL RESULT",
-            actualLabel: "Reported final score",
-            actualUnavailable: "Result not confirmed",
-            context: "Each chance is an independently dated reading; the final score and contract result are reported separately.",
-            expandLabel: "Open chance story",
-            expandHint: nil,
-            detailsLabel: nil,
-            detailsHint: nil,
-            openHint: nil
-        )
-
-        let input = HistoricalChanceInput10868(
-            scope: scope,
-            catalogue: catalogue,
-            subject: HistoricalChanceSubject10868(ref: subjectRef, name: subjectRow.outcomeName),
-            readings: readings,
-            observations: observations,
-            actuals: actuals,
-            scale: scale,
-            phase: .final,
-            copy: copy,
-            unavailableWords: "Team unavailable in this update"
-        )
-
-        return ChanceToResultCard(
-            id: "rugby-afl-chance-result-\(marketId)",
-            marketId: marketId,
-            title: copy.title,
-            sportKind: sportKind,
-            input: input
-        )
-    }
-
-    // MARK: - 3. Margin / Line & Total Points Card Builder
+    // MARK: - 2. Margin / Line & Total Points Card Builder
 
     static func buildMarginOrTotalCard(
         event: EventDetail,
@@ -1113,13 +888,22 @@ enum EventAtlasRugbyAflCards11666 {
                 phase: phase,
                 isStale: isStale
             )
-            let clockLine = provenanceClockLine(phase: phase)
+            let earlierDetail = readingDetailLine(
+                observedAt: phase == .before ? row.observedAt : nil,
+                source: row.source,
+                fallback: phase == .before ? "Recorded quote" : "Pre-match quote"
+            )
+            let laterDetail = readingDetailLine(
+                observedAt: row.observedAt,
+                source: row.source,
+                fallback: "Live quote"
+            )
 
             let earlierReading: FieldChooserReading10868 = {
                 if let p = earlierProb {
                     return FieldChooserReading10868(
                         label: earlierLabel,
-                        value: .recorded(text: formatPercent(p), detail: clockLine)
+                        value: .recorded(text: formatPercent(p), detail: earlierDetail)
                     )
                 }
                 let missingWords = phase == .before ? "No recent probability" : "Not recorded"
@@ -1133,7 +917,7 @@ enum EventAtlasRugbyAflCards11666 {
                 if let p = laterProb {
                     return FieldChooserReading10868(
                         label: laterLabel,
-                        value: .recorded(text: formatPercent(p), detail: clockLine)
+                        value: .recorded(text: formatPercent(p), detail: laterDetail)
                     )
                 }
                 return FieldChooserReading10868(
@@ -1192,30 +976,23 @@ enum EventAtlasRugbyAflCards11666 {
             )
 
             if phase == .final {
-                let verdict = OutcomeVerdict.verdict(
+                let verdict = otherRowVerdict(
                     isWinner: row.isWinner,
                     resolutionSource: row.resolutionSource,
-                    marketResolved: row.marketResolved
+                    finished: true
                 )
-                let finishDetail = scoreSummary ?? "Official settlement"
+                let finishDetail = scoreSummary ?? "Final score"
                 let finishReading: FieldChooserReading10868 = {
-                    switch verdict {
-                    case .won:
+                    if verdict == .won {
                         return FieldChooserReading10868(
                             label: "Contract result",
                             value: .recorded(text: "✓ Won", detail: finishDetail)
                         )
-                    case .lost:
-                        return FieldChooserReading10868(
-                            label: "Contract result",
-                            value: .recorded(text: "✗ Lost", detail: finishDetail)
-                        )
-                    case nil:
-                        return FieldChooserReading10868(
-                            label: "Contract result",
-                            value: .missing("Result not confirmed")
-                        )
                     }
+                    return FieldChooserReading10868(
+                        label: "Contract result",
+                        value: .missing("Result not confirmed")
+                    )
                 }()
                 finishes.append(FieldFinishPlace10868(ref: ref, reading: finishReading))
             }
@@ -1280,17 +1057,17 @@ enum EventAtlasRugbyAflCards11666 {
         return "\(home) \(homeScore)–\(awayScore) \(away)"
     }
 
-    private nonisolated static func provenanceClockLine(
-        phase: FieldOutlookPhase10868
+    private nonisolated static func readingDetailLine(
+        observedAt: Date?,
+        source: String?,
+        fallback: String
     ) -> String {
-        switch phase {
-        case .before:
-            return "Recorded market quote"
-        case .during:
-            return "Live market quote"
-        case .final:
-            return "Pre-match baseline"
+        let clockText = observedAt.map { date in
+            date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
         }
+        let sourceText = SourceLabels.label(for: source)
+        let parts = [clockText, sourceText].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? fallback : parts.joined(separator: " · ")
     }
 
     private nonisolated static func buildHeadlineState(
@@ -1319,7 +1096,7 @@ enum EventAtlasRugbyAflCards11666 {
                     figure: score,
                     unit: nil,
                     caption: "Final score",
-                    detail: "Official final scoreboard",
+                    detail: nil,
                     spoken: "Final score, \(score)",
                     progress: nil
                 )
@@ -1362,19 +1139,6 @@ struct EventAtlasRugbyAflCardView11666: View {
                     .strokeBorder(DS.border, lineWidth: 1)
             )
             .accessibilityIdentifier("eventAtlas.rugbyAfl.matchOutlook.\(outlookCard.marketId)")
-
-        case .chanceToResult(let storyCard):
-            HistoricalChanceResultPresentation10868(input: storyCard.input)
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(DS.cardBg)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(DS.border, lineWidth: 1)
-                )
-                .accessibilityIdentifier("eventAtlas.rugbyAfl.chanceToResult.\(storyCard.marketId)")
 
         case .marginOrTotal(let propCard):
             FieldPhaseHeadlinePresentation10868(input: propCard.headlineInput)
