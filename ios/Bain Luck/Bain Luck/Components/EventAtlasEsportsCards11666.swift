@@ -7,9 +7,11 @@ import SwiftUI
 /// `esports_dota2`, `esports_valorant`, etc.) when `ReleaseSurfaces.isEventPageAtlasEnabled()`
 /// is active:
 ///
-/// 1. **Match Winner Story (`EsportsWinnerCard10868`)**: Shows each team's original
-///    pre-match chance ring with its own timestamp and source metadata; during play
-///    (`.during`), adds each team's live reading (aged after 30 minutes to
+/// 1. **Match Winner Story (`EsportsWinnerCard10868`)**: Before the match starts
+///    (`.before`), shows each team's current reading from the last 30 minutes
+///    (aging after 30 minutes to `"No recent probability"`, per Decide 10-C);
+///    during play (`.during`), shows the fixed `pregameMark` reference ring
+///    beside each team's live reading (aged after 30 minutes to
 ///    `"No recent probability"`); at the final (`.final`), pairs the pre-match
 ///    expectation with the separately reported score (`Won match` / `Lost match`
 ///    and maps/rounds count) and the original contract's own venue-confirmed
@@ -127,6 +129,11 @@ enum EventAtlasEsportsCards11666 {
             guard isStale else { return self }
             switch phase {
             case .before:
+                // Decide 10-C house rule (matching #12440 cricket and #12435 combat):
+                // before the match starts there is no stored pregameMark; both
+                // resolveChances(phase: .before) and current(at:, phase: .before)
+                // show only the live reading from the last 30 minutes and age
+                // quotes older than 30 minutes to "No recent probability".
                 guard pregameChance != nil || currentChance != nil || !isStaleLive else { return self }
                 return WinnerSideRecord(
                     id: id,
@@ -294,7 +301,7 @@ enum EventAtlasEsportsCards11666 {
                             provenance: [],
                             historicalQuote: nil
                         ),
-                        beforeLabel: "Pre-match chance"
+                        beforeLabel: phase == .before ? "Current chance" : "Pre-match chance"
                     )
                 )
 
@@ -397,6 +404,11 @@ enum EventAtlasEsportsCards11666 {
             guard isStale else { return self }
             switch phase {
             case .before:
+                // Decide 10-C house rule (matching #12440 cricket and #12435 combat):
+                // before the match starts there is no stored pregameMark; both
+                // resolveChances(phase: .before) and current(at:, phase: .before)
+                // show only the live reading from the last 30 minutes and age
+                // quotes older than 30 minutes to "No recent probability".
                 guard pregameChance != nil || currentChance != nil || !isStaleLive else { return self }
                 return MarginCardRecord(
                     id: id,
@@ -544,7 +556,7 @@ enum EventAtlasEsportsCards11666 {
                     provenance: [],
                     historicalQuote: nil
                 ),
-                beforeLabel: "Pre-match chance"
+                beforeLabel: phase == .before ? "Current chance" : "Pre-match chance"
             )
 
             let minUnitWord = minimumBlocks == 1 ? unitSingular : unitPlural
@@ -716,7 +728,7 @@ enum EventAtlasEsportsCards11666 {
 
         let eyebrow: String = {
             switch phase {
-            case .before: return "Pregame match-winner contracts"
+            case .before: return "Current match-winner contracts"
             case .during: return "Pre-match vs live match-winner contracts"
             case .final: return "Pre-match expectation vs final result"
             }
@@ -852,7 +864,7 @@ enum EventAtlasEsportsCards11666 {
 
         let eyebrow: String = {
             switch phase {
-            case .before: return "Pregame margin threshold"
+            case .before: return "Current margin threshold"
             case .during: return "Live margin threshold"
             case .final: return "Required margin vs final score"
             }
@@ -1100,8 +1112,11 @@ enum EventAtlasEsportsCards11666 {
         let latest = normalizeUnitProbability(probability)
         switch phase {
         case .before:
-            let pre = opening ?? (isStale ? nil : latest)
-            return (isStale && opening == nil ? nil : pre, nil)
+            // Decide 10-C house rule (matching #12440 cricket and #12435 combat):
+            // before the start there is no stored opening/pregame mark; show only
+            // the live reading from the last 30 minutes, otherwise nil
+            // ("No recent probability").
+            return (isStale ? nil : latest, nil)
         case .during:
             let pre = opening
             let cur = isStale ? nil : latest

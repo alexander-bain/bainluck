@@ -159,28 +159,39 @@ final class EventAtlasEsportsCards11666Tests: XCTestCase {
     // MARK: - 2. Winner Story Card Lifecycle & Unscaled Rings
 
     func testWinnerCardPregameInPlayAndFinalLifecycleWithUnscaledRings() throws {
-        // 1. Before match
+        // 1. Before match (Decide 10-C: shows fresh live price 0.798 / 0.215 and 0.62,
+        //    never the stored pregameMark 0.765 / 0.220 and 0.54)
         let preEvent = makeEvent(status: "upcoming", commenceTime: "2026-11-09T14:00:00Z", homeScore: nil, awayScore: nil)
         let gm = makeGameMarkets()
         let preCards = EventAtlasEsportsCards11666.buildCards(event: preEvent, gameMarkets: gm, now: baseNow)
         XCTAssertEqual(preCards.count, 2)
-        guard case .winner(let preWinner) = preCards[0] else {
-            return XCTFail("Expected winner card first")
+        guard case .winner(let preWinner) = preCards[0],
+              case .margin(let preMargin) = preCards[1] else {
+            return XCTFail("Expected winner and margin cards before start")
         }
         let preModel = preWinner.toWinnerModel()
         XCTAssertEqual(preModel.sides.map { $0.side.name }, ["Natus Vincere", "FaZe Clan"])
-        XCTAssertEqual(preModel.sides.compactMap { $0.ring }.reduce(0, +), 0.985, accuracy: 1e-9,
-                       "Original pre-match chances (0.765 + 0.220) are never rescaled to 1.0")
+        XCTAssertEqual(
+            preModel.sides.map { $0.readings.first?.text },
+            ["80%", "22%"],
+            "Before start shows fresh live price (0.798 / 0.215), not stored pregameMark (0.765 / 0.220)"
+        )
+        XCTAssertEqual(preModel.sides.compactMap { $0.ring }.reduce(0, +), 1.013, accuracy: 1e-9,
+                       "Original chances (0.798 + 0.215) are never rescaled to 1.0")
         XCTAssertEqual(preModel.sides.map { $0.readings.count }, [1, 1])
         XCTAssertTrue(preModel.sides.allSatisfy { $0.report == nil && $0.settlement == nil })
+        XCTAssertEqual(preMargin.toMarginModel().readings.first?.text, "62%",
+                       "Before start margin card shows fresh live price (0.62), not stored pregameMark (0.54)")
 
-        // 2. During match
+        // 2. During match (uses pregameMark 0.765 / 0.220 as fixed reference beside live 0.798 / 0.215)
         let liveEvent = makeEvent(status: "live", homeScore: 8, awayScore: 4)
         let liveCards = EventAtlasEsportsCards11666.buildCards(event: liveEvent, gameMarkets: gm, now: baseNow)
         guard case .winner(let liveWinner) = liveCards[0] else {
             return XCTFail("Expected winner card first")
         }
         let liveModel = liveWinner.toWinnerModel()
+        XCTAssertEqual(liveModel.sides.compactMap { $0.ring }.reduce(0, +), 0.985, accuracy: 1e-9,
+                       "During match pregameMark rings (0.765 + 0.220) are never rescaled to 1.0")
         XCTAssertEqual(
             liveModel.sides.map { $0.readings.map { $0.role } },
             [
@@ -188,6 +199,7 @@ final class EventAtlasEsportsCards11666Tests: XCTestCase {
                 [EsportsStoryRole10868.before, .later]
             ]
         )
+        XCTAssertEqual(liveModel.sides.map { $0.readings.first?.text }, ["77%", "22%"])
         XCTAssertEqual(liveModel.sides.map { $0.readings.last?.text }, ["80%", "22%"])
         XCTAssertTrue(liveModel.sides.allSatisfy { $0.report == nil && $0.settlement == nil })
 
@@ -248,13 +260,28 @@ final class EventAtlasEsportsCards11666Tests: XCTestCase {
     // MARK: - 4. 30-Minute Live Quote Aging
 
     func testCurrentAtAgesLiveQuotesAfter30MinutesAndLeavesFinalUnchanged() {
-        let liveEvent = makeEvent(status: "live", homeScore: 6, awayScore: 5)
         let gm = makeGameMarkets(observedAt: "2026-11-09T11:50:00Z")
+        let laterNow = baseNow.addingTimeInterval(35 * 60)
+
+        // 1. Before start (.before): reading older than 30 minutes ages to "No recent probability"
+        let preEvent = makeEvent(status: "upcoming", commenceTime: "2026-11-09T14:00:00Z", homeScore: nil, awayScore: nil)
+        let preCards = EventAtlasEsportsCards11666.buildCards(event: preEvent, gameMarkets: gm, now: baseNow)
+        let agedPreDeck = preCards.map { NFLEventCard9483.esports($0).current(at: laterNow) }
+        guard case .esports(.winner(let agedPreWinner)) = agedPreDeck[0],
+              case .esports(.margin(let agedPreMargin)) = agedPreDeck[1] else {
+            return XCTFail("Expected aged before-start esports cards")
+        }
+        XCTAssertEqual(
+            agedPreWinner.toWinnerModel().sides.map { $0.readings.first?.text },
+            ["No recent probability", "No recent probability"]
+        )
+        XCTAssertEqual(agedPreMargin.toMarginModel().readings.first?.text, "No recent probability")
+
+        // 2. During play (.during): live reading ages after 30 minutes while pregameMark baseline stays intact
+        let liveEvent = makeEvent(status: "live", homeScore: 6, awayScore: 5)
         let cards = EventAtlasEsportsCards11666.buildCards(event: liveEvent, gameMarkets: gm, now: baseNow)
         XCTAssertEqual(cards.count, 2)
 
-        // Advance clock by 35 minutes (> 30 min max age)
-        let laterNow = baseNow.addingTimeInterval(35 * 60)
         let agedDeck = cards.map { NFLEventCard9483.esports($0).current(at: laterNow) }
 
         guard case .esports(.winner(let agedWinner)) = agedDeck[0],
