@@ -15,7 +15,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.tasks import prediction_market_matching as pmm
 
-NOW = datetime(2026, 11, 9, 22, 0, tzinfo=timezone.utc)
+NOW = datetime(2025, 6, 15, 22, 0, tzinfo=timezone.utc)
 
 #: What `_LinkedMarketRef` is built from — the whole select, in order.
 COLUMNS = [
@@ -64,7 +64,7 @@ def test_the_population_is_unchanged():
 
 def _row(**over):
     base = dict(
-        market_id=7, source="kalshi", external_id="KXNBAGAME-26NOV09LALATL-LAL", name="Lakers at Hawks",
+        market_id=7, source="kalshi", external_id="KXNBAGAME-25JUN15LALATL-LAL", name="Lakers at Hawks",
         status="open", market_metadata={"content_understanding_v1": {"semantic_type": "game_winner"}},
         event_id=15344868, event_commence_time=NOW, home_team_name="Atlanta Hawks",
         away_team_name="Los Angeles Lakers", event_completed_at=None,
@@ -77,7 +77,7 @@ def test_a_row_becomes_the_same_scalar_copy():
     row = _row()
     ref = pmm._linked_ref_from_row(row)
     assert (ref.market_id, ref.source, ref.external_id, ref.name, ref.status) == (
-        7, "kalshi", "KXNBAGAME-26NOV09LALATL-LAL", "Lakers at Hawks", "open")
+        7, "kalshi", "KXNBAGAME-25JUN15LALATL-LAL", "Lakers at Hawks", "open")
     assert (ref.event_id, ref.event_commence_time, ref.home_team_name, ref.away_team_name) == (
         15344868, NOW, "Atlanta Hawks", "Los Angeles Lakers")
     # #9348: the venue's own label still reaches the blend gate.
