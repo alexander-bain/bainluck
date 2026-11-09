@@ -17,6 +17,7 @@ final class EventAtlasSoccerStoryCards11666Tests: XCTestCase {
         pregameMark: Double? = nil,
         observedAt: String? = "2026-11-08T19:55:00Z",
         result: Bool? = nil,
+        resolutionSource: String? = nil,
         source: String? = "kalshi",
         marketId: Int? = 501
     ) throws -> GameMarketOther {
@@ -29,7 +30,7 @@ final class EventAtlasSoccerStoryCards11666Tests: XCTestCase {
         if let observedAt { dict["observed_at"] = observedAt }
         if let result {
             dict["is_winner"] = result
-            dict["resolution_source"] = "kalshi_market_settlement"
+            dict["resolution_source"] = resolutionSource ?? "api_settlement"
         }
         if let source { dict["source"] = source }
         if let marketId { dict["_market_id"] = marketId }
@@ -208,7 +209,157 @@ final class EventAtlasSoccerStoryCards11666Tests: XCTestCase {
         XCTAssertEqual(yesDetails.sourceLabel, "2 sources, not blended")
 
         let noDetails = EventAtlasSoccerCards11666.detailsModel(for: multiSourceCard.legs[1], card: multiSourceCard)
-        XCTAssertEqual(noDetails.primaryReadingValue, EventAtlasStates11666.pending)
+        XCTAssertEqual(noDetails.primaryReadingValue, EventAtlasStates11666.resultNotConfirmed)
+
+        // Decide 80-A (#12449): tier 0 (binary_higher_wins), tier 1 (clean_resolution), and
+        // tier 2 (game_score) rows with is_winner: false at the final read "Result not confirmed",
+        // and an authoritative winner reads "✓ Won" across BTTS, First Team, and Halves cards.
+        for nonAuthSource in ["binary_higher_wins", "clean_resolution", "game_score"] {
+            let finalRows: [GameMarketOther] = [
+                try makeOtherRow(
+                    marketName: "Both Teams to Score",
+                    outcomeName: "Yes",
+                    probability: 0.99,
+                    pregameMark: 0.55,
+                    result: true,
+                    resolutionSource: "api_settlement",
+                    marketId: 750
+                ),
+                try makeOtherRow(
+                    marketName: "Both Teams to Score",
+                    outcomeName: "No",
+                    probability: 0.01,
+                    pregameMark: 0.45,
+                    result: false,
+                    resolutionSource: nonAuthSource,
+                    marketId: 750
+                ),
+                try makeOtherRow(
+                    marketName: "First Team to Score",
+                    outcomeName: "Arsenal FC",
+                    probability: 0.99,
+                    pregameMark: 0.48,
+                    result: true,
+                    resolutionSource: "api_settlement",
+                    marketId: 751
+                ),
+                try makeOtherRow(
+                    marketName: "First Team to Score",
+                    outcomeName: "Chelsea FC",
+                    probability: 0.01,
+                    pregameMark: 0.37,
+                    result: false,
+                    resolutionSource: nonAuthSource,
+                    marketId: 751
+                ),
+                try makeOtherRow(
+                    marketName: "First Team to Score",
+                    outcomeName: "No goal",
+                    probability: 0.01,
+                    pregameMark: 0.15,
+                    result: false,
+                    resolutionSource: nonAuthSource,
+                    marketId: 751
+                ),
+                try makeOtherRow(
+                    marketName: "1st Half Result",
+                    outcomeName: "Arsenal FC",
+                    probability: 0.99,
+                    pregameMark: 0.40,
+                    result: true,
+                    resolutionSource: "api_settlement",
+                    marketId: 752
+                ),
+                try makeOtherRow(
+                    marketName: "1st Half Result",
+                    outcomeName: "Draw",
+                    probability: 0.01,
+                    pregameMark: 0.36,
+                    result: false,
+                    resolutionSource: nonAuthSource,
+                    marketId: 752
+                ),
+                try makeOtherRow(
+                    marketName: "1st Half Result",
+                    outcomeName: "Chelsea FC",
+                    probability: 0.01,
+                    pregameMark: 0.24,
+                    result: false,
+                    resolutionSource: nonAuthSource,
+                    marketId: 752
+                )
+            ]
+
+            let bttsFinal = try XCTUnwrap(
+                EventAtlasSoccerCards11666.buildBothTeamsToScoreCard(
+                    matrix: nil,
+                    otherMarkets: finalRows,
+                    status: "completed",
+                    commenceTime: commencePast,
+                    homeShort: "ARS",
+                    awayShort: "CHE",
+                    homeScore: 2,
+                    awayScore: 1,
+                    now: now
+                )
+            )
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: bttsFinal.legs[0], card: bttsFinal).primaryReadingValue,
+                "✓ Won"
+            )
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: bttsFinal.legs[1], card: bttsFinal).primaryReadingValue,
+                "Result not confirmed",
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+
+            let firstTeamFinal = try XCTUnwrap(
+                EventAtlasSoccerCards11666.buildFirstTeamToScoreCard(
+                    matrix: nil,
+                    otherMarkets: finalRows,
+                    status: "completed",
+                    commenceTime: commencePast,
+                    homeTeam: "Arsenal FC",
+                    awayTeam: "Chelsea FC",
+                    homeShort: "ARS",
+                    awayShort: "CHE",
+                    now: now
+                )
+            )
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: firstTeamFinal.legs[0], card: firstTeamFinal).primaryReadingValue,
+                "✓ Won"
+            )
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: firstTeamFinal.legs[1], card: firstTeamFinal).primaryReadingValue,
+                "Result not confirmed",
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+
+            let halvesFinal = try XCTUnwrap(
+                EventAtlasSoccerCards11666.buildHalvesCard(
+                    matrix: nil,
+                    otherMarkets: finalRows,
+                    status: "completed",
+                    commenceTime: commencePast,
+                    homeTeam: "Arsenal FC",
+                    awayTeam: "Chelsea FC",
+                    homeShort: "ARS",
+                    awayShort: "CHE",
+                    now: now
+                )
+            )
+            let halfSection = try XCTUnwrap(halvesFinal.sections.first)
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: halfSection.legs[0], section: halfSection, card: halvesFinal).primaryReadingValue,
+                "✓ Won"
+            )
+            XCTAssertEqual(
+                EventAtlasSoccerCards11666.detailsModel(for: halfSection.legs[1], section: halfSection, card: halvesFinal).primaryReadingValue,
+                "Result not confirmed",
+                "Tier 0/1/2 source \(nonAuthSource) with is_winner: false must read 'Result not confirmed'"
+            )
+        }
     }
 
     func testFirstTeamToScoreCardPreservesHomeAwayNoGoalAndObservedScoreCheckpoints() throws {

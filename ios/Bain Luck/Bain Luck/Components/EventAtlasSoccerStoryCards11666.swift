@@ -275,11 +275,7 @@ extension EventAtlasSoccerCards11666 {
                 let pregameChance: Double? = currentPhase == .before
                     ? (recent ? validOpenChance(row.probability) : nil)
                     : validOpenChance(row.pregameMark)
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: finished
-                )
+                let verdict = otherRowVerdict(row, finished: finished)
 
                 legsByRole[role] = BTTSLeg(
                     role: role,
@@ -632,11 +628,7 @@ extension EventAtlasSoccerCards11666 {
                 let pregameChance: Double? = currentPhase == .before
                     ? (recent ? validOpenChance(row.probability) : nil)
                     : validOpenChance(row.pregameMark)
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: finished
-                )
+                let verdict = otherRowVerdict(row, finished: finished)
 
                 let displayLabel: String = {
                     switch role {
@@ -970,11 +962,7 @@ extension EventAtlasSoccerCards11666 {
                 let pregameChance: Double? = currentPhase == .before
                     ? (recent ? validOpenChance(row.probability) : nil)
                     : validOpenChance(row.pregameMark)
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: row.isWinner,
-                    resolutionSource: row.resolutionSource,
-                    marketResolved: finished
-                )
+                let verdict = otherRowVerdict(row, finished: finished)
 
                 legsByRole[role] = HalfLeg(
                     period: period,
@@ -1074,7 +1062,7 @@ extension EventAtlasSoccerCards11666 {
             primaryValue = res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
         } else if card.phase == .after {
             primaryLabel = "Result"
-            primaryValue = EventAtlasStates11666.pending
+            primaryValue = EventAtlasStates11666.resultNotConfirmed
         } else if let quoted = leg.quotedChance {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quoted)
@@ -1120,7 +1108,7 @@ extension EventAtlasSoccerCards11666 {
             primaryValue = res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
         } else if card.phase == .after {
             primaryLabel = "Result"
-            primaryValue = EventAtlasStates11666.pending
+            primaryValue = EventAtlasStates11666.resultNotConfirmed
         } else if let quoted = leg.quotedChance {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quoted)
@@ -1166,7 +1154,7 @@ extension EventAtlasSoccerCards11666 {
             primaryValue = res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
         } else if card.phase == .after {
             primaryLabel = "Result"
-            primaryValue = EventAtlasStates11666.pending
+            primaryValue = EventAtlasStates11666.resultNotConfirmed
         } else if let quoted = leg.quotedChance {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quoted)
@@ -1277,7 +1265,7 @@ struct EventAtlasSoccerBothTeamsCardView11666: View {
                     .foregroundStyle(res == .won ? Color.green : Color.secondary)
                     .fixedSize(horizontal: true, vertical: false)
             } else {
-                Text(EventAtlasStates11666.pending)
+                Text(EventAtlasStates11666.resultNotConfirmed)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: true, vertical: false)
@@ -1424,7 +1412,7 @@ struct EventAtlasSoccerFirstTeamCardView11666: View {
                     .foregroundStyle(res == .won ? Color.green : Color.secondary)
                     .fixedSize(horizontal: true, vertical: false)
             } else {
-                Text(EventAtlasStates11666.pending)
+                Text(EventAtlasStates11666.resultNotConfirmed)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: true, vertical: false)
@@ -1574,7 +1562,7 @@ struct EventAtlasSoccerHalvesCardView11666: View {
                     .foregroundStyle(res == .won ? Color.green : Color.secondary)
                     .fixedSize(horizontal: true, vertical: false)
             } else {
-                Text(EventAtlasStates11666.pending)
+                Text(EventAtlasStates11666.resultNotConfirmed)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: true, vertical: false)

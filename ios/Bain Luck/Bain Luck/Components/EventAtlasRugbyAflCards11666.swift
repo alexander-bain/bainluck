@@ -410,10 +410,6 @@ enum EventAtlasRugbyAflCards11666 {
             return orderedRoles.compactMap { byRole[$0] }
         }
 
-        if let firstMarketId = marketOrder.first, let byRole = byMarketAndRole[firstMarketId] {
-            return orderedRoles.compactMap { byRole[$0] }
-        }
-
         return []
     }
 
@@ -505,8 +501,6 @@ enum EventAtlasRugbyAflCards11666 {
             || lower.contains("h2h")
             || lower.contains("3-way")
             || lower.contains("three-way")
-            || lower.contains("premiership")
-            || lower.contains("six nations")
             || lower.contains("who will win")
             || (lower.contains(homeLower) && lower.contains(awayLower))
     }
