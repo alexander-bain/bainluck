@@ -49,7 +49,6 @@ from typing import Optional
 
 import httpx
 
-from app.log_redaction import redact_credentials
 from app.services.base_api import BaseAPIClient
 from app.utils.start_placeholder import statpal_placeholder_fixture_ids
 
@@ -2606,8 +2605,7 @@ async def get_statpal_request_count(api_key: Optional[str] = None) -> dict | Non
                 "request_count": data.get("request_count", 0),
             }
         except Exception as e:
-            # #12433: raise_for_status() puts the URL, access_key included, in `e`.
-            logger.warning(f"StatPal request count fetch failed: {redact_credentials(e)}")
+            logger.warning(f"StatPal request count fetch failed: {e}")
             return None
 
 
