@@ -197,16 +197,47 @@ def _is_eligible(
     return False
 
 
+def _is_marquee_game(item: dict) -> bool:
+    """Tier 1, read off the card's tags (the feed computes them from the sport
+    key when it builds the card, so every NFL, NBA, MLB, NHL and top-soccer game
+    carries it).
+
+    The marquee line ``routes/feed._discover_event_is_marquee`` draws for the
+    arms on either side of the live window (#4898 before kickoff, #4681 after the
+    final). Mirrored rather than imported, because this module cannot import the
+    route; a test asserts the two agree.
+    """
+    data = item.get("data") or {}
+    return "tier:1" in (data.get("event_tags") or [])
+
+
 def _lead_sort_key(item: dict, now: datetime) -> tuple:
     """Live games first, then the soonest to start.
 
-    Within the live tier the existing rank order decides, so a marquee live game
-    still beats a routine one — this pass re-orders, it does not re-judge.
+    Within the live tier a marquee game comes first, and the existing rank order
+    decides inside each group — this pass re-orders, it does not re-judge.
+
+    #12368 — the marquee group is what makes "a marquee live game still beats a
+    routine one" true on Discover. It used to be left to rank, and on Discover
+    rank cannot carry it: a live game's score reads drama (closeness, lead
+    changes, momentum), and the demotion caps a game without enough of it at 35.
+    A first-quarter game has had little time to make any, so a game with more
+    drama, in any league, outranks it. Sun Nov 8 at 7:15 AM PT the live Bengals @
+    Falcons game served at 35, behind a live EPL match at 97; at 10:16 AM seven
+    NFL games were live and the three lead seats (11-13 once #5105 seats the
+    opening) went to Princeton @ Siena, Panthers @ Bruins and Aston Villa @
+    Manchester United. Before kickoff #4898 protects three marquee games into
+    this lead; without this group that protection ended at kickoff, exactly when
+    the reader came for the game.
     """
     data = item.get("data") or {}
     status = (data.get("status") or "").strip().lower()
     if status == "live":
-        return (0, 0.0, -float(item.get("_rank_score") or item.get("score") or 0))
+        return (
+            0,
+            0 if _is_marquee_game(item) else 1,
+            -float(item.get("_rank_score") or item.get("score") or 0),
+        )
     commence = _parse_dt(data.get("commence_time"))
     seconds_away = (commence - now).total_seconds() if commence else float("inf")
     return (1, seconds_away, 0.0)
