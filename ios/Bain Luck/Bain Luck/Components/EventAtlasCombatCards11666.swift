@@ -100,27 +100,48 @@ enum EventAtlasCombatCards11666 {
         let sourceCount: Int
 
         func current(at now: Date, phase: Phase) -> MethodTileRecord {
-            guard phase == .during else { return self }
+            guard phase != .final else { return self }
             let isStale: Bool = {
                 guard let observedAt else { return true }
                 return now.timeIntervalSince(observedAt) > EventAtlasCombatCards11666.liveQuoteMaxAgeSeconds
             }()
             guard isStale else { return self }
-            guard currentChance != nil || !isStaleLive else { return self }
-            return MethodTileRecord(
-                id: id,
-                marketID: marketID,
-                label: label,
-                shortLabel: shortLabel,
-                question: question,
-                beforeChance: beforeChance,
-                currentChance: nil,
-                observedAt: observedAt,
-                isStaleLive: true,
-                verdict: verdict,
-                rawSource: rawSource,
-                sourceCount: sourceCount
-            )
+            switch phase {
+            case .before:
+                guard beforeChance != nil || currentChance != nil || !isStaleLive else { return self }
+                return MethodTileRecord(
+                    id: id,
+                    marketID: marketID,
+                    label: label,
+                    shortLabel: shortLabel,
+                    question: question,
+                    beforeChance: nil,
+                    currentChance: nil,
+                    observedAt: observedAt,
+                    isStaleLive: true,
+                    verdict: verdict,
+                    rawSource: rawSource,
+                    sourceCount: sourceCount
+                )
+            case .during:
+                guard currentChance != nil || !isStaleLive else { return self }
+                return MethodTileRecord(
+                    id: id,
+                    marketID: marketID,
+                    label: label,
+                    shortLabel: shortLabel,
+                    question: question,
+                    beforeChance: beforeChance,
+                    currentChance: nil,
+                    observedAt: observedAt,
+                    isStaleLive: true,
+                    verdict: verdict,
+                    rawSource: rawSource,
+                    sourceCount: sourceCount
+                )
+            case .final:
+                return self
+            }
         }
 
         func toPresentationMethod(phase: Phase, now: Date) -> CombatMethod10868 {
@@ -172,12 +193,15 @@ enum EventAtlasCombatCards11666 {
                     return .unconfirmed("Result not confirmed")
                 }
             }()
+            let beforeMissingWords = (phase == .before && isStaleLive)
+                ? "No recent probability"
+                : "No pre-fight chance recorded"
             let original = CombatMethodOriginal10868(
                 id: origID,
                 marketID: marketID,
                 label: "Yes",
                 before: beforeObs,
-                beforeMissing: "No pre-fight chance recorded",
+                beforeMissing: beforeMissingWords,
                 current: currentState,
                 result: resultState
             )
@@ -204,7 +228,7 @@ enum EventAtlasCombatCards11666 {
         let scheduledStartSummary: String?
 
         func current(at now: Date) -> MethodCard {
-            guard phase == .during else { return self }
+            guard phase != .final else { return self }
             return MethodCard(
                 id: id,
                 eventID: eventID,
@@ -290,29 +314,52 @@ enum EventAtlasCombatCards11666 {
         let sourceCount: Int
 
         func current(at now: Date, phase: Phase) -> RoundSlotRecord {
-            guard phase == .during else { return self }
+            guard phase != .final else { return self }
             let isStale: Bool = {
                 guard let observedAt else { return true }
                 return now.timeIntervalSince(observedAt) > EventAtlasCombatCards11666.liveQuoteMaxAgeSeconds
             }()
             guard isStale else { return self }
-            guard currentChance != nil || !isStaleLive else { return self }
-            return RoundSlotRecord(
-                id: id,
-                marketID: marketID,
-                fighterName: fighterName,
-                roundNumber: roundNumber,
-                roundLabel: roundLabel,
-                hasMarket: hasMarket,
-                beforeChance: beforeChance,
-                currentChance: nil,
-                observedAt: observedAt,
-                isStaleLive: true,
-                isElapsedRound: isElapsedRound,
-                verdict: verdict,
-                rawSource: rawSource,
-                sourceCount: sourceCount
-            )
+            switch phase {
+            case .before:
+                guard beforeChance != nil || currentChance != nil || !isStaleLive else { return self }
+                return RoundSlotRecord(
+                    id: id,
+                    marketID: marketID,
+                    fighterName: fighterName,
+                    roundNumber: roundNumber,
+                    roundLabel: roundLabel,
+                    hasMarket: hasMarket,
+                    beforeChance: nil,
+                    currentChance: nil,
+                    observedAt: observedAt,
+                    isStaleLive: true,
+                    isElapsedRound: isElapsedRound,
+                    verdict: verdict,
+                    rawSource: rawSource,
+                    sourceCount: sourceCount
+                )
+            case .during:
+                guard currentChance != nil || !isStaleLive else { return self }
+                return RoundSlotRecord(
+                    id: id,
+                    marketID: marketID,
+                    fighterName: fighterName,
+                    roundNumber: roundNumber,
+                    roundLabel: roundLabel,
+                    hasMarket: hasMarket,
+                    beforeChance: beforeChance,
+                    currentChance: nil,
+                    observedAt: observedAt,
+                    isStaleLive: true,
+                    isElapsedRound: isElapsedRound,
+                    verdict: verdict,
+                    rawSource: rawSource,
+                    sourceCount: sourceCount
+                )
+            case .final:
+                return self
+            }
         }
 
         func toPresentationSlot(phase: Phase, now: Date) -> CombatRoundSlot10868 {
@@ -369,12 +416,15 @@ enum EventAtlasCombatCards11666 {
                     return .unconfirmed("Result not confirmed")
                 }
             }()
+            let beforeMissingWords = (phase == .before && isStaleLive)
+                ? "No recent probability"
+                : "No pre-fight chance recorded"
             let original = CombatRoundOriginal10868(
                 id: origID,
                 marketID: marketID,
                 label: "Yes",
                 before: beforeObs,
-                beforeMissing: "No pre-fight chance recorded",
+                beforeMissing: beforeMissingWords,
                 current: currentState,
                 result: resultState,
                 resultDetail: nil
@@ -412,7 +462,7 @@ enum EventAtlasCombatCards11666 {
         let scheduledStartSummary: String?
 
         func current(at now: Date) -> RoundCard {
-            guard phase == .during else { return self }
+            guard phase != .final else { return self }
             return RoundCard(
                 eventID: eventID,
                 eyebrow: eyebrow,
@@ -511,30 +561,54 @@ enum EventAtlasCombatCards11666 {
         let sourceCount: Int
 
         func current(at now: Date, phase: Phase) -> DurationRowRecord {
-            guard phase == .during else { return self }
+            guard phase != .final else { return self }
             let isStale: Bool = {
                 guard let observedAt else { return true }
                 return now.timeIntervalSince(observedAt) > EventAtlasCombatCards11666.liveQuoteMaxAgeSeconds
             }()
             guard isStale else { return self }
-            guard currentChance != nil || !isStaleLive else { return self }
-            return DurationRowRecord(
-                id: id,
-                marketID: marketID,
-                title: title,
-                subtitle: subtitle,
-                sideLabel: sideLabel,
-                windowStart: windowStart,
-                windowEnd: windowEnd,
-                includesFinalBell: includesFinalBell,
-                beforeChance: beforeChance,
-                currentChance: nil,
-                observedAt: observedAt,
-                isStaleLive: true,
-                verdict: verdict,
-                rawSource: rawSource,
-                sourceCount: sourceCount
-            )
+            switch phase {
+            case .before:
+                guard beforeChance != nil || currentChance != nil || !isStaleLive else { return self }
+                return DurationRowRecord(
+                    id: id,
+                    marketID: marketID,
+                    title: title,
+                    subtitle: subtitle,
+                    sideLabel: sideLabel,
+                    windowStart: windowStart,
+                    windowEnd: windowEnd,
+                    includesFinalBell: includesFinalBell,
+                    beforeChance: nil,
+                    currentChance: nil,
+                    observedAt: observedAt,
+                    isStaleLive: true,
+                    verdict: verdict,
+                    rawSource: rawSource,
+                    sourceCount: sourceCount
+                )
+            case .during:
+                guard currentChance != nil || !isStaleLive else { return self }
+                return DurationRowRecord(
+                    id: id,
+                    marketID: marketID,
+                    title: title,
+                    subtitle: subtitle,
+                    sideLabel: sideLabel,
+                    windowStart: windowStart,
+                    windowEnd: windowEnd,
+                    includesFinalBell: includesFinalBell,
+                    beforeChance: beforeChance,
+                    currentChance: nil,
+                    observedAt: observedAt,
+                    isStaleLive: true,
+                    verdict: verdict,
+                    rawSource: rawSource,
+                    sourceCount: sourceCount
+                )
+            case .final:
+                return self
+            }
         }
 
         func toPresentationMarket(phase: Phase, now: Date) -> CombatDurationMarket10868 {
@@ -595,6 +669,9 @@ enum EventAtlasCombatCards11666 {
                 end: windowEnd,
                 finalBell: finalBell
             )
+            let beforeMissingWords = (phase == .before && isStaleLive)
+                ? "No recent probability"
+                : "No pre-fight chance recorded"
             let original = CombatDurationOriginal10868(
                 id: origID,
                 marketID: marketID,
@@ -602,7 +679,7 @@ enum EventAtlasCombatCards11666 {
                 window: window,
                 windowMissing: subtitle,
                 before: beforeObs,
-                beforeMissing: "No pre-fight chance recorded",
+                beforeMissing: beforeMissingWords,
                 current: currentState,
                 result: resultState,
                 resultDetail: nil
@@ -632,7 +709,7 @@ enum EventAtlasCombatCards11666 {
         let scheduledStartSummary: String?
 
         func current(at now: Date) -> DurationCard {
-            guard phase == .during else { return self }
+            guard phase != .final else { return self }
             return DurationCard(
                 eventID: eventID,
                 eyebrow: eyebrow,
@@ -1518,8 +1595,7 @@ enum EventAtlasCombatCards11666 {
     ) -> (before: Double?, current: Double?) {
         switch phase {
         case .before:
-            let pregame = outcome.probability ?? outcome.openingProbability
-            return (pregame, pregame)
+            return (outcome.probability, outcome.probability)
         case .during:
             return (outcome.openingProbability, outcome.probability)
         case .final:
@@ -1870,6 +1946,8 @@ struct EventAtlasCombatDetailsSheet11666: View {
                     LabeledContent("Outcome", value: context.itemTitle)
                     if let before = context.beforeChance {
                         LabeledContent("○ Before fight", value: "\(Int((before * 100).rounded()))%")
+                    } else if context.phase == .before && context.isStaleLive {
+                        LabeledContent("○ Before fight", value: "No recent probability")
                     } else {
                         LabeledContent("○ Before fight", value: "Not recorded")
                     }

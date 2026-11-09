@@ -82,19 +82,20 @@ final class EventAtlasCombatCards11666Tests: XCTestCase {
         XCTAssertEqual(underOrig.before?.text, "42%")
     }
 
-    func testBeforeFightPreservesBeforeChanceEvenWhenObservedAtIsHoursOldOrNil() throws {
+    func testBeforeFightAgesStaleReadingToNoRecentProbabilityNeverNoPreFightChanceRecorded() throws {
         let event = makeCombatEvent(
             sport: "mma_mixed_martial_arts",
             status: "scheduled",
             commenceTime: "2026-11-12T03:00:00Z"
         )
-        let markets = makeMMAGameMarkets(
-            observedAt: "2026-11-06T12:00:00Z",
+        // Reading is > 30 minutes old at `now` (2026-11-08T22:00:00Z)
+        let staleMarkets = makeMMAGameMarkets(
+            observedAt: "2026-11-08T21:10:00Z",
             settled: false
         )
         let cards = EventAtlasCombatCards11666.buildCards(
             event: event,
-            gameMarkets: markets,
+            gameMarkets: staleMarkets,
             now: now,
             atlasEnabled: true
         )
@@ -103,12 +104,24 @@ final class EventAtlasCombatCards11666Tests: XCTestCase {
               case .combatDuration(let durationCard) = cards[2] else {
             return XCTFail("Expected all 3 combat cards")
         }
+
         let methodInput = methodCard.presentationInput(selectedMethodID: nil, now: now)
-        XCTAssertEqual(methodInput.methods.first?.originals.first?.before?.text, "46%")
+        let methodOrig = try XCTUnwrap(methodInput.methods.first?.originals.first)
+        XCTAssertNil(methodOrig.before)
+        XCTAssertEqual(methodOrig.beforeMissing, "No recent probability")
+        XCTAssertNotEqual(methodOrig.beforeMissing, "No pre-fight chance recorded")
+
         let roundInput = roundCard.presentationInput(selectedSlotID: nil, now: now)
-        XCTAssertEqual(roundInput.groups.first?.slots.first?.state.market?.originals.first?.before?.text, "14%")
+        let roundOrig = try XCTUnwrap(roundInput.groups.first?.slots.first?.state.market?.originals.first)
+        XCTAssertNil(roundOrig.before)
+        XCTAssertEqual(roundOrig.beforeMissing, "No recent probability")
+        XCTAssertNotEqual(roundOrig.beforeMissing, "No pre-fight chance recorded")
+
         let durationInput = durationCard.presentationInput(selectedMarketID: nil, now: now)
-        XCTAssertEqual(durationInput.markets[3].originals.first?.before?.text, "42%")
+        let durationOrig = try XCTUnwrap(durationInput.markets[3].originals.first)
+        XCTAssertNil(durationOrig.before)
+        XCTAssertEqual(durationOrig.beforeMissing, "No recent probability")
+        XCTAssertNotEqual(durationOrig.beforeMissing, "No pre-fight chance recorded")
     }
 
     func testMethodClassificationStripsFighterNamesAndMatchesWordBoundaries() throws {
