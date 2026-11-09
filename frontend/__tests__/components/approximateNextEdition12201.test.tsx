@@ -17,9 +17,10 @@ import { conceptHeaderDate, formatEditionWindow } from "../../lib/eventConceptDi
 
 const NOW = new Date("2026-11-09T17:00:00Z");
 
-function text(html: string): string {
-  return html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "");
-}
+// React's static markup puts a `<!-- -->` marker between adjacent text parts, so
+// each assertion allows one at every join instead of rewriting the markup.
+const M = "(?:<!-- -->)?";
+const says = (...parts: string[]) => new RegExp(parts.join(M));
 
 function competition(
   name: string,
@@ -51,9 +52,9 @@ describe("NextEditionStrip, approximate edition", () => {
         settled
       />,
     );
-    expect(text(html)).toContain("Emmy Awards returns in September 2027.");
-    expect(text(html)).not.toMatch(/September 12/);
-    expect(text(html)).not.toMatch(/days/);
+    expect(html).toMatch(says("Emmy Awards</span> returns ", "in ", "September 2027", "\\."));
+    expect(html).not.toContain("September 12");
+    expect(html).not.toContain("days");
   });
 
   test("a window across two months names both", () => {
@@ -63,8 +64,8 @@ describe("NextEditionStrip, approximate edition", () => {
         settled
       />,
     );
-    expect(text(html)).toContain("US Open returns in August – September 2027.");
-    expect(text(html)).not.toMatch(/days/);
+    expect(html).toMatch(says("US Open</span> returns ", "in ", "August – September 2027", "\\."));
+    expect(html).not.toContain("days");
   });
 
   test("control: a confirmed edition still prints its days and its countdown", () => {
@@ -74,7 +75,8 @@ describe("NextEditionStrip, approximate edition", () => {
         settled
       />,
     );
-    expect(text(html)).toContain("Abu Dhabi Grand Prix returns December 12, 2027 · in 398 days.");
+    expect(html).toMatch(says("Abu Dhabi Grand Prix</span> returns ", "December 12, 2027"));
+    expect(html).toMatch(says(" · in ", "398", " days"));
   });
 
   test("control: an edition with no confidence on it prints as it always has", () => {
@@ -84,7 +86,8 @@ describe("NextEditionStrip, approximate edition", () => {
         settled
       />,
     );
-    expect(text(html)).toContain("The Open Championship returns July 15–18, 2027 · in 248 days.");
+    expect(html).toMatch(says("The Open Championship</span> returns ", "July 15–18, 2027"));
+    expect(html).toMatch(says(" · in ", "248", " days"));
   });
 });
 
