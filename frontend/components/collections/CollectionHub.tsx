@@ -244,7 +244,15 @@ export default function CollectionHub({ slug }: { slug: string }) {
 
   return <div className="mx-auto w-full max-w-4xl space-y-6" data-collection-hub={slug}>
     <div className="flex items-center justify-between gap-4">
-      <Link href="/discover" className="text-sm text-text-secondary hover:text-text-primary">Back to Discover</Link>
+      <div className="flex items-center gap-3">
+        {shown?.parent && (
+          <>
+            <Link href={shown.parent.href} data-collection-parent={shown.parent.slug} className="text-sm font-medium text-text-primary hover:underline">Back to {shown.parent.name}</Link>
+            <span aria-hidden className="text-text-muted">·</span>
+          </>
+        )}
+        <Link href="/discover" className="text-sm text-text-secondary hover:text-text-primary">Back to Discover</Link>
+      </div>
       <button type="button" disabled={fetching} onClick={() => void load()} className="text-sm text-accent-brand hover:underline disabled:text-text-muted">{fetching && shown ? "Updating…" : "Refresh"}</button>
     </div>
     <header className="space-y-2">
@@ -293,7 +301,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
     }} />}
     {shown?.note && <p role="status" className="text-sm text-text-secondary">{shown.note}</p>}
     {shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every market yet.</p>}
-    {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
+    {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} data-collection-child={child.key.replace(/^container:/, "")} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
     {/* #10985: a hub served as one unclassified list (every provider event) has no
         section to name, so "More" would follow nothing; the page title names it. */}
     {shown?.sections.map((section) => {
