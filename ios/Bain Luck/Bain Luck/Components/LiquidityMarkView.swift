@@ -263,9 +263,12 @@ nonisolated struct LiquidityMarkView: View {
 nonisolated struct LiquidityRevealCaption: View {
     let sentence: String
 
+    /// #12312 — exactly 11.5 pt at the default text size, growing with it.
+    @ScaledMetric(relativeTo: .caption) private var sentenceSize: CGFloat = 11.5
+
     var body: some View {
         Text(sentence)
-            .font(.system(size: 11.5))
+            .font(.system(size: sentenceSize))
             .foregroundColor(DS.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 9)

@@ -1180,6 +1180,9 @@ private struct PlayoffJourneyCard: View {
     private let journey: PlayoffJourney
     private let onStageTap: (Int) -> Void
 
+    /// #12312 — exactly 10 pt at the default text size, growing with it.
+    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 10
+
     init(journey: PlayoffJourney, onStageTap: @escaping (Int) -> Void) {
         self.journey = journey
         self.onStageTap = onStageTap
@@ -1201,7 +1204,7 @@ private struct PlayoffJourneyCard: View {
                     .lineLimit(1)
                 Spacer()
                 Text("PLAYOFFS")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: labelSize, weight: .medium))
                     .foregroundStyle(.secondary)
             }
 
@@ -1288,6 +1291,10 @@ private struct TeamFuturesSection: View {
     private let futures: TeamFuturesResponse
     @Binding private var path: NavigationPath
     @State private var expanded = false
+
+    /// #12312 — the group labels: exactly 10 pt at the default text size,
+    /// growing with it.
+    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 10
 
     private static let initialShow = 8
 
@@ -1389,7 +1396,7 @@ private struct TeamFuturesSection: View {
     private func mergedGroup(label: String, items: [MergedTeamFuture], borderTop: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label.uppercased())
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: labelSize, weight: .medium))
                 .tracking(1.5)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 4)
@@ -1498,6 +1505,14 @@ private struct MyTeamFuturesCard: View {
     private let futures: FeedFuturesData
     private let matchedOutcomes: [MatchedOutcome]
 
+    /// #12312 — the rank (and the column holding it, on the same curve so
+    /// "#12" keeps fitting) and the movement mark: each exactly its old point
+    /// size at the default text size, growing with it.
+    @ScaledMetric(relativeTo: .caption2) private var rankSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .caption2) private var rankColumnWidth: CGFloat = 24
+    @ScaledMetric(relativeTo: .caption2) private var movementArrowSize: CGFloat = 8
+    @ScaledMetric(relativeTo: .caption2) private var movementSize: CGFloat = 9
+
     init(futures: FeedFuturesData, matchedOutcomes: [MatchedOutcome]) {
         self.futures = futures
         self.matchedOutcomes = matchedOutcomes
@@ -1537,9 +1552,9 @@ private struct MyTeamFuturesCard: View {
                 HStack(spacing: 8) {
                     if let rank = outcome.rank {
                         Text("#\(rank)")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .font(.system(size: rankSize, weight: .semibold, design: .rounded))
                             .foregroundStyle(.blue)
-                            .frame(width: 24, alignment: .trailing)
+                            .frame(width: rankColumnWidth, alignment: .trailing)
                     }
                     Text(outcome.name)
                         .font(.subheadline)
@@ -1549,9 +1564,9 @@ private struct MyTeamFuturesCard: View {
                     if let m = outcome.movement, abs(m) >= 0.005 {
                         HStack(spacing: 1) {
                             Image(systemName: m > 0 ? "arrow.up" : "arrow.down")
-                                .font(.system(size: 8))
+                                .font(.system(size: movementArrowSize))
                             Text(formatProbability(abs(m)))
-                                .font(.system(size: 9))
+                                .font(.system(size: movementSize))
                         }
                         .foregroundStyle(m > 0 ? .green : .red)
                     }

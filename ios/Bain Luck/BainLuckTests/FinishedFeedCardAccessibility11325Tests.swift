@@ -230,6 +230,32 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         }
     }
 
+    /// #12312 — once every state stacks, a suspended card's badge is wider than
+    /// the row at AX5: "No result reported" plus its mark runs ≈ 380 pt, and a
+    /// 320 pt phone's row holds 288. Held to one line it ran off the card; it
+    /// wraps between words inside the card instead. CONSTRUCTED from the
+    /// served final: status only (the start is past, so the stoppage words).
+    func testASuspendedSportsCardAtAX5KeepsItsWholeBadgeOnTheCard() throws {
+        let suspended = try served(14780563, editing: #""status": "completed""#, to: #""status": "suspended""#)
+        XCTAssertEqual(suspended.status, "suspended")
+        for width: CGFloat in [320, 393] {
+            let name = "sports-nfl-\(Int(width))-ax5-suspended"
+            let read = try sportsLines(suspended, width: width, size: .accessibility5, name: name)
+            let all = describe(read)
+            // The words in order: on one line, or "No result" over "reported"
+            // in the same column (the mark may read glued to the first).
+            let first = try XCTUnwrap(read.first { normalized($0.text).contains("Noresult") },
+                                      "\(name): the badge's first words are gone — \(all)")
+            XCTAssertTrue(normalized(first.text).hasSuffix("Noresultreported")
+                          || read.contains { normalized($0.text) == "reported" && $0.box.minY > first.box.minY
+                              && abs($0.box.minX - first.box.minX) < 40 },
+                          "\(name): the badge is not whole on the card — \(all)")
+            for line in read where isElided(line.text) {
+                XCTFail("\(name): '\(line.text)' is cut short — \(all)")
+            }
+        }
+    }
+
     // MARK: - The hosted pill-edge misread (Watch MVP run 39990600534)
 
     /// Hosted Xcode 27 read the Large card's top row as "NFL (FINAL" and the

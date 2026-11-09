@@ -99,6 +99,14 @@ struct SearchView: View {
     /// `List` and are therefore always the same width.
     @State private var gridWidth: CGFloat = 0
 
+    /// #12312 — the screen's fixed sizes, each exactly its old point size at
+    /// the default text size and growing with it above: the chip icons on
+    /// their labels' curves, the concept's domain and the source badge.
+    @ScaledMetric(relativeTo: .caption) private var filterIconSize: CGFloat = 10
+    @ScaledMetric(relativeTo: .subheadline) private var quickSearchIconSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .caption2) private var domainSize: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption2) private var sourceBadgeSize: CGFloat = 9
+
     private let quickSearches: [QuickSearchItem] = [
         .init(icon: "basketball.fill", label: "NBA", query: "NBA"),
         .init(icon: "football.fill", label: "NFL", query: "NFL"),
@@ -415,7 +423,7 @@ struct SearchView: View {
                         HStack(spacing: 4) {
                             if !filter.icon.isEmpty {
                                 Image(systemName: filter.icon)
-                                    .font(.system(size: 10))
+                                    .font(.system(size: filterIconSize))
                             }
                             Text(filter.label)
                                 .font(.caption)
@@ -604,7 +612,7 @@ struct SearchView: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 11))
+                    .font(.system(size: quickSearchIconSize))
                 Text(label)
                     .font(.subheadline)
                     .fontWeight(.medium)
@@ -1411,7 +1419,7 @@ struct SearchView: View {
         VStack(alignment: .leading, spacing: 2) {
             if let domain = concept.domain {
                 Text(domain.uppercased())
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: domainSize, weight: .medium))
                     .foregroundStyle(.secondary)
             }
             Text(concept.name)
@@ -1498,7 +1506,7 @@ struct SearchView: View {
                 }
             }()
             Text(label)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: sourceBadgeSize, weight: .medium))
                 .foregroundStyle(color)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)

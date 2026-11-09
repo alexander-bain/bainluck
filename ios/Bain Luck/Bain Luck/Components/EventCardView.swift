@@ -11,6 +11,12 @@ struct EventCardView: View {
     /// `AccessibilityCardLayout12312`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    /// #12312 — the small glyphs beside caption text (the broadcaster's TV,
+    /// the reason icon, the live shift arrow): each exactly its old point size
+    /// at the default text size, growing with the text beside it.
+    @ScaledMetric(relativeTo: .caption2) private var smallGlyphSize: CGFloat = 8
+    @ScaledMetric(relativeTo: .caption2) private var reasonGlyphSize: CGFloat = 9
+
     private var isLive: Bool { event.status == "live" }
     private var isFinished: Bool { EventState.isFinished(event.status) }
     /// live/048 + CERT-786 — the branch this card did not have.
@@ -324,7 +330,7 @@ struct EventCardView: View {
             if let broadcast = broadcastName {
                 HStack(spacing: 2) {
                     Image(systemName: "tv")
-                        .font(.system(size: 8))
+                        .font(.system(size: smallGlyphSize))
                     Text(broadcast)
                         .font(.caption2)
                 }
@@ -370,6 +376,18 @@ struct EventCardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         statusBadge.fixedSize()
+                        Spacer(minLength: 6)
+                        PinButton(type: "event", id: event.id, compact: true)
+                    }
+                    whenText(wrapping: true)
+                }
+                // #12312 — a badge wider than the row: "No result reported" at
+                // AX5 on a 320 pt phone, once every state stacks. It wraps
+                // between words inside its capsule rather than running off the
+                // card.
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .top, spacing: 6) {
+                        statusBadge
                         Spacer(minLength: 6)
                         PinButton(type: "event", id: event.id, compact: true)
                     }
@@ -769,7 +787,7 @@ struct EventCardView: View {
         return HStack(spacing: 3) {
             if let icon {
                 Image(systemName: icon)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: reasonGlyphSize, weight: .semibold))
             }
             Text(text)
                 .font(.caption2)
@@ -944,7 +962,7 @@ struct EventCardView: View {
                     let shift = prob - openProb
                     if abs(shift) > 0.02 {
                         Image(systemName: shift > 0 ? "arrow.up" : "arrow.down")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: smallGlyphSize, weight: .bold))
                             .foregroundStyle(shift > 0 ? Color.green : Color.red)
                     }
                 }

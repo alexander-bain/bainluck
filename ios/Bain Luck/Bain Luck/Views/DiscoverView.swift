@@ -3081,6 +3081,10 @@ private struct NativeComparisonBundleRows: View {
 private struct NativeIPOComparisonRow: View {
     let data: FeedFuturesData
 
+    /// #12312 — the source mark and column titles: exactly 9 pt at the default
+    /// text size, growing with it above (`RelatedFuturesView`'s reasoning).
+    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 9
+
     private var points: [FeedDiscoverThresholdPoint] {
         (data.discoverCard?.thresholdPoints ?? [])
             .filter { $0.probability != nil }
@@ -3112,7 +3116,7 @@ private struct NativeIPOComparisonRow: View {
                     // invented a source named `MARKET` when there was none.
                     if let mark = SourceLabels.label(for: data.source) {
                         Text(mark)
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: labelSize, weight: .bold))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -3125,7 +3129,7 @@ private struct NativeIPOComparisonRow: View {
     private func comparisonSummary(title: String, point: FeedDiscoverThresholdPoint?, emphasized: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: labelSize, weight: .bold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
             Text(point.map { compactRangeLabel($0.label) } ?? "-")
@@ -3141,6 +3145,9 @@ private struct NativeIPOComparisonRow: View {
 
 private struct NativeThresholdComparisonRow: View {
     let data: FeedFuturesData
+
+    /// #12312 — as `NativeIPOComparisonRow.labelSize`.
+    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 9
 
     private var points: [FeedDiscoverThresholdPoint] {
         (data.discoverCard?.thresholdPoints ?? [])
@@ -3160,7 +3167,7 @@ private struct NativeThresholdComparisonRow: View {
                 // its source or is not drawn.
                 if let mark = SourceLabels.label(for: data.source) {
                     Text(mark)
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: labelSize, weight: .bold))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -3537,6 +3544,17 @@ struct NativeGuessCard: View {
     @State private var displayPct: Int = 0
     @State private var showShare = false
 
+    /// #12312 — the card's fixed sizes, each exactly its old point size at the
+    /// default text size and growing with it above: the header, the category
+    /// chip and the matchup's status word, the column holding that word and
+    /// the score (on the score's curve, so the score keeps fitting), and the
+    /// two numerals on `.largeTitle`'s curve, as `DiscoverFuturesCard`'s hero.
+    @ScaledMetric(relativeTo: .caption2) private var headerSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 9
+    @ScaledMetric(relativeTo: .caption) private var statusColumnWidth: CGFloat = 42
+    @ScaledMetric(relativeTo: .largeTitle) private var thresholdNumeralSize: CGFloat = 46
+    @ScaledMetric(relativeTo: .largeTitle) private var resultNumeralSize: CGFloat = 52
+
     init(
         data: FeedFuturesData,
         onNextQuestion: (() -> Void)? = nil,
@@ -3633,14 +3651,14 @@ struct NativeGuessCard: View {
     private func guessHeader(category: String?) -> some View {
         HStack {
             Label("What's the probability?", systemImage: "target")
-                .font(.system(size: 11, weight: .heavy))
+                .font(.system(size: headerSize, weight: .heavy))
                 .tracking(0.8)
                 .foregroundStyle(.orange)
                 .textCase(.uppercase)
             Spacer()
             if let category {
                 Text(category.uppercased())
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: labelSize, weight: .heavy))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
@@ -3679,7 +3697,7 @@ struct NativeGuessCard: View {
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(threshold)%")
-                    .font(.system(size: 46, weight: .black, design: .rounded).monospacedDigit())
+                    .font(.system(size: thresholdNumeralSize, weight: .black, design: .rounded).monospacedDigit())
                     .foregroundStyle(content.thresholdColor)
                 if let subject = content.questionSubject {
                     Text(subject)
@@ -3724,7 +3742,7 @@ struct NativeGuessCard: View {
 
             VStack(spacing: 4) {
                 Text(event.status == "live" ? (event.espn?.period ?? "LIVE") : (EventState.isFinished(event.status) ? "FINAL" : "VS"))
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.system(size: labelSize, weight: .heavy))
                     .foregroundStyle(event.status == "live" ? .red : .secondary)
                 if let a = event.awayScore, let h = event.homeScore,
                    (event.status == "live" || EventState.isFinished(event.status)) {
@@ -3732,7 +3750,7 @@ struct NativeGuessCard: View {
                         .font(.caption.weight(.black).monospacedDigit())
                 }
             }
-            .frame(width: 42)
+            .frame(width: statusColumnWidth)
 
             teamBadge(
                 label: sides.home,
@@ -3838,12 +3856,12 @@ struct NativeGuessCard: View {
     private func resultProbabilityText() -> some View {
         if content.animatesResult {
             Text("\(displayPct)%")
-                .font(.system(size: 52, weight: .black, design: .rounded).monospacedDigit())
+                .font(.system(size: resultNumeralSize, weight: .black, design: .rounded).monospacedDigit())
                 .foregroundStyle(content.resultColor ?? .primary)
                 .contentTransition(.numericText())
         } else {
             Text("\(actualPct)%")
-                .font(.system(size: 52, weight: .black, design: .rounded).monospacedDigit())
+                .font(.system(size: resultNumeralSize, weight: .black, design: .rounded).monospacedDigit())
                 .foregroundStyle(content.resultColor ?? .primary)
         }
     }
@@ -4015,14 +4033,18 @@ private struct ShareSheet: View {
 struct MovementBadge: View {
     let movement: Double?
 
+    /// #12312 — exactly 7 and 10 pt at the default text size, growing with it.
+    @ScaledMetric(relativeTo: .caption2) private var arrowSize: CGFloat = 7
+    @ScaledMetric(relativeTo: .caption2) private var valueSize: CGFloat = 10
+
     var body: some View {
         if let m = movement, abs(m) >= 0.01 {
             let up = m > 0
             HStack(spacing: 2) {
                 Image(systemName: up ? "arrow.up" : "arrow.down")
-                    .font(.system(size: 7, weight: .black))
+                    .font(.system(size: arrowSize, weight: .black))
                 Text("\(abs(Int((m * 100).rounded())))%")
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .font(.system(size: valueSize, weight: .bold).monospacedDigit())
             }
             .foregroundStyle(up ? .green : .red)
             .padding(.horizontal, 5)

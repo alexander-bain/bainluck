@@ -36,6 +36,9 @@ nonisolated struct PriceAgeMarkView: View {
     /// The rendered age, already earned. "3d ago".
     let age: String
 
+    /// #12312 — exactly 10 pt at the default text size, growing with it.
+    @ScaledMetric(relativeTo: .caption2) private var ageSize: CGFloat = 10
+
     /// The precise stamp sentence, for the tap and for VoiceOver. Nil only if the
     /// stamp parsed for the age and not for the reveal, which cannot happen —
     /// both read the same parse — but the render must not be what discovers they
@@ -78,7 +81,7 @@ nonisolated struct PriceAgeMarkView: View {
                 .frame(width: 5, height: 5)
 
             Text(age)
-                .font(.system(size: 10))
+                .font(.system(size: ageSize))
                 .foregroundStyle(DS.textMuted)
                 .lineLimit(1)
                 // The rungs are bounded ("59m ago", "23h ago"), so this cannot

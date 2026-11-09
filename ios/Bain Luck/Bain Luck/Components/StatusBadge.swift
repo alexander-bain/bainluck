@@ -51,6 +51,15 @@ struct StatusBadge: View {
     /// initialiser `private` too, and all five call sites use it.
     @ObservedObject var clock = MinuteClock.shared
 
+    /// #12312 — the pill's glyph (settled tick, stoppage mark, countdown
+    /// clock): exactly 8 pt at the default text size, growing with the
+    /// caption beside it up to 16 pt. At AX5 the 8 pt clock sat as a dot
+    /// before "In 14h 47m"; grown the whole way (29 pt) it widened the pill
+    /// past a 320 pt card's row beside the pin and broke the countdown over
+    /// two lines. The words carry the pill; the glyph only has to read.
+    @ScaledMetric(relativeTo: .caption2) private var scaledGlyphSize: CGFloat = 8
+    private var glyphSize: CGFloat { min(scaledGlyphSize, 16) }
+
     /// Formatted live text: "Q1 5:11", "Bottom 7th", or "LIVE".
     ///
     /// #3273 — this read **"5:11 - 1st Quarter 5:11"** on the live Michigan game
@@ -111,7 +120,7 @@ struct StatusBadge: View {
             // FINAL already wears.
             HStack(spacing: 3) {
                 Image(systemName: "checkmark.circle")
-                    .font(.system(size: 8))
+                    .font(.system(size: glyphSize))
                 Text(EventState.venueSettledLabel)
                     .font(.caption2)
                     .fontWeight(.medium)
@@ -171,7 +180,7 @@ struct StatusBadge: View {
             // web's `authorityStoppageLabel`. Callers pass the period they hold.
             HStack(spacing: 3) {
                 Image(systemName: "exclamationmark.circle")
-                    .font(.system(size: 8))
+                    .font(.system(size: glyphSize))
                 Text(EventState.suspendedLabel(authorityPeriod: period))
                     .font(.caption2)
                     .fontWeight(.medium)
@@ -190,7 +199,7 @@ struct StatusBadge: View {
                 commenceTime: commenceTime, startIsTbd: startIsTbd, now: clock.now) {
                 HStack(spacing: 3) {
                     Image(systemName: "clock")
-                        .font(.system(size: 8))
+                        .font(.system(size: glyphSize))
                     Text("In \(countdown)")
                         .font(.caption2)
                         .fontWeight(.medium)

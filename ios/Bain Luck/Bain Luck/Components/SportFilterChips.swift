@@ -45,6 +45,10 @@ struct SportFilterChips: View {
     @Binding var selectedCategory: String
     var onNavigate: ((Route) -> Void)? = nil
 
+    /// #12312 — the chip icon: exactly 10 pt at the default text size, growing
+    /// with the chip's caption.
+    @ScaledMetric(relativeTo: .caption) private var iconSize: CGFloat = 10
+
     var body: some View {
         ZStack(alignment: .trailing) {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -85,7 +89,7 @@ struct SportFilterChips: View {
             HStack(spacing: 4) {
                 if !isAll {
                     Image(systemName: Self.chipIcon(for: category.id))
-                        .font(.system(size: 10))
+                        .font(.system(size: iconSize))
                 }
                 Text(category.name)
                     .font(.caption)
