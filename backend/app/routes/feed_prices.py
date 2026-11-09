@@ -18,6 +18,7 @@ from app.services import get_db
 from app.utils.aggregation import newest_source_reading_time
 from app.utils.draw_priced_winner import printable_away
 from app.utils.futures_market_snapshot import from_plain, to_plain
+from app.utils.game_state import normalize_live_game_state
 from app.utils.hero_probability import resolve_hero
 from app.utils.personalization import PersonalizationContext
 from app.utils.proven_duplicates import (
@@ -60,6 +61,15 @@ def _outcome_clock(outcome):
     return stamp.isoformat()
 
 
+def _live_state(event) -> dict | None:
+    """``{"period", "game_clock"}`` as `/api/events/search` normalises them."""
+    if event is None:
+        return None
+    sport_key = event.sport.key if event.sport else None
+    period, clock = normalize_live_game_state(sport_key, event.period, event.game_clock)
+    return {"period": period or None, "game_clock": clock or None}
+
+
 def _public(item):
     """Use the existing full leaf, with private scoring instrumentation removed."""
     if isinstance(item, dict):
@@ -91,12 +101,19 @@ async def _event_cards(db, ids, now):
         db, now, None, PersonalizationContext(), price_refresh_events=views
     )
     by_id = {view.id: view for view in views}
+    rows_by_id = {event.id: event for event in rows}
     for item in items:
         data = item["data"]
         eid = data["id"]
         view = by_id[eid]
         hero = resolve_hero(view)
         data["blend_fold_revision"] = revisions[eid]
+        # #10090: the period and clock from the SAME row read as this card's
+        # score and probability, normalised exactly as `/api/events/search`
+        # serves them (`espn.period` / `espn.game_clock`). A Search card patches
+        # a live game's probability, score and clock together or not at all
+        # (Fable, Nov 8), so all three must come from one reading.
+        data["live_state"] = _live_state(rows_by_id.get(eid))
         data["hero_probability_observed_at"] = None
         if hero is not None:
             data["hero_probability_source"] = hero.source

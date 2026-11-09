@@ -13,6 +13,7 @@ from app.utils.event_rails import (
 )
 from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
 from app.utils.aggregation import compute_aggregate_probability
+from app.utils.draw_priced_winner import printable_away, sport_prices_a_draw
 from app.utils.game_state import authority_stoppage_label
 from app.utils.lifecycle import served_event_status
 from app.utils.market_team_sport import (
@@ -867,6 +868,27 @@ async def _folded_briefs(
     ]
 
 
+def _away_three_way_price(event: Event, status: str | None, now: datetime) -> float | None:
+    """The away club's own win price on a sport that prices a draw (#11541).
+
+    The blend carries only the home side, so this reads the stored away leg,
+    which #1011 de-vigs over the whole board until kickoff: the club's three-way
+    price, with the draw left out. It is served only before kickoff, because
+    after it the leg is the last pre-match consensus and not a live chance; and
+    only while its pair still leaves a draw, because a pair summing to one is
+    `1 - home` again under another name (`printable_away`). Otherwise None: a
+    card with no number is honest, and one that counts the draw as a win is not.
+    """
+    commence = event.commence_time
+    if status != "scheduled" or commence is None or commence <= now:
+        return None
+    home, away = event.opening_home_probability, event.opening_away_probability
+    if home is None or away is None:
+        return None
+    sport = event.sport
+    return printable_away(float(away), float(home), sport.key if sport else None)
+
+
 def _format_event_brief(
     event: Event, team: Team, club_ids=None, club_names=None, prematch=None
 ) -> dict:
@@ -905,18 +927,26 @@ def _format_event_brief(
     # `.items()` on the column, so a truthy NON-dict (a list, a bare string)
     # raises AttributeError — and in a per-item formatter a throw does not blank
     # one row, it empties the whole rail (gotcha #42).
+    now = datetime.now(timezone.utc)
+    status = served_event_status(event.status, event.commence_time, now)
     wp = None
     if isinstance(event.win_probability_sources, (dict, type(None))):
         wp = compute_aggregate_probability(event)
         # The blend states the HOME side's probability; this brief is
-        # team-relative ("we had them at 72%"), so an away row is the
-        # complement — the same orientation `pregame_win_probability` gets for
-        # free by picking between two stored columns. Safe because our
-        # probabilities are two-way normalised in every sport, draw leagues
-        # included: measured 2026-09-11, `opening_home + opening_away` sums to
-        # 1.0000 with 0 exceptions across all 60 sport keys, soccer among them.
-        if wp is not None and not is_home:
-            wp = 1.0 - wp
+        # team-relative ("we had them at 72%"), so on a two-way sport an away
+        # row is the complement.
+        #
+        # #11541: NOT ON A SPORT THAT PRICES A DRAW. There `1 - home` is "home
+        # does not win", the away side's chance plus the draw's. Arsenal's page
+        # read 82% at Newcastle (15340934) while the game's own page had
+        # Newcastle at 18% and Arsenal's own price was 59%. This comment used to
+        # call every sport two-way normalised (measured 2026-09-11); #1011 made
+        # soccer three-way five days later.
+        if not is_home:
+            if sport_prices_a_draw(sport.key if sport else None):
+                wp = _away_three_way_price(event, status, now)
+            elif wp is not None:
+                wp = 1.0 - wp
 
     # L2-174 Item 3e — the recents expectation grammar ("we had them at 72%",
     # L2-158) never fired because this brief never emitted the pre-game line or the
@@ -943,8 +973,6 @@ def _format_event_brief(
         pct = prematch["home_rendered_percent" if is_home else "away_rendered_percent"]
         if pct is not None:
             pre = pct / 100
-
-    status = served_event_status(event.status, event.commence_time, datetime.now(timezone.utc))
 
     return {
         "id": event.id,

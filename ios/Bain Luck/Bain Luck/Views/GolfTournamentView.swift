@@ -71,6 +71,8 @@ struct GolfTournamentView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 8)
+                } else if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                    atlasSection(presentation)
                 } else {
                     fieldSection(presentation)
                 }
@@ -79,6 +81,14 @@ struct GolfTournamentView: View {
             .padding(.bottom, 40)
         }
         .refreshable { await vm.load() }
+    }
+
+    @inline(never)
+    private func atlasSection(_ presentation: GolfTournamentPresentation) -> some View {
+        EventAtlasGolfTournamentSection11666(
+            presentation: presentation,
+            atlasData: vm.atlasData
+        )
     }
 
     /// The title bar already says the tournament's name, so this does not.
