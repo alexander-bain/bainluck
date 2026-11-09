@@ -873,6 +873,12 @@ struct NFLEventCardView9483: View {
                     state: state,
                     expanded: expanded
                 )
+            case .combatMethod(let combatMethod):
+                EventAtlasCombatMethodCardView11666(card: combatMethod)
+            case .combatRounds(let combatRounds):
+                EventAtlasCombatRoundCardView11666(card: combatRounds)
+            case .combatDuration(let combatDuration):
+                EventAtlasCombatDurationCardView11666(card: combatDuration)
             }
         }
         .padding(16)

@@ -1085,6 +1085,31 @@ private struct CombatRoundWrappedText10868: View {
     }
 }
 
+private struct CombatRoundTrackLayout10868: Layout {
+    var height: CGFloat
+    var idealWidth: CGFloat = 60
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width: CGFloat
+        if let proposed = proposal.width, proposed.isFinite {
+            width = max(0, proposed)
+        } else {
+            width = idealWidth
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for subview in subviews {
+            subview.place(
+                at: bounds.origin,
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
+            )
+        }
+    }
+}
+
 /// The slim 0–100% track: a hollow pre-match mark, a filled in-fight mark and
 /// the segment between them when both are drawn. Decorative — every reading
 /// it carries is also a figure and is spoken by its control.
@@ -1094,39 +1119,40 @@ private struct CombatRoundTrack10868: View {
     let markSize: CGFloat
 
     var body: some View {
-        GeometryReader { geometry in
-            let width = geometry.size.width
-            let inset = markSize / 2
-            let middle = geometry.size.height / 2
-            ZStack(alignment: .topLeading) {
-                Capsule()
-                    .fill(DS.border)
-                    .frame(width: width, height: 2)
-                    .position(x: width / 2, y: middle)
-                if let segment = marks.segment {
-                    let from = CombatRoundGeometry10868.markX(segment.lowerBound, width: width, inset: inset)
-                    let to = CombatRoundGeometry10868.markX(segment.upperBound, width: width, inset: inset)
+        CombatRoundTrackLayout10868(height: height) {
+            GeometryReader { geometry in
+                let width = geometry.size.width
+                let inset = markSize / 2
+                let middle = geometry.size.height / 2
+                ZStack(alignment: .topLeading) {
                     Capsule()
-                        .fill(DS.blue.opacity(0.45))
-                        .frame(width: max(0, to - from), height: 3)
-                        .position(x: (from + to) / 2, y: middle)
-                }
-                if let before = marks.before {
-                    Circle()
-                        .fill(DS.cardBg)
-                        .overlay(Circle().strokeBorder(DS.blue, lineWidth: 2))
-                        .frame(width: markSize, height: markSize)
-                        .position(x: CombatRoundGeometry10868.markX(before, width: width, inset: inset), y: middle)
-                }
-                if let current = marks.current {
-                    Circle()
-                        .fill(DS.blue)
-                        .frame(width: markSize, height: markSize)
-                        .position(x: CombatRoundGeometry10868.markX(current, width: width, inset: inset), y: middle)
+                        .fill(DS.border)
+                        .frame(width: width, height: 2)
+                        .position(x: width / 2, y: middle)
+                    if let segment = marks.segment {
+                        let from = CombatRoundGeometry10868.markX(segment.lowerBound, width: width, inset: inset)
+                        let to = CombatRoundGeometry10868.markX(segment.upperBound, width: width, inset: inset)
+                        Capsule()
+                            .fill(DS.blue.opacity(0.45))
+                            .frame(width: max(0, to - from), height: 3)
+                            .position(x: (from + to) / 2, y: middle)
+                    }
+                    if let before = marks.before {
+                        Circle()
+                            .fill(DS.cardBg)
+                            .overlay(Circle().strokeBorder(DS.blue, lineWidth: 2))
+                            .frame(width: markSize, height: markSize)
+                            .position(x: CombatRoundGeometry10868.markX(before, width: width, inset: inset), y: middle)
+                    }
+                    if let current = marks.current {
+                        Circle()
+                            .fill(DS.blue)
+                            .frame(width: markSize, height: markSize)
+                            .position(x: CombatRoundGeometry10868.markX(current, width: width, inset: inset), y: middle)
+                    }
                 }
             }
         }
-        .frame(maxWidth: .infinity, minHeight: height, maxHeight: height)
         .accessibilityHidden(true)
     }
 }
@@ -1526,13 +1552,12 @@ struct CombatRoundPresentation10868: View {
     /// The selected slot's side rows (`panelSides`), each with its own track and
     /// readings. Tiles list theirs compactly through `tileSides`.
     @ViewBuilder private func sideList(_ place: CombatRoundPlace10868, _ sides: [CombatRoundTileSide10868]) -> some View {
-        if typeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 6) { sideControls(place, sides) }
-        } else {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 8) { sideControls(place, sides) }
-                VStack(alignment: .leading, spacing: 8) { sideControls(place, sides) }
-            }
+        CombatRoundGridLayout10868(
+            spacing: typeSize.isAccessibilitySize ? 6 : 8,
+            minimumColumnWidth: minimumTileWidth,
+            forceSingleColumn: typeSize.isAccessibilitySize
+        ) {
+            sideControls(place, sides)
         }
     }
 
@@ -1570,6 +1595,7 @@ struct CombatRoundPresentation10868: View {
                     resultLine(result, text: result.text, font: .caption.weight(.semibold))
                 }
             }
+            .fixedSize(horizontal: false, vertical: true)
             .padding(compact ? 6 : 10)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .background(DS.surface, in: RoundedRectangle(cornerRadius: 9))
