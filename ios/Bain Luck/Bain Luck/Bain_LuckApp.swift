@@ -79,6 +79,8 @@ struct Bain_LuckApp: App {
         TelemetryConsent.shared.initialize()
         #if os(iOS)
         WatchTelemetryReceiver.shared.start()
+        // #12309 — Apple's diagnostics, forwarded only under the grant above.
+        MetricKitSubscriber12309.shared.start()
         #endif
         // Subscribe to FCM registration tokens. After `configure()`, by
         // requirement — the delegate is ignored before it (#1159).

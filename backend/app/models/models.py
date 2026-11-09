@@ -3758,6 +3758,56 @@ class ClientTimingEvent(Base):
     )
 
 
+class MetricKitPayload(Base):
+    """#12309: one Apple MetricKit diagnostic, or one day's metrics, from a phone.
+
+    THE SHIP THIS SERVES. Hangs, slow launches and the crashes Crashlytics never
+    sees (watchdog kills, memory terminations, a crash before it starts) reach us
+    as Apple's own call stacks, so a fix like #12278 starts from a stack rather
+    than a guess.
+
+    WHAT MAY BE IN HERE. Only what a reader who GRANTED telemetry consent sends:
+    the app forwards nothing for anyone else (`TelemetryConsent`, deny by
+    default). Each row is MetricKit's JSON for one diagnostic (or the day's
+    metrics), untouched, plus the version and device fields copied out of its
+    own metadata. MetricKit carries no user id, and neither does this table:
+    no foreign key, no user, session, IP or cookie column. A row cannot be
+    attributed to a person, and that is a property of the schema.
+
+    Rows older than `app.routes.metrickit.RETENTION_DAYS` are deleted by the
+    ingest path.
+    """
+
+    __tablename__ = "metrickit_payloads"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+
+    #: One of `app.routes.metrickit.ACCEPTED_KINDS`.
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # Copied out of the payload's own metadata, so a read can group by them
+    # without opening the JSONB.
+    app_version: Mapped[Optional[str]] = mapped_column(String(64))
+    app_build: Mapped[Optional[str]] = mapped_column(String(64))
+    os_version: Mapped[Optional[str]] = mapped_column(String(64))
+    device_type: Mapped[Optional[str]] = mapped_column(String(64))
+
+    #: MetricKit's own JSON for this diagnostic or day, as the phone sent it.
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # Every read is "this kind, in this window".
+        Index("ix_metrickit_kind_time", "kind", "received_at"),
+        # The retention sweep walks the window alone.
+        Index("ix_metrickit_received_at", "received_at"),
+    )
+
+
 class OpenFuturesOutcome(Base):
     """#4437 Decide 89-A: the outcome NAMES of open markets, and nothing else.
 
