@@ -10,21 +10,27 @@ final class EventAtlasCricketCards11666Tests: XCTestCase {
     // MARK: - 1. Sport & Format Gating
 
     func testAppliesGatedByAtlasAndCricketSportKey() {
-        XCTAssertTrue(EventAtlasCricketCards11666.applies(sportKey: "cricket_international_t20", atlasEnabled: true))
+        let t20Sport = "cricket_international_t20"
+        let testSport = "cricket_test_match"
+        let mmaSport = "mma_mixed_martial_arts"
+        let mlbSport = "baseball_mlb"
+        let iplSport = "cricket_ipl"
+        let odiSport = "cricket_odi"
+        XCTAssertTrue(EventAtlasCricketCards11666.applies(sportKey: t20Sport, atlasEnabled: true))
         XCTAssertTrue(EventAtlasCricketCards11666.applies(sportKey: "cricket_t20", atlasEnabled: true))
-        XCTAssertTrue(EventAtlasCricketCards11666.applies(sportKey: "cricket_ipl", atlasEnabled: true))
-        XCTAssertTrue(EventAtlasCricketCards11666.applies(sportKey: "cricket_test_match", atlasEnabled: true))
-        XCTAssertTrue(EventAtlasCricketCards11666.applies(sportKey: "cricket_odi", atlasEnabled: true))
+        XCTAssertTrue(EventAtlasCricketCards11666.applies(sportKey: iplSport, atlasEnabled: true))
+        XCTAssertTrue(EventAtlasCricketCards11666.applies(sportKey: testSport, atlasEnabled: true))
+        XCTAssertTrue(EventAtlasCricketCards11666.applies(sportKey: odiSport, atlasEnabled: true))
         XCTAssertTrue(EventAtlasCricketCards11666.applies(sportKey: "cricket", atlasEnabled: true))
 
-        XCTAssertFalse(EventAtlasCricketCards11666.applies(sportKey: "cricket_international_t20", atlasEnabled: false))
-        XCTAssertFalse(EventAtlasCricketCards11666.applies(sportKey: "baseball_mlb", atlasEnabled: true))
-        XCTAssertFalse(EventAtlasCricketCards11666.applies(sportKey: "mma_mixed_martial_arts", atlasEnabled: true))
+        XCTAssertFalse(EventAtlasCricketCards11666.applies(sportKey: t20Sport, atlasEnabled: false))
+        XCTAssertFalse(EventAtlasCricketCards11666.applies(sportKey: mlbSport, atlasEnabled: true))
+        XCTAssertFalse(EventAtlasCricketCards11666.applies(sportKey: mmaSport, atlasEnabled: true))
         XCTAssertFalse(EventAtlasCricketCards11666.applies(sportKey: nil, atlasEnabled: true))
 
-        XCTAssertEqual(EventAtlasCricketCards11666.resolveFormat(sportKey: "cricket_test_match"), .test)
-        XCTAssertEqual(EventAtlasCricketCards11666.resolveFormat(sportKey: "cricket_odi"), .odi)
-        XCTAssertEqual(EventAtlasCricketCards11666.resolveFormat(sportKey: "cricket_international_t20"), .t20)
+        XCTAssertEqual(EventAtlasCricketCards11666.resolveFormat(sportKey: testSport), .test)
+        XCTAssertEqual(EventAtlasCricketCards11666.resolveFormat(sportKey: odiSport), .odi)
+        XCTAssertEqual(EventAtlasCricketCards11666.resolveFormat(sportKey: t20Sport), .t20)
     }
 
     // MARK: - 2. Before-Play Pregame Story & Chase Cards

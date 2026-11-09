@@ -902,10 +902,11 @@ enum EventAtlasCricketCards11666 {
 
         let homeLower = homeTeam.lowercased()
         let awayLower = awayTeam.lowercased()
+        let cricketSport = "cricket_international_t20"
         let pair = TeamShortName.shortPair(
             away: awayTeam,
             home: homeTeam,
-            sportKey: "cricket_international_t20"
+            sportKey: cricketSport
         )
         let homeShort = pair.home.lowercased()
         let awayShort = pair.away.lowercased()
@@ -1103,10 +1104,11 @@ enum EventAtlasCricketCards11666 {
         let combined = "\(marketName) \(outcomeName)".lowercased()
         let homeLower = homeTeam.lowercased()
         let awayLower = awayTeam.lowercased()
+        let cricketSport = "cricket_international_t20"
         let pair = TeamShortName.shortPair(
             away: awayTeam,
             home: homeTeam,
-            sportKey: "cricket_international_t20"
+            sportKey: cricketSport
         )
         let homeShort = pair.home.lowercased()
         let awayShort = pair.away.lowercased()
