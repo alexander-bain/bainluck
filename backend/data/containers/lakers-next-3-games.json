@@ -14,6 +14,9 @@
   "tag": "NBA",
   "section_title": "Next 3 games",
   "footer": "Combined win probability \u00b7 next 3 games in schedule order",
+  "caption": {
+    "commentary": "Los Angeles faces a compact western slate where each tip-off carries its own blended pre-game reading in schedule order."
+  },
   "destination_href": "/sport/basketball/nba/team/los-angeles-lakers",
   "rule": {
     "producer": "subject_sequence",

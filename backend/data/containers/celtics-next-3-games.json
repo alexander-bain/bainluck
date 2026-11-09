@@ -14,6 +14,9 @@
   "tag": "NBA",
   "section_title": "Next 3 games",
   "footer": "Combined win probability \u00b7 next 3 games in schedule order",
+  "caption": {
+    "commentary": "Boston's upcoming stretch pairs eastern division tests with immediate tip-off readings for each game in schedule order."
+  },
   "rule": {
     "producer": "subject_sequence",
     "sport": "basketball_nba",

@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo
 
 from app.utils.container_presentation import MEMBER_EVENT, event_destination
 from app.utils.field_band import _validate_narrative_copy
+from app.utils.grouping_captions import compose_container_caption
 from app.utils.sport_keys import SPORT_HIERARCHY
 from app.utils.tonights_games import _parse_dt
 
@@ -388,6 +389,7 @@ def select_subject_sequence(
     max_prob_age_hours: float = 48.0,
     footer: str = "Combined win probability · next 3 games in schedule order",
     destination_href: Optional[str] = None,
+    caption: Optional[str | Mapping[str, Any]] = None,
 ) -> Any:
     """Pure selector for ``subject_sequence`` (Decide 74-A).
 
@@ -603,11 +605,22 @@ def select_subject_sequence(
         )
     except ValueError:
         return _rc().RoundupRefusal([("unmapped_team_sport", effective_sport)])
+    default_commentary = (
+        f"{effective_short or team_name} faces an upcoming slate in schedule order, "
+        f"with each pre-game win reading linked to its matchup."
+    )
+    caption_input = caption if caption is not None else {"commentary": default_commentary}
+    verified_caption = compose_container_caption(
+        {"caption": caption_input},
+        members=rows,
+        default_observed_at=effective_now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
     return _rc().RoundupMembers(
         members=members,
         rows=rows,
         footer=footer,
         destination_href=resolved_href,
+        caption=verified_caption,
     )
 
 
@@ -785,6 +798,7 @@ async def produce_subject_sequence(
         max_prob_age_hours=max_prob_age_hours,
         footer=footer,
         destination_href=defined_href,
+        caption=definition.get("caption") or rule.get("caption"),
     )
 
 
@@ -878,6 +892,7 @@ def build_subject_sequence_producer(
         destination_href=destination_href,
         order=order,
         presentation=presentation,
+        caption=definition.get("caption") or rule.get("caption"),
         produce=_produce,
         enabled=enabled if enabled is not None else subject_sequence_enabled,
     )
