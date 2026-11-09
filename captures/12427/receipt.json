@@ -1,0 +1,52 @@
+{
+  "recorded_at_utc": "2026-11-09T17:01:30.439424+00:00",
+  "tool": "Codex in-app browser",
+  "scope": "served web; emulated 390 CSS px, not installed-phone acceptance",
+  "captures": [
+    {
+      "event_id": 15330332,
+      "url": "https://www.bainluck.com/events/15330332",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "view": "header",
+      "file": "15330332-header-390.png",
+      "sha256": "fc27af0b85a35c9dc9d9a3eedf958cd4a6098591d169d60cb1ad0dd9a839e01e"
+    },
+    {
+      "event_id": 15330332,
+      "url": "https://www.bainluck.com/events/15330332",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "view": "winner",
+      "file": "15330332-winner-390.png",
+      "sha256": "c7a575727e1274faeaa5193bb6fec96dd475f184999b1b39e2c9bbb0175dde45"
+    },
+    {
+      "event_id": 15330333,
+      "url": "https://www.bainluck.com/events/15330333",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "view": "header",
+      "file": "15330333-header-390.png",
+      "sha256": "c9d86dd6fbbd0898b90c7f0c6b03e93dc2081ff923d3710ca10b9a1e5a82445b"
+    },
+    {
+      "event_id": 15330333,
+      "url": "https://www.bainluck.com/events/15330333",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "view": "winner",
+      "file": "15330333-winner-390.png",
+      "sha256": "3f48e0bbc7bbf68a827f3ef598e848a426b7f36304377d5d4e5669b933355efe"
+    }
+  ],
+  "finding": "Both full-match Polymarket winner fields already render in All markets > Game lines with home, away and draw. The existing reader rescues their stored split links."
+}
