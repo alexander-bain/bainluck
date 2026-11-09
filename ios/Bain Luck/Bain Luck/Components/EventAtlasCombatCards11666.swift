@@ -49,10 +49,9 @@ enum EventAtlasCombatCards11666 {
             if EventState.isFinished(status) {
                 return .final
             }
-            if status == "live" || status == "in_progress" {
-                return .during
-            }
-            if let commenceTime, now >= commenceTime {
+            if status == "live"
+                || status == "in_progress"
+                || EventState.isSuspendedAndStarted(status, commenceTime: commenceTime, now: now) {
                 return .during
             }
             return .before
@@ -901,13 +900,14 @@ enum EventAtlasCombatCards11666 {
                 isWinner: Bool?,
                 resolutionSource: String?
             ) {
-                let key = marketName.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !key.isEmpty else { return }
+                let trimmedName = marketName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmedName.isEmpty else { return }
+                let key = marketID.map { "id:\($0)" } ?? "title:\(trimmedName)"
                 if grouped[key] == nil {
                     order.append(key)
                     grouped[key] = (
                         id: marketID ?? (order.count + 1000),
-                        title: key,
+                        title: trimmedName,
                         marketType: marketType,
                         source: source,
                         sources: source.map { [$0] } ?? [],
@@ -1075,11 +1075,15 @@ enum EventAtlasCombatCards11666 {
             fighterB: String = ""
         ) -> CanonicalMethodBucket? {
             var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let mmaSport = "mma_mixed_martial_arts"
+            let shortPair = (!fighterA.isEmpty || !fighterB.isEmpty)
+                ? TeamShortName.shortPair(away: fighterB, home: fighterA, sportKey: mmaSport)
+                : (away: "", home: "")
             let fighterStrings: [String] = [
                 fighterA,
                 fighterB,
-                fighterA.isEmpty ? "" : TeamShortName.short(fighterA, sportKey: "mma_mixed_martial_arts"),
-                fighterB.isEmpty ? "" : TeamShortName.short(fighterB, sportKey: "mma_mixed_martial_arts")
+                shortPair.home,
+                shortPair.away
             ]
             for name in fighterStrings {
                 let lowerName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1112,7 +1116,48 @@ enum EventAtlasCombatCards11666 {
         }
     }
 
-    private nonisolated static func isMethodMarket(_ market: NormalizedMarket) -> Bool {
+    private nonisolated static func namesFighter(
+        _ text: String,
+        fighterA: String,
+        fighterB: String
+    ) -> Bool {
+        let lower = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !lower.isEmpty else { return false }
+        let words = Set(
+            lower
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+        )
+        let mmaSport = "mma_mixed_martial_arts"
+        let shortPair = (!fighterA.isEmpty || !fighterB.isEmpty)
+            ? TeamShortName.shortPair(away: fighterB, home: fighterA, sportKey: mmaSport)
+            : (away: "", home: "")
+        let candidates: [(full: String, short: String)] = [
+            (fighterA, shortPair.home),
+            (fighterB, shortPair.away)
+        ]
+        for candidate in candidates {
+            let trimmed = candidate.full.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !trimmed.isEmpty else { continue }
+            if lower.contains(trimmed) { return true }
+            let shortLower = candidate.short.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if shortLower.count >= 2 && words.contains(shortLower) { return true }
+            let tokens = trimmed
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count >= 3 }
+            if tokens.contains(where: { words.contains($0) }) { return true }
+        }
+        return false
+    }
+
+    private nonisolated static func isMethodMarket(
+        _ market: NormalizedMarket,
+        fighterA: String = "",
+        fighterB: String = ""
+    ) -> Bool {
+        if namesFighter(market.title, fighterA: fighterA, fighterB: fighterB) {
+            return false
+        }
         let typeLower = (market.marketType ?? "").lowercased()
         if typeLower == "method_of_victory"
             || typeLower == "method_of_finish"
@@ -1126,9 +1171,14 @@ enum EventAtlasCombatCards11666 {
             || titleLower.contains("method of finish")
             || titleLower.contains("how will the fight end")
             || titleLower.contains("winning method")
+            || titleLower.contains("won by ko")
+            || titleLower.contains("won by tko")
             || titleLower.contains("win by ko")
+            || titleLower.contains("by ko or tko")
             || titleLower.contains("by ko/tko")
+            || titleLower.contains("won by submission")
             || titleLower.contains("by submission")
+            || titleLower.contains("won by decision")
             || titleLower.contains("by decision") {
             return true
         }
@@ -1142,11 +1192,13 @@ enum EventAtlasCombatCards11666 {
         scheduledStartSummary: String?,
         now: Date
     ) -> MethodCard? {
-        let methodMarkets = candidates.filter { isMethodMarket($0) }
-        guard !methodMarkets.isEmpty else { return nil }
-
         let fighterAName = event.homeTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         let fighterBName = event.awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let methodMarkets = candidates.filter {
+            isMethodMarket($0, fighterA: fighterAName, fighterB: fighterBName)
+        }
+        guard !methodMarkets.isEmpty else { return nil }
 
         struct BucketEntry {
             let marketID: String
@@ -1162,6 +1214,9 @@ enum EventAtlasCombatCards11666 {
 
         for market in methodMarkets {
             for outcome in market.outcomes {
+                if namesFighter(outcome.name, fighterA: fighterAName, fighterB: fighterBName) {
+                    continue
+                }
                 let bucket = CanonicalMethodBucket.classify(
                     outcome.name,
                     fighterA: fighterAName,

@@ -146,10 +146,30 @@ final class EventAtlasCombatCards11666Tests: XCTestCase {
             teamTotals: [],
             periodMarkets: [],
             other: [
+                // Fighter-name outcomes containing "ko" / "dec" substrings must never match
+                GameMarketOther(
+                    _marketId: 800,
+                    marketName: "Method of Victory",
+                    outcomeName: "Alexander Volkov",
+                    probability: 0.62,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.60
+                ),
+                GameMarketOther(
+                    _marketId: 800,
+                    marketName: "Method of Victory",
+                    outcomeName: "Kyle Decker",
+                    probability: 0.38,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.40
+                ),
+                // Fight-level method outcomes
                 GameMarketOther(
                     _marketId: 801,
                     marketName: "Method of Victory",
-                    outcomeName: "Volkov by Decision",
+                    outcomeName: "Decision",
                     probability: 0.38,
                     source: "polymarket",
                     observedAt: "2026-11-08T21:56:00Z",
@@ -158,7 +178,7 @@ final class EventAtlasCombatCards11666Tests: XCTestCase {
                 GameMarketOther(
                     _marketId: 801,
                     marketName: "Method of Victory",
-                    outcomeName: "Volkov by Submission",
+                    outcomeName: "Submission",
                     probability: 0.16,
                     source: "polymarket",
                     observedAt: "2026-11-08T21:56:00Z",
@@ -167,7 +187,7 @@ final class EventAtlasCombatCards11666Tests: XCTestCase {
                 GameMarketOther(
                     _marketId: 801,
                     marketName: "Method of Victory",
-                    outcomeName: "Decker by KO/TKO",
+                    outcomeName: "KO/TKO",
                     probability: 0.44,
                     source: "kalshi",
                     observedAt: "2026-11-08T21:56:00Z",
@@ -189,6 +209,137 @@ final class EventAtlasCombatCards11666Tests: XCTestCase {
         XCTAssertEqual(methodCard.tiles[0].currentChance ?? -1, 0.44, accuracy: 0.001)
         XCTAssertEqual(methodCard.tiles[1].currentChance ?? -1, 0.16, accuracy: 0.001)
         XCTAssertEqual(methodCard.tiles[2].currentChance ?? -1, 0.38, accuracy: 0.001)
+    }
+
+    func testFightLevelMethodGridExcludesPerFighterKnockoutAndSubmissionMarketsAndReadsFightLevelMarket() throws {
+        let event = makeCombatEvent(
+            sport: "mma_mixed_martial_arts",
+            status: "scheduled",
+            commenceTime: "2026-11-09T03:00:00Z",
+            homeTeam: "Ateba Gautier",
+            awayTeam: "Roman Kopylov"
+        )
+        // Per-fighter knockout & submission markets appear BEFORE the fight-level markets
+        // so an unfiltered first-match loop would pick Kopylov's 12.5% or Gautier's 40%.
+        let markets = GameMarketsResponse(
+            eventId: event.id,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            status: event.status,
+            homeScore: nil,
+            awayScore: nil,
+            playerProps: [],
+            spreads: [],
+            totals: [],
+            teamTotals: [],
+            periodMarkets: [],
+            other: [
+                GameMarketOther(
+                    _marketId: 63900810,
+                    marketName: "Will Roman Kopylov win by KO or TKO?",
+                    outcomeName: "Yes",
+                    probability: 0.125,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.125
+                ),
+                GameMarketOther(
+                    _marketId: 63786875,
+                    marketName: "Will Ateba Gautier win by KO or TKO?",
+                    outcomeName: "Yes",
+                    probability: 0.40,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.40
+                ),
+                GameMarketOther(
+                    _marketId: 63900811,
+                    marketName: "Will Roman Kopylov win by submission?",
+                    outcomeName: "Yes",
+                    probability: 0.04,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.04
+                ),
+                GameMarketOther(
+                    _marketId: 63786880,
+                    marketName: "Will the fight be won by KO or TKO?",
+                    outcomeName: "Yes",
+                    probability: 0.55,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.55
+                ),
+                GameMarketOther(
+                    _marketId: 63786881,
+                    marketName: "Will the fight be won by submission?",
+                    outcomeName: "Yes",
+                    probability: 0.12,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.12
+                ),
+            ],
+            pace: nil
+        )
+        let cards = EventAtlasCombatCards11666.buildCards(
+            event: event,
+            gameMarkets: markets,
+            now: now,
+            atlasEnabled: true
+        )
+        guard let first = cards.first, case .combatMethod(let methodCard) = first else {
+            return XCTFail("Expected fight-level method card")
+        }
+        XCTAssertEqual(methodCard.tiles.map(\.label), ["KO / TKO", "Submission"])
+        XCTAssertEqual(methodCard.tiles[0].marketID, "63786880")
+        XCTAssertEqual(methodCard.tiles[0].beforeChance ?? -1, 0.55, accuracy: 0.001)
+        XCTAssertEqual(methodCard.tiles[1].marketID, "63786881")
+        XCTAssertEqual(methodCard.tiles[1].beforeChance ?? -1, 0.12, accuracy: 0.001)
+
+        // When only per-fighter markets exist, no fight-level method card is fabricated.
+        let fighterOnlyMarkets = GameMarketsResponse(
+            eventId: event.id,
+            homeTeam: event.homeTeam,
+            awayTeam: event.awayTeam,
+            status: event.status,
+            homeScore: nil,
+            awayScore: nil,
+            playerProps: [],
+            spreads: [],
+            totals: [],
+            teamTotals: [],
+            periodMarkets: [],
+            other: [
+                GameMarketOther(
+                    _marketId: 63900810,
+                    marketName: "Will Roman Kopylov win by KO or TKO?",
+                    outcomeName: "Yes",
+                    probability: 0.125,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.125
+                ),
+                GameMarketOther(
+                    _marketId: 63786875,
+                    marketName: "Will Ateba Gautier win by KO or TKO?",
+                    outcomeName: "Yes",
+                    probability: 0.40,
+                    source: "polymarket",
+                    observedAt: "2026-11-08T21:56:00Z",
+                    pregameMark: 0.40
+                ),
+            ],
+            pace: nil
+        )
+        XCTAssertTrue(
+            EventAtlasCombatCards11666.buildCards(
+                event: event,
+                gameMarkets: fighterOnlyMarkets,
+                now: now,
+                atlasEnabled: true
+            ).isEmpty
+        )
     }
 
     func testWholePointMovementVenueNeutralProvenanceAndSilentSkipGuards() {
