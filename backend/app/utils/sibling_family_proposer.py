@@ -996,10 +996,30 @@ def propose_sibling_families(
         flush=True,
     )
 
+    from app.utils.grouping_licences import run_licensed_promotion_pass
+
+    eligible_proposals = [
+        f["proposed_definition"]
+        for f in families_out
+        if f["kind_verdict"] == "serve" and f["trust_pass"]
+    ]
+    promotion_pass = run_licensed_promotion_pass(
+        PRODUCER_KIND_SIBLING_FAMILY,
+        eligible_proposals,
+        proposed_at=effective_now.strftime("%Y-%m-%d"),
+    )
+
     return {
         "generated_at": generated_at,
         "proposer": "sibling_family_proposer",
         "kind": PRODUCER_KIND_SIBLING_FAMILY,
+        "licence_status": promotion_pass["licence_status"],
+        "promotion_pass": {
+            "stopped": promotion_pass["stopped"],
+            "stopped_reason": promotion_pass["stopped_reason"],
+            "promoted_count": len(promotion_pass["promoted_definitions"]),
+            "refused_slugs": promotion_pass["refused_slugs"],
+        },
         "model": effective_model,
         "run_cost_cap_usd": HARD_RUN_COST_CAP_USD,
         "november_cost_cap_usd": NOVEMBER_MONTHLY_CAP_USD,
