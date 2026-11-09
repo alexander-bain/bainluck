@@ -1003,7 +1003,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
                 .padding(.vertical, 6)
                 .frame(minHeight: 36)
                 .background(
-                    active ? Color.systemGray5 : Color.clear,
+                    active ? Color.tertiaryFill : Color.clear,
                     in: Capsule()
                 )
         }
@@ -1307,7 +1307,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
                                 .padding(.vertical, 6)
                                 .frame(minHeight: 36)
                                 .background(
-                                    active ? Color.systemGray5 : Color.groupedBackground,
+                                    active ? Color.tertiaryFill : Color.groupedBackground,
                                     in: Capsule()
                                 )
                         }
@@ -1503,7 +1503,7 @@ struct EventAtlasGolfContenderChooserView11666: View {
                             .padding(.vertical, 6)
                             .frame(minHeight: 36)
                             .background(
-                                active ? Color.systemGray5 : Color.groupedBackground,
+                                active ? Color.tertiaryFill : Color.groupedBackground,
                                 in: Capsule()
                             )
                     }
@@ -1527,7 +1527,7 @@ struct EventAtlasGolfContenderChooserView11666: View {
                                 .padding(.vertical, 5)
                                 .frame(minHeight: 32)
                                 .background(
-                                    active ? Color.systemGray5 : Color.groupedBackground,
+                                    active ? Color.tertiaryFill : Color.groupedBackground,
                                     in: Capsule()
                                 )
                         }
