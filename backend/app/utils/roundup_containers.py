@@ -108,6 +108,7 @@ SELECTOR_RULE_KEYS: tuple[str, ...] = (
     "subject",
     "selector",
     "team_slug",
+    "series_code",
 )
 
 #: Rule keys that name an occasion/field/register/anchor ("an id, never a member", Decide 73-A).
@@ -160,6 +161,8 @@ class RoundupMembers:
     destination_href: Optional[str] = None
     sections: tuple[dict[str, Any], ...] = ()
     revision_ids: tuple[int, ...] = ()
+    suppress_feed_item: bool = False
+    caption: Optional[dict[str, Any]] = None
 
     def __init__(
         self,
@@ -174,6 +177,8 @@ class RoundupMembers:
         destination_href: Optional[str] = None,
         sections: Sequence[dict[str, Any]] = (),
         revision_ids: Sequence[int] = (),
+        suppress_feed_item: bool = False,
+        caption: Optional[Mapping[str, Any]] = None,
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
@@ -198,6 +203,10 @@ class RoundupMembers:
         object.__setattr__(self, "sections", tuple(sections))
         object.__setattr__(
             self, "revision_ids", tuple(int(rid) for rid in revision_ids)
+        )
+        object.__setattr__(self, "suppress_feed_item", bool(suppress_feed_item))
+        object.__setattr__(
+            self, "caption", dict(caption) if isinstance(caption, Mapping) else None
         )
 
 
@@ -259,6 +268,7 @@ class RoundupProducer:
     destination_href: Optional[str] = None
     order: Optional[str] = None
     presentation: Optional[str] = None
+    caption: Optional[Any] = None
     score: float = 0.0
     enabled: Optional[Callable[[], bool]] = None
     valid_from: Optional[float] = None
@@ -284,6 +294,7 @@ class RoundupProducer:
         destination_href: Optional[str] = None,
         order: Optional[str] = None,
         presentation: Optional[str] = None,
+        caption: Optional[Any] = None,
         score: float = 0.0,
         enabled: Optional[Callable[[], bool]] = None,
     ) -> None:
@@ -388,6 +399,12 @@ class RoundupProducer:
             "presentation",
             str(raw_presentation).strip() if raw_presentation else None,
         )
+        raw_caption = (
+            caption
+            if caption is not None
+            else (rule.get("caption") if isinstance(rule, Mapping) else None)
+        )
+        object.__setattr__(self, "caption", raw_caption)
         object.__setattr__(self, "score", float(score))
         object.__setattr__(self, "enabled", enabled)
         start, end = _definition_window(rule or {})
@@ -512,6 +529,26 @@ def compose_roundup_container(
     }
     if effective_dest_href:
         container_obj["destination_href"] = effective_dest_href
+    raw_caption = (
+        members.caption
+        if isinstance(members, RoundupMembers) and members.caption is not None
+        else producer.caption
+    )
+    verified_caption: Optional[dict[str, Any]] = None
+    if raw_caption is not None:
+        from app.utils.grouping_captions import compose_container_caption
+
+        caption_members: Sequence[Mapping[str, Any]] = (
+            members.rows
+            if isinstance(members, RoundupMembers) and members.rows
+            else normalized
+        )
+        verified_caption = compose_container_caption(
+            {"caption": raw_caption},
+            members=caption_members,
+        )
+    if verified_caption is not None:
+        container_obj["caption"] = verified_caption
     out_payload: dict[str, Any] = {
         "state": "published",
         "slug": producer.slug,
@@ -522,6 +559,7 @@ def compose_roundup_container(
         "edition": None,
         "container": container_obj,
         "subtitle": subtitle,
+        "caption": verified_caption,
         "sections": sections,
         "member_count": total_members,
         "withheld": [],
@@ -539,6 +577,8 @@ def compose_roundup_feed_item(
     members: RoundupMembers,
 ) -> Optional[dict[str, Any]]:
     """Build the Discover feed item for a round-up producer from its produced members."""
+    if getattr(members, "suppress_feed_item", False):
+        return None
     if not members.members:
         return copy.deepcopy(members.feed_item) if members.feed_item is not None else None
     rows = list(members.rows)
@@ -616,6 +656,21 @@ def compose_roundup_feed_item(
         roundup_contract["presentation"] = producer.presentation
     if members.count_line:
         roundup_contract["count_line"] = members.count_line
+    raw_caption = (
+        members.caption if members.caption is not None else producer.caption
+    )
+    if raw_caption is not None:
+        from app.utils.grouping_captions import compose_container_caption
+
+        caption_members: Sequence[Mapping[str, Any]] = (
+            rows if rows else normalized
+        )
+        verified_caption = compose_container_caption(
+            {"caption": raw_caption},
+            members=caption_members,
+        )
+        if verified_caption is not None:
+            roundup_contract["caption"] = verified_caption
     return {
         "type": "bundle",
         "score": base_score,
@@ -858,7 +913,9 @@ async def evaluate_roundup_producer(
 
     container_payload = compose_roundup_container(producer, outcome)
     feed_item = compose_roundup_feed_item(producer, outcome)
-    if container_payload is None or feed_item is None:
+    if container_payload is None or (
+        feed_item is None and not getattr(outcome, "suppress_feed_item", False)
+    ):
         if use_cache:
             await _store_roundup_cache_entry(
                 cache_key, producer.slug, ts, None, None, db
@@ -878,9 +935,16 @@ async def evaluate_roundup_producer(
             else load_grouping_licences(licences_path)
         )
         if producer_kind in (active_licences.get("kinds") or {}):
+            allow_settled = producer_kind == "series_hub"
             violation = detect_served_card_violation(
-                container_payload
-            ) or detect_served_card_violation(feed_item)
+                container_payload, allow_settled_members=allow_settled
+            ) or (
+                detect_served_card_violation(
+                    feed_item, allow_settled_members=allow_settled
+                )
+                if feed_item is not None
+                else None
+            )
             if violation is not None:
                 bad_slug, bad_reason = violation
                 record_runtime_kind_suspension(
@@ -1645,6 +1709,10 @@ _KIND_TO_MODULE_BUILDER: dict[str, tuple[str, str]] = {
         "app.utils.subject_sequence",
         "build_subject_sequence_producer",
     ),
+    "series_hub": (
+        "app.utils.series_hub",
+        "build_series_hub_producer",
+    ),
 }
 
 
@@ -1747,6 +1815,10 @@ _BUILTIN_SLUG_TO_MODULE_ATTR: dict[str, tuple[str, str]] = {
     "celtics-next-3-games": (
         "app.utils.subject_sequence",
         "CELTICS_NEXT_3_GAMES_PRODUCER",
+    ),
+    "mlb-2026-alwc-bos-nyy": (
+        "app.utils.series_hub",
+        "MLB_2026_ALWC_BOS_NYY_PRODUCER",
     ),
 }
 

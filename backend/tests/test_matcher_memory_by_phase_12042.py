@@ -20,6 +20,7 @@ PHASES = [
     "pass3_backlog_scan",
     "phase15_revalidate",
     "relink_and_reconcile",
+    "phase2_load",
     "phase2",
     "phase2b_2c",
     "phase3_backfill",

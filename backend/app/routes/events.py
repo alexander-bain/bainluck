@@ -31166,6 +31166,7 @@ async def _build_related_futures(
     # separately avoids the home/away classification problems (Yes/No outcomes,
     # both-teams-match ambiguity) that caused them to be dropped or misplaced.
     _series_question_matrix = None  # #10238 S0 — set by S1 below when built
+    _series_context = None
     formatted_series: list[dict] = []
     if series_market_ids:
         series_outcomes_result = await db.execute(
@@ -31220,10 +31221,23 @@ async def _build_related_futures(
                     "settled": _outcome_is_settled(so, mkt.status, field_has_winner),
                     "is_winner": so.is_winner,
                 })
-            # #9901 — a one-winner series card never adds up past 100%.
+            # #9901 / #9715 — a one-winner series card never adds up past 100%,
+            # while independent binary rungs (series_total_games) are never squeezed.
+            from app.utils.series_hub import (
+                FAMILY_SERIES_TOTAL_GAMES,
+                classify_series_market_family,
+            )
+
+            _mkt_series_family = classify_series_market_family(
+                mkt.name, getattr(mkt, "external_id", None)
+            )
             top_outcomes = _squeeze_exclusive_series_outcomes(
                 top_outcomes,
-                exclusive=getattr(mkt, "mutually_exclusive", None),
+                exclusive=(
+                    getattr(mkt, "mutually_exclusive", None)
+                    if _mkt_series_family != FAMILY_SERIES_TOTAL_GAMES
+                    else False
+                ),
                 decided_lost={so.id for so in outcomes_list if so.is_winner is False},
                 whole_market=len(outcomes_list) <= 10,
             )
@@ -31327,6 +31341,85 @@ async def _build_related_futures(
             )
             _series_question_matrix = None
 
+        # #9715 — build coherent 3-family series_context with distribution_kind
+        # and labeled game-start baseline movement during live play.
+        try:
+            from app.utils.series_hub import build_event_series_context
+
+            _series_snaps_by_oid: dict[int, list] = {}
+            for _so in series_outcomes:
+                _preloaded = getattr(_so, "__dict__", {}).get("snapshots")
+                if _preloaded:
+                    _series_snaps_by_oid[_so.id] = list(_preloaded)
+            if (
+                not _series_snaps_by_oid
+                and (event.status or "").lower() in ("live", "in_progress")
+                and event.commence_time is not None
+                and series_outcomes
+            ):
+                _snap_window_start = event.commence_time - timedelta(hours=6)
+                _snap_res = await db.execute(
+                    select(FuturesOddsSnapshot)
+                    .distinct(FuturesOddsSnapshot.outcome_id)
+                    .where(
+                        FuturesOddsSnapshot.outcome_id.in_(
+                            [_so.id for _so in series_outcomes]
+                        ),
+                        FuturesOddsSnapshot.captured_at >= _snap_window_start,
+                        FuturesOddsSnapshot.captured_at <= event.commence_time,
+                    )
+                    .order_by(
+                        FuturesOddsSnapshot.outcome_id.asc(),
+                        FuturesOddsSnapshot.captured_at.desc(),
+                    )
+                )
+                for _snap in (
+                    _snap_res.scalars().all()
+                    if hasattr(_snap_res, "scalars")
+                    else []
+                ):
+                    _oid = getattr(_snap, "outcome_id", None)
+                    if isinstance(_oid, int):
+                        _series_snaps_by_oid.setdefault(_oid, []).append(_snap)
+
+            _ext_by_mid = {
+                mid: getattr(legs[0].market, "external_id", None)
+                for mid, legs in series_by_market.items()
+                if legs and getattr(legs[0], "market", None) is not None
+            }
+            _series_markets_with_open = []
+            _open_prob_by_oid = {
+                _so.id: getattr(_so, "opening_probability", None)
+                for _so in series_outcomes
+            }
+            for _sm in formatted_series:
+                _sm_copy = dict(_sm)
+                _sm_copy["outcomes"] = [
+                    {
+                        **_o,
+                        "opening_probability": _open_prob_by_oid.get(
+                            _o.get("outcome_id")
+                        ),
+                    }
+                    for _o in (_sm.get("outcomes") or ())
+                ]
+                _series_markets_with_open.append(_sm_copy)
+
+            _, _series_context = build_event_series_context(
+                _series_markets_with_open,
+                event_id=event.id,
+                game_start=event.commence_time,
+                event_status=event.status,
+                snapshots_by_outcome_id=_series_snaps_by_oid,
+                external_id_by_market_id=_ext_by_mid,
+            )
+        except Exception as exc:
+            logger.warning(
+                "related-futures %s: series_context refused on error (%s)",
+                event.id, exc,
+            )
+            _series_context = None
+
     resp = {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -31334,6 +31427,7 @@ async def _build_related_futures(
         "home_team_futures": home_futures,
         "away_team_futures": away_futures,
         "series_markets": formatted_series,
+        "series_context": _series_context,
         # #10238 S2 — additive; null when no Series question is built. See S1.
         "series_question_matrix": _series_question_matrix,
         "total_count": len(home_futures) + len(away_futures),

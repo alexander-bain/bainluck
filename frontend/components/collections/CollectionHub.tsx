@@ -253,6 +253,30 @@ export default function CollectionHub({ slug }: { slug: string }) {
       {(shown?.subtitle ?? shown?.edition) && <p className="text-sm text-text-secondary">{shown?.subtitle ?? shown?.edition}</p>}
       {/* #11040: the family's one-line page note. */}
       {shown?.dek && <p data-collection-dek className="text-sm text-text-secondary">{shown.dek}</p>}
+      {/* #12233: zero-number model commentary with set-read figures labelled with when true and linked to source */}
+      {shown?.caption && (
+        <div data-collection-caption className="rounded-card border border-surface-border bg-surface-card p-3.5 space-y-2">
+          <p data-collection-caption-commentary className="text-sm text-text-primary">
+            {shown.caption.commentary}
+          </p>
+          {shown.caption.figures.length > 0 && (
+            <div data-collection-caption-figures className="flex flex-wrap gap-2 pt-0.5">
+              {shown.caption.figures.map((fig, idx) => (
+                <Link
+                  key={`${fig.sourceHref}-${idx}`}
+                  href={fig.sourceHref}
+                  data-collection-caption-figure={fig.memberId || String(idx)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-surface-border bg-surface-elevated px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary"
+                >
+                  <span className="font-medium text-text-primary">{fig.label}</span>
+                  <span className="font-semibold text-accent-brand">{fig.value}</span>
+                  <span className="text-text-muted">({fig.source} · {fig.asOfLabel})</span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </header>
     {fetching && !shown && !error && <p role="status" className="py-8 text-text-secondary">Loading collection…</p>}
     {error && shown && <div role="status" className="sticky top-16 z-40 flex items-center justify-between gap-3 rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm shadow-sm">

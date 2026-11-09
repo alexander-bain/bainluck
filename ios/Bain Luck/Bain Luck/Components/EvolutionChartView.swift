@@ -373,6 +373,10 @@ struct EvolutionChartView: View {
     /// expectation the chart behaves exactly as it always has.
     var representation: FuturesRepresentation = .source
     var expectation: VerifiedTitleChartExpectation? = nil
+    /// #11666 (Decide 10-C / 80-A) — outcome IDs whose current probability is withheld by the
+    /// parent Atlas futures presentation (`"No recent probability"` or settled states), so the
+    /// leaderboard `Prob` column withholds those rows (`"—"`) even on `.source` boards like `108629`.
+    var withheldCurrentOutcomeIds: Set<Int> = []
 
     @State private var data: ProbabilityTimelineResponse?
     /// #10955 — the settled lines' results, set aside from `data`'s timeline.
@@ -757,11 +761,28 @@ struct EvolutionChartView: View {
     }
 
     /// The served metadata list the TABLE reads — the list itself, in its own
-    /// order with its own names, unless #9387's agreement policy withheld the
-    /// current column. History keys, colours and the Sum gate read `data`.
+    /// order with its own names, unless #9387's agreement policy or the parent
+    /// Atlas presentation (`#11666` Decide 10-C / 80-A) withheld the current
+    /// column. History keys, colours and the Sum gate read `data`.
+    nonisolated static func resolveServedOutcomes(
+        _ outcomes: [TimelineOutcomeMeta],
+        withholdsCurrent: Bool,
+        withheldCurrentOutcomeIds: Set<Int> = []
+    ) -> [TimelineOutcomeMeta] {
+        let afterPolicy = withholdsCurrent ? VerifiedTitleChartPolicy.withholdingCurrent(outcomes) : outcomes
+        guard !withheldCurrentOutcomeIds.isEmpty else { return afterPolicy }
+        return afterPolicy.map { outcome in
+            guard let id = outcome.id, withheldCurrentOutcomeIds.contains(id) else { return outcome }
+            return outcome.withholdingCurrent()
+        }
+    }
+
     private var servedOutcomes: [TimelineOutcomeMeta] {
-        let outcomes = data?.outcomes ?? []
-        return withholdsCurrent ? VerifiedTitleChartPolicy.withholdingCurrent(outcomes) : outcomes
+        Self.resolveServedOutcomes(
+            data?.outcomes ?? [],
+            withholdsCurrent: withholdsCurrent,
+            withheldCurrentOutcomeIds: withheldCurrentOutcomeIds
+        )
     }
 
     /// #9387 — the verified-context caption, from this response's own basis.

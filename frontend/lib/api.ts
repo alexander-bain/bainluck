@@ -63,6 +63,7 @@ import {
 } from "./probabilityDisplay";
 import { reportFeedTelemetry } from "./feedTelemetry";
 import { resolveSharedAnonSuppression } from "./discover/sharedAnonFeed";
+import { normalizeFeedNumbers } from "./discover/feedNumbers";
 import {
   FEED_BOOT_CLAIM_TIMEOUT_MS,
   bootDurationMs,
@@ -1612,7 +1613,7 @@ export async function fetchFeed(
           }),
         ]);
         if (res !== TIMED_OUT && res.ok) {
-          const parsed = (await res.json()) as FeedResponse;
+          const parsed = normalizeFeedNumbers((await res.json()) as FeedResponse);
           try {
             reportFeedTelemetry(res, {
               endpoint: "/api/feed",
@@ -1639,7 +1640,7 @@ export async function fetchFeed(
     }
   }
 
-  const page = await apiFetch<FeedResponse>(endpoint, {
+  const page = normalizeFeedNumbers(await apiFetch<FeedResponse>(endpoint, {
     headers,
     onResponse: (res, meta) => {
       const now =
@@ -1651,7 +1652,7 @@ export async function fetchFeed(
         durationMs: now - startedAt,
       });
     },
-  });
+  }));
   noteDiscoverSlate(isDiscoverDeck ? page : null);
   return page;
 }

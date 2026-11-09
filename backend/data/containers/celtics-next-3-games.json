@@ -14,6 +14,14 @@
   "tag": "NBA",
   "section_title": "Next 3 games",
   "footer": "Combined win probability \u00b7 next 3 games in schedule order",
+  "caption": {
+    "commentary": "Two Atlantic Division road games, then Dallas visits Boston.",
+    "member_ids": [
+      15344730,
+      15342527,
+      15344712
+    ]
+  },
   "rule": {
     "producer": "subject_sequence",
     "sport": "basketball_nba",

@@ -91,6 +91,22 @@
       "suspended_at": null,
       "suspended_by_card_slug": null,
       "suspended_reason": null
+    },
+    "series_hub": {
+      "kind": "series_hub",
+      "status": "HELD",
+      "mode": "hand_defined",
+      "relations": [
+        "same_series",
+        "same_event",
+        "path"
+      ],
+      "level": "member",
+      "exam_as_of": null,
+      "exam_receipt": null,
+      "suspended_at": null,
+      "suspended_by_card_slug": null,
+      "suspended_reason": null
     }
   }
 }
