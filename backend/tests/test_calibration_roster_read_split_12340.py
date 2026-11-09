@@ -150,7 +150,8 @@ def test_recording_never_raises():
 def test_the_beat_records_the_split_even_when_the_read_raises():
     source = inspect.getsource(pc._run_staged_futures)
     assert "await _read_futures_roster(db, roster_timings)" in source
-    assert "finally:\n        _record_roster_timings(runner, roster_timings)" in source
+    # #12340 roster reuse moved the read into an ``else:``, one level deeper.
+    assert "finally:\n            _record_roster_timings(runner, roster_timings)" in source
 
 
 def test_the_split_does_not_move_the_input_fingerprint():

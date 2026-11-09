@@ -324,7 +324,11 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # the roster read's time split. Same-module, `sql_interpolated: false`;
         # it names where a timing is written, never which rows are read. No
         # hashed root moved, and `_main_input_fingerprint` is identical.
-        assert artifact["input_count"] == 92
+        # #12340 (Nov 9): 92 -> 93. `REUSABLE_ROSTER_ATTR`, the runner attribute
+        # a deferring publish pass leaves its roster on for the same beat's
+        # rebuild pass. Same-module, `sql_interpolated: false`; it changes how
+        # often the roster is read, never which rows. No hashed root moved.
+        assert artifact["input_count"] == 93
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -378,7 +382,8 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # cross-module test below for what bounds each.
         # #938: 76 -> 77, `GOLF_ROUND_TIMING_RULE_TEXT` (prose, see above).
         # #12340: 77 -> 78, `ROSTER_TIMING_GAUGES` (gauge names, see above).
-        assert artifact["uncovered_count"] == 78
+        # #12340 (Nov 9): 78 -> 79, `REUSABLE_ROSTER_ATTR` (see above).
+        assert artifact["uncovered_count"] == 79
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -737,7 +742,9 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # 59 -> 60 at #12340: `ROSTER_TIMING_GAUGES` is a same-module name
         # table, so it lands in the non-cross tier and the cross list is
         # unchanged.
-        assert len(cross) + 60 == artifact["uncovered_count"]
+        # 60 -> 61 at #12340 (Nov 9): `REUSABLE_ROSTER_ATTR`, same-module, so
+        # the non-cross tier again and the cross list is unchanged.
+        assert len(cross) + 61 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:
