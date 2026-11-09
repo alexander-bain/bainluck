@@ -523,8 +523,15 @@ struct NFLMilestoneCardView9483: View {
             Text(card.caption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if ReleaseSurfaces.isEventPageAtlasEnabled() {
                 EventAtlasStoryCardMarkKeyView11666(items: EventAtlasStoryCards11666.milestoneMarkKey(for: card))
+                PlayerMilestoneComparison9483(
+                    card: card,
+                    selectedRowID: rung?.rowID,
+                    isFinal: card.isFinal,
+                    color: color
+                )
             }
             if let profile = card.profile {
                 chart(profile, selected: rung)
@@ -585,7 +592,7 @@ struct NFLMilestoneCardView9483: View {
     }
 
     @ViewBuilder private var actualFigure: some View {
-        if let actual = card.actual {
+        if !ReleaseSurfaces.isEventPageAtlasEnabled(), let actual = card.actual {
             VStack(alignment: .trailing, spacing: 0) {
                 Text(NFLFinishCardView9483.points(actual))
                     .font(.title.weight(.bold).monospacedDigit())

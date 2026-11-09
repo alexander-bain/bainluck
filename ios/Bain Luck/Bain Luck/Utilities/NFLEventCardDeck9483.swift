@@ -412,6 +412,8 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
     /// (`GameMarketPlayerProp.playerHeadshot`), never a name join; nil when
     /// none is served or the rows disagree (`headshot(of:)`).
     var headshot: URL? = nil
+    /// Whether the host event has reached a final state (`EventState.isFinished`).
+    var isFinal: Bool = false
 
     /// The one https headshot a ladder's rows agree on, or nil.
     static func headshot(of rows: [GameMarketPlayerProp]) -> URL? {
@@ -452,7 +454,7 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
                         rowID: rung.rowID, hit: rung.hit)
         }
         return NFLMilestoneCard9483(id: id, player: player, stat: stat, side: side, basis: basis,
-                                    rungs: aged, actual: actual, headshot: headshot)
+                                    rungs: aged, actual: actual, headshot: headshot, isFinal: isFinal)
     }
 
     /// A quote is recent when its observation clock is readable and no older
@@ -525,7 +527,8 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
                 side: PlayerPropsTeam.side(for: ladder.rows.compactMap(\.playerTeam).first),
                 basis: basis, rungs: rungs,
                 actual: finished ? ladder.rows.compactMap(\.actual).first : nil,
-                headshot: headshot(of: ladder.rows))
+                headshot: headshot(of: ladder.rows),
+                isFinal: finished)
             guard card.profile != nil else { return nil }
             return (card, PlayerPropsFamily.family(statLabel: stat, isPriced: true))
         }
