@@ -71,6 +71,8 @@ final class WatchSelectedGameStore: ObservableObject {
     private let transport: any WatchSelectedGameTransport
     private let defaults: UserDefaults
     private let publish: (WatchSelectedGame?, Date?) -> Void
+    /// #12316: the Smart Stack card's own store, read only (the widget extension writes it).
+    private let cardReading: () -> WatchYourGameCardReading?
     private let now: () -> Date
     private var selectedIdentityIDs: [Int] = []
     private var revision = 0
@@ -120,11 +122,13 @@ final class WatchSelectedGameStore: ObservableObject {
     init(transport: any WatchSelectedGameTransport = WatchSelectedGameHTTPTransport(),
          defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init,
          retryClock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         cardReading: @escaping () -> WatchYourGameCardReading? = { nil },
          publish: @escaping (WatchSelectedGame?, Date?) -> Void = { _, _ in }) {
         self.transport = transport
         self.defaults = defaults
         self.now = now
         self.retryClock = retryClock
+        self.cardReading = cardReading
         self.publish = publish
         let stored = defaults.integer(forKey: Self.selectionKey)
         selectedEventID = stored > 0 ? stored : nil
@@ -139,6 +143,26 @@ final class WatchSelectedGameStore: ObservableObject {
             defaults.removeObject(forKey: Self.snapshotKey)
         }
         publish(game, fetchedAt)
+        adoptNewerCardReading()
+    }
+
+    /// #12316: with the app closed, the Smart Stack card may have kept a newer reading of this
+    /// game, which the face then drew. Opening the app never shows an older one: exactly when
+    /// the face would draw the card's reading, the app shows it too, as a saved reading. The
+    /// app neither stores nor publishes it: the face already draws it, and a publish would
+    /// redraw the face, which pushes the face's next check back (watchOS waits at least a
+    /// minute after a redraw). Its own next refresh replaces it.
+    @discardableResult
+    private func adoptNewerCardReading() -> Bool {
+        guard let game, let fetchedAt,
+              let saved = WatchComplicationProjection.snapshot(game: game, savedAt: fetchedAt),
+              let card = cardReading(),
+              let shown = WatchYourGameCardReading.newest(saved: saved, card: card, now: now()),
+              shown.observedAt > saved.observedAt else { return false }
+        self.game = card.game
+        self.fetchedAt = card.fetchedAt
+        isRestoredReading = true
+        return true
     }
 
     /// Only accepted detail responses establish equivalence for this one reading.
@@ -220,6 +244,8 @@ final class WatchSelectedGameStore: ObservableObject {
             try await Task.sleep(for: .seconds(seconds))
         }
     ) async {
+        // #12316: the face may have drawn the card's newer reading while the app was away.
+        adoptNewerCardReading()
         while !Task.isCancelled, selectedEventID != nil {
             // A scene restart reuses a recent reading and preserves failure/server waits.
             let cadenceDelay = max(0, automaticRefreshNotBefore.map { $0 - retryClock() } ?? 0)

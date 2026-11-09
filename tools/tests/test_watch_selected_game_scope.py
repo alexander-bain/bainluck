@@ -53,8 +53,21 @@ SMART_STACK_WIDGET = (
     "guard let saved, saved.eventID == configuration.eventID else {\n"
     "            return YourGameEntry(date: now, snapshot: nil)",
     "guard !context.isPreview else { return YourGameEntry(date: now, snapshot: saved) }",
-    "let shown = await WatchYourGameRefresh.reading(saved: saved, now: now)\n"
+    # A newer reading the card fetched goes to its own store, and the face is asked to draw it.
+    "let shown = await WatchYourGameRefresh.reading(saved: saved, now: now, keep: { kept in\n"
+    "            if WatchYourGameRefresh.keep(kept, in: WatchYourGameCardReading.sharedDirectory) {\n"
+    '                WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")\n'
+    "            }\n"
+    "        })\n"
     "        return YourGameEntry(date: max(now, shown.savedAt), snapshot: shown)",
+    # One reading for both kinds: the newer of the app's saved file and the card's own store.
+    "    static func newest(now: Date) -> WatchComplicationSnapshot? {\n"
+    "        let directory = WatchYourGameCardReading.sharedDirectory\n"
+    "        return WatchYourGameCardReading.newest(saved: WatchComplicationSnapshot.read(from: directory, now: now),\n"
+    "                                               card: WatchYourGameCardReading.read(from: directory), now: now)",
+    "return BainLuckEntry(date: now, snapshot: Self.newest(now: now))",
+    "guard let saved = BainLuckProvider.newest(now: now), let window = saved.relevanceWindow,",
+    "let saved = BainLuckProvider.newest(now: now)\n        // A suggestion made for an earlier choice never shows a different game.",
     "WatchSavedComplicationContent(snapshot: entry.snapshot, now: entry.date, liveAge: true)",
     ".containerBackground(.fill.tertiary, for: .widget)\n"
     "                .widgetURL(WatchLaunchRoute.url)\n        }",
@@ -105,6 +118,68 @@ def require_smart_stack(content, widget, publisher):
         assert pin in content, pin
     for pin in SMART_STACK_PUBLISHER:
         assert pin in publisher, pin
+
+
+def require_shared_reading(refresh, publisher, store, view, widget, project):
+    """#12316: the face and the Smart Stack card draw one reading. The card keeps a newer
+    reading in its own store, written only by the extension; the app stays the only writer of
+    its saved file, reads the card's store, and opens on the face's newer reading."""
+    app_exceptions = project.split(
+        'Exceptions for "BainLuckWatch Watch App" folder in "BainLuckWatch Watch App" target */ = {', 1
+    )[1].split("};", 1)[0]
+    assert "WatchYourGameRefresh.swift," in app_exceptions, "the card's writer stays out of the app"
+    extension = project.split(
+        'Exceptions for "BainLuckWatch Watch App" folder in "BainLuckComplication" target */ = {', 1
+    )[1].split("};", 1)[0]
+    for member in ("WatchYourGameRefresh.swift,", "WatchComplicationPublisher.swift,"):
+        assert member in extension, member
+    for pin in (
+        "    static func keep(_ card: WatchYourGameCardReading, in directory: URL?) -> Bool {",
+        "try data.write(to: directory.appendingPathComponent(WatchYourGameCardReading.filename), options: .atomic)",
+        "keep: (WatchYourGameCardReading) -> Void = { _ in }) async -> WatchComplicationSnapshot {",
+        "fresh.observedAt > saved.observedAt,\n"
+        "              fresh.validatedRectangularReading(now: kept.fetchedAt) != nil else { return saved }\n"
+        "        keep(kept)\n        return fresh",
+        "let stale = saved.observedAt.addingTimeInterval(WatchRectangularReading.liveStaleThresholdSeconds + 1)",
+        "return stale > now ? min(stale, regular) : regular",
+    ):
+        assert pin in refresh, pin
+    assert refresh.count("keep(kept)") == 1
+    for forbidden in ("WatchComplicationPublisher", "selected-game.json"):
+        assert forbidden not in refresh, forbidden
+        assert forbidden not in widget, forbidden
+    for pin in (
+        'static let filename = "your-game-card.json"',
+        "guard let saved, let kept = card?.snapshot, kept.eventID == saved.eventID,\n"
+        "              kept.observedAt > saved.observedAt,\n"
+        "              kept.validatedRectangularReading(now: now) != nil else { return saved }",
+    ):
+        assert pin in publisher, pin
+    assert "WatchYourGameCardReading.filename), options" not in publisher
+    for pin in (
+        "        publish(game, fetchedAt)\n        adoptNewerCardReading()\n    }",
+        "while the app was away.\n        adoptNewerCardReading()\n",
+        "let shown = WatchYourGameCardReading.newest(saved: saved, card: card, now: now()),",
+        "        self.fetchedAt = card.fetchedAt\n        isRestoredReading = true",
+    ):
+        assert pin in store, pin
+    adopt = store.split("private func adoptNewerCardReading() -> Bool {", 1)[1].split("\n    }\n", 1)[0]
+    assert "defaults.set" not in adopt, "the app does not store the card's reading"
+    # Nor publishes it: the face already draws it, and a redraw pushes the face's next check back.
+    assert "publish(" not in adopt and "if adoptNewerCardReading()" not in store
+    assert store.count("adoptNewerCardReading()") == 3, "declared once, called at open and on return"
+    assert (
+        "cardReading: { WatchYourGameCardReading.read(from: WatchYourGameCardReading.sharedDirectory) },"
+        in view
+    )
+    for pin in (
+        "return BainLuckEntry(date: now, snapshot: Self.newest(now: now))",
+        "card: WatchYourGameCardReading.read(from: directory), now: now)",
+        "if WatchYourGameRefresh.keep(kept, in: WatchYourGameCardReading.sharedDirectory) {\n"
+        '                WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")',
+    ):
+        assert pin in widget, pin
+    assert widget.count("BainLuckProvider.newest(now: now)") == 2, "relevance and the card"
 
 
 def require_product(view, content, widget):
@@ -223,7 +298,13 @@ class SelectedGameScopeTests(unittest.TestCase):
             (1, "        .supportedFamilies([.accessoryRectangular])\n", ""),
             (1, "window.end > now else", "true else"),
             (1, "guard let saved, saved.eventID == configuration.eventID else", "guard let saved else"),
-            (1, "await WatchYourGameRefresh.reading(saved: saved, now: now)", "saved"),
+            (1, "await WatchYourGameRefresh.reading(saved: saved, now: now, keep: { kept in", "saved; _ = { (kept: WatchYourGameCardReading) in"),
+            (1, "if WatchYourGameRefresh.keep(kept, in: WatchYourGameCardReading.sharedDirectory) {", "if true {"),
+            (1, '                WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")\n            }\n        })', "            }\n        })"),
+            (1, "card: WatchYourGameCardReading.read(from: directory), now: now)", "card: nil, now: now)"),
+            (1, "snapshot: Self.newest(now: now))", "snapshot: WatchComplicationSnapshot.read(from: WatchYourGameCardReading.sharedDirectory, now: now))"),
+            (1, "let saved = BainLuckProvider.newest(now: now)\n", "let saved = WatchComplicationSnapshot.read(from: WatchYourGameCardReading.sharedDirectory, now: now)\n"),
+            (1, "guard let saved = BainLuckProvider.newest(now: now), let window", "guard let saved = WatchComplicationSnapshot.read(from: WatchYourGameCardReading.sharedDirectory, now: now), let window"),
             (1, "liveAge: true", "liveAge: false"),
             (1, "                .widgetURL(WatchLaunchRoute.url)\n        }", "        }"),
             (1, "relevanceProvider: { YourGameRelevanceProvider() })", "relevanceEntries: { [] })"),
@@ -258,6 +339,55 @@ class SelectedGameScopeTests(unittest.TestCase):
                 altered[index] = altered[index].replace(old, new, 1)
                 with self.assertRaises(AssertionError):
                     require_smart_stack(*altered)
+
+    def test_face_and_card_share_one_reading_and_each_file_keeps_one_writer(self):
+        sources = [
+            (ROOT / (APP + name)).read_text()
+            for name in (
+                "WatchYourGameRefresh.swift",
+                "WatchComplicationPublisher.swift",
+                "WatchSelectedGameStore.swift",
+                "WatchSelectedGameView.swift",
+                "BainLuckComplication.swift",
+            )
+        ]
+        project = (ROOT / "ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj").read_text()
+        require_shared_reading(*sources, project)
+        app_files = {
+            path.name: path.read_text()
+            for path in (ROOT / APP).glob("*.swift")
+            if path.name not in ("WatchYourGameRefresh.swift", "BainLuckComplication.swift")
+        }
+        # Only the extension writes the card's store; the app has no writer to call.
+        for name, text in app_files.items():
+            self.assertNotIn("WatchYourGameRefresh.keep(", text, name)
+            self.assertNotIn("WatchYourGameCardReading.filename), options", text, name)
+        for index, old, new in (
+            (0, "    static func keep(", "    static func remember("),
+            (0, "fresh.observedAt > saved.observedAt,\n              fresh.validatedRectangularReading(now: kept.fetchedAt) != nil else { return saved }\n        keep(kept)",
+             "fresh.validatedRectangularReading(now: kept.fetchedAt) != nil else { return saved }\n        keep(kept)"),
+            (0, "        keep(kept)\n        return fresh", "        return fresh"),
+            (0, "return stale > now ? min(stale, regular) : regular", "return regular"),
+            (1, "kept.observedAt > saved.observedAt,", ""),
+            (1, "guard let saved, let kept = card?.snapshot, kept.eventID == saved.eventID,", "guard let saved, let kept = card?.snapshot,"),
+            (1, "kept.validatedRectangularReading(now: now) != nil else { return saved }", "true else { return saved }"),
+            (2, "        publish(game, fetchedAt)\n        adoptNewerCardReading()\n    }", "        publish(game, fetchedAt)\n    }"),
+            (2, "        publish(game, fetchedAt)\n        adoptNewerCardReading()\n    }", "        adoptNewerCardReading()\n        publish(game, fetchedAt)\n    }"),
+            (2, "while the app was away.\n        adoptNewerCardReading()\n", "while the app was away.\n"),
+            (2, "while the app was away.\n        adoptNewerCardReading()\n", "while the app was away.\n        if adoptNewerCardReading() { publish(game, fetchedAt) }\n"),
+            (2, "        self.fetchedAt = card.fetchedAt\n        isRestoredReading = true\n        return true",
+             "        self.fetchedAt = card.fetchedAt\n        isRestoredReading = true\n        publish(self.game, self.fetchedAt)\n        return true"),
+            (2, "let shown = WatchYourGameCardReading.newest(saved: saved, card: card, now: now()),", "let shown = card.snapshot,"),
+            (2, "        self.fetchedAt = card.fetchedAt\n        isRestoredReading = true", "        self.fetchedAt = card.fetchedAt\n        isRestoredReading = false"),
+            (3, "cardReading: { WatchYourGameCardReading.read(from: WatchYourGameCardReading.sharedDirectory) },", ""),
+            (5, "\t\t\t\tWatchYourGameRefresh.swift,\n\t\t\t);\n\t\t\ttarget = A70F40102FA6C20000170BF2", "\t\t\t);\n\t\t\ttarget = A70F40102FA6C20000170BF2"),
+        ):
+            with self.subTest(index=index, old=old):
+                altered = sources + [project]
+                self.assertIn(old, altered[index])
+                altered[index] = altered[index].replace(old, new, 1)
+                with self.assertRaises(AssertionError):
+                    require_shared_reading(*altered)
 
     def test_exact_scope_accounts_for_every_original_identity(self):
         groups = SHARDS.manifest()

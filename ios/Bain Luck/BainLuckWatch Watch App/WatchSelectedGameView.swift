@@ -42,7 +42,9 @@ struct WatchSelectedGameView: View {
             return
         }
         #endif
-        _store = StateObject(wrappedValue: WatchSelectedGameStore(publish: WatchComplicationPublisher.publish))
+        _store = StateObject(wrappedValue: WatchSelectedGameStore(
+            cardReading: { WatchYourGameCardReading.read(from: WatchYourGameCardReading.sharedDirectory) },
+            publish: WatchComplicationPublisher.publish))
         _picker = StateObject(wrappedValue: WatchGamePickerStore(transport: WatchDiscoverGameTransport()))
     }
 

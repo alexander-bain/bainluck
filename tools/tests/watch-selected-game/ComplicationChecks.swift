@@ -820,9 +820,12 @@ private final class SmartStackHTTPProtocol: URLProtocol, @unchecked Sendable {
     precondition(WatchYourGameRefresh.faceRecheck(saved, now: later) == later.addingTimeInterval(120),
                  "Mid-game the face asks again two minutes on")
     let freshNow = saved.observedAt.addingTimeInterval(60)
-    precondition(WatchYourGameRefresh.faceRecheck(saved, now: freshNow) == freshNow.addingTimeInterval(120)
-                 && !WatchYourGameRefresh.wantsRefresh(saved, now: freshNow),
-                 "A fresh reading asks nothing yet, but the face asks again, so the card is asked once it is not")
+    precondition(WatchYourGameRefresh.faceRecheck(saved, now: freshNow) == saved.observedAt.addingTimeInterval(121)
+                 && !WatchYourGameRefresh.wantsRefresh(saved, now: freshNow)
+                 && WatchYourGameRefresh.wantsRefresh(saved, now: saved.observedAt.addingTimeInterval(121)),
+                 "A fresh reading asks nothing yet; the face asks again the moment it stops being live, and that ask asks the card")
+    precondition(WatchYourGameRefresh.faceRecheck(saved, now: saved.observedAt) == saved.observedAt.addingTimeInterval(120),
+                 "Never more than two minutes between the face's asks")
     precondition(WatchYourGameRefresh.faceRecheck(nil, now: later) == nil, "No game: the face keeps its own end")
     precondition(WatchYourGameRefresh.faceRecheck(final, now: later) == nil, "A final: the face keeps its own end")
     let finalLaterStart = try project(body("\"status\":\"final\",\"sport\":\"baseball_mlb\",\"commence_time\":\"2026-10-05T17:00:00Z\",\"home_score\":4,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:58:00Z\""))
@@ -848,8 +851,19 @@ private final class SmartStackHTTPProtocol: URLProtocol, @unchecked Sendable {
     // A newer reading of the same game replaces the saved one on the card.
     let fetchedAt = later.addingTimeInterval(1)
     SmartStackHTTPProtocol.reset()
+    var kept: [WatchYourGameCardReading] = []
     let newer = await WatchYourGameRefresh.reading(saved: saved, now: later,
-        session: session(json: body(live(observed: "2026-10-04T18:19:30Z", home: 5))), clock: { fetchedAt })
+        session: session(json: body(live(observed: "2026-10-04T18:19:30Z", home: 5))), clock: { fetchedAt },
+        keep: { kept.append($0) })
+    precondition(kept.count == 1 && kept[0].game.id == 101 && kept[0].fetchedAt == fetchedAt
+                 && kept[0].snapshot?.observedAt == newer.observedAt
+                 && kept[0].snapshot?.rectangularReading == newer.rectangularReading,
+                 "A newer reading goes to the card's own store exactly once, as the card shows it")
+    // No reload loop: once kept, the newest reading wants nothing more until it is two minutes old.
+    let keptNewest = WatchYourGameCardReading.newest(saved: saved, card: kept[0], now: fetchedAt)!
+    precondition(keptNewest.observedAt == newer.observedAt && !WatchYourGameRefresh.wantsRefresh(keptNewest, now: fetchedAt)
+                 && WatchYourGameRefresh.faceRecheck(keptNewest, now: fetchedAt) == newer.observedAt.addingTimeInterval(121),
+                 "The face redraws the kept reading without asking the card again, then asks when it stops being live")
     precondition(SmartStackHTTPProtocol.seen.count == 1 && SmartStackHTTPProtocol.seen[0].url?.path == "/api/events/101"
                  && SmartStackHTTPProtocol.seen[0].timeoutInterval == 8, "One bounded request for the chosen game")
     precondition(newer.observedAt == iso.date(from: "2026-10-04T18:19:30Z")! && newer.savedAt == fetchedAt
@@ -871,16 +885,136 @@ private final class SmartStackHTTPProtocol: URLProtocol, @unchecked Sendable {
         ("same reading", session(json: body(live(observed: "2026-10-04T17:58:00Z", home: 3)))),
         ("no reading", session(json: body("\"status\":\"delayed\",\"commence_time\":\"2026-10-04T17:00:00Z\""))),
     ]
+    kept = []
     for (label, failing) in failures {
-        let shown = await WatchYourGameRefresh.reading(saved: saved, now: later, session: failing, clock: { fetchedAt })
+        let shown = await WatchYourGameRefresh.reading(saved: saved, now: later, session: failing, clock: { fetchedAt },
+                                                      keep: { kept.append($0) })
         precondition(shown.savedAt == saved.savedAt && shown.observedAt == saved.observedAt
                      && shown.rectangularReading == saved.rectangularReading, "\(label) keeps the saved reading")
         failing.invalidateAndCancel()
     }
+    precondition(kept.isEmpty, "Nothing that is not strictly newer reaches the card's store")
     SmartStackHTTPProtocol.reset()
     let stillFresh = await WatchYourGameRefresh.reading(saved: saved, now: saved.observedAt.addingTimeInterval(60),
-        session: session(json: body(live(observed: "2026-10-04T17:58:30Z", home: 5))), clock: { fetchedAt })
-    precondition(SmartStackHTTPProtocol.seen.isEmpty && stillFresh.savedAt == saved.savedAt,
+        session: session(json: body(live(observed: "2026-10-04T17:58:30Z", home: 5))), clock: { fetchedAt },
+        keep: { kept.append($0) })
+    precondition(SmartStackHTTPProtocol.seen.isEmpty && stillFresh.savedAt == saved.savedAt && kept.isEmpty,
                  "No request while the saved reading is fresh")
-    print("PASS: Smart Stack card refresh only mid-game past two minutes, one bounded uncached GET of the same game, newer readings and finals only, saved reading on every failure; the face asks again at the start and then every two minutes only while the game is under way")
+    print("PASS: Smart Stack card refresh only mid-game past two minutes, one bounded uncached GET of the same game, newer readings and finals only (kept once for the face), saved reading on every failure; the face asks again at the start, then when its reading stops being live and at most every two minutes, only while the game is under way")
+    try await runSmartStackSharedReadingChecks()
+}
+
+/// #12316: the face and the Smart Stack card draw one reading. The card's own store holds a
+/// newer reading it fetched; both kinds draw the newer of it and the app's saved reading, and the
+/// app, when it opens, never shows an older reading than the face just did.
+@MainActor func runSmartStackSharedReadingChecks() async throws {
+    let iso = ISO8601DateFormatter()
+    let savedAt = iso.date(from: "2026-10-04T18:00:00Z")!
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("watch-card-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let teams = "\"home_team_data\":{\"team_id\":1,\"abbreviation\":\"SF\"},\"away_team_data\":{\"team_id\":2,\"abbreviation\":\"LA\"}"
+    func game(observed: String, percent: Double = 0.64, id: Int = 101, status: String = "live") throws -> WatchSelectedGame {
+        let fields = status == "completed"
+            ? "\"status\":\"completed\",\"home_score\":5,\"away_score\":2,\"score_observed_at\":\"\(observed)\""
+            : "\"status\":\"\(status)\",\"hero_probability\":\(percent),\"hero_probability_away\":\(1 - percent),\"hero_probability_observed_at\":\"\(observed)\",\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"\(observed)\""
+        return try JSONDecoder().decode(WatchSelectedGame.self, from: Data(
+            "{\"id\":\(id),\"home_team\":\"San Francisco Giants\",\"away_team\":\"Los Angeles Dodgers\",\"sport\":\"baseball_mlb\",\"commence_time\":\"2026-10-04T17:00:00Z\",\(fields),\(teams)}".utf8))
+    }
+    let appGame = try game(observed: "2026-10-04T17:58:00Z")
+    let saved = WatchComplicationProjection.snapshot(game: appGame, savedAt: savedAt)!
+    let fetchedAt = iso.date(from: "2026-10-04T18:20:01Z")!
+    let card = WatchYourGameCardReading(game: try game(observed: "2026-10-04T18:19:30Z", percent: 0.61), fetchedAt: fetchedAt)
+
+    // The card's own store: written by the extension's keep, read bounded by everyone.
+    precondition(WatchYourGameCardReading.read(from: directory) == nil, "No store yet, no reading")
+    precondition(WatchYourGameRefresh.keep(card, in: directory))
+    let file = directory.appendingPathComponent(WatchYourGameCardReading.filename)
+    precondition(FileManager.default.fileExists(atPath: file.path)
+                 && !FileManager.default.fileExists(atPath: directory.appendingPathComponent(WatchComplicationSnapshot.filename).path),
+                 "The card writes its own file, never the app's saved game")
+    let read = WatchYourGameCardReading.read(from: directory)!
+    precondition(read.version == 1 && read.game.id == 101 && read.fetchedAt == fetchedAt
+                 && read.snapshot?.observedAt == iso.date(from: "2026-10-04T18:19:30Z")! && read.snapshot?.detail == "61% · Live")
+    precondition(!WatchYourGameRefresh.keep(card, in: nil) && WatchYourGameCardReading.read(from: nil) == nil
+                 && WatchYourGameCardReading.read(from: URL(string: "https://api.bainluck.com/")!) == nil)
+    for (label, bytes) in [("malformed", Data("{\"version\":1,".utf8)), ("empty", Data()),
+                           ("oversized", Data(repeating: 0x20, count: WatchYourGameCardReading.maximumBytes + 1))] {
+        try bytes.write(to: file)
+        precondition(WatchYourGameCardReading.read(from: directory) == nil, "\(label) store is no reading")
+    }
+    var future = try JSONSerialization.jsonObject(with: JSONEncoder().encode(card)) as! [String: Any]
+    future["version"] = 2
+    try JSONSerialization.data(withJSONObject: future).write(to: file)
+    precondition(WatchYourGameCardReading.read(from: directory) == nil, "An unknown store version is no reading")
+
+    // Which reading both kinds draw.
+    let at = fetchedAt.addingTimeInterval(5)
+    precondition(WatchYourGameCardReading.newest(saved: saved, card: card, now: at)?.detail == "61% · Live",
+                 "A strictly newer reading of the saved game wins, with its own observation time")
+    precondition(WatchYourGameCardReading.newest(saved: saved, card: card, now: at)?.observedAt == iso.date(from: "2026-10-04T18:19:30Z")!)
+    precondition(WatchYourGameCardReading.newest(saved: saved, card: nil, now: at)?.detail == saved.detail)
+    precondition(WatchYourGameCardReading.newest(saved: nil, card: card, now: at) == nil,
+                 "No saved game (cleared), no reading: the card's store never brings a choice back")
+    let otherGame = WatchYourGameCardReading(game: try game(observed: "2026-10-04T18:19:30Z", id: 202), fetchedAt: fetchedAt)
+    let sameTime = WatchYourGameCardReading(game: try game(observed: "2026-10-04T17:58:00Z", percent: 0.61), fetchedAt: fetchedAt)
+    let older = WatchYourGameCardReading(game: try game(observed: "2026-10-04T17:50:00Z", percent: 0.61), fetchedAt: fetchedAt)
+    for (label, other) in [("another game", otherGame), ("same observation", sameTime), ("older", older)] {
+        precondition(WatchYourGameCardReading.newest(saved: saved, card: other, now: at)?.detail == saved.detail,
+                     "\(label): the app's saved reading")
+    }
+    precondition(WatchYourGameCardReading.newest(saved: saved, card: card, now: fetchedAt.addingTimeInterval(-1))?.detail == saved.detail,
+                 "A store reading from the future of this clock is not valid yet")
+    let wentFinal = WatchYourGameCardReading(game: try game(observed: "2026-10-04T18:15:00Z", status: "completed"), fetchedAt: fetchedAt)
+    precondition(WatchYourGameCardReading.newest(saved: saved, card: wentFinal, now: at)?.title == "San Francisco Giants won"
+                 && WatchYourGameRefresh.faceRecheck(WatchYourGameCardReading.newest(saved: saved, card: wentFinal, now: at), now: at) == nil,
+                 "A final the card found is drawn by both kinds, and the face stops asking")
+    let newerSaved = WatchComplicationProjection.snapshot(game: try game(observed: "2026-10-04T18:21:00Z", percent: 0.66),
+                                                          savedAt: iso.date(from: "2026-10-04T18:21:10Z")!)!
+    precondition(WatchYourGameCardReading.newest(saved: newerSaved, card: card, now: iso.date(from: "2026-10-04T18:21:15Z")!)?.detail == "66% · Live",
+                 "The app's newer saved reading wins over an older card reading")
+
+    // Opening the app: exactly when the face would draw the card's reading, the app shows it too.
+    let suite = "watch-card-adopt-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let seed = WatchSelectedGameStore(transport: ComplicationTransport([.success(appGame)]), defaults: defaults, now: { savedAt })
+    seed.select(eventID: 101)
+    await seed.refresh()
+    var published: [(Int?, Date?)] = []
+    var cardOnDisk: WatchYourGameCardReading? = card
+    let opened = WatchSelectedGameStore(transport: ComplicationTransport([]), defaults: defaults, now: { at },
+                                        cardReading: { cardOnDisk }, publish: { published.append(($0?.id, $1)) })
+    precondition(opened.isRestoredReading && opened.game?.homeRenderedPercent == 61 && opened.fetchedAt == fetchedAt
+                 && opened.game?.probabilityObservedAt == iso.date(from: "2026-10-04T18:19:30Z")!,
+                 "The app opens on the face's newer reading, as a saved reading with its own observation time")
+    precondition(published.count == 1 && published[0].0 == 101 && published[0].1 == savedAt,
+                 "It publishes only its own saved reading, so the face is not redrawn and keeps its next check")
+    precondition(WatchSelectedGameStore(defaults: defaults, now: { at }).game?.homeRenderedPercent == 64,
+                 "The app does not store the card's reading; its own saved game is unchanged")
+    for (label, other) in [("another game", otherGame), ("same observation", sameTime), ("older", older)] {
+        cardOnDisk = other
+        let kept = WatchSelectedGameStore(defaults: defaults, now: { at }, cardReading: { cardOnDisk })
+        precondition(kept.game?.homeRenderedPercent == 64 && kept.fetchedAt == savedAt, "\(label): the app's own reading")
+    }
+    // A warm return: the card kept a newer reading while the app was away.
+    cardOnDisk = nil
+    published = []
+    let blocked = ComplicationRaceTransport()
+    let warm = WatchSelectedGameStore(transport: blocked, defaults: defaults, now: { at },
+                                      cardReading: { cardOnDisk }, publish: { published.append(($0?.id, $1)) })
+    precondition(warm.game?.homeRenderedPercent == 64 && published.count == 1)
+    cardOnDisk = card
+    let foreground = Task { await warm.runForegroundRefresh(sleep: { _ in try await Task.sleep(nanoseconds: 1_000_000_000) }) }
+    await blocked.waitForRequest()
+    precondition(warm.game?.homeRenderedPercent == 61 && warm.isRestoredReading,
+                 "Coming back to the app shows the newer reading before its own refresh lands")
+    precondition(published.count == 1, "without publishing it: the face already draws it")
+    await blocked.finish(try game(observed: "2026-10-04T18:20:30Z", percent: 0.59))
+    while warm.isRefreshing || warm.game?.homeRenderedPercent != 59 { await Task.yield() }
+    precondition(!warm.isRestoredReading && warm.fetchedAt == at && published.count == 2 && published[1].1 == at,
+                 "Its own refresh then replaces it and publishes, as before")
+    foreground.cancel()
+    _ = await foreground.value
+    print("PASS: one reading for the face and the card: the card's own bounded store (extension-written, never the app's file), newest observation of the saved game wins, cleared or changed games ignore it, a found final stops the face, and the app opens on the face's newer reading without storing or publishing it")
 }

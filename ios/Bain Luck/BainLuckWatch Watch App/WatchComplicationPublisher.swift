@@ -124,6 +124,54 @@ nonisolated enum WatchComplicationProjection {
     }
 }
 
+/// #12316: the Smart Stack card's own small store. With the app closed, a Bain Luck
+/// complication asks the card to check the chosen game; a newer reading the card finds is kept
+/// here, and the face and the card both draw the newer of it and the app's saved reading, so
+/// they never show different numbers. The widget extension is its only writer
+/// (`WatchYourGameRefresh.keep`, compiled into the extension alone). The app stays the only
+/// writer of `selected-game.json`; it only reads this file.
+nonisolated struct WatchYourGameCardReading: Codable, Sendable {
+    static let filename = "your-game-card.json"
+    static let maximumBytes = 16 * 1024
+    let version: Int
+    let game: WatchSelectedGame
+    let fetchedAt: Date
+
+    init(game: WatchSelectedGame, fetchedAt: Date) {
+        version = 1
+        self.game = game
+        self.fetchedAt = fetchedAt
+    }
+
+    /// The reading as the face and the card draw it; its age counts from its own observation.
+    var snapshot: WatchComplicationSnapshot? {
+        version == 1 ? WatchComplicationProjection.snapshot(game: game, savedAt: fetchedAt) : nil
+    }
+
+    static var sharedDirectory: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.bainluck.watch")
+    }
+
+    static func read(from directory: URL?) -> Self? {
+        guard let directory, directory.isFileURL,
+              let handle = try? FileHandle(forReadingFrom: directory.appendingPathComponent(filename, isDirectory: false))
+        else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: maximumBytes + 1), !data.isEmpty, data.count <= maximumBytes,
+              let value = try? JSONDecoder().decode(Self.self, from: data), value.version == 1 else { return nil }
+        return value
+    }
+
+    /// What the face and the card draw: the card's reading when it is a strictly newer, valid
+    /// reading of the game the app saved; otherwise the app's. No saved game, nothing.
+    static func newest(saved: WatchComplicationSnapshot?, card: Self?, now: Date) -> WatchComplicationSnapshot? {
+        guard let saved, let kept = card?.snapshot, kept.eventID == saved.eventID,
+              kept.observedAt > saved.observedAt,
+              kept.validatedRectangularReading(now: now) != nil else { return saved }
+        return kept
+    }
+}
+
 nonisolated enum WatchComplicationPublisher {
     /// Shared storage is unavailable until the app and extension are properly entitled.
     /// Never substitute separate standard defaults and pretend data was shared.
