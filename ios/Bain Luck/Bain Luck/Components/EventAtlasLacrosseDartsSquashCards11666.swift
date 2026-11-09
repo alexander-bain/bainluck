@@ -497,14 +497,29 @@ enum EventAtlasLacrosseDartsSquashCards11666 {
         let words = Set(
             lower.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
         )
-        return words.contains("1st")
+        if words.contains("1st")
             || words.contains("2nd")
             || words.contains("3rd")
             || words.contains("4th")
             || words.contains("q1")
             || words.contains("q2")
             || words.contains("q3")
-            || words.contains("q4")
+            || words.contains("q4") {
+            return true
+        }
+        if lower.range(
+            of: #"\b(set|leg|game|round|map|period)\s*\d+\b"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+        let orderedWords = lower.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        for idx in 0..<max(0, orderedWords.count - 1) {
+            if PeriodLabel.normalize("\(orderedWords[idx + 1]) \(orderedWords[idx])").hasPrefix("Q") {
+                return true
+            }
+        }
+        return false
     }
 
     nonisolated static func isFullMatchWinnerMarketName(

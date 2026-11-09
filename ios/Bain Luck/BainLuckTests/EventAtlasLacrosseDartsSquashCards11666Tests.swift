@@ -456,6 +456,25 @@ final class EventAtlasLacrosseDartsSquashCards11666Tests: XCTestCase {
         gm.spreads = []
         gm.totals = []
         gm.other = [
+            // Numbered partial-scope market ("Set 1 Winner") listed BEFORE the match market — must be ignored!
+            GameMarketOther(
+                _marketId: 910000,
+                marketName: "Set 1 Winner: Boston Cannons vs New York Atlas",
+                outcomeName: "Boston Cannons",
+                probability: 0.22,
+                source: "polymarket",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.22
+            ),
+            GameMarketOther(
+                _marketId: 910000,
+                marketName: "Set 1 Winner: Boston Cannons vs New York Atlas",
+                outcomeName: "New York Atlas",
+                probability: 0.78,
+                source: "polymarket",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.78
+            ),
             GameMarketOther(
                 _marketId: 910001,
                 marketName: "First Half Winner: Boston Cannons vs New York Atlas",
@@ -522,6 +541,64 @@ final class EventAtlasLacrosseDartsSquashCards11666Tests: XCTestCase {
             cardsWithout910010.isEmpty,
             "Without a complete full-match market pricing both sides, no Match Outcome card is built"
         )
+
+        // Darts numbered partial-scope check ("Set 1 Winner: Littler vs Humphries" listed first)
+        let dartsEvent = makeEvent(
+            id: 15500202,
+            sport: "darts_pdc",
+            status: "upcoming",
+            commenceTime: "2026-11-09T14:00:00Z",
+            homeTeam: "Luke Littler",
+            awayTeam: "Luke Humphries",
+            homeScore: nil,
+            awayScore: nil
+        )
+        var dartsGM = makeDartsGameMarkets()
+        dartsGM.spreads = []
+        dartsGM.totals = []
+        dartsGM.other = [
+            GameMarketOther(
+                _marketId: 920001,
+                marketName: "Set 1 Winner: Littler vs Humphries",
+                outcomeName: "Luke Littler",
+                probability: 0.21,
+                source: "kalshi",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.21
+            ),
+            GameMarketOther(
+                _marketId: 920001,
+                marketName: "Set 1 Winner: Littler vs Humphries",
+                outcomeName: "Luke Humphries",
+                probability: 0.79,
+                source: "kalshi",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.79
+            ),
+            GameMarketOther(
+                _marketId: 920020,
+                marketName: "PDC World Championship Match Winner: Luke Littler vs Luke Humphries",
+                outcomeName: "Luke Littler",
+                probability: 0.64,
+                source: "kalshi",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.56
+            ),
+            GameMarketOther(
+                _marketId: 920020,
+                marketName: "PDC World Championship Match Winner: Luke Littler vs Luke Humphries",
+                outcomeName: "Luke Humphries",
+                probability: 0.36,
+                source: "kalshi",
+                observedAt: "2026-11-09T11:50:00Z",
+                pregameMark: 0.44
+            )
+        ]
+        let dartsCards = EventAtlasLacrosseDartsSquashCards11666.buildCards(event: dartsEvent, gameMarkets: dartsGM, now: baseNow)
+        guard case .matchOutlook(let dartsOutlook) = dartsCards.first else {
+            return XCTFail("Expected Darts matchOutlook card")
+        }
+        XCTAssertEqual(dartsOutlook.marketId, 920020, "'Set 1 Winner: Littler vs Humphries' must be ignored as partial scope")
     }
 
     // MARK: - 5. 30-Minute Live Quote Aging (.before and .during)
