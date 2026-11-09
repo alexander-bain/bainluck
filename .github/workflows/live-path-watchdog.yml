@@ -1641,8 +1641,8 @@ jobs:
         if grep -qiE \"[0-9]+ skipped\" /tmp/vacuum2006.txt; then\n  echo \"::error::#2006 vacuum-signal gate SKIPPED \u2014 the gate did not\
         \ run\"\n  exit 1\nfi\n# A skip check cannot see a DESELECTION, and most arms here are\n# satisfied by a rail that reports everything:\
         \ losing the cross-role\n# xid arm specifically would leave this step green and meaningless.\n# `[= ]12 passed`, not `^12 passed` (the\
-        \ summary sits inside an `=====`\n# banner) and not a bare `12 passed` (which `112 passed` satisfies).\nif ! grep -qE \"[= ]12 passed\"\
-        \ /tmp/vacuum2006.txt; then\n  echo \"::error::#2006 vacuum-signal gate did not run all 12 arms \u2014 tests were deselected or removed\"\
+        \ summary sits inside an `=====`\n# banner) and not a bare `12 passed` (which `112 passed` satisfies).\nif ! grep -qE \"[= ]13 passed\"\
+        \ /tmp/vacuum2006.txt; then\n  echo \"::error::#2006 vacuum-signal gate did not run all 13 arms \u2014 tests were deselected or removed\"\
         \n  exit 1\nfi\n"
     - id: db_213_6977_diacritic_search_fold_three_rails_r
       name: '#6977 diacritic search fold, three rails (real Postgres)'
