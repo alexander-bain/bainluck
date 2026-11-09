@@ -2499,6 +2499,10 @@ struct EventDetailView: View {
         if EventAtlasTennisCards11666.applies(sportKey: event.sport) {
             return tennisAtlasCards(event)
         }
+        // #11666 Menu Item 15 — native Combat (MMA / Boxing) story cards when Atlas is enabled.
+        if EventAtlasCombatCards11666.applies(sportKey: event.sport) {
+            return combatAtlasCards(event)
+        }
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         // #9483 R2 — a finished page's card compares the final with the
         // headline's own qualified forecast, not an earlier history point.
@@ -2630,6 +2634,18 @@ struct EventDetailView: View {
             awayShort: names.away,
             homeScore: hasScore ? event.homeScore : nil,
             awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: gm,
+            now: displayNow()
+        )
+    }
+
+    /// #11666 Menu Item 15 — Combat (MMA / Boxing) story cards from THIS event's
+    /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    @inline(never)
+    private func combatAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
+        guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        return EventAtlasCombatCards11666.buildCards(
+            event: event,
             gameMarkets: gm,
             now: displayNow()
         )

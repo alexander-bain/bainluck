@@ -128,3 +128,9 @@ d54c97d3403d8973d11dd640a39ee7105c74e638:frontend/lib/evals/data/twin-exam-2026-
 # #11935: the settled-champion fixture contains a result-provenance constant.
 # Exact historical finding from gitleaks run 42534884899.
 05cc7ced000adb545e7c1290ffb1c9ffa7233d6d:backend/tests/test_field_selection_11935.py:generic-api-key:131
+
+# #11666 / #10868: SwiftUI accessibility identifier constants in combat presentation
+# views, not credentials. Exact historical findings from gitleaks run 42598377257.
+7379c1ebe40fd8c21763c664dde9802f8eb39829:ios/Bain Luck/Bain Luck/Components/CombatRoundPresentation10868.swift:generic-api-key:1136
+7379c1ebe40fd8c21763c664dde9802f8eb39829:ios/Bain Luck/Bain Luck/Components/CombatDurationPresentation10868.swift:generic-api-key:1178
+
