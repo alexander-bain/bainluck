@@ -166,60 +166,76 @@ struct FuturesDetailView: View {
                 )
             } else if let market = viewModel.market {
                 ScrollView {
-                    VStack(spacing: 0) {
-                        // Hero section (matches Discover card visual quality)
-                        heroSection(market)
-                            // #10876 — the pin tip opens over the top of the page,
-                            // so it waits until this hero is out of view.
-                            .contextualTipHero10876(type: "future", id: marketId, scrollSpace: Self.scrollSpace)
+                    Group {
+                        if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                            FuturesAtlasPageView11666(
+                                market: market,
+                                marketId: marketId,
+                                shareMessage: shareMessage,
+                                onShare: { recordShareOpened() },
+                                golfTournamentStart: golfTournamentStart(market),
+                                golfTournamentEnd: golfTournamentEnd(market),
+                                chartRefreshToken: viewModel.chartRefreshToken,
+                                representation: viewModel.representation
+                            )
+                            .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
+                        } else {
+                            VStack(spacing: 0) {
+                                // Hero section (matches Discover card visual quality)
+                                heroSection(market)
+                                    // #10876 — the pin tip opens over the top of the page,
+                                    // so it waits until this hero is out of view.
+                                    .contextualTipHero10876(type: "future", id: marketId, scrollSpace: Self.scrollSpace)
 
-                        VStack(spacing: 20) {
-                            // Hook description (journalist-style blurb)
-                            if let hook = market.hookDescription, !hook.isEmpty {
-                                Text(hook)
-                                    .font(.system(size: 15))
-                                    .foregroundStyle(DS.textSecondary)
-                                    .lineSpacing(4)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(16)
-                                    .background(DS.cardBg)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(DS.border, lineWidth: 0.5)
-                                    )
+                                VStack(spacing: 20) {
+                                    // Hook description (journalist-style blurb)
+                                    if let hook = market.hookDescription, !hook.isEmpty {
+                                        Text(hook)
+                                            .font(.system(size: 15))
+                                            .foregroundStyle(DS.textSecondary)
+                                            .lineSpacing(4)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(16)
+                                            .background(DS.cardBg)
+                                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 12)
+                                                    .stroke(DS.border, lineWidth: 0.5)
+                                            )
+                                    }
+
+                                    // Market metadata (status, outcomes, dates, bookmakers)
+                                    metadataSection(market)
+
+                                    // #11666 (Item 16a, Decide 91-C) — Native Motorsport / F1 Atlas Story Cards
+                                    if EventAtlasRacingCards11666.applies(market: market) {
+                                        EventAtlasRacingSectionView11666(market: market)
+                                    }
+
+                                    // Probability evolution chart
+                                    if market.outcomes.count >= 1 {
+                                        // #9387: the chart asks for the same mode and is
+                                        // told what the hero says, so its current column
+                                        // can never contradict it.
+                                        EvolutionChartView(
+                                            marketId: marketId,
+                                            hours: 168,
+                                            tournamentStart: golfTournamentStart(market),
+                                            tournamentEnd: golfTournamentEnd(market),
+                                            refreshToken: viewModel.chartRefreshToken,
+                                            representation: viewModel.representation,
+                                            expectation: viewModel.representation == .source ? nil
+                                                : VerifiedTitleChartExpectation(
+                                                    market: market, hero: futuresDetailHeroOutcome(market))
+                                        )
+                                    }
+
+                                    outcomesSection(market)
+                                }
+                                .padding()
+                                .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
                             }
-
-                            // Market metadata (status, outcomes, dates, bookmakers)
-                            metadataSection(market)
-
-                            // #11666 (Item 16a, Decide 91-C) — Native Motorsport / F1 Atlas Story Cards
-                            if EventAtlasRacingCards11666.applies(market: market) {
-                                EventAtlasRacingSectionView11666(market: market)
-                            }
-
-                            // Probability evolution chart
-                            if market.outcomes.count >= 1 {
-                                // #9387: the chart asks for the same mode and is
-                                // told what the hero says, so its current column
-                                // can never contradict it.
-                                EvolutionChartView(
-                                    marketId: marketId,
-                                    hours: 168,
-                                    tournamentStart: golfTournamentStart(market),
-                                    tournamentEnd: golfTournamentEnd(market),
-                                    refreshToken: viewModel.chartRefreshToken,
-                                    representation: viewModel.representation,
-                                    expectation: viewModel.representation == .source ? nil
-                                        : VerifiedTitleChartExpectation(
-                                            market: market, hero: futuresDetailHeroOutcome(market))
-                                )
-                            }
-
-                            outcomesSection(market)
                         }
-                        .padding()
-                        .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
                     }
                     #if os(macOS)
                     .frame(maxWidth: 1000)
