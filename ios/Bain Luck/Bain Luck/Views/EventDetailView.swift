@@ -2495,8 +2495,9 @@ struct EventDetailView: View {
         if EventAtlasEsportsCards11666.applies(sportKey: event.sport) {
             return esportsAtlasCards(event)
         }
-        // #11666 Menu Item 16d-1 — native Rugby & AFL story cards when Atlas is enabled.
-        if EventAtlasRugbyAflCards11666.applies(sportKey: event.sport) {
+        // #11666 Menu Items 16d-1 & 16d-2 — native Rugby, AFL, Lacrosse, Darts & Squash story cards when Atlas is enabled.
+        if EventAtlasRugbyAflCards11666.applies(sportKey: event.sport)
+            || EventAtlasLacrosseDartsSquashCards11666.applies(sportKey: event.sport) {
             return rugbyAflAtlasCards(event)
         }
         // #11666 Step E6b — native NHL story cards when Atlas is enabled.
@@ -2604,11 +2605,18 @@ struct EventDetailView: View {
         ).map { .esports($0) }
     }
 
-    /// #11666 Menu Item 16d-1 — Rugby & AFL story cards (`rugby_*`, `aussierules_*`, `afl*`)
+    /// #11666 Menu Items 16d-1 & 16d-2 — Rugby, AFL, Lacrosse, Darts & Squash story cards
     /// from THIS event's deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
     @inline(never)
     private func rugbyAflAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
         guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        if EventAtlasLacrosseDartsSquashCards11666.applies(sportKey: event.sport) {
+            return EventAtlasLacrosseDartsSquashCards11666.buildCards(
+                event: event,
+                gameMarkets: gm,
+                now: displayNow()
+            ).map { .lacrosseDartsSquash($0) }
+        }
         return EventAtlasRugbyAflCards11666.buildCards(
             event: event,
             gameMarkets: gm,
