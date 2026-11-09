@@ -234,11 +234,13 @@ Q_VACUUM_OLDEST_XMIN = (
 #: that could carry row data.
 #:
 #: #7712: the nightly Heroku backup is NOT named pg_dump, so the filter above
-#: never matched it and it paged most nights at about 3 AM PT, an hour into its
-#: ~80 minute snapshot. Read on production Mon Nov 9 at 2:05 AM PT: our own
-#: application role (so this same-role read sees it), `application_name` 'Heroku
-#: Postgres Backups', `COPY … TO stdout`, no xid, open since 2:02 AM. Exempt by
-#: that exact name; the xid read above still counts it.
+#: never matched it. On a night its snapshot runs past the hour, it pages at
+#: about 3 AM PT: 9 of the issue's first 315 posts, on 4 of 26 nights (the other
+#: 306 are our own code, which this keeps paging). Read on production Mon Nov 9
+#: at 2:05 AM PT: our own application role (so this same-role read sees it),
+#: `application_name` 'Heroku Postgres Backups', `COPY … TO stdout`, no xid,
+#: open since 2:02 AM. Exempt by that exact name; the xid read above still
+#: counts it.
 Q_VACUUM_OLDEST_XACT = (
     "SELECT pid, backend_type, coalesce(application_name, '') AS application_name, "
     "EXTRACT(EPOCH FROM (now() - xact_start)) AS xact_age_s "
