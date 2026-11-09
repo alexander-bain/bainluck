@@ -14,6 +14,7 @@ import httpx
 
 from app.services.base_api import BaseAPIClient
 from app.utils.kalshi_candle_price import candle_yes_price
+from app.utils.kalshi_event_envelope import kalshi_event_envelope
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -1265,7 +1266,7 @@ class KalshiAPIService(BaseAPIClient):
         event_ticker: str,
         with_nested_markets: bool = True,
     ) -> Optional[dict]:
-        """Get a single event by ticker. Returns None only for 404."""
+        """Get an identity-checked event with its native markets; only 404 is None."""
         import asyncio as _asyncio
         params = {"with_nested_markets": str(with_nested_markets).lower()}
         for _attempt in range(3):
@@ -1276,17 +1277,19 @@ class KalshiAPIService(BaseAPIClient):
                 )
                 if response.status_code == 404:
                     return None
-                if response.status_code == 429:
+                if response.status_code == 429 and _attempt < 2:
                     await _asyncio.sleep(3 * (_attempt + 1))
                     continue
                 response.raise_for_status()
-                return response.json().get("event")
-            except Exception:
+                return kalshi_event_envelope(
+                    response.json(), event_ticker, require_markets=with_nested_markets
+                )
+            except httpx.HTTPError:
                 if _attempt < 2:
                     await _asyncio.sleep(1)
                     continue
-                return None
-        return None
+                raise
+        raise RuntimeError("Kalshi event retry budget exhausted")
 
     async def get_series_metadata(self, series_ticker: str) -> Optional[dict]:
         """Get a single series by ticker. Returns None only for 404.
