@@ -838,6 +838,10 @@ struct NFLEventCardView9483: View {
             case .mlb(let mlb):
                 MLBFinalCardView11284(card: mlb, awayColor: awayColor, homeColor: homeColor,
                                       state: state, expanded: expanded)
+            case .cricket(let cricket):
+                EventAtlasCricketCardView11666(card: cricket)
+            case .esports(let esports):
+                EventAtlasEsportsCardView11666(card: esports, awayColor: awayColor, homeColor: homeColor)
             case .nhlScoring(let nhl):
                 EventAtlasNhlScoringCardView11666(card: nhl, awayColor: awayColor, homeColor: homeColor,
                                                   state: state, expanded: expanded)
@@ -873,6 +877,12 @@ struct NFLEventCardView9483: View {
                     state: state,
                     expanded: expanded
                 )
+            case .combatMethod(let combatMethod):
+                EventAtlasCombatMethodCardView11666(card: combatMethod)
+            case .combatRounds(let combatRounds):
+                EventAtlasCombatRoundCardView11666(card: combatRounds)
+            case .combatDuration(let combatDuration):
+                EventAtlasCombatDurationCardView11666(card: combatDuration)
             }
         }
         .padding(16)

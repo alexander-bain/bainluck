@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import DiscoverCard from "@/components/DiscoverCard";
@@ -256,6 +257,11 @@ function Shell({ children, tally }: { children: React.ReactNode; tally?: string 
       <div className="mx-auto max-w-md">
         {children}
         {tally && <p className="mt-6 text-center text-sm text-text-muted">{tally}</p>}
+        <p className="mt-4 text-center text-xs text-text-muted">
+          <Link href="/grade/groupings" className="hover:underline">
+            Grade proposed grouping cards beside best single member →
+          </Link>
+        </p>
       </div>
     </div>
   );

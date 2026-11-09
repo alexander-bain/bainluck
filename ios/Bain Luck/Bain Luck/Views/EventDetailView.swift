@@ -2487,6 +2487,14 @@ struct EventDetailView: View {
         if MLBFinalPage11284.applies(sportKey: event.sport, status: event.status) {
             return mlbFinalCards(event).map { .mlb($0) }
         }
+        // #11666 Menu Item 16b — native Cricket story cards when Atlas is enabled.
+        if EventAtlasCricketCards11666.applies(sportKey: event.sport) {
+            return cricketAtlasCards(event)
+        }
+        // #11666 Menu Item 16c — native Esports story cards when Atlas is enabled.
+        if EventAtlasEsportsCards11666.applies(sportKey: event.sport) {
+            return esportsAtlasCards(event)
+        }
         // #11666 Step E6b — native NHL story cards when Atlas is enabled.
         if EventAtlasNhlCards11666.applies(sportKey: event.sport) {
             return nhlAtlasCards(event)
@@ -2498,6 +2506,10 @@ struct EventDetailView: View {
         // #11666 Step E6d — native Tennis story cards when Atlas is enabled.
         if EventAtlasTennisCards11666.applies(sportKey: event.sport) {
             return tennisAtlasCards(event)
+        }
+        // #11666 Menu Item 15 — native Combat (MMA / Boxing) story cards when Atlas is enabled.
+        if EventAtlasCombatCards11666.applies(sportKey: event.sport) {
+            return combatAtlasCards(event)
         }
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         // #9483 R2 — a finished page's card compares the final with the
@@ -2562,6 +2574,30 @@ struct EventDetailView: View {
             homeTeam: event.homeTeam, awayTeam: event.awayTeam,
             homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
             gameMarkets: vm.gameMarkets, relatedFutures: vm.relatedFutures))
+    }
+
+    /// #11666 Menu Item 16b — Cricket story cards (`cricket_*`) from THIS event's
+    /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    @inline(never)
+    private func cricketAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
+        guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        return EventAtlasCricketCards11666.buildCards(
+            event: event,
+            gameMarkets: gm,
+            now: displayNow()
+        ).map { .cricket($0) }
+    }
+
+    /// #11666 Menu Item 16c — Esports story cards (`esports_*`) from THIS event's
+    /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    @inline(never)
+    private func esportsAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
+        guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        return EventAtlasEsportsCards11666.buildCards(
+            event: event,
+            gameMarkets: gm,
+            now: displayNow()
+        ).map { .esports($0) }
     }
 
     /// #11666 Step E6b — NHL story cards (`icehockey_nhl`) from THIS event's
@@ -2630,6 +2666,18 @@ struct EventDetailView: View {
             awayShort: names.away,
             homeScore: hasScore ? event.homeScore : nil,
             awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: gm,
+            now: displayNow()
+        )
+    }
+
+    /// #11666 Menu Item 15 — Combat (MMA / Boxing) story cards from THIS event's
+    /// deliveries when `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
+    @inline(never)
+    private func combatAtlasCards(_ event: EventDetail) -> [NFLEventCard9483] {
+        guard let gm = vm.gameMarkets, gm.eventId == event.id else { return [] }
+        return EventAtlasCombatCards11666.buildCards(
+            event: event,
             gameMarkets: gm,
             now: displayNow()
         )

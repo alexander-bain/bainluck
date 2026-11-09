@@ -7,6 +7,7 @@ import GapList from "@/components/evals/GapList";
 import ReadingGuide from "@/components/evals/ReadingGuide";
 import RelationReportCard from "@/components/evals/RelationReportCard";
 import RunTimeline from "@/components/evals/RunTimeline";
+import SiblingFamilyExamSection from "@/components/evals/SiblingFamilyExamSection";
 import SourceList from "@/components/evals/SourceList";
 import TestLibrary from "@/components/evals/TestLibrary";
 import TestsForTheTests, { BiteMeter } from "@/components/evals/TestsForTheTests";
@@ -34,6 +35,7 @@ import { loadReviewerResults } from "@/lib/evals/reviewerResults";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
 import { loadScoreboard } from "@/lib/evals/scoreboard";
+import { loadSiblingFamilyExam } from "@/lib/evals/siblingFamilyExam";
 import { loadExam } from "@/lib/evals/twinExam";
 import { loadWatchers } from "@/lib/evals/watchers";
 import { sourcesFor, type EvalsSectionId } from "@/lib/evals/sources";
@@ -65,6 +67,7 @@ import { sourcesFor, type EvalsSectionId } from "@/lib/evals/sources";
 
 /** The sections on the page, in order. Sources list only what these read. */
 const EXAM = loadExam();
+const SIBLING_EXAM = loadSiblingFamilyExam();
 const RUNS = loadRuns();
 const SCOREBOARD = loadScoreboard();
 const REVIEWER_STUDY = loadReviewerStudy();
@@ -153,6 +156,7 @@ export default function EvalsPage() {
             <ForwardRecordSection state={forward} />
             {EXAM && <ExamSection exam={EXAM} />}
             {EXAM && <RelationReportCard exam={EXAM} />}
+            {SIBLING_EXAM && <SiblingFamilyExamSection exam={SIBLING_EXAM} />}
             <EvalsSection
               id="timeline"
               title={TIMELINE_COPY.title}

@@ -184,6 +184,7 @@ merged and deployed before any of the above does anything.
 import argparse
 import asyncio
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -221,6 +222,31 @@ MIN_EXPECTED_POPULATION = 5_000
 
 CHUNK = 500
 
+
+def label_scope_re(labels):
+    """`--labels` as a regex matching only those market types as the suffix.
+
+    Each label must already be in the derivative vocabulary: a scope can only
+    narrow the net, never widen it to a name the prevention allows. A label
+    with a period segment in front ("1st Half Exact Margin") is NOT matched by
+    "Exact Margin" — the scope is exactly the labels named. No `(?:`: this
+    pattern also runs in Postgres.
+    """
+    if not labels:
+        return DERIV_RE
+    parts = []
+    for label in labels:
+        words = label.split()
+        if not words:
+            raise ValueError("--labels: an empty label")
+        if not is_derivative_market_name(f"Team - {' '.join(words)}"):
+            raise ValueError(
+                f"--labels: {label!r} is not a derivative market type "
+                f"(#2871 vocabulary); a scope can only narrow the net")
+        parts.append(r"\s+".join(re.escape(w) for w in words))
+    return r"\s*[-–—]\s*(" + "|".join(parts) + r")\s*$"
+
+
 # child table -> the disposition this repair applies. RE-POINT moves the row to
 # the survivor; DELETE removes it. See the module docstring for why each is what
 # it is — none of these are interchangeable.
@@ -234,7 +260,15 @@ CHILD_REPOINT_TABLES = ("futures_markets",)
 BAK_PREFIX = "bak_2871_"
 LEDGER = BAK_PREFIX + "market_repoint"
 
-_POPULATION = "e.away_team_name ~* :deriv_re"
+# `:scope_re` narrows the net to the `--labels` an operator was cleared for
+# (#11649: ruling 97 cleared "Exact Margin" and "First Touchdown Scorer" only,
+# while the full net also held 537 older rows of other labels). Without
+# `--labels` it is DERIV_RE itself, so the population is unchanged.
+#
+# It narrows the POPULATION ONLY. The `!~* :deriv_re` counterpart exclusions in
+# `_PLAN_SQL` and `_ALIAS_SQL` keep the full vocabulary: a "Lakers - Exact
+# Score" row is never a real fixture, whichever labels this run repairs.
+_POPULATION = "e.away_team_name ~* :deriv_re AND e.away_team_name ~* :scope_re"
 
 _PLAN_SQL = f"""
 WITH b AS (
@@ -467,13 +501,12 @@ def _chunks(seq, n=CHUNK):
         yield seq[i:i + n]
 
 
-async def build_plan(session, include_live=False):
+async def build_plan(session, include_live=False, scope_re=DERIV_RE):
     """Read the population and fold it into fixtures. No writes."""
     from sqlalchemy import text
 
-    rows = (await session.execute(
-        text(_PLAN_SQL), {"deriv_re": DERIV_RE}
-    )).mappings().all()
+    binds = {"deriv_re": DERIV_RE, "scope_re": scope_re}
+    rows = (await session.execute(text(_PLAN_SQL), binds)).mappings().all()
 
     # The predicate is the load-bearing part of this whole script. If Python and
     # Postgres disagree about what a derivative name is, the repair operates on
@@ -488,9 +521,7 @@ async def build_plan(session, include_live=False):
         )
 
     alias = {}
-    for a in (await session.execute(
-        text(_ALIAS_SQL), {"deriv_re": DERIV_RE}
-    )).mappings().all():
+    for a in (await session.execute(text(_ALIAS_SQL), binds)).mappings().all():
         alias[(a["home"], a["clean_away"], a["d"])] = a
 
     groups = {}
@@ -682,10 +713,16 @@ async def run(args):
     from app.tasks.base import get_task_session
     from sqlalchemy import text
 
+    labels = [x for x in (args.labels or "").split(",") if x.strip()]
+    scope_re = label_scope_re(labels)
+    binds = {"deriv_re": DERIV_RE, "scope_re": scope_re}
+
     async with get_task_session() as s:
-        census = (await s.execute(text(_CENSUS_SQL), {"deriv_re": DERIV_RE})).all()
+        census = (await s.execute(text(_CENSUS_SQL), binds)).all()
         total = sum(r.n for r in census)
         print("=== #2871 phantom derivative events — population ===")
+        if labels:
+            print(f"  scoped to --labels: {', '.join(' '.join(x.split()) for x in labels)}")
         for r in census:
             print(f"  {r.status:>12}: {r.n:>7}")
         print(f"  {'TOTAL':>12}: {total:>7}")
@@ -701,7 +738,7 @@ async def run(args):
                 return
 
         actionable, live, deferred, rows = await build_plan(
-            s, include_live=args.include_live)
+            s, include_live=args.include_live, scope_re=scope_re)
         if args.limit:
             actionable = actionable[:args.limit]
 
@@ -790,7 +827,7 @@ async def run(args):
                 print(f"    {r}: {e}")
 
         # ---- verify ----
-        after = (await s.execute(text(_CENSUS_SQL), {"deriv_re": DERIV_RE})).all()
+        after = (await s.execute(text(_CENSUS_SQL), binds)).all()
         after_total = sum(r.n for r in after)
         print(f"\nPOST-REPAIR POPULATION: {after_total} "
               f"(was {total}; expected residue = deferred live + anything skipped by --limit)")
@@ -810,6 +847,11 @@ def main():
                    help="process at most N fixtures — for a staged first slice")
     p.add_argument("--allow-small", action="store_true",
                    help="proceed even though the population is below the sanity floor")
+    p.add_argument("--labels", default="",
+                   help="comma-separated market types to repair, e.g. "
+                        "'Exact Margin,First Touchdown Scorer' (default: every "
+                        "#2871 label). Scoped runs sit under the floor, so "
+                        "they also need --allow-small")
     args = p.parse_args()
     asyncio.run(run(args))
 

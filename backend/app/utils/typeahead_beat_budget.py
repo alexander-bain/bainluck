@@ -2148,12 +2148,21 @@ def free_background_slots(
 #: lateness is safe by construction: readers stop using the copy 15 minutes
 #: after its last pass. The census RUN over the tree branched from `dfb64a5dd5`
 #: printed `explicit 104 implicit 39 total 143`.
+#: #11935, 2026-11-08. The assembled configuration on the owned branch based
+#: on 46851401d3 reads explicit 105, implicit 39, total 144. The hourly
+#: refresh-awards-occasions fire names background. Disabled ceremony definitions
+#: return before Redis or database access. Enabled passes have a 90-second source
+#: budget, a 1 MiB evidence limit, the existing bounded durable read/CAS writer
+#: and a Redis publication. Model cost is $0. Task soft/hard limits are 120/150 s.
 #: 🔴 RE-DERIVED at Atlas (2026-11-08, #12372): 143 → 142, explicit UNMOVED at
 #: 104, fall-through 39 → 38. `generate-discover-comparison-candidates` (a
 #: default-queue fall-through beat) was taken off its timer per #12372 / #12221
 #: Part 1 §2. The census RUN over the tree rebased onto `ec6b8b3f04` printed
 #: `explicit 104 implicit 38 total 142`.
-BACKGROUND_BEAT_COUNT = 142
+#: #11935 composed with master `a68d05abe1`: the assembled configuration reads
+#: explicit 105, implicit 38, total 143. The ceremony refresh remains explicit
+#: background and #12372's retired comparison timer remains absent.
+BACKGROUND_BEAT_COUNT = 143
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
