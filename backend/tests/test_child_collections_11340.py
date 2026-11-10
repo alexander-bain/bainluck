@@ -234,3 +234,164 @@ async def test_live_published_parent_child_pairs_and_serve_roundup_withholding(
     assert "parent" not in served_races_withdrawn
     assert served_races_withdrawn["container"]["parent_container_id"] is None
 
+
+def test_registered_builtin_producers_carry_parent_and_children_metadata() -> None:
+    from app.utils.roundup_containers import ROUNDUP_PRODUCERS
+
+    dec_prod = ROUNDUP_PRODUCERS["by-december-31"]
+    nov_prod = ROUNDUP_PRODUCERS["by-november-30"]
+    races_prod = ROUNDUP_PRODUCERS["roundup-closest-races"]
+
+    assert [c["slug"] for c in dec_prod.children] == ["by-november-30"]
+    assert nov_prod.parent_slug == "by-december-31"
+    assert nov_prod.parent_name == "By December 31"
+    assert races_prod.parent_slug == "midterms-2026"
+    assert races_prod.parent_name == "Midterms 2026"
+
+
+@pytest.mark.asyncio
+async def test_produce_register_closest_applies_withheld_prices_and_hub_checks_all_registered_twins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routes import events, futures
+    from app.services.midterms_collection import load_midterms_cards
+    from app.utils.register_closest import (
+        CLOSEST_RACES_DEFINITION,
+        produce_register_closest,
+        select_register_closest,
+    )
+    from app.utils.roundup_containers import RoundupRefusal
+
+    def _make_orm_market(mid: int, name: str, source: str, outcomes: list[tuple[int, str, float]], *, is_settled: bool = False):
+        return SimpleNamespace(
+            id=mid,
+            name=name,
+            source=source,
+            status="settled" if is_settled else "open",
+            mutually_exclusive=True,
+            resolution_date=None,
+            updated_at=FIXED_NOW,
+            settled_at=FIXED_NOW if is_settled else None,
+            group_id=None,
+            outcomes=[
+                SimpleNamespace(
+                    id=oid,
+                    name=oname,
+                    current_probability=prob,
+                    is_winner=(idx == 0) if is_settled else False,
+                    resolution_source="api_settlement" if is_settled else None,
+                    last_updated=FIXED_NOW,
+                )
+                for idx, (oid, oname, prob) in enumerate(outcomes)
+            ],
+        )
+
+    # Three open Senate races in the Midterms register (109085 KS, 109082 ME, 109068 SC),
+    # where 109085 has outcome 1090851 withheld by withheld_price_outcome_ids_for_markets:
+    orm_rows = [
+        _make_orm_market(
+            109085,
+            "Kansas Senate winner?",
+            "kalshi",
+            [(1090851, "Adam Hamilton", 0.48), (1090852, "Roger Marshall", 0.52)],
+        ),
+        _make_orm_market(
+            109082,
+            "Maine Senate winner?",
+            "kalshi",
+            [(1090821, "Troy Jackson", 0.49), (1090822, "Susan Collins", 0.51)],
+        ),
+        _make_orm_market(
+            109068,
+            "South Carolina Senate winner?",
+            "kalshi",
+            [(1090681, "Annie Andrews", 0.47), (1090682, "Lindsey Graham", 0.53)],
+        ),
+    ]
+
+    class _FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return self._rows
+
+    class _FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def scalars(self):
+            return _FakeScalars(self._rows)
+
+    class _FakeDb:
+        apply_withheld_prices = True
+
+        async def execute(self, _stmt):
+            return _FakeResult(orm_rows)
+
+    async def _fake_withheld(_db, _markets):
+        return {109085: {1090851}}
+
+    monkeypatch.setattr(futures, "withheld_price_outcome_ids_for_markets", _fake_withheld)
+
+    res = await produce_register_closest(_FakeDb(), CLOSEST_RACES_DEFINITION, now=FIXED_NOW)
+    assert isinstance(res, RoundupRefusal)
+    assert ("register_closest", "unpriced_outcome:109085") in res.reasons
+    assert ("register_closest", "too_few_open_races") in res.reasons
+
+    # Also verify load_midterms_cards includes a registered twin in cards even when
+    # is_midterms_twin fails (e.g. drifted outcome label while primary settled and twin still priced):
+    settled_primary = [
+        _make_orm_market(
+            109085,
+            "Kansas Senate winner?",
+            "kalshi",
+            [(1090851, "Adam Hamilton", 0.0), (1090852, "Roger Marshall", 1.0)],
+            is_settled=True,
+        )
+    ]
+    drifted_open_twin = [
+        _make_orm_market(
+            113093,
+            "Kansas Senate Election Winner",
+            "polymarket",
+            [(1130931, "Replacement Nominee (D)", 0.48), (1130932, "Roger Marshall (R)", 0.52)],
+            is_settled=False,
+        )
+    ]
+
+    class _HubDb:
+        def __init__(self):
+            self._reads = iter((settled_primary, drifted_open_twin))
+
+        async def execute(self, _stmt):
+            return _FakeResult(next(self._reads))
+
+    def _serialize(market, _withheld):
+        return {
+            "id": market.id,
+            "name": market.name,
+            "source": market.source,
+            "status": market.status,
+            "settled_winner": "Roger Marshall" if market.status == "settled" else None,
+            "outcome_count": len(market.outcomes),
+            "top_outcomes": [
+                {"id": o.id, "name": o.name, "probability": o.current_probability}
+                for o in market.outcomes
+            ],
+        }
+
+    async def _no_withheld(_db, _markets):
+        return {}
+
+    monkeypatch.setattr(events, "_format_futures_for_search", _serialize)
+    monkeypatch.setattr(futures, "withheld_price_outcome_ids_for_markets", _no_withheld)
+
+    cards, twins, _ = await load_midterms_cards(_HubDb(), [109085])
+    assert twins == {}
+    assert 113093 in cards
+    hub_check = select_register_closest(cards)
+    assert isinstance(hub_check, RoundupRefusal)
+    assert hub_check.reasons == (("register_closest", "settled_in_register_still_priced:109085"),)
+
+
