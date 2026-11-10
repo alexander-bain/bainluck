@@ -5,6 +5,11 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     nonisolated enum Lifecycle: String, Codable, Hashable, Sendable {
         case scheduled, live, suspended, final, closed, unknown
     }
+    /// #10864 — the server's own verdict on a final, never one read off the
+    /// scores (a shootout or an aggregate tie is not settled by them).
+    nonisolated enum Result: String, Codable, Hashable, Sendable {
+        case home, away, draw
+    }
 
     let eventID: Int
     let homeTeam: String
@@ -32,6 +37,8 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     let projectedHomeScore: Int?
     let projectedAwayScore: Int?
     let projectionLabel: String?
+    /// #10864 — present only on a final whose verdict the server stated.
+    let result: Result?
 
     private enum CodingKeys: String, CodingKey {
         case eventID, homeTeam, awayTeam, homeScore, awayScore, lifecycle
@@ -39,6 +46,7 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         case awayRenderedPercent, homeAbbreviation, awayAbbreviation
         case homeColorHex, awayColorHex, periodLabel
         case projectedHomeScore, projectedAwayScore, projectionLabel
+        case result
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +80,9 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         projectedHomeScore = projection?.home
         projectedAwayScore = projection?.away
         projectionLabel = projection?.label
+        // An older or malformed value reads as no verdict, never a failed reading.
+        let decodedResult = (try? c.decodeIfPresent(Result.self, forKey: .result)) ?? nil
+        result = lifecycle == .final ? decodedResult : nil
         guard eventID > 0,
               !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -96,7 +107,7 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
           homeColorHex: String? = nil, awayColorHex: String? = nil,
           periodLabel: String? = nil,
           projectedHomeScore: Int? = nil, projectedAwayScore: Int? = nil,
-          projectionLabel: String? = nil) {
+          projectionLabel: String? = nil, servedResult: String? = nil) {
         let home = homeTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         let away = awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         guard eventID > 0, !home.isEmpty, !away.isEmpty else { return nil }
@@ -135,6 +146,7 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         self.projectedHomeScore = projection?.home
         self.projectedAwayScore = projection?.away
         self.projectionLabel = projection?.label
+        self.result = lifecycle == .final ? servedResult.flatMap(Result.init(rawValue:)) : nil
     }
 
     var isTerminal: Bool { lifecycle == .final || lifecycle == .closed }

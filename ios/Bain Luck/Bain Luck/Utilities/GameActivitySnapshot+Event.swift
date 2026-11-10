@@ -96,7 +96,9 @@ extension GameActivitySnapshot {
             periodLabel: period,
             projectedHomeScore: projected?.home,
             projectedAwayScore: projected?.away,
-            projectionLabel: projected?.label
+            projectionLabel: projected?.label,
+            // #10864 — the server's verdict on a final; the snapshot keeps it only then.
+            servedResult: event.heroSettledResult
         )
     }
 }
