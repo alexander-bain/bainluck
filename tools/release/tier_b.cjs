@@ -13,13 +13,15 @@
 // a reader-visible change skip it, so the list errs broad. Argue with it here,
 // in one place.
 //
+// `tasks/__init__.py` is NOT plumbing: it also holds task bodies, among them
+// `update_max_movement`, which writes the movement a reader sees (Fable, #12543).
+//
 // THE DEFAULT IS FLIPPED FOR backend/app/ AND backend/data/ (Fable's review of
 // #12543): a file there needs Fable UNLESS its name says it is plumbing, meaning
 // it only watches, files or measures. A keyword list of reader-facing names
 // missed 593 of 740 backend modules, among them team_merge.py (this morning's
 // deleted names) and the seating and calibration code.
 const PLUMBING = new RegExp('^backend/app/(?!routes/)(' + [
-  'tasks/__init__\\.py$',                       // Celery registration; task bodies live elsewhere
   '.*(sentinel|watchdog)[^/]*\\.py$',           // the alarms
   '.*(alert|issue_labels|bug_report|filing)[^/]*\\.py$', // alert and issue filing
   '.*(log_redaction|logging)[^/]*\\.py$',       // logging
@@ -43,7 +45,7 @@ const FABLE_PATHS = [
   {why: 'licence', re: /licen[cs]e/i},
   {why: 'eval or gate', re: /^(evals\/|backend\/scripts\/evals\/|backend\/tests\/evals\/|tools\/release\/|tools\/ranking\/|tools\/reader_walk\/|docs\/release-loop\/|\.github\/workflows\/|\.github\/PULL_REQUEST_TEMPLATE)/},
   // Migrations, index changes and data repairs.
-  {why: 'destructive (migration, index change or data repair)', re: /^backend\/(alembic\/|scripts\/[^/]*\.sql$|scripts\/[^/]*(repair|restore|backfill|apply|fold|merge|delete|purge)[^/]*$)/},
+  {why: 'destructive (migration, index change or data repair)', re: /^backend\/(alembic\/|scripts\/[^/]*\.sql$|scripts\/[^/]*(repair|restore|backfill|apply|fold|merge|delete|purge|fix|seed|populate|ingest|import|reconcile|settle|cleanup|dedup|prune)[^/]*$|cleanup_soccer\.py$|deduplicate_snapshots\.py$)/},
 ];
 
 // The first non-empty line of the PR body, read as the 119-A declaration.

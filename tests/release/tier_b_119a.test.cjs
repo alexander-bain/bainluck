@@ -126,7 +126,8 @@ const PR_12536 = ['backend/app/utils/grouping_licences.py', 'backend/app/utils/r
   'backend/data/discover/sibling-family-exam-dataset-2026-11.json', 'backend/data/grouping_licences.json',
   'frontend/components/evals/SiblingFamilyExamSection.tsx', 'frontend/lib/evals/data/sibling-family-exam-2026-11.json'];
 const PR_12520 = ['backend/app/routes/admin_team_clusters.py', 'backend/app/utils/team_merge.py'];
-const PR_12542 = ['backend/app/tasks/__init__.py', 'backend/app/tasks/task_memory.py',
+// #12542's tasks/__init__.py is listed: it holds update_max_movement (Fable, #12543).
+const PR_12542 = ['backend/app/tasks/task_memory.py',
   'backend/tests/test_task_memory_worker_background_12042.py'];
 const PR_12546 = ['backend/app/utils/latency_stats.py', 'backend/app/utils/request_timing.py',
   'backend/tests/test_slow_ring_names_its_query_12529.py'];
@@ -136,9 +137,21 @@ test('every app and data file of #12536 (grouped cards, the exam) and #12520 (th
   for (const name of [...PR_12536, ...PR_12520]) assert.equal(fableHits([name]).length, 1, name);
 });
 
-test('no file of the instrumentation PRs #12542 and #12546 is listed', () => {
+test('the instrumentation files of #12542 and #12546 are not listed; tasks/__init__.py is', () => {
   const {fableHits} = policy();
   for (const name of [...PR_12542, ...PR_12546]) assert.equal(fableHits([name]).length, 0, name);
+  assert.equal(fableHits(['backend/app/tasks/__init__.py']).length, 1);
+});
+
+test('the house names for repair scripts are destructive', () => {
+  const {fableHits} = policy();
+  for (const name of ['backend/scripts/fix_orphan_markets.py', 'backend/scripts/seed_teams.py',
+    'backend/scripts/populate_slugs.py', 'backend/scripts/ingest_archive.py', 'backend/scripts/import_grades.py',
+    'backend/scripts/reconcile_links.py', 'backend/scripts/settle_props.py', 'backend/scripts/cleanup_old.py',
+    'backend/scripts/dedup_events.py', 'backend/scripts/prune_rows.py',
+    'backend/cleanup_soccer.py', 'backend/deduplicate_snapshots.py'])
+    assert.equal(fableHits([name]).length, 1, name);
+  assert.equal(fableHits(['backend/scripts/probe_kalshi_retention.py']).length, 0);
 });
 
 test('the backend default is flipped: unlisted names need Fable unless they say plumbing', () => {
