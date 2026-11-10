@@ -21,6 +21,7 @@ import {
   GROUPING_GRADE_LABELS,
   KID_PSEUDONYMS,
   formatTally,
+  handleGradeDeckReadError,
   resolveGroupingGraderId,
   type GroupingGrade,
   type GroupingGradeDeck,
@@ -51,7 +52,7 @@ export default function GroupingGradePage() {
 }
 
 function GroupingGradeSession() {
-  const { secret } = useAdminAuth();
+  const { secret, clearSecret } = useAdminAuth();
   const [deck, setDeck] = useState<GroupingGradeDeck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
@@ -122,14 +123,16 @@ function GroupingGradeSession() {
         void loadTallyAndSummary(d.slate_id);
       })
       .catch((e: unknown) => {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Could not load proposed grouping cards");
-        }
+        if (cancelled) return;
+        handleGradeDeckReadError(e, "Could not load proposed grouping cards", {
+          clearSecret,
+          setError,
+        });
       });
     return () => {
       cancelled = true;
     };
-  }, [secret, selectedSlate, loadTallyAndSummary]);
+  }, [secret, selectedSlate, loadTallyAndSummary, clearSecret]);
 
   const resolvedGrader = resolveGroupingGraderId(nameInput, kid, kidSlot);
 
