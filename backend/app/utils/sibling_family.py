@@ -987,6 +987,9 @@ def _build_member_card(member: _SiblingMember) -> dict[str, Any]:
     return card
 
 
+MAX_INLINE_UNNUMBERED_NAMES = 4
+
+
 def _format_count_line(
     shown_count: int,
     total_count: int,
@@ -1002,7 +1005,15 @@ def _format_count_line(
         else:
             parts.append(f"Showing {shown_count} of {total_count}")
     if unnumbered_subjects:
-        parts.append(f"No number yet: {', '.join(unnumbered_subjects)}")
+        if len(unnumbered_subjects) > MAX_INLINE_UNNUMBERED_NAMES:
+            target = (
+                f"{len(unnumbered_subjects)} {unit}"
+                if unit
+                else f"{len(unnumbered_subjects)}"
+            )
+            parts.append(f"No number yet for {target}")
+        else:
+            parts.append(f"No number yet: {', '.join(unnumbered_subjects)}")
     return " · ".join(parts) if parts else None
 
 

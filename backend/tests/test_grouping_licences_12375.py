@@ -202,9 +202,11 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
         assert sib_outcome.promoted is False
         assert sib_outcome.reason == "kind_not_licensed:held"
 
-        # Under Decide 117-A, sibling_family is PASS and its 6 verified serve families
+        # Under Decide 117-A, sibling_family is PASS and its 5 verified stable serve families
         # are promoted into backend/data/containers/ with clean reader-facing slugs,
-        # proposal_id provenance, and review_path == "tier-b-pr"
+        # proposal_id provenance, and review_path == "tier-b-pr" (mlb-world-series-pennant-2027
+        # is held out because thin off-season books moved Rays 54% -> 15.5% and Dodgers 32% -> 8%).
+        assert not (DEFAULT_CONTAINERS_DIR / "mlb-world-series-pennant-2027.json").exists()
         for promoted_slug, expected_proposal_id in (
             (
                 "nhl-players-100-points-2026-27",
@@ -221,10 +223,6 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
             (
                 "liga-profesional-relegation-2026",
                 "proposed-polymarket-will-contenders-be-relegated-from-the-2026-liga",
-            ),
-            (
-                "mlb-world-series-pennant-2027",
-                "proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
             ),
             (
                 "nhl-playoffs-2026-27",
