@@ -84,3 +84,73 @@ def test_the_worker_signals_are_wired():
     src = inspect.getsource(tasks_pkg)
     assert "task_memory.task_started(task_id)" in src
     assert "task_memory.task_finished(task_id" in src
+
+
+# --- private / shared / PSS split (refs #12042) ----------------------------
+# RSS counts the parent's copy-on-write pages in every child; the quota counts
+# them once. The line's tail says what the dyno actually pays for.
+
+_ROLLUP = """00400000-7ffd0000 ---p 00000000 00:00 0                          [rollup]
+Rss:              245760 kB
+Pss:              131072 kB
+Pss_Anon:         100000 kB
+Shared_Clean:     102400 kB
+Shared_Dirty:      10240 kB
+Private_Clean:      2048 kB
+Private_Dirty:    120832 kB
+Referenced:       245760 kB
+Anonymous:        180000 kB
+Swap:                  0 kB
+"""
+
+
+def _fake_rollups(monkeypatch, by_pid):
+    import builtins
+    import io
+    real_open = builtins.open
+
+    def fake_open(path, *a, **k):
+        path = str(path)
+        if path.startswith("/proc/") and path.endswith("/smaps_rollup"):
+            pid = path.split("/")[2]
+            if pid in by_pid:
+                return io.StringIO(by_pid[pid])
+            raise FileNotFoundError(path)
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(builtins, "open", fake_open)
+
+
+def test_smaps_mb_reads_pss_private_and_shared(monkeypatch):
+    _fake_rollups(monkeypatch, {"self": _ROLLUP})
+    assert tm.smaps_mb() == {"pss": 128.0, "private": 120.0, "shared": 110.0}
+
+
+def test_smaps_mb_is_none_where_unreadable_or_without_pss(monkeypatch):
+    _fake_rollups(monkeypatch, {"self": "Rss: 10 kB\n"})
+    assert tm.smaps_mb() is None
+    assert tm.smaps_mb(999999) is None
+
+
+def test_the_line_ends_with_the_childs_split_and_the_parents_pss(monkeypatch, fake_proc, caplog):
+    monkeypatch.setenv("DYNO", "worker-background.1")
+    monkeypatch.setattr(tm.os, "getppid", lambda: 4242)
+    parent = _ROLLUP.replace("Pss:              131072 kB", "Pss:               61440 kB")
+    _fake_rollups(monkeypatch, {"self": _ROLLUP, "4242": parent})
+    with caplog.at_level(logging.INFO, logger=tm.__name__):
+        tm.task_started("t1")
+        tm.task_finished("t1", "app.tasks.warm_typeahead")
+    line = caplog.records[-1].getMessage()
+    assert line.endswith(" private_mb=120.0 shared_mb=110.0 pss_mb=128.0 parent_pss_mb=60.0")
+    assert "peak_mb=" in line  # the earlier fields are unchanged
+
+
+def test_an_unreadable_rollup_logs_none_and_keeps_the_line(monkeypatch, fake_proc, caplog):
+    monkeypatch.setenv("DYNO", "worker-background.1")
+    _fake_rollups(monkeypatch, {})
+    with caplog.at_level(logging.INFO, logger=tm.__name__):
+        tm.task_started("t1")
+        tm.task_finished("t1", "x")
+    line = caplog.records[-1].getMessage()
+    assert line.startswith("task_memory task=x ")
+    assert line.endswith(" private_mb=None shared_mb=None pss_mb=None parent_pss_mb=None")
