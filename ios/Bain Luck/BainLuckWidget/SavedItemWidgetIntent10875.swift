@@ -197,13 +197,36 @@ struct SelectSavedItemIntent10875: WidgetConfigurationIntent {
                description: "Optional. Without one, a game shows the favourite and a market its leading outcome.")
     var outcome: SavedOutcomeEntity10875?
 
+    #if DEBUG
+    /// #12466 — the lane's side-by-side preview of the looks offered to Alex.
+    /// Debug builds only: Release draws `SavedWidgetLook12466.shipping`.
+    @Parameter(title: "Look (preview)")
+    var look: SavedWidgetLook12466?
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Show \(\.$item)") {
+            \.$outcome
+            \.$look
+        }
+    }
+    #else
     static var parameterSummary: some ParameterSummary {
         Summary("Show \(\.$item)") {
             \.$outcome
         }
     }
+    #endif
 
     init() {}
+
+    /// The look this widget draws.
+    var look12466: SavedWidgetLook12466 {
+        #if DEBUG
+        return look ?? .shipping
+        #else
+        return .shipping
+        #endif
+    }
 
     /// The plain-value selection the timeline reads.
     var selection: SavedWidgetSelection10875? {
@@ -214,3 +237,16 @@ struct SelectSavedItemIntent10875: WidgetConfigurationIntent {
             outcomeID: parsed.subject.kind == .market ? outcome?.outcomeID : nil)
     }
 }
+
+#if DEBUG
+nonisolated extension SavedWidgetLook12466: AppEnum {
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Look"
+    static var caseDisplayRepresentations: [SavedWidgetLook12466: DisplayRepresentation] = [
+        .today: "Today's",
+        .matchup: "A · Matchup",
+        .clean: "B · Clean",
+        .scoreboard: "C · Scoreboard",
+        .spotlight: "D · Favorite",
+    ]
+}
+#endif
