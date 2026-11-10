@@ -1,0 +1,38 @@
+{
+  "as_of": "2026-11-10",
+  "project_id": "PVT_kwHOC0ai9c4Bp5gq",
+  "gaps": {
+    "combined-probability": {
+      "issue": 11850,
+      "target": "2026-11-20"
+    },
+    "rare-pair-kinds": {
+      "issue": 12514,
+      "target": "2026-12-23"
+    },
+    "code-reviewer": {
+      "issue": 12515,
+      "target": "2026-11-20"
+    },
+    "feed-reviewer": {
+      "issue": 587,
+      "target": null
+    },
+    "ranking-grades": {
+      "issue": 12095,
+      "target": "2026-11-13"
+    },
+    "matching-audit": {
+      "issue": 12516,
+      "target": "2026-12-23"
+    },
+    "time-before-result": {
+      "issue": 12517,
+      "target": "2026-12-13"
+    },
+    "chance-failures": {
+      "issue": 12518,
+      "target": "2026-11-20"
+    }
+  }
+}

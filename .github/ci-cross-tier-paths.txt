@@ -151,3 +151,4 @@ frontend/lib/gameTimeLabel.ts
 frontend/lib/evals/data/twin-exam-2026-11-05.json
 frontend/lib/evals/data/twin-confusion-2026-11-05.json
 frontend/lib/evals/data/sibling-family-exam-2026-11.json
+frontend/lib/evals/data/gap-targets.json

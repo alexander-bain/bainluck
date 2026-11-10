@@ -17,6 +17,7 @@ const FOOTER_LINKS: { heading: string; links: { label: string; href: string }[] 
       // whose own `<h1>` never says it back. "Accuracy" is Alex's word for this
       // surface (D137 / notice 45).
       { label: "Accuracy", href: "/calibration" },
+      { label: "How we test", href: "/evals" },
       { label: "My Stuff", href: "/my-stuff" },
     ],
   },

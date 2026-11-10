@@ -61,7 +61,7 @@ import { compactOutcomeCount, proofCohortFigures } from "@/lib/calibrationProofF
 import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy } from "@/lib/copyBans";
 import { EVALS_COPY_RULES } from "@/lib/evals/copyRules";
 import { calibrationFixture, calibrationFixtureBuckets } from "@/lib/evals/fixtures/calibration";
-import { GAPS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
+import { GAPS, GAP_TARGETS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
 import { familyView, loadScoreboard, type Scoreboard } from "@/lib/evals/scoreboard";
@@ -184,15 +184,28 @@ describe("/evals S1 renders the shell", () => {
     ]);
   });
 
-  it("every gap row links the issue or pull request that owns it", async () => {
+  it("every gap row links its owning issue and prints its rough target from gap-targets.json (#12467)", async () => {
     const page = await mountPage();
     const rows = Array.from(page.querySelectorAll("[data-gap-id]"));
     expect(rows.map((r) => r.getAttribute("data-gap-id"))).toEqual(GAPS.map((g) => g.id));
+    expect(Object.keys(GAP_TARGETS.gaps).sort()).toEqual(GAPS.map((g) => g.id).sort());
     for (const row of rows) {
+      const id = row.getAttribute("data-gap-id")!;
+      const entry = GAP_TARGETS.gaps[id];
+      expect(entry).toBeDefined();
       const link = row.querySelector("a[data-evals-ref]");
-      expect(link?.getAttribute("href")).toMatch(
-        /^https:\/\/github\.com\/alexander-bain\/bainluck\/(issues|pull)\/\d+$/
+      expect(link?.getAttribute("href")).toBe(
+        `https://github.com/alexander-bain/bainluck/issues/${entry.issue}`
       );
+      const targetEl = row.querySelector("[data-gap-target]");
+      if (entry.target) {
+        expect(targetEl?.getAttribute("data-gap-target")).toBe(entry.target);
+        expect(targetEl?.textContent).toMatch(/Expected (November|December) 2026/);
+        expect(targetEl?.querySelector("time")?.getAttribute("dateTime")).toBe(entry.target.slice(0, 7));
+      } else {
+        expect(targetEl?.getAttribute("data-gap-target")).toBe("unscheduled");
+        expect(targetEl?.textContent).toContain("Not scheduled yet");
+      }
     }
   });
 
@@ -877,9 +890,20 @@ describe("S5: checks that run on their own", () => {
   });
 });
 
-describe("/evals is unlisted until Alex's phone look (Decide 43-A1)", () => {
-  it("noindex, nofollow", () => {
-    expect(metadata.robots).toEqual({ index: false, follow: false });
+describe("/evals is listed publicly (S10, Ruling 104, #12467)", () => {
+  it("is indexable (no noindex), while /daily keeps its own noindex", () => {
+    expect(metadata.robots).toBeUndefined();
+    const dailyLayout = require("@/app/daily/layout");
+    expect(dailyLayout.metadata.robots).toEqual({ index: false, follow: false });
+  });
+
+  it("is listed in sitemap.ts", () => {
+    const sitemap = require("@/app/sitemap").default;
+    const entries: Array<{ url: string; priority?: number; changeFrequency?: string }> = sitemap();
+    const evalsEntry = entries.find((e) => e.url.endsWith("/evals"));
+    expect(evalsEntry).toBeDefined();
+    expect(evalsEntry?.priority).toBe(0.7);
+    expect(evalsEntry?.changeFrequency).toBe("daily");
   });
 
   it("names itself as canonical and og:url, with the default share card", () => {

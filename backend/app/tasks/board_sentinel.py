@@ -492,6 +492,108 @@ def check_ready_scoping(issues: list[dict]) -> list[dict]:
     return out
 
 
+def _iter_gap_target_entries(gap_targets: dict) -> list[dict]:
+    """Normalize ``gap_targets['gaps']`` whether stored as ``{gap_id: {issue, target}}``
+    or ``[{id, issue, target}]``."""
+    raw_gaps = gap_targets.get("gaps")
+    if isinstance(raw_gaps, dict):
+        return [
+            {"id": gap_id, **(val if isinstance(val, dict) else {})}
+            for gap_id, val in raw_gaps.items()
+        ]
+    if isinstance(raw_gaps, list):
+        return [g for g in raw_gaps if isinstance(g, dict)]
+    return []
+
+
+def check_evals_gap_targets(
+    gap_targets: dict,
+    issues: list[dict],
+    launch_board_targets: dict[int, str | None],
+    *,
+    today: str | None = None,
+    population_complete: bool = True,
+) -> list[dict]:
+    """#12467 — keep the printed dates on /evals ('What we have not tested yet')
+    honest against the launch board ('Nov 2026 launch').
+
+    Compares each entry in ``gap-targets.json`` with the open-issue set and the
+    issue's ``Target`` date on the launch board:
+      * If the gap's issue is closed (or missing from open issues when
+        ``population_complete`` is True), flag REAL so a lane updates or retires
+        the gap row. When ``population_complete`` is False, skip the closed-issue
+        accusation so a truncated read never raises a false REAL.
+      * If the gap's printed ``target`` ('YYYY-MM-DD' or None) does not match
+        the issue's ``Target`` on the launch board, flag REAL so a lane syncs
+        ``gap-targets.json``.
+      * If ``today`` ('YYYY-MM-DD') is provided and an open gap's ``Target`` is
+        before ``today``, flag REAL (``evals_gap_target_past_due``) so a past-due
+        month does not keep printing on /evals.
+    """
+    open_by_num = {
+        i.get("number"): i for i in issues if i.get("number") is not None
+    }
+    out: list[dict] = []
+    for gap in _iter_gap_target_entries(gap_targets):
+        gap_id = str(gap.get("id") or "")
+        raw_issue = str(gap.get("issue") or "").strip().lstrip("#")
+        try:
+            issue_num = int(raw_issue)
+        except ValueError:
+            out.append({
+                "check": "evals_gap_target_drift",
+                "gap_id": gap_id,
+                "issue": None,
+                "detail": f"/evals gap '{gap_id}' has invalid issue reference "
+                          f"{gap.get('issue')!r} in gap-targets.json",
+            })
+            continue
+
+        printed_target = gap.get("target")
+        if issue_num not in open_by_num:
+            if population_complete:
+                out.append({
+                    "check": "evals_gap_target_drift",
+                    "gap_id": gap_id,
+                    "issue": issue_num,
+                    "printed_target": printed_target,
+                    "board_target": launch_board_targets.get(issue_num),
+                    "detail": f"/evals gap '{gap_id}' points at #{issue_num}, which is "
+                              f"closed or not in open issues — update /evals gaps.ts "
+                              f"and gap-targets.json",
+                })
+            continue
+
+        board_target = launch_board_targets.get(issue_num)
+        if printed_target != board_target:
+            out.append({
+                "check": "evals_gap_target_drift",
+                "gap_id": gap_id,
+                "issue": issue_num,
+                "printed_target": printed_target,
+                "board_target": board_target,
+                "detail": f"/evals gap '{gap_id}' (#{issue_num}) prints target "
+                          f"{printed_target!r} on /evals, but the launch board Target "
+                          f"is {board_target!r} — sync gap-targets.json",
+            })
+        effective_target = board_target if isinstance(board_target, str) else (
+            printed_target if isinstance(printed_target, str) else None
+        )
+        if today and effective_target and effective_target < today:
+            out.append({
+                "check": "evals_gap_target_past_due",
+                "gap_id": gap_id,
+                "issue": issue_num,
+                "printed_target": printed_target,
+                "board_target": board_target,
+                "today": today,
+                "detail": f"/evals gap '{gap_id}' (#{issue_num}) has a past-due "
+                          f"Target {effective_target!r} (before {today}) — update or "
+                          f"retire the gap",
+            })
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Classification → verdict. REAL = any objective violation. UNKNOWN = a check
 # could not run (no column data / fetch failure). GREEN = everything ran clean.
@@ -507,6 +609,9 @@ def classify_board(
     population_complete: bool = True,
     inbox_first_seen: dict[int, Any] | None = None,
     status_missing: set[int] | None = None,
+    evals_gap_targets: dict | None = None,
+    launch_board_targets: dict[int, str | None] | None = None,
+    evals_gap_check_enabled: bool = False,
 ) -> dict:
     """Run every check and split into real findings + unknown checks. ``now``,
     ``columns_available`` and the Project data are injected so the whole
@@ -588,6 +693,27 @@ def classify_board(
 
     for err in fetch_errors:
         unknown.append({"check": "fetch_error", "detail": err.get("detail", str(err))})
+
+    if evals_gap_check_enabled:
+        if evals_gap_targets is not None and launch_board_targets is not None:
+            today_iso = (
+                now.strftime("%Y-%m-%d")
+                if hasattr(now, "strftime")
+                else None
+            )
+            real += check_evals_gap_targets(
+                evals_gap_targets,
+                issues,
+                launch_board_targets,
+                today=today_iso,
+                population_complete=population_complete,
+            )
+        else:
+            unknown.append({
+                "check": "evals_gap_targets",
+                "detail": "Launch board Target field or gap-targets.json unavailable "
+                          "— /evals gap-date parity check could not run (UNKNOWN, not GREEN)",
+            })
 
     return {
         "real": real,
@@ -852,6 +978,136 @@ def _fetch_project_columns() -> dict[int, str] | None:
     return None if proj is None else proj["columns"]
 
 
+def _load_evals_gap_targets(path: Any = None) -> dict | None:
+    """Load ``gap-targets.json`` from ``backend/data/evals/gap-targets.json``
+    (packaged in the Heroku backend slug) or ``frontend/lib/evals/data/gap-targets.json``
+    in the repo checkout (#12467). Returns ``None`` when missing or unreadable so
+    ``classify_board`` reports UNKNOWN rather than skipping the check."""
+    import json as _json
+    from pathlib import Path
+
+    if path is not None:
+        candidates = [Path(path)]
+    else:
+        backend_dir = Path(__file__).resolve().parents[2]
+        repo_root = Path(__file__).resolve().parents[3]
+        candidates = [
+            backend_dir / "data" / "evals" / "gap-targets.json",
+            repo_root / "frontend" / "lib" / "evals" / "data" / "gap-targets.json",
+        ]
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            data = _json.loads(candidate.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("gaps") is not None:
+                return data
+            logger.warning(
+                "Board sentinel: gap-targets.json at %s is missing 'gaps'",
+                candidate,
+            )
+            return None
+        except Exception as exc:
+            logger.warning(
+                "Board sentinel: could not read gap-targets.json at %s: %s",
+                candidate,
+                exc,
+            )
+            return None
+    logger.warning("Board sentinel: gap-targets.json not found in %s", candidates)
+    return None
+
+
+def _fetch_launch_board_targets(
+    project_id: str,
+    deadline: float | None = None,
+) -> dict[int, str | None] | None:
+    """Read issue number → ``Target`` date ('YYYY-MM-DD' or None) from the launch
+    project board (#12467). Returns ``None`` on any read failure so the check
+    reports UNKNOWN rather than a false GREEN or false RED."""
+    from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
+
+    if not GITHUB_TOKEN or not project_id:
+        return None
+    query = """
+    query($projectId: ID!, $cursor: String) {
+      node(id: $projectId) {
+        __typename
+        ... on ProjectV2 {
+          items(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              target: fieldValueByName(name: "Target") {
+                ... on ProjectV2ItemFieldDateValue { date }
+              }
+              content {
+                __typename
+                ... on Issue { number state repository { nameWithOwner } }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+    targets: dict[int, str | None] = {}
+    cursor = None
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    truncated = True
+    try:
+        for _ in range(_PROJECT_MAX_PAGES):
+            if deadline is not None and _time.monotonic() > deadline:
+                logger.warning("Board sentinel: launch board Target read exceeded deadline")
+                return None
+            resp = httpx.post(
+                "https://api.github.com/graphql",
+                headers=headers,
+                json={"query": query, "variables": {"projectId": project_id, "cursor": cursor}},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if not isinstance(data, dict) or data.get("errors"):
+                return None
+            node = (data.get("data") or {}).get("node")
+            if not isinstance(node, dict) or node.get("__typename") != "ProjectV2":
+                return None
+            items = node.get("items")
+            if not isinstance(items, dict):
+                return None
+            nodes = items.get("nodes")
+            page = items.get("pageInfo")
+            if not isinstance(nodes, list) or not isinstance(page, dict):
+                return None
+            for card in nodes:
+                content = (card or {}).get("content") or {}
+                if content.get("__typename") == "PullRequest":
+                    continue
+                if str(content.get("state") or "").upper() == "CLOSED":
+                    continue
+                repo = (content.get("repository") or {}).get("nameWithOwner")
+                if repo is not None and repo != REPO:
+                    continue
+                num = content.get("number")
+                if num is None:
+                    continue
+                date_val = ((card or {}).get("target") or {}).get("date")
+                targets[num] = str(date_val) if date_val else None
+            if not page.get("hasNextPage"):
+                truncated = False
+                break
+            cursor = page.get("endCursor")
+    except Exception as exc:
+        logger.warning("Board sentinel: launch board Target fetch failed: %s", exc)
+        return None
+    if truncated:
+        return None
+    return targets
+
+
 def _fetch_board_state(deadline: float | None = None) -> tuple[list[dict], dict, list[dict]]:
     """Assemble the normalized FULL open-issue population + Project annotations.
 
@@ -930,12 +1186,24 @@ def _fetch_board_state(deadline: float | None = None) -> tuple[list[dict], dict,
             # checks by leaving it None.
             "column": None if num in dup_set else columns.get(num),
         })
+    evals_gap_targets = _load_evals_gap_targets()
+    launch_board_targets: dict[int, str | None] | None = None
+    evals_gap_check_enabled = True
+    if evals_gap_targets is not None:
+        launch_project_id = str(evals_gap_targets.get("project_id") or "")
+        launch_board_targets = _fetch_launch_board_targets(
+            launch_project_id, deadline=deadline
+        )
+
     board = {
         "columns_available": columns_available,
         "project_numbers": project_numbers,
         "open_project_items": open_project_items,
         "status_missing": status_missing,
         "population_complete": population_complete,
+        "evals_gap_targets": evals_gap_targets,
+        "launch_board_targets": launch_board_targets,
+        "evals_gap_check_enabled": evals_gap_check_enabled,
     }
     return issues, board, errors
 
@@ -1186,6 +1454,9 @@ async def _run_board_sentinel(
         population_complete=board.get("population_complete", True),
         inbox_first_seen=inbox_first_seen,
         status_missing=board.get("status_missing"),
+        evals_gap_targets=board.get("evals_gap_targets"),
+        launch_board_targets=board.get("launch_board_targets"),
+        evals_gap_check_enabled=board.get("evals_gap_check_enabled", False),
     )
     verdict = board_verdict(classified)
 
