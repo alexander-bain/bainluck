@@ -171,6 +171,7 @@ tests/test_game_market_class_rollout_1529.py  clock-invariant at +1/+31/+60 d (t
 tests/test_game_market_stream_envelope_9524.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_game_market_winner_reaches_game_lines_1529.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_game_markets_or_group_minimal_10820.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
+tests/test_game_team_identity_12555.py  all 11 cases clock-invariant at +1/+31/+60 d with --whole-clock (timebomb_confirm 2026-11-10); fixture kickoff and venue slug are identity data, not time-window inputs
 tests/test_gap_create_commence_from_occurrence_3511.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_gate_futures_open_trgm_index.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_golf_future_live_ranking_5105.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
