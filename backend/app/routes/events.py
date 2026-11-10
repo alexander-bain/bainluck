@@ -38851,11 +38851,13 @@ class _VerifiedOutcome:
     delegating proxy would answer every one of those reads with "absent".
     """
 
-    def __init__(self, row, overlay):
+    def __init__(self, row, overlay, card_name=None):
         self.__dict__.update(
             {k: v for k, v in row.__dict__.items() if k != "_sa_instance_state"}
         )
         self._row = row
+        if card_name is not None:
+            self.name = card_name
         self.current_probability = getattr(overlay, "probability", None)
         if _verified_changed_leg(overlay):
             from app.utils import probability_to_american
@@ -38877,13 +38879,18 @@ class _VerifiedOutcome:
 class _VerifiedMarket:
     """#12335: a market whose outcomes are :class:`_VerifiedOutcome` rows."""
 
-    def __init__(self, market, overlay: dict):
+    def __init__(self, market, overlay: dict, display: Optional[dict] = None):
         # Loaded state copied, as on :class:`_VerifiedOutcome`, for the same reason.
         self.__dict__.update(
             {k: v for k, v in market.__dict__.items() if k != "_sa_instance_state"}
         )
         self._market = market
-        self.outcomes = [_VerifiedOutcome(o, overlay.get(o.id)) for o in market.outcomes]
+        # The card opens the canonical board. Use its proven club labels for
+        # both query pinning and display, without changing the source rows.
+        self.outcomes = [
+            _VerifiedOutcome(o, overlay.get(o.id), (display or {}).get(o.id, {}).get("name"))
+            for o in market.outcomes
+        ]
 
     def __getattr__(self, name):
         return getattr(self._market, name)
@@ -38944,7 +38951,7 @@ def _build_search_top_outcomes(
 
     _verified_changed = False
     if verified is not None:
-        market = _VerifiedMarket(market, verified.overlay)
+        market = _VerifiedMarket(market, verified.overlay, verified.display_overlay)
         _verified_changed = any(
             _verified_changed_leg(verified.overlay.get(o.id)) for o in market.outcomes
         )
