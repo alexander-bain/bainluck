@@ -77,6 +77,20 @@ nonisolated struct SavedWidgetReading10875: Equatable, Sendable {
     /// #698: a settled row whose result is unknown keeps its last price
     /// ("50%"), printed only as "Last recorded", never as a value or a result.
     var lastRecordedFigure: String? = nil
+    /// #12466 — what the chance bar draws: the same pair the figures above
+    /// were printed from, as shares. Nil wherever no figure is printed (a
+    /// result, an unknown result, a choice with no price), so a bar can never
+    /// show a chance the words don't.
+    var shares: Shares? = nil
+
+    nonisolated enum Shares: Equatable, Sendable {
+        /// A game, away first as every card. `away` is nil where the sport
+        /// prices a draw: the rest of the bar is "not the home team", never the
+        /// away team's (#5271).
+        case game(away: Double?, home: Double)
+        /// A market: the chosen or leading outcome's chance.
+        case outcome(Double)
+    }
 }
 
 /// Which side of a game the reader chose to follow, if any.
@@ -112,10 +126,11 @@ enum SavedWidgetReadingRules10875 {
         }
         func reading(_ phase: SavedWidgetReading10875.Phase, status: String, rows: [SavedWidgetReading10875.Row],
                      headline: SavedWidgetReading10875.Row?, caption: String? = nil, observedAt: Date? = nil,
-                     flipsAt: Date? = nil, spoken: String) -> SavedWidgetReading10875 {
+                     flipsAt: Date? = nil, spoken: String,
+                     shares: SavedWidgetReading10875.Shares? = nil) -> SavedWidgetReading10875 {
             .init(phase: phase, subject: subject, shortSubject: shortSubject, status: status, rows: rows,
                   headline: headline, priceCaption: caption, observedAt: observedAt,
-                  becomesLastRecordedAt: flipsAt, spoken: spoken)
+                  becomesLastRecordedAt: flipsAt, spoken: spoken, shares: shares)
         }
         // A score is printed only when both sides are held (`EventState`'s
         // partial-line rule): half a score is not a score.
@@ -200,10 +215,18 @@ enum SavedWidgetReadingRules10875 {
 
         var awayFigure: String?
         let homeFigure: String
+        // #12466: the bar draws the integers the two figures print, so a bar
+        // and its numbers can't disagree; the raw pair only where no integer is.
+        var shares = SavedWidgetReading10875.Shares.game(away: nil, home: pair.home)
         if let away = pair.away {
             let percents = heroPairPercents(shown, away: away, home: pair.home)
             awayFigure = formatProbability(away, renderedPercent: percents.away)
             homeFigure = formatProbability(pair.home, renderedPercent: percents.home)
+            if let a = percents.away, let h = percents.home, a + h > 0 {
+                shares = .game(away: Double(a) / 100, home: Double(h) / 100)
+            } else {
+                shares = .game(away: away, home: pair.home)
+            }
         } else {
             // Draw-priced: the lone home number, rounded alone (#5271).
             homeFigure = formatProbability(pair.home)
@@ -258,7 +281,7 @@ enum SavedWidgetReadingRules10875 {
         let when = observedAt == nil && phase == .lastRecorded ? " No time was recorded for it." : ""
         return reading(phase, status: status, rows: rows, headline: headline, caption: caption,
                        observedAt: shown.isOpeningLine ? nil : observedAt, flipsAt: flipsAt,
-                       spoken: "\(subject). \(caption): \(said).\(when) \(status).")
+                       spoken: "\(subject). \(caption): \(said).\(when) \(status).", shares: shares)
     }
 
     /// The pair the hero prints — `OpeningLineHero.resolve`'s rule on this
@@ -324,10 +347,12 @@ enum SavedWidgetReadingRules10875 {
         let standing = marketStatusText(market.status)
         func reading(_ phase: SavedWidgetReading10875.Phase, status: String, rows: [SavedWidgetReading10875.Row],
                      headline: SavedWidgetReading10875.Row?, caption: String? = nil, observedAt: Date? = nil,
-                     flipsAt: Date? = nil, spoken: String, lastRecorded: String? = nil) -> SavedWidgetReading10875 {
+                     flipsAt: Date? = nil, spoken: String, lastRecorded: String? = nil,
+                     shares: SavedWidgetReading10875.Shares? = nil) -> SavedWidgetReading10875 {
             .init(phase: phase, subject: market.name, shortSubject: market.name, status: status, rows: rows,
                   headline: headline, priceCaption: caption, observedAt: observedAt,
-                  becomesLastRecordedAt: flipsAt, spoken: spoken, lastRecordedFigure: lastRecorded)
+                  becomesLastRecordedAt: flipsAt, spoken: spoken, lastRecordedFigure: lastRecorded,
+                  shares: shares)
         }
 
         let chosen: SavedWidgetMarketOutcome10875?
@@ -383,9 +408,12 @@ enum SavedWidgetReadingRules10875 {
                            spoken: "\(market.name): Bain Luck has no price for \(outcome.name) right now.")
         }
 
-        let figure = formatProbability(probability, renderedPercent: renderedPercents(market.outcomes)[outcome.id])
+        let printed = renderedPercents(market.outcomes)[outcome.id]
+        let figure = formatProbability(probability, renderedPercent: printed)
         let row = SavedWidgetReading10875.Row(label: outcome.name, shortLabel: outcome.name, figure: figure,
                                               verdict: nil, emphasized: false)
+        // #12466: the bar draws the printed integer, as the game's bar does.
+        let shares = SavedWidgetReading10875.Shares.outcome(printed.map { Double($0) / 100 } ?? probability)
         // The outcome's own clock: a verified answer's oldest included
         // observation, otherwise the row's price stamp.
         let observedAt = SavedWidgetDetailDecoding10875.date(outcome.observedAt ?? outcome.lastUpdated)
@@ -397,14 +425,15 @@ enum SavedWidgetReadingRules10875 {
             return reading(.current, status: standing, rows: [row], headline: row, caption: nil,
                            observedAt: observedAt,
                            flipsAt: observedAt.addingTimeInterval(SavedWidgetStaleness10875.futuresStaleAfter),
-                           spoken: "\(market.name): \(outcome.name) \(figure).")
+                           spoken: "\(market.name): \(outcome.name) \(figure).", shares: shares)
         }
         let when = observedAt == nil ? " No time was recorded for it." : ""
         let closedSaid = resolved ? " has closed"
             : (isOpen || market.status == nil ? "" : " is \(standing.lowercased())")
         return reading(.lastRecorded, status: standing, rows: [row], headline: row,
                        caption: "Last recorded chance", observedAt: observedAt,
-                       spoken: "\(market.name)\(closedSaid): \(outcome.name) \(figure), last recorded chance.\(when)")
+                       spoken: "\(market.name)\(closedSaid): \(outcome.name) \(figure), last recorded chance.\(when)",
+                       shares: shares)
     }
 
     /// #698 — what a resolved market's row may say about its own result, the

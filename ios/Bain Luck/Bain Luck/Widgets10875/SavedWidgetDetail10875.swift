@@ -43,6 +43,12 @@ nonisolated struct SavedWidgetEventOdds10875: Decodable, Equatable, Sendable {
 
 nonisolated struct SavedWidgetTeamData10875: Decodable, Equatable, Sendable {
     let abbreviation: String?
+    /// #12466 — the team's own colours and crest, the fields the event page
+    /// draws its hero with. A team without them gets its slot's default colour
+    /// and a monogram, never a colour nobody chose.
+    var primaryColor: String? = nil
+    var secondaryColor: String? = nil
+    var logoSmall: String? = nil
 }
 
 nonisolated struct SavedWidgetMarketDetail10875: Decodable, Equatable, Sendable {
