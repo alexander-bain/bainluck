@@ -4300,7 +4300,9 @@ async def _phase1_pass2_general_scan(
     _time_remaining,
 ) -> None:
     """Phase 1 Pass 2: scan non-ticker game markets (Polymarket + edge cases)."""
-    from app.models.models import FuturesMarket
+    from app.models.models import FuturesMarket, MarketMatchReceipt
+    from app.services.polymarket_api import GAMMA_FULL_CONTEST_WINNER_TYPES
+    from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
 
     _matchup_base_where = [
         FuturesMarket.source.in_(["kalshi", "polymarket"]),
@@ -4313,11 +4315,49 @@ async def _phase1_pass2_general_scan(
         FuturesMarket.name.ilike("% – %"),
     )
 
+    # #12072: a fixture can arrive after a winner market's last refusal. The
+    # recency prefix may never revisit that market, and Pass 3's never-attempted
+    # prefix can fill its budget first. Reserve at most a fifth of these same
+    # slots for dated, venue-labelled winners, oldest receipt first. The date
+    # only prioritises an attempt; the ordinary fixture and identity gates
+    # still decide every link. Legacy rows retain the recency/backlog paths.
+    retry_budget = min(100, max(0, limit // 5))
+    retry_ids: list[int] = []
+    if retry_budget > 0:
+        retry_result = await session.execute(
+            select(FuturesMarket.id)
+            .join(
+                MarketMatchReceipt,
+                MarketMatchReceipt.market_id == FuturesMarket.id,
+            )
+            .where(
+                *_matchup_base_where,
+                _matchup_name_filter,
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.market_metadata[CONTENT_UNDERSTANDING_KEY][
+                    "venue_type"
+                ].astext.in_(GAMMA_FULL_CONTEST_WINNER_TYPES),
+                FuturesMarket.resolution_date >= now - timedelta(hours=6),
+                FuturesMarket.resolution_date <= now + timedelta(hours=48),
+                MarketMatchReceipt.last_attempted_at <= now - timedelta(minutes=15),
+            )
+            .order_by(
+                MarketMatchReceipt.last_attempted_at.asc(),
+                FuturesMarket.id.asc(),
+            )
+            .limit(retry_budget)
+        )
+        retry_ids = [int(mid) for mid in retry_result.scalars().all()]
+
     matchup_result = await session.execute(
         select(FuturesMarket.id)
-        .where(*_matchup_base_where, _matchup_name_filter)
+        .where(
+            *_matchup_base_where,
+            _matchup_name_filter,
+            FuturesMarket.id.notin_(retry_ids),
+        )
         .order_by(FuturesMarket.updated_at.desc())
-        .limit(limit)
+        .limit(max(0, limit - len(retry_ids)))
     )
     matchup_ids = [int(mid) for mid in matchup_result.scalars().all()]
 
@@ -4332,11 +4372,17 @@ async def _phase1_pass2_general_scan(
         )
         remaining_ids = [int(mid) for mid in remaining_result.scalars().all()]
 
-    unlinked_ids = matchup_ids + remaining_ids
+    # One retry followed by four fresh matchups also preserves fresh-ingest
+    # headroom when the time reserve stops the pass before its row cap.
+    unlinked_ids = list(matchup_ids)
+    for index, market_id in enumerate(retry_ids):
+        unlinked_ids.insert(index * 5, market_id)
+    unlinked_ids.extend(remaining_ids)
     stats["funnel"]["general_scan_count"] = len(unlinked_ids)
     stats["funnel"]["pass2_yielded_to_backlog"] = False
-    stats["funnel"]["matchup_scan_count"] = len(matchup_ids)
+    stats["funnel"]["matchup_scan_count"] = len(matchup_ids) + len(retry_ids)
     stats["funnel"]["remaining_scan_count"] = len(remaining_ids)
+    stats["funnel"]["winner_retry_scan_count"] = len(retry_ids)
 
     receipts: list[MatchReceipt] = []
     try:
