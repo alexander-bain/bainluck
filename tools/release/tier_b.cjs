@@ -9,25 +9,41 @@
 // The PR's first line declares which: `Fable: needed (reader-visible |
 // destructive | eval)` or `Fable: not needed`. A PR with no such line is read as
 // needing Fable. A `not needed` PR that touches any path below is blocked, with
-// the paths named. The list is deliberately broad: a false match only asks for
-// Fable's review, while a miss would let a reader-visible change skip it. Argue
-// with it here, in one place.
+// the paths named. A false match only asks for Fable's review, while a miss lets
+// a reader-visible change skip it, so the list errs broad. Argue with it here,
+// in one place.
+//
+// THE DEFAULT IS FLIPPED FOR backend/app/ AND backend/data/ (Fable's review of
+// #12543): a file there needs Fable UNLESS its name says it is plumbing, meaning
+// it only watches, files or measures. A keyword list of reader-facing names
+// missed 593 of 740 backend modules, among them team_merge.py (this morning's
+// deleted names) and the seating and calibration code.
+const PLUMBING = new RegExp('^backend/app/(?!routes/)(' + [
+  'tasks/__init__\\.py$',                       // Celery registration; task bodies live elsewhere
+  '.*(sentinel|watchdog)[^/]*\\.py$',           // the alarms
+  '.*(alert|issue_labels|bug_report|filing)[^/]*\\.py$', // alert and issue filing
+  '.*(log_redaction|logging)[^/]*\\.py$',       // logging
+  '.*(task_memory|memory_turns|latency|timing|task_metrics|sampler|heartbeat)[^/]*\\.py$', // memory and timing instrumentation
+].join('|') + ')');
+
 const FABLE_PATHS = [
-  // Reader-facing pages, components and client code (web), minus their tests.
+  // Reader-facing pages, components and client code (web), minus their tests,
+  // and the three configs that change what the web app serves.
   {why: 'reader-visible (web page or component)', re: /^frontend\/(app|components|lib|hooks|public|styles|src)\/(?!.*(__tests__\/|\.test\.|\.spec\.))/},
+  {why: 'reader-visible (web config)', re: /^frontend\/(next\.config\.mjs|tailwind\.config\.ts|vercel\.json)$/},
   // The phone and the Watch app.
   {why: 'reader-visible (iOS / Watch)', re: /^ios\//},
   // API responses a page reads, and every admin handler (some are destructive).
   {why: 'reader-visible or destructive (API route)', re: /^backend\/app\/routes\//},
-  // Blending, matching, ranking and formatting code.
-  // (`issue_labels.py` is the alarm-filing taxonomy, not a reader label.)
-  {why: 'reader-visible (blend, match, rank or format code)', re: /^backend\/app\/(utils|services|tasks)\/(?!issue_labels\.py$)[^/]*(blend|aggregat|probab|price|feed|rank|display|format|caption|label|match|registry|copy|headline|hero|ladder|settle|winner)[^/]*\.py$/},
-  // Container and licence data.
-  {why: 'reader-visible (container or licence data)', re: /^(backend\/data\/containers\/|.*licen[cs]e)/i},
+  // Everything else in the app and its data, unless the name says plumbing.
+  {why: 'reader-visible or destructive (backend app code; not plumbing)', re: /^backend\/app\//, unless: PLUMBING},
+  {why: 'reader-visible, graded or licensed data (backend data)', re: /^backend\/data\//},
   // Evals, gates, exams, grades and the release machinery itself.
-  {why: 'eval or gate', re: /^(evals\/|backend\/data\/evals\/|backend\/scripts\/evals\/|backend\/tests\/evals\/|tools\/release\/|docs\/release-loop\/|\.github\/workflows\/|\.github\/PULL_REQUEST_TEMPLATE)/},
-  // Migrations, models and data repairs.
-  {why: 'destructive (migration, model or data repair)', re: /^backend\/(alembic\/|app\/models\/|app\/tasks\/repair_[^/]*\.py$|scripts\/[^/]*(repair|restore|backfill|apply|fold|merge|delete|purge)[^/]*$)/},
+  {why: 'eval or gate (exam, golden set or grades)', re: /(exam|golden|grade)/i},
+  {why: 'licence', re: /licen[cs]e/i},
+  {why: 'eval or gate', re: /^(evals\/|backend\/scripts\/evals\/|backend\/tests\/evals\/|tools\/release\/|tools\/ranking\/|tools\/reader_walk\/|docs\/release-loop\/|\.github\/workflows\/|\.github\/PULL_REQUEST_TEMPLATE)/},
+  // Migrations, index changes and data repairs.
+  {why: 'destructive (migration, index change or data repair)', re: /^backend\/(alembic\/|scripts\/[^/]*\.sql$|scripts\/[^/]*(repair|restore|backfill|apply|fold|merge|delete|purge)[^/]*$)/},
 ];
 
 // The first non-empty line of the PR body, read as the 119-A declaration.
@@ -42,9 +58,12 @@ function fableLine(body) {
 function fableHits(files) {
   const hits = [];
   for (const file of files || []) {
-    const name = file.filename || file;
-    const rule = FABLE_PATHS.find(rule => rule.re.test(name));
-    if (rule) hits.push(`${name} (${rule.why})`);
+    // A rename is judged by both names, so moving a file off a listed path
+    // cannot take it off the list.
+    for (const name of [file.filename || file, file.previous_filename].filter(Boolean)) {
+      const rule = FABLE_PATHS.find(rule => rule.re.test(name) && !(rule.unless && rule.unless.test(name)));
+      if (rule) { hits.push(`${name} (${rule.why})`); break; }
+    }
   }
   return hits;
 }
@@ -173,4 +192,4 @@ async function evaluate(github, context) {
     summary:'PR membership, head or labels changed during both evaluation attempts; re-evaluation required.'});
 }
 
-module.exports = {verdict,evaluate,fableLine,fableHits,FABLE_PATHS};
+module.exports = {verdict,evaluate,fableLine,fableHits,FABLE_PATHS,PLUMBING};

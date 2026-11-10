@@ -118,3 +118,53 @@ test('the docs and the bot brief state 119-A, not the old every-PR rule', () => 
   }
   assert.match(brief, /`Fable: not needed`/);
 });
+
+// Fable's review of #12543 (Nov 10): pinned on real PRs from that day.
+const PR_12536 = ['backend/app/utils/grouping_licences.py', 'backend/app/utils/roundup_containers.py',
+  'backend/app/utils/sibling_family.py', 'backend/app/utils/sibling_family_exam.py',
+  'backend/app/utils/sibling_family_proposer.py', 'backend/data/containers/nhl-playoffs-2026-27.json',
+  'backend/data/discover/sibling-family-exam-dataset-2026-11.json', 'backend/data/grouping_licences.json',
+  'frontend/components/evals/SiblingFamilyExamSection.tsx', 'frontend/lib/evals/data/sibling-family-exam-2026-11.json'];
+const PR_12520 = ['backend/app/routes/admin_team_clusters.py', 'backend/app/utils/team_merge.py'];
+const PR_12542 = ['backend/app/tasks/__init__.py', 'backend/app/tasks/task_memory.py',
+  'backend/tests/test_task_memory_worker_background_12042.py'];
+const PR_12546 = ['backend/app/utils/latency_stats.py', 'backend/app/utils/request_timing.py',
+  'backend/tests/test_slow_ring_names_its_query_12529.py'];
+
+test('every app and data file of #12536 (grouped cards, the exam) and #12520 (the merge tool) is listed', () => {
+  const {fableHits} = policy();
+  for (const name of [...PR_12536, ...PR_12520]) assert.equal(fableHits([name]).length, 1, name);
+});
+
+test('no file of the instrumentation PRs #12542 and #12546 is listed', () => {
+  const {fableHits} = policy();
+  for (const name of [...PR_12542, ...PR_12546]) assert.equal(fableHits([name]).length, 0, name);
+});
+
+test('the backend default is flipped: unlisted names need Fable unless they say plumbing', () => {
+  const {fableHits} = policy();
+  for (const name of ['backend/app/utils/discover_final_seating.py', 'backend/app/utils/calibration_publish_gate.py',
+    'backend/app/tasks/precompute_calibration.py', 'backend/app/tasks/prune_unanchored_duplicates.py',
+    'backend/app/services/team_identity.py', 'backend/app/utils/live_push.py',
+    'backend/app/services/activitykit_push.py', 'backend/app/routes/admin_alerts.py',
+    'tools/ranking/scorecard.py', 'tools/reader_walk/walk.py', 'backend/scripts/awards_event_identity_indexes_11935.sql',
+    'frontend/next.config.mjs', 'frontend/tailwind.config.ts', 'frontend/vercel.json',
+    'docs/discover/sibling-family-exam-2026-11.md', 'backend/tests/test_matching_golden_set_2706.py'])
+    assert.equal(fableHits([name]).length, 1, name);
+  for (const name of ['backend/app/tasks/calibration_sentinel.py', 'backend/app/tasks/data_quality_watchdog.py',
+    'backend/app/tasks/sentinel_filing.py', 'backend/app/tasks/bug_report_github.py', 'backend/app/log_redaction.py',
+    'backend/app/tasks/heavy_memory_turns.py', 'backend/app/tasks/calibration_beat_gauge_sampler.py'])
+    assert.equal(fableHits([name]).length, 0, name);
+});
+
+test('a rename is judged by both names', () => {
+  const {fableHits} = policy();
+  assert.equal(fableHits([{filename: 'docs/old/seat.py', previous_filename: 'backend/app/utils/discover_final_seating.py'}]).length, 1);
+  assert.equal(fableHits([{filename: 'docs/notes.md', previous_filename: 'docs/old.md'}]).length, 0);
+});
+
+test('the bot brief says who accepts a PR Fable wrote (122-A)', () => {
+  const brief = fs.readFileSync(path.join(repoRoot, 'docs/release-loop/tier-b-review-brief.md'), 'utf8');
+  assert.match(brief.replace(/\s+/g, ' '), /A PR that Fable wrote is accepted by the lane its test judges \(an "OK at <head>" on the PR\) and merged by Builder E/);
+  assert.match(brief, /122-A/);
+});

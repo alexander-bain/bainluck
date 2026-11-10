@@ -11,6 +11,9 @@ rewrites stored data or is migration-class; or (c) changes an eval, a gate, an
 exam, a licence or grades (this brief and the approval policy included). The PR's
 first line declares which: `Fable: needed (reader-visible | destructive | eval)`
 or `Fable: not needed`; no line means needed. Alex does not merge subsequent PRs.
+A PR that Fable wrote is accepted by the lane its test judges (an "OK at <head>"
+on the PR) and merged by Builder E, after your approval and green checks (Alex,
+122-A, Nov 10).
 Human approval and the retired `alex-approved` label cannot replace the bot's
 review. Your review supplies the bot gate; Fable's acceptance, where needed, and
 the merge remain the author window's separate responsibilities.
