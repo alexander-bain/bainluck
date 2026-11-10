@@ -113,7 +113,8 @@ class TestEveryGatePassOrFail:
     def test_baseline_ungraded_test_set_holds_gate_1_and_passes_structural_gates(
         self,
     ) -> None:
-        record = score_sibling_family_exam(build_default_sibling_family_exam_dataset())
+        ungraded_cards = _graded_dataset(better_count=0, same_count=0, worse_count=0)
+        record = score_sibling_family_exam(ungraded_cards)
         assert record["schema"] == EXAM_SCHEMA_VERSION
         assert record["result"] == "HELD"
         assert record["licences"] == {"sibling_family": "HELD"}
@@ -137,6 +138,80 @@ class TestEveryGatePassOrFail:
         assert gates["run_to_run_stability"]["result"] == "PASS"
         assert gates["run_to_run_stability"]["observed"]["k"] == 32
         assert gates["run_to_run_stability"]["observed"]["n"] == 32
+
+    def test_109a_grade_mapping_pins_amazing_and_fine_to_better_and_no_to_worse_with_strict_reading(
+        self,
+    ) -> None:
+        from app.routes.admin_ranking_eval import (
+            EXAM_TEST_GROUPING_SLATE_ID,
+            load_grouping_grade_deck,
+        )
+        from app.utils.sibling_family_exam import normalize_exam_human_grade
+
+        assert normalize_exam_human_grade("amazing") == "better"
+        assert normalize_exam_human_grade("fine") == "better"
+        assert normalize_exam_human_grade("no") == "worse"
+        assert normalize_exam_human_grade("shareable") == "better"
+        assert normalize_exam_human_grade("interesting") == "better"
+        assert normalize_exam_human_grade("neither") == "worse"
+        assert normalize_exam_human_grade(None) is None
+
+        cards = build_default_sibling_family_exam_dataset()
+        # Every graded card's grade must name that card's own family_slug; ungraded cardsStay null.
+        graded_cards = [c for c in cards if c.get("human_grade") is not None]
+        assert len(graded_cards) == 6
+        for c in cards:
+            assert "graded_item_key" not in c
+            if c.get("human_grade") is not None:
+                assert c["split"] == "dev"
+                assert c.get("graded_family_slug") == c["family_slug"]
+            else:
+                assert "graded_family_slug" not in c
+
+        committed_record = score_sibling_family_exam(cards)
+        assert committed_record["result"] == "HELD"
+        assert committed_record["licences"] == {"sibling_family": "HELD"}
+        g1_obs = committed_record["gate_results"][0]["observed"]
+        assert g1_obs["graded_k"] == 0
+        assert g1_obs["ungraded_k"] == 20
+        assert g1_obs["status_note"] == "not measured: 0 of 20 test cards graded"
+
+        p1_dev = committed_record["per_pass"]["1"]["dev"]
+        assert p1_dev["expected"] == 12
+        assert p1_dev["graded"] == 6
+        assert p1_dev["ungraded"] == 6
+        assert p1_dev["better"]["k"] == 6
+        assert p1_dev["strict_amazing"]["k"] == 3
+
+        # And the 20 fixed test cards are served on /grade/groupings as their own slate.
+        test_deck = load_grouping_grade_deck(slate_id=EXAM_TEST_GROUPING_SLATE_ID)
+        assert test_deck["slate_id"] == EXAM_TEST_GROUPING_SLATE_ID
+        assert len(test_deck["items"]) == 20
+        expected_test_slugs = [c["family_slug"] for c in cards if c["split"] == "test"]
+        assert [it["item_key"] for it in test_deck["items"]] == expected_test_slugs
+
+        # Verify 109-A scoring when all 20 test cards carry amazing/fine/no grades:
+        synthetic_cards = copy.deepcopy(cards)
+        test_idx = 0
+        for c in synthetic_cards:
+            if c["split"] != "test":
+                continue
+            if test_idx < 9:
+                c["human_grade"] = "amazing"
+            elif test_idx < 19:
+                c["human_grade"] = "fine"
+            else:
+                c["human_grade"] = "no"
+            test_idx += 1
+        synthetic_record = score_sibling_family_exam(synthetic_cards)
+        syn_obs = synthetic_record["gate_results"][0]["observed"]
+        assert syn_obs["better_k"] == 19
+        assert syn_obs["worse_k"] == 1
+        assert syn_obs["graded_k"] == 20
+        assert syn_obs["better_pct"] == 95.0
+        assert syn_obs["strict_amazing_k"] == 9
+        assert syn_obs["strict_amazing_pct"] == 45.0
+        assert syn_obs["grade_mapping"] == "109-A: amazing + fine -> better, no -> worse"
 
     def test_default_dataset_is_derived_from_real_proposer_and_nonzero_varied_api_usage(
         self,
@@ -359,7 +434,7 @@ class TestEveryGatePassOrFail:
         assert "relation_truth" in md
         assert "freshness_and_count" in md
         assert "run_to_run_stability" in md
-        assert "Waiting for grades: 0 of 20 graded (20 ungraded)" in md
+        assert "Not measured: 0 of 20 test cards graded (20 ungraded)" in md
         assert "**HELD**" in md
         assert "**PASS**" in md
 

@@ -36,7 +36,7 @@ export const SIBLING_EXAM_GATE_WORDS: Record<
   card_vs_single_member: {
     name: "Better than a single market",
     checks:
-      "On set-aside cards never used for tuning, people rate the grouped card better than its strongest single market at least eighty-five percent of the time, and worse at most ten percent of the time.",
+      "On set-aside cards never used for tuning, people rate the grouped card better than its strongest single market at least eighty-five percent of the time, and worse at most ten percent of the time (both 'Amazing' and 'Fine' count as better, and 'No' counts as worse).",
     unitLabel: "rated better on set-aside cards",
   },
   relation_truth: {
@@ -69,6 +69,8 @@ export interface SiblingGateCell {
   gradedK?: number;
   ungradedK?: number;
   betterPct?: number | null;
+  strictAmazingK?: number;
+  strictAmazingPct?: number | null;
 }
 
 export interface SiblingExamGate {
@@ -164,6 +166,13 @@ function parseCell(raw: unknown): SiblingGateCell | null {
     gradedK: isNonNegInt(c.graded_k) ? (c.graded_k as number) : undefined,
     ungradedK: isNonNegInt(c.ungraded_k) ? (c.ungraded_k as number) : undefined,
     betterPct: typeof c.better_pct === "number" ? (c.better_pct as number) : null,
+    strictAmazingK: isNonNegInt(c.strict_amazing_k)
+      ? (c.strict_amazing_k as number)
+      : undefined,
+    strictAmazingPct:
+      typeof c.strict_amazing_pct === "number"
+        ? (c.strict_amazing_pct as number)
+        : null,
   };
 }
 

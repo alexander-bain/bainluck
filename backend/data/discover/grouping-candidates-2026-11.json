@@ -15,7 +15,7 @@
   "families": [
     {
       "slug": "proposed-polymarket-will-contenders-record-100-points",
-      "name": "Will which contender record 100+ points?",
+      "name": "Who will record 100+ points?",
       "source": "polymarket",
       "category": "hockey",
       "template_key": "will * record 100 points",
@@ -606,7 +606,7 @@
         "href": "/collections/proposed-polymarket-will-contenders-record-100-points",
         "kicker": "HOCKEY",
         "tag": "HOCKEY",
-        "title": "Will which contender record 100+ points?",
+        "title": "Who will record 100+ points?",
         "rows": [
           {
             "label": "Connor McDavid",
@@ -636,11 +636,11 @@
         ],
         "count_line": "Showing 5 of 80 contenders \u00b7 No number yet: Brady Tkachuk, Drake Batherson, Evan Bouchard, Evgenii Malkin, Kirill Kaprizov, Roope Hintz, Tim Stutzle, William Nylander, Zach Werenski",
         "footer": "Each row is its own market. They don't add up to 100%.",
-        "text_390px": "HOCKEY \u00b7 HOCKEY\nWill which contender record 100+ points?\nConnor McDavid \u2014 92%\nNathan MacKinnon \u2014 88%\nLeon Draisaitl \u2014 88%\nNikita Kucherov \u2014 82%\nMacklin Celebrini \u2014 59%\nShowing 5 of 80 contenders \u00b7 No number yet: Brady Tkachuk, Drake Batherson, Evan Bouchard, Evgenii Malkin, Kirill Kaprizov, Roope Hintz, Tim Stutzle, William Nylander, Zach Werenski\nEach row is its own market. They don't add up to 100%."
+        "text_390px": "HOCKEY \u00b7 HOCKEY\nWho will record 100+ points?\nConnor McDavid \u2014 92%\nNathan MacKinnon \u2014 88%\nLeon Draisaitl \u2014 88%\nNikita Kucherov \u2014 82%\nMacklin Celebrini \u2014 59%\nShowing 5 of 80 contenders \u00b7 No number yet: Brady Tkachuk, Drake Batherson, Evan Bouchard, Evgenii Malkin, Kirill Kaprizov, Roope Hintz, Tim Stutzle, William Nylander, Zach Werenski\nEach row is its own market. They don't add up to 100%."
       },
       "proposed_definition": {
         "slug": "proposed-polymarket-will-contenders-record-100-points",
-        "name": "Will which contender record 100+ points?",
+        "name": "Who will record 100+ points?",
         "kind": "roundup",
         "category": "hockey",
         "tag": "HOCKEY",
@@ -666,7 +666,7 @@
           "source": "polymarket",
           "template": "will * record 100 points",
           "title_ilike": "Will % record 100+ points%",
-          "title_template": "Will which contender record 100+ points?",
+          "title_template": "Who will record 100+ points?",
           "kicker_prefix": "HOCKEY",
           "kicker_include_date": false,
           "subject_unit": "contenders",
@@ -679,7 +679,7 @@
     },
     {
       "slug": "proposed-polymarket-highest-temperature-in-cities",
-      "name": "Highest temperature in cities?",
+      "name": "Highest temperature in cities",
       "source": "polymarket",
       "category": "weather",
       "template_key": "highest temperature in *",
@@ -692,84 +692,96 @@
           "name": "Highest temperature in Manila on November 9?",
           "subject": "Manila",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "32\u00b0C"
         },
         {
           "id": 69472419,
           "name": "Highest temperature in Karachi on November 9?",
           "subject": "Karachi",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "36\u00b0C"
         },
         {
           "id": 69472420,
           "name": "Highest temperature in Qingdao on November 9?",
           "subject": "Qingdao",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "9\u00b0C"
         },
         {
           "id": 69472421,
           "name": "Highest temperature in Guangzhou on November 9?",
           "subject": "Guangzhou",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "24\u00b0C"
         },
         {
           "id": 69472423,
           "name": "Highest temperature in Jeddah on November 9?",
           "subject": "Jeddah",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "32\u00b0C"
         },
         {
           "id": 69472424,
           "name": "Highest temperature in Kuala Lumpur on November 9?",
           "subject": "Kuala Lumpur",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "31\u00b0C"
         },
         {
           "id": 69472425,
           "name": "Highest temperature in Helsinki on November 9?",
           "subject": "Helsinki",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.9617,
+          "outcome_label": "5\u00b0C"
         },
         {
           "id": 69472426,
           "name": "Highest temperature in Busan on November 9?",
           "subject": "Busan",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "14\u00b0C"
         },
         {
           "id": 69472427,
           "name": "Highest temperature in Amsterdam on November 9?",
           "subject": "Amsterdam",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.584,
+          "outcome_label": "10\u00b0C"
         },
         {
           "id": 69472428,
           "name": "Highest temperature in Istanbul on November 9?",
           "subject": "Istanbul",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.9845,
+          "outcome_label": "14\u00b0C"
         },
         {
           "id": 69472429,
           "name": "Highest temperature in Moscow on November 9?",
           "subject": "Moscow",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.9625,
+          "outcome_label": "5\u00b0C"
         },
         {
           "id": 69472430,
           "name": "Highest temperature in Shenzhen on November 9?",
           "subject": "Shenzhen",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "28\u00b0C"
         },
         {
           "id": 69472431,
@@ -1255,7 +1267,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-polymarket-highest-temperature-in-cities",
-        "name": "Highest temperature in cities?",
+        "name": "Highest temperature in cities",
         "kind": "roundup",
         "category": "weather",
         "tag": "WEATHER",
@@ -1281,7 +1293,7 @@
           "source": "polymarket",
           "template": "highest temperature in *",
           "title_ilike": "Highest temperature in %",
-          "title_template": "Highest temperature in cities {deadline}?",
+          "title_template": "Highest temperature in cities {deadline}",
           "kicker_prefix": "WEATHER",
           "kicker_include_date": true,
           "subject_unit": "cities",
@@ -1294,7 +1306,7 @@
     },
     {
       "slug": "proposed-polymarket-lowest-temperature-in-cities",
-      "name": "Lowest temperature in cities?",
+      "name": "Lowest temperature in cities",
       "source": "polymarket",
       "category": "weather",
       "template_key": "lowest temperature in *",
@@ -1307,84 +1319,96 @@
           "name": "Lowest temperature in Karachi on November 9?",
           "subject": "Karachi",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.9478,
+          "outcome_label": "20\u00b0C"
         },
         {
           "id": 69472457,
           "name": "Lowest temperature in Qingdao on November 9?",
           "subject": "Qingdao",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.06,
+          "outcome_label": "-2\u00b0C or below"
         },
         {
           "id": 69472458,
           "name": "Lowest temperature in Guangzhou on November 9?",
           "subject": "Guangzhou",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.4,
+          "outcome_label": "17\u00b0C"
         },
         {
           "id": 69472460,
           "name": "Lowest temperature in Jeddah on November 9?",
           "subject": "Jeddah",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.97,
+          "outcome_label": "26\u00b0C"
         },
         {
           "id": 69472461,
           "name": "Lowest temperature in Helsinki on November 9?",
           "subject": "Helsinki",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.9664,
+          "outcome_label": "0\u00b0C"
         },
         {
           "id": 69472462,
           "name": "Lowest temperature in Amsterdam on November 9?",
           "subject": "Amsterdam",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.7,
+          "outcome_label": "4\u00b0C"
         },
         {
           "id": 69472463,
           "name": "Lowest temperature in Busan on November 9?",
           "subject": "Busan",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.4699,
+          "outcome_label": "10\u00b0C"
         },
         {
           "id": 69472464,
           "name": "Lowest temperature in Istanbul on November 9?",
           "subject": "Istanbul",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.855,
+          "outcome_label": "3\u00b0C"
         },
         {
           "id": 69472465,
           "name": "Lowest temperature in Moscow on November 9?",
           "subject": "Moscow",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.67,
+          "outcome_label": "4\u00b0C"
         },
         {
           "id": 69472466,
           "name": "Lowest temperature in Shenzhen on November 9?",
           "subject": "Shenzhen",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "19\u00b0C"
         },
         {
           "id": 69472467,
           "name": "Lowest temperature in Chengdu on November 9?",
           "subject": "Chengdu",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.88,
+          "outcome_label": "12\u00b0C"
         },
         {
           "id": 69472468,
           "name": "Lowest temperature in Beijing on November 9?",
           "subject": "Beijing",
           "resolution_date": "2026-11-09T12:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.9751,
+          "outcome_label": "-4\u00b0C"
         },
         {
           "id": 69472469,
@@ -1828,7 +1852,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-polymarket-lowest-temperature-in-cities",
-        "name": "Lowest temperature in cities?",
+        "name": "Lowest temperature in cities",
         "kind": "roundup",
         "category": "weather",
         "tag": "WEATHER",
@@ -1854,7 +1878,7 @@
           "source": "polymarket",
           "template": "lowest temperature in *",
           "title_ilike": "Lowest temperature in %",
-          "title_template": "Lowest temperature in cities {deadline}?",
+          "title_template": "Lowest temperature in cities {deadline}",
           "kicker_prefix": "WEATHER",
           "kicker_include_date": true,
           "subject_unit": "cities",
@@ -1867,7 +1891,7 @@
     },
     {
       "slug": "proposed-polymarket-will-contenders-reach-the-2027-ncaa-men-s-basket",
-      "name": "Will Auburn reach the 2027 NCAA Men's Basketball Final Four?",
+      "name": "Who will reach the 2027 NCAA Men's Basketball Final Four?",
       "source": "polymarket",
       "category": "basketball",
       "template_key": "will * reach the 2027 ncaa men's basketball final four",
@@ -2214,14 +2238,14 @@
         {
           "id": 68954803,
           "name": "Will St. John's reach the 2027 NCAA Men's Basketball Final Four?",
-          "subject": "St. John's",
+          "subject": "St. John",
           "resolution_date": "2027-03-29T03:59:00+00:00",
           "yes_probability": 0.115
         },
         {
           "id": 68954804,
           "name": "Will Saint Mary's reach the 2027 NCAA Men's Basketball Final Four?",
-          "subject": "Saint Mary's",
+          "subject": "Saint Mary",
           "resolution_date": "2027-03-29T03:59:00+00:00",
           "yes_probability": 0.026
         },
@@ -2345,7 +2369,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-polymarket-will-contenders-reach-the-2027-ncaa-men-s-basket",
-        "name": "Will Auburn reach the 2027 NCAA Men's Basketball Final Four?",
+        "name": "Who will reach the 2027 NCAA Men's Basketball Final Four?",
         "kind": "roundup",
         "category": "basketball",
         "tag": "BASKETBALL",
@@ -2371,7 +2395,7 @@
           "source": "polymarket",
           "template": "will * reach the 2027 ncaa men's basketball final four",
           "title_ilike": "Will % reach the 2027 NCAA Men's Basketball Final Four%",
-          "title_template": "Will Auburn reach the 2027 NCAA Men's Basketball Final Four?",
+          "title_template": "Who will reach the 2027 NCAA Men's Basketball Final Four?",
           "kicker_prefix": "BASKETBALL",
           "kicker_include_date": false,
           "subject_unit": "contenders",
@@ -2384,7 +2408,7 @@
     },
     {
       "slug": "proposed-kalshi-college-football-contenders-regular-season-wins",
-      "name": "College Football: contenders Regular Season Wins?",
+      "name": "College Football: Regular Season Wins",
       "source": "kalshi",
       "category": "football",
       "template_key": "college football * regular season wins",
@@ -2397,84 +2421,96 @@
           "name": "College Football: Washington Regular Season Wins",
           "subject": "Washington",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "5+ wins"
         },
         {
           "id": 20272306,
           "name": "College Football: Vanderbilt Regular Season Wins",
           "subject": "Vanderbilt",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "4+ wins"
         },
         {
           "id": 20272307,
           "name": "College Football: Virginia Regular Season Wins",
           "subject": "Virginia",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.89,
+          "outcome_label": "5+ wins"
         },
         {
           "id": 20272308,
           "name": "College Football: Utah Regular Season Wins",
           "subject": "Utah",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "8+ wins"
         },
         {
           "id": 20272309,
           "name": "College Football: USC Regular Season Wins",
           "subject": "USC",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "7+ wins"
         },
         {
           "id": 20272310,
           "name": "College Football: North Carolina Regular Season Wins",
           "subject": "North Carolina",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "5+ wins"
         },
         {
           "id": 20272311,
           "name": "College Football: Georgia Regular Season Wins",
           "subject": "Georgia",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "7+ wins"
         },
         {
           "id": 20272312,
           "name": "College Football: Texas A&M Regular Season Wins",
           "subject": "Texas A&M",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.635,
+          "outcome_label": "5+ wins"
         },
         {
           "id": 20272313,
           "name": "College Football: Tulane Regular Season Wins",
           "subject": "Tulane",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "4+ wins"
         },
         {
           "id": 20272315,
           "name": "College Football: Texas Regular Season Wins",
           "subject": "Texas",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "7+ wins"
         },
         {
           "id": 20272316,
           "name": "College Football: Tennessee Regular Season Wins",
           "subject": "Tennessee",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "6+ wins"
         },
         {
           "id": 20272317,
           "name": "College Football: TCU Regular Season Wins",
           "subject": "TCU",
           "resolution_date": "2026-12-20T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "4+ wins"
         },
         {
           "id": 20272318,
@@ -2834,7 +2870,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-kalshi-college-football-contenders-regular-season-wins",
-        "name": "College Football: contenders Regular Season Wins?",
+        "name": "College Football: Regular Season Wins",
         "kind": "roundup",
         "category": "football",
         "tag": "FOOTBALL",
@@ -2860,7 +2896,7 @@
           "source": "kalshi",
           "template": "college football * regular season wins",
           "title_ilike": "College Football: % Regular Season Wins%",
-          "title_template": "College Football: contenders Regular Season Wins?",
+          "title_template": "College Football: Regular Season Wins",
           "kicker_prefix": "FOOTBALL",
           "kicker_include_date": false,
           "subject_unit": "contenders",
@@ -2873,7 +2909,7 @@
     },
     {
       "slug": "proposed-kalshi-college-basketball-m-top-contenders-ranked-teams",
-      "name": "College Basketball (M): Top 5 Ranked Teams on Apr 6 AP Poll",
+      "name": "College Basketball (M): Top Ranked Teams AP Poll",
       "source": "kalshi",
       "category": "basketball",
       "template_key": "college basketball m top * ranked teams ap poll",
@@ -2886,7 +2922,8 @@
           "name": "College Basketball (M): Top 5 Ranked Teams on Apr 6 AP Poll",
           "subject": "5",
           "resolution_date": "2027-04-06T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.94,
+          "outcome_label": "Seton Hall"
         },
         {
           "id": 67792434,
@@ -2900,7 +2937,8 @@
           "name": "College Basketball (M): Top 5 Ranked Teams on Mar 1 AP Poll",
           "subject": "5",
           "resolution_date": "2027-03-01T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.87,
+          "outcome_label": "Alabama"
         },
         {
           "id": 67792454,
@@ -2928,7 +2966,8 @@
           "name": "College Basketball (M): Top 25 Ranked Teams on Feb 22 AP Poll",
           "subject": "25",
           "resolution_date": "2027-02-22T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.86,
+          "outcome_label": "Colorado"
         },
         {
           "id": 67792462,
@@ -2970,7 +3009,8 @@
           "name": "College Basketball (M): Top 25 Ranked Teams on Feb 8 AP Poll",
           "subject": "25",
           "resolution_date": "2027-02-08T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.89,
+          "outcome_label": "Santa Clara"
         },
         {
           "id": 67792496,
@@ -2984,7 +3024,8 @@
           "name": "College Basketball (M): Top 5 Ranked Teams on Feb 1 AP Poll",
           "subject": "5",
           "resolution_date": "2027-02-01T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "Syracuse"
         },
         {
           "id": 67792510,
@@ -3012,14 +3053,16 @@
           "name": "College Basketball (M): Top 25 Ranked Teams on Jan 25 AP Poll",
           "subject": "25",
           "resolution_date": "2027-01-25T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.87,
+          "outcome_label": "Alabama"
         },
         {
           "id": 67792532,
           "name": "College Basketball (M): Top 10 Ranked Teams on Jan 25 AP Poll",
           "subject": "10",
           "resolution_date": "2027-01-25T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "Stephen F. Austin"
         },
         {
           "id": 67792541,
@@ -3068,14 +3111,16 @@
           "name": "College Basketball (M): Top 5 Ranked Teams on Jan 4 AP Poll",
           "subject": "5",
           "resolution_date": "2027-01-04T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "Michigan St."
         },
         {
           "id": 67804395,
           "name": "College Basketball (M): Top 25 Ranked Teams on Jan 4 AP Poll",
           "subject": "25",
           "resolution_date": "2027-01-04T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "Grand Canyon"
         },
         {
           "id": 67804396,
@@ -3117,7 +3162,8 @@
           "name": "College Basketball (M): Top 25 Ranked Teams on Dec 21 AP Poll",
           "subject": "25",
           "resolution_date": "2026-12-21T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "Gonzaga"
         },
         {
           "id": 67804454,
@@ -3131,14 +3177,16 @@
           "name": "College Basketball (M): Top 5 Ranked Teams on Dec 14 AP Poll",
           "subject": "5",
           "resolution_date": "2026-12-14T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.94,
+          "outcome_label": "Georgetown"
         },
         {
           "id": 67804468,
           "name": "College Basketball (M): Top 25 Ranked Teams on Dec 14 AP Poll",
           "subject": "25",
           "resolution_date": "2026-12-14T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "Butler"
         },
         {
           "id": 67804469,
@@ -3152,21 +3200,24 @@
           "name": "College Basketball (M): Top 5 Ranked Teams on Dec 7 AP Poll",
           "subject": "5",
           "resolution_date": "2026-12-07T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "Wake Forest"
         },
         {
           "id": 67804497,
           "name": "College Basketball (M): Top 25 Ranked Teams on Dec 7 AP Poll",
           "subject": "25",
           "resolution_date": "2026-12-07T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "Penn St."
         },
         {
           "id": 67804498,
           "name": "College Basketball (M): Top 10 Ranked Teams on Dec 7 AP Poll",
           "subject": "10",
           "resolution_date": "2026-12-07T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.96,
+          "outcome_label": "Charlotte"
         },
         {
           "id": 67804591,
@@ -3222,7 +3273,8 @@
           "name": "College Basketball (M): Top 25 Ranked Teams on Nov 16 AP Poll",
           "subject": "25",
           "resolution_date": "2026-11-16T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.89,
+          "outcome_label": "Davidson"
         },
         {
           "id": 67804689,
@@ -3236,21 +3288,24 @@
           "name": "College Basketball (M): Top 5 Ranked Teams on Nov 9 AP Poll",
           "subject": "5",
           "resolution_date": "2026-11-09T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "Florida"
         },
         {
           "id": 67804815,
           "name": "College Basketball (M): Top 25 Ranked Teams on Nov 9 AP Poll",
           "subject": "25",
           "resolution_date": "2026-11-09T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "Arizona"
         },
         {
           "id": 67804816,
           "name": "College Basketball (M): Top 10 Ranked Teams on Nov 9 AP Poll",
           "subject": "10",
           "resolution_date": "2026-11-09T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "Duke"
         }
       ],
       "quotes": {
@@ -3274,7 +3329,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-kalshi-college-basketball-m-top-contenders-ranked-teams",
-        "name": "College Basketball (M): Top 5 Ranked Teams on Apr 6 AP Poll",
+        "name": "College Basketball (M): Top Ranked Teams AP Poll",
         "kind": "roundup",
         "category": "basketball",
         "tag": "BASKETBALL",
@@ -3300,7 +3355,7 @@
           "source": "kalshi",
           "template": "college basketball m top * ranked teams ap poll",
           "title_ilike": "College Basketball (M): Top % Ranked Teams AP Poll%",
-          "title_template": "College Basketball (M): Top 5 Ranked Teams on Apr 6 AP Poll",
+          "title_template": "College Basketball (M): Top Ranked Teams AP Poll {deadline}",
           "kicker_prefix": "BASKETBALL",
           "kicker_include_date": false,
           "subject_unit": "contenders",
@@ -3313,7 +3368,7 @@
     },
     {
       "slug": "proposed-kalshi-contenders-next-team",
-      "name": "contenders Next Team?",
+      "name": "Next Team",
       "source": "kalshi",
       "category": "football",
       "template_key": "* next team",
@@ -3324,175 +3379,181 @@
         {
           "id": 9512,
           "name": "Maxx Crosby's Next Team",
-          "subject": "Maxx Crosby's",
+          "subject": "Maxx Crosby",
           "resolution_date": "2026-12-01T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.8927,
+          "outcome_label": "Stays with Las Vegas or Retires"
         },
         {
           "id": 96147,
           "name": "Tyreek Hill's Next Team",
-          "subject": "Tyreek Hill's",
+          "subject": "Tyreek Hill",
           "resolution_date": "2026-12-31T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.375,
+          "outcome_label": "Stays with Miami or Retires"
         },
         {
           "id": 3452978,
           "name": "Trey Hendrickson's next team?",
-          "subject": "Trey Hendrickson's",
+          "subject": "Trey Hendrickson",
           "resolution_date": "2026-12-08T15:00:00+00:00",
           "yes_probability": null
         },
         {
           "id": 3452980,
           "name": "Rashid Shaheed's Next Team",
-          "subject": "Rashid Shaheed's",
+          "subject": "Rashid Shaheed",
           "resolution_date": "2026-12-01T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.8796,
+          "outcome_label": "Stays with Seattle or Retires"
         },
         {
           "id": 3452981,
           "name": "Malik Willis's next team?",
-          "subject": "Malik Willis's",
+          "subject": "Malik Willis",
           "resolution_date": "2026-12-08T15:00:00+00:00",
           "yes_probability": null
         },
         {
           "id": 3452982,
           "name": "Mike Evans's next team?",
-          "subject": "Mike Evans's",
+          "subject": "Mike Evans",
           "resolution_date": "2026-12-08T15:00:00+00:00",
           "yes_probability": null
         },
         {
           "id": 3452985,
           "name": "Kirk Cousins's Next Team",
-          "subject": "Kirk Cousins's",
+          "subject": "Kirk Cousins",
           "resolution_date": "2026-12-08T15:00:00+00:00",
           "yes_probability": null
         },
         {
           "id": 3452986,
           "name": "Jaelan Phillips's next team?",
-          "subject": "Jaelan Phillips's",
+          "subject": "Jaelan Phillips",
           "resolution_date": "2026-12-08T15:00:00+00:00",
           "yes_probability": null
         },
         {
           "id": 3452987,
           "name": "Alec Pierce's Next Team",
-          "subject": "Alec Pierce's",
+          "subject": "Alec Pierce",
           "resolution_date": "2026-12-01T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.965,
+          "outcome_label": "Stays with Indianapolis or Retires"
         },
         {
           "id": 3648046,
           "name": "Kyle Pitts's Next Team",
-          "subject": "Kyle Pitts's",
+          "subject": "Kyle Pitts",
           "resolution_date": "2026-12-01T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.915,
+          "outcome_label": "Stays with Atlanta or Retires"
         },
         {
           "id": 9396166,
           "name": "Dexter Lawrence's Next Team",
-          "subject": "Dexter Lawrence's",
+          "subject": "Dexter Lawrence",
           "resolution_date": "2026-12-08T15:00:00+00:00",
           "yes_probability": null
         },
         {
           "id": 12821421,
           "name": "Kayvon Thibodeaux's Next Team",
-          "subject": "Kayvon Thibodeaux's",
+          "subject": "Kayvon Thibodeaux",
           "resolution_date": "2026-12-01T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.5743,
+          "outcome_label": "Stays with New York G or Retires"
         },
         {
           "id": 19529192,
           "name": "Aaron Rodgers's Next Team",
-          "subject": "Aaron Rodgers's",
+          "subject": "Aaron Rodgers",
           "resolution_date": "2026-12-01T04:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 27558446,
           "name": "Yandy Diaz's Next Team",
-          "subject": "Yandy Diaz's",
+          "subject": "Yandy Diaz",
           "resolution_date": "2027-03-25T03:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 27558448,
           "name": "Sandy Alcantara's Next Team",
-          "subject": "Sandy Alcantara's",
+          "subject": "Sandy Alcantara",
           "resolution_date": "2027-03-25T03:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 27558449,
           "name": "Mike Trout's Next Team",
-          "subject": "Mike Trout's",
+          "subject": "Mike Trout",
           "resolution_date": "2027-03-25T03:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 27558450,
           "name": "Luis Severino's Next Team",
-          "subject": "Luis Severino's",
+          "subject": "Luis Severino",
           "resolution_date": "2027-03-25T03:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 27558451,
           "name": "Joe Ryan's Next Team",
-          "subject": "Joe Ryan's",
+          "subject": "Joe Ryan",
           "resolution_date": "2027-03-25T03:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 27558452,
           "name": "Jarren Duran's Next Team",
-          "subject": "Jarren Duran's",
+          "subject": "Jarren Duran",
           "resolution_date": "2027-03-25T03:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 27558454,
           "name": "Christian Walker's Next Team",
-          "subject": "Christian Walker's",
+          "subject": "Christian Walker",
           "resolution_date": "2027-03-25T03:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 27558456,
           "name": "Aroldis Chapman's Next Team",
-          "subject": "Aroldis Chapman's",
+          "subject": "Aroldis Chapman",
           "resolution_date": "2027-03-25T03:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 33281833,
           "name": "Caitlin Clark's Next Team",
-          "subject": "Caitlin Clark's",
+          "subject": "Caitlin Clark",
           "resolution_date": "2027-05-01T03:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 34277073,
           "name": "T.J. Watt's Next Team",
-          "subject": "T.J. Watt's",
+          "subject": "T.J. Watt",
           "resolution_date": "2026-12-01T04:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 52755787,
           "name": "Rafael Devers's Next Team",
-          "subject": "Rafael Devers's",
+          "subject": "Rafael Devers",
           "resolution_date": "2027-03-25T03:59:00+00:00",
           "yes_probability": null
         },
         {
           "id": 56914122,
           "name": "Francisco Lindor's Next Team",
-          "subject": "Francisco Lindor's",
+          "subject": "Francisco Lindor",
           "resolution_date": "2027-03-25T03:59:00+00:00",
           "yes_probability": null
         },
@@ -3714,7 +3775,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-kalshi-contenders-next-team",
-        "name": "contenders Next Team?",
+        "name": "Next Team",
         "kind": "roundup",
         "category": "football",
         "tag": "FOOTBALL",
@@ -3740,7 +3801,7 @@
           "source": "kalshi",
           "template": "* next team",
           "title_ilike": "% Next Team%",
-          "title_template": "contenders Next Team?",
+          "title_template": "Next Team",
           "kicker_prefix": "FOOTBALL",
           "kicker_include_date": false,
           "subject_unit": "contenders",
@@ -3753,7 +3814,7 @@
     },
     {
       "slug": "proposed-polymarket-ncaa-football-contenders-2026-win-total",
-      "name": "NCAA Football: Alabama 2026 Win Total",
+      "name": "NCAA Football: 2026 Win Total",
       "source": "polymarket",
       "category": "football",
       "template_key": "ncaa football * 2026 win total",
@@ -3766,14 +3827,16 @@
           "name": "NCAA Football: Alabama 2026 Win Total",
           "subject": "Alabama",
           "resolution_date": "2026-12-27T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "6.5+ Wins"
         },
         {
           "id": 58900185,
           "name": "NCAA Football: Washington 2026 Win Total",
           "subject": "Washington",
           "resolution_date": "2026-12-27T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.265,
+          "outcome_label": "6.5+ Wins"
         },
         {
           "id": 58900187,
@@ -3794,21 +3857,24 @@
           "name": "NCAA Football: Virginia 2026 Win Total",
           "subject": "Virginia",
           "resolution_date": "2026-12-27T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.572,
+          "outcome_label": "5.5+ Wins"
         },
         {
           "id": 58900190,
           "name": "NCAA Football: Vanderbilt 2026 Win Total",
           "subject": "Vanderbilt",
           "resolution_date": "2026-12-27T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "3.5+ Wins"
         },
         {
           "id": 58900192,
           "name": "NCAA Football: Utah 2026 Win Total",
           "subject": "Utah",
           "resolution_date": "2026-12-27T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "6.5+ Wins"
         },
         {
           "id": 58900193,
@@ -3829,7 +3895,8 @@
           "name": "NCAA Football: Texas 2026 Win Total",
           "subject": "Texas",
           "resolution_date": "2026-12-27T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.945,
+          "outcome_label": "7.5+ Wins"
         },
         {
           "id": 58900201,
@@ -3969,7 +4036,8 @@
           "name": "NCAA Football: Ole Miss 2026 Win Total",
           "subject": "Ole Miss",
           "resolution_date": "2026-12-27T04:59:00+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "5.5+ Wins"
         },
         {
           "id": 58900239,
@@ -4140,7 +4208,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-polymarket-ncaa-football-contenders-2026-win-total",
-        "name": "NCAA Football: Alabama 2026 Win Total",
+        "name": "NCAA Football: 2026 Win Total",
         "kind": "roundup",
         "category": "football",
         "tag": "FOOTBALL",
@@ -4166,7 +4234,7 @@
           "source": "polymarket",
           "template": "ncaa football * 2026 win total",
           "title_ilike": "NCAA Football: % 2026 Win Total%",
-          "title_template": "NCAA Football: Alabama 2026 Win Total",
+          "title_template": "NCAA Football: 2026 Win Total",
           "kicker_prefix": "FOOTBALL",
           "kicker_include_date": false,
           "subject_unit": "contenders",
@@ -4179,7 +4247,7 @@
     },
     {
       "slug": "proposed-kalshi-candidates-democratic-nominee",
-      "name": "TX-38 Democratic nominee?",
+      "name": "Democratic nominee",
       "source": "kalshi",
       "category": "politics",
       "template_key": "* democratic nominee",
@@ -4503,7 +4571,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-kalshi-candidates-democratic-nominee",
-        "name": "TX-38 Democratic nominee?",
+        "name": "Democratic nominee",
         "kind": "roundup",
         "category": "politics",
         "tag": "POLITICS",
@@ -4529,7 +4597,7 @@
           "source": "kalshi",
           "template": "* democratic nominee",
           "title_ilike": "% Democratic nominee%",
-          "title_template": "TX-38 Democratic nominee?",
+          "title_template": "Democratic nominee",
           "kicker_prefix": "POLITICS",
           "kicker_include_date": false,
           "subject_unit": "candidates",
@@ -4542,7 +4610,7 @@
     },
     {
       "slug": "proposed-kalshi-college-basketball-m-contenders-ranked-team-ap-p",
-      "name": "College Basketball (M): #1 Ranked Team on Dec 21 AP Poll",
+      "name": "College Basketball (M): Ranked Team AP Poll",
       "source": "kalshi",
       "category": "basketball",
       "template_key": "college basketball m * ranked team ap poll",
@@ -4555,42 +4623,48 @@
           "name": "College Basketball (M): #1 Ranked Team on Dec 21 AP Poll",
           "subject": "#1",
           "resolution_date": "2026-12-31T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.3709,
+          "outcome_label": "Duke"
         },
         {
           "id": 52755954,
           "name": "College Basketball (M): #1 Ranked Team on Dec 14 AP Poll",
           "subject": "#1",
           "resolution_date": "2026-12-31T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.3662,
+          "outcome_label": "Duke"
         },
         {
           "id": 52755955,
           "name": "College Basketball (M): #1 Ranked Team on Dec 7 AP Poll",
           "subject": "#1",
           "resolution_date": "2026-12-31T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.3776,
+          "outcome_label": "Duke"
         },
         {
           "id": 52755956,
           "name": "College Basketball (M): #1 Ranked Team on Nov 30 AP Poll",
           "subject": "#1",
           "resolution_date": "2026-12-31T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.3586,
+          "outcome_label": "Duke"
         },
         {
           "id": 52755957,
           "name": "College Basketball (M): #1 Ranked Team on Nov 23 AP Poll",
           "subject": "#1",
           "resolution_date": "2026-12-31T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.3312,
+          "outcome_label": "Duke"
         },
         {
           "id": 52755958,
           "name": "College Basketball (M): #1 Ranked Team on Nov 16 AP Poll",
           "subject": "#1",
           "resolution_date": "2026-12-31T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.3425,
+          "outcome_label": "Duke"
         },
         {
           "id": 67792435,
@@ -4625,7 +4699,8 @@
           "name": "College Basketball (M): #3 Ranked Team on Feb 22 AP Poll",
           "subject": "#3",
           "resolution_date": "2027-02-22T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.95,
+          "outcome_label": "Kentucky"
         },
         {
           "id": 67792464,
@@ -4646,7 +4721,8 @@
           "name": "College Basketball (M): #2 Ranked Team on Feb 15 AP Poll",
           "subject": "#2",
           "resolution_date": "2027-02-15T15:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.95,
+          "outcome_label": "Grand Canyon"
         },
         {
           "id": 67792497,
@@ -4866,7 +4942,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-kalshi-college-basketball-m-contenders-ranked-team-ap-p",
-        "name": "College Basketball (M): #1 Ranked Team on Dec 21 AP Poll",
+        "name": "College Basketball (M): Ranked Team AP Poll",
         "kind": "roundup",
         "category": "basketball",
         "tag": "BASKETBALL",
@@ -4892,7 +4968,7 @@
           "source": "kalshi",
           "template": "college basketball m * ranked team ap poll",
           "title_ilike": "College Basketball (M): % Ranked Team AP Poll%",
-          "title_template": "College Basketball (M): #1 Ranked Team on Dec 21 AP Poll",
+          "title_template": "College Basketball (M): Ranked Team AP Poll {deadline}",
           "kicker_prefix": "BASKETBALL",
           "kicker_include_date": false,
           "subject_unit": "contenders",
@@ -4905,7 +4981,7 @@
     },
     {
       "slug": "proposed-kalshi-rain-in-cities",
-      "name": "Rain in NYC in",
+      "name": "Rain in cities",
       "source": "kalshi",
       "category": "weather",
       "template_key": "rain in *",
@@ -5114,49 +5190,56 @@
           "name": "Rain in Las Vegas in Nov 2026?",
           "subject": "Las Vegas",
           "resolution_date": "2026-12-01T04:59:59+00:00",
-          "yes_probability": null
+          "yes_probability": 0.24,
+          "outcome_label": "Above 1 inch"
         },
         {
           "id": 67804559,
           "name": "Rain in Indianapolis in Nov 2026?",
           "subject": "Indianapolis",
           "resolution_date": "2026-12-01T04:59:59+00:00",
-          "yes_probability": null
+          "yes_probability": 0.845,
+          "outcome_label": "Above 1 inch"
         },
         {
           "id": 67804560,
           "name": "Rain in Newark in Nov 2026?",
           "subject": "Newark",
           "resolution_date": "2026-12-01T04:59:59+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "Above 1 inch"
         },
         {
           "id": 67804561,
           "name": "Rain in Detroit in Nov 2026?",
           "subject": "Detroit",
           "resolution_date": "2026-12-01T04:59:59+00:00",
-          "yes_probability": null
+          "yes_probability": 0.785,
+          "outcome_label": "Above 1 inch"
         },
         {
           "id": 67804562,
           "name": "Rain in Washington DC in Nov 2026?",
           "subject": "Washington DC",
           "resolution_date": "2026-12-01T04:59:59+00:00",
-          "yes_probability": null
+          "yes_probability": 0.81,
+          "outcome_label": "Above 1 inch"
         },
         {
           "id": 67804563,
           "name": "Rain in Boston in Nov 2026?",
           "subject": "Boston",
           "resolution_date": "2026-12-01T04:59:59+00:00",
-          "yes_probability": null
+          "yes_probability": 1.0,
+          "outcome_label": "Above 1 inch"
         },
         {
           "id": 67804564,
           "name": "Rain in Atlanta in Nov 2026?",
           "subject": "Atlanta",
           "resolution_date": "2026-12-01T04:59:59+00:00",
-          "yes_probability": null
+          "yes_probability": 0.96,
+          "outcome_label": "Above 1 inch"
         },
         {
           "id": 67804565,
@@ -5187,7 +5270,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-kalshi-rain-in-cities",
-        "name": "Rain in NYC in",
+        "name": "Rain in cities",
         "kind": "roundup",
         "category": "weather",
         "tag": "WEATHER",
@@ -5213,7 +5296,7 @@
           "source": "kalshi",
           "template": "rain in *",
           "title_ilike": "Rain in %",
-          "title_template": "Rain in NYC in {deadline}",
+          "title_template": "Rain in cities {deadline}",
           "kicker_prefix": "WEATHER",
           "kicker_include_date": true,
           "subject_unit": "cities",
@@ -5226,7 +5309,7 @@
     },
     {
       "slug": "proposed-polymarket-will-teams-finish-9th-24th-in-uecl-league-phase",
-      "name": "Will which team finish 9th-24th in UECL league phase?",
+      "name": "Which team will finish 9th-24th in UECL league phase?",
       "source": "polymarket",
       "category": "soccer",
       "template_key": "will * finish 9th-24th in uecl league phase",
@@ -5509,7 +5592,7 @@
         "href": "/collections/proposed-polymarket-will-teams-finish-9th-24th-in-uecl-league-phase",
         "kicker": "SOCCER",
         "tag": "SOCCER",
-        "title": "Will which team finish 9th-24th in UECL league phase?",
+        "title": "Which team will finish 9th-24th in UECL league phase?",
         "rows": [
           {
             "label": "Getafe",
@@ -5539,11 +5622,11 @@
         ],
         "count_line": "Showing 5 of 36 teams \u00b7 No number yet: AGF Aarhus, Ajax, Atalanta, Borac Banja Luka, Braga, Egnatia, Hearts, Iberia 1999, Kairat, Lugano, Midtjylland, Mjallby AIF, Nordsjaelland, Red Star Belgrade, Riga, Trabzonspor, Twente",
         "footer": "Each row is its own market. They don't add up to 100%.",
-        "text_390px": "SOCCER \u00b7 SOCCER\nWill which team finish 9th-24th in UECL league phase?\nGetafe \u2014 67%\nSint-Truiden \u2014 62%\nPanathinaikos \u2014 61%\nBrann \u2014 60%\nHajduk Split \u2014 59%\nShowing 5 of 36 teams \u00b7 No number yet: AGF Aarhus, Ajax, Atalanta, Borac Banja Luka, Braga, Egnatia, Hearts, Iberia 1999, Kairat, Lugano, Midtjylland, Mjallby AIF, Nordsjaelland, Red Star Belgrade, Riga, Trabzonspor, Twente\nEach row is its own market. They don't add up to 100%."
+        "text_390px": "SOCCER \u00b7 SOCCER\nWhich team will finish 9th-24th in UECL league phase?\nGetafe \u2014 67%\nSint-Truiden \u2014 62%\nPanathinaikos \u2014 61%\nBrann \u2014 60%\nHajduk Split \u2014 59%\nShowing 5 of 36 teams \u00b7 No number yet: AGF Aarhus, Ajax, Atalanta, Borac Banja Luka, Braga, Egnatia, Hearts, Iberia 1999, Kairat, Lugano, Midtjylland, Mjallby AIF, Nordsjaelland, Red Star Belgrade, Riga, Trabzonspor, Twente\nEach row is its own market. They don't add up to 100%."
       },
       "proposed_definition": {
         "slug": "proposed-polymarket-will-teams-finish-9th-24th-in-uecl-league-phase",
-        "name": "Will which team finish 9th-24th in UECL league phase?",
+        "name": "Which team will finish 9th-24th in UECL league phase?",
         "kind": "roundup",
         "category": "soccer",
         "tag": "SOCCER",
@@ -5569,7 +5652,7 @@
           "source": "polymarket",
           "template": "will * finish 9th-24th in uecl league phase",
           "title_ilike": "Will % finish 9th-24th in UECL league phase%",
-          "title_template": "Will which team finish 9th-24th in UECL league phase?",
+          "title_template": "Which team will finish 9th-24th in UECL league phase?",
           "kicker_prefix": "SOCCER",
           "kicker_include_date": false,
           "subject_unit": "teams",
@@ -5582,7 +5665,7 @@
     },
     {
       "slug": "proposed-polymarket-will-teams-finish-top-8-in-uecl-league-phase",
-      "name": "Will which team finish top 8 in UECL league phase?",
+      "name": "Which team will finish top 8 in UECL league phase?",
       "source": "polymarket",
       "category": "soccer",
       "template_key": "will * finish top 8 in uecl league phase",
@@ -5865,7 +5948,7 @@
         "href": "/collections/proposed-polymarket-will-teams-finish-top-8-in-uecl-league-phase",
         "kicker": "SOCCER",
         "tag": "SOCCER",
-        "title": "Will which team finish top 8 in UECL league phase?",
+        "title": "Which team will finish top 8 in UECL league phase?",
         "rows": [
           {
             "label": "Trabzonspor",
@@ -5895,11 +5978,11 @@
         ],
         "count_line": "Showing 5 of 36 teams \u00b7 No number yet: Atalanta, Braga, Brann, Gent, Lugano, Mjallby AIF",
         "footer": "Each row is its own market. They don't add up to 100%.",
-        "text_390px": "SOCCER \u00b7 SOCCER\nWill which team finish top 8 in UECL league phase?\nTrabzonspor \u2014 85%\nMonaco \u2014 83%\nBrighton & Hove Albion \u2014 78%\nSC Freiburg \u2014 66%\nPanathinaikos \u2014 60%\nShowing 5 of 36 teams \u00b7 No number yet: Atalanta, Braga, Brann, Gent, Lugano, Mjallby AIF\nEach row is its own market. They don't add up to 100%."
+        "text_390px": "SOCCER \u00b7 SOCCER\nWhich team will finish top 8 in UECL league phase?\nTrabzonspor \u2014 85%\nMonaco \u2014 83%\nBrighton & Hove Albion \u2014 78%\nSC Freiburg \u2014 66%\nPanathinaikos \u2014 60%\nShowing 5 of 36 teams \u00b7 No number yet: Atalanta, Braga, Brann, Gent, Lugano, Mjallby AIF\nEach row is its own market. They don't add up to 100%."
       },
       "proposed_definition": {
         "slug": "proposed-polymarket-will-teams-finish-top-8-in-uecl-league-phase",
-        "name": "Will which team finish top 8 in UECL league phase?",
+        "name": "Which team will finish top 8 in UECL league phase?",
         "kind": "roundup",
         "category": "soccer",
         "tag": "SOCCER",
@@ -5925,7 +6008,7 @@
           "source": "polymarket",
           "template": "will * finish top 8 in uecl league phase",
           "title_ilike": "Will % finish top 8 in UECL league phase%",
-          "title_template": "Will which team finish top 8 in UECL league phase?",
+          "title_template": "Which team will finish top 8 in UECL league phase?",
           "kicker_prefix": "SOCCER",
           "kicker_include_date": false,
           "subject_unit": "teams",
@@ -5938,7 +6021,7 @@
     },
     {
       "slug": "proposed-kalshi-candidates-republican-nominee",
-      "name": "candidates Republican nominee?",
+      "name": "Republican nominee",
       "source": "kalshi",
       "category": "politics",
       "template_key": "* republican nominee",
@@ -6199,7 +6282,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-kalshi-candidates-republican-nominee",
-        "name": "candidates Republican nominee?",
+        "name": "Republican nominee",
         "kind": "roundup",
         "category": "politics",
         "tag": "POLITICS",
@@ -6225,7 +6308,7 @@
           "source": "kalshi",
           "template": "* republican nominee",
           "title_ilike": "% Republican nominee%",
-          "title_template": "candidates Republican nominee?",
+          "title_template": "Republican nominee",
           "kicker_prefix": "POLITICS",
           "kicker_include_date": false,
           "subject_unit": "candidates",
@@ -6238,7 +6321,7 @@
     },
     {
       "slug": "proposed-kalshi-nhl-contenders-total-points",
-      "name": "NHL: WSH Capitals Total Points",
+      "name": "NHL: Total Points",
       "source": "kalshi",
       "category": "hockey",
       "template_key": "nhl * total points",
@@ -6321,154 +6404,176 @@
           "name": "NHL: PIT Penguins Total Points",
           "subject": "PIT Penguins",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.945,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693565,
           "name": "NHL: PHI Flyers Total Points",
           "subject": "PHI Flyers",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.84,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693566,
           "name": "NHL: OTT Senators Total Points",
           "subject": "OTT Senators",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693567,
           "name": "NHL: NYR Rangers Total Points",
           "subject": "NYR Rangers",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693568,
           "name": "NHL: NYI Islanders Total Points",
           "subject": "NYI Islanders",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.935,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693569,
           "name": "NHL: NSH Predators Total Points",
           "subject": "NSH Predators",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693570,
           "name": "NHL: NJ Devils Total Points",
           "subject": "NJ Devils",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.98,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693571,
           "name": "NHL: MTL Canadiens Total Points",
           "subject": "MTL Canadiens",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693572,
           "name": "NHL: MIN Wild Total Points",
           "subject": "MIN Wild",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.98,
+          "outcome_label": "75+ points"
         },
         {
           "id": 59693573,
           "name": "NHL: LA Kings Total Points",
           "subject": "LA Kings",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.945,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693574,
           "name": "NHL: FLA Panthers Total Points",
           "subject": "FLA Panthers",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693575,
           "name": "NHL: EDM Oilers Total Points",
           "subject": "EDM Oilers",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.98,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693576,
           "name": "NHL: DET Red Wings Total Points",
           "subject": "DET Red Wings",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.91,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693577,
           "name": "NHL: DAL Stars Total Points",
           "subject": "DAL Stars",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "80+ points"
         },
         {
           "id": 59693578,
           "name": "NHL: COL Avalanche Total Points",
           "subject": "COL Avalanche",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.98,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693579,
           "name": "NHL: CHI Blackhawks Total Points",
           "subject": "CHI Blackhawks",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.56,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693580,
           "name": "NHL: CGY Flames Total Points",
           "subject": "CGY Flames",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.73,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693581,
           "name": "NHL: CBJ Blue Jackets Total Points",
           "subject": "CBJ Blue Jackets",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.94,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693582,
           "name": "NHL: CAR Hurricanes Total Points",
           "subject": "CAR Hurricanes",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.98,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693583,
           "name": "NHL: BUF Sabres Total Points",
           "subject": "BUF Sabres",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "70+ points"
         },
         {
           "id": 59693584,
           "name": "NHL: BOS Bruins Total Points",
           "subject": "BOS Bruins",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "75+ points"
         },
         {
           "id": 59693585,
           "name": "NHL: ANA Ducks Total Points",
           "subject": "ANA Ducks",
           "resolution_date": "2027-04-18T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.955,
+          "outcome_label": "70+ points"
         }
       ],
       "quotes": {
@@ -6492,7 +6597,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-kalshi-nhl-contenders-total-points",
-        "name": "NHL: WSH Capitals Total Points",
+        "name": "NHL: Total Points",
         "kind": "roundup",
         "category": "hockey",
         "tag": "HOCKEY",
@@ -6518,7 +6623,7 @@
           "source": "kalshi",
           "template": "nhl * total points",
           "title_ilike": "NHL: % Total Points%",
-          "title_template": "NHL: WSH Capitals Total Points",
+          "title_template": "NHL: Total Points",
           "kicker_prefix": "HOCKEY",
           "kicker_include_date": false,
           "subject_unit": "contenders",
@@ -6531,7 +6636,7 @@
     },
     {
       "slug": "proposed-polymarket-will-subjects-make-the-top-10-in-the-2026-atp-en",
-      "name": "Will which subject Make the Top 10 in the 2026 ATP end of year rankings?",
+      "name": "Who will Make the Top 10 in the 2026 ATP end of year rankings?",
       "source": "polymarket",
       "category": "tennis",
       "template_key": "will * make the top 10 in the 2026 atp end of year rankings",
@@ -6778,7 +6883,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-polymarket-will-subjects-make-the-top-10-in-the-2026-atp-en",
-        "name": "Will which subject Make the Top 10 in the 2026 ATP end of year rankings?",
+        "name": "Who will Make the Top 10 in the 2026 ATP end of year rankings?",
         "kind": "roundup",
         "category": "tennis",
         "tag": "TENNIS",
@@ -6804,7 +6909,7 @@
           "source": "polymarket",
           "template": "will * make the top 10 in the 2026 atp end of year rankings",
           "title_ilike": "Will % Make the Top 10 in the 2026 ATP end of year rankings%",
-          "title_template": "Will which subject Make the Top 10 in the 2026 ATP end of year rankings?",
+          "title_template": "Who will Make the Top 10 in the 2026 ATP end of year rankings?",
           "kicker_prefix": "TENNIS",
           "kicker_include_date": false,
           "subject_unit": "subjects",
@@ -6817,7 +6922,7 @@
     },
     {
       "slug": "proposed-kalshi-pro-basketball-teams-total-wins",
-      "name": "Pro Basketball: teams Total Wins?",
+      "name": "Pro Basketball: Total Wins",
       "source": "kalshi",
       "category": "basketball",
       "template_key": "pro basketball * total wins",
@@ -6830,210 +6935,240 @@
           "name": "Pro Basketball: Washington Total Wins",
           "subject": "Washington",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.995,
+          "outcome_label": "10+ wins"
         },
         {
           "id": 52755723,
           "name": "Pro Basketball: Toronto Total Wins",
           "subject": "Toronto",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "20+ wins"
         },
         {
           "id": 52755724,
           "name": "Pro Basketball: Philadelphia Total Wins",
           "subject": "Philadelphia",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.995,
+          "outcome_label": "20+ wins"
         },
         {
           "id": 52755725,
           "name": "Pro Basketball: Orlando Total Wins",
           "subject": "Orlando",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.98,
+          "outcome_label": "20+ wins"
         },
         {
           "id": 52755726,
           "name": "Pro Basketball: New York Total Wins",
           "subject": "New York",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.98,
+          "outcome_label": "25+ wins"
         },
         {
           "id": 52755727,
           "name": "Pro Basketball: Milwaukee Total Wins",
           "subject": "Milwaukee",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.74,
+          "outcome_label": "15+ wins"
         },
         {
           "id": 52755728,
           "name": "Pro Basketball: Miami Total Wins",
           "subject": "Miami",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.965,
+          "outcome_label": "25+ wins"
         },
         {
           "id": 52755729,
           "name": "Pro Basketball: Indiana Total Wins",
           "subject": "Indiana",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.99,
+          "outcome_label": "10+ wins"
         },
         {
           "id": 52755730,
           "name": "Pro Basketball: Detroit Total Wins",
           "subject": "Detroit",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.96,
+          "outcome_label": "35+ wins"
         },
         {
           "id": 52755731,
           "name": "Pro Basketball: Cleveland Total Wins",
           "subject": "Cleveland",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.985,
+          "outcome_label": "20+ wins"
         },
         {
           "id": 52755732,
           "name": "Pro Basketball: Chicago Total Wins",
           "subject": "Chicago",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.935,
+          "outcome_label": "15+ wins"
         },
         {
           "id": 52755733,
           "name": "Pro Basketball: Charlotte Total Wins",
           "subject": "Charlotte",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.905,
+          "outcome_label": "20+ wins"
         },
         {
           "id": 52755734,
           "name": "Pro Basketball: Boston Total Wins",
           "subject": "Boston",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.985,
+          "outcome_label": "20+ wins"
         },
         {
           "id": 52755735,
           "name": "Pro Basketball: Brooklyn Total Wins",
           "subject": "Brooklyn",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.94,
+          "outcome_label": "10+ wins"
         },
         {
           "id": 52755736,
           "name": "Pro Basketball: Atlanta Total Wins",
           "subject": "Atlanta",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.935,
+          "outcome_label": "25+ wins"
         },
         {
           "id": 55674197,
           "name": "Pro Basketball: Utah Total Wins",
           "subject": "Utah",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.98,
+          "outcome_label": "10+ wins"
         },
         {
           "id": 55674198,
           "name": "Pro Basketball: San Antonio Total Wins",
           "subject": "San Antonio",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.985,
+          "outcome_label": "25+ wins"
         },
         {
           "id": 55674199,
           "name": "Pro Basketball: Sacramento Total Wins",
           "subject": "Sacramento",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.935,
+          "outcome_label": "10+ wins"
         },
         {
           "id": 55674200,
           "name": "Pro Basketball: Portland Total Wins",
           "subject": "Portland",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.985,
+          "outcome_label": "30+ wins"
         },
         {
           "id": 55674201,
           "name": "Pro Basketball: Phoenix Total Wins",
           "subject": "Phoenix",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.985,
+          "outcome_label": "15+ wins"
         },
         {
           "id": 55674202,
           "name": "Pro Basketball: Oklahoma City Total Wins",
           "subject": "Oklahoma City",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.985,
+          "outcome_label": "25+ wins"
         },
         {
           "id": 55674203,
           "name": "Pro Basketball: New Orleans Total Wins",
           "subject": "New Orleans",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.94,
+          "outcome_label": "15+ wins"
         },
         {
           "id": 55674204,
           "name": "Pro Basketball: Minnesota Total Wins",
           "subject": "Minnesota",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.945,
+          "outcome_label": "25+ wins"
         },
         {
           "id": 55674205,
           "name": "Pro Basketball: Memphis Total Wins",
           "subject": "Memphis",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "10+ wins"
         },
         {
           "id": 55674206,
           "name": "Pro Basketball: Los Angeles L Total Wins",
           "subject": "Los Angeles L",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.98,
+          "outcome_label": "20+ wins"
         },
         {
           "id": 55674207,
           "name": "Pro Basketball: Los Angeles C Total Wins",
           "subject": "Los Angeles C",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.885,
+          "outcome_label": "20+ wins"
         },
         {
           "id": 55674208,
           "name": "Pro Basketball: Houston Total Wins",
           "subject": "Houston",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.995,
+          "outcome_label": "35+ wins"
         },
         {
           "id": 55674209,
           "name": "Pro Basketball: Golden State Total Wins",
           "subject": "Golden State",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "20+ wins"
         },
         {
           "id": 55674210,
           "name": "Pro Basketball: Denver Total Wins",
           "subject": "Denver",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.975,
+          "outcome_label": "25+ wins"
         },
         {
           "id": 55674211,
           "name": "Pro Basketball: Dallas Total Wins",
           "subject": "Dallas",
           "resolution_date": "2027-05-08T14:00:00+00:00",
-          "yes_probability": null
+          "yes_probability": 0.955,
+          "outcome_label": "25+ wins"
         }
       ],
       "quotes": {
@@ -7057,7 +7192,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-kalshi-pro-basketball-teams-total-wins",
-        "name": "Pro Basketball: teams Total Wins?",
+        "name": "Pro Basketball: Total Wins",
         "kind": "roundup",
         "category": "basketball",
         "tag": "BASKETBALL",
@@ -7083,7 +7218,7 @@
           "source": "kalshi",
           "template": "pro basketball * total wins",
           "title_ilike": "Pro Basketball: % Total Wins%",
-          "title_template": "Pro Basketball: teams Total Wins?",
+          "title_template": "Pro Basketball: Total Wins",
           "kicker_prefix": "BASKETBALL",
           "kicker_include_date": false,
           "subject_unit": "teams",
@@ -7096,7 +7231,7 @@
     },
     {
       "slug": "proposed-polymarket-will-contenders-be-a-top-4-seed-in-the-2027-coll",
-      "name": "Will which contender be a top 4 seed in the 2027 College Football Playoffs?",
+      "name": "Who will be a top 4 seed in the 2027 College Football Playoffs?",
       "source": "polymarket",
       "category": "football",
       "template_key": "will * be a top 4 seed in the 2027 college football playoffs",
@@ -7336,7 +7471,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-polymarket-will-contenders-be-a-top-4-seed-in-the-2027-coll",
-        "name": "Will which contender be a top 4 seed in the 2027 College Football Playoffs?",
+        "name": "Who will be a top 4 seed in the 2027 College Football Playoffs?",
         "kind": "roundup",
         "category": "football",
         "tag": "FOOTBALL",
@@ -7362,7 +7497,7 @@
           "source": "polymarket",
           "template": "will * be a top 4 seed in the 2027 college football playoffs",
           "title_ilike": "Will % be a top 4 seed in the 2027 College Football Playoffs%",
-          "title_template": "Will which contender be a top 4 seed in the 2027 College Football Playoffs?",
+          "title_template": "Who will be a top 4 seed in the 2027 College Football Playoffs?",
           "kicker_prefix": "FOOTBALL",
           "kicker_include_date": false,
           "subject_unit": "contenders",
@@ -7375,7 +7510,7 @@
     },
     {
       "slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-liga",
-      "name": "Will which contender be relegated from the 2026 Liga Profesional (Argentina)?",
+      "name": "Who will be relegated from the 2026 Liga Profesional (Argentina)?",
       "source": "polymarket",
       "category": "soccer",
       "template_key": "will * be relegated from the 2026 liga profesional argentina",
@@ -7616,7 +7751,7 @@
         "href": "/collections/proposed-polymarket-will-contenders-be-relegated-from-the-2026-liga",
         "kicker": "SOCCER",
         "tag": "SOCCER",
-        "title": "Will which contender be relegated from the 2026 Liga Profesional (Argentina)?",
+        "title": "Who will be relegated from the 2026 Liga Profesional (Argentina)?",
         "rows": [
           {
             "label": "Estudiantes (RC)",
@@ -7646,11 +7781,11 @@
         ],
         "count_line": "Showing 5 of 30 contenders",
         "footer": "Each row is its own market. They don't add up to 100%.",
-        "text_390px": "SOCCER \u00b7 SOCCER\nWill which contender be relegated from the 2026 Liga Profesional (Argentina)?\nEstudiantes (RC) \u2014 97%\nAldosivi \u2014 91%\nDeportivo Riestra \u2014 4%\nLan\u00fas \u2014 3%\nTalleres (C) \u2014 3%\nShowing 5 of 30 contenders\nEach row is its own market. They don't add up to 100%."
+        "text_390px": "SOCCER \u00b7 SOCCER\nWho will be relegated from the 2026 Liga Profesional (Argentina)?\nEstudiantes (RC) \u2014 97%\nAldosivi \u2014 91%\nDeportivo Riestra \u2014 4%\nLan\u00fas \u2014 3%\nTalleres (C) \u2014 3%\nShowing 5 of 30 contenders\nEach row is its own market. They don't add up to 100%."
       },
       "proposed_definition": {
         "slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-liga",
-        "name": "Will which contender be relegated from the 2026 Liga Profesional (Argentina)?",
+        "name": "Who will be relegated from the 2026 Liga Profesional (Argentina)?",
         "kind": "roundup",
         "category": "soccer",
         "tag": "SOCCER",
@@ -7676,7 +7811,7 @@
           "source": "polymarket",
           "template": "will * be relegated from the 2026 liga profesional argentina",
           "title_ilike": "Will % be relegated from the 2026 Liga Profesional (Argentina)%",
-          "title_template": "Will which contender be relegated from the 2026 Liga Profesional (Argentina)?",
+          "title_template": "Who will be relegated from the 2026 Liga Profesional (Argentina)?",
           "kicker_prefix": "SOCCER",
           "kicker_include_date": false,
           "subject_unit": "contenders",
@@ -7689,7 +7824,7 @@
     },
     {
       "slug": "proposed-polymarket-will-subjects-qualify-for-the-nitto-atp-finals",
-      "name": "Will which subject Qualify for the Nitto ATP Finals?",
+      "name": "Who will Qualify for the Nitto ATP Finals?",
       "source": "polymarket",
       "category": "tennis",
       "template_key": "will * qualify for the nitto atp finals",
@@ -7929,7 +8064,7 @@
       "card_words_390px": null,
       "proposed_definition": {
         "slug": "proposed-polymarket-will-subjects-qualify-for-the-nitto-atp-finals",
-        "name": "Will which subject Qualify for the Nitto ATP Finals?",
+        "name": "Who will Qualify for the Nitto ATP Finals?",
         "kind": "roundup",
         "category": "tennis",
         "tag": "TENNIS",
@@ -7955,7 +8090,7 @@
           "source": "polymarket",
           "template": "will * qualify for the nitto atp finals",
           "title_ilike": "Will % Qualify for the Nitto ATP Finals%",
-          "title_template": "Will which subject Qualify for the Nitto ATP Finals {deadline}?",
+          "title_template": "Who will Qualify for the Nitto ATP Finals {deadline}?",
           "kicker_prefix": "TENNIS",
           "kicker_include_date": true,
           "subject_unit": "subjects",
@@ -7968,7 +8103,7 @@
     },
     {
       "slug": "proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
-      "name": "Will which team advance to the World Series in the 2027 MLB Playoffs?",
+      "name": "Which team will advance to the World Series in the 2027 MLB Playoffs?",
       "source": "polymarket",
       "category": "baseball",
       "template_key": "will * advance to the world series in the 2027 mlb playoffs",
@@ -8209,7 +8344,7 @@
         "href": "/collections/proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
         "kicker": "BASEBALL",
         "tag": "BASEBALL",
-        "title": "Will which team advance to the World Series in the 2027 MLB Playoffs?",
+        "title": "Which team will advance to the World Series in the 2027 MLB Playoffs?",
         "rows": [
           {
             "label": "Tampa Bay Rays",
@@ -8239,11 +8374,11 @@
         ],
         "count_line": "Showing 5 of 30 teams",
         "footer": "Each row is its own market. They don't add up to 100%.",
-        "text_390px": "BASEBALL \u00b7 BASEBALL\nWill which team advance to the World Series in the 2027 MLB Playoffs?\nTampa Bay Rays \u2014 54%\nLos Angeles Dodgers \u2014 32%\nMilwaukee Brewers \u2014 26%\nNew York Yankees \u2014 25%\nCleveland Guardians \u2014 16%\nShowing 5 of 30 teams\nEach row is its own market. They don't add up to 100%."
+        "text_390px": "BASEBALL \u00b7 BASEBALL\nWhich team will advance to the World Series in the 2027 MLB Playoffs?\nTampa Bay Rays \u2014 54%\nLos Angeles Dodgers \u2014 32%\nMilwaukee Brewers \u2014 26%\nNew York Yankees \u2014 25%\nCleveland Guardians \u2014 16%\nShowing 5 of 30 teams\nEach row is its own market. They don't add up to 100%."
       },
       "proposed_definition": {
         "slug": "proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
-        "name": "Will which team advance to the World Series in the 2027 MLB Playoffs?",
+        "name": "Which team will advance to the World Series in the 2027 MLB Playoffs?",
         "kind": "roundup",
         "category": "baseball",
         "tag": "BASEBALL",
@@ -8269,7 +8404,7 @@
           "source": "polymarket",
           "template": "will * advance to the world series in the 2027 mlb playoffs",
           "title_ilike": "Will % advance to the World Series in the 2027 MLB Playoffs%",
-          "title_template": "Will which team advance to the World Series in the 2027 MLB Playoffs?",
+          "title_template": "Which team will advance to the World Series in the 2027 MLB Playoffs?",
           "kicker_prefix": "BASEBALL",
           "kicker_include_date": false,
           "subject_unit": "teams",
@@ -8282,7 +8417,7 @@
     },
     {
       "slug": "proposed-polymarket-will-the-contenders-make-the-2026-27-nhl-playoff",
-      "name": "Will the contenders make the 2026-27 NHL Playoffs?",
+      "name": "Who will make the 2026-27 NHL Playoffs?",
       "source": "polymarket",
       "category": "hockey",
       "template_key": "will the * make the 2026-27 nhl playoffs",
@@ -8516,7 +8651,7 @@
         "href": "/collections/proposed-polymarket-will-the-contenders-make-the-2026-27-nhl-playoff",
         "kicker": "HOCKEY",
         "tag": "HOCKEY",
-        "title": "Will the contenders make the 2026-27 NHL Playoffs?",
+        "title": "Who will make the 2026-27 NHL Playoffs?",
         "rows": [
           {
             "label": "Minnesota Wild",
@@ -8546,11 +8681,11 @@
         ],
         "count_line": "Showing 5 of 29 contenders",
         "footer": "Each row is its own market. They don't add up to 100%.",
-        "text_390px": "HOCKEY \u00b7 HOCKEY\nWill the contenders make the 2026-27 NHL Playoffs?\nMinnesota Wild \u2014 95%\nCarolina Hurricanes \u2014 93%\nEdmonton Oilers \u2014 91%\nColorado Avalanche \u2014 90%\nVegas Golden Knights \u2014 89%\nShowing 5 of 29 contenders\nEach row is its own market. They don't add up to 100%."
+        "text_390px": "HOCKEY \u00b7 HOCKEY\nWho will make the 2026-27 NHL Playoffs?\nMinnesota Wild \u2014 95%\nCarolina Hurricanes \u2014 93%\nEdmonton Oilers \u2014 91%\nColorado Avalanche \u2014 90%\nVegas Golden Knights \u2014 89%\nShowing 5 of 29 contenders\nEach row is its own market. They don't add up to 100%."
       },
       "proposed_definition": {
         "slug": "proposed-polymarket-will-the-contenders-make-the-2026-27-nhl-playoff",
-        "name": "Will the contenders make the 2026-27 NHL Playoffs?",
+        "name": "Who will make the 2026-27 NHL Playoffs?",
         "kind": "roundup",
         "category": "hockey",
         "tag": "HOCKEY",
@@ -8576,7 +8711,7 @@
           "source": "polymarket",
           "template": "will the * make the 2026-27 nhl playoffs",
           "title_ilike": "Will the % make the 2026-27 NHL Playoffs%",
-          "title_template": "Will the contenders make the 2026-27 NHL Playoffs?",
+          "title_template": "Who will make the 2026-27 NHL Playoffs?",
           "kicker_prefix": "HOCKEY",
           "kicker_include_date": false,
           "subject_unit": "contenders",

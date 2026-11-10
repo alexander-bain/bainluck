@@ -53,7 +53,7 @@ function SiblingCell({
       {waitingForGrades ? (
         <>
           <span className="mt-1 block" data-sibling-waiting-for-grades="">
-            {"Waiting for grades: "}
+            {(cell.gradedK ?? 0) === 0 ? "Not measured: " : "Waiting for grades: "}
             <Figure
               truth={truth}
               value={String(cell.gradedK)}
@@ -69,7 +69,7 @@ function SiblingCell({
             >
               {cell.n.toLocaleString("en-US")}
             </Figure>
-            {" graded ("}
+            {(cell.gradedK ?? 0) === 0 ? " test cards graded (" : " graded ("}
             <Figure
               truth={truth}
               value={String(ungradedCount)}
@@ -118,24 +118,51 @@ function SiblingCell({
           )}
         </>
       ) : (
-        <span className="mt-1 block">
-          <Figure truth={truth} value={`${cell.k}/${cell.n}`} className="text-text-primary">
-            {`${cell.k.toLocaleString("en-US")}/${cell.n.toLocaleString("en-US")}`}
-          </Figure>
-          {cell.wilson95 && (
-            <>
-              {" ("}
+        <>
+          <span className="mt-1 block">
+            <Figure truth={truth} value={`${cell.k}/${cell.n}`} className="text-text-primary">
+              {`${cell.k.toLocaleString("en-US")}/${cell.n.toLocaleString("en-US")}`}
+            </Figure>
+            {cell.wilson95 && (
+              <>
+                {" ("}
+                <Figure
+                  truth={truth}
+                  value={`${cell.wilson95[0]}–${cell.wilson95[1]}%`}
+                  className="text-text-secondary"
+                >
+                  {`${cell.wilson95[0].toFixed(1)}–${cell.wilson95[1].toFixed(1)}%`}
+                </Figure>
+                {")"}
+              </>
+            )}
+          </span>
+          {cell.strictAmazingK !== undefined && (
+            <span className="mt-0.5 block text-text-secondary" data-sibling-strict-amazing="">
+              {"Counting 'Amazing' and 'Fine' as better; strict 'Amazing' only: "}
               <Figure
                 truth={truth}
-                value={`${cell.wilson95[0]}–${cell.wilson95[1]}%`}
-                className="text-text-secondary"
+                value={`${cell.strictAmazingK}/${cell.n}`}
+                className="text-text-primary"
               >
-                {`${cell.wilson95[0].toFixed(1)}–${cell.wilson95[1].toFixed(1)}%`}
+                {`${cell.strictAmazingK.toLocaleString("en-US")}/${cell.n.toLocaleString("en-US")}`}
               </Figure>
-              {")"}
-            </>
+              {cell.strictAmazingPct !== undefined && cell.strictAmazingPct !== null && (
+                <>
+                  {" ("}
+                  <Figure
+                    truth={truth}
+                    value={`${cell.strictAmazingPct}%`}
+                    className="text-text-secondary"
+                  >
+                    {`${cell.strictAmazingPct.toFixed(1)}%`}
+                  </Figure>
+                  {")"}
+                </>
+              )}
+            </span>
           )}
-        </span>
+        </>
       )}
     </td>
   );

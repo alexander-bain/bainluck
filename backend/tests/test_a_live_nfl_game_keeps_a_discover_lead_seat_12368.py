@@ -259,3 +259,65 @@ class TestEverythingElseIsUnchanged:
         mirrored = [tonights_games._is_marquee_game(c) for c in cards]
         assert mirrored == [_discover_event_is_marquee(c) for c in cards]
         assert mirrored == [True, False, True, False, False, False]
+
+
+# ── #12368 (b): one lead seat per top-tier league (Fable, 6:03 PM PT Mon Nov 9) ──
+#
+# Mon Nov 9 at 5:45 PM PT (`GET /api/feed?limit=40&event_pct=0.15`, ranker
+# `a8fef3e938a9`): the night's only NFL game, Bills @ Vikings, was live at seat 29.
+# Three live NBA games held all three lead seats, at scores 98, 94 and 94; the NFL
+# game served at 82. Every one is tier 1, so #12469's marquee group could not
+# separate them, and rank alone gave the NBA the whole lead.
+LAKERS, CAVALIERS, PACERS, BILLS = 15344868, 15344806, 15344871, 14780576
+
+
+def monday_night():
+    return [
+        live_game(LAKERS, "Atlanta Hawks", "Los Angeles Lakers",
+                  sport="basketball_nba", rank=98),
+        live_game(CAVALIERS, "Charlotte Hornets", "Cleveland Cavaliers",
+                  sport="basketball_nba", rank=94),
+        live_game(PACERS, "Dallas Mavericks", "Indiana Pacers",
+                  sport="basketball_nba", rank=94),
+        live_game(BILLS, "Minnesota Vikings", "Buffalo Bills",
+                  sport="americanfootball_nfl", rank=82),
+    ]
+
+
+class TestOneLeadSeatPerTopTierLeague:
+    def test_the_nights_only_nfl_game_takes_a_lead_seat(self):
+        deck = ranked(futures() + monday_night())
+        lead = compose_lead(deck, NOW, include_tonights_games=True)
+        assert ids(lead[:3]) == [LAKERS, BILLS, CAVALIERS]
+
+    def test_it_lands_in_the_seated_lead_inside_the_top_twenty(self):
+        page = served(ranked(futures() + monday_night()))
+        seats_11_to_13 = ids(page[OPENING_SEATS : OPENING_SEATS + 3])
+        assert BILLS in seats_11_to_13, seats_11_to_13
+        assert BILLS in ids(page[:20])
+
+    def test_two_games_from_one_league_keep_their_rank_order(self):
+        # NBA's second game still follows its first, and the tie at 94 keeps the
+        # feed's own order (Cavaliers before Pacers), exactly as before.
+        lead = compose_lead(ranked(monday_night()), NOW, include_tonights_games=True)
+        nba = [i for i in ids(lead) if i != BILLS]
+        assert nba == [LAKERS, CAVALIERS, PACERS]
+
+    def test_with_one_league_live_it_is_plain_rank_order(self):
+        nba_only = [g for g in monday_night() if g["data"]["id"] != BILLS]
+        lead = compose_lead(list(reversed(nba_only)), NOW, include_tonights_games=True)
+        assert ids(lead) == [LAKERS, PACERS, CAVALIERS]
+
+    def test_sundays_page_is_unchanged(self):
+        # Bruins, Villa and one NFL game are each their league's first turn.
+        page = served(reported_deck())
+        assert ids(page[OPENING_SEATS : OPENING_SEATS + 3]) == [BRUINS, VILLA, 14780573]
+
+    def test_a_lower_tier_game_still_waits_for_every_marquee_game(self):
+        # The turn applies inside the marquee group only: a tier-2 game ranked
+        # above them all still comes after the NBA's second and third games.
+        lead = compose_lead(
+            [princeton(rank=120), *monday_night()], NOW,
+            include_tonights_games=True, max_lead=5,
+        )
+        assert ids(lead) == [LAKERS, BILLS, CAVALIERS, PACERS, PRINCETON]

@@ -31,4 +31,3 @@
 
 - **Reviewed promotion (`promote_licensed_proposal_to_definition`):** Refuses unlicensed kinds (`HELD` / `FAIL` / `SUSPENDED`) or any kind without an `exam_receipt`. Once a kind earns `status: PASS` with its exam receipt, promotes proposals into `backend/data/containers/<slug>.json` with `authored_by.review_path = "tier-b-pr"`.
 - **Suspension (`detect_served_card_violation` + `suspend_grouping_kind`):** `run_licensed_promotion_pass` inspects `served_cards` for truth violations (settled members, fewer than 2 rows, out-of-range probabilities); one wrong served card transitions the kind's licence to `SUSPENDED` (recording `suspended_by_card_slug`, `suspended_reason`, and `suspended_at`) and stops new cards (`stopped_reason = "kind_suspended"`, `promoted_definitions = []`).
-
