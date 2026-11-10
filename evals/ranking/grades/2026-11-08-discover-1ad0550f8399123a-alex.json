@@ -1,0 +1,395 @@
+{
+  "slate_id": "1ad0550f8399123a",
+  "surface": "discover",
+  "captured_at": "2026-11-08T15:15:34.531983+00:00",
+  "ranker_version": "257db9356f23",
+  "grader": "alex",
+  "expert": true,
+  "source": "plane-pack",
+  "grades_allowed": [
+    "shareable",
+    "interesting",
+    "neither"
+  ],
+  "items": [
+    {
+      "position": 1,
+      "item_key": "bundle:theme:story:ai:109596-60607595-61329163-60635344",
+      "title": "AI",
+      "probability": null,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 2,
+      "item_key": "futures:67817888",
+      "title": "Gemini Carbon released by November 15, 2026?",
+      "probability": 0.83,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 3,
+      "item_key": "futures:68871621",
+      "title": "GPT Astra 6.1+ released?",
+      "probability": 0.39109213,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 4,
+      "item_key": "bundle:theme:story:major_entertainment_events:6173044-58492234-58492236-58492239",
+      "title": "Awards Season",
+      "probability": null,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 5,
+      "item_key": "futures:58492245",
+      "title": "Grammys 2027: Record of the Year Winner",
+      "probability": 0.258,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 6,
+      "item_key": "futures:58492244",
+      "title": "Grammys 2027: Best Rap Album Winner",
+      "probability": 0.45379081,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 7,
+      "item_key": "bundle:theme:story:ipo_markets:30635376-67722878-30691373-16623139",
+      "title": "IPOs",
+      "probability": null,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 8,
+      "item_key": "futures:60635342",
+      "title": "Will Kimi (Moonshot AI) IPO by March 31, 2027?",
+      "probability": 0.73,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 9,
+      "item_key": "futures:115608",
+      "title": "Largest IPO by market cap in 2026?",
+      "probability": 0.885,
+      "grade": "shareable",
+      "note": ""
+    },
+    {
+      "position": 10,
+      "item_key": "bundle:theme:story:aliens_disclosure:109435-67741088",
+      "title": "Aliens & UFOs",
+      "probability": null,
+      "grade": "shareable",
+      "note": ""
+    },
+    {
+      "position": 11,
+      "item_key": "event:15335252",
+      "title": "Chelsea @ Sunderland",
+      "probability": 0.564833,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 12,
+      "item_key": "event:14638897",
+      "title": "Cincinnati Bengals @ Atlanta Falcons",
+      "probability": 0.333013,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 13,
+      "item_key": "event:15335242",
+      "title": "Liverpool @ Crystal Palace",
+      "probability": 0.028833,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 14,
+      "item_key": "bundle:roundup:cfp-picture",
+      "title": "College Football Playoff picture",
+      "probability": null,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 15,
+      "item_key": "bundle:roundup:by-november-30",
+      "title": "By November 30",
+      "probability": null,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 16,
+      "item_key": "bundle:roundup:by-december-31",
+      "title": "By December 31",
+      "probability": null,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 17,
+      "item_key": "bundle:roundup:gta-vi-album-features",
+      "title": "Will they be featured on GTA VI: The Album?",
+      "probability": null,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 18,
+      "item_key": "bundle:roundup:snow-first-flakes-2026",
+      "title": "Will it snow by November 15?",
+      "probability": null,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 19,
+      "item_key": "bundle:roundup:golf-this-week",
+      "title": "Three tournaments",
+      "probability": null,
+      "grade": "neither",
+      "note": "Can’t see the contents of this card"
+    },
+    {
+      "position": 20,
+      "item_key": "bundle:roundup:for-scale-us-recession-2026",
+      "title": "The Iranian regime falls before 2027: as likely as a US recession by end of 2026",
+      "probability": null,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 21,
+      "item_key": "bundle:roundup:nfl-division-front-runners",
+      "title": "NFL division front-runners",
+      "probability": null,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 22,
+      "item_key": "bundle:theme:story:macro_rates:57574250-56995847",
+      "title": "Fed & Rates",
+      "probability": null,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 23,
+      "item_key": "bundle:theme:story:middle_east_conflict:113232-3484764-69603905-60627569-63720627-5349599",
+      "title": "Middle East",
+      "probability": null,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 24,
+      "item_key": "futures:61076598",
+      "title": "2027 PPA Tour Finals: To Reach the Final (Women's)",
+      "probability": 0.65,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 25,
+      "item_key": "event:15336253",
+      "title": "Real Betis @ Elche CF",
+      "probability": 0,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 26,
+      "item_key": "event:15343574",
+      "title": "Orlando Magic @ Golden State Warriors",
+      "probability": 1,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 27,
+      "item_key": "futures:69512172",
+      "title": "Where will it rain on November 8?",
+      "probability": 0.115,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 28,
+      "item_key": "concept:event:ufc:26nov21",
+      "title": "UFC Fight Night: Procházka vs. Stirling",
+      "probability": 0.5598,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 29,
+      "item_key": "futures:52755659",
+      "title": "2026-27 Stanley Cup® Final Winner",
+      "probability": 0.10900474,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 30,
+      "item_key": "futures:69442398",
+      "title": "What will the NYT front-page headlines say on Sunday? (November 15)",
+      "probability": 0.93,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 48,
+      "item_key": "futures:69430066",
+      "title": "What will Netflix, Inc. (NFLX) hit Week of November 9 2026?",
+      "probability": 0.565,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 53,
+      "item_key": "futures:68943121",
+      "title": "Will AECOM (ACM) beat quarterly earnings?",
+      "probability": 0.7995,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 55,
+      "item_key": "futures:64677254",
+      "title": "Military action against Saudi Oil Pipeline (East-West) by November 30?",
+      "probability": 0.675,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 67,
+      "item_key": "futures:64410880",
+      "title": "Who will headline Coachella 2027?",
+      "probability": 0.765,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 69,
+      "item_key": "futures:68785500",
+      "title": "Will Micron Technology, Inc. (MU) hit (LOW) $600 in November?",
+      "probability": 0.51,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 71,
+      "item_key": "futures:67074141",
+      "title": "ChatGPT Outage?",
+      "probability": 0.87,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 74,
+      "item_key": "futures:60607786",
+      "title": "UEFA Champions League: League Phase Winner",
+      "probability": 0.4529439,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 96,
+      "item_key": "futures:68727488",
+      "title": "How many Codex resets week of November 2?",
+      "probability": 0.48,
+      "grade": "interesting",
+      "note": ""
+    },
+    {
+      "position": 101,
+      "item_key": "futures:69412226",
+      "title": "#2 Free App in the US Apple App Store on November 13?",
+      "probability": 0.40816327,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 105,
+      "item_key": "futures:69582129",
+      "title": "Silver Up or Down - November 8, 6:15PM-6:30PM ET",
+      "probability": 0.5,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 106,
+      "item_key": "futures:69582130",
+      "title": "Gold Up or Down - November 8, 6:15PM-6:30PM ET",
+      "probability": 0.5,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 110,
+      "item_key": "tournament:ryder_cup",
+      "title": "Ryder Cup",
+      "probability": 0.52898001,
+      "grade": "shareable",
+      "note": ""
+    },
+    {
+      "position": 111,
+      "item_key": "futures:69186073",
+      "title": "Will Matthias Bluebaum finish in the Top 5 of Titled Tuesday on November 10?",
+      "probability": 0.515,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 117,
+      "item_key": "futures:69626691",
+      "title": "Will Nathan Kimsey finish in the Top 10 at the 2026 Abu Dhabi Championship?",
+      "probability": 0.9,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 120,
+      "item_key": "concept:event:ufc:27jan31",
+      "title": "UFC 336: Van vs. Kape",
+      "probability": 0.5427,
+      "grade": "neither",
+      "note": ""
+    },
+    {
+      "position": 128,
+      "item_key": "concept:event:ufc:26dec05",
+      "title": "UFC Fight Night: Adesanya vs Magomedov",
+      "probability": 0.5439,
+      "grade": "interesting",
+      "note": ""
+    }
+  ],
+  "not_on_slate": [
+    {
+      "position": null,
+      "item_key": "futures:67741088",
+      "title": "Trump declassifies new UFO files by November 30?",
+      "probability": 0.595,
+      "grade": "shareable",
+      "note": "",
+      "reason": "not served on its own; a member of the served bundle bundle:theme:story:aliens_disclosure:109435-67741088"
+    }
+  ]
+}
