@@ -703,11 +703,17 @@ def _card_entry_to_deck_item(
     count_line_val = str(card.get("count_line") or default_count_line)
     subtitle_val = card.get("subtitle")
     selection_type_val = str(card.get("selection_type") or "top_5")
+    graded_title_val = str(card.get("graded_title") or "").strip() or None
     tag_val = "BUBBLE · 50%" if selection_type_val == "bubble_50" else sport_cat.split("_")[-1].upper()
     return {
         "position": pos,
         "item_key": c_slug,
         "title": str(card.get("title") or c_slug),
+        **(
+            {"graded_title": graded_title_val}
+            if graded_title_val is not None
+            else {}
+        ),
         "source": first_source,
         "category": sport_cat,
         "template_key": str((card.get("selector") or {}).get("title_ilike") or ""),
@@ -722,6 +728,11 @@ def _card_entry_to_deck_item(
             "kicker": str(card.get("kicker") or kind_slug.upper()),
             "tag": tag_val,
             "title": str(card.get("title") or c_slug),
+            **(
+                {"graded_title": graded_title_val}
+                if graded_title_val is not None
+                else {}
+            ),
             "subtitle": str(subtitle_val) if subtitle_val else None,
             "rows": preview_rows,
             "count_line": count_line_val,

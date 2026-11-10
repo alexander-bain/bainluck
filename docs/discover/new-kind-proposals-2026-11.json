@@ -104,7 +104,12 @@
           "count_line": "Showing 4 of 32 teams",
           "selection_type": "top_5",
           "subject_unit": "teams",
-          "member_count": 32
+          "member_count": 32,
+          "race_name": "NHL 100-point club race",
+          "question_subtitle": "Which NHL teams will reach 100+ regular-season points in 2026\u201327?",
+          "bubble_title": null,
+          "unnumbered_count": 0,
+          "graded_title": "NHL 2026\u201327: Which clubs reach 100+ regular-season points?"
         },
         {
           "slug": "nhl-2026-teams-110-points-benchmark",
@@ -164,7 +169,12 @@
           "count_line": "Showing 4 of 32 teams",
           "selection_type": "top_5",
           "subject_unit": "teams",
-          "member_count": 32
+          "member_count": 32,
+          "race_name": "NHL 110-point club race",
+          "question_subtitle": "Which NHL teams will reach 110+ regular-season points in 2026\u201327?",
+          "bubble_title": null,
+          "unnumbered_count": 0,
+          "graded_title": "NHL 2026\u201327: Which clubs reach 110+ regular-season points?"
         },
         {
           "slug": "nhl-2026-players-100-points-leaders",
@@ -224,7 +234,12 @@
           "count_line": "Showing 4 of 101 players \u00b7 No number yet for 18 players",
           "selection_type": "top_5",
           "subject_unit": "players",
-          "member_count": 101
+          "member_count": 101,
+          "race_name": "NHL 100-point player race",
+          "question_subtitle": "Which NHL players will reach 100+ regular-season points in 2026\u201327?",
+          "bubble_title": null,
+          "unnumbered_count": 18,
+          "graded_title": "NHL 2026\u201327: Which players reach 100+ regular-season points?"
         },
         {
           "slug": "nfl-2026-receiving-td-8-leaders",
@@ -284,7 +299,12 @@
           "count_line": "Showing 4 of 9 players",
           "selection_type": "top_5",
           "subject_unit": "players",
-          "member_count": 9
+          "member_count": 9,
+          "race_name": "NFL 8+ receiving-TD race",
+          "question_subtitle": "Which NFL players will catch 8+ regular-season receiving touchdowns in 2026\u201327?",
+          "bubble_title": null,
+          "unnumbered_count": 0,
+          "graded_title": "NFL 2026\u201327: Who catches 7.5+ regular-season receiving touchdowns?"
         },
         {
           "slug": "nfl-2026-teams-10-wins-benchmark",
@@ -344,7 +364,12 @@
           "count_line": "Showing 4 of 15 teams",
           "selection_type": "top_5",
           "subject_unit": "teams",
-          "member_count": 15
+          "member_count": 15,
+          "race_name": "NFL 10+ win race",
+          "question_subtitle": "Which NFL teams will win 10+ regular-season games in 2026?",
+          "bubble_title": null,
+          "unnumbered_count": 0,
+          "graded_title": "NFL 2026: Which teams reach 9.5+ regular-season wins?"
         }
       ]
     },
@@ -434,7 +459,12 @@
           "count_line": "Showing 4 of 6 clubs",
           "selection_type": "top_5",
           "subject_unit": "clubs",
-          "member_count": 6
+          "member_count": 6,
+          "race_name": "LaLiga Champions League race",
+          "question_subtitle": "Which LaLiga clubs will qualify for the 2027\u201328 UEFA Champions League?",
+          "bubble_title": null,
+          "unnumbered_count": 0,
+          "graded_title": "LaLiga: Who qualifies for the 2027\u201328 UEFA Champions League?"
         },
         {
           "slug": "epl-2027-conference-league-qualifiers",
@@ -494,7 +524,12 @@
           "count_line": "Showing 4 of 20 clubs",
           "selection_type": "top_5",
           "subject_unit": "clubs",
-          "member_count": 20
+          "member_count": 20,
+          "race_name": "Premier League Conference League race",
+          "question_subtitle": "Which Premier League clubs will qualify for the 2027\u201328 UEFA Conference League?",
+          "bubble_title": null,
+          "unnumbered_count": 0,
+          "graded_title": "Premier League: Who qualifies for the 2027\u201328 UEFA Conference League?"
         },
         {
           "slug": "nhl-2027-second-round-advancement",
@@ -554,7 +589,12 @@
           "count_line": "Showing 4 of 32 teams",
           "selection_type": "top_5",
           "subject_unit": "teams",
-          "member_count": 32
+          "member_count": 32,
+          "race_name": "NHL Second Round race",
+          "question_subtitle": "Which NHL teams will advance to the 2027 Stanley Cup Second Round?",
+          "bubble_title": null,
+          "unnumbered_count": 0,
+          "graded_title": "NHL Playoffs: Who advances to the 2027 Second Round?"
         },
         {
           "slug": "nfl-2027-playoff-berth-contenders",
@@ -614,7 +654,12 @@
           "count_line": "Showing 4 of 32 teams",
           "selection_type": "top_5",
           "subject_unit": "teams",
-          "member_count": 32
+          "member_count": 32,
+          "race_name": "NFL playoff race",
+          "question_subtitle": "Which NFL teams will make the 2027 playoffs?",
+          "bubble_title": null,
+          "unnumbered_count": 0,
+          "graded_title": "NFL: Who makes the 2027 Playoffs?"
         },
         {
           "slug": "cfb-2027-playoff-top-4-seed-board",
@@ -674,7 +719,12 @@
           "count_line": "Showing 4 of 49 teams",
           "selection_type": "top_5",
           "subject_unit": "teams",
-          "member_count": 49
+          "member_count": 49,
+          "race_name": "College Football Playoff top-4 seed race",
+          "question_subtitle": "Which college football teams will earn a top-4 seed in 2027?",
+          "bubble_title": null,
+          "unnumbered_count": 0,
+          "graded_title": "College Football Playoff: Who earns a 2027 Top-4 Seed?"
         }
       ]
     }

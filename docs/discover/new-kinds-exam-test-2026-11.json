@@ -6,17 +6,26 @@
     "calibration_slate_id": "grouping-candidates-2026-11",
     "calibration_positions": "23-32",
     "grader": "alex",
+    "graded_on_pre_fix_headings": true,
+    "counts_as_pass_on_new_titles": false,
+    "grading_note": "Alex's 10 calibration grades on grouping-candidates-2026-11 (positions 23-32) were recorded on the pre-fix question headings (preserved as graded_title on each calibration card) and do not count as a pass on the new selection-carrying titles.",
     "season_stat_leaders": {
       "graded": 5,
       "yes": 5,
       "no": 0,
-      "pass_rate": 1.0
+      "pass_rate": 1.0,
+      "graded_on_pre_fix_headings": true,
+      "counts_as_pass_on_new_titles": false,
+      "new_title_yes": 0
     },
     "qualification_stage_board": {
       "graded": 5,
       "yes": 5,
       "no": 0,
-      "pass_rate": 1.0
+      "pass_rate": 1.0,
+      "graded_on_pre_fix_headings": true,
+      "counts_as_pass_on_new_titles": false,
+      "new_title_yes": 0
     },
     "boundary_unit_axis_failures": 0
   },
@@ -36,7 +45,9 @@
       "as_of_label": "as of Nov 10, 10:40 AM PT",
       "selector": {
         "sport": "icehockey_nhl",
-        "title_ilike": "Will the % record 80+ points?"
+        "title_ilike": "Will the % record 80+ points?",
+        "window": "2026-27-regular-season",
+        "selector": "threshold:80_team_points"
       },
       "stronger_single_alternative": {
         "market_id": 63218665,
@@ -90,76 +101,86 @@
           "destination_href": "/futures/63218648",
           "observed_at": "2026-11-10T18:21:32Z"
         }
-      ]
+      ],
+      "race_name": "NHL 80-point race",
+      "question_subtitle": "Which NHL teams will reach 80+ points in 2026–27?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
-      "slug": "nhl-teams-100-points-2026-27",
+      "slug": "nhl-players-80-points-2026-27",
       "kind": "season_stat_leaders",
-      "title": "Carolina Hurricanes lead the NHL 100-point race at 87%",
-      "subtitle": "Which NHL teams will reach 100+ points in 2026–27?",
-      "kicker": "NHL · SEASON STAT LEADERS",
-      "count_line": "Showing 5 of 32 teams",
-      "footer": "Each team is its own market. They don't add up to 100%.",
+      "title": "Connor McDavid and Nathan MacKinnon top the NHL 80-point player race at 96%",
+      "subtitle": "Which NHL players will reach 80+ points in 2026–27?",
+      "kicker": "NHL · SEASON MILESTONE",
+      "count_line": "Showing 5 of 101 players",
+      "footer": "Each player is their own market. They don't add up to 100%.",
       "selection_type": "top_5",
-      "subject_unit": "teams",
-      "member_count": 32,
-      "as_of": "2026-11-10T18:40:35Z",
-      "as_of_label": "as of Nov 10, 10:40 AM PT",
+      "subject_unit": "players",
+      "member_count": 101,
+      "race_name": "NHL 80-point player race",
+      "question_subtitle": "Which NHL players will reach 80+ points in 2026–27?",
+      "bubble_title": null,
+      "unnumbered_count": 4,
+      "as_of": "2026-11-10T19:53:50Z",
+      "as_of_label": "as of Nov 10, 11:53 AM PT",
       "selector": {
         "sport": "icehockey_nhl",
-        "title_ilike": "Will the % record 100+ points?"
+        "title_ilike": "Will % record 80+ points in the 2026-27 regular season?",
+        "window": "2026-27-regular-season",
+        "selector": "threshold:80_player_points"
       },
       "stronger_single_alternative": {
-        "market_id": 63218573,
-        "title": "Will the Carolina Hurricanes record 100+ points?",
-        "probability": 0.865,
-        "destination_href": "/futures/63218573"
+        "market_id": 63104762,
+        "title": "Will Connor McDavid record 80+ points in the 2026-27 regular season?",
+        "probability": 0.962,
+        "destination_href": "/futures/63104762"
       },
       "rows": [
         {
-          "market_id": 63218573,
-          "label": "Carolina Hurricanes",
-          "probability": 0.865,
-          "rendered_percent": 87,
+          "market_id": 63104762,
+          "label": "Connor McDavid",
+          "probability": 0.962,
+          "rendered_percent": 96,
           "source": "polymarket",
-          "destination_href": "/futures/63218573",
-          "observed_at": "2026-11-10T18:33:34Z"
+          "destination_href": "/futures/63104762",
+          "observed_at": "2026-11-10T19:51:08Z"
         },
         {
-          "market_id": 63218582,
-          "label": "Minnesota Wild",
-          "probability": 0.78,
-          "rendered_percent": 78,
+          "market_id": 63119236,
+          "label": "Nathan MacKinnon",
+          "probability": 0.9595,
+          "rendered_percent": 96,
           "source": "polymarket",
-          "destination_href": "/futures/63218582",
-          "observed_at": "2026-11-10T18:39:01Z"
+          "destination_href": "/futures/63119236",
+          "observed_at": "2026-11-10T19:41:31Z"
         },
         {
-          "market_id": 63218585,
-          "label": "New Jersey Devils",
-          "probability": 0.76,
-          "rendered_percent": 76,
+          "market_id": 63104768,
+          "label": "Leon Draisaitl",
+          "probability": 0.94,
+          "rendered_percent": 94,
           "source": "polymarket",
-          "destination_href": "/futures/63218585",
-          "observed_at": "2026-11-10T18:37:35Z"
+          "destination_href": "/futures/63104768",
+          "observed_at": "2026-11-08T09:51:14Z"
         },
         {
-          "market_id": 63218575,
-          "label": "Colorado Avalanche",
-          "probability": 0.7515,
-          "rendered_percent": 75,
+          "market_id": 63104766,
+          "label": "Kirill Kaprizov",
+          "probability": 0.935,
+          "rendered_percent": 94,
           "source": "polymarket",
-          "destination_href": "/futures/63218575",
-          "observed_at": "2026-11-10T18:35:15Z"
+          "destination_href": "/futures/63104766",
+          "observed_at": "2026-11-10T19:47:44Z"
         },
         {
-          "market_id": 63218579,
-          "label": "Edmonton Oilers",
-          "probability": 0.74,
-          "rendered_percent": 74,
+          "market_id": 63104764,
+          "label": "Jack Eichel",
+          "probability": 0.88,
+          "rendered_percent": 88,
           "source": "polymarket",
-          "destination_href": "/futures/63218579",
-          "observed_at": "2026-11-10T18:40:35Z"
+          "destination_href": "/futures/63104764",
+          "observed_at": "2026-11-10T19:53:50Z"
         }
       ]
     },
@@ -234,76 +255,86 @@
           "destination_href": "/futures/63123350",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "NHL 50-goal race",
+      "question_subtitle": "Which NHL players will score 50+ goals in 2026–27?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
-      "slug": "nhl-teams-110-points-2026-27",
+      "slug": "nfl-qbs-22-passing-tds-2026-27",
       "kind": "season_stat_leaders",
-      "title": "Carolina Hurricanes lead the NHL 110-point race at 67%",
-      "subtitle": "Which NHL teams will reach 110+ points in 2026–27?",
-      "kicker": "NHL · SEASON STAT LEADERS",
-      "count_line": "Showing 5 of 32 teams",
-      "footer": "Each team is its own market. They don't add up to 100%.",
+      "title": "Brock Purdy leads the NFL 22+ passing-TD race at 89%",
+      "subtitle": "Which NFL quarterbacks will throw 22+ passing touchdowns in 2026–27?",
+      "kicker": "NFL · SEASON MILESTONE",
+      "count_line": "Showing 5 of 6 quarterbacks",
+      "footer": "Each quarterback is their own market. They don't add up to 100%.",
       "selection_type": "top_5",
-      "subject_unit": "teams",
-      "member_count": 32,
-      "as_of": "2026-11-10T18:40:51Z",
-      "as_of_label": "as of Nov 10, 10:40 AM PT",
+      "subject_unit": "quarterbacks",
+      "member_count": 6,
+      "race_name": "NFL 22+ passing-TD race",
+      "question_subtitle": "Which NFL quarterbacks will throw 22+ passing touchdowns in 2026–27?",
+      "bubble_title": null,
+      "unnumbered_count": 0,
+      "as_of": "2026-11-10T19:40:26Z",
+      "as_of_label": "as of Nov 10, 11:40 AM PT",
       "selector": {
-        "sport": "icehockey_nhl",
-        "title_ilike": "Will the % record 110+ points?"
+        "sport": "americanfootball_nfl",
+        "title_ilike": "Pro Football: % 2026-27 Regular Season Passing Touchdowns",
+        "window": "2026-27-regular-season",
+        "selector": "threshold:21.5_passing_touchdowns"
       },
       "stronger_single_alternative": {
-        "market_id": 63218549,
-        "title": "Will the Minnesota Wild record 110+ points?",
-        "probability": 0.455,
-        "destination_href": "/futures/63218549"
+        "market_id": 58835739,
+        "title": "Pro Football: Brock Purdy 2026-27 Regular Season Passing Touchdowns (21.5+ passing TDs)",
+        "probability": 0.8885,
+        "destination_href": "/futures/58835739"
       },
       "rows": [
         {
-          "market_id": 63218540,
-          "label": "Carolina Hurricanes",
-          "probability": 0.665,
-          "rendered_percent": 67,
+          "market_id": 58835739,
+          "label": "Brock Purdy",
+          "probability": 0.8885,
+          "rendered_percent": 89,
           "source": "polymarket",
-          "destination_href": "/futures/63218540",
-          "observed_at": "2026-11-10T18:40:51Z"
+          "destination_href": "/futures/58835739",
+          "observed_at": "2026-11-10T19:40:24Z"
         },
         {
-          "market_id": 63218549,
-          "label": "Minnesota Wild",
-          "probability": 0.455,
-          "rendered_percent": 46,
+          "market_id": 58835741,
+          "label": "Aaron Rodgers",
+          "probability": 0.75,
+          "rendered_percent": 75,
           "source": "polymarket",
-          "destination_href": "/futures/63218549",
-          "observed_at": "2026-11-10T18:40:13Z"
+          "destination_href": "/futures/58835741",
+          "observed_at": "2026-11-10T19:40:26Z"
         },
         {
-          "market_id": 63218561,
-          "label": "Tampa Bay Lightning",
-          "probability": 0.445,
-          "rendered_percent": 45,
+          "market_id": 58833971,
+          "label": "Josh Allen",
+          "probability": 0.71,
+          "rendered_percent": 71,
           "source": "polymarket",
-          "destination_href": "/futures/63218561",
-          "observed_at": "2026-11-10T18:40:43Z"
+          "destination_href": "/futures/58833971",
+          "observed_at": "2026-11-10T19:40:16Z"
         },
         {
-          "market_id": 63218565,
-          "label": "Vegas Golden Knights",
-          "probability": 0.445,
-          "rendered_percent": 45,
+          "market_id": 58835737,
+          "label": "Bo Nix",
+          "probability": 0.375,
+          "rendered_percent": 38,
           "source": "polymarket",
-          "destination_href": "/futures/63218565",
-          "observed_at": "2026-11-10T18:40:29Z"
+          "destination_href": "/futures/58835737",
+          "observed_at": "2026-11-10T19:40:24Z"
         },
         {
-          "market_id": 63218546,
-          "label": "Edmonton Oilers",
-          "probability": 0.42,
-          "rendered_percent": 42,
+          "market_id": 58833973,
+          "label": "Caleb Williams",
+          "probability": 0.315,
+          "rendered_percent": 32,
           "source": "polymarket",
-          "destination_href": "/futures/63218546",
-          "observed_at": "2026-11-10T18:39:39Z"
+          "destination_href": "/futures/58833973",
+          "observed_at": "2026-11-10T19:40:17Z"
         }
       ]
     },
@@ -378,7 +409,11 @@
           "destination_href": "/futures/63218603",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "NHL 90-point race",
+      "question_subtitle": "Which NHL teams will reach 90+ points in 2026–27?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "nfl-players-6-receiving-tds-2026-27",
@@ -451,7 +486,11 @@
           "destination_href": "/futures/58836270",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "NFL 6+ receiving-TD race",
+      "question_subtitle": "Which NFL players will catch 6+ receiving touchdowns in 2026–27?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "nfl-players-7-receiving-tds-2026-27",
@@ -524,7 +563,11 @@
           "destination_href": "/futures/58836256",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "NFL 7+ receiving-TD race",
+      "question_subtitle": "Which NFL players will catch 7+ receiving touchdowns in 2026–27?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "nfl-players-800-rushing-yards-2026-27",
@@ -597,7 +640,11 @@
           "destination_href": "/futures/58836120",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "NFL 800+ rushing-yard race",
+      "question_subtitle": "Which NFL players will rush for 800+ yards in 2026–27?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "nfl-qbs-3500-passing-yards-2026-27",
@@ -670,7 +717,11 @@
           "destination_href": "/futures/58836050",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "NFL 3,500+ passing-yard race",
+      "question_subtitle": "Which NFL quarterbacks will throw for 3,500+ yards in 2026–27?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "nfl-teams-9-wins-2026",
@@ -743,7 +794,11 @@
           "destination_href": "/futures/59567961",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "NFL 9+ win race",
+      "question_subtitle": "Which NFL teams will win 9+ regular-season games in 2026?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "nfl-afc-north-playoffs-2027",
@@ -807,7 +862,11 @@
           "destination_href": "/futures/16630440",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "AFC North playoff race",
+      "question_subtitle": "Which AFC North teams will make the 2027 NFL playoffs?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "nfl-nfc-north-playoffs-2027",
@@ -871,7 +930,11 @@
           "destination_href": "/futures/16630449",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "NFC North playoff race",
+      "question_subtitle": "Which NFC North teams will make the 2027 NFL playoffs?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "ucl-top-8-2026-27",
@@ -944,7 +1007,11 @@
           "destination_href": "/futures/61914237",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "Champions League top-8 race",
+      "question_subtitle": "Which clubs will finish in the top 8 of the 2026–27 UEFA Champions League?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "uel-top-8-2026-27",
@@ -1017,7 +1084,11 @@
           "destination_href": "/futures/63462293",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "Europa League top-8 race",
+      "question_subtitle": "Which clubs will finish in the top 8 of the 2026–27 UEFA Europa League?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "ucl-playoff-places-2026-27",
@@ -1090,7 +1161,11 @@
           "destination_href": "/futures/63348240",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "Champions League knockout-playoff race",
+      "question_subtitle": "Which clubs will finish 9th to 24th in the 2026–27 UEFA Champions League?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "uel-playoff-places-2026-27",
@@ -1163,7 +1238,11 @@
           "destination_href": "/futures/63590774",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "Europa League knockout-playoff race",
+      "question_subtitle": "Which clubs will finish 9th to 24th in the 2026–27 UEFA Europa League?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "nfl-afc-championship-2027",
@@ -1180,7 +1259,9 @@
       "as_of_label": "as of Nov 9, 11:33 PM PT",
       "selector": {
         "sport": "americanfootball_nfl",
-        "title_ilike": "Will % advance to the AFC Championship Game in the 2027 NFL Playoffs?"
+        "title_ilike": "Will % advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+        "window": "2027-playoffs",
+        "selector": "stage:nfl_2027_afc_championship"
       },
       "stronger_single_alternative": {
         "market_id": 61602455,
@@ -1234,7 +1315,11 @@
           "destination_href": "/futures/61380800",
           "observed_at": "2026-11-10T07:33:53Z"
         }
-      ]
+      ],
+      "race_name": "AFC Championship Game race",
+      "question_subtitle": "Which AFC teams will advance to the 2027 AFC Championship Game?",
+      "bubble_title": null,
+      "unnumbered_count": 0
     },
     {
       "slug": "nhl-playoffs-bubble-2026-27",
@@ -1307,7 +1392,11 @@
           "destination_href": "/futures/63119266",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "NHL playoff race",
+      "question_subtitle": "Which NHL teams will make the 2026–27 playoffs?",
+      "bubble_title": "Five NHL teams on the 2026–27 playoff bubble",
+      "unnumbered_count": 0
     },
     {
       "slug": "nfl-playoffs-bubble-2027",
@@ -1380,7 +1469,11 @@
           "destination_href": "/futures/16630469",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "NFL playoff race",
+      "question_subtitle": "Which NFL teams will make the 2027 playoffs?",
+      "bubble_title": "Five NFL teams on the 2027 playoff bubble",
+      "unnumbered_count": 0
     },
     {
       "slug": "ucl-playoff-places-bubble-2026-27",
@@ -1453,8 +1546,12 @@
           "destination_href": "/futures/63348257",
           "observed_at": "2026-11-10T16:50:00Z"
         }
-      ]
+      ],
+      "race_name": "Champions League knockout-playoff race",
+      "question_subtitle": "Which clubs will finish 9th to 24th in the 2026–27 UEFA Champions League?",
+      "bubble_title": "Five Champions League clubs on the knockout-playoff bubble",
+      "unnumbered_count": 0
     }
   ],
-  "observed_at_note": "Cards nhl-teams-80-points-2026-27 and nhl-teams-100-points-2026-27 carry live market updated_at stamps from GET /api/events/search on 2026-11-10; the remaining 18 snapshot cards carry the exam capture clock 2026-11-10T16:50:00Z assigned at snapshot creation."
+  "observed_at_note": "Cards nhl-teams-80-points-2026-27, nhl-players-80-points-2026-27, and nfl-qbs-22-passing-tds-2026-27 carry live market updated_at stamps from GET /api/futures/{id} on 2026-11-10; the remaining 17 snapshot cards carry the exam capture clock 2026-11-10T16:50:00Z (or 07:33:53Z) assigned at snapshot creation."
 }

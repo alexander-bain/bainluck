@@ -332,6 +332,24 @@ class TestKindProposerSpendAndCatalogAdmission:
         assert verdict_page["yes_count"] == 2
         assert verdict_page["no_count"] == 0
 
+        # Pre-fix calibration grades (from grouping-candidates-2026-11 or graded_on_pre_fix_headings=True)
+        # are recorded in pre_fix_yes_count and do NOT count as a pass on the new selection-carrying titles
+        pre_fix_rows = [
+            {
+                "slate_id": "grouping-candidates-2026-11",
+                "item_key": "nhl-2026-teams-100-points-benchmark",
+                "grader": "Alex",
+                "grade": "amazing",
+            }
+            for _ in range(6)
+        ]
+        verdict_pre_fix = evaluate_kind_catalog_admission(
+            "season_stat_leaders", pre_fix_rows
+        )
+        assert verdict_pre_fix["pre_fix_yes_count"] == 6
+        assert verdict_pre_fix["yes_count"] == 0
+        assert verdict_pre_fix["joins_catalog"] is False
+
     def test_selection_carrying_titles_and_twenty_card_held_out_exam_deck(
         self,
     ) -> None:
@@ -434,15 +452,88 @@ class TestKindProposerSpendAndCatalogAdmission:
         assert len(qual_cards) == 10
         assert len(bubble_cards) == 3
 
-        # Disjoint from the 10 calibration cards
+        # Disjoint from the 10 calibration cards by slug, selector, and row market_ids
         calib = load_committed_kind_proposals()
-        calib_slugs = {
-            c["slug"]
+        calib_cards = [
+            c
             for p in calib["proposals"]
             for c in p["example_cards"]
-        }
+        ]
+        calib_slugs = {c["slug"] for c in calib_cards}
         exam_slugs = {c["slug"] for c in exam["cards"]}
         assert calib_slugs.isdisjoint(exam_slugs)
+
+        def _selector_tuple(card: dict[str, Any]) -> tuple[str, str, str]:
+            sel = card["selector"]
+            assert sel.get("sport"), f"missing sport in selector on {card['slug']}"
+            assert sel.get("title_ilike"), f"missing title_ilike in selector on {card['slug']}"
+            assert sel.get("window"), f"missing window in selector on {card['slug']}"
+            assert sel.get("selector"), f"missing selector rule in selector on {card['slug']}"
+            return (
+                str(sel["sport"]),
+                str(sel["title_ilike"]),
+                str(sel["selector"]),
+            )
+
+        calib_selectors = {_selector_tuple(c) for c in calib_cards}
+        exam_selectors = {_selector_tuple(c) for c in exam["cards"]}
+        assert len(calib_selectors) == 10
+        assert len(exam_selectors) == 20
+        assert calib_selectors.isdisjoint(exam_selectors)
+
+        # Row market_id sets are distinct and share at most 1 market_id across any (exam, calibration) pair
+        calib_id_sets = {
+            frozenset(int(r["market_id"]) for r in c["rows"]) for c in calib_cards
+        }
+        exam_id_sets = {
+            frozenset(int(r["market_id"]) for r in c["rows"]) for c in exam["cards"]
+        }
+        assert calib_id_sets.isdisjoint(exam_id_sets)
+        for ec in exam["cards"]:
+            e_ids = {int(r["market_id"]) for r in ec["rows"]}
+            for cc in calib_cards:
+                c_ids = {int(r["market_id"]) for r in cc["rows"]}
+                assert len(e_ids & c_ids) <= 1, (
+                    f"{ec['slug']} shares >1 market_ids with calibration card {cc['slug']}: {e_ids & c_ids}"
+                )
+
+        # All 10 calibration cards preserve graded_title (the pre-fix headings Alex graded)
+        # and calibration_summary marks graded_on_pre_fix_headings=True
+        for cc in calib_cards:
+            assert cc.get("graded_title")
+            assert cc["graded_title"] != cc["title"]
+        cal_sum = exam["calibration_summary"]
+        assert cal_sum["graded_on_pre_fix_headings"] is True
+        assert cal_sum["counts_as_pass_on_new_titles"] is False
+        assert cal_sum["season_stat_leaders"]["graded_on_pre_fix_headings"] is True
+        assert cal_sum["season_stat_leaders"]["counts_as_pass_on_new_titles"] is False
+        assert cal_sum["qualification_stage_board"]["graded_on_pre_fix_headings"] is True
+        assert cal_sum["qualification_stage_board"]["counts_as_pass_on_new_titles"] is False
+
+        # All 30 cards (10 calibration + 20 exam) reproduce title, subtitle, count_line, and selection_type
+        # directly from compute_selection_carrying_title using the card's stored inputs
+        for card in [*calib_cards, *exam["cards"]]:
+            recomputed = compute_selection_carrying_title(
+                card["rows"],
+                total_member_count=card["member_count"],
+                subject_unit=card["subject_unit"],
+                race_name=card.get("race_name"),
+                question_subtitle=card.get("question_subtitle") or "",
+                selection_type=card["selection_type"],
+                bubble_title=card.get("bubble_title"),
+                unnumbered_count=int(card.get("unnumbered_count") or 0),
+            )
+            assert card["title"] == recomputed["title"], f"title mismatch on {card['slug']}"
+            assert card["subtitle"] == recomputed["subtitle"], f"subtitle mismatch on {card['slug']}"
+            assert card["count_line"] == recomputed["count_line"], f"count_line mismatch on {card['slug']}"
+            assert card["selection_type"] == recomputed["selection_type"], f"selection_type mismatch on {card['slug']}"
+
+        # Validator refuses a card whose title does not match compute_selection_carrying_title
+        tampered_prop = copy.deepcopy(calib["proposals"][0])
+        tampered_prop["example_cards"][0]["title"] = "Tampered non-reproducible headline"
+        tampered_res = validate_proposed_grouping_kind(tampered_prop)
+        assert tampered_res["ok"] is False
+        assert str(tampered_res["reason"]).startswith("non_reproducible_selection_title:")
 
         # Served via load_grouping_grade_deck(slate_id="new-kinds-exam-test-2026-11")
         deck = load_grouping_grade_deck(slate_id=NEW_KINDS_EXAM_SLATE_ID)

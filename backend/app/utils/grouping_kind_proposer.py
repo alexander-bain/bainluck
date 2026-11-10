@@ -471,8 +471,19 @@ def _validate_example_card(
     selection_type_val = str(card.get("selection_type") or "top_5").strip()
     subject_unit_val = str(card.get("subject_unit") or "teams").strip()
     member_count_val = int(card.get("member_count") or len(normalized_rows))
+    race_name_val = str(card.get("race_name") or "").strip() or None
+    question_subtitle_val = str(card.get("question_subtitle") or "").strip() or None
+    bubble_title_val = str(card.get("bubble_title") or "").strip() or None
+    unnumbered_count_val = int(card.get("unnumbered_count") or 0)
+    graded_title_val = str(card.get("graded_title") or "").strip() or None
 
-    for opt_field in (subtitle_val, count_line_val):
+    for opt_field in (
+        subtitle_val,
+        count_line_val,
+        race_name_val,
+        question_subtitle_val,
+        bubble_title_val,
+    ):
         if opt_field:
             if _FORBIDDEN_QUESTION_RE.search(opt_field):
                 return False, f"forbidden_question_word:{slug}", None
@@ -480,34 +491,61 @@ def _validate_example_card(
                 if pat.search(opt_field):
                     return False, f"standing_exclusion_triggered:{slug}", None
 
+    if any(x is not None for x in (race_name_val, question_subtitle_val, bubble_title_val)):
+        expected_meta = compute_selection_carrying_title(
+            normalized_rows,
+            total_member_count=member_count_val,
+            subject_unit=subject_unit_val,
+            race_name=race_name_val,
+            question_subtitle=question_subtitle_val or "",
+            selection_type=selection_type_val,
+            bubble_title=bubble_title_val,
+            unnumbered_count=unnumbered_count_val,
+        )
+        if (
+            title != expected_meta["title"]
+            or subtitle_val != expected_meta["subtitle"]
+            or count_line_val != expected_meta["count_line"]
+            or selection_type_val != expected_meta["selection_type"]
+        ):
+            return False, f"non_reproducible_selection_title:{slug}", None
+
+    normalized_card: Dict[str, Any] = {
+        "slug": slug,
+        "kind": kind_name,
+        "title": title,
+        "subtitle": subtitle_val,
+        "kicker": kicker,
+        "count_line": count_line_val,
+        "footer": footer,
+        "selection_type": selection_type_val,
+        "subject_unit": subject_unit_val,
+        "member_count": member_count_val,
+        "race_name": race_name_val,
+        "question_subtitle": question_subtitle_val,
+        "bubble_title": bubble_title_val,
+        "unnumbered_count": unnumbered_count_val,
+        "as_of": as_of_val or None,
+        "as_of_label": as_of_label_val or None,
+        "selector": dict(selector),
+        "stronger_single_alternative": {
+            "market_id": int(stronger_single["market_id"]),
+            "title": str(stronger_single["title"]).strip(),
+            "probability": round(float(single_prob), 4),
+            "destination_href": str(
+                stronger_single.get("destination_href")
+                or f"/futures/{int(stronger_single['market_id'])}"
+            ).strip(),
+        },
+        "rows": normalized_rows,
+    }
+    if graded_title_val is not None:
+        normalized_card["graded_title"] = graded_title_val
+
     return (
         True,
         None,
-        {
-            "slug": slug,
-            "kind": kind_name,
-            "title": title,
-            "subtitle": subtitle_val,
-            "kicker": kicker,
-            "count_line": count_line_val,
-            "footer": footer,
-            "selection_type": selection_type_val,
-            "subject_unit": subject_unit_val,
-            "member_count": member_count_val,
-            "as_of": as_of_val or None,
-            "as_of_label": as_of_label_val or None,
-            "selector": dict(selector),
-            "stronger_single_alternative": {
-                "market_id": int(stronger_single["market_id"]),
-                "title": str(stronger_single["title"]).strip(),
-                "probability": round(float(single_prob), 4),
-                "destination_href": str(
-                    stronger_single.get("destination_href")
-                    or f"/futures/{int(stronger_single['market_id'])}"
-                ).strip(),
-            },
-            "rows": normalized_rows,
-        },
+        normalized_card,
     )
 
 
@@ -672,6 +710,7 @@ def evaluate_kind_catalog_admission(
     slug_to_kind = _card_slug_to_kind_map(proposals_path=proposals_path)
     yes_count = 0
     no_count = 0
+    pre_fix_yes_count = 0
     for g in grades or []:
         if not isinstance(g, Mapping):
             continue
@@ -684,9 +723,16 @@ def evaluate_kind_catalog_admission(
             row_kind = slug_to_kind.get(item_key, "")
         if row_kind != kind:
             continue
+        is_pre_fix = bool(
+            g.get("graded_on_pre_fix_headings") is True
+            or str(g.get("slate_id") or "").strip() == "grouping-candidates-2026-11"
+        )
         raw_verdict = str(g.get("verdict") or g.get("grade") or "").strip().lower()
         if raw_verdict in ("yes", "amazing", "fine", "shareable", "interesting"):
-            yes_count += 1
+            if is_pre_fix:
+                pre_fix_yes_count += 1
+            else:
+                yes_count += 1
         elif raw_verdict in ("no", "neither"):
             no_count += 1
     total_graded = yes_count + no_count
@@ -703,6 +749,7 @@ def evaluate_kind_catalog_admission(
         "total_alex_graded": total_graded,
         "yes_count": yes_count,
         "no_count": no_count,
+        "pre_fix_yes_count": pre_fix_yes_count,
         "required_graded_cards": MIN_GRADED_CARDS_FOR_CATALOG,
         "joins_catalog": joins_catalog,
         "is_licensed": licensed,
@@ -876,6 +923,7 @@ def load_new_kinds_exam_cards(
         "generated_at": raw.get("generated_at"),
         "model": raw.get("model") or DEFAULT_KIND_PROPOSER_MODEL,
         "calibration_summary": raw.get("calibration_summary"),
+        "observed_at_note": raw.get("observed_at_note"),
         "accepted_count": len(verified),
         "refused_count": len(refused),
         "cards": verified,
