@@ -17,6 +17,7 @@ import copy
 import inspect
 import json
 import logging
+import re
 import time
 import zlib
 from dataclasses import dataclass
@@ -1569,10 +1570,11 @@ def _sibling_family_title_tokens(item: Mapping[str, Any]) -> set[str]:
         " ",
         title,
     )
+    title = re.sub(r"\b20\d{2}(?:[-–/]\d{2,4})?\b", " ", title)
     tokens = {
         tok
         for tok in re.findall(r"[a-z0-9]+", title)
-        if tok not in _SIBLING_TITLE_STOPWORDS and not re.fullmatch(r"20\d{2}", tok)
+        if tok not in _SIBLING_TITLE_STOPWORDS
     }
     return tokens
 

@@ -511,6 +511,12 @@ def detect_sibling_template_pair(
     mid_b = toks_b[pre : len(toks_b) - suf]
     if not mid_a or not mid_b:
         return None, "empty_subject_run"
+    if (
+        pre == 1
+        and folded_a[0] == "will"
+        and (mid_a[0][0] == "the") != (mid_b[0][0] == "the")
+    ):
+        return None, "article_mismatch"
 
     shared = pre + suf
     if shared > 0 and (
@@ -672,6 +678,8 @@ def _match_declared_template(
     subj_end = len(toks) - len(suffix_words) if suffix_words else len(toks)
     subj_slice = toks[len(prefix_words) : subj_end]
     if not subj_slice:
+        return None
+    if prefix_words == ["will"] and subj_slice[0][0] == "the":
         return None
     raw_subject = " ".join(raw for raw, _ in subj_slice).strip()
     if not raw_subject:
@@ -1776,7 +1784,7 @@ async def _load_markets_from_db(
         filters.append(FuturesMarket.group_id == clean_group_id)
     if clean_candidate_ids:
         filters.append(FuturesMarket.id.in_(clean_candidate_ids))
-    if clean_title_ilike:
+    if clean_title_ilike and not clean_group_id:
         if clean_expected_source:
             filters.append(
                 and_(
@@ -1833,8 +1841,7 @@ async def _load_markets_from_db(
             mid = int(raw_id)
             row_gid = str(m.get("group_id") or "").strip() or None
             if (
-                not clean_title_ilike
-                and (clean_group_id or candidate_id_set)
+                (clean_group_id or (not clean_title_ilike and candidate_id_set))
                 and row_gid != clean_group_id
                 and mid not in candidate_id_set
             ):
@@ -1850,8 +1857,7 @@ async def _load_markets_from_db(
         mid = int(raw_mid)
         row_gid = str(getattr(m, "group_id", None) or "").strip() or None
         if (
-            not clean_title_ilike
-            and (clean_group_id or candidate_id_set)
+            (clean_group_id or (not clean_title_ilike and candidate_id_set))
             and row_gid != clean_group_id
             and mid not in candidate_id_set
         ):
@@ -2039,10 +2045,19 @@ async def produce_sibling_family(
             _, mid = _parse_market_ref_id(str(spec))
             candidate_ids.append(mid)
 
+    candidate_id_set = set(candidate_ids)
     withheld_by_market: dict[int, set[int]] = {}
     if isinstance(db, Mapping):
         by_id = {
-            int(k): v for k, v in db.items() if isinstance(v, Mapping)
+            int(k): v
+            for k, v in db.items()
+            if isinstance(v, Mapping)
+            and (
+                not group_id
+                or not str(v.get("group_id") or "").strip()
+                or str(v.get("group_id") or "").strip() == group_id
+                or int(k) in candidate_id_set
+            )
         }
     elif isinstance(db, (list, tuple)):
         by_id = {
@@ -2051,6 +2066,12 @@ async def produce_sibling_family(
             if isinstance(m, Mapping)
             and isinstance(m.get("id"), int)
             and not isinstance(m.get("id"), bool)
+            and (
+                not group_id
+                or not str(m.get("group_id") or "").strip()
+                or str(m.get("group_id") or "").strip() == group_id
+                or int(m["id"]) in candidate_id_set
+            )
         }
     else:
         by_id, withheld_by_market = await _load_markets_from_db(

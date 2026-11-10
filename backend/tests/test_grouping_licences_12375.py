@@ -203,18 +203,40 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
         assert sib_outcome.reason == "kind_not_licensed:held"
 
         # Under Decide 117-A, sibling_family is PASS and its 6 verified serve families
-        # are promoted into backend/data/containers/ with review_path == "tier-b-pr"
-        for promoted_slug in (
-            "proposed-polymarket-will-contenders-record-100-points",
-            "proposed-polymarket-will-teams-finish-top-8-in-uecl-league-phase",
-            "proposed-polymarket-will-teams-finish-9th-24th-in-uecl-league-phase",
-            "proposed-polymarket-will-contenders-be-relegated-from-the-2026-liga",
-            "proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
-            "proposed-polymarket-will-the-contenders-make-the-2026-27-nhl-playoff",
+        # are promoted into backend/data/containers/ with clean reader-facing slugs,
+        # proposal_id provenance, and review_path == "tier-b-pr"
+        for promoted_slug, expected_proposal_id in (
+            (
+                "nhl-players-100-points-2026-27",
+                "proposed-polymarket-will-contenders-record-100-points",
+            ),
+            (
+                "uecl-top-8-2026-27",
+                "proposed-polymarket-will-teams-finish-top-8-in-uecl-league-phase",
+            ),
+            (
+                "uecl-playoff-places-2026-27",
+                "proposed-polymarket-will-teams-finish-9th-24th-in-uecl-league-phase",
+            ),
+            (
+                "liga-profesional-relegation-2026",
+                "proposed-polymarket-will-contenders-be-relegated-from-the-2026-liga",
+            ),
+            (
+                "mlb-world-series-pennant-2027",
+                "proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
+            ),
+            (
+                "nhl-playoffs-2026-27",
+                "proposed-polymarket-will-the-contenders-make-the-2026-27-nhl-playoff",
+            ),
         ):
+            assert not promoted_slug.startswith("proposed-")
             p_path = DEFAULT_CONTAINERS_DIR / f"{promoted_slug}.json"
             assert p_path.exists()
             p_defn = load_roundup_definition(p_path)
+            assert p_defn["proposal_id"] == expected_proposal_id
+            assert p_defn["destination_href"] == f"/collections/{promoted_slug}"
             assert p_defn["authored_by"]["proposer_kind"] == "sibling_family"
             assert p_defn["authored_by"]["licence_status"] == "PASS"
             assert p_defn["authored_by"]["review_path"] == "tier-b-pr"

@@ -674,12 +674,15 @@ def score_sibling_family_exam(
                 "until #12500 lands and Alex spot-checks the fixed cards."
             )
         else:
+            sa_k = int(sa["k"])
+            fine_k = max(0, better_k - sa_k)
+            ci_low, ci_high = wilson95_interval(better_k, graded_k)
             gate1_observed["graded_on_pre_fix_headings"] = False
             gate1_observed["grading_note"] = (
-                "All 20 held-out test cards were graded by Alex Bain on 2026-11-10 on "
-                "/grade/groupings?slate=sibling-family-exam-test-2026-11 (20/20 amazing, "
-                "0 fine, 0 no), matched strictly by family_slug. The interval's low end "
-                "is 83.9% (83.9%–100.0%), which is what 20 cards from one grader can show; "
+                f"All {test_n} held-out test cards were graded by Alex Bain on {as_of} on "
+                f"/grade/groupings?slate=sibling-family-exam-test-2026-11 ({sa_k}/{graded_k} amazing, "
+                f"{fine_k} fine, {worse_k} no), matched strictly by family_slug. The interval's low end "
+                f"is {ci_low:.1f}% ({ci_low:.1f}%–{ci_high:.1f}%), which is what {graded_k} cards from one grader can show; "
                 "licensed under Decide 117-A."
             )
     elif graded_k == 0:

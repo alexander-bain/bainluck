@@ -1,5 +1,6 @@
 {
-  "slug": "proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
+  "slug": "mlb-world-series-pennant-2027",
+  "proposal_id": "proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
   "membership": "sibling-family",
   "kind": "roundup",
   "relations": [
@@ -12,9 +13,9 @@
   "name": "Which team will advance to the World Series in the 2027 MLB Playoffs?",
   "category": "baseball",
   "tag": "BASEBALL",
-  "section_title": "By deadline",
+  "section_title": "2027 MLB Playoffs",
   "footer": "Each row is its own market. They don't add up to 100%.",
-  "destination_href": "/collections/proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
+  "destination_href": "/collections/mlb-world-series-pennant-2027",
   "order": "probability_desc",
   "presentation": "list",
   "score": 78.0,
@@ -29,6 +30,7 @@
   "rule": {
     "producer": "sibling_family",
     "source": "polymarket",
+    "group_id": "polymarket:1308847",
     "template": "will * advance to the world series in the 2027 mlb playoffs",
     "title_ilike": "Will % advance to the World Series in the 2027 MLB Playoffs%",
     "title_template": "Which team will advance to the World Series in the 2027 MLB Playoffs?",

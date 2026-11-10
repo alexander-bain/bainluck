@@ -474,3 +474,80 @@ class TestEveryGatePassOrFail:
         assert published_json["cost"]["actual_usd"] == raw_dataset["actual_cost_usd"] == 0.0167
         assert published_json["cost"]["input_tokens"] == raw_dataset["total_input_tokens"] == 58434
         assert published_json["cost"]["output_tokens"] == raw_dataset["total_output_tokens"] == 13224
+
+    def test_nhl_100_points_players_and_teams_never_mix_when_both_present(self) -> None:
+        import asyncio
+        from pathlib import Path
+
+        from app.utils.roundup_containers import RoundupMembers, load_roundup_definition
+        from app.utils.sibling_family import produce_sibling_family
+
+        defn_path = (
+            Path(__file__).resolve().parents[1]
+            / "data"
+            / "containers"
+            / "nhl-players-100-points-2026-27.json"
+        )
+        defn = load_roundup_definition(defn_path)
+        assert defn["slug"] == "nhl-players-100-points-2026-27"
+        assert defn["name"] == "Which NHL player will record 100+ points in 2026-27?"
+        assert defn["section_title"] == "2026-27 regular season"
+        assert defn["rule"]["group_id"] == "polymarket:1098356"
+        assert defn["rule"]["subject_unit"] == "players"
+
+        shared_res = "2027-04-30T03:59:00+00:00"
+        mixed_pool_without_gids = [
+            {
+                "id": 63105212,
+                "name": "Will Connor McDavid record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": shared_res,
+                "outcomes": [{"id": 1, "name": "Yes", "probability": 0.9235}],
+            },
+            {
+                "id": 63105213,
+                "name": "Will Nathan MacKinnon record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": shared_res,
+                "outcomes": [{"id": 2, "name": "Yes", "probability": 0.877}],
+            },
+            {
+                "id": 63218794,
+                "name": "Will Leon Draisaitl record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": shared_res,
+                "outcomes": [{"id": 3, "name": "Yes", "probability": 0.875}],
+            },
+            {
+                "id": 63218575,
+                "name": "Will the Colorado Avalanche record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": shared_res,
+                "outcomes": [{"id": 4, "name": "Yes", "probability": 0.95}],
+            },
+            {
+                "id": 63218573,
+                "name": "Will the Carolina Hurricanes record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": shared_res,
+                "outcomes": [{"id": 5, "name": "Yes", "probability": 0.91}],
+            },
+        ]
+
+        produced = asyncio.run(produce_sibling_family(mixed_pool_without_gids, defn))
+        assert isinstance(produced, RoundupMembers)
+        row_labels = [r["label"] for r in produced.rows]
+        assert row_labels == ["Connor McDavid", "Nathan MacKinnon", "Leon Draisaitl"]
+        assert "Colorado Avalanche" not in row_labels
+        assert "Carolina Hurricanes" not in row_labels
+        assert produced.sections[0]["title"] == "2026-27 regular season"
