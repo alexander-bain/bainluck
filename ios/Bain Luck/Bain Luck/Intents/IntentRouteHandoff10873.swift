@@ -18,6 +18,9 @@ import Foundation
 ///
 /// Cancellation: an intent posts only after every parameter has resolved, so a
 /// reader who backs out of a "Which one?" list leaves nothing here.
+///
+/// The widget extension compiles this file too, for #12305's "My game" control,
+/// whose action the system performs in the app (`OpenSavedItemIntent12305`).
 @MainActor
 final class IntentRouteHandoff10873: ObservableObject {
     static let shared = IntentRouteHandoff10873()
