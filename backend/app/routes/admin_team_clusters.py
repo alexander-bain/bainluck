@@ -278,12 +278,20 @@ async def team_clusters_verdict(
         try:
             for fid in body.fold_ids:
                 merge_evidence.append(await _apply_merge(db, canonical, rows[fid], sport_key))
-            # Scoped mapping dedup for this canonical (mirrors the rail).
+            # Scoped mapping dedup for this canonical. #12519: the same statement
+            # as the rail's `team_merge.MAPPING_DEDUP_SQL`, character for
+            # character (a test pins it), and written out here rather than
+            # imported so the destructive-handler census still sees this
+            # handler delete. It keeps every distinct name a source holds.
             await db.execute(
                 text(
                     "DELETE FROM team_identity_mapping a USING team_identity_mapping b "
                     "WHERE a.id > b.id AND a.team_id = b.team_id AND a.source = b.source "
-                    "AND a.source_id IS NOT DISTINCT FROM b.source_id AND a.team_id = :tid"
+                    "AND a.team_id = :tid "
+                    "AND ((a.source_id IS NOT NULL AND a.source_id = b.source_id) "
+                    "OR (a.source_id IS NULL AND b.source_id IS NULL "
+                    "AND a.source_name IS NOT DISTINCT FROM b.source_name "
+                    "AND a.sport_key IS NOT DISTINCT FROM b.sport_key))"
                 ),
                 {"tid": canonical.id},
             )
