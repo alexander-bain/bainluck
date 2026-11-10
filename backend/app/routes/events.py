@@ -29699,6 +29699,90 @@ async def _related_futures_withheld_ids(
     return withheld
 
 
+async def _discover_season_market_ids(db, base_season_filters) -> list[int]:
+    """The season-market discovery scan and its per-tier cap: the ids, in order.
+
+    #12529: ONE function for the request's build and the background refresh
+    behind a stale answer (`_schedule_season_rebuild`), so the two cannot drift.
+    The cost of this scan and why it cannot be indexed away without a migration
+    are in `utils/season_market_discovery.py`.
+    """
+    _tier_query = await db.execute(
+        select(FuturesMarket.id, FuturesMarket.market_tier)
+        .where(
+            *base_season_filters,
+            FuturesMarket.market_tier.in_([1, 2, 3, 4]),
+        )
+        .order_by(FuturesMarket.market_tier, FuturesMarket.id)
+        .limit(400)
+    )
+    _tier_counts: dict[int, int] = {}
+    season_market_ids = []
+    for row in _tier_query.all():
+        tier = row.market_tier or 4
+        _tier_counts[tier] = _tier_counts.get(tier, 0) + 1
+        if _tier_counts[tier] <= SEASON_TIER_CAP:
+            season_market_ids.append(row.id)
+    return season_market_ids
+
+
+#: #12529: strong references to season-discovery refreshes running after their
+#: request answered. asyncio holds a task weakly.
+_SEASON_REBUILD_TASKS: set = set()
+
+
+def _season_rebuild_done(task) -> None:
+    _SEASON_REBUILD_TASKS.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning("season-market discovery refresh failed: %s", task.exception())
+
+
+def _schedule_season_rebuild(db, sport_key, event_is_finished, base_season_filters):
+    """Refresh a slot served from its stale copy, after the response; the task or None.
+
+    #12529. Only the reader that takes the slot's build lease starts one
+    (`try_claim`, which never waits), so a slot has at most one refresh in
+    flight. It runs on its own session from the request's engine, like
+    `_typeahead_start_outcome_arm_beside`, and is skipped when that pool is fully
+    checked out: the stale copy is still served, and the next reader tries
+    again. The lease is released in a `finally`, and a refresh killed with its
+    dyno leaves it to expire.
+    """
+    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+
+    from app.utils import season_market_discovery as _smd
+
+    engine = getattr(db, "bind", None)
+    if not isinstance(engine, AsyncEngine):
+        return None
+    try:
+        if engine.pool.checkedout() >= engine.pool.size():
+            return None
+    except Exception:  # noqa: BLE001 — a pool without counters keeps the old path
+        return None
+    lease = _smd.try_claim(sport_key, event_is_finished)
+    if lease is None:
+        return None
+
+    import asyncio
+
+    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    filters = list(base_season_filters)
+
+    async def _run():
+        try:
+            async with maker() as side:
+                market_ids = await _discover_season_market_ids(side, filters)
+            _smd.write(sport_key, event_is_finished, market_ids)
+        finally:
+            _smd.release_build(lease)
+
+    task = asyncio.ensure_future(_run())
+    _SEASON_REBUILD_TASKS.add(task)
+    task.add_done_callback(_season_rebuild_done)
+    return task
+
+
 async def _build_related_futures(
     event_id: int,
     db: AsyncSession,
@@ -29966,6 +30050,14 @@ async def _build_related_futures(
     # by the competition-scope re-check below must rebuild here, because the
     # wait would re-read and return the same rejected ids.
     _discovery_missed = season_market_ids is None
+    # #12529: on a miss, the slot's last non-empty answer is served now and one
+    # background rebuild refreshes it (`_schedule_season_rebuild` below), so this
+    # reader does not wait 12-67 s for the scan. The competition-scope re-check
+    # applies to the copy exactly as to a fresh slot.
+    _served_stale = False
+    if _discovery_missed and not debug:
+        season_market_ids = _smd.read_stale(event_sport_key, event_is_finished)
+        _served_stale = season_market_ids is not None
     if _competition_scope is not None and season_market_ids:
         # A cache populated before adoption of this rule must not bypass it.
         # Rebuild a contaminated pool so wrong rows cannot consume its cap.
@@ -29976,6 +30068,9 @@ async def _build_related_futures(
         )
         if {row.id for row in _scope_result.all()} != set(season_market_ids):
             season_market_ids = None
+            _served_stale = False
+    if _served_stale:
+        _schedule_season_rebuild(db, event_sport_key, event_is_finished, base_season_filters)
     # #2316: one builder per slot. On a miss, a reader whose peer is already
     # running this scan waits for the peer's answer instead of running its own
     # copy (27 of 87 slow reads on 2026-10-17 overlapped another one). The
@@ -29987,23 +30082,7 @@ async def _build_related_futures(
         )
     if season_market_ids is None:
         try:
-            _tier_query = await db.execute(
-                select(FuturesMarket.id, FuturesMarket.market_tier)
-                .where(
-                    *base_season_filters,
-                    FuturesMarket.market_tier.in_([1, 2, 3, 4]),
-                )
-                .order_by(FuturesMarket.market_tier, FuturesMarket.id)
-                .limit(400)
-            )
-            _tier_rows = _tier_query.all()
-            _tier_counts: dict[int, int] = {}
-            season_market_ids = []
-            for row in _tier_rows:
-                tier = row.market_tier or 4
-                _tier_counts[tier] = _tier_counts.get(tier, 0) + 1
-                if _tier_counts[tier] <= SEASON_TIER_CAP:
-                    season_market_ids.append(row.id)
+            season_market_ids = await _discover_season_market_ids(db, base_season_filters)
             if not debug:
                 _smd.write(event_sport_key, event_is_finished, season_market_ids)
         finally:
