@@ -280,6 +280,11 @@ def build_slow_event(
         unfinished = split.get("unfinished_queries")
         if isinstance(unfinished, int) and unfinished > 0:
             record["unfinished_queries"] = unfinished
+        # #12529: which statement was the slowest one. The ring could say a
+        # `related-futures` read spent 18.8 s in one query, never which query.
+        sql = split.get("max_query_sql")
+        if isinstance(sql, str) and sql:
+            record["max_query_sql"] = sql[:160]
     return json.dumps(record, separators=(",", ":"), allow_nan=False)
 
 
