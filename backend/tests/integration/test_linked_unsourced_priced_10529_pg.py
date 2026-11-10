@@ -177,6 +177,7 @@ class _Seed:
         status: str = "open",
         age_min: float = 180,
         names=("XI Esport", "struggletony"),
+        market_type: str | None = None,
     ) -> int:
         """One market with one outcome per entry in ``prices`` (None = unpriced)."""
         from sqlalchemy import text
@@ -188,9 +189,9 @@ class _Seed:
                 text(
                     "INSERT INTO futures_markets "
                     "(source, external_id, name, category, mutually_exclusive, "
-                    " status, event_id, sport_id, created_at, updated_at) "
+                    " status, event_id, sport_id, created_at, updated_at, market_type) "
                     "VALUES (:src, :ext, :name, 'game', TRUE, :status, :eid, :sid, "
-                    "        :created, :created) RETURNING id"
+                    "        :created, :created, :mtype) RETURNING id"
                 ),
                 {
                     "src": source,
@@ -200,6 +201,7 @@ class _Seed:
                     "eid": event_id,
                     "sid": self.sport_id,
                     "created": self.now - timedelta(minutes=age_min),
+                    "mtype": market_type,
                 },
             )
         ).scalar()
@@ -385,3 +387,70 @@ async def test_unpriced_pairs_cannot_crowd_a_priced_pair_out_of_the_limit(
     assert (priced, "kalshi") in pairs
     # Scoped to this file's ids: the CI database is shared with other gates.
     assert not any((ev, "kalshi") in pairs for ev in crowd)
+
+
+# #10523 (Nov 10): a numeric-threshold market is never a game winner.
+#
+# The RED pair at 14:27Z was Polymarket on event 15345718 (Rubini v Roncadelli),
+# whose ONLY linked market was "Total Sets O/U 2.5", priced Over 0.145 / Under
+# 0.855 and stored with ``market_type = 'quantity'``. No game-winner price
+# existed for the writer to draw, so the alert accused it of skipping nothing.
+# The exclusion keys on the stored SHAPE (``market_shape.SHAPE_QUANTITY``, a
+# numeric threshold ladder), never on the writer's own identity gates: a priced
+# market with no shape, like the map-total test above, still stays RED.
+
+
+async def test_the_rubini_specimen_a_lone_total_is_not_accused(pg_session):
+    seed = await _seed(pg_session)
+    rubini = await seed.event()
+    await seed.market(
+        rubini, prices=(0.145, 0.855), source="polymarket",
+        ticker="0x358186a8gate10523", names=("Over", "Under"),
+        market_type="quantity",
+    )
+    control = await seed.event()
+    await seed.market(control, prices=(0.6, 0.4), source="polymarket", market_type="duel")
+    await pg_session.commit()
+
+    _, pairs = await _red_pairs(pg_session)
+    assert (control, "polymarket") in pairs  # the refusal below is not vacuous
+    assert (rubini, "polymarket") not in pairs
+
+
+async def test_a_priced_duel_beside_a_total_stays_red_and_counts_only_the_duel(
+    pg_session,
+):
+    seed = await _seed(pg_session)
+    ev = await seed.event()
+    await seed.market(ev, prices=(0.3, 0.7), source="polymarket", market_type="quantity")
+    await seed.market(ev, prices=(0.55, 0.45), source="polymarket", market_type="duel")
+    await pg_session.commit()
+
+    _, pairs = await _red_pairs(pg_session)
+    assert pairs[(ev, "polymarket")]["priced_linked_markets"] == 1
+
+
+async def test_a_priced_total_does_not_rescue_an_unpriced_duel(pg_session):
+    """The duel has no price, so there is nothing to write; the total's price
+    must not make the pair look priced."""
+    seed = await _seed(pg_session)
+    ev = await seed.event()
+    await seed.market(ev, prices=(None, None), source="polymarket", market_type="duel")
+    await seed.market(ev, prices=(0.3, 0.7), source="polymarket", market_type="quantity")
+    await pg_session.commit()
+
+    _, pairs = await _red_pairs(pg_session)
+    assert (ev, "polymarket") not in pairs
+
+
+async def test_every_other_shape_still_counts(pg_session):
+    seed = await _seed(pg_session)
+    evs = {}
+    for shape in ("duel", "field", "container_member", "claim", None):
+        evs[shape] = await seed.event()
+        await seed.market(evs[shape], prices=(0.6, 0.4), market_type=shape)
+    await pg_session.commit()
+
+    _, pairs = await _red_pairs(pg_session)
+    for shape, ev in evs.items():
+        assert (ev, "kalshi") in pairs, shape

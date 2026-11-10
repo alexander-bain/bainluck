@@ -63,6 +63,7 @@ from typing import Any
 from sqlalchemy import BigInteger, bindparam, text
 
 from app.tasks.base import get_task_session
+from app.utils.market_shape import SHAPE_QUANTITY
 
 logger = logging.getLogger(__name__)
 
@@ -615,6 +616,14 @@ async def check_linked_unsourced(session) -> dict:
     Nothing further is required of the market — not the writer's ticker gate,
     not orientation — because a priced market the writer refuses is exactly
     the failure this alert exists to catch.
+
+    ONE STRUCTURAL EXCEPTION: A NUMERIC-THRESHOLD MARKET (#10523). A market
+    stored with ``market_type = 'quantity'`` (a total, a spread, an O/U ladder)
+    can never be a game winner, so its price is no price the curve writer could
+    draw. On 2026-11-10 the only RED pair was Polymarket on Rubini v Roncadelli,
+    whose sole linked market was "Total Sets O/U 2.5". This keys on the stored
+    SHAPE only. A priced market with no shape, or one the writer's own gates
+    refuse, still counts.
     """
     rows = (await session.execute(text(
         """
@@ -628,6 +637,7 @@ async def check_linked_unsourced(session) -> dict:
           AND e.commence_time BETWEEN NOW() - (:hrs * INTERVAL '1 hour')
                                   AND NOW() + (:hrs * INTERVAL '1 hour')
           AND fm.created_at < NOW() - (:mins * INTERVAL '1 minute')
+          AND fm.market_type IS DISTINCT FROM :quantity
           AND EXISTS (
               SELECT 1 FROM futures_outcomes fo
               WHERE fo.market_id = fm.id
@@ -642,7 +652,8 @@ async def check_linked_unsourced(session) -> dict:
         LIMIT 200
         """
     ), {"mins": UNSOURCED_AFTER_MINUTES,
-         "hrs": UNSOURCED_WINDOW_HOURS})).all()
+         "hrs": UNSOURCED_WINDOW_HOURS,
+         "quantity": SHAPE_QUANTITY})).all()
     listed = [
         {"event_id": int(r[0]), "source": r[1], "priced_linked_markets": int(r[2]),
          "commence_time": r[3].isoformat() if r[3] else None}
