@@ -14,9 +14,13 @@
  *   from the same row read as its score and probability), and then all of
  *   probability, score and clock move together. A card without it (an older
  *   server) patches nothing on a live game.
- * * **A game that changes status stops updating.** Only a card whose status
- *   equals the served one is adopted, so a game that ends keeps its last live
- *   reading until the next search read, which is today's behaviour.
+ * * **A game that changes status stops updating** — with one exception.
+ *   Only a card whose status equals the served one is adopted, EXCEPT a live
+ *   game whose card says it finished (`completed`/`closed`, decision (b), Fable
+ *   Nov 9). That card takes the status, final score and `completed_at` from
+ *   the same read, so the open page shows the FINAL card a fresh search shows
+ *   (`EventCard` reads a finished game's probabilities from the served
+ *   `opening_odds`; this module never touches them on a finish).
  * * **Never backwards.** The fold revision must be the same or newer than the
  *   one held, and the blend's own reading time no older.
  * * **Probability fields only, plus score and clock on a live game.** The
@@ -27,6 +31,7 @@
 import type { CurrentOdds, Event, FeedEventData } from '@/lib/types';
 import type { DiscoverPriceCards } from '@/lib/discover/priceRefresh';
 import { compareFoldRevision, parseFoldRevision, type FoldRevision } from '@/lib/foldRevision';
+import { isFinishedStatus } from '@/lib/eventState';
 
 const PRICED_STATUSES = new Set(['scheduled', 'live']);
 
@@ -42,6 +47,8 @@ export interface HeldGame {
   heroSource: string | null;
   /** Live games only: the score and clock read with the probability. */
   live: { homeScore: number | null; awayScore: number | null; period: string | null; clock: string | null } | null;
+  /** A live game the card says finished: its final score and stamp (decision (b)). */
+  final?: { homeScore: number | null; awayScore: number | null; completedAt: string | null } | null;
 }
 export type SearchEventBook = Map<number, HeldGame>;
 
@@ -77,22 +84,29 @@ export function adoptSearchEventCards(
     const fresh = item.data as FeedEventData & {
       blend_fold_revision?: unknown; hero_probability_observed_at?: string | null;
       hero_probability?: number | null; hero_probability_away?: number | null;
-      hero_probability_source?: string | null; live_state?: unknown;
+      hero_probability_source?: string | null; live_state?: unknown; completed_at?: string | null;
     };
     const served = byId.get(fresh.id);
     if (!served || !requested.has(fresh.id) || !searchEventStreamable(served)) continue;
     if (response.dispositions?.[`event-${fresh.id}`] !== 'updated') continue;
-    if (fresh.status !== served.status) continue;
+    const finished = served.status === 'live' && isFinishedStatus(fresh.status);
+    if (fresh.status !== served.status && !finished) continue;
     const revision = parseFoldRevision(fresh.blend_fold_revision);
     if (!revision) continue;
     let live: HeldGame['live'] = null;
-    if (served.status === 'live') {
+    let final: HeldGame['final'] = null;
+    if (finished) {
+      final = { homeScore: fresh.home_score ?? null, awayScore: fresh.away_score ?? null,
+        completedAt: fresh.completed_at ?? null };
+    } else if (served.status === 'live') {
       const state = liveState(fresh.live_state);
       if (!state) continue;
       live = { homeScore: fresh.home_score ?? null, awayScore: fresh.away_score ?? null, ...state };
     }
     const observedMs = ms(fresh.hero_probability_observed_at);
     const held = next.get(fresh.id);
+    // A finish is terminal: nothing after it, a late live card included, reopens the game.
+    if (held?.final) continue;
     if (held) {
       const order = compareFoldRevision(revision, held.revision);
       if (order !== 'newer' && order !== 'same') continue;
@@ -108,6 +122,7 @@ export function adoptSearchEventCards(
       heroProbabilityAway: typeof fresh.hero_probability_away === 'number' ? fresh.hero_probability_away : null,
       heroSource: fresh.hero_probability_source ?? null,
       live,
+      final,
     };
     if (held && JSON.stringify(held) === JSON.stringify(game)) continue;
     if (next === book) next = new Map(book);
@@ -119,6 +134,16 @@ export function adoptSearchEventCards(
 /** The served card with its adopted reading applied; `event` itself when nothing changed. */
 export function patchSearchEvent(event: Event, book: SearchEventBook): Event {
   const game = book.get(event.id);
+  if (game?.final && event.status === 'live') {
+    // The result, from one read: status, score and stamp together; the live
+    // period and clock go, and the served probabilities stay (a finished card
+    // reads `opening_odds`).
+    const { period: _period, game_clock: _clock, ...espn } = event.espn ?? {};
+    return {
+      ...event, status: game.status, home_score: game.final.homeScore, away_score: game.final.awayScore,
+      completed_at: game.final.completedAt ?? event.completed_at, espn,
+    } as Event;
+  }
   if (!game || game.status !== event.status || !searchEventStreamable(event)) return event;
   if (event.status === 'live' && !game.live) return event;
   const next: Event & { hero_probability_source?: string | null } = { ...event };
