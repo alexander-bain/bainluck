@@ -58,14 +58,15 @@ struct OpenGameOrMarketIntent10873: AppIntent {
 struct GetProbabilityIntent10873: AppIntent {
     static let title: LocalizedStringResource = "Get Probability"
     static let description = IntentDescription(
-        "Says the chance Bain Luck shows for one team or outcome, and when it was recorded. A settled game or market answers with its result.")
+        "Says the chances Bain Luck shows for a game's two teams, or for one outcome of a market, and when they were recorded. A settled game or market answers with its result.")
 
     @Parameter(title: "Game or Market", requestValueDialog: "Which game or market?")
     var subject: GameOrMarketEntity10873
 
-    /// Optional so a one-outcome market answers without a second question. Any
-    /// game, and any market with more than one outcome, asks; nothing is picked
-    /// for the reader.
+    /// Optional. A game answers for both teams at once unless a team is
+    /// supplied (a saved shortcut can name one); a one-outcome market answers
+    /// for that outcome. Only a market with more than one outcome asks, and
+    /// nothing is picked for the reader.
     @Parameter(title: "Outcome")
     var outcome: OutcomeEntity10873?
 
@@ -86,25 +87,29 @@ struct GetProbabilityIntent10873: AppIntent {
         switch subject.kind {
         case .game:
             let event: EventDetail
+            let id = subject.recordID
             do {
-                event = try await APIClient.shared.fetchEvent(id: subject.recordID)
+                event = try await IntentReadDeadline10873.run { try await APIClient.shared.fetchEvent(id: id) }
             } catch {
                 return ProbabilityAnswer10873.failure(error, subject: subject.title)
             }
-            let chosen = try await choose(
-                from: OutcomeEntity10873.options(for: event), dialog: "Which team?")
-            guard let chosen, let side = GameSide10873(rawValue: chosen.key) else {
-                return ProbabilityAnswer10873(
-                    kind: .unavailable,
-                    text: "Bain Luck has no teams listed for \(subject.title).",
-                    figure: nil)
+            // A supplied team answers for that team. Otherwise both teams answer
+            // at once and Siri asks nothing more: on Alex's phone (Nov 9) it
+            // stopped on "Running your shortcut" where this used to ask
+            // "Which team?" (`ProbabilityAnswer10873.gameBothSides`).
+            if let outcome,
+               let match = OutcomeChoice10873.supplied(outcome.id, among: OutcomeEntity10873.options(for: event)),
+               let side = GameSide10873(rawValue: match.key) {
+                return ProbabilityAnswer10873.game(event, side: side, now: now)
             }
-            return ProbabilityAnswer10873.game(event, side: side, now: now)
+            return ProbabilityAnswer10873.gameBothSides(event, now: now)
         case .market:
             let market: FuturesMarketDetail
+            let id = subject.recordID
             do {
-                market = try await APIClient.shared.fetchFuturesDetail(
-                    id: subject.recordID, representation: .verifiedTitle)
+                market = try await IntentReadDeadline10873.run {
+                    try await APIClient.shared.fetchFuturesDetail(id: id, representation: .verifiedTitle)
+                }
             } catch {
                 return ProbabilityAnswer10873.failure(error, subject: subject.title)
             }
@@ -132,6 +137,32 @@ struct GetProbabilityIntent10873: AppIntent {
         case .none: return nil
         case .only: return options[0]
         case .ask: return try await $outcome.requestDisambiguation(among: options, dialog: dialog)
+        }
+    }
+}
+
+/// #10873 — the read an answer waits for, at most `seconds`. Siri on Alex's
+/// phone sat on "Running your shortcut" (Nov 9); past the deadline the action
+/// says it couldn't load the game or market instead of leaving Siri waiting.
+/// The read itself is cancelled with the group.
+nonisolated enum IntentReadDeadline10873 {
+    static let seconds: TimeInterval = 10
+
+    struct TimedOut: Error, Equatable {}
+
+    static func run<T: Sendable>(
+        within limit: TimeInterval = seconds,
+        _ read: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await read() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(limit * 1_000_000_000))
+                throw TimedOut()
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else { throw TimedOut() }
+            return first
         }
     }
 }
