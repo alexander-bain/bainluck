@@ -181,3 +181,19 @@ test('the bot brief says who accepts a PR Fable wrote (122-A)', () => {
   assert.match(brief.replace(/\s+/g, ' '), /A PR that Fable wrote is accepted by the lane its test judges \(an "OK at <head>" on the PR\) and merged by Builder E/);
   assert.match(brief, /122-A/);
 });
+
+test('iOS test targets are not reader-visible; the app and the Watch app are (#12553)', () => {
+  const {fableHits} = policy();
+  for (const name of [
+    'ios/Bain Luck/BainLuckTests/ALiveHeroCarriesTheStoryNotTheContext8320Tests.swift',
+    'ios/Bain Luck/BainLuckTests/OddsChartNoReadingsTests.swift',
+    'ios/Bain Luck/BainLuckUITests/DiscoverUITests.swift',
+    'ios/Bain Luck/BainLuckWatchUITests/WatchUITests.swift',
+  ]) assert.equal(fableHits([name]).length, 0, name);
+  for (const name of [
+    'ios/Bain Luck/Bain Luck/Views/EventDetailView.swift',
+    'ios/Bain Luck/BainLuckWatch Watch App/ContentView.swift',
+    'ios/Bain Luck/BainLuckWidget/SavedItemControl12305.swift',
+    'ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj',
+  ]) assert.equal(fableHits([name]).length, 1, name);
+});

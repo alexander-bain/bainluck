@@ -33,8 +33,9 @@ const FABLE_PATHS = [
   // and the three configs that change what the web app serves.
   {why: 'reader-visible (web page or component)', re: /^frontend\/(app|components|lib|hooks|public|styles|src)\/(?!.*(__tests__\/|\.test\.|\.spec\.))/},
   {why: 'reader-visible (web config)', re: /^frontend\/(next\.config\.mjs|tailwind\.config\.ts|vercel\.json)$/},
-  // The phone and the Watch app.
-  {why: 'reader-visible (iOS / Watch)', re: /^ios\//},
+  // The phone and the Watch app, minus their test targets (BainLuckTests,
+  // BainLuckUITests, BainLuckWatchUITests), as the web rule skips web tests.
+  {why: 'reader-visible (iOS / Watch)', re: /^ios\/(?![^/]+\/[^/]*Tests\/)/},
   // API responses a page reads, and every admin handler (some are destructive).
   {why: 'reader-visible or destructive (API route)', re: /^backend\/app\/routes\//},
   // Everything else in the app and its data, unless the name says plumbing.
