@@ -6579,6 +6579,13 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         "(%d refined slot(s))",
         gen_digest, len(roster), len(chunks), len(cursor.unit_splits),
     )
+    # #12340: nothing below reads the roster. The units run off ``assignment`` and
+    # ``chunks``, so the list is released here instead of living through the unit
+    # loop and ``staged:finalize``, whose allocations then reuse its space rather
+    # than stacking on it. Lab, Nov 10 (2,162,152 rows, the real
+    # ``generation_fingerprint`` and ``plan_units``): RSS at a finalize stand-in
+    # 1,023 MB kept vs 971 MB released; the roster tuples are ~184 MB of heap.
+    del roster
     if not chunks:
         # An empty population is a real answer, not a failure, and it is
         # complete by definition. Returning [] lets the build publish the
