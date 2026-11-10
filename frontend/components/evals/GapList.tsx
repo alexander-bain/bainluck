@@ -2,14 +2,37 @@ import { Fragment } from "react";
 
 import { PlannedItem } from "@/components/evals/Figure";
 import RepoRefLink from "@/components/evals/RepoRefLink";
-import { CHIP_COPY } from "@/lib/evals/copy";
+import { CHIP_COPY, GAPS_COPY } from "@/lib/evals/copy";
 import type { Gap } from "@/lib/evals/gaps";
-import { calendarMonthLabel, pacificDayLabel } from "@/lib/evals/truth";
+import { asOfCalendarDate, calendarMonthLabel, pacificDayLabel } from "@/lib/evals/truth";
 
 /** A `{name}` in a row's text, rendered as the `<time>` its `dates` entry names. */
 function GapDate({ value }: { value: string | undefined }) {
   const label = value ? calendarMonthLabel(value) ?? pacificDayLabel(value) : null;
   return <time dateTime={value}>{label ?? CHIP_COPY.dateUnreadable}</time>;
+}
+
+/** Rough target timing from the owning issue's board Target (#12467, Ruling 104). */
+function GapTarget({ target }: { target?: string | null }) {
+  const validDay = target ? asOfCalendarDate(target) : null;
+  const ym = validDay ? validDay.slice(0, 7) : null;
+  const monthLabel = ym ? calendarMonthLabel(ym) : null;
+  return (
+    <span
+      data-gap-target={monthLabel && validDay ? validDay : "unscheduled"}
+      className="text-caption text-text-secondary"
+    >
+      {" · "}
+      {monthLabel && ym ? (
+        <>
+          {GAPS_COPY.expectedBefore}{" "}
+          <time dateTime={ym}>{monthLabel}</time>
+        </>
+      ) : (
+        GAPS_COPY.notScheduledYet
+      )}
+    </span>
+  );
 }
 
 function GapText({ gap }: { gap: Gap }) {
@@ -24,6 +47,7 @@ function GapText({ gap }: { gap: Gap }) {
         )
       )}{" "}
       <RepoRefLink repoRef={gap.ref} />
+      <GapTarget target={gap.target} />
     </p>
   );
 }

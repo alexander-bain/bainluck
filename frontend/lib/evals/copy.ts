@@ -383,6 +383,8 @@ export const GAPS_COPY = {
   title: "What we have not tested yet",
   lead: "This is what we have not checked.",
   detail: "Known gaps, each linked to its issue: the ones an outside reviewer would ask about first.",
+  expectedBefore: "Expected",
+  notScheduledYet: "Not scheduled yet",
 } as const;
 
 export const READING_COPY = {

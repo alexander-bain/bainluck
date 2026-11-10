@@ -8,13 +8,10 @@ import {
 } from "@/lib/evals/copy";
 import { defaultShareCard } from "@/lib/shareCard";
 
-// #12102 — /evals, "How Bain Luck tests itself".
+// #12102, #12467 — /evals, "How Bain Luck tests itself".
 //
-// UNLISTED, per Decide 43-A1 (Alex, Nov 5): `noindex, nofollow`, no footer link
-// and no sitemap entry until Alex has read the served page on his phone. The
-// route still renders for anyone holding the URL; S10 removes this line and adds
-// the footer link and the sitemap entry, with Alex's "looks right" on NOW.
-// `/daily` carries the same pair for the same reason.
+// Listed publicly per Ruling 104 (Alex, Mon Nov 9): linked from the footer and
+// the sitemap, and indexable. `/daily` keeps its own `noindex`.
 //
 // The canonical and `og:url` name this route, and the share card is explicit,
 // because a route that declares `openGraph` does not reliably inherit the root
@@ -29,7 +26,6 @@ export const metadata: Metadata = {
     url: EVALS_PATH,
     images: defaultShareCard(),
   },
-  robots: { index: false, follow: false },
 };
 
 export default function EvalsLayout({ children }: { children: React.ReactNode }) {

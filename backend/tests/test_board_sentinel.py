@@ -896,3 +896,69 @@ def test_run_deadline_caches_unknown_no_filing(monkeypatch):
     assert stats["filed"] is None
     assert any(u["check"] == "deadline_exceeded" for u in stats["unknown"])
     assert stats["counts"]["population_complete"] is False
+
+
+# --------------------------------------------------------------------------
+# #12467 — /evals gap-targets vs launch board Target parity check
+# --------------------------------------------------------------------------
+def test_check_evals_gap_targets_clean_when_open_and_matching():
+    gap_targets = {
+        "project_id": "PVT_launch",
+        "gaps": [
+            {"id": "calibration-windows", "issue": "#11850", "target": "2026-11-20"},
+            {"id": "grouping-holdout", "issue": "#587", "target": None},
+        ],
+    }
+    issues = [_iss(11850), _iss(587)]
+    launch_targets = {11850: "2026-11-20"}
+    assert bs.check_evals_gap_targets(gap_targets, issues, launch_targets) == []
+
+
+def test_check_evals_gap_targets_flags_closed_issue_and_target_drift():
+    gap_targets = {
+        "project_id": "PVT_launch",
+        "gaps": [
+            {"id": "calibration-windows", "issue": "#11850", "target": "2026-11-20"},
+            {"id": "rare-pair-kinds", "issue": "#12514", "target": "2026-11-20"},
+            {"id": "grouping-holdout", "issue": "#587", "target": None},
+        ],
+    }
+    # #11850 is closed (absent from open issues); #12514 moved to Dec 23 on the board;
+    # #587 was scheduled on the board while /evals still says Not scheduled yet (None).
+    issues = [_iss(12514), _iss(587)]
+    launch_targets = {12514: "2026-12-23", 587: "2026-12-15"}
+    findings = bs.check_evals_gap_targets(gap_targets, issues, launch_targets)
+    assert [f["gap_id"] for f in findings] == [
+        "calibration-windows",
+        "rare-pair-kinds",
+        "grouping-holdout",
+    ]
+    assert all(f["check"] == "evals_gap_target_drift" for f in findings)
+    assert "closed or not in open issues" in findings[0]["detail"]
+    assert "'2026-11-20'" in findings[1]["detail"] and "'2026-12-23'" in findings[1]["detail"]
+    assert "None" in findings[2]["detail"] and "'2026-12-15'" in findings[2]["detail"]
+
+
+def test_classify_board_evals_gap_targets_unknown_when_launch_board_unavailable():
+    issues = [_iss(10, labels=("alert-intake", "area:infra", "needs-agent", "priority:p2"),
+                   column="In Progress")]
+    c = bs.classify_board(
+        issues,
+        NOW,
+        columns_available=True,
+        project_numbers={10},
+        evals_gap_targets={"project_id": "PVT_launch", "gaps": []},
+        launch_board_targets=None,
+        evals_gap_check_enabled=True,
+    )
+    assert c["real"] == []
+    assert any(u["check"] == "evals_gap_targets" for u in c["unknown"])
+    assert bs.board_verdict(c) == "unknown"
+
+
+def test_repo_gap_targets_json_loads_cleanly():
+    loaded = bs._load_evals_gap_targets()
+    assert isinstance(loaded, dict)
+    assert loaded.get("project_id") == "PVT_kwHOC0ai9c4Bp5gq"
+    entries = bs._iter_gap_target_entries(loaded)
+    assert len(entries) == 8
