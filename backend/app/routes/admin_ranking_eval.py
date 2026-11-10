@@ -682,6 +682,11 @@ def _card_entry_to_deck_item(
             "market_id": int(r.get("market_id") or 0),
             "probability": round(float(r["probability"]), 4),
             "rendered_percent": int(r.get("rendered_percent", math.floor(float(r["probability"]) * 100.0 + 0.5))),
+            **(
+                {"observed_at": str(r["observed_at"])}
+                if r.get("observed_at")
+                else {}
+            ),
         }
         for r in raw_rows
     ]

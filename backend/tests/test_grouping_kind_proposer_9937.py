@@ -452,3 +452,32 @@ class TestKindProposerSpendAndCatalogAdmission:
             for r in item["proposed_card"]["rows"]:
                 assert 0 < r["probability"] < 1
                 assert 0 <= r["rendered_percent"] <= 100
+                assert r.get("observed_at")
+
+        # Every row stamped at one time 8 days before as_of, or missing observed_at, is refused.
+        raw_exam = json.loads(DEFAULT_NEW_KINDS_EXAM_JSON_PATH.read_text(encoding="utf-8"))
+        stale_card = copy.deepcopy(raw_exam["cards"][0])
+        for r in stale_card["rows"]:
+            r["observed_at"] = "2026-11-01T12:00:00Z"
+        missing_obs_card = copy.deepcopy(raw_exam["cards"][1])
+        missing_obs_card["rows"][0].pop("observed_at", None)
+        refused_exam_path = Path(__file__).resolve().parent / "_tmp_refused_exam_9937.json"
+        try:
+            refused_exam_path.write_text(
+                json.dumps(
+                    {
+                        "slate_id": NEW_KINDS_EXAM_SLATE_ID,
+                        "generated_at": "2026-11-10T16:50:00Z",
+                        "cards": [stale_card, missing_obs_card],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            refused_exam = load_new_kinds_exam_cards(path=refused_exam_path)
+            assert refused_exam["accepted_count"] == 0
+            assert refused_exam["refused_count"] == 2
+            reasons = [entry["reason"] for entry in refused_exam["refused"]]
+            assert any(str(r).startswith("stale_quote:") for r in reasons)
+            assert any(str(r).startswith("missing_observed_at:") for r in reasons)
+        finally:
+            refused_exam_path.unlink(missing_ok=True)

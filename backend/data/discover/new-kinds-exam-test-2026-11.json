@@ -22,138 +22,144 @@
   },
   "cards": [
     {
-      "slug": "nhl-players-80-points-2026-27",
+      "slug": "nhl-teams-80-points-2026-27",
       "kind": "season_stat_leaders",
-      "title": "Connor McDavid and Nathan MacKinnon top the NHL 80-point race at 96%",
-      "subtitle": "Which NHL players will reach 80+ points in 2026\u201327?",
-      "kicker": "NHL \u00b7 SEASON MILESTONE",
-      "count_line": "Showing 5 of 101 players \u00b7 No number yet for 9 players",
-      "footer": "Each player is their own market. They don't add up to 100%.",
+      "title": "Washington Capitals and Tampa Bay Lightning top the NHL 80-point race at 98%",
+      "subtitle": "Which NHL teams will reach 80+ points in 2026–27?",
+      "kicker": "NHL · SEASON STAT LEADERS",
+      "count_line": "Showing 5 of 32 teams",
+      "footer": "Each team is its own market. They don't add up to 100%.",
       "selection_type": "top_5",
-      "subject_unit": "players",
-      "member_count": 101,
-      "as_of": "2026-11-10T16:50:00Z",
-      "as_of_label": "as of Nov 10, 8:50 AM PT",
+      "subject_unit": "teams",
+      "member_count": 32,
+      "as_of": "2026-11-10T18:40:47Z",
+      "as_of_label": "as of Nov 10, 10:40 AM PT",
       "selector": {
         "sport": "icehockey_nhl",
-        "title_ilike": "Will % record 80+ points in the 2026-27 regular season?",
-        "window": "2026-27-regular-season",
-        "selector": "threshold:80_player_points"
+        "title_ilike": "Will the % record 80+ points?"
       },
       "stronger_single_alternative": {
-        "market_id": 63104762,
-        "title": "Will Connor McDavid record 80+ points in the 2026-27 regular season?",
-        "probability": 0.9605,
-        "destination_href": "/futures/63104762"
+        "market_id": 63218665,
+        "title": "Will the Washington Capitals record 80+ points?",
+        "probability": 0.976,
+        "destination_href": "/futures/63218665"
       },
       "rows": [
         {
-          "market_id": 63104762,
-          "label": "Connor McDavid",
-          "probability": 0.9605,
+          "market_id": 63218665,
+          "label": "Washington Capitals",
+          "probability": 0.976,
+          "rendered_percent": 98,
+          "source": "polymarket",
+          "destination_href": "/futures/63218665",
+          "observed_at": "2026-11-10T18:40:41Z"
+        },
+        {
+          "market_id": 63218660,
+          "label": "Tampa Bay Lightning",
+          "probability": 0.975,
+          "rendered_percent": 98,
+          "source": "polymarket",
+          "destination_href": "/futures/63218660",
+          "observed_at": "2026-11-10T18:21:32Z"
+        },
+        {
+          "market_id": 63218639,
+          "label": "Carolina Hurricanes",
+          "probability": 0.969,
+          "rendered_percent": 97,
+          "source": "polymarket",
+          "destination_href": "/futures/63218639",
+          "observed_at": "2026-11-10T18:40:47Z"
+        },
+        {
+          "market_id": 63218641,
+          "label": "Colorado Avalanche",
+          "probability": 0.967,
+          "rendered_percent": 97,
+          "source": "polymarket",
+          "destination_href": "/futures/63218641",
+          "observed_at": "2026-11-10T18:21:35Z"
+        },
+        {
+          "market_id": 63218648,
+          "label": "Minnesota Wild",
+          "probability": 0.964,
           "rendered_percent": 96,
           "source": "polymarket",
-          "destination_href": "/futures/63104762"
-        },
-        {
-          "market_id": 63119236,
-          "label": "Nathan MacKinnon",
-          "probability": 0.9595,
-          "rendered_percent": 96,
-          "source": "polymarket",
-          "destination_href": "/futures/63119236"
-        },
-        {
-          "market_id": 63104768,
-          "label": "Leon Draisaitl",
-          "probability": 0.94,
-          "rendered_percent": 94,
-          "source": "polymarket",
-          "destination_href": "/futures/63104768"
-        },
-        {
-          "market_id": 63104766,
-          "label": "Kirill Kaprizov",
-          "probability": 0.935,
-          "rendered_percent": 94,
-          "source": "polymarket",
-          "destination_href": "/futures/63104766"
-        },
-        {
-          "market_id": 63104769,
-          "label": "Macklin Celebrini",
-          "probability": 0.9,
-          "rendered_percent": 90,
-          "source": "polymarket",
-          "destination_href": "/futures/63104769"
+          "destination_href": "/futures/63218648",
+          "observed_at": "2026-11-10T18:21:32Z"
         }
       ]
     },
     {
-      "slug": "nhl-players-40-goals-2026-27",
+      "slug": "nhl-teams-100-points-2026-27",
       "kind": "season_stat_leaders",
-      "title": "Leon Draisaitl leads the NHL 40-goal race at 83%",
-      "subtitle": "Which NHL players will score 40+ goals in 2026\u201327?",
-      "kicker": "NHL \u00b7 SEASON MILESTONE",
-      "count_line": "Showing 5 of 61 players",
-      "footer": "Each player is their own market. They don't add up to 100%.",
+      "title": "Carolina Hurricanes lead the NHL 100-point race at 87%",
+      "subtitle": "Which NHL teams will reach 100+ points in 2026–27?",
+      "kicker": "NHL · SEASON STAT LEADERS",
+      "count_line": "Showing 5 of 32 teams",
+      "footer": "Each team is its own market. They don't add up to 100%.",
       "selection_type": "top_5",
-      "subject_unit": "players",
-      "member_count": 61,
-      "as_of": "2026-11-10T16:50:00Z",
-      "as_of_label": "as of Nov 10, 8:50 AM PT",
+      "subject_unit": "teams",
+      "member_count": 32,
+      "as_of": "2026-11-10T18:40:35Z",
+      "as_of_label": "as of Nov 10, 10:40 AM PT",
       "selector": {
         "sport": "icehockey_nhl",
-        "title_ilike": "Will % record 40+ goals in the 2026-27 regular season?",
-        "window": "2026-27-regular-season",
-        "selector": "threshold:40_player_goals"
+        "title_ilike": "Will the % record 100+ points?"
       },
       "stronger_single_alternative": {
-        "market_id": 63119326,
-        "title": "Will Leon Draisaitl record 40+ goals in the 2026-27 regular season?",
-        "probability": 0.83,
-        "destination_href": "/futures/63119326"
+        "market_id": 63218573,
+        "title": "Will the Carolina Hurricanes record 100+ points?",
+        "probability": 0.865,
+        "destination_href": "/futures/63218573"
       },
       "rows": [
         {
-          "market_id": 63119326,
-          "label": "Leon Draisaitl",
-          "probability": 0.83,
-          "rendered_percent": 83,
+          "market_id": 63218573,
+          "label": "Carolina Hurricanes",
+          "probability": 0.865,
+          "rendered_percent": 87,
           "source": "polymarket",
-          "destination_href": "/futures/63119326"
+          "destination_href": "/futures/63218573",
+          "observed_at": "2026-11-10T18:33:34Z"
         },
         {
-          "market_id": 63119324,
-          "label": "Kirill Kaprizov",
-          "probability": 0.81,
-          "rendered_percent": 81,
+          "market_id": 63218582,
+          "label": "Minnesota Wild",
+          "probability": 0.78,
+          "rendered_percent": 78,
           "source": "polymarket",
-          "destination_href": "/futures/63119324"
+          "destination_href": "/futures/63218582",
+          "observed_at": "2026-11-10T18:39:01Z"
         },
         {
-          "market_id": 63119337,
-          "label": "Tage Thompson",
-          "probability": 0.58,
-          "rendered_percent": 58,
+          "market_id": 63218585,
+          "label": "New Jersey Devils",
+          "probability": 0.76,
+          "rendered_percent": 76,
           "source": "polymarket",
-          "destination_href": "/futures/63119337"
+          "destination_href": "/futures/63218585",
+          "observed_at": "2026-11-10T18:37:35Z"
         },
         {
-          "market_id": 63119329,
-          "label": "Nathan MacKinnon",
-          "probability": 0.57,
-          "rendered_percent": 57,
+          "market_id": 63218575,
+          "label": "Colorado Avalanche",
+          "probability": 0.7515,
+          "rendered_percent": 75,
           "source": "polymarket",
-          "destination_href": "/futures/63119329"
+          "destination_href": "/futures/63218575",
+          "observed_at": "2026-11-10T18:35:15Z"
         },
         {
-          "market_id": 63119310,
-          "label": "Auston Matthews",
-          "probability": 0.55,
-          "rendered_percent": 55,
+          "market_id": 63218579,
+          "label": "Edmonton Oilers",
+          "probability": 0.74,
+          "rendered_percent": 74,
           "source": "polymarket",
-          "destination_href": "/futures/63119310"
+          "destination_href": "/futures/63218579",
+          "observed_at": "2026-11-10T18:40:35Z"
         }
       ]
     },
@@ -161,8 +167,8 @@
       "slug": "nhl-players-50-goals-2026-27",
       "kind": "season_stat_leaders",
       "title": "Leon Draisaitl leads the NHL 50-goal race at 62%",
-      "subtitle": "Which NHL players will score 50+ goals in 2026\u201327?",
-      "kicker": "NHL \u00b7 SEASON MILESTONE",
+      "subtitle": "Which NHL players will score 50+ goals in 2026–27?",
+      "kicker": "NHL · SEASON MILESTONE",
       "count_line": "Showing 5 of 39 players",
       "footer": "Each player is their own market. They don't add up to 100%.",
       "selection_type": "top_5",
@@ -189,7 +195,8 @@
           "probability": 0.615,
           "rendered_percent": 62,
           "source": "polymarket",
-          "destination_href": "/futures/63123351"
+          "destination_href": "/futures/63123351",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63119348,
@@ -197,7 +204,8 @@
           "probability": 0.56,
           "rendered_percent": 56,
           "source": "polymarket",
-          "destination_href": "/futures/63119348"
+          "destination_href": "/futures/63119348",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63123359,
@@ -205,7 +213,8 @@
           "probability": 0.3935,
           "rendered_percent": 39,
           "source": "polymarket",
-          "destination_href": "/futures/63123359"
+          "destination_href": "/futures/63123359",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63123343,
@@ -213,7 +222,8 @@
           "probability": 0.35,
           "rendered_percent": 35,
           "source": "polymarket",
-          "destination_href": "/futures/63123343"
+          "destination_href": "/futures/63123343",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63123350,
@@ -221,75 +231,79 @@
           "probability": 0.325,
           "rendered_percent": 33,
           "source": "polymarket",
-          "destination_href": "/futures/63123350"
+          "destination_href": "/futures/63123350",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
     {
-      "slug": "nhl-players-30-goals-2026-27",
+      "slug": "nhl-teams-110-points-2026-27",
       "kind": "season_stat_leaders",
-      "title": "Auston Matthews leads the NHL 30-goal race at 94%",
-      "subtitle": "Which NHL players will score 30+ goals in 2026\u201327?",
-      "kicker": "NHL \u00b7 SEASON MILESTONE",
-      "count_line": "Showing 5 of 37 players \u00b7 No number yet for 9 players",
-      "footer": "Each player is their own market. They don't add up to 100%.",
+      "title": "Carolina Hurricanes lead the NHL 110-point race at 67%",
+      "subtitle": "Which NHL teams will reach 110+ points in 2026–27?",
+      "kicker": "NHL · SEASON STAT LEADERS",
+      "count_line": "Showing 5 of 32 teams",
+      "footer": "Each team is its own market. They don't add up to 100%.",
       "selection_type": "top_5",
-      "subject_unit": "players",
-      "member_count": 37,
-      "as_of": "2026-11-10T16:50:00Z",
-      "as_of_label": "as of Nov 10, 8:50 AM PT",
+      "subject_unit": "teams",
+      "member_count": 32,
+      "as_of": "2026-11-10T18:40:51Z",
+      "as_of_label": "as of Nov 10, 10:40 AM PT",
       "selector": {
         "sport": "icehockey_nhl",
-        "title_ilike": "Will % record 30+ goals in the 2026-27 regular season?",
-        "window": "2026-27-regular-season",
-        "selector": "threshold:30_player_goals"
+        "title_ilike": "Will the % record 110+ points?"
       },
       "stronger_single_alternative": {
-        "market_id": 63104799,
-        "title": "Will Auston Matthews record 30+ goals in the 2026-27 regular season?",
-        "probability": 0.935,
-        "destination_href": "/futures/63104799"
+        "market_id": 63218549,
+        "title": "Will the Minnesota Wild record 110+ points?",
+        "probability": 0.455,
+        "destination_href": "/futures/63218549"
       },
       "rows": [
         {
-          "market_id": 63104799,
-          "label": "Auston Matthews",
-          "probability": 0.935,
-          "rendered_percent": 94,
+          "market_id": 63218540,
+          "label": "Carolina Hurricanes",
+          "probability": 0.665,
+          "rendered_percent": 67,
           "source": "polymarket",
-          "destination_href": "/futures/63104799"
+          "destination_href": "/futures/63218540",
+          "observed_at": "2026-11-10T18:40:51Z"
         },
         {
-          "market_id": 63104804,
-          "label": "Nathan MacKinnon",
-          "probability": 0.8935,
-          "rendered_percent": 89,
+          "market_id": 63218549,
+          "label": "Minnesota Wild",
+          "probability": 0.455,
+          "rendered_percent": 46,
           "source": "polymarket",
-          "destination_href": "/futures/63104804"
+          "destination_href": "/futures/63218549",
+          "observed_at": "2026-11-10T18:40:13Z"
         },
         {
-          "market_id": 63104803,
-          "label": "Leon Draisaitl",
-          "probability": 0.87,
-          "rendered_percent": 87,
+          "market_id": 63218561,
+          "label": "Tampa Bay Lightning",
+          "probability": 0.445,
+          "rendered_percent": 45,
           "source": "polymarket",
-          "destination_href": "/futures/63104803"
+          "destination_href": "/futures/63218561",
+          "observed_at": "2026-11-10T18:40:43Z"
         },
         {
-          "market_id": 63104802,
-          "label": "Kirill Kaprizov",
-          "probability": 0.838,
-          "rendered_percent": 84,
+          "market_id": 63218565,
+          "label": "Vegas Golden Knights",
+          "probability": 0.445,
+          "rendered_percent": 45,
           "source": "polymarket",
-          "destination_href": "/futures/63104802"
+          "destination_href": "/futures/63218565",
+          "observed_at": "2026-11-10T18:40:29Z"
         },
         {
-          "market_id": 63104801,
-          "label": "Jason Robertson",
-          "probability": 0.835,
-          "rendered_percent": 84,
+          "market_id": 63218546,
+          "label": "Edmonton Oilers",
+          "probability": 0.42,
+          "rendered_percent": 42,
           "source": "polymarket",
-          "destination_href": "/futures/63104801"
+          "destination_href": "/futures/63218546",
+          "observed_at": "2026-11-10T18:39:39Z"
         }
       ]
     },
@@ -297,8 +311,8 @@
       "slug": "nhl-teams-90-points-2026-27",
       "kind": "season_stat_leaders",
       "title": "Carolina Hurricanes and Dallas Stars top the NHL 90-point race at 93%",
-      "subtitle": "Which NHL teams will reach 90+ points in 2026\u201327?",
-      "kicker": "NHL \u00b7 SEASON BENCHMARK",
+      "subtitle": "Which NHL teams will reach 90+ points in 2026–27?",
+      "kicker": "NHL · SEASON BENCHMARK",
       "count_line": "Showing 5 of 32 teams",
       "footer": "Each team is its own market. They don't add up to 100%.",
       "selection_type": "top_5",
@@ -325,7 +339,8 @@
           "probability": 0.93,
           "rendered_percent": 93,
           "source": "polymarket",
-          "destination_href": "/futures/63218606"
+          "destination_href": "/futures/63218606",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63218610,
@@ -333,7 +348,8 @@
           "probability": 0.915,
           "rendered_percent": 92,
           "source": "polymarket",
-          "destination_href": "/futures/63218610"
+          "destination_href": "/futures/63218610",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63218631,
@@ -341,7 +357,8 @@
           "probability": 0.9135,
           "rendered_percent": 91,
           "source": "polymarket",
-          "destination_href": "/futures/63218631"
+          "destination_href": "/futures/63218631",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63218615,
@@ -349,7 +366,8 @@
           "probability": 0.91,
           "rendered_percent": 91,
           "source": "polymarket",
-          "destination_href": "/futures/63218615"
+          "destination_href": "/futures/63218615",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63218603,
@@ -357,7 +375,8 @@
           "probability": 0.905,
           "rendered_percent": 91,
           "source": "polymarket",
-          "destination_href": "/futures/63218603"
+          "destination_href": "/futures/63218603",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -365,8 +384,8 @@
       "slug": "nfl-players-6-receiving-tds-2026-27",
       "kind": "season_stat_leaders",
       "title": "Amon-Ra St. Brown leads the NFL 6+ receiving-TD race at 98%",
-      "subtitle": "Which NFL players will catch 6+ receiving touchdowns in 2026\u201327?",
-      "kicker": "NFL \u00b7 SEASON MILESTONE",
+      "subtitle": "Which NFL players will catch 6+ receiving touchdowns in 2026–27?",
+      "kicker": "NFL · SEASON MILESTONE",
       "count_line": "Showing 5 of 18 players",
       "footer": "Each player is their own market. They don't add up to 100%.",
       "selection_type": "top_5",
@@ -393,7 +412,8 @@
           "probability": 0.9815,
           "rendered_percent": 98,
           "source": "polymarket",
-          "destination_href": "/futures/58830295"
+          "destination_href": "/futures/58830295",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58830293,
@@ -401,7 +421,8 @@
           "probability": 0.9,
           "rendered_percent": 90,
           "source": "polymarket",
-          "destination_href": "/futures/58830293"
+          "destination_href": "/futures/58830293",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58834046,
@@ -409,7 +430,8 @@
           "probability": 0.885,
           "rendered_percent": 89,
           "source": "polymarket",
-          "destination_href": "/futures/58834046"
+          "destination_href": "/futures/58834046",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836287,
@@ -417,7 +439,8 @@
           "probability": 0.61,
           "rendered_percent": 61,
           "source": "polymarket",
-          "destination_href": "/futures/58836287"
+          "destination_href": "/futures/58836287",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836270,
@@ -425,7 +448,8 @@
           "probability": 0.61,
           "rendered_percent": 61,
           "source": "polymarket",
-          "destination_href": "/futures/58836270"
+          "destination_href": "/futures/58836270",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -433,8 +457,8 @@
       "slug": "nfl-players-7-receiving-tds-2026-27",
       "kind": "season_stat_leaders",
       "title": "Tee Higgins leads the NFL 7+ receiving-TD race at 87%",
-      "subtitle": "Which NFL players will catch 7+ receiving touchdowns in 2026\u201327?",
-      "kicker": "NFL \u00b7 SEASON MILESTONE",
+      "subtitle": "Which NFL players will catch 7+ receiving touchdowns in 2026–27?",
+      "kicker": "NFL · SEASON MILESTONE",
       "count_line": "Showing 5 of 14 players",
       "footer": "Each player is their own market. They don't add up to 100%.",
       "selection_type": "top_5",
@@ -461,7 +485,8 @@
           "probability": 0.87,
           "rendered_percent": 87,
           "source": "polymarket",
-          "destination_href": "/futures/58836282"
+          "destination_href": "/futures/58836282",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836286,
@@ -469,7 +494,8 @@
           "probability": 0.79,
           "rendered_percent": 79,
           "source": "polymarket",
-          "destination_href": "/futures/58836286"
+          "destination_href": "/futures/58836286",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836283,
@@ -477,7 +503,8 @@
           "probability": 0.78,
           "rendered_percent": 78,
           "source": "polymarket",
-          "destination_href": "/futures/58836283"
+          "destination_href": "/futures/58836283",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836273,
@@ -485,7 +512,8 @@
           "probability": 0.775,
           "rendered_percent": 78,
           "source": "polymarket",
-          "destination_href": "/futures/58836273"
+          "destination_href": "/futures/58836273",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836256,
@@ -493,7 +521,8 @@
           "probability": 0.58,
           "rendered_percent": 58,
           "source": "polymarket",
-          "destination_href": "/futures/58836256"
+          "destination_href": "/futures/58836256",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -501,8 +530,8 @@
       "slug": "nfl-players-800-rushing-yards-2026-27",
       "kind": "season_stat_leaders",
       "title": "Jahmyr Gibbs leads the NFL 800+ rushing-yard race at 96%",
-      "subtitle": "Which NFL players will rush for 800+ yards in 2026\u201327?",
-      "kicker": "NFL \u00b7 SEASON MILESTONE",
+      "subtitle": "Which NFL players will rush for 800+ yards in 2026–27?",
+      "kicker": "NFL · SEASON MILESTONE",
       "count_line": "Showing 5 of 6 players",
       "footer": "Each player is their own market. They don't add up to 100%.",
       "selection_type": "top_5",
@@ -529,7 +558,8 @@
           "probability": 0.96,
           "rendered_percent": 96,
           "source": "polymarket",
-          "destination_href": "/futures/58836049"
+          "destination_href": "/futures/58836049",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836097,
@@ -537,7 +567,8 @@
           "probability": 0.88,
           "rendered_percent": 88,
           "source": "polymarket",
-          "destination_href": "/futures/58836097"
+          "destination_href": "/futures/58836097",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836123,
@@ -545,7 +576,8 @@
           "probability": 0.865,
           "rendered_percent": 87,
           "source": "polymarket",
-          "destination_href": "/futures/58836123"
+          "destination_href": "/futures/58836123",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836203,
@@ -553,7 +585,8 @@
           "probability": 0.845,
           "rendered_percent": 85,
           "source": "polymarket",
-          "destination_href": "/futures/58836203"
+          "destination_href": "/futures/58836203",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836120,
@@ -561,16 +594,17 @@
           "probability": 0.0325,
           "rendered_percent": 3,
           "source": "polymarket",
-          "destination_href": "/futures/58836120"
+          "destination_href": "/futures/58836120",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
     {
       "slug": "nfl-qbs-3500-passing-yards-2026-27",
       "kind": "season_stat_leaders",
-      "title": "Which NFL quarterbacks will throw for 3,500+ yards in 2026\u201327?",
+      "title": "Which NFL quarterbacks will throw for 3,500+ yards in 2026–27?",
       "subtitle": null,
-      "kicker": "NFL \u00b7 SEASON MILESTONE",
+      "kicker": "NFL · SEASON MILESTONE",
       "count_line": "Showing 5 of 5 quarterbacks",
       "footer": "Each quarterback is their own market. They don't add up to 100%.",
       "selection_type": "complete_group",
@@ -597,7 +631,8 @@
           "probability": 0.87,
           "rendered_percent": 87,
           "source": "polymarket",
-          "destination_href": "/futures/58836057"
+          "destination_href": "/futures/58836057",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836036,
@@ -605,7 +640,8 @@
           "probability": 0.815,
           "rendered_percent": 82,
           "source": "polymarket",
-          "destination_href": "/futures/58836036"
+          "destination_href": "/futures/58836036",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836059,
@@ -613,7 +649,8 @@
           "probability": 0.79,
           "rendered_percent": 79,
           "source": "polymarket",
-          "destination_href": "/futures/58836059"
+          "destination_href": "/futures/58836059",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58833764,
@@ -621,7 +658,8 @@
           "probability": 0.35,
           "rendered_percent": 35,
           "source": "polymarket",
-          "destination_href": "/futures/58833764"
+          "destination_href": "/futures/58833764",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 58836050,
@@ -629,7 +667,8 @@
           "probability": 0.0155,
           "rendered_percent": 2,
           "source": "polymarket",
-          "destination_href": "/futures/58836050"
+          "destination_href": "/futures/58836050",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -638,7 +677,7 @@
       "kind": "season_stat_leaders",
       "title": "Jacksonville Jaguars lead the NFL 9+ win race at 99%",
       "subtitle": "Which NFL teams will win 9+ regular-season games in 2026?",
-      "kicker": "NFL \u00b7 SEASON BENCHMARK",
+      "kicker": "NFL · SEASON BENCHMARK",
       "count_line": "Showing 5 of 21 teams",
       "footer": "Each team is its own market. They don't add up to 100%.",
       "selection_type": "top_5",
@@ -665,7 +704,8 @@
           "probability": 0.985,
           "rendered_percent": 99,
           "source": "polymarket",
-          "destination_href": "/futures/59567947"
+          "destination_href": "/futures/59567947",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 59569773,
@@ -673,7 +713,8 @@
           "probability": 0.9605,
           "rendered_percent": 96,
           "source": "polymarket",
-          "destination_href": "/futures/59569773"
+          "destination_href": "/futures/59569773",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 59567964,
@@ -681,7 +722,8 @@
           "probability": 0.96,
           "rendered_percent": 96,
           "source": "polymarket",
-          "destination_href": "/futures/59567964"
+          "destination_href": "/futures/59567964",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 59566030,
@@ -689,7 +731,8 @@
           "probability": 0.945,
           "rendered_percent": 95,
           "source": "polymarket",
-          "destination_href": "/futures/59566030"
+          "destination_href": "/futures/59566030",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 59567961,
@@ -697,7 +740,8 @@
           "probability": 0.94,
           "rendered_percent": 94,
           "source": "polymarket",
-          "destination_href": "/futures/59567961"
+          "destination_href": "/futures/59567961",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -706,7 +750,7 @@
       "kind": "qualification_stage_board",
       "title": "Which AFC North teams will make the 2027 NFL playoffs?",
       "subtitle": null,
-      "kicker": "NFL \u00b7 AFC NORTH",
+      "kicker": "NFL · AFC NORTH",
       "count_line": "Showing 4 of 4 teams",
       "footer": "Each team is its own market; multiple division teams can make the playoffs.",
       "selection_type": "complete_group",
@@ -733,7 +777,8 @@
           "probability": 0.935,
           "rendered_percent": 94,
           "source": "polymarket",
-          "destination_href": "/futures/16630442"
+          "destination_href": "/futures/16630442",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 16630452,
@@ -741,7 +786,8 @@
           "probability": 0.715,
           "rendered_percent": 72,
           "source": "polymarket",
-          "destination_href": "/futures/16630452"
+          "destination_href": "/futures/16630452",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 16630458,
@@ -749,7 +795,8 @@
           "probability": 0.2365,
           "rendered_percent": 24,
           "source": "polymarket",
-          "destination_href": "/futures/16630458"
+          "destination_href": "/futures/16630458",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 16630440,
@@ -757,7 +804,8 @@
           "probability": 0.16,
           "rendered_percent": 16,
           "source": "polymarket",
-          "destination_href": "/futures/16630440"
+          "destination_href": "/futures/16630440",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -766,7 +814,7 @@
       "kind": "qualification_stage_board",
       "title": "Which NFC North teams will make the 2027 NFL playoffs?",
       "subtitle": null,
-      "kicker": "NFL \u00b7 NFC NORTH",
+      "kicker": "NFL · NFC NORTH",
       "count_line": "Showing 4 of 4 teams",
       "footer": "Each team is its own market; multiple division teams can make the playoffs.",
       "selection_type": "complete_group",
@@ -793,7 +841,8 @@
           "probability": 0.865,
           "rendered_percent": 87,
           "source": "polymarket",
-          "destination_href": "/futures/16630457"
+          "destination_href": "/futures/16630457",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 16630444,
@@ -801,7 +850,8 @@
           "probability": 0.75,
           "rendered_percent": 75,
           "source": "polymarket",
-          "destination_href": "/futures/16630444"
+          "destination_href": "/futures/16630444",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 16630460,
@@ -809,7 +859,8 @@
           "probability": 0.66,
           "rendered_percent": 66,
           "source": "polymarket",
-          "destination_href": "/futures/16630460"
+          "destination_href": "/futures/16630460",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 16630449,
@@ -817,7 +868,8 @@
           "probability": 0.645,
           "rendered_percent": 65,
           "source": "polymarket",
-          "destination_href": "/futures/16630449"
+          "destination_href": "/futures/16630449",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -825,9 +877,9 @@
       "slug": "ucl-top-8-2026-27",
       "kind": "qualification_stage_board",
       "title": "Real Madrid and Paris Saint-Germain top the Champions League top-8 race at 98%",
-      "subtitle": "Which clubs will finish in the top 8 of the 2026\u201327 UEFA Champions League?",
-      "kicker": "CHAMPIONS LEAGUE \u00b7 TOP 8",
-      "count_line": "Showing 5 of 36 clubs \u00b7 No number yet for 5 clubs",
+      "subtitle": "Which clubs will finish in the top 8 of the 2026–27 UEFA Champions League?",
+      "kicker": "CHAMPIONS LEAGUE · TOP 8",
+      "count_line": "Showing 5 of 36 clubs",
       "footer": "Eight clubs finish in the top 8. They don't add up to 100%.",
       "selection_type": "top_5",
       "subject_unit": "clubs",
@@ -853,7 +905,8 @@
           "probability": 0.976,
           "rendered_percent": 98,
           "source": "polymarket",
-          "destination_href": "/futures/61914236"
+          "destination_href": "/futures/61914236",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 62224259,
@@ -861,7 +914,8 @@
           "probability": 0.9755,
           "rendered_percent": 98,
           "source": "polymarket",
-          "destination_href": "/futures/62224259"
+          "destination_href": "/futures/62224259",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 61914235,
@@ -869,7 +923,8 @@
           "probability": 0.9,
           "rendered_percent": 90,
           "source": "polymarket",
-          "destination_href": "/futures/61914235"
+          "destination_href": "/futures/61914235",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 61991272,
@@ -877,7 +932,8 @@
           "probability": 0.86,
           "rendered_percent": 86,
           "source": "polymarket",
-          "destination_href": "/futures/61991272"
+          "destination_href": "/futures/61991272",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 61914237,
@@ -885,7 +941,8 @@
           "probability": 0.755,
           "rendered_percent": 76,
           "source": "polymarket",
-          "destination_href": "/futures/61914237"
+          "destination_href": "/futures/61914237",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -893,8 +950,8 @@
       "slug": "uel-top-8-2026-27",
       "kind": "qualification_stage_board",
       "title": "Benfica and Bournemouth top the Europa League top-8 race at 98%",
-      "subtitle": "Which clubs will finish in the top 8 of the 2026\u201327 UEFA Europa League?",
-      "kicker": "EUROPA LEAGUE \u00b7 TOP 8",
+      "subtitle": "Which clubs will finish in the top 8 of the 2026–27 UEFA Europa League?",
+      "kicker": "EUROPA LEAGUE · TOP 8",
       "count_line": "Showing 5 of 36 clubs",
       "footer": "Eight clubs finish in the top 8. They don't add up to 100%.",
       "selection_type": "top_5",
@@ -921,7 +978,8 @@
           "probability": 0.9785,
           "rendered_percent": 98,
           "source": "polymarket",
-          "destination_href": "/futures/62302258"
+          "destination_href": "/futures/62302258",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63462305,
@@ -929,7 +987,8 @@
           "probability": 0.9685,
           "rendered_percent": 97,
           "source": "polymarket",
-          "destination_href": "/futures/63462305"
+          "destination_href": "/futures/63462305",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63462286,
@@ -937,7 +996,8 @@
           "probability": 0.875,
           "rendered_percent": 88,
           "source": "polymarket",
-          "destination_href": "/futures/63462286"
+          "destination_href": "/futures/63462286",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63462284,
@@ -945,7 +1005,8 @@
           "probability": 0.785,
           "rendered_percent": 79,
           "source": "polymarket",
-          "destination_href": "/futures/63462284"
+          "destination_href": "/futures/63462284",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63462293,
@@ -953,16 +1014,17 @@
           "probability": 0.765,
           "rendered_percent": 77,
           "source": "polymarket",
-          "destination_href": "/futures/63462293"
+          "destination_href": "/futures/63462293",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
     {
       "slug": "ucl-playoff-places-2026-27",
       "kind": "qualification_stage_board",
-      "title": "Atl\u00e9tico Madrid and Sporting CP top the Champions League knockout-playoff race at 81%",
-      "subtitle": "Which clubs will finish 9th to 24th in the 2026\u201327 UEFA Champions League?",
-      "kicker": "CHAMPIONS LEAGUE \u00b7 PLAYOFF PLACES",
+      "title": "Atlético Madrid and Sporting CP top the Champions League knockout-playoff race at 81%",
+      "subtitle": "Which clubs will finish 9th to 24th in the 2026–27 UEFA Champions League?",
+      "kicker": "CHAMPIONS LEAGUE · PLAYOFF PLACES",
       "count_line": "Showing 5 of 36 clubs",
       "footer": "Sixteen clubs finish 9th to 24th. They don't add up to 100%.",
       "selection_type": "top_5",
@@ -978,18 +1040,19 @@
       },
       "stronger_single_alternative": {
         "market_id": 63348249,
-        "title": "Will Atl\u00e9tico Madrid finish 9th-24th in UCL league phase?",
+        "title": "Will Atlético Madrid finish 9th-24th in UCL league phase?",
         "probability": 0.81,
         "destination_href": "/futures/63348249"
       },
       "rows": [
         {
           "market_id": 63348249,
-          "label": "Atl\u00e9tico Madrid",
+          "label": "Atlético Madrid",
           "probability": 0.81,
           "rendered_percent": 81,
           "source": "polymarket",
-          "destination_href": "/futures/63348249"
+          "destination_href": "/futures/63348249",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63348260,
@@ -997,7 +1060,8 @@
           "probability": 0.805,
           "rendered_percent": 81,
           "source": "polymarket",
-          "destination_href": "/futures/63348260"
+          "destination_href": "/futures/63348260",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63348254,
@@ -1005,7 +1069,8 @@
           "probability": 0.79,
           "rendered_percent": 79,
           "source": "polymarket",
-          "destination_href": "/futures/63348254"
+          "destination_href": "/futures/63348254",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63348261,
@@ -1013,7 +1078,8 @@
           "probability": 0.78,
           "rendered_percent": 78,
           "source": "polymarket",
-          "destination_href": "/futures/63348261"
+          "destination_href": "/futures/63348261",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63348240,
@@ -1021,7 +1087,8 @@
           "probability": 0.78,
           "rendered_percent": 78,
           "source": "polymarket",
-          "destination_href": "/futures/63348240"
+          "destination_href": "/futures/63348240",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -1029,8 +1096,8 @@
       "slug": "uel-playoff-places-2026-27",
       "kind": "qualification_stage_board",
       "title": "Milan leads the Europa League knockout-playoff race at 83%",
-      "subtitle": "Which clubs will finish 9th to 24th in the 2026\u201327 UEFA Europa League?",
-      "kicker": "EUROPA LEAGUE \u00b7 PLAYOFF PLACES",
+      "subtitle": "Which clubs will finish 9th to 24th in the 2026–27 UEFA Europa League?",
+      "kicker": "EUROPA LEAGUE · PLAYOFF PLACES",
       "count_line": "Showing 5 of 36 clubs",
       "footer": "Sixteen clubs finish 9th to 24th. They don't add up to 100%.",
       "selection_type": "top_5",
@@ -1057,7 +1124,8 @@
           "probability": 0.83,
           "rendered_percent": 83,
           "source": "polymarket",
-          "destination_href": "/futures/63462253"
+          "destination_href": "/futures/63462253",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63462257,
@@ -1065,7 +1133,8 @@
           "probability": 0.805,
           "rendered_percent": 81,
           "source": "polymarket",
-          "destination_href": "/futures/63462257"
+          "destination_href": "/futures/63462257",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63462267,
@@ -1073,7 +1142,8 @@
           "probability": 0.78,
           "rendered_percent": 78,
           "source": "polymarket",
-          "destination_href": "/futures/63462267"
+          "destination_href": "/futures/63462267",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63462255,
@@ -1081,7 +1151,8 @@
           "probability": 0.775,
           "rendered_percent": 78,
           "source": "polymarket",
-          "destination_href": "/futures/63462255"
+          "destination_href": "/futures/63462255",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63590774,
@@ -1089,84 +1160,88 @@
           "probability": 0.77,
           "rendered_percent": 77,
           "source": "polymarket",
-          "destination_href": "/futures/63590774"
+          "destination_href": "/futures/63590774",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
     {
-      "slug": "nfl-divisional-round-2027",
+      "slug": "nfl-afc-championship-2027",
       "kind": "qualification_stage_board",
-      "title": "San Francisco 49ers lead the NFL Divisional Round race at 77%",
-      "subtitle": "Which NFL teams will advance to the 2027 Divisional Round?",
-      "kicker": "NFL PLAYOFFS \u00b7 DIVISIONAL ROUND",
-      "count_line": "Showing 5 of 32 teams",
-      "footer": "Eight teams advance to the Divisional Round. They don't add up to 100%.",
+      "title": "Buffalo Bills lead the AFC Championship Game race at 50%",
+      "subtitle": "Which AFC teams will advance to the 2027 AFC Championship Game?",
+      "kicker": "NFL · PLAYOFF STAGE",
+      "count_line": "Showing 5 of 16 teams",
+      "footer": "Each team is its own market. They don't add up to 100%.",
       "selection_type": "top_5",
       "subject_unit": "teams",
-      "member_count": 32,
-      "as_of": "2026-11-10T16:50:00Z",
-      "as_of_label": "as of Nov 10, 8:50 AM PT",
+      "member_count": 16,
+      "as_of": "2026-11-10T07:33:53Z",
+      "as_of_label": "as of Nov 9, 11:33 PM PT",
       "selector": {
         "sport": "americanfootball_nfl",
-        "title_ilike": "Will % advance to the Divisional Round in the 2027 NFL Playoffs?",
-        "window": "2027-playoffs",
-        "selector": "stage:nfl_divisional_round"
+        "title_ilike": "Will % advance to the AFC Championship Game in the 2027 NFL Playoffs?"
       },
       "stronger_single_alternative": {
-        "market_id": 62813044,
-        "title": "Will San Francisco 49ers advance to the Divisional Round in the 2027 NFL Playoffs?",
-        "probability": 0.77,
-        "destination_href": "/futures/62813044"
+        "market_id": 61602455,
+        "title": "Will Buffalo Bills advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+        "probability": 0.5,
+        "destination_href": "/futures/61602455"
       },
       "rows": [
         {
-          "market_id": 62813044,
-          "label": "San Francisco 49ers",
-          "probability": 0.77,
-          "rendered_percent": 77,
-          "source": "polymarket",
-          "destination_href": "/futures/62813044"
-        },
-        {
-          "market_id": 62813047,
+          "market_id": 61602455,
           "label": "Buffalo Bills",
-          "probability": 0.715,
-          "rendered_percent": 72,
+          "probability": 0.5,
+          "rendered_percent": 50,
           "source": "polymarket",
-          "destination_href": "/futures/62813047"
+          "destination_href": "/futures/61602455",
+          "observed_at": "2026-11-10T07:33:53Z"
         },
         {
-          "market_id": 61524314,
+          "market_id": 60087223,
           "label": "Jacksonville Jaguars",
-          "probability": 0.695,
-          "rendered_percent": 70,
+          "probability": 0.3665,
+          "rendered_percent": 37,
           "source": "polymarket",
-          "destination_href": "/futures/61524314"
+          "destination_href": "/futures/60087223",
+          "observed_at": "2026-11-10T07:33:53Z"
         },
         {
-          "market_id": 61602472,
-          "label": "Chicago Bears",
-          "probability": 0.625,
-          "rendered_percent": 63,
-          "source": "polymarket",
-          "destination_href": "/futures/61602472"
-        },
-        {
-          "market_id": 62058233,
+          "market_id": 61380805,
           "label": "Denver Broncos",
-          "probability": 0.515,
-          "rendered_percent": 52,
+          "probability": 0.25,
+          "rendered_percent": 25,
           "source": "polymarket",
-          "destination_href": "/futures/62058233"
+          "destination_href": "/futures/61380805",
+          "observed_at": "2026-11-10T07:33:53Z"
+        },
+        {
+          "market_id": 61380798,
+          "label": "Cincinnati Bengals",
+          "probability": 0.24,
+          "rendered_percent": 24,
+          "source": "polymarket",
+          "destination_href": "/futures/61380798",
+          "observed_at": "2026-11-10T07:33:53Z"
+        },
+        {
+          "market_id": 61380800,
+          "label": "Pittsburgh Steelers",
+          "probability": 0.1793,
+          "rendered_percent": 18,
+          "source": "polymarket",
+          "destination_href": "/futures/61380800",
+          "observed_at": "2026-11-10T07:33:53Z"
         }
       ]
     },
     {
       "slug": "nhl-playoffs-bubble-2026-27",
       "kind": "qualification_stage_board",
-      "title": "Five NHL teams on the 2026\u201327 playoff bubble",
-      "subtitle": "Closest to 50% \u00b7 32 teams",
-      "kicker": "NHL PLAYOFFS \u00b7 BUBBLE",
+      "title": "Five NHL teams on the 2026–27 playoff bubble",
+      "subtitle": "Closest to 50% · 32 teams",
+      "kicker": "NHL PLAYOFFS · BUBBLE",
       "count_line": "Showing 5 of 32 teams",
       "footer": "Each team is its own market; 16 NHL teams make the playoffs.",
       "selection_type": "bubble_50",
@@ -1193,7 +1268,8 @@
           "probability": 0.505,
           "rendered_percent": 51,
           "source": "polymarket",
-          "destination_href": "/futures/63104780"
+          "destination_href": "/futures/63104780",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63104782,
@@ -1201,7 +1277,8 @@
           "probability": 0.445,
           "rendered_percent": 45,
           "source": "polymarket",
-          "destination_href": "/futures/63104782"
+          "destination_href": "/futures/63104782",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63104795,
@@ -1209,7 +1286,8 @@
           "probability": 0.415,
           "rendered_percent": 42,
           "source": "polymarket",
-          "destination_href": "/futures/63104795"
+          "destination_href": "/futures/63104795",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63104792,
@@ -1217,7 +1295,8 @@
           "probability": 0.405,
           "rendered_percent": 41,
           "source": "polymarket",
-          "destination_href": "/futures/63104792"
+          "destination_href": "/futures/63104792",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63119266,
@@ -1225,7 +1304,8 @@
           "probability": 0.365,
           "rendered_percent": 37,
           "source": "polymarket",
-          "destination_href": "/futures/63119266"
+          "destination_href": "/futures/63119266",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -1233,8 +1313,8 @@
       "slug": "nfl-playoffs-bubble-2027",
       "kind": "qualification_stage_board",
       "title": "Five NFL teams on the 2027 playoff bubble",
-      "subtitle": "Closest to 50% \u00b7 32 teams",
-      "kicker": "NFL PLAYOFFS \u00b7 BUBBLE",
+      "subtitle": "Closest to 50% · 32 teams",
+      "kicker": "NFL PLAYOFFS · BUBBLE",
       "count_line": "Showing 5 of 32 teams",
       "footer": "Each team is its own market; 14 NFL teams make the playoffs.",
       "selection_type": "bubble_50",
@@ -1261,7 +1341,8 @@
           "probability": 0.6435,
           "rendered_percent": 64,
           "source": "polymarket",
-          "destination_href": "/futures/16630465"
+          "destination_href": "/futures/16630465",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 16630453,
@@ -1269,7 +1350,8 @@
           "probability": 0.51,
           "rendered_percent": 51,
           "source": "polymarket",
-          "destination_href": "/futures/16630453"
+          "destination_href": "/futures/16630453",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 16630448,
@@ -1277,7 +1359,8 @@
           "probability": 0.44,
           "rendered_percent": 44,
           "source": "polymarket",
-          "destination_href": "/futures/16630448"
+          "destination_href": "/futures/16630448",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 16630445,
@@ -1285,7 +1368,8 @@
           "probability": 0.39,
           "rendered_percent": 39,
           "source": "polymarket",
-          "destination_href": "/futures/16630445"
+          "destination_href": "/futures/16630445",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 16630469,
@@ -1293,7 +1377,8 @@
           "probability": 0.37,
           "rendered_percent": 37,
           "source": "polymarket",
-          "destination_href": "/futures/16630469"
+          "destination_href": "/futures/16630469",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     },
@@ -1301,8 +1386,8 @@
       "slug": "ucl-playoff-places-bubble-2026-27",
       "kind": "qualification_stage_board",
       "title": "Five Champions League clubs on the knockout-playoff bubble",
-      "subtitle": "Closest to 50% \u00b7 36 clubs",
-      "kicker": "CHAMPIONS LEAGUE \u00b7 CUTLINE BUBBLE",
+      "subtitle": "Closest to 50% · 36 clubs",
+      "kicker": "CHAMPIONS LEAGUE · CUTLINE BUBBLE",
       "count_line": "Showing 5 of 36 clubs",
       "footer": "Each club is its own market; 16 clubs finish 9th to 24th.",
       "selection_type": "bubble_50",
@@ -1329,15 +1414,17 @@
           "probability": 0.58,
           "rendered_percent": 58,
           "source": "polymarket",
-          "destination_href": "/futures/63348253"
+          "destination_href": "/futures/63348253",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63348266,
-          "label": "Bod\u00f8/Glimt",
+          "label": "Bodø/Glimt",
           "probability": 0.495,
           "rendered_percent": 50,
           "source": "polymarket",
-          "destination_href": "/futures/63348266"
+          "destination_href": "/futures/63348266",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63348269,
@@ -1345,7 +1432,8 @@
           "probability": 0.495,
           "rendered_percent": 50,
           "source": "polymarket",
-          "destination_href": "/futures/63348269"
+          "destination_href": "/futures/63348269",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63348264,
@@ -1353,7 +1441,8 @@
           "probability": 0.445,
           "rendered_percent": 45,
           "source": "polymarket",
-          "destination_href": "/futures/63348264"
+          "destination_href": "/futures/63348264",
+          "observed_at": "2026-11-10T16:50:00Z"
         },
         {
           "market_id": 63348257,
@@ -1361,9 +1450,11 @@
           "probability": 0.435,
           "rendered_percent": 44,
           "source": "polymarket",
-          "destination_href": "/futures/63348257"
+          "destination_href": "/futures/63348257",
+          "observed_at": "2026-11-10T16:50:00Z"
         }
       ]
     }
-  ]
+  ],
+  "observed_at_note": "Cards nhl-teams-80-points-2026-27 and nhl-teams-100-points-2026-27 carry live market updated_at stamps from GET /api/events/search on 2026-11-10; the remaining 18 snapshot cards carry the exam capture clock 2026-11-10T16:50:00Z assigned at snapshot creation."
 }

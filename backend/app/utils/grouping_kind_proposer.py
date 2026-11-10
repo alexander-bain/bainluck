@@ -29,7 +29,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from app.services.llm_models import LEGACY_MODEL
-from app.utils.grouping_licences import UNLICENSED_PROPOSED_KINDS, is_kind_licensed
+from app.utils.grouping_licences import is_kind_licensed
 from app.utils.roundup_containers import (
     CLOSED_GROUPING_RELATIONS,
     CLOSED_PERMISSION_LEVELS,
@@ -352,6 +352,7 @@ def _validate_example_card(
     *,
     kind_name: str,
     default_as_of: str = "",
+    require_observed_at: bool = False,
 ) -> tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
     """Validate one example card inside a proposed grouping kind."""
     slug = str(card.get("slug") or "").strip()
@@ -434,16 +435,31 @@ def _validate_example_card(
         pct = int(math.floor(float(prob) * 100.0 + 0.5))
         source = str(r.get("source") or "kalshi").strip()
         dest_href = str(r.get("destination_href") or f"/futures/{mid}").strip()
-        normalized_rows.append(
-            {
-                "market_id": mid,
-                "label": label,
-                "probability": round(float(prob), 4),
-                "rendered_percent": pct,
-                "source": source,
-                "destination_href": dest_href,
-            }
-        )
+        obs_val = str(r.get("observed_at") or "").strip() or None
+        if require_observed_at and not obs_val:
+            return False, f"missing_observed_at:{slug}:{mid}", None
+        if obs_val:
+            ref_iso = str(card.get("as_of") or default_as_of or "").strip()
+            if ref_iso:
+                try:
+                    obs_dt = datetime.fromisoformat(obs_val.replace("Z", "+00:00"))
+                    ref_dt = datetime.fromisoformat(ref_iso.replace("Z", "+00:00"))
+                    if (ref_dt - obs_dt).total_seconds() > 7.0 * 86400.0:
+                        return False, f"stale_quote:{slug}:{mid}", None
+                except ValueError:
+                    if require_observed_at:
+                        return False, f"invalid_observed_at:{slug}:{mid}", None
+        row_entry: Dict[str, Any] = {
+            "market_id": mid,
+            "label": label,
+            "probability": round(float(prob), 4),
+            "rendered_percent": pct,
+            "source": source,
+            "destination_href": dest_href,
+        }
+        if obs_val:
+            row_entry["observed_at"] = obs_val
+        normalized_rows.append(row_entry)
 
     as_of_val = str(card.get("as_of") or default_as_of or "").strip()
     as_of_label_val = str(
@@ -842,7 +858,10 @@ def load_new_kinds_exam_cards(
             continue
         k_name = str(item.get("kind") or "").strip()
         ok, err, norm = _validate_example_card(
-            item, kind_name=k_name, default_as_of=generated_at
+            item,
+            kind_name=k_name,
+            default_as_of=generated_at,
+            require_observed_at=True,
         )
         if not ok or norm is None:
             refused.append({"slug": str(item.get("slug") or ""), "reason": err})

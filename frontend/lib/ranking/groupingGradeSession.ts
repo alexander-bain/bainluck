@@ -33,6 +33,7 @@ export interface ProposedCardRow {
   market_id: number;
   probability?: number | null;
   rendered_percent?: number | null;
+  observed_at?: string | null;
 }
 
 export interface ProposedCardPreview {
@@ -78,6 +79,7 @@ export function buildRoundupContractForProposedCard(
       label: r.label,
       probability: prob,
       rendered_percent: pct,
+      ...(r.observed_at ? { observed_at: r.observed_at } : {}),
     };
   });
 
