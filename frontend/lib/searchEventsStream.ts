@@ -96,7 +96,10 @@ export function adoptSearchEventCards(
     let live: HeldGame['live'] = null;
     let final: HeldGame['final'] = null;
     if (finished) {
-      final = { homeScore: fresh.home_score ?? null, awayScore: fresh.away_score ?? null,
+      // Terminal, so it must carry the result: no final score, no finish (a
+      // later read can still finish it).
+      if (typeof fresh.home_score !== 'number' || typeof fresh.away_score !== 'number') continue;
+      final = { homeScore: fresh.home_score, awayScore: fresh.away_score,
         completedAt: fresh.completed_at ?? null };
     } else if (served.status === 'live') {
       const state = liveState(fresh.live_state);
@@ -110,7 +113,9 @@ export function adoptSearchEventCards(
     if (held) {
       const order = compareFoldRevision(revision, held.revision);
       if (order !== 'newer' && order !== 'same') continue;
-      if (held.observedMs !== null && (observedMs === null || observedMs < held.observedMs)) continue;
+      // A finish adopts a status and a result, not a newer probability, so the
+      // blend's reading time does not gate it (a settled card has none).
+      if (!final && held.observedMs !== null && (observedMs === null || observedMs < held.observedMs)) continue;
     }
     const game: HeldGame = {
       status: fresh.status,

@@ -113,3 +113,29 @@ test('closed counts as finished; an unknown status like "final" still does not',
     .toBe('closed');
   expect(adoptSearchEventCards(empty, [e], answer([card({ status: 'final' })]), ASKED)).toBe(empty);
 });
+
+test('a page already patching the game live still takes the finish (Fable finding 1)', () => {
+  const e = live({ home_score: 111, away_score: 121, espn: { period: '4th Quarter', game_clock: '1:10', broadcast: 'Spectrum Sports Net' } });
+  const held = adoptSearchEventCards(empty, [e], answer([card({
+    status: 'live', home_score: 114, away_score: 124, live_state: { period: '4th Quarter', game_clock: '0:14' },
+    hero_probability_source: 'blend', hero_probability_observed_at: '2025-03-04T02:22:58Z',
+    blend_fold_revision: { [String(ID)]: 9001 },
+  })]), ASKED);
+  expect(patchSearchEvent(e, held).espn?.game_clock).toBe('0:14');
+  for (const revision of [9001, 9002]) {
+    const done = adoptSearchEventCards(held, [e], answer([card({ blend_fold_revision: { [String(ID)]: revision } })]), ASKED);
+    const shown = patchSearchEvent(e, done);
+    expect(shown.status).toBe('completed');
+    const fresh = live({ status: 'completed', completed_at: '2025-03-04T02:23:08Z', espn: { broadcast: 'Spectrum Sports Net' } });
+    expect(renderToStaticMarkup(<EventCard event={shown} />)).toBe(renderToStaticMarkup(<EventCard event={fresh} />));
+  }
+  // Never backwards still holds for a finish: an OLDER fold revision is refused.
+  expect(adoptSearchEventCards(held, [e], answer([card({ blend_fold_revision: { [String(ID)]: 9000 } })]), ASKED)).toBe(held);
+});
+
+test('a completed card without both final scores does not finish the game (Fable finding 2)', () => {
+  const e = live();
+  expect(adoptSearchEventCards(empty, [e], answer([card({ home_score: null })]), ASKED)).toBe(empty);
+  expect(adoptSearchEventCards(empty, [e], answer([card({ away_score: undefined })]), ASKED)).toBe(empty);
+});
+
