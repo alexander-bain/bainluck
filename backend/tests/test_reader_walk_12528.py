@@ -61,8 +61,8 @@ def _state(search, payload, status=200):
 def _raises(fn, *args):
     try:
         fn(*args)
-    except ValueError as exc:
-        return str(exc)
+    except ValueError as refusal:
+        return str(refusal)
     return None
 
 
