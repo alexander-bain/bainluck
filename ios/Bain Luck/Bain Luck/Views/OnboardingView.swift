@@ -69,7 +69,7 @@ struct OnboardingView: View {
                 RoundedRectangle(cornerRadius: 3)
                     .fill(Color.accentColor)
                     .frame(width: geo.size.width * CGFloat(vm.currentStep) / CGFloat(vm.totalSteps), height: 6)
-                    .animation(.easeInOut(duration: 0.3), value: vm.currentStep)
+                    .motionAnimation12527(.easeInOut(duration: 0.3), value: vm.currentStep)
             }
         }
         .frame(height: 6)
@@ -495,7 +495,7 @@ private struct SearchDropdownView: View {
                 // Main row
                 Button {
                     if hasSports {
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        withMotion12527(.easeInOut(duration: 0.2)) {
                             expandedId = expandedId == result.id ? nil : result.id
                         }
                     } else {

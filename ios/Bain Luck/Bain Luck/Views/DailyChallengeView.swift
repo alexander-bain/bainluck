@@ -110,7 +110,7 @@ struct DailyChallengeView: View {
                 Rectangle()
                     .fill(Color.orange)
                     .frame(width: geo.size.width * vm.progress)
-                    .animation(.easeInOut(duration: 0.3), value: vm.progress)
+                    .motionAnimation12527(.easeInOut(duration: 0.3), value: vm.progress)
             }
         }
         .frame(height: 4)

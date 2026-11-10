@@ -265,7 +265,7 @@ struct PoliticsView: View {
             HStack(spacing: 6) {
                 ForEach(filterTabs, id: \.self) { tab in
                     Button {
-                        withAnimation(.easeInOut(duration: 0.15)) {
+                        withMotion12527(.easeInOut(duration: 0.15)) {
                             selectedTab = tab
                         }
                     } label: {

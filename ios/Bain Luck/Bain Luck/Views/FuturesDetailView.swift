@@ -696,7 +696,7 @@ struct FuturesDetailView: View {
                 Spacer()
                 if hasMore {
                     Button(showAllOutcomes ? "Show less" : "Show all \(sorted.count)") {
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        withMotion12527(.easeInOut(duration: 0.2)) {
                             showAllOutcomes.toggle()
                         }
                     }
@@ -732,7 +732,7 @@ struct FuturesDetailView: View {
 
             if hasMore && !showAllOutcomes {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withMotion12527(.easeInOut(duration: 0.2)) {
                         showAllOutcomes = true
                     }
                 } label: {

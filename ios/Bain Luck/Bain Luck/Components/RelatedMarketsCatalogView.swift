@@ -88,7 +88,7 @@ struct RelatedMarketsCatalogView: View {
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { isOpen.toggle() }
+                    withMotion12527(.easeInOut(duration: 0.15)) { isOpen.toggle() }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: isOpen ? "chevron.down" : "chevron.right")

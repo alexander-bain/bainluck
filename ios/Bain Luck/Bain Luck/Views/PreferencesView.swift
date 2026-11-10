@@ -418,7 +418,7 @@ struct PreferencesView: View {
             Spacer()
 
             Button(role: .destructive) {
-                withAnimation(.easeInOut(duration: 0.25)) {
+                withMotion12527(.easeInOut(duration: 0.25)) {
                     viewModel.removeFavorite(teamId: item.teamId, relationType: item.relationType)
                 }
             } label: {
@@ -562,7 +562,7 @@ struct PreferencesView: View {
                     let color = affinityColor[level] ?? .gray
 
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        withMotion12527(.easeInOut(duration: 0.2)) {
                             viewModel.setAffinity(item.key, level: level)
                         }
                     } label: {

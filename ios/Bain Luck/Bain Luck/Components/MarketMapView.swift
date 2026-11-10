@@ -1454,7 +1454,7 @@ struct MarketMapView: View {
             // #10830 — the full ladder is one tap away, never a second page.
             if hasMoreLines {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withMotion12527(.easeInOut(duration: 0.15)) {
                         if ladderOpen { expandedLadders.remove(title) }
                         else { expandedLadders.insert(title) }
                     }

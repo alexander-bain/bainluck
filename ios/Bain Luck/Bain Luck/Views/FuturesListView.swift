@@ -228,7 +228,7 @@ struct FuturesListView: View {
 
     private func selectCategory(_ tag: String) {
         guard viewModel.selectedCategory != tag else { return }
-        withAnimation(.easeInOut(duration: 0.18)) {
+        withMotion12527(.easeInOut(duration: 0.18)) {
             viewModel.selectedCategory = tag
         }
         viewModel.onCategoryChange()

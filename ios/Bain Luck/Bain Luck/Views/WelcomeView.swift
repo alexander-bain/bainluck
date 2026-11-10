@@ -19,7 +19,7 @@ struct WelcomeView: View {
 
             Button {
                 if currentPage < 3 {
-                    withAnimation { currentPage += 1 }
+                    withMotion12527 { currentPage += 1 }
                 } else {
                     dismiss()
                 }

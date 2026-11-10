@@ -37,7 +37,7 @@ struct NativeDailyChallengeCard: View {
                         .trim(from: 0, to: progress)
                         .stroke(Color.orange, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                        .animation(.easeInOut(duration: 0.5), value: progress)
+                        .motionAnimation12527(.easeInOut(duration: 0.5), value: progress)
                     Text("\(guessesToday)")
                         .font(.caption.weight(.bold).monospacedDigit())
                 }

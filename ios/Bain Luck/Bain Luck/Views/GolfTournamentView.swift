@@ -168,7 +168,7 @@ struct GolfTournamentView: View {
             // control so the reader knows what they are asking for.
             if presentation.field.count > GolfTournamentPresentation.initiallyShown {
                 Button {
-                    withAnimation { showingWholeField.toggle() }
+                    withMotion12527 { showingWholeField.toggle() }
                 } label: {
                     Text(showingWholeField
                          ? "Show less"

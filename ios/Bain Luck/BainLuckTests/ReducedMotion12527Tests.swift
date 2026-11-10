@@ -70,6 +70,27 @@ final class ReducedMotion12527Tests: XCTestCase {
         }
     }
 
+    /// Every screen in the app, not just the common ones: a file either goes
+    /// through the rule or reads `accessibilityReduceMotion` itself.
+    func testNoScreenInTheAppAnimatesAroundTheRule() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck")
+        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" } ?? []
+        XCTAssertGreaterThan(files.count, 100, "the walk found the app's sources")
+        let animation = try NSRegularExpression(pattern: #"\bwithAnimation\b|\.animation\((?!nil).*value:|\.transition\(.*\.move\("#)
+        for file in files where file.lastPathComponent != "ReducedMotion12527.swift" {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            if text.contains("accessibilityReduceMotion") { continue }
+            for line in text.components(separatedBy: "\n") where !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
+                guard animation.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil,
+                      !line.contains("ReducedMotion12527.transition(") else { continue }
+                XCTFail("\(file.lastPathComponent): an animation skips Reduce Motion: \(line.trimmingCharacters(in: .whitespaces))")
+            }
+        }
+    }
+
     func testTheScreensReallyUseTheRule() throws {
         // Guards the guard: if the replacements were reverted wholesale the
         // check above would still pass on a file with no animation at all.

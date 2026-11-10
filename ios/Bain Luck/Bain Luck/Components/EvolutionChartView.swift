@@ -1836,7 +1836,7 @@ struct EvolutionChartView: View {
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.3)
                         .onEnded { _ in
-                            withAnimation(.easeInOut(duration: 0.15)) {
+                            withMotion12527(.easeInOut(duration: 0.15)) {
                                 highlightedName = highlightedName == outcome.name ? nil : outcome.name
                             }
                         }

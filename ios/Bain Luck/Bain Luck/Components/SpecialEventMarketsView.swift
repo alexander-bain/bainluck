@@ -637,7 +637,7 @@ struct SpecialEventMarketsView: View {
             }
             if sorted.count > Self.outcomeDisplayCap {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withMotion12527(.easeInOut(duration: 0.15)) {
                         if isOpen { openCards.remove(item.id) } else { openCards.insert(item.id) }
                     }
                 } label: {

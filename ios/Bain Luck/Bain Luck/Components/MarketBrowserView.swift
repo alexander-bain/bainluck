@@ -358,7 +358,7 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
             .accessibilityLabel("\(label) categories")
             .onChange(of: active) { _, newValue in
                 guard let newValue else { return }
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withMotion12527(.easeInOut(duration: 0.2)) {
                     proxy.scrollTo(newValue, anchor: .center)
                 }
             }
@@ -374,7 +374,7 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
                 .accessibilityIdentifier("market-browser-status-\(label)")
             Spacer()
             Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withMotion12527(.easeInOut(duration: 0.15)) {
                     limit = MarketBrowserLogic.nextLimit(
                         current: window, matchCount: matchCount, pageSize: pageSize
                     )
