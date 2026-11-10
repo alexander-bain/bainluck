@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchTeamPage, fetchChampionshipGrid } from "@/lib/api";
-import type { TeamPageResponse } from "@/lib/api";
+import type { TeamFutureItem, TeamPageResponse } from "@/lib/api";
 import type { ChampionshipGridResponse } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useTeamPropRaces } from "@/hooks/useTeamPropRaces";
@@ -30,6 +30,9 @@ import { TeamSeasonJourney } from "@/components/TeamSeasonJourney";
 import { TeamDivisionRace } from "@/components/TeamDivisionRace";
 import { TeamPropFamilies } from "@/components/TeamPropFamilies";
 import { TeamFutureRow } from "@/components/TeamFutureRow";
+import { useTeamOutcomeStream } from "@/hooks/useTeamOutcomeStream";
+
+const NO_FUTURES: TeamFutureItem[] = [];
 
 export default function TeamPage() {
   const params = useParams();
@@ -105,6 +108,10 @@ export default function TeamPage() {
   // (#2311), keyed on the resolved slug; see the hook for the reset contract.
   const propRaces = useTeamPropRaces(resolvedSlug);
 
+  // #10090: the season-futures rows re-price live by outcome id when their
+  // market moves; the championship path keeps its served value.
+  const patchFuture = useTeamOutcomeStream(data?.futures ?? NO_FUTURES);
+
   // Document title
   useEffect(() => {
     if (data?.team) {
@@ -144,8 +151,9 @@ export default function TeamPage() {
     );
   }
 
-  const { team, upcoming_events, recent_events, futures, championship_path, season } =
+  const { team, upcoming_events, recent_events, futures: servedFutures, championship_path, season } =
     data;
+  const futures = servedFutures.map(patchFuture);
   const leaguePath = `/sport/${sport}/${league}`;
   const leagueLabel = teamLeagueLabel(team, league);
 

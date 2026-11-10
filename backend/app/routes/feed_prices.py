@@ -196,6 +196,32 @@ async def _market_cards(db, ids, now):
     return terminal_items + items, dispositions
 
 
+@router.get("/outcome-prices")
+async def get_outcome_prices(
+    response: Response,
+    outcome_ids: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    """#10090: the team page's on-screen rows, re-read by outcome id.
+
+    `price-cards` returns a market's `top_outcomes` only, and a team's leg of a
+    30-way field is rarely among them; the team page itself is a 2.7-5.8 s read
+    (Nov 9). This returns each named leg's row fields, refused exactly where the
+    team read refuses them (`routes.user._team_outcome_prices`).
+    """
+    from app.routes.user import _team_outcome_prices
+
+    ids = _ids(outcome_ids)
+    if not 0 < len(ids) <= MAX_IDENTITIES:
+        raise HTTPException(400, detail={"reason": "outcome_identity_bound", "max_ids": MAX_IDENTITIES})
+    items, dispositions = await _team_outcome_prices(db, ids)
+    order = {oid: i for i, oid in enumerate(ids)}
+    items.sort(key=lambda item: order[item["outcome_id"]])
+    response.headers["Cache-Control"] = "no-store"
+    return {"items": items, "dispositions": dispositions,
+            "built_at": datetime.now(timezone.utc).timestamp()}
+
+
 @router.get("/price-cards")
 async def get_price_cards(
     response: Response,
