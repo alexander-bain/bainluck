@@ -5763,6 +5763,8 @@ async def _verified_title_board(db: AsyncSession, market: FuturesMarket) -> list
                 external_id=getattr(orm, "external_id", None),
                 probability=row["probability"],
                 observed_at=parse_aware(getattr(orm, "last_updated", None)),
+                is_winner=row.get("is_winner"),
+                resolution_source=row.get("resolution_source"),
             )
         )
     return board
@@ -5849,7 +5851,45 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
             for t in roster
         ]
     )
-    return compose_outcomes(spec, members, boards, index, now)
+    verdict = compose_outcomes(spec, members, boards, index, now)
+    if isinstance(verdict, Composition):
+        from dataclasses import replace
+
+        projections = {market.id: verdict}
+        for member in members[1:]:
+            peer = compose_outcomes(
+                spec, [member, *(m for m in members if m != member)], boards, index, now,
+            )
+            if isinstance(peer, Composition):
+                projections[member.market_id] = peer
+        canonical = loaded[verdict.canonical_market_id]
+        canonical_verdict = projections.get(canonical.id, verdict)
+        observations = [
+            value.observed_at for value in canonical_verdict.overlay.values()
+            if value.probability is not None and value.observed_at is not None
+        ]
+        card_fields = {
+            "sport": canonical.sport.key if canonical.sport else None,
+            "sport_name": (
+                sport_display_name(canonical.sport.key, canonical.sport.name)
+                if canonical.sport else None
+            ),
+            "resolution_date": (
+                canonical.resolution_date.isoformat() if canonical.resolution_date else None
+            ),
+            "outcome_count": len(boards[canonical.id]),
+            "updated_at": canonical.updated_at.isoformat() if canonical.updated_at else None,
+            "prices_updated_at": min(observations) if observations else None,
+        }
+        projections = {
+            mid: replace(peer, canonical_market_name=canonical.name, canonical_card_fields=card_fields)
+            for mid, peer in projections.items()
+        }
+        verdict = replace(
+            projections[market.id],
+            peer_verdicts={mid: peer for mid, peer in projections.items() if mid != market.id},
+        )
+    return verdict
 
 
 #: #12335 step 2: each title market's verdict, kept briefly and shared by every
@@ -5922,12 +5962,17 @@ async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
         return Refusal("resolver_error")
     if ttl > 0 and key is not None:
         now = _time.monotonic()
-        if len(_VERIFIED_TITLE_CACHE) >= _VERIFIED_TITLE_CACHE_MAX:
+        entries = {key: verdict}
+        if isinstance(verdict, Composition):
+            entries.update(verdict.peer_verdicts)
+        if len(entries) > _VERIFIED_TITLE_CACHE_MAX:
+            entries = {key: verdict}
+        if len(_VERIFIED_TITLE_CACHE.keys() | entries.keys()) > _VERIFIED_TITLE_CACHE_MAX:
             for stale in [k for k, (exp, _v) in _VERIFIED_TITLE_CACHE.items() if exp <= now]:
                 del _VERIFIED_TITLE_CACHE[stale]
-            if len(_VERIFIED_TITLE_CACHE) >= _VERIFIED_TITLE_CACHE_MAX:
+            if len(_VERIFIED_TITLE_CACHE.keys() | entries.keys()) > _VERIFIED_TITLE_CACHE_MAX:
                 _VERIFIED_TITLE_CACHE.clear()
-        _VERIFIED_TITLE_CACHE[key] = (now + ttl, verdict)
+        _VERIFIED_TITLE_CACHE.update({mid: (now + ttl, value) for mid, value in entries.items()})
     return verdict
 
 
@@ -5984,6 +6029,7 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     `assign_display_ranks`, because the client sorts on the value it is given.
     """
     from app.utils.outcome_display import assign_display_ranks, normalize_display_probs
+    from app.utils.futures_verified_title import apply_title_display
 
     _stamp_representation(detail, verdict)
     changed = False
@@ -6002,10 +6048,15 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
         if not changed
         else None
     )
-    scaled = normalize_display_probs(
-        detail["outcomes"], mutually_exclusive=detail.get("mutually_exclusive", True),
-        field_complete=not detail.get("prices_withheld"), question=detail.get("name"),
+    scaled = (
+        apply_title_display(detail["outcomes"], verdict)
+        if isinstance(verdict, Composition) else None
     )
+    if scaled is None:
+        scaled = normalize_display_probs(
+            detail["outcomes"], mutually_exclusive=detail.get("mutually_exclusive", True),
+            field_complete=not detail.get("prices_withheld"), question=detail.get("name"),
+        )
     if comparisons is not None:
         had_openings = any(
             row.get("opening_probability") is not None for row in detail["outcomes"]

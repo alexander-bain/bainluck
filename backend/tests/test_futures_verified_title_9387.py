@@ -489,8 +489,8 @@ class TestTheTrioServesOneVerifiedNumber:
             assert payload["representation"] == VERIFIED, _why(payload)
             row = next(o for o in payload["outcomes"] if o["id"] == buffalo)
             assert row["probability"] == pytest.approx(
-                0.13 if payload["id"] == PM_ID else 0.13 / 0.4715, abs=1e-8
-            )  # PM has an unpriced Other: unknown mass is never normalized
+                0.13 / 0.4715, abs=1e-8
+            )  # #12530: one verified named-team field, before venue projection
             assert row["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
             assert payload["question_identity"]["edition"] == "2027"
 
@@ -891,8 +891,11 @@ class TestExactTeamCorrespondence:
         ny = by_name(payload, "New York")
         assert ny["contributing_sources"] == ["odds_api"]
         assert ny["aggregation_rule"] == "single_source"
-        assert ny["probability"] == pytest.approx(0.02 / 0.4715, abs=1e-8)
-        assert ny["opening_probability"] is None, "normalization suppresses the raw opening"
+        assert ny["probability"] == 0.02
+        assert ny["opening_probability"] == 0.01
+        # An unresolved canonical row cannot certify a full common field.
+        # Its own value/reference remain source-only; neither is borrowed
+        # from the Giants or from the normalized named-team set.
 
     async def test_kalshi_corresponds_by_its_ticker_not_its_city_string(self):
         # Kalshi's display strings are bare cities and truncations; every one of
@@ -1144,3 +1147,143 @@ class TestTheRosterIndex:
         assert index.alias_team("Buffalo") is None
         assert index.abbrev_team("BUF") == 1
         assert index.is_ambiguous("New York"), "a shared alternate name is refused"
+
+
+# #12530: the November 10 field that exposed per-venue normalization.
+_SNAPSHOT_12530 = [
+    ('Buffalo Bills', 0.145),
+    ('San Francisco 49ers', 0.1435),
+    ('Jacksonville Jaguars', 0.10828),
+    ('Chicago Bears', 0.1095),
+    ('Kansas City Chiefs', 0.075),
+    ('Los Angeles Rams', 0.060789),
+    ('Cincinnati Bengals', 0.060396),
+    ('Denver Broncos', 0.0505),
+    ('Detroit Lions', 0.045),
+    ('Seattle Seahawks', 0.045),
+    ('Green Bay Packers', 0.035),
+    ('Minnesota Vikings', 0.0275),
+    ('Houston Texans', 0.0235),
+    ('Pittsburgh Steelers', 0.021),
+    ('New England Patriots', 0.025),
+    ('New York Giants', 0.0145),
+    ('Dallas Cowboys', 0.013583),
+    ('Baltimore Ravens', 0.006),
+    ('Tampa Bay Buccaneers', 0.01),
+    ('Carolina Panthers', 0.007911),
+    ('Atlanta Falcons', 0.007341),
+    ('New Orleans Saints', 0.004702),
+    ('Cleveland Browns', 0.003844),
+    ('Washington Commanders', 0.003812),
+    ('Las Vegas Raiders', 0.005094),
+    ('Arizona Cardinals', 0.000849),
+    ('Miami Dolphins', 0.000643),
+    ('Indianapolis Colts', 0.000764),
+    ('Los Angeles Chargers', 0.000764),
+    ('New York Jets', 0.000721),
+    ('Philadelphia Eagles', 0.000849),
+    ('Tennessee Titans', 0.000678),
+]
+
+
+class TestOneTitleField12530:
+    def markets(self, *, missing_last=False):
+        values = list(_SNAPSHOT_12530)
+        if missing_last:
+            values[-1] = (values[-1][0], None)
+        odds = odds_market(rows=[(100 + i, name, p if p is not None else 0) for i, (name, p) in enumerate(values)])
+        if missing_last:
+            odds.outcomes[-1].current_probability = None
+        pm = pm_market(rows=[(1000 + i, name, p) for i, (name, p) in enumerate(values)])
+        roster = [
+            {"id": i + 1, "name": name, "abbreviation": f"team{i}", "alternate_names": []}
+            for i, (name, _p) in enumerate(values)
+        ]
+        return [odds, pm], roster
+
+    async def test_all_32_teams_share_the_number_and_other_is_retained_unpriced(self):
+        markets, roster = self.markets()
+        odds, _ = await detail(ODDS_ID, markets, VERIFIED, roster=roster)
+        pm, _ = await detail(PM_ID, markets, VERIFIED, roster=roster)
+        assert len(odds["outcomes"]) == 32
+        assert len(pm["outcomes"]) == 33
+        for name, raw in _SNAPSHOT_12530:
+            expected = round(raw / 1.04702, 8)
+            assert by_name(odds, name)["probability"] == expected
+            assert by_name(pm, name)["probability"] == expected
+        other = by_name(pm, "Other")
+        assert other["id"] == PM_OTHER_ID
+        assert other["probability"] is None
+        assert other["contributing_sources"] == []
+        assert by_name(pm, "Buffalo Bills")["probability"] == 0.13848828
+
+    async def test_a_missing_named_team_stops_normalization_under_both_aliases(self):
+        markets, roster = self.markets(missing_last=True)
+        for mid in (ODDS_ID, PM_ID):
+            payload, _ = await detail(mid, markets, VERIFIED, roster=roster)
+            assert by_name(payload, "Buffalo Bills")["probability"] == 0.145
+            assert by_name(payload, _SNAPSHOT_12530[-1][0])["probability"] is None
+
+    async def test_each_alias_has_one_destination_and_the_same_top_five(self):
+        from app.routes.events import _format_futures_for_search, _dedup_verified_title_markets
+
+        markets, roster = self.markets()
+        cards, verdicts = [], {}
+        for market in markets:
+            with _at():
+                verdict = await futures_routes._compose_verified_title(_DB(markets, roster=roster), market)
+                cards.append(_format_futures_for_search(market, set(), verified=verdict))
+            verdicts[market.id] = verdict
+        for key in ("id", "name", "source", "sport", "sport_name", "resolution_date",
+                    "outcome_count", "prices_updated_at"):
+            assert cards[0][key] == cards[1][key], key
+        assert cards[0]["id"] == ODDS_ID
+        assert cards[0]["outcome_count"] == 32
+        named = [[(o["name"], o["probability"]) for o in c["top_outcomes"]] for c in cards]
+        assert named[0] == named[1]
+        assert [n for n, _p in named[0]] == [
+            "Buffalo Bills", "San Francisco 49ers", "Chicago Bears",
+            "Jacksonville Jaguars", "Kansas City Chiefs",
+        ]
+        assert len(_dedup_verified_title_markets(markets, verdicts)) == 1
+        assert len(_dedup_verified_title_markets(markets, {})) == 2
+
+    async def test_aliases_reuse_one_snapshot_without_another_database_read(self, monkeypatch):
+        from app.routes.events import _format_futures_for_search
+
+        markets, roster = self.markets()
+        db = _DB(markets, roster=roster)
+        monkeypatch.setenv("VERIFIED_TITLE_CACHE_SECONDS", "60")
+        monkeypatch.setattr(futures_routes, "_VERIFIED_TITLE_CACHE_MAX", 3)
+        futures_routes._VERIFIED_TITLE_CACHE.clear()
+        futures_routes._VERIFIED_TITLE_CACHE.update({
+            777: (float("inf"), None), 888: (float("inf"), None),
+        })
+        try:
+            with _at():
+                first = await futures_routes._resolve_verified_title(db, markets[0])
+                reads = list(db.kinds)
+                # A later poll must not make the other alias recompose within
+                # the already-accepted snapshot's short cache life.
+                markets[1].outcomes[0].current_probability = 0.9
+                second = await futures_routes._resolve_verified_title(db, markets[1])
+                a = _format_futures_for_search(markets[0], set(), verified=first)
+                b = _format_futures_for_search(markets[1], set(), verified=second)
+            assert db.kinds == reads
+            assert set(futures_routes._VERIFIED_TITLE_CACHE) == {ODDS_ID, PM_ID}
+            assert len({entry[0] for entry in futures_routes._VERIFIED_TITLE_CACHE.values()}) == 1
+            assert [(r["name"], r["probability"]) for r in a["top_outcomes"]] == [
+                (r["name"], r["probability"]) for r in b["top_outcomes"]
+            ]
+            assert second.peer_verdicts == {}, "cached projections must not form cycles"
+        finally:
+            futures_routes._VERIFIED_TITLE_CACHE.clear()
+
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_each_chart_current_column_still_matches_its_detail(self, mid):
+        board, _ = await detail(mid, trio(), VERIFIED)
+        chart, _ = await timeline(mid, trio(), VERIFIED)
+        detail_values = {o["id"]: o["probability"] for o in board["outcomes"]}
+        for row in chart["outcomes"]:
+            if row.get("id") is not None:
+                assert row["current_probability"] == detail_values[row["id"]]
