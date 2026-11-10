@@ -23,9 +23,13 @@ import { setDiscoverLearningGate } from "@/lib/discoverInteractions";
 import {
   GRADES,
   GRADE_LABELS,
+  deckHeadline,
   formatTally,
+  gradeDeckInit,
+  gradeDeckPath,
   handleGradeDeckReadError,
   normalizeGraderName,
+  slateFromSearch,
   type Grade,
   type GradeDeck,
   type TallyEntry,
@@ -64,6 +68,16 @@ function GradeSession() {
   const [graded, setGraded] = useState(0);
   const [saving, setSaving] = useState(false);
   const [tally, setTally] = useState<TallyEntry[]>([]);
+  // #11937: `/grade?slate=<date or id>` grades that saved slate's spread deck.
+  // undefined until the URL is read, so the deck isn't fetched twice.
+  const [slateRef, setSlateRef] = useState<string | null | undefined>(undefined);
+  // While a named slate re-deals for the grader, the grade buttons wait, so a
+  // quick tap can't grade a card the new deck is about to skip.
+  const [dealing, setDealing] = useState(false);
+
+  useEffect(() => {
+    setSlateRef(slateFromSearch(window.location.search));
+  }, []);
 
   useEffect(() => {
     try {
@@ -90,8 +104,9 @@ function GradeSession() {
   );
 
   useEffect(() => {
+    if (slateRef === undefined) return;
     let cancelled = false;
-    adminFetchJSON<GradeDeck>("/api/admin/ranking/grade-deck", secret)
+    adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret)
       .then((d) => {
         if (cancelled) return;
         setDeck(d);
@@ -107,7 +122,7 @@ function GradeSession() {
     return () => {
       cancelled = true;
     };
-  }, [secret, loadTally, clearSecret]);
+  }, [secret, loadTally, clearSecret, slateRef]);
 
   const start = () => {
     const name = normalizeGraderName(nameInput);
@@ -121,10 +136,18 @@ function GradeSession() {
     setGrader(name);
     setIndex(0);
     setGraded(0);
+    // A named slate re-deals for this grader, skipping cards they already graded.
+    if (slateRef) {
+      setDealing(true);
+      adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret, gradeDeckInit(name))
+        .then(setDeck)
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not load the cards"))
+        .finally(() => setDealing(false));
+    }
   };
 
   const submit = async (grade: Grade) => {
-    if (!deck || !grader || saving) return;
+    if (!deck || !grader || saving || dealing) return;
     const item = deck.items[index];
     setSaving(true);
     setError(null);
@@ -171,9 +194,7 @@ function GradeSession() {
     return (
       <Shell tally={tallyLine}>
         <h1 className="text-xl font-semibold text-text-primary">Who&apos;s grading?</h1>
-        <p className="mt-1 text-sm text-text-secondary">
-          The top {deck.items.length} Discover cards from {deck.captured_at ? new Date(deck.captured_at).toLocaleString() : "the latest capture"}.
-        </p>
+        <p className="mt-1 text-sm text-text-secondary">{deckHeadline(deck)}</p>
         <input
           className="mt-4 w-full rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-text-primary"
           placeholder="Your name"
@@ -202,7 +223,9 @@ function GradeSession() {
   if (index >= deck.items.length) {
     return (
       <Shell tally={tallyLine}>
-        <h1 className="text-xl font-semibold text-text-primary">All {deck.items.length} graded. Thanks, {grader}!</h1>
+        <h1 className="text-xl font-semibold text-text-primary">
+          {deck.items.length ? `All ${deck.items.length} graded. Thanks, ${grader}!` : `Nothing left to grade on this slate, ${grader}.`}
+        </h1>
         <button className="mt-4 text-sm font-semibold text-accent-brand hover:underline" onClick={() => setGrader(null)}>
           Next grader
         </button>
@@ -244,7 +267,7 @@ function GradeSession() {
           <button
             key={g}
             className="rounded-lg border border-surface-border bg-surface-elevated px-2 py-3 font-semibold text-text-primary disabled:opacity-50"
-            disabled={saving}
+            disabled={saving || dealing}
             onClick={() => void submit(g)}
           >
             {GRADE_LABELS[g]}

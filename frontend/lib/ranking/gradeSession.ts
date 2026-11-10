@@ -32,6 +32,43 @@ export interface GradeDeck {
   captured_at: string | null;
   ranker_version: string;
   items: GradeDeckItem[];
+  /** #11937: "opening" (today's ten) or "spread" (a named slate, top to bottom). */
+  mode?: "opening" | "spread";
+  /** Spread deck only: the slate's whole candidate list length. */
+  candidates?: number;
+  /** Spread deck only: cards of this deck the grader graded before (skipped). */
+  already_graded?: number;
+}
+
+const SLATE_REF = /^[A-Za-z0-9-]{1,64}$/;
+
+/** #11937: the `?slate=` a link names (a Pacific date or a slate id), or null. */
+export function slateFromSearch(search: string): string | null {
+  const raw = new URLSearchParams(search).get("slate");
+  return raw && SLATE_REF.test(raw) ? raw : null;
+}
+
+/** The deck request: today's opening ten, or a named slate's deck. */
+export function gradeDeckPath(slate: string | null): string {
+  if (!slate) return "/api/admin/ranking/grade-deck";
+  return `/api/admin/ranking/grade-deck?${new URLSearchParams({ slate }).toString()}`;
+}
+
+/** The grader's name rides in a header, never the URL (request logs), so the
+ * named slate's deck can skip what they already graded there. */
+export function gradeDeckInit(grader: string | null): RequestInit | undefined {
+  return grader ? { headers: { "X-Grader-Name": encodeURIComponent(grader) } } : undefined;
+}
+
+/** The line under "Who's grading?". */
+export function deckHeadline(deck: GradeDeck): string {
+  const when = deck.captured_at ? new Date(deck.captured_at).toLocaleString() : "the latest capture";
+  if (deck.mode !== "spread") return `The top ${deck.items.length} Discover cards from ${when}.`;
+  const day = deck.captured_at
+    ? new Date(deck.captured_at).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "America/Los_Angeles" })
+    : "that day";
+  const skipped = deck.already_graded ? ` (${deck.already_graded} you've already graded are skipped)` : "";
+  return `${deck.items.length} cards from the Discover slate of ${day}: its top cards, then a spread down the rest of its ${deck.candidates ?? "?"} candidates${skipped}.`;
 }
 
 export interface TallyEntry {

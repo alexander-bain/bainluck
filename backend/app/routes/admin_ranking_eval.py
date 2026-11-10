@@ -10,9 +10,14 @@
 * ``POST /api/admin/ranking/slates/capture`` — take one slate now (the nightly
   job's own function). Refused while ``RANKING_SNAPSHOTS`` is off.
 * ``GET  /api/admin/ranking/grade-deck`` — Phase 2: the latest slate's opening
-  ten with each card's served payload, for the ``/grade`` page.
-* ``POST /api/admin/ranking/grades`` — Phase 2: one grader's grade for one of
-  those cards. Refused while ``RANKING_SNAPSHOTS`` is off.
+  ten with each card's served payload, for the ``/grade`` page. With
+  ``?slate=<YYYY-MM-DD (Pacific) | slate id | row id>`` (#11937): that saved
+  slate's deck, its top 20 then 10 spread down the rest of its candidate list,
+  the same cards each time, minus those the grader (``X-Grader-Name`` header,
+  never the URL) already graded there.
+* ``POST /api/admin/ranking/grades`` — Phase 2: one grader's grade for one card
+  of a slate's candidate list, at its list position (served cards keep their
+  served position). Refused while ``RANKING_SNAPSHOTS`` is off.
 * ``GET  /api/admin/ranking/grades`` — grades (latest per grader and card) and
   today's family tally; ``tools/ranking/grades.py export`` writes them to
   ``evals/ranking/grades/``.
@@ -28,6 +33,7 @@ import json
 import math
 from pathlib import Path
 import re
+import urllib.parse
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
@@ -51,9 +57,33 @@ from app.utils.ranking_slate_capture import snapshot_ranking_slate
 router = APIRouter(prefix="/admin/ranking", tags=["admin-ranking-eval"])
 
 
+_DATE_REF = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def slate_date_bounds(ref: str) -> tuple[datetime, datetime] | None:
+    """#11937: a ``YYYY-MM-DD`` ref names that Pacific day, as UTC bounds; else None.
+
+    The nightly slate is captured at 7:15 AM Pacific, so "the Nov 9 slate" is
+    the one captured on Nov 9 Pacific time.
+    """
+    if not _DATE_REF.match(ref or ""):
+        return None
+    try:
+        day = datetime.strptime(ref, "%Y-%m-%d").replace(tzinfo=TALLY_TZ)
+    except ValueError:
+        return None
+    return day.astimezone(timezone.utc), (day + timedelta(days=1)).astimezone(timezone.utc)
+
+
 async def _slate_row(db: AsyncSession, ref: str, surface: str):
     stmt = select(RankingSlateSnapshot).where(RankingSlateSnapshot.surface == surface)
-    if ref != "latest":
+    bounds = slate_date_bounds(ref)
+    if bounds is not None:
+        stmt = stmt.where(
+            RankingSlateSnapshot.captured_at >= bounds[0],
+            RankingSlateSnapshot.captured_at < bounds[1],
+        )
+    elif ref != "latest":
         stmt = stmt.where(
             or_(RankingSlateSnapshot.id == ref, RankingSlateSnapshot.slate_id == ref)
         )
@@ -164,22 +194,116 @@ def opening_cards(slate: dict) -> list[dict]:
     return out
 
 
+def candidate_order(slate: Mapping[str, Any]) -> list[dict]:
+    """#11937: a slate's whole candidate list in one fixed order, with positions.
+
+    Served cards first, in served order, so a served card's position is its
+    served position (the opening ten graded before this change keep theirs);
+    then every candidate that was not served, best score first, ties by key.
+    """
+    by_key = {c.get("item_key"): c for c in slate.get("candidates") or () if c.get("item_key")}
+    keys = [k for k in (slate.get("served_order") or []) if k]
+    served = set(keys)
+    rest = sorted(
+        (c for k, c in by_key.items() if k not in served),
+        key=lambda c: (-(c.get("score") if isinstance(c.get("score"), (int, float)) else float("-inf")),
+                       str(c.get("item_key"))),
+    )
+    keys += [c["item_key"] for c in rest]
+    out = []
+    for position, key in enumerate(keys, start=1):
+        cand = by_key.get(key) or {}
+        out.append({
+            "position": position,
+            "item_key": key,
+            "title": cand.get("title"),
+            "probability": cand.get("probability"),
+            "card": cand.get("card"),
+        })
+    return out
+
+
+#: About the cards Alex can grade in one sitting on a phone (Fable, #11937).
+SPREAD_DECK_SIZE = 30
+#: The top of the slate is dealt whole: the scorer reads a top ten with more
+#: than 3 ungraded cards as UNKNOWN, so the served order itself must be graded
+#: before any change can be compared with it (Fable's review of #12564; the
+#: Nov 8 sheet, positions 1-30 then a spread, is the shape that scored replays).
+SPREAD_DECK_HEAD = 20
+
+
+def spread_deck(
+    order: list[dict], *, size: int = SPREAD_DECK_SIZE, head: int = SPREAD_DECK_HEAD, skip=()
+) -> list[dict]:
+    """#11937: the first ``head`` cards of ``order`` whole, then ``size - head``
+    spread evenly over the rest down to the last card; the same cards every
+    time for the same list. ``skip`` (item keys already graded) is removed
+    afterwards, so the rest of the deck never moves."""
+    n = len(order)
+    head = min(head, size)
+    if n <= size:
+        picks = list(range(n))
+    else:
+        tail = size - head
+        rest = n - head
+        spread = (
+            {head + round(i * (rest - 1) / (tail - 1)) for i in range(tail)} if tail > 1
+            else ({n - 1} if tail == 1 else set())
+        )
+        picks = sorted(set(range(head)) | spread)
+    skip = set(skip)
+    return [order[i] for i in picks if order[i]["item_key"] not in skip]
+
+
+#: Carries the grader's name (URL-encoded) on ``GET /grade-deck``.
+GRADER_HEADER = "x-grader-name"
+
+
 @router.get("/grade-deck")
 async def get_grade_deck(
     request: Request,
     surface: str = Query(SURFACE_DISCOVER, max_length=32),
+    slate: str | None = Query(None, max_length=64),
+    size: int = Query(SPREAD_DECK_SIZE, ge=5, le=60),
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     _check_admin_secret(secret, request=request)
-    slate = slate_row_dict(await _slate_row(db, "latest", surface))
-    return {
+    # Called directly (tests, other handlers), unset params arrive as Query objects.
+    slate = slate if isinstance(slate, str) and slate.strip() else None
+    size = size if isinstance(size, int) else SPREAD_DECK_SIZE
+    # The grader's name comes in a header, never the URL: query strings land in
+    # request logs, and the family's kids type their names on this page.
+    grader = urllib.parse.unquote(request.headers.get(GRADER_HEADER) or "")[:40]
+    row = slate_row_dict(await _slate_row(db, slate or "latest", surface))
+    out = {
         "switch_on": ranking_snapshots_enabled(),
-        "slate_id": slate["slate_id"],
-        "surface": slate["surface"],
-        "captured_at": slate["captured_at"],
-        "ranker_version": slate["ranker_version"],
-        "items": opening_cards(slate),
+        "slate_id": row["slate_id"],
+        "surface": row["surface"],
+        "captured_at": row["captured_at"],
+        "ranker_version": row["ranker_version"],
+    }
+    if not slate:
+        return {**out, "mode": "opening", "items": opening_cards(row)}
+    order = candidate_order(row)
+    name = " ".join((grader or "").split())
+    graded: set[str] = set()
+    if name:
+        rows = (await db.execute(
+            select(RankingGrade).where(
+                RankingGrade.slate_id == row["slate_id"],
+                RankingGrade.surface == row["surface"],
+                RankingGrade.grader == name,
+            )
+        )).scalars().all()
+        graded = {r.item_key for r in rows}
+    items = spread_deck(order, size=size, skip=graded)
+    return {
+        **out,
+        "mode": "spread",
+        "candidates": len(order),
+        "already_graded": len(graded & {c["item_key"] for c in spread_deck(order, size=size)}),
+        "items": items,
     }
 
 
@@ -188,7 +312,8 @@ class GradeIn(BaseModel):
     surface: str = Field(SURFACE_DISCOVER, max_length=32)
     grader: str = Field(..., min_length=1, max_length=40)
     kid: bool = False
-    position: int = Field(..., ge=1, le=OPENING_CARDS)
+    # #11937: any card of the slate's candidate list (captures keep up to 500).
+    position: int = Field(..., ge=1, le=500)
     item_key: str = Field(..., min_length=1, max_length=120)
     grade: str
     note: str | None = Field(None, max_length=300)
@@ -212,7 +337,7 @@ async def post_grade(
     slate = slate_row_dict(await _slate_row(db, body.slate_id, body.surface))
     if slate["slate_id"] != body.slate_id:
         raise HTTPException(status_code=404, detail="no such slate")
-    order = slate["served_order"][:OPENING_CARDS]
+    order = [c["item_key"] for c in candidate_order(slate)]
     if body.position > len(order) or order[body.position - 1] != body.item_key:
         raise HTTPException(status_code=422, detail="that card is not at that position in the slate")
     db.add(
