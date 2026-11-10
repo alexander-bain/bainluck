@@ -158,9 +158,11 @@ no copy exists: the slot's first build, or a slot unread for `STALE_TTL`.
 The staleness this adds is bounded and stated. A served copy is at most
 `STALE_TTL` old, and only while its refresh is failing; normally it is one
 rebuild old. That is for tier 1-4 markets (titles, conferences, awards,
-divisions), which open and close on a season's timescale. An EMPTY answer gets
-no copy. A sport whose markets have just been ingested must not be held at
-"none" for hours; it keeps the one-minute recovery `TTL_EMPTY` exists for.
+divisions), which open and close on a season's timescale. An EMPTY answer
+keeps no copy and DELETES any earlier one: a sport whose markets have just been
+ingested keeps the one-minute recovery `TTL_EMPTY` exists for, and a sport whose
+markets are gone reads as empty rather than alternating between "none" and the
+old list. A refresh runs under `REFRESH_STATEMENT_TIMEOUT_MS`, inside its lease.
 """
 
 from __future__ import annotations
@@ -190,6 +192,15 @@ TTL_EMPTY = 60
 #: #12529: how long the last NON-EMPTY answer stays servable after its fresh
 #: slot expires, while a background rebuild replaces it. See the module docstring.
 STALE_TTL = 6 * 60 * 60
+
+#: #12529: the lease a refresh behind a stale answer holds, and the statement
+#: timeout it runs under. The timeout is below the lease, so a refresh is always
+#: over (finished or cancelled by Postgres) before its lease can lapse and let a
+#: second one start. The slowest scan measured is 67.5 s (Nov 10); the resting
+#: 30-minute timeout (`services/database.py`) would let a hung one hold a web
+#: pool connection far longer than any reader would wait.
+REFRESH_STATEMENT_TIMEOUT_MS = 120_000
+REFRESH_LEASE_TTL_SECONDS = 150
 
 #: The stale copy's namespace. Separate from `CACHE_PREFIX` so a fresh-slot
 #: read can never return a stale copy by accident.
@@ -308,6 +319,10 @@ def write(
         if market_ids:
             # #12529: the copy a reader is served once the slot above expires.
             client.setex(stale_key(sport_key, event_is_finished), STALE_TTL, encoded)
+        else:
+            # A sport whose season markets are gone must read as empty, not
+            # alternate between "none" and the old list for six hours.
+            client.delete(stale_key(sport_key, event_is_finished))
     except Exception:
         logger.warning(
             "season-market discovery: write failed for %s", sport_key
@@ -472,7 +487,7 @@ def try_claim(sport_key: str, event_is_finished: bool, rc=None):
         return None
     try:
         lease = _single_flight.acquire(
-            build_task_name(sport_key, event_is_finished), BUILD_LEASE_TTL_SECONDS, rc=client
+            build_task_name(sport_key, event_is_finished), REFRESH_LEASE_TTL_SECONDS, rc=client
         )
     except Exception:
         return None

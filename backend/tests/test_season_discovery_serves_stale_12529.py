@@ -79,7 +79,9 @@ class _FakeRedis:
         return _Pipe()
 
 
-_NOW = datetime(2026, 11, 10, 20, 0, tzinfo=timezone.utc)
+# The real clock, offset only: the build asks `_event_is_really_finished` with
+# `datetime.now()`, and an event three hours ahead of now is live on any date.
+_NOW = datetime.now(timezone.utc)
 
 
 class _Result:
@@ -183,6 +185,19 @@ def test_an_empty_answer_keeps_no_copy_so_a_sport_is_never_held_at_none():
     assert smd.read_stale("boxing_boxing", False, rc=rc) is None
 
 
+def test_an_empty_build_deletes_the_copy_so_a_sport_whose_markets_are_gone_reads_empty():
+    """Fable's required change on #12563: non-empty, then empty, then the fresh
+    slot expires. That must read as a miss with no copy, as on master, not
+    hand the old list back for six hours."""
+    rc = _FakeRedis()
+    smd.write("baseball_mlb", False, [7, 8], rc=rc)
+    smd.write("baseball_mlb", False, [], rc=rc)
+    rc.delete(smd.cache_key("baseball_mlb", False))
+    assert smd.read("baseball_mlb", False, rc=rc) is None
+    assert smd.read_stale("baseball_mlb", False, rc=rc) is None
+    assert smd.stale_key("baseball_mlb", False) not in rc.store
+
+
 def test_the_fresh_read_never_returns_the_stale_copy():
     rc = _FakeRedis()
     smd.write("baseball_mlb", False, [7], rc=rc)
@@ -204,6 +219,29 @@ def test_try_claim_takes_a_free_lease_once_and_never_waits():
     assert smd.try_claim("baseball_mlb", False, rc=rc) is None  # held: no wait, no copy
     assert smd.release_build(first, rc=rc) is True
     assert smd.try_claim("baseball_mlb", False, rc=rc) is not None
+
+
+def test_a_refresh_lease_outlives_the_refresh_s_statement_timeout():
+    """A refresh is over, done or cancelled by Postgres, before its lease can
+    lapse, so a slow one never lets a second one start."""
+    rc = _FakeRedis()
+    lease = smd.try_claim("baseball_mlb", False, rc=rc)
+    assert rc.ttls[lease.key] == smd.REFRESH_LEASE_TTL_SECONDS
+    assert smd.REFRESH_STATEMENT_TIMEOUT_MS / 1000 < smd.REFRESH_LEASE_TTL_SECONDS
+    assert smd.REFRESH_STATEMENT_TIMEOUT_MS / 1000 > 67.5  # the slowest scan measured
+
+
+@pytest.mark.asyncio
+async def test_a_bounded_scan_sets_its_timeout_before_the_scan_and_the_request_path_does_not():
+    bounded = _RecordingSession(_event("baseball_mlb"), _tier_rows())
+    assert await events_route._discover_season_market_ids(
+        bounded, [], statement_timeout_ms=120_000
+    ) == [11, 12]
+    assert bounded.statements[0] == "SET LOCAL statement_timeout = 120000"
+    assert bounded.discovery_calls == 1
+    plain = _RecordingSession(_event("baseball_mlb"), _tier_rows())
+    await events_route._discover_season_market_ids(plain, [])
+    assert not any("statement_timeout" in s for s in plain.statements)
 
 
 def test_try_claim_without_redis_is_none_not_a_fail_open_lease():
@@ -297,9 +335,12 @@ async def test_the_refresh_republishes_through_the_shared_scan_and_releases(monk
     rc = _FakeRedis()
     seen = []
 
-    async def fake_scan(db, filters):
+    async def fake_scan(db, filters, statement_timeout_ms=None):
         seen.append(list(filters))
+        timeouts.append(statement_timeout_ms)
         return [21, 22]
+
+    timeouts = []
 
     monkeypatch.setattr(events_route, "_discover_season_market_ids", fake_scan)
     with patch.object(smd, "_client", lambda: rc):
@@ -309,6 +350,7 @@ async def test_the_refresh_republishes_through_the_shared_scan_and_releases(monk
         assert events_route._schedule_season_rebuild(_db(), "baseball_mlb", False, ["f1"]) is None
         await task
     assert seen == [["f1", "f2"]]
+    assert timeouts == [smd.REFRESH_STATEMENT_TIMEOUT_MS]
     assert smd.read("baseball_mlb", False, rc=rc) == [21, 22]
     assert smd.read_stale("baseball_mlb", False, rc=rc) == [21, 22]
     assert smd.try_claim("baseball_mlb", False, rc=rc) is not None, "lease was not released"
@@ -320,7 +362,7 @@ async def test_a_failed_refresh_releases_the_lease_and_keeps_the_copy(monkeypatc
     smd.write("baseball_mlb", False, [11], rc=rc)
     rc.delete(smd.cache_key("baseball_mlb", False))
 
-    async def boom(db, filters):
+    async def boom(db, filters, statement_timeout_ms=None):
         raise RuntimeError("statement timeout")
 
     monkeypatch.setattr(events_route, "_discover_season_market_ids", boom)

@@ -29699,14 +29699,19 @@ async def _related_futures_withheld_ids(
     return withheld
 
 
-async def _discover_season_market_ids(db, base_season_filters) -> list[int]:
+async def _discover_season_market_ids(
+    db, base_season_filters, statement_timeout_ms: int | None = None
+) -> list[int]:
     """The season-market discovery scan and its per-tier cap: the ids, in order.
 
     #12529: ONE function for the request's build and the background refresh
     behind a stale answer (`_schedule_season_rebuild`), so the two cannot drift.
     The cost of this scan and why it cannot be indexed away without a migration
-    are in `utils/season_market_discovery.py`.
+    are in `utils/season_market_discovery.py`. ``statement_timeout_ms`` bounds
+    it for the transaction (the refresh passes one; the request path does not).
     """
+    if statement_timeout_ms is not None:
+        await db.execute(text(f"SET LOCAL statement_timeout = {int(statement_timeout_ms)}"))
     _tier_query = await db.execute(
         select(FuturesMarket.id, FuturesMarket.market_tier)
         .where(
@@ -29772,7 +29777,9 @@ def _schedule_season_rebuild(db, sport_key, event_is_finished, base_season_filte
     async def _run():
         try:
             async with maker() as side:
-                market_ids = await _discover_season_market_ids(side, filters)
+                market_ids = await _discover_season_market_ids(
+                    side, filters, statement_timeout_ms=_smd.REFRESH_STATEMENT_TIMEOUT_MS
+                )
             _smd.write(sport_key, event_is_finished, market_ids)
         finally:
             _smd.release_build(lease)
