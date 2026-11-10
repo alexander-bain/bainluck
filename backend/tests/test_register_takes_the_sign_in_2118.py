@@ -17,8 +17,11 @@ arriving.
 THE RULE NOW. The account comes from a valid sign-in (``get_optional_user``,
 the same Bearer check as every signed-in route; the app already sends it,
 checked on #2118). The body's ``user_id`` is ignored. A signed-out registration
-is stored anonymous and keeps working. A call without a valid sign-in never
-changes which account an already-registered phone belongs to.
+is stored anonymous and keeps working. Attaching a phone to an account needs
+that account's sign-in; detaching needs only the phone's own token, so a phone
+that registers signed out leaves its account (Fable's call on PR #12565: a
+reader who signs out must stop getting notifications on that phone). An
+unsigned call can never put a phone on ANOTHER account.
 """
 
 from __future__ import annotations
@@ -111,20 +114,25 @@ class TestTheAugustTrace:
         _post(_client(db, None), device_token="stranger-device-token", user_id=str(VICTIM))
         assert _inserted_user(db) is None
 
-    def test_outbound_an_unsigned_call_cannot_move_or_detach_a_registered_phone(self):
+    def test_outbound_an_unsigned_call_can_detach_but_never_move_a_registered_phone(self):
         # The victim's token re-posted without a sign-in, naming the stranger
-        # or no one: the repeat-token update must not touch the owner.
+        # or no one: the phone ends up with NO account, never the stranger's.
         for body_user in (str(STRANGER), None):
             db = _CaptureDB()
             _post(_client(db, None), device_token="victim-device-token", user_id=body_user)
-            assert _set_user(db) == "NOT SET"
+            assert _set_user(db) is None
+
+    def test_a_reader_who_signs_out_stops_getting_their_notifications_there(self):
+        db = _CaptureDB()
+        _post(_client(db, None), device_token="readers-own-phone")
+        assert _inserted_user(db) is None and _set_user(db) is None
 
     def test_an_invalid_sign_in_is_treated_as_signed_out(self):
         # get_optional_user resolves a bad, expired or deleted-account token to
         # None, the same as no token; the route then cannot write an owner.
         db = _CaptureDB()
         _post(_client(db, None), user_id=str(VICTIM))
-        assert _inserted_user(db) is None and _set_user(db) == "NOT SET"
+        assert _inserted_user(db) is None and _set_user(db) is None
 
 
 def test_the_route_depends_on_the_shared_optional_sign_in():

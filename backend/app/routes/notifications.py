@@ -65,10 +65,11 @@ async def register_device_token(
 
     #2118 (131-A): the ACCOUNT comes only from the request's valid sign-in (the
     Bearer session the app already sends). The body's ``user_id`` is ignored, so
-    a stranger can't attach their phone to someone's account. A signed-out
-    registration is stored anonymous and keeps working, and it never rewrites
-    the owner of a phone that is already registered, so a stranger can't move
-    or detach someone's phone either.
+    a stranger can't attach their phone to someone's account, or move someone's
+    phone to theirs. Attaching needs the account's sign-in; DETACHING needs only
+    the phone's own token: a signed-out registration is stored anonymous, and a
+    phone that registers signed out (after its reader signs out) leaves its
+    account, so it stops getting that reader's notifications (Fable's call).
     """
     session_id = body.session_id or request.headers.get("x-session-id")
     user_id_int: Optional[int] = user.id if user is not None else None
@@ -100,17 +101,18 @@ async def register_device_token(
         is_active=True,
         token_kind=token_kind,
     )
-    set_ = {
-        "platform": body.platform,
-        "session_id": session_id,
-        "is_active": True,
-        "token_kind": token_kind,
-        "updated_at": func.now(),
-    }
-    if user is not None:
-        # Only a signed-in call may set (or move) a phone's account.
-        set_["user_id"] = user_id_int
-    stmt = stmt.on_conflict_do_update(constraint="uq_device_tokens_token", set_=set_)
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_device_tokens_token",
+        set_={
+            "platform": body.platform,
+            # The sign-in's account, or none: never the body's.
+            "user_id": user_id_int,
+            "session_id": session_id,
+            "is_active": True,
+            "token_kind": token_kind,
+            "updated_at": func.now(),
+        },
+    )
     await db.execute(stmt)
     await db.commit()
 
