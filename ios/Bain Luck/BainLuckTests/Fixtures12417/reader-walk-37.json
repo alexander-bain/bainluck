@@ -1,0 +1,1997 @@
+{
+ "schema": "search-answer-12417-fixture-v0",
+ "source": "evals/reader-walk/queries/search-v1.json (PR #12541)",
+ "contract": "#12290 search answer v0 (Fable, 12:09 PM PT Tue Nov 10)",
+ "rows": [
+  {
+   "q": "celtics",
+   "class": "entity",
+   "expect": "the Boston Celtics, first among teams",
+   "response": {
+    "query": "celtics",
+    "results": [
+     {
+      "id": 9056,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "Boston Celtics \u00b7 next game",
+     "exact": true,
+     "game": {
+      "id": 9057,
+      "away_team": "Opponent",
+      "home_team": "Boston Celtics",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "game",
+   "entities": [
+    "game-9057"
+   ]
+  },
+  {
+   "q": "patriots",
+   "class": "entity",
+   "expect": "the New England Patriots, first among teams",
+   "response": {
+    "query": "patriots",
+    "results": [
+     {
+      "id": 9058,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "New England Patriots \u00b7 next game",
+     "exact": true,
+     "game": {
+      "id": 9059,
+      "away_team": "Opponent",
+      "home_team": "New England Patriots",
+      "sport": "americanfootball_nfl",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "game",
+   "entities": [
+    "game-9059"
+   ]
+  },
+  {
+   "q": "lakers",
+   "class": "entity",
+   "expect": "the Los Angeles Lakers, first among teams",
+   "response": {
+    "query": "lakers",
+    "results": [
+     {
+      "id": 9060,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "Los Angeles Lakers \u00b7 next game",
+     "exact": true,
+     "game": {
+      "id": 9061,
+      "away_team": "Opponent",
+      "home_team": "Los Angeles Lakers",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "game",
+   "entities": [
+    "game-9061"
+   ]
+  },
+  {
+   "q": "chiefs",
+   "class": "entity",
+   "expect": "the Kansas City Chiefs, first among teams",
+   "response": {
+    "query": "chiefs",
+    "results": [
+     {
+      "id": 9062,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "Kansas City Chiefs \u00b7 next game",
+     "exact": true,
+     "game": {
+      "id": 9063,
+      "away_team": "Opponent",
+      "home_team": "Kansas City Chiefs",
+      "sport": "americanfootball_nfl",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "game",
+   "entities": [
+    "game-9063"
+   ]
+  },
+  {
+   "q": "bruins",
+   "class": "entity",
+   "expect": "the Boston Bruins, first among teams",
+   "response": {
+    "query": "bruins",
+    "results": [
+     {
+      "id": 9064,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "Boston Bruins \u00b7 next game",
+     "exact": true,
+     "game": {
+      "id": 9065,
+      "away_team": "Opponent",
+      "home_team": "Boston Bruins",
+      "sport": "icehockey_nhl",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "game",
+   "entities": [
+    "game-9065"
+   ]
+  },
+  {
+   "q": "pats",
+   "class": "alias",
+   "expect": "the New England Patriots",
+   "response": {
+    "query": "pats",
+    "results": [
+     {
+      "id": 9066,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "New England Patriots \u00b7 next game",
+     "exact": true,
+     "game": {
+      "id": 9067,
+      "away_team": "Opponent",
+      "home_team": "New England Patriots",
+      "sport": "americanfootball_nfl",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "game",
+   "entities": [
+    "game-9067"
+   ]
+  },
+  {
+   "q": "patroits",
+   "class": "alias",
+   "expect": "the New England Patriots, despite the typo",
+   "response": {
+    "query": "patroits",
+    "results": [
+     {
+      "id": 9068,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "New England Patriots \u00b7 next game",
+     "exact": false,
+     "game": {
+      "id": 9069,
+      "away_team": "Opponent",
+      "home_team": "New England Patriots",
+      "sport": "americanfootball_nfl",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "list",
+   "entities": [
+    "game-9069",
+    "game-9068",
+    "market-990"
+   ]
+  },
+  {
+   "q": "niners",
+   "class": "alias",
+   "expect": "the San Francisco 49ers",
+   "response": {
+    "query": "niners",
+    "results": [
+     {
+      "id": 9070,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "San Francisco 49ers \u00b7 next game",
+     "exact": true,
+     "game": {
+      "id": 9071,
+      "away_team": "Opponent",
+      "home_team": "San Francisco 49ers",
+      "sport": "americanfootball_nfl",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "game",
+   "entities": [
+    "game-9071"
+   ]
+  },
+  {
+   "q": "celts",
+   "class": "alias",
+   "expect": "the Boston Celtics",
+   "response": {
+    "query": "celts",
+    "results": [
+     {
+      "id": 9072,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "Boston Celtics \u00b7 next game",
+     "exact": true,
+     "game": {
+      "id": 9073,
+      "away_team": "Opponent",
+      "home_team": "Boston Celtics",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "game",
+   "entities": [
+    "game-9073"
+   ]
+  },
+  {
+   "q": "man u",
+   "class": "alias",
+   "expect": "Manchester United",
+   "response": {
+    "query": "man u",
+    "results": [
+     {
+      "id": 9074,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "Manchester United \u00b7 next game",
+     "exact": true,
+     "game": {
+      "id": 9075,
+      "away_team": "Opponent",
+      "home_team": "Manchester United",
+      "sport": "soccer_epl",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "game",
+   "entities": [
+    "game-9075"
+   ]
+  },
+  {
+   "q": "KC chiefs",
+   "class": "alias",
+   "expect": "the Kansas City Chiefs",
+   "response": {
+    "query": "KC chiefs",
+    "results": [
+     {
+      "id": 9076,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "game",
+     "understood": "Kansas City Chiefs \u00b7 next game",
+     "exact": true,
+     "game": {
+      "id": 9077,
+      "away_team": "Opponent",
+      "home_team": "Kansas City Chiefs",
+      "sport": "americanfootball_nfl",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    }
+   },
+   "plan": "game",
+   "entities": [
+    "game-9077"
+   ]
+  },
+  {
+   "q": "superbowl patriots",
+   "class": "entity+market",
+   "expect": "the Super Bowl winner market, showing the Patriots' chance",
+   "response": {
+    "query": "superbowl patriots",
+    "results": [
+     {
+      "id": 9078,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "outcome",
+     "understood": "New England Patriots \u00b7 NFL Super Bowl Winner",
+     "exact": true,
+     "market": {
+      "id": 501,
+      "name": "NFL Super Bowl Winner",
+      "category": "Sports",
+      "status": "open"
+     },
+     "outcome": {
+      "id": 7001,
+      "name": "New England Patriots",
+      "probability": 0.139
+     }
+    }
+   },
+   "plan": "outcome",
+   "entities": [
+    "outcome-501-7001"
+   ]
+  },
+  {
+   "q": "super bowl patriots",
+   "class": "entity+market",
+   "expect": "the Super Bowl winner market, showing the Patriots' chance",
+   "response": {
+    "query": "super bowl patriots",
+    "results": [
+     {
+      "id": 9079,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "outcome",
+     "understood": "New England Patriots \u00b7 NFL Super Bowl Winner",
+     "exact": true,
+     "market": {
+      "id": 501,
+      "name": "NFL Super Bowl Winner",
+      "category": "Sports",
+      "status": "open"
+     },
+     "outcome": {
+      "id": 7001,
+      "name": "New England Patriots",
+      "probability": 0.139
+     }
+    }
+   },
+   "plan": "outcome",
+   "entities": [
+    "outcome-501-7001"
+   ]
+  },
+  {
+   "q": "patriots super bowl",
+   "class": "entity+market",
+   "expect": "the Super Bowl winner market, showing the Patriots' chance",
+   "response": {
+    "query": "patriots super bowl",
+    "results": [
+     {
+      "id": 9080,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "outcome",
+     "understood": "New England Patriots \u00b7 NFL Super Bowl Winner",
+     "exact": true,
+     "market": {
+      "id": 501,
+      "name": "NFL Super Bowl Winner",
+      "category": "Sports",
+      "status": "open"
+     },
+     "outcome": {
+      "id": 7001,
+      "name": "New England Patriots",
+      "probability": 0.139
+     }
+    }
+   },
+   "plan": "outcome",
+   "entities": [
+    "outcome-501-7001"
+   ]
+  },
+  {
+   "q": "super bowl",
+   "class": "entity+market",
+   "expect": "the Super Bowl winner market",
+   "response": {
+    "query": "super bowl",
+    "results": [
+     {
+      "id": 9081,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "market",
+     "understood": "NFL Super Bowl Winner",
+     "exact": true,
+     "market": {
+      "id": 501,
+      "name": "NFL Super Bowl Winner",
+      "category": "Sports",
+      "status": "open"
+     }
+    }
+   },
+   "plan": "market",
+   "entities": [
+    "market-501"
+   ]
+  },
+  {
+   "q": "who will win the super bowl",
+   "class": "entity+market",
+   "expect": "the Super Bowl winner market",
+   "response": {
+    "query": "who will win the super bowl",
+    "results": [
+     {
+      "id": 9082,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "market",
+     "understood": "NFL Super Bowl Winner",
+     "exact": true,
+     "market": {
+      "id": 501,
+      "name": "NFL Super Bowl Winner",
+      "category": "Sports",
+      "status": "open"
+     }
+    }
+   },
+   "plan": "market",
+   "entities": [
+    "market-501"
+   ]
+  },
+  {
+   "q": "celtics championship",
+   "class": "entity+market",
+   "expect": "the NBA champion market",
+   "response": {
+    "query": "celtics championship",
+    "results": [
+     {
+      "id": 9083,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "outcome",
+     "understood": "Boston Celtics \u00b7 NBA: 2027 Champion",
+     "exact": true,
+     "market": {
+      "id": 502,
+      "name": "NBA: 2027 Champion",
+      "category": "Sports",
+      "status": "open"
+     },
+     "outcome": {
+      "id": 7101,
+      "name": "Boston Celtics",
+      "probability": 0.09
+     }
+    }
+   },
+   "plan": "outcome",
+   "entities": [
+    "outcome-502-7101"
+   ]
+  },
+  {
+   "q": "nba champion",
+   "class": "entity+market",
+   "expect": "the NBA champion market",
+   "response": {
+    "query": "nba champion",
+    "results": [
+     {
+      "id": 9084,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "market",
+     "understood": "NBA: 2027 Champion",
+     "exact": true,
+     "market": {
+      "id": 502,
+      "name": "NBA: 2027 Champion",
+      "category": "Sports",
+      "status": "open"
+     }
+    }
+   },
+   "plan": "market",
+   "entities": [
+    "market-502"
+   ]
+  },
+  {
+   "q": "best picture",
+   "class": "entity+market",
+   "expect": "the Oscars Best Picture market",
+   "response": {
+    "query": "best picture",
+    "results": [
+     {
+      "id": 9085,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "market",
+     "understood": "Oscar Winner: Best Picture",
+     "exact": true,
+     "market": {
+      "id": 503,
+      "name": "Oscar Winner: Best Picture",
+      "category": "Entertainment",
+      "status": "open"
+     }
+    }
+   },
+   "plan": "market",
+   "entities": [
+    "market-503"
+   ]
+  },
+  {
+   "q": "oscars",
+   "class": "entity+market",
+   "expect": "the Oscars, as an event or a collection",
+   "response": {
+    "query": "oscars",
+    "results": [
+     {
+      "id": 9086,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "set",
+     "understood": "Oscars 2027",
+     "exact": true,
+     "set": {
+      "slug": "oscars-2027",
+      "title": "Oscars 2027",
+      "href": "/c/oscars-2027",
+      "items": []
+     }
+    }
+   },
+   "plan": "list",
+   "entities": [
+    "game-9086",
+    "market-990"
+   ]
+  },
+  {
+   "q": "celtics next three games",
+   "class": "set",
+   "expect": "the Celtics' next three games, as one set",
+   "response": {
+    "query": "celtics next three games",
+    "results": [
+     {
+      "id": 9087,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "set",
+     "understood": "Celtics: next three games",
+     "exact": true,
+     "set": {
+      "slug": "celtics-next-3",
+      "title": "Celtics: next three games",
+      "href": "/c/celtics-next-3",
+      "items": [
+       {
+        "id": 9001,
+        "away_team": "Away 1",
+        "home_team": "Home 1",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9002,
+        "away_team": "Away 2",
+        "home_team": "Home 2",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9003,
+        "away_team": "Away 3",
+        "home_team": "Home 3",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       }
+      ]
+     }
+    }
+   },
+   "plan": "set",
+   "entities": [
+    "game-9001",
+    "game-9002",
+    "game-9003"
+   ]
+  },
+  {
+   "q": "celtics next 3 games",
+   "class": "set",
+   "expect": "the Celtics' next three games, as one set",
+   "response": {
+    "query": "celtics next 3 games",
+    "results": [
+     {
+      "id": 9088,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "set",
+     "understood": "Celtics: next three games",
+     "exact": true,
+     "set": {
+      "slug": "celtics-next-3",
+      "title": "Celtics: next three games",
+      "href": "/c/celtics-next-3",
+      "items": [
+       {
+        "id": 9004,
+        "away_team": "Away 1",
+        "home_team": "Home 1",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9005,
+        "away_team": "Away 2",
+        "home_team": "Home 2",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9006,
+        "away_team": "Away 3",
+        "home_team": "Home 3",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       }
+      ]
+     }
+    }
+   },
+   "plan": "set",
+   "entities": [
+    "game-9004",
+    "game-9005",
+    "game-9006"
+   ]
+  },
+  {
+   "q": "close games tonight",
+   "class": "set",
+   "expect": "tonight's closest games, as one set",
+   "response": {
+    "query": "close games tonight",
+    "results": [
+     {
+      "id": 9089,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "set",
+     "understood": "Closest games tonight",
+     "exact": true,
+     "set": {
+      "slug": "close-tonight",
+      "title": "Closest games tonight",
+      "href": "/c/close-tonight",
+      "items": [
+       {
+        "id": 9007,
+        "away_team": "Away 1",
+        "home_team": "Home 1",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9008,
+        "away_team": "Away 2",
+        "home_team": "Home 2",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9009,
+        "away_team": "Away 3",
+        "home_team": "Home 3",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9010,
+        "away_team": "Away 4",
+        "home_team": "Home 4",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9011,
+        "away_team": "Away 5",
+        "home_team": "Home 5",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9012,
+        "away_team": "Away 6",
+        "home_team": "Home 6",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       }
+      ]
+     }
+    }
+   },
+   "plan": "set",
+   "entities": [
+    "game-9007",
+    "game-9008",
+    "game-9009",
+    "game-9010",
+    "game-9011"
+   ]
+  },
+  {
+   "q": "games tonight",
+   "class": "set",
+   "expect": "games starting tonight",
+   "response": {
+    "query": "games tonight",
+    "results": [
+     {
+      "id": 9090,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "set",
+     "understood": "Games tonight",
+     "exact": true,
+     "set": {
+      "slug": "tonight",
+      "title": "Games tonight",
+      "href": "/c/tonight",
+      "items": [
+       {
+        "id": 9013,
+        "away_team": "Away 1",
+        "home_team": "Home 1",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9014,
+        "away_team": "Away 2",
+        "home_team": "Home 2",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9015,
+        "away_team": "Away 3",
+        "home_team": "Home 3",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9016,
+        "away_team": "Away 4",
+        "home_team": "Home 4",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9017,
+        "away_team": "Away 5",
+        "home_team": "Home 5",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9018,
+        "away_team": "Away 6",
+        "home_team": "Home 6",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9019,
+        "away_team": "Away 7",
+        "home_team": "Home 7",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9020,
+        "away_team": "Away 8",
+        "home_team": "Home 8",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       }
+      ]
+     }
+    }
+   },
+   "plan": "set",
+   "entities": [
+    "game-9013",
+    "game-9014",
+    "game-9015",
+    "game-9016",
+    "game-9017"
+   ]
+  },
+  {
+   "q": "nba tonight",
+   "class": "set",
+   "expect": "NBA games starting tonight",
+   "response": {
+    "query": "nba tonight",
+    "results": [
+     {
+      "id": 9091,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "set",
+     "understood": "NBA tonight",
+     "exact": true,
+     "set": {
+      "slug": "nba-tonight",
+      "title": "NBA tonight",
+      "href": "/c/nba-tonight",
+      "items": [
+       {
+        "id": 9021,
+        "away_team": "Away 1",
+        "home_team": "Home 1",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9022,
+        "away_team": "Away 2",
+        "home_team": "Home 2",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9023,
+        "away_team": "Away 3",
+        "home_team": "Home 3",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9024,
+        "away_team": "Away 4",
+        "home_team": "Home 4",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9025,
+        "away_team": "Away 5",
+        "home_team": "Home 5",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9026,
+        "away_team": "Away 6",
+        "home_team": "Home 6",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9027,
+        "away_team": "Away 7",
+        "home_team": "Home 7",
+        "sport": "basketball_nba",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       }
+      ]
+     }
+    }
+   },
+   "plan": "set",
+   "entities": [
+    "game-9021",
+    "game-9022",
+    "game-9023",
+    "game-9024",
+    "game-9025"
+   ]
+  },
+  {
+   "q": "nfl week 10",
+   "class": "set",
+   "expect": "the NFL Week 10 page",
+   "response": {
+    "query": "nfl week 10",
+    "results": [
+     {
+      "id": 9092,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "set",
+     "understood": "NFL Week 10",
+     "exact": true,
+     "set": {
+      "slug": "nfl-week-10",
+      "title": "NFL Week 10",
+      "href": "/c/nfl-week-10",
+      "items": [
+       {
+        "id": 9028,
+        "away_team": "Away 1",
+        "home_team": "Home 1",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9029,
+        "away_team": "Away 2",
+        "home_team": "Home 2",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9030,
+        "away_team": "Away 3",
+        "home_team": "Home 3",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9031,
+        "away_team": "Away 4",
+        "home_team": "Home 4",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9032,
+        "away_team": "Away 5",
+        "home_team": "Home 5",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9033,
+        "away_team": "Away 6",
+        "home_team": "Home 6",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9034,
+        "away_team": "Away 7",
+        "home_team": "Home 7",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9035,
+        "away_team": "Away 8",
+        "home_team": "Home 8",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9036,
+        "away_team": "Away 9",
+        "home_team": "Home 9",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9037,
+        "away_team": "Away 10",
+        "home_team": "Home 10",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9038,
+        "away_team": "Away 11",
+        "home_team": "Home 11",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9039,
+        "away_team": "Away 12",
+        "home_team": "Home 12",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9040,
+        "away_team": "Away 13",
+        "home_team": "Home 13",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9041,
+        "away_team": "Away 14",
+        "home_team": "Home 14",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       }
+      ]
+     }
+    }
+   },
+   "plan": "set",
+   "entities": [
+    "game-9028",
+    "game-9029",
+    "game-9030",
+    "game-9031",
+    "game-9032"
+   ]
+  },
+  {
+   "q": "nfl this week",
+   "class": "set",
+   "expect": "this week's NFL page (Week 10), first among collections",
+   "response": {
+    "query": "nfl this week",
+    "results": [
+     {
+      "id": 9093,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "set",
+     "understood": "NFL Week 10",
+     "exact": true,
+     "set": {
+      "slug": "nfl-week-10",
+      "title": "NFL Week 10",
+      "href": "/c/nfl-week-10",
+      "items": [
+       {
+        "id": 9042,
+        "away_team": "Away 1",
+        "home_team": "Home 1",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9043,
+        "away_team": "Away 2",
+        "home_team": "Home 2",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9044,
+        "away_team": "Away 3",
+        "home_team": "Home 3",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9045,
+        "away_team": "Away 4",
+        "home_team": "Home 4",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9046,
+        "away_team": "Away 5",
+        "home_team": "Home 5",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9047,
+        "away_team": "Away 6",
+        "home_team": "Home 6",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9048,
+        "away_team": "Away 7",
+        "home_team": "Home 7",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9049,
+        "away_team": "Away 8",
+        "home_team": "Home 8",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9050,
+        "away_team": "Away 9",
+        "home_team": "Home 9",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9051,
+        "away_team": "Away 10",
+        "home_team": "Home 10",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9052,
+        "away_team": "Away 11",
+        "home_team": "Home 11",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9053,
+        "away_team": "Away 12",
+        "home_team": "Home 12",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9054,
+        "away_team": "Away 13",
+        "home_team": "Home 13",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       },
+       {
+        "id": 9055,
+        "away_team": "Away 14",
+        "home_team": "Home 14",
+        "sport": "americanfootball_nfl",
+        "status": "scheduled",
+        "commence_time": "2026-11-12T00:30:00Z"
+       }
+      ]
+     }
+    }
+   },
+   "plan": "set",
+   "entities": [
+    "game-9042",
+    "game-9043",
+    "game-9044",
+    "game-9045",
+    "game-9046"
+   ]
+  },
+  {
+   "q": "awards season",
+   "class": "set",
+   "expect": "an awards collection (the Oscars or the Golden Globes)",
+   "response": {
+    "query": "awards season",
+    "results": [
+     {
+      "id": 9094,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "set",
+     "understood": "Awards season",
+     "exact": true,
+     "set": {
+      "slug": "awards-season",
+      "title": "Awards season",
+      "href": "/c/awards-season",
+      "items": []
+     }
+    }
+   },
+   "plan": "list",
+   "entities": [
+    "game-9094",
+    "market-990"
+   ]
+  },
+  {
+   "q": "will the fed cut rates",
+   "class": "other topics",
+   "expect": "the Fed's next rate decision",
+   "response": {
+    "query": "will the fed cut rates",
+    "results": [
+     {
+      "id": 9095,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "market",
+     "understood": "Fed decision in December?",
+     "exact": true,
+     "market": {
+      "id": 504,
+      "name": "Fed decision in December?",
+      "category": "Economics",
+      "status": "open"
+     }
+    }
+   },
+   "plan": "market",
+   "entities": [
+    "market-504"
+   ]
+  },
+  {
+   "q": "fed december",
+   "class": "other topics",
+   "expect": "a market on the Fed's December meeting",
+   "response": {
+    "query": "fed december",
+    "results": [
+     {
+      "id": 9096,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "market",
+     "understood": "Fed decision in December?",
+     "exact": true,
+     "market": {
+      "id": 504,
+      "name": "Fed decision in December?",
+      "category": "Economics",
+      "status": "open"
+     }
+    }
+   },
+   "plan": "market",
+   "entities": [
+    "market-504"
+   ]
+  },
+  {
+   "q": "gemini",
+   "class": "other topics",
+   "expect": "a market about a Gemini model",
+   "response": {
+    "query": "gemini",
+    "results": [
+     {
+      "id": 9097,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "market",
+     "understood": "Next Google Gemini Pro model: Arena debut?",
+     "exact": true,
+     "market": {
+      "id": 505,
+      "name": "Next Google Gemini Pro model: Arena debut?",
+      "category": "Tech",
+      "status": "open"
+     }
+    }
+   },
+   "plan": "market",
+   "entities": [
+    "market-505"
+   ]
+  },
+  {
+   "q": "snow boston",
+   "class": "other topics",
+   "expect": "a market on snow in Boston",
+   "response": {
+    "query": "snow boston",
+    "results": [
+     {
+      "id": 9098,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "market",
+     "understood": "Will it snow in Boston, MA by November 30?",
+     "exact": true,
+     "market": {
+      "id": 506,
+      "name": "Will it snow in Boston, MA by November 30?",
+      "category": "Weather",
+      "status": "open"
+     }
+    }
+   },
+   "plan": "market",
+   "entities": [
+    "market-506"
+   ]
+  },
+  {
+   "q": "ufo",
+   "class": "other topics",
+   "expect": "the UFO-files markets",
+   "response": {
+    "query": "ufo",
+    "results": [
+     {
+      "id": 9099,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "market",
+     "understood": "Trump declassifies new UFO files by...?",
+     "exact": true,
+     "market": {
+      "id": 507,
+      "name": "Trump declassifies new UFO files by...?",
+      "category": "Politics",
+      "status": "open"
+     }
+    }
+   },
+   "plan": "market",
+   "entities": [
+    "market-507"
+   ]
+  },
+  {
+   "q": "largest ipo 2026",
+   "class": "other topics",
+   "expect": "the largest-IPO market",
+   "response": {
+    "query": "largest ipo 2026",
+    "results": [
+     {
+      "id": 9100,
+      "away_team": "Fallback Away",
+      "home_team": "Fallback Home",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [
+     {
+      "id": 990,
+      "name": "A fallback market",
+      "category": "Sports",
+      "status": "open"
+     }
+    ],
+    "answer": {
+     "kind": "market",
+     "understood": "Largest IPO by market cap in 2026?",
+     "exact": true,
+     "market": {
+      "id": 508,
+      "name": "Largest IPO by market cap in 2026?",
+      "category": "Economics",
+      "status": "open"
+     }
+    }
+   },
+   "plan": "market",
+   "entities": [
+    "market-508"
+   ]
+  },
+  {
+   "q": "giants",
+   "class": "honesty",
+   "expect": "both Giants teams, New York and San Francisco",
+   "response": {
+    "query": "giants",
+    "results": [
+     {
+      "id": 9102,
+      "away_team": "Washington Commanders",
+      "home_team": "New York Giants",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     },
+     {
+      "id": 9103,
+      "away_team": "San Francisco Giants",
+      "home_team": "Opponent",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [],
+    "answer": null
+   },
+   "plan": "list",
+   "entities": [
+    "game-9102",
+    "game-9103"
+   ]
+  },
+  {
+   "q": "rangers",
+   "class": "honesty",
+   "expect": "both Rangers teams, New York and Texas",
+   "response": {
+    "query": "rangers",
+    "results": [
+     {
+      "id": 9105,
+      "away_team": "Washington Commanders",
+      "home_team": "New York Rangers",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     },
+     {
+      "id": 9106,
+      "away_team": "Texas Rangers",
+      "home_team": "Opponent",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "commence_time": "2026-11-12T00:30:00Z"
+     }
+    ],
+    "futures": [],
+    "answer": null
+   },
+   "plan": "list",
+   "entities": [
+    "game-9105",
+    "game-9106"
+   ]
+  },
+  {
+   "q": "asdfgh",
+   "class": "honesty",
+   "expect": "an honest empty state",
+   "response": {
+    "query": "asdfgh",
+    "results": [],
+    "futures": [],
+    "answer": null
+   },
+   "plan": "list",
+   "entities": []
+  }
+ ]
+}

@@ -113,6 +113,11 @@ struct GetProbabilityIntent10873: AppIntent {
             } catch {
                 return ProbabilityAnswer10873.failure(error, subject: subject.title)
             }
+            // #12417 — the server's answer named the outcome: answer for it,
+            // no "Which outcome?". Only an outcome this market lists counts.
+            if let named = subject.outcomeID, market.outcomes.contains(where: { $0.id == named }) {
+                return ProbabilityAnswer10873.market(market, outcomeID: named, now: now)
+            }
             let chosen = try await choose(
                 from: OutcomeEntity10873.options(for: market), dialog: "Which outcome?")
             guard let chosen, let outcomeID = Int(chosen.key) else {

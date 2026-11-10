@@ -38,6 +38,11 @@ nonisolated struct SearchResponse: Decodable, Sendable {
     /// Optional top-level `collections` producer cards (#9653). The shared
     /// decoder tolerates missing/null lists and isolates malformed siblings.
     let collectionDiscovery: ContainerDiscoveryResponse?
+    /// #12417 — the server's one best answer (search answer contract v0,
+    /// #12290). Every door reads it — Search, Siri, Spotlight — and none
+    /// rebuilds an answer from `teams`, `results` or `collections`. Absent,
+    /// null or malformed all read as nil: the door shows today's lists.
+    var answer: SearchAnswer12417? = nil
 }
 
 extension SearchResponse {
@@ -57,13 +62,90 @@ extension SearchResponse {
         // Optional/new collection data must never make an ordinary answer fail.
         // This reads the SAME response envelope; it performs no network request.
         collectionDiscovery = try? ContainerDiscoveryResponse(from: decoder)
+        answer = (try? c.decodeIfPresent(SearchAnswer12417.self, forKey: .answer)) ?? nil
     }
 
     private enum CodingKeys: String, CodingKey {
         case query, teams, eventConcepts, results, futures, futuresFamilies
-        case pagination, sports, filters, didYouMean, degraded
+        case pagination, sports, filters, didYouMean, degraded, answer
     }
 }
+
+/// #12417 — `answer` on `GET /api/events/search`, contract v0 (#12290, Fable,
+/// 12:09 PM PT Tue Nov 10). `kind` says which one object is filled: `game`
+/// fills `game`; `outcome` fills `market` and `outcome`; `market` fills
+/// `market`; `set` fills `set`. `exact: false` is a best guess. Field names
+/// may still change when the server builds it; the shape should not.
+nonisolated struct SearchAnswer12417: Decodable, Sendable {
+    nonisolated enum Kind: String, Decodable, Sendable {
+        case game, outcome, market, set
+    }
+
+    nonisolated struct Outcome: Decodable, Sendable {
+        let id: Int
+        let name: String
+        let probability: Double?
+    }
+
+    nonisolated struct AnswerSet: Decodable, Sendable {
+        let slug: String?
+        let title: String?
+        let href: String?
+        /// The set's games, in order.
+        let items: [SearchEvent]
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            slug = try? c.decodeIfPresent(String.self, forKey: .slug)
+            title = try? c.decodeIfPresent(String.self, forKey: .title)
+            href = try? c.decodeIfPresent(String.self, forKey: .href)
+            // One malformed game must not cost the reader the others.
+            var rows = try c.nestedUnkeyedContainer(forKey: .items)
+            var decoded: [SearchEvent] = []
+            while !rows.isAtEnd {
+                if let row = try? rows.decode(SearchEvent.self) { decoded.append(row) }
+                else { _ = try? rows.decode(SkipRow12417.self) }
+            }
+            items = decoded
+        }
+
+        private enum CodingKeys: String, CodingKey { case slug, title, href, items }
+    }
+
+    let kind: Kind
+    let understood: String?
+    let exact: Bool
+    let game: SearchEvent?
+    let market: SearchFuturesMarket?
+    let outcome: Outcome?
+    let set: AnswerSet?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // An unknown kind is not an answer this app can read: the whole field
+        // reads as absent and the door falls back to today's lists.
+        kind = try c.decode(Kind.self, forKey: .kind)
+        understood = try? c.decodeIfPresent(String.self, forKey: .understood)
+        exact = ((try? c.decodeIfPresent(Bool.self, forKey: .exact)) ?? nil) ?? false
+        game = (try? c.decodeIfPresent(SearchEvent.self, forKey: .game)) ?? nil
+        // The contract names the market "the same shape as futures_families[]";
+        // read a plain market row first, then a family's headline.
+        if let row = (try? c.decodeIfPresent(SearchFuturesMarket.self, forKey: .market)) ?? nil {
+            market = row
+        } else {
+            market = ((try? c.decodeIfPresent(SearchFuturesFamily.self, forKey: .market)) ?? nil)?.headline
+        }
+        outcome = (try? c.decodeIfPresent(Outcome.self, forKey: .outcome)) ?? nil
+        set = (try? c.decodeIfPresent(AnswerSet.self, forKey: .set)) ?? nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, understood, exact, game, market, outcome, set
+    }
+}
+
+/// Advances past one row that does not decode.
+nonisolated struct SkipRow12417: Decodable {}
 
 /// A tournament, ceremony or race the query names, derived server-side from the
 /// winner-field markets that matched (#999 L2-65).

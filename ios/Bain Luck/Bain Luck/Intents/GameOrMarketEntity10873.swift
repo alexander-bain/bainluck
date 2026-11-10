@@ -21,8 +21,15 @@ nonisolated struct GameOrMarketEntity10873: AppEntity {
     let recordID: Int
     let title: String
     let detail: String?
+    /// #12417 — the outcome the server's answer named (`kind: outcome`), on a
+    /// market only. "Get Probability" then answers for it without asking
+    /// "Which outcome?".
+    var outcomeID: Int? = nil
 
-    var id: String { Self.identifier(kind: kind, recordID: recordID) }
+    var id: String {
+        if kind == .market, let outcomeID { return Self.outcomeIdentifier(marketID: recordID, outcomeID: outcomeID) }
+        return Self.identifier(kind: kind, recordID: recordID)
+    }
 
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Game or Market"
     static let defaultQuery = GameOrMarketQuery10873()
@@ -44,6 +51,20 @@ nonisolated struct GameOrMarketEntity10873: AppEntity {
 
     static func identifier(kind: Kind, recordID: Int) -> String {
         "\(kind.rawValue)-\(recordID)"
+    }
+
+    /// #12417 — "outcome-<market>-<outcome>". A prefix of its own, so it can
+    /// never be read as a plain market or as an `OutcomeEntity10873` id.
+    static func outcomeIdentifier(marketID: Int, outcomeID: Int) -> String {
+        "outcome-\(marketID)-\(outcomeID)"
+    }
+
+    static func outcomeReference(_ identifier: String) -> (marketID: Int, outcomeID: Int)? {
+        let parts = identifier.split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "outcome",
+              let market = Int(parts[1]), market > 0, String(market) == parts[1],
+              let outcome = Int(parts[2]), outcome > 0, String(outcome) == parts[2] else { return nil }
+        return (market, outcome)
     }
 
     /// Parses an identifier back into its kind and id; nil for anything else.
@@ -68,6 +89,17 @@ nonisolated struct GameOrMarketQuery10873: EntityStringQuery {
     func entities(for identifiers: [String]) async throws -> [GameOrMarketEntity10873] {
         var found: [GameOrMarketEntity10873] = []
         for identifier in identifiers {
+            if let named = GameOrMarketEntity10873.outcomeReference(identifier) {
+                do {
+                    if let entity = try await GameOrMarketCatalog10873.entity(
+                        marketID: named.marketID, outcomeID: named.outcomeID) {
+                        found.append(entity)
+                    }
+                } catch APIError.httpError(let status, _) where status == 404 {
+                    continue
+                }
+                continue
+            }
             guard let ref = GameOrMarketEntity10873.reference(identifier) else { continue }
             do {
                 found.append(try await GameOrMarketCatalog10873.entity(kind: ref.kind, recordID: ref.recordID))
@@ -78,9 +110,10 @@ nonisolated struct GameOrMarketQuery10873: EntityStringQuery {
         return found
     }
 
-    /// Every match the canonical search returns, ranked as search ranks them.
-    /// Never narrowed to the first hit: when more than one comes back, the
-    /// system asks the reader which one.
+    /// The server's answer when it has an exact one (#12417); otherwise every
+    /// match the canonical search returns, ranked as search ranks them. Never
+    /// narrowed to the first hit by the app: when more than one comes back,
+    /// the system asks the reader which one.
     func entities(matching string: String) async throws -> [GameOrMarketEntity10873] {
         try await GameOrMarketCatalog10873.search(string)
     }
@@ -104,20 +137,16 @@ enum GameOrMarketCatalog10873 {
         return entities(from: response)
     }
 
+    /// What Siri and Spotlight offer for one search response: the server's
+    /// answer read as `SearchAnswerPlan12417`, never an answer of our own.
     static func entities(from response: SearchResponse) -> [GameOrMarketEntity10873] {
+        SearchAnswerPlan12417.plan(for: response).entities
+    }
+
+    /// Today's list: up to ten games, then up to ten markets, as search ranks them.
+    static func listEntities(from response: SearchResponse) -> [GameOrMarketEntity10873] {
         let facets = response.sports ?? []
-        let games = response.results.prefix(perKindLimit).map { event in
-            GameOrMarketEntity10873(
-                kind: .game,
-                recordID: event.id,
-                title: ProbabilityAnswer10873.matchup(away: event.awayTeam, home: event.homeTeam),
-                detail: gameDetail(
-                    league: sportKeyDisplayName(event.sport, facets: facets),
-                    status: event.status,
-                    authorityPeriod: event.authorityPeriod,
-                    commenceTime: event.commenceTime,
-                    startIsTbd: event.startIsTbd == true))
-        }
+        let games = response.results.prefix(perKindLimit).map { gameEntity($0, facets: facets) }
         // Families first, as search draws them, then the flat rows; each market once.
         var seen = Set<Int>()
         var markets: [SearchFuturesMarket] = []
@@ -129,18 +158,46 @@ enum GameOrMarketCatalog10873 {
         for market in response.futures where seen.insert(market.id).inserted {
             markets.append(market)
         }
-        let marketEntities = markets.prefix(perKindLimit).map { market in
-            GameOrMarketEntity10873(
-                kind: .market,
-                recordID: market.id,
-                title: market.name,
-                detail: marketDetail(
-                    category: market.llmSportCategory ?? market.category,
-                    source: market.source,
-                    status: market.status,
-                    resolutionDate: market.resolutionDate))
-        }
+        let marketEntities = markets.prefix(perKindLimit).map { marketEntity($0) }
         return Array(games) + Array(marketEntities)
+    }
+
+    static func gameEntity(_ event: SearchEvent, facets: [SportFacet]) -> GameOrMarketEntity10873 {
+        GameOrMarketEntity10873(
+            kind: .game,
+            recordID: event.id,
+            title: ProbabilityAnswer10873.matchup(away: event.awayTeam, home: event.homeTeam),
+            detail: gameDetail(
+                league: sportKeyDisplayName(event.sport, facets: facets),
+                status: event.status,
+                authorityPeriod: event.authorityPeriod,
+                commenceTime: event.commenceTime,
+                startIsTbd: event.startIsTbd == true))
+    }
+
+    static func marketEntity(_ market: SearchFuturesMarket, outcome: SearchAnswer12417.Outcome? = nil) -> GameOrMarketEntity10873 {
+        GameOrMarketEntity10873(
+            kind: .market,
+            recordID: market.id,
+            title: outcome.map { "\($0.name) · \(market.name)" } ?? market.name,
+            detail: marketDetail(
+                category: market.llmSportCategory ?? market.category,
+                source: market.source,
+                status: market.status,
+                resolutionDate: market.resolutionDate),
+            outcomeID: outcome?.id)
+    }
+
+    /// #12417 — a saved "outcome-<market>-<outcome>" reference, rebuilt from the
+    /// market's own page; nil when that outcome is no longer listed.
+    static func entity(marketID: Int, outcomeID: Int) async throws -> GameOrMarketEntity10873? {
+        let market = try await APIClient.shared.fetchFuturesDetail(id: marketID, representation: .verifiedTitle)
+        guard let outcome = market.outcomes.first(where: { $0.id == outcomeID }) else { return nil }
+        var entity = entity(from: market)
+        entity = GameOrMarketEntity10873(kind: .market, recordID: market.id,
+                                         title: "\(outcome.name) · \(market.name)",
+                                         detail: entity.detail, outcomeID: outcomeID)
+        return entity
     }
 
     static func entity(kind: GameOrMarketEntity10873.Kind, recordID: Int) async throws -> GameOrMarketEntity10873 {
