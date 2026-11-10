@@ -21,7 +21,7 @@ from typing import Annotated, Optional, Sequence
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false, Interval
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, aliased
+from sqlalchemy.orm import selectinload, aliased, load_only
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql.visitors import replacement_traverse
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -36608,12 +36608,30 @@ def _enriched_teams_stmt():
     silently dropping that team's logo — the failure this whole function exists
     to prevent. A missing sport row yields `key = None`, which
     `_team_league_identity` falls back to `sport_id` for.
+
+    #12529: ONLY the columns `_snapshot_team` copies (`TEAM_LOOKUP_COLUMNS`). The
+    statement used to load every `teams` column: 622,434 calls, mean 577 ms,
+    the heaviest statement in `pg_stat_statements` by total time (Nov 10), and
+    `roster_players` alone was 1,048 kB of the 1,536 kB it read across 1,809
+    branded teams, for a lookup that never reads it.
     """
     return (
         select(Team, Sport.key)
+        .options(load_only(*TEAM_LOOKUP_COLUMNS, raiseload=True))
         .join(Sport, Sport.id == Team.sport_id, isouter=True)
         .where(or_(Team.primary_color.isnot(None), Team.logo_url_small.isnot(None)))
     )
+
+
+#: #12529: the `teams` columns `_snapshot_team` reads, and nothing else. A column
+#: added to the snapshot must be added here: an unloaded one raises (raiseload)
+#: rather than lazy-loading on an async session.
+TEAM_LOOKUP_COLUMNS = (
+    Team.id, Team.sport_id, Team.name, Team.slug, Team.abbreviation,
+    Team.primary_color, Team.secondary_color, Team.logo_url_small, Team.logo_url_large,
+    Team.current_record, Team.alternate_names, Team.standings_data,
+    Team.standings_updated_at, Team.season_stats, Team.espn_id,
+)
 
 
 def _shape_team_lookup(rows) -> dict:
