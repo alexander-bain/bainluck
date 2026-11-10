@@ -2179,7 +2179,7 @@ def _run_pass2_retry_rows(monkeypatch, rows, *, limit=5, time_remaining=None):
 
 class TestDatedWinnerRetries12072:
     def test_ucf_retry_selects_the_mens_fixture_and_refuses_the_womens_game(self):
-        fixture = datetime(2026, 11, 11, tzinfo=timezone.utc)
+        fixture = NOW + timedelta(hours=24)
         market = _Market(
             external_id="1310803",
             llm_sport_category="basketball",
@@ -2192,7 +2192,7 @@ class TestDatedWinnerRetries12072:
                 15341654,
                 "South Alabama Jaguars",
                 "UCF Knights (W)",
-                datetime(2026, 11, 9, 23, 30, tzinfo=timezone.utc),
+                fixture - timedelta(hours=24, minutes=30),
                 sport_key="basketball_other",
             ),
             _Event(
