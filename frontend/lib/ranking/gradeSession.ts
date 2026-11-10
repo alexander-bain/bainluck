@@ -48,13 +48,16 @@ export function slateFromSearch(search: string): string | null {
   return raw && SLATE_REF.test(raw) ? raw : null;
 }
 
-/** The deck request: today's opening ten, or a named slate's spread deck minus
- * what this grader already graded there. */
-export function gradeDeckPath(slate: string | null, grader: string | null): string {
+/** The deck request: today's opening ten, or a named slate's deck. */
+export function gradeDeckPath(slate: string | null): string {
   if (!slate) return "/api/admin/ranking/grade-deck";
-  const params = new URLSearchParams({ slate });
-  if (grader) params.set("grader", grader);
-  return `/api/admin/ranking/grade-deck?${params.toString().replace(/\+/g, "%20")}`;
+  return `/api/admin/ranking/grade-deck?${new URLSearchParams({ slate }).toString()}`;
+}
+
+/** The grader's name rides in a header, never the URL (request logs), so the
+ * named slate's deck can skip what they already graded there. */
+export function gradeDeckInit(grader: string | null): RequestInit | undefined {
+  return grader ? { headers: { "X-Grader-Name": encodeURIComponent(grader) } } : undefined;
 }
 
 /** The line under "Who's grading?". */
@@ -65,7 +68,7 @@ export function deckHeadline(deck: GradeDeck): string {
     ? new Date(deck.captured_at).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "America/Los_Angeles" })
     : "that day";
   const skipped = deck.already_graded ? ` (${deck.already_graded} you've already graded are skipped)` : "";
-  return `${deck.items.length} cards from the Discover slate of ${day}, spread from top to bottom of its ${deck.candidates ?? "?"} candidates${skipped}.`;
+  return `${deck.items.length} cards from the Discover slate of ${day}: its top cards, then a spread down the rest of its ${deck.candidates ?? "?"} candidates${skipped}.`;
 }
 
 export interface TallyEntry {

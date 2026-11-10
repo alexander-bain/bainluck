@@ -2,7 +2,7 @@
  * #11937 (127-A): /grade?slate=<date or id> opens that saved slate's spread deck.
  * The pure half: reading the slate from the URL and building the deck request.
  */
-import { gradeDeckPath, slateFromSearch, deckHeadline } from "@/lib/ranking/gradeSession";
+import { gradeDeckInit, gradeDeckPath, slateFromSearch, deckHeadline } from "@/lib/ranking/gradeSession";
 
 describe("slateFromSearch", () => {
   it("reads a Pacific date or a slate id", () => {
@@ -18,15 +18,17 @@ describe("slateFromSearch", () => {
 });
 
 describe("gradeDeckPath", () => {
-  it("is today's opening ten with no slate", () => {
-    expect(gradeDeckPath(null, null)).toBe("/api/admin/ranking/grade-deck");
-    expect(gradeDeckPath(null, "Alex")).toBe("/api/admin/ranking/grade-deck");
+  it("is today's opening ten with no slate, and names the slate otherwise", () => {
+    expect(gradeDeckPath(null)).toBe("/api/admin/ranking/grade-deck");
+    expect(gradeDeckPath("327293405b250480")).toBe("/api/admin/ranking/grade-deck?slate=327293405b250480");
   });
-  it("names the slate, and the grader once known, so graded cards are skipped", () => {
-    expect(gradeDeckPath("2026-11-09", null)).toBe("/api/admin/ranking/grade-deck?slate=2026-11-09");
-    expect(gradeDeckPath("2026-11-09", "Alex Bain")).toBe(
-      "/api/admin/ranking/grade-deck?slate=2026-11-09&grader=Alex%20Bain",
-    );
+});
+
+describe("gradeDeckInit", () => {
+  it("sends the grader's name in a header, never the URL", () => {
+    expect(gradeDeckInit(null)).toBeUndefined();
+    expect(gradeDeckInit("Alex Bain")).toEqual({ headers: { "X-Grader-Name": "Alex%20Bain" } });
+    expect(gradeDeckPath("2026-11-09")).not.toMatch(/grader/);
   });
 });
 
@@ -38,7 +40,7 @@ describe("deckHeadline", () => {
   it("says a spread deck covers the slate top to bottom and how many are already done", () => {
     const line = deckHeadline({ ...base, mode: "spread", candidates: 157, already_graded: 3, items: new Array(27).fill(null) } as never);
     expect(line).toMatch(/^27 cards from the Discover slate of /);
-    expect(line).toMatch(/top to bottom of its 157/);
+    expect(line).toMatch(/a spread down the rest of its 157/);
     expect(line).toMatch(/3 you've already graded are skipped/);
   });
 });

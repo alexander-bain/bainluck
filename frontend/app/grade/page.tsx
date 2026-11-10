@@ -25,6 +25,7 @@ import {
   GRADE_LABELS,
   deckHeadline,
   formatTally,
+  gradeDeckInit,
   gradeDeckPath,
   handleGradeDeckReadError,
   normalizeGraderName,
@@ -70,6 +71,9 @@ function GradeSession() {
   // #11937: `/grade?slate=<date or id>` grades that saved slate's spread deck.
   // undefined until the URL is read, so the deck isn't fetched twice.
   const [slateRef, setSlateRef] = useState<string | null | undefined>(undefined);
+  // While a named slate re-deals for the grader, the grade buttons wait, so a
+  // quick tap can't grade a card the new deck is about to skip.
+  const [dealing, setDealing] = useState(false);
 
   useEffect(() => {
     setSlateRef(slateFromSearch(window.location.search));
@@ -102,7 +106,7 @@ function GradeSession() {
   useEffect(() => {
     if (slateRef === undefined) return;
     let cancelled = false;
-    adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef, null), secret)
+    adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret)
       .then((d) => {
         if (cancelled) return;
         setDeck(d);
@@ -134,14 +138,16 @@ function GradeSession() {
     setGraded(0);
     // A named slate re-deals for this grader, skipping cards they already graded.
     if (slateRef) {
-      adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef, name), secret)
+      setDealing(true);
+      adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret, gradeDeckInit(name))
         .then(setDeck)
-        .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not load the cards"));
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not load the cards"))
+        .finally(() => setDealing(false));
     }
   };
 
   const submit = async (grade: Grade) => {
-    if (!deck || !grader || saving) return;
+    if (!deck || !grader || saving || dealing) return;
     const item = deck.items[index];
     setSaving(true);
     setError(null);
@@ -261,7 +267,7 @@ function GradeSession() {
           <button
             key={g}
             className="rounded-lg border border-surface-border bg-surface-elevated px-2 py-3 font-semibold text-text-primary disabled:opacity-50"
-            disabled={saving}
+            disabled={saving || dealing}
             onClick={() => void submit(g)}
           >
             {GRADE_LABELS[g]}

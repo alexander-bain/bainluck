@@ -12,8 +12,9 @@
 * ``GET  /api/admin/ranking/grade-deck`` — Phase 2: the latest slate's opening
   ten with each card's served payload, for the ``/grade`` page. With
   ``?slate=<YYYY-MM-DD (Pacific) | slate id | row id>`` (#11937): that saved
-  slate's spread deck, about 30 cards from top to bottom of its candidate list,
-  the same cards each time, minus those ``?grader=`` already graded there.
+  slate's deck, its top 20 then 10 spread down the rest of its candidate list,
+  the same cards each time, minus those the grader (``X-Grader-Name`` header,
+  never the URL) already graded there.
 * ``POST /api/admin/ranking/grades`` — Phase 2: one grader's grade for one card
   of a slate's candidate list, at its list position (served cards keep their
   served position). Refused while ``RANKING_SNAPSHOTS`` is off.
@@ -32,6 +33,7 @@ import json
 import math
 from pathlib import Path
 import re
+import urllib.parse
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
@@ -223,19 +225,38 @@ def candidate_order(slate: Mapping[str, Any]) -> list[dict]:
 
 #: About the cards Alex can grade in one sitting on a phone (Fable, #11937).
 SPREAD_DECK_SIZE = 30
+#: The top of the slate is dealt whole: the scorer reads a top ten with more
+#: than 3 ungraded cards as UNKNOWN, so the served order itself must be graded
+#: before any change can be compared with it (Fable's review of #12564; the
+#: Nov 8 sheet, positions 1-30 then a spread, is the shape that scored replays).
+SPREAD_DECK_HEAD = 20
 
 
-def spread_deck(order: list[dict], *, size: int = SPREAD_DECK_SIZE, skip=()) -> list[dict]:
-    """#11937: ``size`` cards evenly spread from the top to the bottom of
-    ``order``, the same cards every time for the same list; ``skip`` (item keys
-    already graded) is removed afterwards, so the rest of the deck never moves."""
+def spread_deck(
+    order: list[dict], *, size: int = SPREAD_DECK_SIZE, head: int = SPREAD_DECK_HEAD, skip=()
+) -> list[dict]:
+    """#11937: the first ``head`` cards of ``order`` whole, then ``size - head``
+    spread evenly over the rest down to the last card; the same cards every
+    time for the same list. ``skip`` (item keys already graded) is removed
+    afterwards, so the rest of the deck never moves."""
     n = len(order)
+    head = min(head, size)
     if n <= size:
         picks = list(range(n))
     else:
-        picks = sorted({round(i * (n - 1) / (size - 1)) for i in range(size)})
+        tail = size - head
+        rest = n - head
+        spread = (
+            {head + round(i * (rest - 1) / (tail - 1)) for i in range(tail)} if tail > 1
+            else ({n - 1} if tail == 1 else set())
+        )
+        picks = sorted(set(range(head)) | spread)
     skip = set(skip)
     return [order[i] for i in picks if order[i]["item_key"] not in skip]
+
+
+#: Carries the grader's name (URL-encoded) on ``GET /grade-deck``.
+GRADER_HEADER = "x-grader-name"
 
 
 @router.get("/grade-deck")
@@ -243,7 +264,6 @@ async def get_grade_deck(
     request: Request,
     surface: str = Query(SURFACE_DISCOVER, max_length=32),
     slate: str | None = Query(None, max_length=64),
-    grader: str | None = Query(None, max_length=40),
     size: int = Query(SPREAD_DECK_SIZE, ge=5, le=60),
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -251,8 +271,10 @@ async def get_grade_deck(
     _check_admin_secret(secret, request=request)
     # Called directly (tests, other handlers), unset params arrive as Query objects.
     slate = slate if isinstance(slate, str) and slate.strip() else None
-    grader = grader if isinstance(grader, str) else None
     size = size if isinstance(size, int) else SPREAD_DECK_SIZE
+    # The grader's name comes in a header, never the URL: query strings land in
+    # request logs, and the family's kids type their names on this page.
+    grader = urllib.parse.unquote(request.headers.get(GRADER_HEADER) or "")[:40]
     row = slate_row_dict(await _slate_row(db, slate or "latest", surface))
     out = {
         "switch_on": ranking_snapshots_enabled(),

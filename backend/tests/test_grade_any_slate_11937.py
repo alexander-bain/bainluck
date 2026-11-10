@@ -51,8 +51,9 @@ SLATE = {
 }
 
 
-def _request():
-    return Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
+def _request(grader: str | None = None):
+    headers = [(b"x-grader-name", grader.encode())] if grader else []
+    return Request({"type": "http", "method": "GET", "path": "/", "headers": headers, "query_string": b""})
 
 
 class _Rows:
@@ -112,14 +113,17 @@ class TestTheCandidateList:
 
 
 class TestTheSpreadDeck:
-    def test_thirty_cards_from_top_to_bottom_the_same_each_time(self):
+    def test_the_top_twenty_whole_then_ten_spread_to_the_bottom_the_same_each_time(self):
         deck = admin.spread_deck(admin.candidate_order(SLATE), size=30)
         again = admin.spread_deck(admin.candidate_order(SLATE), size=30)
         assert [c["item_key"] for c in deck] == [c["item_key"] for c in again]
         assert len(deck) == 30
-        assert deck[0]["position"] == 1 and deck[-1]["position"] == 72
-        gaps = [b["position"] - a["position"] for a, b in zip(deck, deck[1:])]
-        assert min(gaps) >= 2 and max(gaps) <= 3  # spread, not bunched
+        # The served top is graded whole, so the order readers saw can be scored.
+        assert [c["position"] for c in deck[:20]] == list(range(1, 21))
+        tail = [c["position"] for c in deck[20:]]
+        assert tail[0] == 21 and tail[-1] == 72
+        gaps = [b - a for a, b in zip(tail, tail[1:])]
+        assert min(gaps) >= 5 and max(gaps) <= 6  # spread, not bunched
 
     def test_a_short_list_is_dealt_whole(self):
         order = admin.candidate_order(SLATE)[:20]
@@ -136,7 +140,7 @@ class TestTheSpreadDeck:
 class TestTheDeckEndpoint:
     async def test_a_named_slate_deals_the_spread_with_cards(self, wired):
         deck = await admin.get_grade_deck(_request(), surface="discover", slate="2026-11-09",
-                                          grader=None, size=30, secret=None, db=FakeDB())
+                                          size=30, secret=None, db=FakeDB())
         assert wired["ref"] == "2026-11-09"
         assert deck["slate_id"] == "327293405b250480" and deck["mode"] == "spread"
         assert len(deck["items"]) == 30 and deck["candidates"] == 72
@@ -144,15 +148,27 @@ class TestTheDeckEndpoint:
 
     async def test_it_skips_what_this_grader_already_graded(self, wired):
         graded = [SimpleNamespace(item_key="futures:1"), SimpleNamespace(item_key="futures:3")]
-        deck = await admin.get_grade_deck(_request(), surface="discover", slate="327293405b250480",
-                                          grader=" Alex  Bain ", size=30, secret=None, db=FakeDB(graded))
+        deck = await admin.get_grade_deck(_request(" Alex%20%20Bain "), surface="discover",
+                                          slate="327293405b250480", size=30, secret=None, db=FakeDB(graded))
         keys = [i["item_key"] for i in deck["items"]]
         assert "futures:1" not in keys and "futures:3" not in keys
         assert deck["already_graded"] == 2
 
+    async def test_nov_9s_ten_done_leave_twenty(self, wired):
+        # Alex graded Nov 9's opening ten; the deck is the other 20.
+        graded = [SimpleNamespace(item_key=k) for k in SERVED[:10]]
+        deck = await admin.get_grade_deck(_request("Alex Bain"), surface="discover",
+                                          slate="327293405b250480", size=30, secret=None, db=FakeDB(graded))
+        assert len(deck["items"]) == 20 and deck["items"][0]["position"] == 11
+
+    def test_the_grader_name_is_never_a_query_parameter(self):
+        import inspect
+
+        assert "grader" not in inspect.signature(admin.get_grade_deck).parameters
+
     async def test_no_slate_is_still_the_latest_opening_ten(self, wired):
         deck = await admin.get_grade_deck(_request(), surface="discover", slate=None,
-                                          grader=None, size=30, secret=None, db=FakeDB())
+                                          size=30, secret=None, db=FakeDB())
         assert wired["ref"] == "latest"
         assert [i["position"] for i in deck["items"]] == list(range(1, 11))
 
