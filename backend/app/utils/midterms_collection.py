@@ -440,3 +440,66 @@ def midterms_pin(payload: dict, now: datetime | None = None) -> dict | None:
         "subtitle": " - ".join(parts),
         "pin_until": MANIFEST["pin_until"],
     }
+
+
+MIDTERMS_CLOSEST_RACES_CHILD_SLUG = "roundup-closest-races"
+MIDTERMS_CLOSEST_RACES_CHILD_NAME = "The closest races still open"
+
+
+def midterms_children(
+    sections: list[dict],
+    *,
+    include_children: bool = True,
+) -> list[dict]:
+    """Return published child collections for the Midterms 2026 parent hub (#11340).
+
+    ``roundup-closest-races`` ("The closest races still open") is a child
+    collection of ``midterms-2026`` that is published whenever at least 3 open,
+    priced two-party races exist across ``senate_races`` and ``governors``
+    (excluding multi-state / margin markets ``109918`` and ``108629``).
+    Computed purely from the already-hydrated ``sections`` so ``midterms-2026``
+    performs zero extra SQL queries.
+    """
+    if not include_children:
+        return []
+    import zlib
+
+    from app.utils.container_presentation import container_destination
+
+    excluded = {109918, 108629}
+    open_races = 0
+    for sec in sections or []:
+        if sec.get("class") not in ("senate_races", "governors"):
+            continue
+        for member in sec.get("members") or []:
+            mid = member.get("id")
+            card = member.get("card") or {}
+            if mid in excluded:
+                continue
+            if card.get("settled_winner") or card.get("status") != "open":
+                continue
+            outcomes = card.get("top_outcomes") or []
+            if len(outcomes) >= 2 and all(
+                isinstance(o.get("probability"), (int, float)) for o in outcomes[:2]
+            ):
+                open_races += 1
+
+    if open_races < 3:
+        return []
+
+    child_id = (
+        zlib.crc32(MIDTERMS_CLOSEST_RACES_CHILD_SLUG.encode("utf-8")) & 0xFFFFFFFF
+    ) or 1
+    return [
+        {
+            "id": child_id,
+            "kind": "roundup",
+            "name": MIDTERMS_CLOSEST_RACES_CHILD_NAME,
+            "slug": MIDTERMS_CLOSEST_RACES_CHILD_SLUG,
+            "status": "open",
+            "publication_state": "published",
+            "edition": None,
+            "destination": container_destination(MIDTERMS_CLOSEST_RACES_CHILD_SLUG),
+        }
+    ]
+

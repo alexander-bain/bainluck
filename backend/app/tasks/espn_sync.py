@@ -4888,6 +4888,11 @@ def _is_bogus_future_settled(status, commence_time, home_score, away_score, now)
 #: not the 24 hours the ``scheduled → live`` arm uses.
 SUSPENDED_RESUME_WINDOW = timedelta(hours=48)
 
+#: #12369 — the sport whose never-observed timeout takes no half-hour buffer in
+#: the ``live → suspended`` arm: its timeout already spans a whole match. See
+#: the arm for why tennis and the default keep theirs.
+UNPADDED_UNOBSERVED_TIMEOUT_PREFIX = "soccer"
+
 
 async def _statpal_later_session_starts(session, events) -> dict:
     """StatPal's recorded start for each row StatPal's schedule may hold. #9588.
@@ -5128,7 +5133,9 @@ async def _transition_event_statuses_impl() -> dict:
       is ``wall_clock_bound_hours``, not the sport maximum flat: a row NOTHING
       has ever reported on — no score, no period, no authority anchor, no play
       snapshot ever — cannot be the long five-setter the tennis maximum was
-      widened for, so it does not inherit the widening.
+      widened for, so it does not inherit the widening. A row leaves half an
+      hour past its bound, except an unwatched soccer match, which leaves at
+      its 2.5h timeout itself (#12369).
     - suspended → live: a source that reports on the game is captured again.
     - suspended → retired: nothing can EVER select the row again — no provider
       id of any kind, and past the resume window by a margin. Off by default and
@@ -5762,11 +5769,28 @@ async def _transition_event_statuses_impl() -> dict:
                 sport_key,
             )
             bound_hours = wall_clock_bound_hours(sport_key, max_hours, never_observed)
+            # #12369 — the half-hour buffer (BR76) pads a sport's MAXIMUM
+            # duration, and it predates the never-observed timeout (#3946),
+            # which inherited it. For SOCCER that timeout already spans a whole
+            # match (measured p99 of real duration 2.15h against its 2.5h), so
+            # padded, an unwatched match stayed LIVE to 3.0h: about an hour
+            # past its final whistle, printing the venue's decided price with
+            # no score, at the top of /sports/soccer_other. Unpadded it leaves
+            # where the odds net already releases it. Tennis and the default
+            # keep the buffer, because a best-of-three can outrun 3.0h (#9418's
+            # Challenger was suspended mid-set at 3.0h + 0.5h); so do observed
+            # rows and the exempt sports, whose bound is their maximum.
+            pad_hours = (
+                0.0
+                if bound_hours < max_hours
+                and sport_key.startswith(UNPADDED_UNOBSERVED_TIMEOUT_PREFIX)
+                else 0.5
+            )
 
             hours_since_start = (
                 now - statpal_clock_starts.get(event.id, event.commence_time)
             ).total_seconds() / 3600
-            if hours_since_start > bound_hours + 0.5:
+            if hours_since_start > bound_hours + pad_hours:
                 last_snap = last_snaps.get(event.id)
                 if game_may_still_be_running(last_snap, now):
                     # Leave it live. The next pass re-checks, and a real source

@@ -16,6 +16,25 @@ export interface CollectionMember {
 }
 export interface CollectionSection { key: string; cls: string; title: string; note: string | null; layout?: string; members: CollectionMember[] }
 export interface CollectionPin { slug: string; name: string; href: string; subtitle: string; pin_until: string }
+export interface CollectionCaptionFigure {
+  memberId: string;
+  label: string;
+  value: string;
+  observedAt: string;
+  asOfLabel: string;
+  source: string;
+  sourceHref: string;
+}
+export interface CollectionCaption {
+  commentary: string;
+  noNumberVerified: boolean;
+  figures: CollectionCaptionFigure[];
+}
+export interface CollectionParent {
+  slug: string;
+  name: string;
+  href: string;
+}
 export interface CollectionHub {
   slug: string;
   revision: number | null;
@@ -24,6 +43,7 @@ export interface CollectionHub {
   edition: string | null;
   sections: CollectionSection[];
   children: { key: string; name: string; href: string }[];
+  parent?: CollectionParent | null;
   members: CollectionMember[];
   related: Record<string, CollectionMember[]>;
   note: string | null;
@@ -35,6 +55,7 @@ export interface CollectionHub {
   // revision. Null on every NFL/MLB hub, which arrives whole.
   theme: { totalCount: number; nextCursor: string | null; inventoryComplete: boolean; revisionMoved: boolean } | null;
   subtitle?: string | null;
+  caption?: CollectionCaption | null;
   pin?: CollectionPin | null;
   relatedSummary?: { count: number; unclassifiedCount: number };
 }
@@ -232,8 +253,53 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
   }
   const pin = object(row.discover_pin);
   const admittedPin = slug === "midterms-2026" && pin?.slug === slug && pin.href === collectionPath(slug) && text(pin.name) && text(pin.subtitle) && text(pin.pin_until) && Number.isFinite(Date.parse(pin.pin_until)) ? pin as unknown as CollectionPin : null;
-  return { ...base, members, related, children, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
-    subtitle: text(row.subtitle) ? row.subtitle : null, pin: admittedPin,
+  const rawCaption = object(row.caption) ?? object(header?.caption);
+  let admittedCaption: CollectionCaption | null = null;
+  if (rawCaption && rawCaption.no_number_verified === true && text(rawCaption.commentary) && !/\d/.test(rawCaption.commentary)) {
+    const rawFigs = Array.isArray(rawCaption.figures) ? rawCaption.figures : [];
+    const parsedFigs: CollectionCaptionFigure[] = [];
+    for (const f of rawFigs) {
+      const fig = object(f);
+      if (fig && text(fig.label) && text(fig.value) && text(fig.observed_at) && text(fig.as_of_label) && text(fig.source) && text(fig.source_href) && fig.source_href.startsWith("/") && !fig.source_href.startsWith("//")) {
+        parsedFigs.push({
+          memberId: text(fig.member_id) ? fig.member_id : "",
+          label: fig.label.trim(),
+          value: fig.value.trim(),
+          observedAt: fig.observed_at.trim(),
+          asOfLabel: fig.as_of_label.trim(),
+          source: fig.source.trim(),
+          sourceHref: fig.source_href.trim(),
+        });
+      }
+    }
+    admittedCaption = {
+      commentary: rawCaption.commentary.trim(),
+      noNumberVerified: true,
+      figures: parsedFigs,
+    };
+  }
+  const rawParent = object(row.parent);
+  let admittedParent: CollectionParent | null = null;
+  if (rawParent && safeCollectionSlug(rawParent.slug) && text(rawParent.name)) {
+    const pDest = object(rawParent.destination);
+    const pHref = collectionPath(rawParent.slug);
+    if (
+      pHref &&
+      (!pDest ||
+        (pDest.kind === "container" &&
+          pDest.slug === rawParent.slug &&
+          pDest.api === `/api/containers/${rawParent.slug}` &&
+          (pDest.web == null || pDest.web === pHref)))
+    ) {
+      admittedParent = {
+        slug: rawParent.slug,
+        name: rawParent.name.trim(),
+        href: pHref,
+      };
+    }
+  }
+  return { ...base, members, related, children, parent: admittedParent, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
+    subtitle: text(row.subtitle) ? row.subtitle : null, caption: admittedCaption, pin: admittedPin,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
     note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or questions aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
 }

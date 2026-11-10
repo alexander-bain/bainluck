@@ -294,11 +294,25 @@ function GroupingGradeSession() {
           aria-label="Proposed grouping card"
         >
           <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-text-muted">
-            <span>Proposed Grouping Card · {card.kicker}</span>
             <span>
-              {item.kind_verdict === "serve" ? "Kind: SERVE" : `Kind: REFUSE (${item.refusal_reasons.join(", ")})`}
+              Proposed Grouping Card · {card.kicker}
+              {item.proposed_kind && item.proposed_kind !== "sibling_family"
+                ? ` · New Kind (${item.proposed_kind})`
+                : ""}
+            </span>
+            <span>
+              {item.proposed_kind && item.proposed_kind !== "sibling_family"
+                ? "Kind: PROPOSED · not licensed"
+                : item.kind_verdict === "serve"
+                  ? "Kind: SERVE"
+                  : `Kind: REFUSE (${item.refusal_reasons.join(", ")})`}
             </span>
           </div>
+          {(item.as_of_label || card.as_of_label) && (
+            <div className="mt-1 text-xs font-medium text-text-secondary" data-testid="card-as-of-label">
+              Snapshot {item.as_of_label || card.as_of_label}
+            </div>
+          )}
           <h2 className="mt-1.5 text-lg font-semibold text-text-primary">{card.title}</h2>
           <div className="mt-3 divide-y divide-surface-border">
             {card.rows.map((row) => (

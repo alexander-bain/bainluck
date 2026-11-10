@@ -13,6 +13,8 @@
   "tag": "POLITICS",
   "section_title": "Open races",
   "footer": "Combined probability · both sources where paired",
+  "parent_slug": "midterms-2026",
+  "parent_name": "Midterms 2026",
   "rule": {
     "producer": "register_closest",
     "register": "midterms-2026",

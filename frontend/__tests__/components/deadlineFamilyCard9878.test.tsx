@@ -84,6 +84,7 @@ import {
   formatDeadlineMovementTimeframe,
   validateAndBuildDeadlineFamilyCardModel,
 } from "../../lib/discover/deadlineFamilyCard";
+import { normalizeFeedNumbers } from "../../lib/discover/feedNumbers";
 
 const RETAINED_NOW_ISO = "2026-10-14T23:47:16+00:00";
 const RETAINED_OBSERVED_AT = "2026-10-14T23:45:00+00:00";
@@ -341,6 +342,32 @@ function reactProps(node: El): Record<string, (arg?: unknown) => void> {
 }
 
 describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => {
+  test("#12361: cached decimal text reaches the same outcome-bound deadline model", () => {
+    const bundle = makeDeadlineBundleFeedItem([
+      makeFeedItemFromContract(makeOct31Contract()),
+      makeFeedItemFromContract(makeDec31Contract()),
+    ]);
+    const options = { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" };
+    const expected = buildDeadlineFamilyCardModel(bundle.data as FeedBundleData, options);
+    expect(expected).not.toBeNull();
+
+    const textBundle = JSON.parse(JSON.stringify(bundle, (key, value) =>
+      ["probability", "yes_probability", "no_probability", "basis_price"].includes(key)
+      && typeof value === "number" ? value.toFixed(6) : value,
+    )) as FeedItem;
+    const page = normalizeFeedNumbers({
+      items: [textBundle], total: 1, limit: 20, offset: 0, has_more: false,
+    });
+    const data = page.items[0].data as FeedBundleData;
+    expect(buildDeadlineFamilyCardModel(data, options)).toEqual(expected);
+
+    // Decoding prices cannot manufacture the rule proof a refused family lacks.
+    const first = data.items[0].data as FeedFuturesData;
+    first.deadline_member!.rule_verification = null;
+    expect(validateAndBuildDeadlineFamilyCardModel(data, options).rejectionReason)
+      .toBe("missing_rule_equivalence_proof");
+  });
+
   test("Case 1a & 1b: Missing rule equivalence proof is refused; rule-verified Oct 14 NULL control renders level-led family card", () => {
     // 1a: Missing rule_verification -> refused
     const oct31NoRule = makeFeedItemFromContract(

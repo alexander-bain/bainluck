@@ -24,7 +24,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from app.utils.container_presentation import MEMBER_MARKET, market_destination
+from app.utils.container_presentation import (
+    MEMBER_MARKET,
+    container_destination,
+    market_destination,
+)
 
 __all__ = [
     "CLOSED_GROUPING_RELATIONS",
@@ -162,6 +166,10 @@ class RoundupMembers:
     sections: tuple[dict[str, Any], ...] = ()
     revision_ids: tuple[int, ...] = ()
     suppress_feed_item: bool = False
+    caption: Optional[dict[str, Any]] = None
+    parent_slug: Optional[str] = None
+    parent_name: Optional[str] = None
+    children: tuple[dict[str, Any], ...] = ()
 
     def __init__(
         self,
@@ -177,6 +185,10 @@ class RoundupMembers:
         sections: Sequence[dict[str, Any]] = (),
         revision_ids: Sequence[int] = (),
         suppress_feed_item: bool = False,
+        caption: Optional[Mapping[str, Any]] = None,
+        parent_slug: Optional[str] = None,
+        parent_name: Optional[str] = None,
+        children: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
@@ -203,6 +215,24 @@ class RoundupMembers:
             self, "revision_ids", tuple(int(rid) for rid in revision_ids)
         )
         object.__setattr__(self, "suppress_feed_item", bool(suppress_feed_item))
+        object.__setattr__(
+            self, "caption", dict(caption) if isinstance(caption, Mapping) else None
+        )
+        object.__setattr__(
+            self,
+            "parent_slug",
+            str(parent_slug).strip() if parent_slug is not None and str(parent_slug).strip() else None,
+        )
+        object.__setattr__(
+            self,
+            "parent_name",
+            str(parent_name).strip() if parent_name is not None and str(parent_name).strip() else None,
+        )
+        object.__setattr__(
+            self,
+            "children",
+            tuple(dict(c) for c in (children or ()) if isinstance(c, Mapping)),
+        )
 
 
 @dataclass(frozen=True)
@@ -263,6 +293,10 @@ class RoundupProducer:
     destination_href: Optional[str] = None
     order: Optional[str] = None
     presentation: Optional[str] = None
+    caption: Optional[Any] = None
+    parent_slug: Optional[str] = None
+    parent_name: Optional[str] = None
+    children: tuple[dict[str, Any], ...] = ()
     score: float = 0.0
     enabled: Optional[Callable[[], bool]] = None
     valid_from: Optional[float] = None
@@ -288,6 +322,10 @@ class RoundupProducer:
         destination_href: Optional[str] = None,
         order: Optional[str] = None,
         presentation: Optional[str] = None,
+        caption: Optional[Any] = None,
+        parent_slug: Optional[str] = None,
+        parent_name: Optional[str] = None,
+        children: Optional[Sequence[Mapping[str, Any]]] = None,
         score: float = 0.0,
         enabled: Optional[Callable[[], bool]] = None,
     ) -> None:
@@ -391,6 +429,59 @@ class RoundupProducer:
             self,
             "presentation",
             str(raw_presentation).strip() if raw_presentation else None,
+        )
+        raw_caption = (
+            caption
+            if caption is not None
+            else (rule.get("caption") if isinstance(rule, Mapping) else None)
+        )
+        object.__setattr__(self, "caption", raw_caption)
+        raw_parent_slug = (
+            parent_slug
+            if parent_slug is not None
+            else (
+                rule.get("parent_slug")
+                if isinstance(rule, Mapping) and isinstance(rule.get("parent_slug"), str)
+                else None
+            )
+        )
+        raw_parent_name = (
+            parent_name
+            if parent_name is not None
+            else (
+                rule.get("parent_name")
+                if isinstance(rule, Mapping) and isinstance(rule.get("parent_name"), str)
+                else None
+            )
+        )
+        raw_children = (
+            children
+            if children is not None
+            else (
+                rule.get("children")
+                if isinstance(rule, Mapping)
+                and isinstance(rule.get("children"), (list, tuple))
+                else ()
+            )
+        )
+        object.__setattr__(
+            self,
+            "parent_slug",
+            str(raw_parent_slug).strip()
+            if raw_parent_slug and str(raw_parent_slug).strip()
+            else None,
+        )
+        object.__setattr__(
+            self,
+            "parent_name",
+            str(raw_parent_name).strip()
+            if raw_parent_name and str(raw_parent_name).strip()
+            else None,
+        )
+        object.__setattr__(
+            self,
+            "children",
+            tuple(dict(c) for c in (raw_children or ()) if isinstance(c, Mapping)),
         )
         object.__setattr__(self, "score", float(score))
         object.__setattr__(self, "enabled", enabled)
@@ -503,6 +594,46 @@ def compose_roundup_container(
         )
         or producer.destination_href
     )
+    effective_parent_slug = (
+        (
+            members.parent_slug
+            if isinstance(members, RoundupMembers) and members.parent_slug
+            else None
+        )
+        or producer.parent_slug
+    )
+    effective_parent_name = (
+        (
+            members.parent_name
+            if isinstance(members, RoundupMembers) and members.parent_name
+            else None
+        )
+        or producer.parent_name
+        or effective_parent_slug
+    )
+    raw_children = (
+        members.children
+        if isinstance(members, RoundupMembers) and members.children
+        else producer.children
+    )
+    children_payload: list[dict[str, Any]] = []
+    for child in raw_children:
+        if not isinstance(child, Mapping):
+            continue
+        c_slug = str(child.get("slug") or "").strip()
+        if not c_slug:
+            continue
+        c_entry = dict(child)
+        c_entry.setdefault("id", roundup_container_id(c_slug))
+        c_entry["slug"] = c_slug
+        c_entry.setdefault("name", c_slug)
+        c_entry.setdefault("kind", "roundup")
+        c_entry.setdefault("category", producer.category)
+        c_entry.setdefault("status", "open")
+        c_entry.setdefault("publication_state", "published")
+        c_entry.setdefault("edition", None)
+        c_entry.setdefault("destination", container_destination(c_slug))
+        children_payload.append(c_entry)
     container_obj: dict[str, Any] = {
         "id": roundup_container_id(producer.slug),
         "slug": producer.slug,
@@ -512,10 +643,37 @@ def compose_roundup_container(
         "status": "open",
         "window_start": None,
         "window_end": None,
-        "parent_container_id": None,
+        "parent_container_id": (
+            roundup_container_id(effective_parent_slug)
+            if effective_parent_slug
+            else None
+        ),
     }
     if effective_dest_href:
         container_obj["destination_href"] = effective_dest_href
+    if effective_parent_slug:
+        container_obj["parent_slug"] = effective_parent_slug
+        container_obj["parent_name"] = effective_parent_name
+    raw_caption = (
+        members.caption
+        if isinstance(members, RoundupMembers) and members.caption is not None
+        else producer.caption
+    )
+    verified_caption: Optional[dict[str, Any]] = None
+    if raw_caption is not None:
+        from app.utils.grouping_captions import compose_container_caption
+
+        caption_members: Sequence[Mapping[str, Any]] = (
+            members.rows
+            if isinstance(members, RoundupMembers) and members.rows
+            else normalized
+        )
+        verified_caption = compose_container_caption(
+            {"caption": raw_caption},
+            members=caption_members,
+        )
+    if verified_caption is not None:
+        container_obj["caption"] = verified_caption
     out_payload: dict[str, Any] = {
         "state": "published",
         "slug": producer.slug,
@@ -526,13 +684,20 @@ def compose_roundup_container(
         "edition": None,
         "container": container_obj,
         "subtitle": subtitle,
+        "caption": verified_caption,
         "sections": sections,
         "member_count": total_members,
         "withheld": [],
         "withheld_count": 0,
-        "children": [],
+        "children": children_payload,
         "assembled": True,
     }
+    if effective_parent_slug:
+        out_payload["parent"] = {
+            "slug": effective_parent_slug,
+            "name": effective_parent_name,
+            "destination": container_destination(effective_parent_slug),
+        }
     if effective_dest_href:
         out_payload["destination_href"] = effective_dest_href
     return out_payload
@@ -622,6 +787,21 @@ def compose_roundup_feed_item(
         roundup_contract["presentation"] = producer.presentation
     if members.count_line:
         roundup_contract["count_line"] = members.count_line
+    raw_caption = (
+        members.caption if members.caption is not None else producer.caption
+    )
+    if raw_caption is not None:
+        from app.utils.grouping_captions import compose_container_caption
+
+        caption_members: Sequence[Mapping[str, Any]] = (
+            rows if rows else normalized
+        )
+        verified_caption = compose_container_caption(
+            {"caption": raw_caption},
+            members=caption_members,
+        )
+        if verified_caption is not None:
+            roundup_contract["caption"] = verified_caption
     return {
         "type": "bundle",
         "score": base_score,
@@ -921,11 +1101,28 @@ async def evaluate_roundup_producer(
     return feed_item, container_payload
 
 
-async def serve_roundup(slug: str, db: Any) -> dict[str, Any]:
+def _strip_parent_from_payload(out: dict[str, Any]) -> None:
+    out.pop("parent", None)
+    if isinstance(out.get("container"), dict):
+        out["container"]["parent_container_id"] = None
+        out["container"].pop("parent_slug", None)
+        out["container"].pop("parent_name", None)
+
+
+async def serve_roundup(
+    slug: str,
+    db: Any,
+    *,
+    include_children: bool = True,
+) -> dict[str, Any]:
     """Serve a registered round-up container, or raise 404 ``{state: unavailable, slug}``."""
     from fastapi import HTTPException
 
-    from app.utils.container_corrections import READ_UNAVAILABLE
+    from app.utils.container_corrections import (
+        READ_PUBLISHED,
+        READ_UNAVAILABLE,
+        read_published,
+    )
 
     producer = ROUNDUP_PRODUCERS.get(slug)
     if producer is None:
@@ -937,7 +1134,57 @@ async def serve_roundup(slug: str, db: Any) -> dict[str, Any]:
         raise HTTPException(
             status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
         )
-    return payload
+    out = copy.deepcopy(payload)
+    if not include_children:
+        out["children"] = []
+    elif out.get("children"):
+        verified_children: list[dict[str, Any]] = []
+        for ch in out["children"]:
+            if not isinstance(ch, Mapping):
+                continue
+            ch_slug = str(ch.get("slug") or "").strip()
+            if not ch_slug:
+                continue
+            ch_prod = ROUNDUP_PRODUCERS.get(ch_slug)
+            if ch_prod is not None:
+                _ch_fi, ch_payload = await evaluate_roundup_producer(ch_prod, db)
+                if ch_payload is None or ch_payload.get("state") != "published":
+                    continue
+                ch_copy = dict(ch)
+                ch_copy["publication_state"] = "published"
+                ch_name = (ch_payload.get("container") or {}).get("name")
+                if ch_name:
+                    ch_copy["name"] = ch_name
+                verified_children.append(ch_copy)
+            else:
+                try:
+                    ch_pub = await read_published(db, ch_slug)
+                except Exception:  # noqa: BLE001
+                    ch_pub = None
+                if getattr(ch_pub, "state", None) == READ_PUBLISHED:
+                    ch_copy = dict(ch)
+                    ch_copy["publication_state"] = "published"
+                    verified_children.append(ch_copy)
+        out["children"] = verified_children
+
+    parent_obj = out.get("parent")
+    if isinstance(parent_obj, Mapping):
+        p_slug = str(parent_obj.get("slug") or "").strip()
+        p_prod = ROUNDUP_PRODUCERS.get(p_slug) if p_slug else None
+        if p_prod is not None:
+            _p_fi, p_payload = await evaluate_roundup_producer(p_prod, db)
+            if p_payload is None or p_payload.get("state") != "published":
+                _strip_parent_from_payload(out)
+        elif p_slug:
+            try:
+                p_pub = await read_published(db, p_slug)
+            except Exception:  # noqa: BLE001
+                p_pub = None
+            if getattr(p_pub, "state", None) != READ_PUBLISHED:
+                _strip_parent_from_payload(out)
+        else:
+            _strip_parent_from_payload(out)
+    return out
 
 
 async def roundup_feed_items(db: Any) -> list[dict[str, Any]]:
@@ -1575,6 +1822,31 @@ def validate_roundup_definition(
     rule_copy = dict(rule_raw)
     rule_copy["relations"] = list(relations_list)
     rule_copy["level"] = level_clean
+    parent_slug = str(
+        data.get("parent_slug") or rule_raw.get("parent_slug") or ""
+    ).strip()
+    parent_name = str(
+        data.get("parent_name") or rule_raw.get("parent_name") or ""
+    ).strip()
+    raw_children = (
+        data.get("children")
+        if "children" in data
+        else rule_raw.get("children")
+    )
+    children_list: list[dict[str, Any]] = []
+    if isinstance(raw_children, (list, tuple)):
+        for ch in raw_children:
+            if isinstance(ch, Mapping) and str(ch.get("slug") or "").strip():
+                children_list.append(dict(ch))
+    if parent_slug:
+        out["parent_slug"] = parent_slug
+        rule_copy["parent_slug"] = parent_slug
+    if parent_name:
+        out["parent_name"] = parent_name
+        rule_copy["parent_name"] = parent_name
+    if children_list:
+        out["children"] = children_list
+        rule_copy["children"] = children_list
     out["rule"] = rule_copy
     if id_list_reason:
         out["id_list_reason"] = id_list_reason
