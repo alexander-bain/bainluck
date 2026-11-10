@@ -621,6 +621,26 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
 except Exception:  # pragma: no cover - defensive
     pass
 
+# #12042: per-task memory on worker-background (``app.tasks.task_memory``): the
+# child's RSS at start and end and its peak during the task, one line per task.
+try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
+    from celery.signals import task_postrun as _mem_postrun
+    from celery.signals import task_prerun as _mem_prerun
+
+    @_mem_prerun.connect
+    def _task_memory_start(sender=None, task_id=None, **_kwargs):
+        from app.tasks import task_memory
+
+        task_memory.task_started(task_id)
+
+    @_mem_postrun.connect
+    def _task_memory_finish(sender=None, task_id=None, task=None, **_kwargs):
+        from app.tasks import task_memory
+
+        task_memory.task_finished(task_id, getattr(sender, "name", None) or getattr(task, "name", None))
+except Exception:  # pragma: no cover - defensive
+    pass
+
 # =============================================================================
 # Queue routing: realtime vs background vs heavy workers
 #
