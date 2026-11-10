@@ -494,6 +494,11 @@ class TestLiveDefinitionsAndDecisionA:
         """
         pool = _live_snow_pool(denver_resolved=True)
         now_nov_16 = datetime(2026, 11, 16, 14, 0, 0, tzinfo=timezone.utc)
+        obs_nov_16 = "2026-11-16T13:00:00Z"
+        for m in pool:
+            m["updated_at"] = obs_nov_16
+            for o in m.get("outcomes") or ():
+                o["observed_at"] = obs_nov_16
         members = await snow_first_flakes_2026(pool, now=now_nov_16)
         assert isinstance(members, RoundupMembers)
         assert members.kicker == "SNOW · NOV 30"

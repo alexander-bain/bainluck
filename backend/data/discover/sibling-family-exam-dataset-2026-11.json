@@ -73,14 +73,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9195
+              "probability": 0.9195,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0805
+              "probability": 0.0805,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Connor McDavid record 100+ points?"
+          "rule_quote": "Will Connor McDavid record 100+ points?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63218794,
@@ -93,14 +96,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.875
+              "probability": 0.875,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.125
+              "probability": 0.125,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Leon Draisaitl record 100+ points?"
+          "rule_quote": "Will Leon Draisaitl record 100+ points?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63218810,
@@ -113,14 +119,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.82
+              "probability": 0.82,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.18
+              "probability": 0.18,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Nikita Kucherov record 100+ points?"
+          "rule_quote": "Will Nikita Kucherov record 100+ points?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63119688,
@@ -133,14 +142,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.585
+              "probability": 0.585,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.415
+              "probability": 0.415,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Macklin Celebrini record 100+ points?"
+          "rule_quote": "Will Macklin Celebrini record 100+ points?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63218792,
@@ -153,14 +165,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.41
+              "probability": 0.41,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.59
+              "probability": 0.59,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Kyle Connor record 100+ points?"
+          "rule_quote": "Will Kyle Connor record 100+ points?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will which contender record 100+ points?",
@@ -234,14 +249,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.67
+              "probability": 0.67,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.33
+              "probability": 0.33,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Getafe finish 9th-24th in UECL league phase?"
+          "rule_quote": "Will Getafe finish 9th-24th in UECL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63348210,
@@ -254,14 +272,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.615
+              "probability": 0.615,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.385
+              "probability": 0.385,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Sint-Truiden finish 9th-24th in UECL league phase?"
+          "rule_quote": "Will Sint-Truiden finish 9th-24th in UECL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63348208,
@@ -274,14 +295,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.605
+              "probability": 0.605,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.395
+              "probability": 0.395,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Panathinaikos finish 9th-24th in UECL league phase?"
+          "rule_quote": "Will Panathinaikos finish 9th-24th in UECL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63462192,
@@ -294,14 +318,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.6
+              "probability": 0.6,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.4
+              "probability": 0.4,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Brann finish 9th-24th in UECL league phase?"
+          "rule_quote": "Will Brann finish 9th-24th in UECL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63462198,
@@ -314,14 +341,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.59
+              "probability": 0.59,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.41
+              "probability": 0.41,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Hajduk Split finish 9th-24th in UECL league phase?"
+          "rule_quote": "Will Hajduk Split finish 9th-24th in UECL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will which team finish 9th-24th in UECL league phase?",
@@ -395,14 +425,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.845
+              "probability": 0.845,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.155
+              "probability": 0.155,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trabzonspor finish top 8 in UECL league phase?"
+          "rule_quote": "Will Trabzonspor finish top 8 in UECL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63462212,
@@ -415,14 +448,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.825
+              "probability": 0.825,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.175
+              "probability": 0.175,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Monaco finish top 8 in UECL league phase?"
+          "rule_quote": "Will Monaco finish top 8 in UECL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63348216,
@@ -435,14 +471,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.78
+              "probability": 0.78,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.22
+              "probability": 0.22,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Brighton & Hove Albion finish top 8 in UECL league phase?"
+          "rule_quote": "Will Brighton & Hove Albion finish top 8 in UECL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63348215,
@@ -455,14 +494,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.655
+              "probability": 0.655,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.345
+              "probability": 0.345,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will SC Freiburg finish top 8 in UECL league phase?"
+          "rule_quote": "Will SC Freiburg finish top 8 in UECL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63462218,
@@ -475,14 +517,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.595
+              "probability": 0.595,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.405
+              "probability": 0.405,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Panathinaikos finish top 8 in UECL league phase?"
+          "rule_quote": "Will Panathinaikos finish top 8 in UECL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will which team finish top 8 in UECL league phase?",
@@ -556,14 +601,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9965
+              "probability": 0.9965,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0035
+              "probability": 0.0035,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Paris Saint-Germain reach the 2027 UEFA Champions League Round of 16?"
+          "rule_quote": "Will Paris Saint-Germain reach the 2027 UEFA Champions League Round of 16?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380622,
@@ -576,14 +624,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9785
+              "probability": 0.9785,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0215
+              "probability": 0.0215,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Arsenal reach the 2027 UEFA Champions League Round of 16?"
+          "rule_quote": "Will Arsenal reach the 2027 UEFA Champions League Round of 16?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380631,
@@ -596,14 +647,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9785
+              "probability": 0.9785,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0215
+              "probability": 0.0215,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Real Madrid reach the 2027 UEFA Champions League Round of 16?"
+          "rule_quote": "Will Real Madrid reach the 2027 UEFA Champions League Round of 16?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380635,
@@ -616,14 +670,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.966
+              "probability": 0.966,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.034
+              "probability": 0.034,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Bayern Munich reach the 2027 UEFA Champions League Round of 16?"
+          "rule_quote": "Will Bayern Munich reach the 2027 UEFA Champions League Round of 16?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380630,
@@ -636,14 +693,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.962
+              "probability": 0.962,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.038
+              "probability": 0.038,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Barcelona reach the 2027 UEFA Champions League Round of 16?"
+          "rule_quote": "Will Barcelona reach the 2027 UEFA Champions League Round of 16?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will which team reach the 2027 UEFA Champions League Round of 16?"
@@ -714,14 +774,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.967
+              "probability": 0.967,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.033
+              "probability": 0.033,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Estudiantes (RC) be relegated from the 2026 Liga Profesional (Argentina)?"
+          "rule_quote": "Will Estudiantes (RC) be relegated from the 2026 Liga Profesional (Argentina)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61373115,
@@ -734,14 +797,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.952
+              "probability": 0.952,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.048
+              "probability": 0.048,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Aldosivi be relegated from the 2026 Liga Profesional (Argentina)?"
+          "rule_quote": "Will Aldosivi be relegated from the 2026 Liga Profesional (Argentina)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61373133,
@@ -754,14 +820,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0325
+              "probability": 0.0325,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9675
+              "probability": 0.9675,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Lanús be relegated from the 2026 Liga Profesional (Argentina)?"
+          "rule_quote": "Will Lanús be relegated from the 2026 Liga Profesional (Argentina)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61373117,
@@ -774,14 +843,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0315
+              "probability": 0.0315,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9685
+              "probability": 0.9685,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Atlético Tucumán be relegated from the 2026 Liga Profesional (Argentina)?"
+          "rule_quote": "Will Atlético Tucumán be relegated from the 2026 Liga Profesional (Argentina)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61373118,
@@ -794,14 +866,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0315
+              "probability": 0.0315,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9685
+              "probability": 0.9685,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Banfield be relegated from the 2026 Liga Profesional (Argentina)?"
+          "rule_quote": "Will Banfield be relegated from the 2026 Liga Profesional (Argentina)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will which contender be relegated from the 2026 Liga Profesional (Argentina)?",
@@ -875,14 +950,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.32
+              "probability": 0.32,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.68
+              "probability": 0.68,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Los Angeles Dodgers advance to the World Series in the 2027 MLB Playoffs?"
+          "rule_quote": "Will Los Angeles Dodgers advance to the World Series in the 2027 MLB Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68954953,
@@ -895,14 +973,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.25
+              "probability": 0.25,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.75
+              "probability": 0.75,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Milwaukee Brewers advance to the World Series in the 2027 MLB Playoffs?"
+          "rule_quote": "Will Milwaukee Brewers advance to the World Series in the 2027 MLB Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68954932,
@@ -915,14 +996,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.25
+              "probability": 0.25,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.75
+              "probability": 0.75,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will New York Yankees advance to the World Series in the 2027 MLB Playoffs?"
+          "rule_quote": "Will New York Yankees advance to the World Series in the 2027 MLB Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68954937,
@@ -935,14 +1019,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.195
+              "probability": 0.195,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.805
+              "probability": 0.805,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Cleveland Guardians advance to the World Series in the 2027 MLB Playoffs?"
+          "rule_quote": "Will Cleveland Guardians advance to the World Series in the 2027 MLB Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68954945,
@@ -955,14 +1042,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.145
+              "probability": 0.145,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.855
+              "probability": 0.855,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Texas Rangers advance to the World Series in the 2027 MLB Playoffs?"
+          "rule_quote": "Will Texas Rangers advance to the World Series in the 2027 MLB Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will which team advance to the World Series in the 2027 MLB Playoffs?",
@@ -1036,14 +1126,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.955
+              "probability": 0.955,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.045
+              "probability": 0.045,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Minnesota Wild make the 2026-27 NHL Playoffs?"
+          "rule_quote": "Will the Minnesota Wild make the 2026-27 NHL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63104784,
@@ -1056,14 +1149,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.94
+              "probability": 0.94,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.06
+              "probability": 0.06,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Carolina Hurricanes make the 2026-27 NHL Playoffs?"
+          "rule_quote": "Will the Carolina Hurricanes make the 2026-27 NHL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63104790,
@@ -1076,14 +1172,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.91
+              "probability": 0.91,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.09
+              "probability": 0.09,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Edmonton Oilers make the 2026-27 NHL Playoffs?"
+          "rule_quote": "Will the Edmonton Oilers make the 2026-27 NHL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63104786,
@@ -1096,14 +1195,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.8995
+              "probability": 0.8995,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.1005
+              "probability": 0.1005,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Colorado Avalanche make the 2026-27 NHL Playoffs?"
+          "rule_quote": "Will the Colorado Avalanche make the 2026-27 NHL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63119277,
@@ -1116,14 +1218,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.89
+              "probability": 0.89,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.11
+              "probability": 0.11,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Vegas Golden Knights make the 2026-27 NHL Playoffs?"
+          "rule_quote": "Will the Vegas Golden Knights make the 2026-27 NHL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will the contenders make the 2026-27 NHL Playoffs?",
@@ -1197,14 +1302,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.77
+              "probability": 0.77,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.23
+              "probability": 0.23,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will San Francisco 49ers advance to the Divisional Round in the 2027 NFL Playoffs?"
+          "rule_quote": "Will San Francisco 49ers advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 62813047,
@@ -1217,14 +1325,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.715
+              "probability": 0.715,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.285
+              "probability": 0.285,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Buffalo Bills advance to the Divisional Round in the 2027 NFL Playoffs?"
+          "rule_quote": "Will Buffalo Bills advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61524314,
@@ -1237,14 +1348,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.705
+              "probability": 0.705,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.295
+              "probability": 0.295,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Jacksonville Jaguars advance to the Divisional Round in the 2027 NFL Playoffs?"
+          "rule_quote": "Will Jacksonville Jaguars advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 62058233,
@@ -1257,14 +1371,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.51
+              "probability": 0.51,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.49
+              "probability": 0.49,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Denver Broncos advance to the Divisional Round in the 2027 NFL Playoffs?"
+          "rule_quote": "Will Denver Broncos advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61602472,
@@ -1277,14 +1394,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.475
+              "probability": 0.475,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.525
+              "probability": 0.525,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Chicago Bears advance to the Divisional Round in the 2027 NFL Playoffs?"
+          "rule_quote": "Will Chicago Bears advance to the Divisional Round in the 2027 NFL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will which team advance to the Divisional Round in the 2027 NFL Playoffs?"
@@ -1355,14 +1475,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0545
+              "probability": 0.0545,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9455
+              "probability": 0.9455,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Alexander Volkov become UFC champion in 2026?"
+          "rule_quote": "Will Alexander Volkov become UFC champion in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13793097,
@@ -1375,14 +1498,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0305
+              "probability": 0.0305,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9695
+              "probability": 0.9695,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Manel Kape become UFC champion in 2026?"
+          "rule_quote": "Will Manel Kape become UFC champion in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13793123,
@@ -1395,14 +1521,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0285
+              "probability": 0.0285,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9715
+              "probability": 0.9715,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Sergei Pavlovich become UFC champion in 2026?"
+          "rule_quote": "Will Sergei Pavlovich become UFC champion in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13793113,
@@ -1415,14 +1544,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.028
+              "probability": 0.028,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.972
+              "probability": 0.972,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Belal Muhammad become UFC champion in 2026?"
+          "rule_quote": "Will Belal Muhammad become UFC champion in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13793116,
@@ -1435,14 +1567,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.028
+              "probability": 0.028,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.972
+              "probability": 0.972,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Dricus Du Plessis become UFC champion in 2026?"
+          "rule_quote": "Will Dricus Du Plessis become UFC champion in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will which subject become UFC champion?"
@@ -1513,14 +1648,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.855
+              "probability": 0.855,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.145
+              "probability": 0.145,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Georgia make College Football Playoff Quarterfinals?"
+          "rule_quote": "Will Georgia make College Football Playoff Quarterfinals?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 58426808,
@@ -1533,14 +1671,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.81
+              "probability": 0.81,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.19
+              "probability": 0.19,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Miami (FL) make College Football Playoff Quarterfinals?"
+          "rule_quote": "Will Miami (FL) make College Football Playoff Quarterfinals?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 58426789,
@@ -1553,14 +1694,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.54
+              "probability": 0.54,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.46
+              "probability": 0.46,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Alabama make College Football Playoff Quarterfinals?"
+          "rule_quote": "Will Alabama make College Football Playoff Quarterfinals?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 58426786,
@@ -1573,14 +1717,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.515
+              "probability": 0.515,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.485
+              "probability": 0.485,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Indiana make College Football Playoff Quarterfinals?"
+          "rule_quote": "Will Indiana make College Football Playoff Quarterfinals?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 58426787,
@@ -1593,14 +1740,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.395
+              "probability": 0.395,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.605
+              "probability": 0.605,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Texas make College Football Playoff Quarterfinals?"
+          "rule_quote": "Will Texas make College Football Playoff Quarterfinals?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will which contender make College Football Playoff Quarterfinals?"
@@ -1671,14 +1821,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.06
+              "probability": 0.06,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.94
+              "probability": 0.94,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Atlanta Hawks reach the 2026 NBA Cup Championship game?"
+          "rule_quote": "Will the Atlanta Hawks reach the 2026 NBA Cup Championship game?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68697828,
@@ -1691,14 +1844,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.06
+              "probability": 0.06,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.94
+              "probability": 0.94,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Cleveland Cavaliers reach the 2026 NBA Cup Championship game?"
+          "rule_quote": "Will the Cleveland Cavaliers reach the 2026 NBA Cup Championship game?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68697829,
@@ -1711,14 +1867,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.06
+              "probability": 0.06,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.94
+              "probability": 0.94,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Dallas Mavericks reach the 2026 NBA Cup Championship game?"
+          "rule_quote": "Will the Dallas Mavericks reach the 2026 NBA Cup Championship game?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68697830,
@@ -1731,14 +1890,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.06
+              "probability": 0.06,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.94
+              "probability": 0.94,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Golden State Warriors reach the 2026 NBA Cup Championship game?"
+          "rule_quote": "Will the Golden State Warriors reach the 2026 NBA Cup Championship game?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68697831,
@@ -1751,14 +1913,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.06
+              "probability": 0.06,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.94
+              "probability": 0.94,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Houston Rockets reach the 2026 NBA Cup Championship game?"
+          "rule_quote": "Will the Houston Rockets reach the 2026 NBA Cup Championship game?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will the teams reach the 2026 NBA Cup Championship game?"
@@ -1829,14 +1994,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9815
+              "probability": 0.9815,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0185
+              "probability": 0.0185,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the San Francisco 49ers make the 2027 NFL Playoffs?"
+          "rule_quote": "Will the San Francisco 49ers make the 2027 NFL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 16630446,
@@ -1849,14 +2017,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.965
+              "probability": 0.965,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.035
+              "probability": 0.035,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Jacksonville Jaguars make the 2027 NFL Playoffs?"
+          "rule_quote": "Will the Jacksonville Jaguars make the 2027 NFL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 16630442,
@@ -1869,14 +2040,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.935
+              "probability": 0.935,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.065
+              "probability": 0.065,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Cincinnati Bengals make the 2027 NFL Playoffs?"
+          "rule_quote": "Will the Cincinnati Bengals make the 2027 NFL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 16630459,
@@ -1889,14 +2063,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9
+              "probability": 0.9,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.1
+              "probability": 0.1,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Denver Broncos make the 2027 NFL Playoffs?"
+          "rule_quote": "Will the Denver Broncos make the 2027 NFL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 16630457,
@@ -1909,14 +2086,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.875
+              "probability": 0.875,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.125
+              "probability": 0.125,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will the Chicago Bears make the 2027 NFL Playoffs?"
+          "rule_quote": "Will the Chicago Bears make the 2027 NFL Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Will the teams make the 2027 NFL Playoffs?"
@@ -1987,14 +2167,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9555
+              "probability": 0.9555,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0445
+              "probability": 0.0445,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trump meet with Xi Jinping by November 30, 2026?"
+          "rule_quote": "Will Trump meet with Xi Jinping by November 30, 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68370850,
@@ -2007,14 +2190,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.905
+              "probability": 0.905,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.095
+              "probability": 0.095,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trump meet with Vladimir Putin by November 30, 2026?"
+          "rule_quote": "Will Trump meet with Vladimir Putin by November 30, 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68381117,
@@ -2027,14 +2213,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.82
+              "probability": 0.82,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.18
+              "probability": 0.18,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trump meet with Mark Carney by November 30, 2026?"
+          "rule_quote": "Will Trump meet with Mark Carney by November 30, 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68376368,
@@ -2047,14 +2236,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.375
+              "probability": 0.375,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.625
+              "probability": 0.625,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trump meet with Elon Musk by November 30, 2026?"
+          "rule_quote": "Will Trump meet with Elon Musk by November 30, 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68370853,
@@ -2067,14 +2259,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.23
+              "probability": 0.23,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.77
+              "probability": 0.77,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trump meet with Dario Amodei by November 30, 2026?"
+          "rule_quote": "Will Trump meet with Dario Amodei by November 30, 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Who will Trump meet with {deadline}?",
@@ -2149,14 +2344,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9485
+              "probability": 0.9485,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0515
+              "probability": 0.0515,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trump speak to Xi Jinping by November 30?"
+          "rule_quote": "Will Trump speak to Xi Jinping by November 30?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68386359,
@@ -2169,14 +2367,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9295
+              "probability": 0.9295,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0705
+              "probability": 0.0705,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trump speak to Friedrich Merz by November 30?"
+          "rule_quote": "Will Trump speak to Friedrich Merz by November 30?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68370842,
@@ -2189,14 +2390,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9265
+              "probability": 0.9265,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0735
+              "probability": 0.0735,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trump speak to Mark Carney by November 30?"
+          "rule_quote": "Will Trump speak to Mark Carney by November 30?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68370837,
@@ -2209,14 +2413,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.915
+              "probability": 0.915,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.085
+              "probability": 0.085,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trump speak to Vladimir Putin by November 30?"
+          "rule_quote": "Will Trump speak to Vladimir Putin by November 30?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 68498824,
@@ -2229,14 +2436,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.785
+              "probability": 0.785,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.215
+              "probability": 0.215,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Trump speak to Mohammed bin Salman by November 30?"
+          "rule_quote": "Will Trump speak to Mohammed bin Salman by November 30?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Who will Trump speak to {deadline}?",
@@ -2311,14 +2521,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.988
+              "probability": 0.988,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.012
+              "probability": 0.012,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Remo be relegated from the 2026 Brazil Série A?"
+          "rule_quote": "Will Remo be relegated from the 2026 Brazil Série A?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61518887,
@@ -2331,14 +2544,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9785
+              "probability": 0.9785,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0215
+              "probability": 0.0215,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Chapecoense be relegated from the 2026 Brazil Série A?"
+          "rule_quote": "Will Chapecoense be relegated from the 2026 Brazil Série A?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369549,
@@ -2351,14 +2567,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.517
+              "probability": 0.517,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.483
+              "probability": 0.483,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Internacional be relegated from the 2026 Brazil Série A?"
+          "rule_quote": "Will Internacional be relegated from the 2026 Brazil Série A?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61589620,
@@ -2371,14 +2590,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.48
+              "probability": 0.48,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.52
+              "probability": 0.52,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Grêmio be relegated from the 2026 Brazil Série A?"
+          "rule_quote": "Will Grêmio be relegated from the 2026 Brazil Série A?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 62207495,
@@ -2391,14 +2613,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.2
+              "probability": 0.2,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.8
+              "probability": 0.8,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Mirassol be relegated from the 2026 Brazil Série A?"
+          "rule_quote": "Will Mirassol be relegated from the 2026 Brazil Série A?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Who will be relegated from the 2026 Brazil Série A?",
@@ -2473,14 +2698,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.205
+              "probability": 0.205,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.795
+              "probability": 0.795,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Zohran Mamdani be TIME Person of the Year 2026?"
+          "rule_quote": "Will Zohran Mamdani be TIME Person of the Year 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 27467317,
@@ -2493,14 +2721,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.1495
+              "probability": 0.1495,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.8505
+              "probability": 0.8505,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will James Talarico be TIME Person of the Year 2026?"
+          "rule_quote": "Will James Talarico be TIME Person of the Year 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61861526,
@@ -2513,14 +2744,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.115
+              "probability": 0.115,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.885
+              "probability": 0.885,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Mark Carney be TIME Person of the Year 2026?"
+          "rule_quote": "Will Mark Carney be TIME Person of the Year 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 27467327,
@@ -2533,14 +2767,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.075
+              "probability": 0.075,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.925
+              "probability": 0.925,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Pope Leo XIV be TIME Person of the Year 2026?"
+          "rule_quote": "Will Pope Leo XIV be TIME Person of the Year 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 27467322,
@@ -2553,14 +2790,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0575
+              "probability": 0.0575,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9425
+              "probability": 0.9425,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Donald Trump be TIME Person of the Year 2026?"
+          "rule_quote": "Will Donald Trump be TIME Person of the Year 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Who will be TIME Person of the Year {deadline}?",
@@ -2634,14 +2874,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9315
+              "probability": 0.9315,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0685
+              "probability": 0.0685,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Real Madrid finish top 8 in UCL league phase?"
+          "rule_quote": "Will Real Madrid finish top 8 in UCL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61914235,
@@ -2654,14 +2897,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9
+              "probability": 0.9,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.1
+              "probability": 0.1,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Arsenal finish top 8 in UCL league phase?"
+          "rule_quote": "Will Arsenal finish top 8 in UCL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61088381,
@@ -2674,14 +2920,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.33
+              "probability": 0.33,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.67
+              "probability": 0.67,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Como finish top 8 in UCL league phase?"
+          "rule_quote": "Will Como finish top 8 in UCL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61079862,
@@ -2694,14 +2943,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.285
+              "probability": 0.285,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.715
+              "probability": 0.715,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Borussia Dortmund finish top 8 in UCL league phase?"
+          "rule_quote": "Will Borussia Dortmund finish top 8 in UCL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61114303,
@@ -2714,14 +2966,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.2215
+              "probability": 0.2215,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.7785
+              "probability": 0.7785,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Club Brugge finish top 8 in UCL league phase?"
+          "rule_quote": "Will Club Brugge finish top 8 in UCL league phase?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Who will finish top 8 in UCL league phase?",
@@ -2795,14 +3050,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9
+              "probability": 0.9,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.1
+              "probability": 0.1,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will UTC Cajamarca be relegated from the 2026 Peru Liga 1?"
+          "rule_quote": "Will UTC Cajamarca be relegated from the 2026 Peru Liga 1?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 65366505,
@@ -2815,14 +3073,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0405
+              "probability": 0.0405,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9595
+              "probability": 0.9595,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Juan Pablo II be relegated from the 2026 Peru Liga 1?"
+          "rule_quote": "Will Juan Pablo II be relegated from the 2026 Peru Liga 1?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369508,
@@ -2835,14 +3096,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0345
+              "probability": 0.0345,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9655
+              "probability": 0.9655,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Comerciantes Unidos be relegated from the 2026 Peru Liga 1?"
+          "rule_quote": "Will Comerciantes Unidos be relegated from the 2026 Peru Liga 1?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369507,
@@ -2855,14 +3119,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.034
+              "probability": 0.034,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.966
+              "probability": 0.966,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Los Chankas be relegated from the 2026 Peru Liga 1?"
+          "rule_quote": "Will Los Chankas be relegated from the 2026 Peru Liga 1?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61589576,
@@ -2875,14 +3142,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.032
+              "probability": 0.032,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.968
+              "probability": 0.968,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Sport Huancayo be relegated from the 2026 Peru Liga 1?"
+          "rule_quote": "Will Sport Huancayo be relegated from the 2026 Peru Liga 1?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Which team will be relegated from the 2026 Peru Liga 1?",
@@ -2956,14 +3226,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.21
+              "probability": 0.21,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.79
+              "probability": 0.79,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Morgan Wallen have a #1 song on the Billboard Hot 100 in 2026?"
+          "rule_quote": "Will Morgan Wallen have a #1 song on the Billboard Hot 100 in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13793510,
@@ -2976,14 +3249,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.205
+              "probability": 0.205,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.795
+              "probability": 0.795,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Future have a #1 song on the Billboard Hot 100 in 2026?"
+          "rule_quote": "Will Future have a #1 song on the Billboard Hot 100 in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13793515,
@@ -2996,14 +3272,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.17
+              "probability": 0.17,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.83
+              "probability": 0.83,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Post Malone have a #1 song on the Billboard Hot 100 in 2026?"
+          "rule_quote": "Will Post Malone have a #1 song on the Billboard Hot 100 in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13793495,
@@ -3016,14 +3295,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.091
+              "probability": 0.091,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.909
+              "probability": 0.909,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Doja Cat have a #1 song on the Billboard Hot 100 in 2026?"
+          "rule_quote": "Will Doja Cat have a #1 song on the Billboard Hot 100 in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13793505,
@@ -3036,14 +3318,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.085
+              "probability": 0.085,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.915
+              "probability": 0.915,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Tyler, The Creator have a #1 song on the Billboard Hot 100 in 2026?"
+          "rule_quote": "Will Tyler, The Creator have a #1 song on the Billboard Hot 100 in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Who will have a #1 song on the Billboard Hot 100 {deadline}?",
@@ -3117,14 +3402,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9815
+              "probability": 0.9815,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0185
+              "probability": 0.0185,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Boyacá Chicó be relegated from the 2026 Colombia Primera A?"
+          "rule_quote": "Will Boyacá Chicó be relegated from the 2026 Colombia Primera A?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369650,
@@ -3137,14 +3425,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.9655
+              "probability": 0.9655,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.0345
+              "probability": 0.0345,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Jaguares be relegated from the 2026 Colombia Primera A?"
+          "rule_quote": "Will Jaguares be relegated from the 2026 Colombia Primera A?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61734280,
@@ -3157,14 +3448,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.035
+              "probability": 0.035,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.965
+              "probability": 0.965,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Internacional de Bogotá be relegated from the 2026 Colombia Primera A?"
+          "rule_quote": "Will Internacional de Bogotá be relegated from the 2026 Colombia Primera A?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 62958534,
@@ -3177,14 +3471,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0305
+              "probability": 0.0305,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9695
+              "probability": 0.9695,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Llaneros FC be relegated from the 2026 Colombia Primera A?"
+          "rule_quote": "Will Llaneros FC be relegated from the 2026 Colombia Primera A?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61589751,
@@ -3197,14 +3494,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.027
+              "probability": 0.027,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.973
+              "probability": 0.973,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Once Caldas be relegated from the 2026 Colombia Primera A?"
+          "rule_quote": "Will Once Caldas be relegated from the 2026 Colombia Primera A?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Which team will be relegated from the 2026 Colombia Primera A?",
@@ -3278,14 +3578,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.88
+              "probability": 0.88,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.12
+              "probability": 0.12,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will \"Trump\" be in the headlines on Sunday?"
+          "rule_quote": "Will \"Trump\" be in the headlines on Sunday?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 69456289,
@@ -3298,14 +3601,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.68
+              "probability": 0.68,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.32
+              "probability": 0.32,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will \"War\" be in the headlines on Sunday?"
+          "rule_quote": "Will \"War\" be in the headlines on Sunday?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 69456281,
@@ -3318,14 +3624,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.3553
+              "probability": 0.3553,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.6447
+              "probability": 0.6447,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will \"Israel / Israeli\" be in the headlines on Sunday?"
+          "rule_quote": "Will \"Israel / Israeli\" be in the headlines on Sunday?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 69456284,
@@ -3338,14 +3647,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.16
+              "probability": 0.16,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.84
+              "probability": 0.84,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will \"Claude / Anthropic\" be in the headlines on Sunday?"
+          "rule_quote": "Will \"Claude / Anthropic\" be in the headlines on Sunday?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 69456285,
@@ -3358,14 +3670,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.12
+              "probability": 0.12,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.88
+              "probability": 0.88,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will \"NFL / Football\" be in the headlines on Sunday?"
+          "rule_quote": "Will \"NFL / Football\" be in the headlines on Sunday?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Who will be in the headlines on Sunday?",
@@ -3439,14 +3754,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.895
+              "probability": 0.895,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.105
+              "probability": 0.105,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Start be relegated from the 2026 Norway Eliteserien?"
+          "rule_quote": "Will Start be relegated from the 2026 Norway Eliteserien?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369611,
@@ -3459,14 +3777,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.56
+              "probability": 0.56,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.44
+              "probability": 0.44,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Aalesund be relegated from the 2026 Norway Eliteserien?"
+          "rule_quote": "Will Aalesund be relegated from the 2026 Norway Eliteserien?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369615,
@@ -3479,14 +3800,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.065
+              "probability": 0.065,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.935
+              "probability": 0.935,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will KFUM Oslo be relegated from the 2026 Norway Eliteserien?"
+          "rule_quote": "Will KFUM Oslo be relegated from the 2026 Norway Eliteserien?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369608,
@@ -3499,14 +3823,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.04
+              "probability": 0.04,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.96
+              "probability": 0.96,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will HamKam be relegated from the 2026 Norway Eliteserien?"
+          "rule_quote": "Will HamKam be relegated from the 2026 Norway Eliteserien?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369614,
@@ -3519,14 +3846,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0375
+              "probability": 0.0375,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9625
+              "probability": 0.9625,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Fredrikstad be relegated from the 2026 Norway Eliteserien?"
+          "rule_quote": "Will Fredrikstad be relegated from the 2026 Norway Eliteserien?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Who will be relegated from the 2026 Norway Eliteserien?",
@@ -3600,14 +3930,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.95
+              "probability": 0.95,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.05
+              "probability": 0.05,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Mash'al be relegated from the 2026 Uzbekistan Super League?"
+          "rule_quote": "Will Mash'al be relegated from the 2026 Uzbekistan Super League?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369916,
@@ -3620,14 +3953,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.49
+              "probability": 0.49,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.51
+              "probability": 0.51,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Bunyodkor be relegated from the 2026 Uzbekistan Super League?"
+          "rule_quote": "Will Bunyodkor be relegated from the 2026 Uzbekistan Super League?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369919,
@@ -3640,14 +3976,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.4
+              "probability": 0.4,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.6
+              "probability": 0.6,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Kokand 1912 be relegated from the 2026 Uzbekistan Super League?"
+          "rule_quote": "Will Kokand 1912 be relegated from the 2026 Uzbekistan Super League?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61814153,
@@ -3660,14 +3999,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.2452
+              "probability": 0.2452,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.7548
+              "probability": 0.7548,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Lokomotiv Tashkent be relegated from the 2026 Uzbekistan Super League?"
+          "rule_quote": "Will Lokomotiv Tashkent be relegated from the 2026 Uzbekistan Super League?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369915,
@@ -3680,14 +4022,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.12
+              "probability": 0.12,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.88
+              "probability": 0.88,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Andijon be relegated from the 2026 Uzbekistan Super League?"
+          "rule_quote": "Will Andijon be relegated from the 2026 Uzbekistan Super League?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Who will be relegated from the 2026 Uzbekistan Super League?",
@@ -3761,14 +4106,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.919
+              "probability": 0.919,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.081
+              "probability": 0.081,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Manta be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+          "rule_quote": "Will Manta be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63323383,
@@ -3781,14 +4129,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.375
+              "probability": 0.375,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.625
+              "probability": 0.625,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Delfín be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+          "rule_quote": "Will Delfín be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61814139,
@@ -3801,14 +4152,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0375
+              "probability": 0.0375,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9625
+              "probability": 0.9625,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Mushuc Runa be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+          "rule_quote": "Will Mushuc Runa be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61590009,
@@ -3821,14 +4175,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0315
+              "probability": 0.0315,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9685
+              "probability": 0.9685,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Macará be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+          "rule_quote": "Will Macará be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61369899,
@@ -3841,14 +4198,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.027
+              "probability": 0.027,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.973
+              "probability": 0.973,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Deportivo Cuenca be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+          "rule_quote": "Will Deportivo Cuenca be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Which team will be relegated from the 2026 LigaPro Serie A (Ecuador)?",
@@ -3922,14 +4282,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.98
+              "probability": 0.98,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.02
+              "probability": 0.02,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Danubio be relegated from the 2026 Uruguayan Primera División?"
+          "rule_quote": "Will Danubio be relegated from the 2026 Uruguayan Primera División?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61373102,
@@ -3942,14 +4305,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.8825
+              "probability": 0.8825,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.1175
+              "probability": 0.1175,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Progreso be relegated from the 2026 Uruguayan Primera División?"
+          "rule_quote": "Will Progreso be relegated from the 2026 Uruguayan Primera División?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61373103,
@@ -3962,14 +4328,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.31
+              "probability": 0.31,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.69
+              "probability": 0.69,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Cerro be relegated from the 2026 Uruguayan Primera División?"
+          "rule_quote": "Will Cerro be relegated from the 2026 Uruguayan Primera División?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 62288921,
@@ -3982,14 +4351,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.21
+              "probability": 0.21,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.79
+              "probability": 0.79,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Albion be relegated from the 2026 Uruguayan Primera División?"
+          "rule_quote": "Will Albion be relegated from the 2026 Uruguayan Primera División?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63848914,
@@ -4002,14 +4374,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.11
+              "probability": 0.11,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.89
+              "probability": 0.89,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Central Español be relegated from the 2026 Uruguayan Primera División?"
+          "rule_quote": "Will Central Español be relegated from the 2026 Uruguayan Primera División?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Which team will be relegated from the 2026 Uruguayan Primera División?",
@@ -4083,14 +4458,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.075
+              "probability": 0.075,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.925
+              "probability": 0.925,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Donald Trump visit South Korea in 2026?"
+          "rule_quote": "Will Donald Trump visit South Korea in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13791789,
@@ -4103,14 +4481,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.063
+              "probability": 0.063,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.937
+              "probability": 0.937,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Donald Trump visit Oman in 2026?"
+          "rule_quote": "Will Donald Trump visit Oman in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13791779,
@@ -4123,14 +4504,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.045
+              "probability": 0.045,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.955
+              "probability": 0.955,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Donald Trump visit Saudi Arabia in 2026?"
+          "rule_quote": "Will Donald Trump visit Saudi Arabia in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13791788,
@@ -4143,14 +4527,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.04
+              "probability": 0.04,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.96
+              "probability": 0.96,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Donald Trump visit Italy in 2026?"
+          "rule_quote": "Will Donald Trump visit Italy in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 13791777,
@@ -4163,14 +4550,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0395
+              "probability": 0.0395,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9605
+              "probability": 0.9605,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Donald Trump visit Canada in 2026?"
+          "rule_quote": "Will Donald Trump visit Canada in 2026?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Where will Donald Trump visit {deadline}?",
@@ -4244,14 +4634,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.35
+              "probability": 0.35,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.65
+              "probability": 0.65,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will it snow in Salt Lake City, UT by November 15?"
+          "rule_quote": "Will it snow in Salt Lake City, UT by November 15?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 60087428,
@@ -4264,14 +4657,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.34
+              "probability": 0.34,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.66
+              "probability": 0.66,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will it snow in Chicago, IL by November 15?"
+          "rule_quote": "Will it snow in Chicago, IL by November 15?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 60087431,
@@ -4284,14 +4680,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.29
+              "probability": 0.29,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.71
+              "probability": 0.71,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will it snow in Indianapolis, IN by November 15?"
+          "rule_quote": "Will it snow in Indianapolis, IN by November 15?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Where will it snow {deadline}?",
@@ -4365,14 +4764,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.875
+              "probability": 0.875,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.125
+              "probability": 0.125,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will New York Knicks advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will New York Knicks advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380775,
@@ -4385,14 +4787,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.61
+              "probability": 0.61,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.39
+              "probability": 0.39,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Detroit Pistons advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Detroit Pistons advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61524273,
@@ -4405,14 +4810,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.5545
+              "probability": 0.5545,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.4455
+              "probability": 0.4455,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Boston Celtics advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Boston Celtics advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61817058,
@@ -4425,14 +4833,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.525
+              "probability": 0.525,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.475
+              "probability": 0.475,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Toronto Raptors advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Toronto Raptors advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63856078,
@@ -4445,14 +4856,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.4236
+              "probability": 0.4236,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.5764
+              "probability": 0.5764,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Philadelphia 76ers advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Philadelphia 76ers advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Which team will advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
@@ -4526,14 +4940,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.415
+              "probability": 0.415,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.585
+              "probability": 0.585,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Oklahoma City Thunder advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Oklahoma City Thunder advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380736,
@@ -4546,14 +4963,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.26
+              "probability": 0.26,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.74
+              "probability": 0.74,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Houston Rockets advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Houston Rockets advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380725,
@@ -4566,14 +4986,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.15
+              "probability": 0.15,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.85
+              "probability": 0.85,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Denver Nuggets advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Denver Nuggets advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380733,
@@ -4586,14 +5009,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.099
+              "probability": 0.099,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.901
+              "probability": 0.901,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Phoenix Suns advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Phoenix Suns advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380728,
@@ -4606,14 +5032,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.0905
+              "probability": 0.0905,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.9095
+              "probability": 0.9095,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Portland Trail Blazers advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Portland Trail Blazers advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Which team will advance to the Western Conference Finals in the 2027 NBA Playoffs?",
@@ -4687,14 +5116,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.725
+              "probability": 0.725,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.275
+              "probability": 0.275,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will San Antonio Spurs advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will San Antonio Spurs advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380759,
@@ -4707,14 +5139,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.695
+              "probability": 0.695,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.305
+              "probability": 0.305,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Oklahoma City Thunder advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Oklahoma City Thunder advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380764,
@@ -4727,14 +5162,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.63
+              "probability": 0.63,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.37
+              "probability": 0.37,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Los Angeles Lakers advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Los Angeles Lakers advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380768,
@@ -4747,14 +5185,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.5
+              "probability": 0.5,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.5
+              "probability": 0.5,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Houston Rockets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Houston Rockets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61380757,
@@ -4767,14 +5208,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.495
+              "probability": 0.495,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.505
+              "probability": 0.505,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Denver Nuggets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+          "rule_quote": "Will Denver Nuggets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Which team will advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
@@ -4848,14 +5292,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.96
+              "probability": 0.96,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.04
+              "probability": 0.04,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Anzoátegui be relegated from the 2026 Venezuelan Primera División?"
+          "rule_quote": "Will Anzoátegui be relegated from the 2026 Venezuelan Primera División?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 65374094,
@@ -4868,14 +5315,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.11
+              "probability": 0.11,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.89
+              "probability": 0.89,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Portuguesa be relegated from the 2026 Venezuelan Primera División?"
+          "rule_quote": "Will Portuguesa be relegated from the 2026 Venezuelan Primera División?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 65374093,
@@ -4888,14 +5338,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.1085
+              "probability": 0.1085,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.8915
+              "probability": 0.8915,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Estudiantes de Mérida be relegated from the 2026 Venezuelan Primera División?"
+          "rule_quote": "Will Estudiantes de Mérida be relegated from the 2026 Venezuelan Primera División?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 65513297,
@@ -4908,14 +5361,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.1055
+              "probability": 0.1055,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.8945
+              "probability": 0.8945,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Zamora be relegated from the 2026 Venezuelan Primera División?"
+          "rule_quote": "Will Zamora be relegated from the 2026 Venezuelan Primera División?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 64824912,
@@ -4928,14 +5384,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.105
+              "probability": 0.105,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.895
+              "probability": 0.895,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Metropolitanos be relegated from the 2026 Venezuelan Primera División?"
+          "rule_quote": "Will Metropolitanos be relegated from the 2026 Venezuelan Primera División?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Which team will be relegated from the 2026 Venezuelan Primera División?",
@@ -5009,14 +5468,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.89
+              "probability": 0.89,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.11
+              "probability": 0.11,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Halmstads BK be relegated from the 2026 Allsvenskan (Sweden)?"
+          "rule_quote": "Will Halmstads BK be relegated from the 2026 Allsvenskan (Sweden)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61373164,
@@ -5029,14 +5491,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.812
+              "probability": 0.812,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.188
+              "probability": 0.188,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Örgryte IS be relegated from the 2026 Allsvenskan (Sweden)?"
+          "rule_quote": "Will Örgryte IS be relegated from the 2026 Allsvenskan (Sweden)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63702184,
@@ -5049,14 +5514,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.105
+              "probability": 0.105,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.895
+              "probability": 0.895,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Mjällby AIF be relegated from the 2026 Allsvenskan (Sweden)?"
+          "rule_quote": "Will Mjällby AIF be relegated from the 2026 Allsvenskan (Sweden)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 63994988,
@@ -5069,14 +5537,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.072
+              "probability": 0.072,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.928
+              "probability": 0.928,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will Kalmar FF be relegated from the 2026 Allsvenskan (Sweden)?"
+          "rule_quote": "Will Kalmar FF be relegated from the 2026 Allsvenskan (Sweden)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         },
         {
           "id": 61373166,
@@ -5089,14 +5560,17 @@
           "outcomes": [
             {
               "name": "Yes",
-              "probability": 0.011
+              "probability": 0.011,
+              "observed_at": "2026-11-09T12:00:00Z"
             },
             {
               "name": "No",
-              "probability": 0.989
+              "probability": 0.989,
+              "observed_at": "2026-11-09T12:00:00Z"
             }
           ],
-          "rule_quote": "Will IF Elfsborg be relegated from the 2026 Allsvenskan (Sweden)?"
+          "rule_quote": "Will IF Elfsborg be relegated from the 2026 Allsvenskan (Sweden)?",
+          "updated_at": "2026-11-09T12:00:00Z"
         }
       ],
       "graded_title": "Who will be relegated from the 2026 Allsvenskan (Sweden)?",

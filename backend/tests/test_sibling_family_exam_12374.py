@@ -559,6 +559,9 @@ class TestEveryGatePassOrFail:
         }
 
         shared_res = "2027-04-30T03:59:00+00:00"
+        from datetime import datetime, timezone
+
+        fresh_obs = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         mixed_pool_without_gids = [
             {
                 "id": 63105212,
@@ -567,7 +570,7 @@ class TestEveryGatePassOrFail:
                 "source": "polymarket",
                 "category": "hockey",
                 "resolution_date": shared_res,
-                "outcomes": [{"id": 1, "name": "Yes", "probability": 0.9235}],
+                "outcomes": [{"id": 1, "name": "Yes", "probability": 0.9235, "observed_at": fresh_obs}],
             },
             {
                 "id": 63105213,
@@ -576,7 +579,7 @@ class TestEveryGatePassOrFail:
                 "source": "polymarket",
                 "category": "hockey",
                 "resolution_date": shared_res,
-                "outcomes": [{"id": 2, "name": "Yes", "probability": 0.877}],
+                "outcomes": [{"id": 2, "name": "Yes", "probability": 0.877, "observed_at": fresh_obs}],
             },
             {
                 "id": 63218794,
@@ -585,7 +588,7 @@ class TestEveryGatePassOrFail:
                 "source": "polymarket",
                 "category": "hockey",
                 "resolution_date": shared_res,
-                "outcomes": [{"id": 3, "name": "Yes", "probability": 0.875}],
+                "outcomes": [{"id": 3, "name": "Yes", "probability": 0.875, "observed_at": fresh_obs}],
             },
             {
                 "id": 63218575,
@@ -594,7 +597,7 @@ class TestEveryGatePassOrFail:
                 "source": "polymarket",
                 "category": "hockey",
                 "resolution_date": shared_res,
-                "outcomes": [{"id": 4, "name": "Yes", "probability": 0.95}],
+                "outcomes": [{"id": 4, "name": "Yes", "probability": 0.95, "observed_at": fresh_obs}],
             },
             {
                 "id": 63218573,
@@ -603,7 +606,7 @@ class TestEveryGatePassOrFail:
                 "source": "polymarket",
                 "category": "hockey",
                 "resolution_date": shared_res,
-                "outcomes": [{"id": 5, "name": "Yes", "probability": 0.91}],
+                "outcomes": [{"id": 5, "name": "Yes", "probability": 0.91, "observed_at": fresh_obs}],
             },
         ]
 
@@ -902,6 +905,91 @@ class TestEveryGatePassOrFail:
         assert (
             dict(nhl_refusal.reasons).get("family")
             == "unnumbered_members_could_change_top_rows"
+        )
+
+        # 4. Every row stamped at one identical time, 8 days before now -> refused.
+        eight_days_ago = "2026-11-02T18:30:00Z"
+        uniform_stale_cohort = [
+            {
+                "id": 8001 + idx,
+                "name": f"Will Club {club} finish top 8?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 80010 + idx,
+                        "name": "Yes",
+                        "probability": prob,
+                        "last_updated": eight_days_ago,
+                    }
+                ],
+            }
+            for idx, (club, prob) in enumerate(
+                (("Alpha", 0.72), ("Beta", 0.58), ("Gamma", 0.44))
+            )
+        ]
+        uniform_stale_refusal = select_sibling_family(uniform_stale_cohort, now=now)
+        assert isinstance(uniform_stale_refusal, RoundupRefusal)
+        assert (
+            dict(uniform_stale_refusal.reasons).get("family")
+            == "unnumbered_members_could_change_top_rows"
+        )
+        assert dict(uniform_stale_refusal.reasons).get("stale_quotes_withheld") == (
+            "Alpha",
+            "Beta",
+            "Gamma",
+        )
+
+        # 5. A priced row with no observation time does not count as fresh -> refused.
+        missing_obs_cohort = [
+            {
+                "id": 8101,
+                "name": "Will Club Alpha finish top 8?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [{"id": 81011, "name": "Yes", "probability": 0.72}],
+            },
+            {
+                "id": 8102,
+                "name": "Will Club Beta finish top 8?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 81021,
+                        "name": "Yes",
+                        "probability": 0.58,
+                        "last_updated": "2026-11-10T18:10:00Z",
+                    }
+                ],
+            },
+            {
+                "id": 8103,
+                "name": "Will Club Gamma finish top 8?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 81031,
+                        "name": "Yes",
+                        "probability": 0.44,
+                        "last_updated": "2026-11-10T18:10:00Z",
+                    }
+                ],
+            },
+        ]
+        missing_obs_refusal = select_sibling_family(missing_obs_cohort, now=now)
+        assert isinstance(missing_obs_refusal, RoundupRefusal)
+        assert "Alpha" in dict(missing_obs_refusal.reasons).get(
+            "stale_quotes_withheld", ()
         )
 
     def test_decision_123a_at_most_two_sibling_family_in_first_20_and_no_adjacent_grouped_cards(

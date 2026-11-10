@@ -621,7 +621,10 @@ def _build_sibling_exam_test_deck_items(
     """Build `/grade/groupings` deck items for the 20 fixed set-aside `test` cards (#12374 / #12500)."""
     from app.utils.roundup_containers import RoundupMembers
     from app.utils.sibling_family import select_sibling_family
-    from app.utils.sibling_family_exam import DEFAULT_EXAM_DATASET_PATH
+    from app.utils.sibling_family_exam import (
+        DEFAULT_EXAM_DATASET_PATH,
+        EXAM_EVAL_NOW_UTC,
+    )
 
     path = dataset_path or DEFAULT_EXAM_DATASET_PATH
     if not path.exists():
@@ -652,6 +655,7 @@ def _build_sibling_exam_test_deck_items(
                 card.get("footer")
                 or "Each row is its own market. They don't add up to 100%."
             ),
+            now=EXAM_EVAL_NOW_UTC,
         )
         if not isinstance(res, RoundupMembers):
             continue

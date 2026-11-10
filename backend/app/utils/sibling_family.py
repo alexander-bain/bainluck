@@ -1647,24 +1647,15 @@ def select_sibling_family(
                     max_lag_days=float(max_quote_age_days),
                 )
             )
-            distinct_obs = {
-                pm.observed_at for pm in open_priced if pm.observed_at is not None
-            }
-            check_wall_clock = (
-                len(distinct_obs) > 1
-                or float(max_quote_age_days) != MAX_SIBLING_QUOTE_AGE_DAYS
-            )
             updated_cohort: list[_SiblingMember] = []
             for pm in cohort:
                 if pm.is_open and pm.probability is not None:
                     is_stale = pm.market_id in cohort_stale_ids
-                    if not is_stale and check_wall_clock and pm.observed_at is not None:
-                        obs_dt = _parse_dt(pm.observed_at)
-                        if (
-                            obs_dt is not None
-                            and (effective_now - obs_dt).total_seconds() > cutoff_sec
-                        ):
-                            is_stale = True
+                    obs_dt = _parse_dt(pm.observed_at)
+                    if obs_dt is None:
+                        is_stale = True
+                    elif (effective_now - obs_dt).total_seconds() > cutoff_sec:
+                        is_stale = True
                     if is_stale:
                         pm = replace(
                             pm,
