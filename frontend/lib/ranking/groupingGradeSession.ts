@@ -13,6 +13,7 @@ import {
   normalizeGraderName,
   type TallyEntry,
 } from "@/lib/ranking/gradeSession";
+import type { FeedRoundupContract, FeedRoundupRow } from "@/lib/types";
 
 export const GROUPING_GRADES = ["amazing", "fine", "no"] as const;
 export type GroupingGrade = (typeof GROUPING_GRADES)[number];
@@ -30,12 +31,15 @@ export interface ProposedCardRow {
   label: string;
   value: string;
   market_id: number;
+  probability?: number | null;
+  rendered_percent?: number | null;
 }
 
 export interface ProposedCardPreview {
   kicker: string;
   tag: string;
   title: string;
+  subtitle?: string | null;
   rows: ProposedCardRow[];
   count_line: string;
   footer: string;
@@ -43,6 +47,52 @@ export interface ProposedCardPreview {
   level: string;
   as_of_label?: string | null;
   proposed_kind?: string | null;
+  selection_type?: string | null;
+}
+
+/**
+ * Convert a `/grade/groupings` `ProposedCardPreview` into the canonical
+ * `FeedRoundupContract` consumed by `RoundupCard`, so `/grade/groupings` and
+ * Discover share one card renderer (#9937).
+ */
+export function buildRoundupContractForProposedCard(
+  card: ProposedCardPreview,
+): FeedRoundupContract {
+  const rows: FeedRoundupRow[] = (card.rows || []).map((r, idx) => {
+    let prob = typeof r.probability === "number" ? r.probability : NaN;
+    let pct = typeof r.rendered_percent === "number" ? r.rendered_percent : undefined;
+    if (!Number.isFinite(prob) && typeof r.value === "string") {
+      const cleaned = r.value.trim().replace(/^[<>]/, "");
+      if (cleaned.endsWith("%")) {
+        const parsed = Number.parseFloat(cleaned.slice(0, -1));
+        if (Number.isFinite(parsed)) {
+          prob = parsed / 100;
+          pct = Math.round(parsed);
+        }
+      }
+    }
+    const marketId =
+      typeof r.market_id === "number" && r.market_id > 0 ? r.market_id : idx + 1;
+    return {
+      market_id: marketId,
+      label: r.label,
+      probability: prob,
+      rendered_percent: pct,
+    };
+  });
+
+  return {
+    kicker: card.kicker || "PROPOSED CARD",
+    tag: card.tag || null,
+    subtitle: card.subtitle || null,
+    complete_group: card.selection_type === "complete_group",
+    count_line: card.count_line || null,
+    footer:
+      card.footer || "Each row is its own market. They don't add up to 100%.",
+    relations: card.relations,
+    level: card.level,
+    rows,
+  };
 }
 
 export interface BestSingleMember {

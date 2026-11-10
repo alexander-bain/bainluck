@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
@@ -91,7 +92,195 @@ DEFAULT_KIND_PROPOSALS_MD_PATH = (
     / "discover"
     / "new-kind-proposals-2026-11.md"
 )
+DEFAULT_NEW_KINDS_EXAM_JSON_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "discover"
+    / "new-kinds-exam-test-2026-11.json"
+)
+DOCS_NEW_KINDS_EXAM_JSON_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "docs"
+    / "discover"
+    / "new-kinds-exam-test-2026-11.json"
+)
+_NEW_KINDS_EXAM_PATHS: tuple[Path, ...] = (
+    DEFAULT_NEW_KINDS_EXAM_JSON_PATH,
+    DOCS_NEW_KINDS_EXAM_JSON_PATH,
+)
+NEW_KINDS_EXAM_SLATE_ID = "new-kinds-exam-test-2026-11"
 _PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+
+_PLURAL_TEAM_SUFFIXES: tuple[str, ...] = (
+    "Wild",
+    "Avalanche",
+    "Lightning",
+    "Kraken",
+    "Mammoth",
+    "Hurricanes",
+    "Devils",
+    "Oilers",
+    "Golden Knights",
+    "Stars",
+    "Panthers",
+    "Maple Leafs",
+    "Rangers",
+    "Bruins",
+    "Canucks",
+    "Jets",
+    "Predators",
+    "Kings",
+    "Sabres",
+    "Senators",
+    "Islanders",
+    "Capitals",
+    "Penguins",
+    "Flyers",
+    "Red Wings",
+    "Blues",
+    "Flames",
+    "Canadiens",
+    "Blue Jackets",
+    "Blackhawks",
+    "Ducks",
+    "Sharks",
+    "49ers",
+    "Bills",
+    "Bears",
+    "Bengals",
+    "Lions",
+    "Jaguars",
+    "Vikings",
+    "Packers",
+    "Chiefs",
+    "Broncos",
+    "Texans",
+    "Rams",
+    "Seahawks",
+    "Buccaneers",
+    "Steelers",
+    "Browns",
+    "Ravens",
+    "Cowboys",
+    "Eagles",
+    "Commanders",
+    "Giants",
+    "Dolphins",
+    "Patriots",
+    "Raiders",
+    "Chargers",
+    "Colts",
+    "Titans",
+    "Cardinals",
+    "Falcons",
+    "Saints",
+    "Timberwolves",
+    "Thunder",
+    "Celtics",
+    "Knicks",
+    "Yankees",
+    "Brewers",
+    "Dodgers",
+    "Rays",
+    "Rangers",
+    "Guardians",
+    "Hoosiers",
+    "Longhorns",
+    "Cougars",
+    "Rebels",
+    "Fighting Irish",
+    "Hurricanes",
+)
+
+
+def _subject_takes_plural_verb(label: str) -> bool:
+    cleaned = str(label or "").strip()
+    return any(
+        cleaned == suffix or cleaned.endswith(f" {suffix}")
+        for suffix in _PLURAL_TEAM_SUFFIXES
+    )
+
+
+def compute_selection_carrying_title(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    total_member_count: int,
+    subject_unit: str = "teams",
+    race_name: Optional[str] = None,
+    question_subtitle: str = "",
+    selection_type: str = "top_5",
+    bubble_title: Optional[str] = None,
+    unnumbered_count: int = 0,
+) -> Dict[str, Optional[str]]:
+    """Compute selection-carrying title, subtitle, and count_line from the card's rows (#9937).
+
+    Rules:
+    1. Complete division or group (``selection_type == "complete_group"`` or ``total_member_count <= 8``
+       when showing all rows): title is the group question, ``subtitle`` is ``None``,
+       ``count_line`` is ``Showing K of N <unit>``.
+    2. Clear leader or race (``selection_type == "top_5"`` with ``race_name``):
+       - When #1 leads #2 by more than 1 percentage point: ``"<#1> lead(s) the <race_name> at <pct1>%"``.
+       - When #1 and #2 are within 1 percentage point: ``"<#1> and <#2> top the <race_name> at <pct1>%"``.
+       - ``subtitle`` is ``question_subtitle`` and ``count_line`` is ``Showing K of N <unit>``.
+    3. Bubble / cutline slice (``selection_type == "bubble_50"``):
+       - ``title`` is ``bubble_title`` (e.g. ``"Five NHL teams on the 2026–27 playoff bubble"``).
+       - ``subtitle`` is ``"Closest to 50% · N <unit>"`` and ``count_line`` is ``Showing K of N <unit>``.
+    4. Fallback when a card has no natural title for ``S``:
+       - ``title`` is ``question_subtitle``, ``subtitle`` is ``None``, and ``count_line`` falls back
+         to ``"Top K by chance · N <unit>"``.
+    """
+    k = len(rows)
+    n = max(k, int(total_member_count or k))
+    unit = str(subject_unit or "teams").strip() or "teams"
+    q_sub = str(question_subtitle or "").strip()
+    r_name = str(race_name or "").strip()
+    sel = str(selection_type or "top_5").strip()
+
+    unnumbered_suffix = ""
+    if int(unnumbered_count or 0) > 4:
+        unnumbered_suffix = f" · No number yet for {int(unnumbered_count)} {unit}"
+
+    if sel == "complete_group" or (n <= 8 and k == n and sel != "bubble_50"):
+        return {
+            "title": q_sub,
+            "subtitle": None,
+            "count_line": f"Showing {k} of {n} {unit}{unnumbered_suffix}",
+            "selection_type": "complete_group",
+        }
+
+    if sel == "bubble_50" and bubble_title:
+        return {
+            "title": str(bubble_title).strip(),
+            "subtitle": f"Closest to 50% · {n} {unit}",
+            "count_line": f"Showing {k} of {n} {unit}{unnumbered_suffix}",
+            "selection_type": "bubble_50",
+        }
+
+    if sel == "top_5" and r_name and k >= 2:
+        p1 = float(rows[0].get("probability") or 0.0)
+        p2 = float(rows[1].get("probability") or 0.0)
+        pct1 = int(rows[0].get("rendered_percent", math.floor(p1 * 100.0 + 0.5)))
+        pct2 = int(rows[1].get("rendered_percent", math.floor(p2 * 100.0 + 0.5)))
+        lead_label = str(rows[0].get("label") or "").strip()
+        second_label = str(rows[1].get("label") or "").strip()
+        if (pct1 - pct2) > 1 and (p1 - p2) > 0.01:
+            verb = "lead" if _subject_takes_plural_verb(lead_label) else "leads"
+            headline = f"{lead_label} {verb} the {r_name} at {pct1}%"
+        else:
+            headline = f"{lead_label} and {second_label} top the {r_name} at {pct1}%"
+        return {
+            "title": headline,
+            "subtitle": q_sub or None,
+            "count_line": f"Showing {k} of {n} {unit}{unnumbered_suffix}",
+            "selection_type": "top_5",
+        }
+
+    return {
+        "title": q_sub,
+        "subtitle": None,
+        "count_line": f"Top {k} by chance · {n} {unit}{unnumbered_suffix}",
+        "selection_type": "fallback",
+    }
 
 
 class KindProposalSpendCapExceededError(RuntimeError):
@@ -242,7 +431,7 @@ def _validate_example_card(
             or float(prob) >= 1.0
         ):
             return False, f"unpriced_or_settled_row:{slug}:{mid}", None
-        pct = int(round(float(prob) * 100))
+        pct = int(math.floor(float(prob) * 100.0 + 0.5))
         source = str(r.get("source") or "kalshi").strip()
         dest_href = str(r.get("destination_href") or f"/futures/{mid}").strip()
         normalized_rows.append(
@@ -261,6 +450,20 @@ def _validate_example_card(
         card.get("as_of_label") or _format_as_of_label(as_of_val)
     ).strip()
 
+    subtitle_val = str(card.get("subtitle") or "").strip() or None
+    count_line_val = str(card.get("count_line") or "").strip() or None
+    selection_type_val = str(card.get("selection_type") or "top_5").strip()
+    subject_unit_val = str(card.get("subject_unit") or "teams").strip()
+    member_count_val = int(card.get("member_count") or len(normalized_rows))
+
+    for opt_field in (subtitle_val, count_line_val):
+        if opt_field:
+            if _FORBIDDEN_QUESTION_RE.search(opt_field):
+                return False, f"forbidden_question_word:{slug}", None
+            for pat in STANDING_EXCLUSION_PATTERNS:
+                if pat.search(opt_field):
+                    return False, f"standing_exclusion_triggered:{slug}", None
+
     return (
         True,
         None,
@@ -268,8 +471,13 @@ def _validate_example_card(
             "slug": slug,
             "kind": kind_name,
             "title": title,
+            "subtitle": subtitle_val,
             "kicker": kicker,
+            "count_line": count_line_val,
             "footer": footer,
+            "selection_type": selection_type_val,
+            "subject_unit": subject_unit_val,
+            "member_count": member_count_val,
             "as_of": as_of_val or None,
             "as_of_label": as_of_label_val or None,
             "selector": dict(selector),
@@ -600,5 +808,57 @@ def load_committed_kind_proposals(
         "accepted_count": len(verified),
         "refused_count": len(refused),
         "proposals": verified,
+        "refused": refused,
+    }
+
+
+def load_new_kinds_exam_cards(
+    path: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """Load and validate the 20-card held-out exam slate for new kinds (#9937)."""
+    if path is not None:
+        p = Path(path)
+    else:
+        p = DEFAULT_NEW_KINDS_EXAM_JSON_PATH
+        for candidate in _NEW_KINDS_EXAM_PATHS:
+            if candidate.exists():
+                p = candidate
+                break
+    if not p.exists():
+        raise FileNotFoundError(f"New-kinds exam file not found: {p}")
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"Invalid new-kinds exam payload in {p}: expected mapping")
+    raw_cards = raw.get("cards")
+    if not isinstance(raw_cards, list) or not raw_cards:
+        raise ValueError(f"Invalid new-kinds exam payload in {p}: expected non-empty cards list")
+    generated_at = str(raw.get("generated_at") or "").strip()
+    verified: List[Dict[str, Any]] = []
+    refused: List[Dict[str, Any]] = []
+    seen_slugs: set[str] = set()
+    for item in raw_cards:
+        if not isinstance(item, Mapping):
+            refused.append({"slug": "", "reason": "invalid_card_entry"})
+            continue
+        k_name = str(item.get("kind") or "").strip()
+        ok, err, norm = _validate_example_card(
+            item, kind_name=k_name, default_as_of=generated_at
+        )
+        if not ok or norm is None:
+            refused.append({"slug": str(item.get("slug") or ""), "reason": err})
+            continue
+        if norm["slug"] in seen_slugs:
+            refused.append({"slug": norm["slug"], "reason": f"duplicate_slug:{norm['slug']}"})
+            continue
+        seen_slugs.add(norm["slug"])
+        verified.append(norm)
+    return {
+        "slate_id": str(raw.get("slate_id") or NEW_KINDS_EXAM_SLATE_ID),
+        "generated_at": raw.get("generated_at"),
+        "model": raw.get("model") or DEFAULT_KIND_PROPOSER_MODEL,
+        "calibration_summary": raw.get("calibration_summary"),
+        "accepted_count": len(verified),
+        "refused_count": len(refused),
+        "cards": verified,
         "refused": refused,
     }

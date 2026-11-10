@@ -14,12 +14,15 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import { RoundupCard } from "@/components/discover/roundup/RoundupCard";
+import { buildRoundupCardModel } from "@/lib/discover/roundupCard";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 import { setDiscoverLearningGate } from "@/lib/discoverInteractions";
 import {
   GROUPING_GRADES,
   GROUPING_GRADE_LABELS,
   KID_PSEUDONYMS,
+  buildRoundupContractForProposedCard,
   formatTally,
   handleGradeDeckReadError,
   resolveGroupingGraderId,
@@ -226,7 +229,8 @@ function GroupingGradeSession() {
         <div className="mt-3 flex flex-wrap gap-2" data-testid="grouping-slate-selector">
           {[
             { id: "grouping-candidates-2026-11", label: "Proposed candidates (32)" },
-            { id: "sibling-family-exam-test-2026-11", label: "Exam test cards (20)" },
+            { id: "sibling-family-exam-test-2026-11", label: "Sibling-family exam (20)" },
+            { id: "new-kinds-exam-test-2026-11", label: "New-kinds exam (20)" },
           ].map((opt) => (
             <button
               key={opt.id}
@@ -320,6 +324,9 @@ function GroupingGradeSession() {
   const item = deck.items[index];
   const card = item.proposed_card;
   const single = item.best_single;
+  const roundupContract = buildRoundupContractForProposedCard(card);
+  const canRenderRoundupCard =
+    buildRoundupCardModel(card.title, roundupContract).model !== null;
 
   return (
     <Shell tally={tallyLine} summary={summary}>
@@ -338,12 +345,12 @@ function GroupingGradeSession() {
       <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
         {/* Left: Proposed Grouping Card */}
         <div
-          className="rounded-xl border border-surface-border bg-surface-card p-4"
+          className="space-y-2"
           aria-label="Proposed grouping card"
         >
-          <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-text-muted">
+          <div className="flex items-center justify-between px-1 text-xs font-semibold uppercase tracking-wide text-text-muted">
             <span>
-              Proposed Grouping Card · {card.kicker}
+              Proposed Grouping Card
               {item.proposed_kind && item.proposed_kind !== "sibling_family"
                 ? ` · New Kind (${item.proposed_kind})`
                 : ""}
@@ -357,23 +364,36 @@ function GroupingGradeSession() {
             </span>
           </div>
           {(item.as_of_label || card.as_of_label) && (
-            <div className="mt-1 text-xs font-medium text-text-secondary" data-testid="card-as-of-label">
+            <div className="px-1 text-xs font-medium text-text-secondary" data-testid="card-as-of-label">
               Snapshot {item.as_of_label || card.as_of_label}
             </div>
           )}
-          <h2 className="mt-1.5 text-lg font-semibold text-text-primary">{card.title}</h2>
-          <div className="mt-3 divide-y divide-surface-border">
-            {card.rows.map((row) => (
-              <div key={`${row.market_id}-${row.label}`} className="flex items-center justify-between py-2 text-sm">
-                <span className="font-medium text-text-primary">{row.label}</span>
-                <span className="font-semibold tabular-nums text-text-primary">{row.value}</span>
+          {canRenderRoundupCard ? (
+            <RoundupCard
+              title={card.title}
+              contract={roundupContract}
+              collectionRef={null}
+              items={[]}
+              bundleId={`grade:${item.item_key}`}
+              previewOnly
+            />
+          ) : (
+            <div className="rounded-xl border border-surface-border bg-surface-card p-4">
+              <h2 className="mt-1.5 text-lg font-semibold text-text-primary">{card.title}</h2>
+              <div className="mt-3 divide-y divide-surface-border">
+                {card.rows.map((row) => (
+                  <div key={`${row.market_id}-${row.label}`} className="flex items-center justify-between py-2 text-sm">
+                    <span className="font-medium text-text-primary">{row.label}</span>
+                    <span className="font-semibold tabular-nums text-text-primary">{row.value}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          {card.count_line && (
-            <p className="mt-2 text-xs text-text-secondary">{card.count_line}</p>
+              {card.count_line && (
+                <p className="mt-2 text-xs text-text-secondary">{card.count_line}</p>
+              )}
+              <p className="mt-1.5 text-xs text-text-muted">{card.footer}</p>
+            </div>
           )}
-          <p className="mt-1.5 text-xs text-text-muted">{card.footer}</p>
         </div>
 
         {/* Right: Best Single Member */}

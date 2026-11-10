@@ -37,14 +37,19 @@ from app.utils.grouping_kind_proposer import (
     DEFAULT_KIND_PROPOSALS_JSON_PATH,
     DEFAULT_KIND_PROPOSALS_MD_PATH,
     DEFAULT_KIND_PROPOSER_MODEL,
+    DEFAULT_NEW_KINDS_EXAM_JSON_PATH,
     DOCS_KIND_PROPOSALS_JSON_PATH,
+    DOCS_NEW_KINDS_EXAM_JSON_PATH,
     KIND_PROPOSER_MONTHLY_CAP_USD,
     KIND_PROPOSER_RUN_CAP_USD,
     MIN_GRADED_CARDS_FOR_CATALOG,
+    NEW_KINDS_EXAM_SLATE_ID,
     REQUIRED_EXAMPLE_CARDS_PER_KIND,
     KindProposalSpendCapExceededError,
+    compute_selection_carrying_title,
     evaluate_kind_catalog_admission,
     load_committed_kind_proposals,
+    load_new_kinds_exam_cards,
     propose_new_grouping_kinds,
     validate_proposed_grouping_kind,
 )
@@ -326,3 +331,124 @@ class TestKindProposerSpendAndCatalogAdmission:
         verdict_page = evaluate_kind_catalog_admission("season_stat_leaders", page_rows)
         assert verdict_page["yes_count"] == 2
         assert verdict_page["no_count"] == 0
+
+    def test_selection_carrying_titles_and_twenty_card_held_out_exam_deck(
+        self,
+    ) -> None:
+        # 1. Complete division (N <= 8)
+        complete_meta = compute_selection_carrying_title(
+            [
+                {"label": "Cincinnati Bengals", "probability": 0.935, "rendered_percent": 94},
+                {"label": "Pittsburgh Steelers", "probability": 0.715, "rendered_percent": 72},
+                {"label": "Cleveland Browns", "probability": 0.2365, "rendered_percent": 24},
+                {"label": "Baltimore Ravens", "probability": 0.16, "rendered_percent": 16},
+            ],
+            total_member_count=4,
+            subject_unit="teams",
+            question_subtitle="Which AFC North teams will make the 2027 NFL playoffs?",
+            selection_type="complete_group",
+        )
+        assert complete_meta["title"] == "Which AFC North teams will make the 2027 NFL playoffs?"
+        assert complete_meta["subtitle"] is None
+        assert complete_meta["count_line"] == "Showing 4 of 4 teams"
+
+        # 2. Clear leader (> 1 point)
+        leader_meta = compute_selection_carrying_title(
+            [
+                {"label": "Minnesota Wild", "probability": 0.955, "rendered_percent": 96},
+                {"label": "Carolina Hurricanes", "probability": 0.94, "rendered_percent": 94},
+            ],
+            total_member_count=32,
+            subject_unit="teams",
+            race_name="NHL playoff race",
+            question_subtitle="Which NHL team will make the 2026–27 playoffs?",
+            selection_type="top_5",
+        )
+        assert leader_meta["title"] == "Minnesota Wild lead the NHL playoff race at 96%"
+        assert leader_meta["subtitle"] == "Which NHL team will make the 2026–27 playoffs?"
+        assert leader_meta["count_line"] == "Showing 2 of 32 teams"
+
+        # 3. Close race (within 1 point)
+        tie_meta = compute_selection_carrying_title(
+            [
+                {"label": "Connor McDavid", "probability": 0.962, "rendered_percent": 96},
+                {"label": "Nathan MacKinnon", "probability": 0.9595, "rendered_percent": 96},
+            ],
+            total_member_count=101,
+            subject_unit="players",
+            race_name="NHL 80-point race",
+            question_subtitle="Which NHL players will reach 80+ points in 2026–27?",
+            selection_type="top_5",
+            unnumbered_count=9,
+        )
+        assert (
+            tie_meta["title"]
+            == "Connor McDavid and Nathan MacKinnon top the NHL 80-point race at 96%"
+        )
+        assert tie_meta["subtitle"] == "Which NHL players will reach 80+ points in 2026–27?"
+        assert (
+            tie_meta["count_line"]
+            == "Showing 2 of 101 players · No number yet for 9 players"
+        )
+
+        # 4. Bubble slice (closest to 50%)
+        bubble_meta = compute_selection_carrying_title(
+            [
+                {"label": "Anaheim Ducks", "probability": 0.505, "rendered_percent": 50},
+                {"label": "Buffalo Sabres", "probability": 0.445, "rendered_percent": 44},
+            ],
+            total_member_count=32,
+            subject_unit="teams",
+            selection_type="bubble_50",
+            bubble_title="Five NHL teams on the 2026–27 playoff bubble",
+        )
+        assert bubble_meta["title"] == "Five NHL teams on the 2026–27 playoff bubble"
+        assert bubble_meta["subtitle"] == "Closest to 50% · 32 teams"
+        assert bubble_meta["count_line"] == "Showing 2 of 32 teams"
+
+        # 5. Fallback when no natural title for S
+        fallback_meta = compute_selection_carrying_title(
+            [{"label": "Team A", "probability": 0.5, "rendered_percent": 50}],
+            total_member_count=20,
+            subject_unit="teams",
+            question_subtitle="Which team qualifies?",
+            selection_type="fallback",
+        )
+        assert fallback_meta["count_line"] == "Top 1 by chance · 20 teams"
+
+        # 6. Verify 20-card held-out exam slate
+        assert DEFAULT_NEW_KINDS_EXAM_JSON_PATH.exists()
+        assert DOCS_NEW_KINDS_EXAM_JSON_PATH.exists()
+        assert DEFAULT_NEW_KINDS_EXAM_JSON_PATH.read_text(
+            encoding="utf-8"
+        ) == DOCS_NEW_KINDS_EXAM_JSON_PATH.read_text(encoding="utf-8")
+
+        exam = load_new_kinds_exam_cards()
+        assert exam["slate_id"] == NEW_KINDS_EXAM_SLATE_ID
+        assert exam["accepted_count"] == 20
+        assert exam["refused_count"] == 0
+        stat_cards = [c for c in exam["cards"] if c["kind"] == "season_stat_leaders"]
+        qual_cards = [c for c in exam["cards"] if c["kind"] == "qualification_stage_board"]
+        bubble_cards = [c for c in exam["cards"] if c["selection_type"] == "bubble_50"]
+        assert len(stat_cards) == 10
+        assert len(qual_cards) == 10
+        assert len(bubble_cards) == 3
+
+        # Disjoint from the 10 calibration cards
+        calib = load_committed_kind_proposals()
+        calib_slugs = {
+            c["slug"]
+            for p in calib["proposals"]
+            for c in p["example_cards"]
+        }
+        exam_slugs = {c["slug"] for c in exam["cards"]}
+        assert calib_slugs.isdisjoint(exam_slugs)
+
+        # Served via load_grouping_grade_deck(slate_id="new-kinds-exam-test-2026-11")
+        deck = load_grouping_grade_deck(slate_id=NEW_KINDS_EXAM_SLATE_ID)
+        assert deck["slate_id"] == NEW_KINDS_EXAM_SLATE_ID
+        assert len(deck["items"]) == 20
+        for item in deck["items"]:
+            for r in item["proposed_card"]["rows"]:
+                assert 0 < r["probability"] < 1
+                assert 0 <= r["rendered_percent"] <= 100
