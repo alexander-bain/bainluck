@@ -143,8 +143,10 @@ struct ProjectedFinalPointsChartView: View {
         VStack(alignment: .leading, spacing: 6) {
             let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 20))
             layout {
-                teamReadout(homeTeam, forecast: series.latest.home, actual: series.latestActual?.home, color: homeColor)
-                teamReadout(awayTeam, forecast: series.latest.away, actual: series.latestActual?.away, color: awayColor)
+                teamReadout(homeTeam, forecast: series.latest.home, actual: series.latestActual?.home, color: homeColor,
+                            glyph: Self.keyGlyph(home: true))
+                teamReadout(awayTeam, forecast: series.latest.away, actual: series.latestActual?.away, color: awayColor,
+                            glyph: Self.keyGlyph(home: false))
             }
             Text("\(Self.readingLabel(for: series)) recorded \(series.latest.at.formatted(date: .abbreviated, time: .shortened))")
                 .font(.caption).foregroundStyle(.secondary)
@@ -163,9 +165,24 @@ struct ProjectedFinalPointsChartView: View {
         series.phase == .after ? "Last projection" : "Latest projection"
     }
 
-    private func teamReadout(_ team: String, forecast: Double, actual: Double?, color: Color) -> some View {
+    /// #12317 (Differentiate Without Color) — each team's line has its own
+    /// shape, home circles and away diamonds, and the key shows that shape
+    /// beside the team's name, so the two lines can be told apart without
+    /// colour. Must match the plot's `.symbol(side == 0 ? .circle : .diamond)`.
+    static func keyGlyph(home: Bool) -> String {
+        home ? "circle.fill" : "diamond.fill"
+    }
+
+    private func teamReadout(_ team: String, forecast: Double, actual: Double?, color: Color,
+                             glyph: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(team).font(.subheadline.bold()).foregroundStyle(color)
+            HStack(spacing: 5) {
+                Image(systemName: glyph)
+                    .font(.caption2)
+                    .foregroundStyle(color)
+                    .accessibilityHidden(true)
+                Text(team).font(.subheadline.bold()).foregroundStyle(color)
+            }
             Text("\(forecast.formatted(.number.precision(.fractionLength(0...1)))) projected")
                 .font(.subheadline.monospacedDigit())
             if let actual {
@@ -234,6 +251,9 @@ struct ProjectedFinalPointsChartView: View {
                     ForEach(Array(segment.element.enumerated()), id: \.offset) { entry in
                         let point = entry.element
                         let value = side == 0 ? point.home : point.away
+                        // #12317 — the newest point is drawn large enough to read its shape.
+                        let isNewest = segment.offset == series.segments.count - 1
+                            && entry.offset == segment.element.count - 1
                         LineMark(x: .value("Recorded", point.at), y: .value("Projected points", value),
                                  series: .value("Line", "forecast-\(segment.offset)-\(side)"))
                             .interpolationMethod(.stepEnd)
@@ -242,7 +262,7 @@ struct ProjectedFinalPointsChartView: View {
                         PointMark(x: .value("Recorded", point.at), y: .value("Projected points", value))
                             .foregroundStyle(side == 0 ? homeColor : awayColor)
                             .symbol(side == 0 ? .circle : .diamond)
-                            .symbolSize(22)
+                            .symbolSize(isNewest ? 80 : 22)
                     }
                 }
             }
