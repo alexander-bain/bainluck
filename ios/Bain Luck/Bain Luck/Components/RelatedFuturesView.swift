@@ -495,7 +495,8 @@ struct RelatedFuturesView: View {
                         Text("Tap to load related futures")
                             .font(.caption)
                     }
-                    .foregroundStyle(.secondary)
+                    // #12364 — inside a button `.secondary` is a faded blue (about 2:1).
+                    .foregroundStyle(DS.blueReadable)
                     .frame(maxWidth: .infinity)
                     .padding()
                 }
@@ -553,7 +554,7 @@ struct RelatedFuturesView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "chart.bar.xaxis.ascending")
                             .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                         Text("Season Futures")
                             .font(.headline)
                             .fontWeight(.semibold)
@@ -643,7 +644,7 @@ struct RelatedFuturesView: View {
                 .font(.system(size: 10, weight: .semibold))
                 .tracking(0.8)
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(DS.textSecondaryReadable)
     }
 
     private func teamColorForFuture(_ future: RelatedFuture, sides: [Int: RelatedFutureSide], homeColor: Color, awayColor: Color) -> Color {
@@ -685,7 +686,7 @@ struct RelatedFuturesView: View {
             Circle().fill(color).frame(width: 6, height: 6)
             Text(team)
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
         }
         .padding(.top, 4)
     }
@@ -722,7 +723,7 @@ struct RelatedFuturesView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(shortAwardLabel(future.marketName, cleanLabel: future.cleanLabel).uppercased())
                                 .font(.system(size: 10, weight: .heavy))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                                 .tracking(0.5)
                                 .lineLimit(1)
 
@@ -824,7 +825,7 @@ struct RelatedFuturesView: View {
             Text(title)
                 .font(.system(size: 9, weight: .bold))
                 .tracking(0.3)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
 
             ForEach(Array(sorted.prefix(4).enumerated()), id: \.element.id) { _, future in
@@ -1004,7 +1005,7 @@ struct PlayerAwardsRow: View {
         HStack(spacing: 3) {
             Text(award.label)
                 .font(.system(size: typeSize))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 // 🔴 DELIBERATELY NO `lineLimit(1)`, AND MUTATION IS WHY.
                 //
                 // It looked like the obvious companion to the reflow, and removing
@@ -1069,7 +1070,7 @@ private struct SectionDividerView: View {
                 .font(.system(size: 10, weight: .bold))
                 .textCase(.uppercase)
                 .tracking(0.8)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
 
             Rectangle()
                 .fill(Color.secondary.opacity(0.2))
@@ -1112,7 +1113,7 @@ private struct PlayoffPathPairView: View {
             Text(shortName)
                 .font(.caption2)
                 .fontWeight(.semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
 
             if stages.isEmpty {
                 Text("No playoff data")
@@ -1126,7 +1127,7 @@ private struct PlayoffPathPairView: View {
                             .frame(width: 8, height: 8)
                         Text(stage.name)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(1)
                         Spacer()
                         Text(formatProbability(stage.probability))
@@ -1175,7 +1176,7 @@ private struct SeasonStatRowView: View {
             HStack(spacing: 6) {
                 Text(shortLabel)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(2)
                 Spacer()
                 if let prob = future.probability {
@@ -1188,7 +1189,7 @@ private struct SeasonStatRowView: View {
                 if let rank = future.rank {
                     Text("#\(rank)")
                         .font(.system(size: 8))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
             .padding(.vertical, 3)
@@ -1295,7 +1296,7 @@ private struct AwardCompactRowView: View {
 
                 Text(shortAwardLabel(future.marketName, cleanLabel: future.cleanLabel))
                     .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
 
                 Spacer()
@@ -1336,7 +1337,7 @@ private struct TradeWatchPairView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .tracking(0.8)
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
 
             HStack(alignment: .top, spacing: 8) {
                 tradeColumn(futures: awayTrades, teamName: awayTeam, color: awayColor)
@@ -1368,7 +1369,7 @@ private struct TradeWatchPairView: View {
             Text(TeamShortName.short(teamName))
                 .font(.caption2)
                 .fontWeight(.semibold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
 
             if deduped.isEmpty {
                 Text("None")
@@ -1571,7 +1572,7 @@ private struct NoveltyCardView: View {
                                 Text(noveltyLegName(leg, in: card)
                                      ?? TickerMatchupName.display(leg.outcomeName, matchup: leg.cleanLabel ?? leg.marketName))
                                     .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(DS.textSecondaryReadable)
                                     .lineLimit(2)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
@@ -1653,7 +1654,7 @@ private struct ChampionshipCard: View {
 
                 Text(future.cleanLabel ?? future.marketName)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -1673,7 +1674,7 @@ private struct ChampionshipCard: View {
                             Text("RANK")
                                 .font(.system(size: 8, weight: .semibold))
                                 .tracking(0.5)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                             Text("#\(rank)")
                                 .font(.system(size: 20, weight: .bold, design: .rounded))
                                 .foregroundStyle(.primary.opacity(0.7))
@@ -1743,7 +1744,7 @@ private struct AwardCard: View {
                         Text(shortAwardLabel(future.marketName, cleanLabel: future.cleanLabel))
                             .font(.caption2)
                             .fontWeight(.medium)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(1)
                     }
                 }
@@ -1839,7 +1840,7 @@ private struct GameCell: View {
                     HStack {
                         Text(opponent)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(1)
                         Spacer(minLength: 4)
                         HStack(spacing: 2) {
@@ -1926,7 +1927,7 @@ private struct StatPropsSection: View {
                             Text(config.label)
                                 .font(.caption)
                                 .fontWeight(.semibold)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                             if !((isLive || isFinished) && hasBoxScore) {
                                 Text("(\(rows.count))")
                                     .font(.caption2)
@@ -2047,7 +2048,7 @@ private struct StatTrackerRow: View {
 
                     Text(statCategory)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
 
                     Spacer()
 
@@ -2113,7 +2114,7 @@ private struct StatTrackerRow: View {
                         HStack(spacing: 4) {
                             Text(lineText)
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                             if let prob = future.probability {
                                 Text("\(Int(prob * 100))%")
                                     .font(.system(size: 10, weight: .semibold))
@@ -2180,7 +2181,7 @@ private struct StatPropCard: View {
                 if let line = parsed.line {
                     Text(line)
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
             .frame(width: 80)
@@ -2393,13 +2394,13 @@ private struct SeriesMarketsSection: View {
                     .font(.system(size: 10, weight: .semibold))
                     .tracking(0.8)
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
 
             ForEach(markets) { market in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(market.marketName)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
 
                     ForEach(market.outcomes) { outcome in

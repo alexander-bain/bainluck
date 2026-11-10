@@ -373,7 +373,7 @@ struct EventAtlasChartHeaderView11666: View {
                             .frame(width: 8, height: 8)
                         Text(keyModel.openingLabel)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     }
                 }
                 HStack(spacing: 4) {
@@ -382,7 +382,7 @@ struct EventAtlasChartHeaderView11666: View {
                         .frame(width: 8, height: 8)
                     Text(keyModel.recordedLabel)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
                 HStack(spacing: 4) {
                     RoundedRectangle(cornerRadius: 1)
@@ -390,7 +390,7 @@ struct EventAtlasChartHeaderView11666: View {
                         .frame(width: 12, height: 2)
                     Text(keyModel.changeLabel)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
                 if keyModel.showsSettledResultWords {
                     HStack(spacing: 3) {
@@ -402,10 +402,10 @@ struct EventAtlasChartHeaderView11666: View {
                             .foregroundStyle(.tertiary)
                         Text(keyModel.settledLostWord)
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                         Text(keyModel.settledExplanation)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     }
                     .accessibilityIdentifier("event.atlas.chartKeyResultWord")
                 }
@@ -462,7 +462,8 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                 HStack(spacing: 6) {
                     Text(tapHint)
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        // #12364 — the system tertiary grey read about 1.6:1.
+                        .foregroundStyle(DS.textSecondaryReadable)
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 2)
@@ -496,7 +497,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                 .fixedSize(horizontal: true, vertical: false)
             Text(selectedModel.badgeText.uppercased())
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1.5)
                 .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
@@ -510,7 +511,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                 .foregroundStyle(.tertiary)
             Text(selectedModel.timestampTextPT)
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: true, vertical: false)
             Spacer(minLength: 4)
             Button("Clear") {
@@ -518,7 +519,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
             }
             .font(.caption2.weight(.semibold))
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
             .fixedSize(horizontal: true, vertical: false)
         }
     }
@@ -532,7 +533,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                     .foregroundStyle(.primary)
                 Text(selectedModel.badgeText.uppercased())
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1.5)
                     .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
@@ -545,11 +546,11 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                 }
                 .font(.caption2.weight(.semibold))
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             }
             Text(selectedModel.timestampTextPT)
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
         }
     }
 }
@@ -646,7 +647,7 @@ struct EventAtlasChartOverlay11666: View {
                 )
                 Text(placement.word)
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(settled == .won ? Color.green : Color.secondary)
+                    .foregroundStyle(settled == .won ? DS.greenReadable : DS.textSecondaryReadable)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1.5)
                     .background(Color.systemBackground.opacity(0.88), in: RoundedRectangle(cornerRadius: 3))

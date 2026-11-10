@@ -727,13 +727,13 @@ struct EventAtlasNhlScoringCardView11666: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("NHL GOALSCORERS")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Text(card.title)
                 .font(.headline.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
             Text(card.reason)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
             EventAtlasStoryCardMarkKeyView11666(
                 items: EventAtlasNhlCards11666.scoringMarkKey(for: card)
@@ -793,7 +793,7 @@ struct EventAtlasNhlScoringCardView11666: View {
             .frame(height: 10)
             Text(expanded ? "\(chanceText) · details" : chanceText)
                 .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
         }
 
         return Group {
@@ -820,11 +820,11 @@ struct EventAtlasNhlScoringCardView11666: View {
         if entry.hasHitConflict, card.phase == .after {
             Text(EventAtlasStates11666.pending)
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
         } else if let hit = entry.hit, card.phase == .after {
             Text(hit ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(hit ? Color.green : Color.secondary)
+                .foregroundStyle(hit ? DS.greenReadable : DS.textSecondaryReadable)
         }
     }
 }

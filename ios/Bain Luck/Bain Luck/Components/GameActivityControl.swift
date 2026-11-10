@@ -100,6 +100,8 @@ struct GameActivityControl: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
+        // #12364 — footnote text in the system blue reads 4.0:1; this blue reads 6.3:1.
+        .tint(DS.blueReadable)
     }
 }
 /// Visibility is separate from lifecycle delivery: hiding chrome must not skip final updates.

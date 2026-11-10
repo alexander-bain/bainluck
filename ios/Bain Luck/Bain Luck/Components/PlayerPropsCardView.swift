@@ -421,7 +421,7 @@ struct PlayerPropsCardView: View {
                     // #4919 — no side label at all when the side is unknown.
                     Text(rowSubtitle(item, target: target?.rung))
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
@@ -883,14 +883,14 @@ struct PlayerPropsCardView: View {
                 Text(displayStat(group, card: card).uppercased())
                     .font(.caption.weight(.bold))
                     .tracking(0.5)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
                 if isDone, let final = group.finalValue {
                     Spacer(minLength: 2)
                     Text("Final \(Self.formatStatValue(final))")
                         .font(.caption.weight(.semibold))
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                         .layoutPriority(1)

@@ -899,7 +899,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Text(phase == .final ? "Tournament win-probability journey · Final" : "Tournament win-probability journey")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     HStack(spacing: 6) {
@@ -916,7 +916,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Text(phase == .final ? "Tournament win-probability journey · Final" : "Tournament win-probability journey")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 4)
@@ -974,7 +974,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
                         : "Win-probability history isn’t available for this tournament yet."
                 )
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 8)
             }
@@ -1068,13 +1068,13 @@ struct EventAtlasGolfJourneyCardView11666: View {
             if contender.loadFailed {
                 Text("Couldn’t load market")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 if let open = contender.openingProbability {
                     Text("○ Opened \(formatProbability(open))")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .monospacedDigit()
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1088,12 +1088,12 @@ struct EventAtlasGolfJourneyCardView11666: View {
                     case .lost:
                         Text("✗ Lost")
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .fixedSize(horizontal: false, vertical: true)
                     case nil:
                         Text("Result not confirmed")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 } else if let current = contender.currentProbability {
@@ -1104,7 +1104,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
                 } else {
                     Text("No recent probability")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1133,7 +1133,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Final field distribution (\(card.rows.count) golfers) on one signed strokes-against-par axis")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1162,7 +1162,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Text("Opening win chance: \(preText)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                     Text("Reported finish: \(finishText) · \(scoreText)")
                         .font(.subheadline.weight(.semibold))
@@ -1176,7 +1176,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Text("Reported finish: \(finishText)")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 4)
@@ -1186,7 +1186,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
                             .monospacedDigit()
                         Text("○ Opened \(preText)")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .monospacedDigit()
                     }
                 }
@@ -1249,7 +1249,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
                 Text(EventAtlasGolfTournament11666.ClosingRoundCard.formatStrokes(maxS))
             }
             .font(.caption2)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
             .monospacedDigit()
         }
     }
@@ -1289,7 +1289,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Round-scoped markets settle per round and never carry into later rounds")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1343,7 +1343,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
                         } else {
                             Text("Round complete · result not confirmed")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -1363,7 +1363,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
                         } else {
                             Text("Round complete · result not confirmed")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -1390,7 +1390,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
                                     if let open = outcome.openingProbability, open > 0, open < 1 {
                                         Text("○ Opened \(formatProbability(open))")
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(DS.textSecondaryReadable)
                                             .monospacedDigit()
                                     }
                                     if isSettled {
@@ -1416,7 +1416,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
                                 if let open = outcome.openingProbability, open > 0, open < 1 {
                                     Text("○ Opened \(formatProbability(open))")
                                         .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(DS.textSecondaryReadable)
                                         .monospacedDigit()
                                 }
                                 if isSettled {
@@ -1485,7 +1485,7 @@ struct EventAtlasGolfContenderChooserView11666: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Tap any golfer in the field (\(field.count)) to inspect their finish expectations")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1540,7 +1540,7 @@ struct EventAtlasGolfContenderChooserView11666: View {
             if pagedRows.isEmpty {
                 Text(mode == .movement ? "No 24-hour movement recorded for this field." : "No golfers in this surname band.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 6)
             } else {
@@ -1567,7 +1567,7 @@ struct EventAtlasGolfContenderChooserView11666: View {
                     Spacer()
                     Text("Page \(clampedPage + 1) of \(pageCount)")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .monospacedDigit()
                     Spacer()
 
@@ -1654,12 +1654,12 @@ struct EventAtlasGolfContenderChooserView11666: View {
                 } else if let open = row.openingProbability, open > 0, open < 1 {
                     Text("○ Opened \(formatProbability(open))")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .monospacedDigit()
                 } else {
                     Text("—")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             } else {
                 Text(row.probabilityLabel)
@@ -1686,7 +1686,7 @@ struct EventAtlasGolfFinishDetailsSheet11666: View {
                             .font(.headline)
                         Text("\(item.finishTitle) · \(item.marketName)")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     }
                     .padding(.vertical, 4)
                 }

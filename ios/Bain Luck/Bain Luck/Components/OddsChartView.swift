@@ -764,7 +764,7 @@ struct OddsChartView: View {
                 sportKey: sportKey) {
                 Text(result)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
             }
         }
@@ -1007,13 +1007,13 @@ struct OddsChartView: View {
         HStack(spacing: 8) {
             Image(systemName: "chart.xyaxis.line")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Text(Self.noReadingsLine(
                 status: status,
                 venueSettled: venueSettled,
                 commenceTime: commenceTime?.asDate))
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1135,7 +1135,7 @@ struct OddsChartView: View {
             } else if let error = vm.error {
                 Text(error)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .frame(height: chartHeight)
             } else if let history = vm.history {
                 let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
@@ -1160,7 +1160,7 @@ struct OddsChartView: View {
                     ))
                         .font(.caption)
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
@@ -1335,7 +1335,7 @@ struct OddsChartView: View {
                             ))
                                 .font(.callout)
                                 .multilineTextAlignment(.center)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                             Spacer()
                         }
                         .padding()
@@ -1565,7 +1565,7 @@ struct OddsChartView: View {
         } label: {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
                 .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 // #9483 R4 — the whole 44pt square is the target (it was the
                 // 12pt glyph plus 6pt padding, 26×25), inside the header row.
                 .frame(minWidth: 44, minHeight: 44)
@@ -1585,13 +1585,16 @@ struct OddsChartView: View {
                         .fontWeight(selectedRange == range ? .semibold : .regular)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(selectedRange == range ? Color.blue.opacity(0.15) : Color.clear)
-                        .foregroundStyle(selectedRange == range ? .blue : .secondary)
+                        // #12364 — both chips read at 4.5:1 or better (system blue and grey did not).
+                        .background(selectedRange == range ? DS.blueReadable.opacity(0.15) : Color.clear)
+                        .foregroundStyle(selectedRange == range ? DS.blueReadable : DS.textSecondaryReadable)
                 }
             }
         }
+        // #12364 — a light fill, not a hairline: Apple's audit read the
+        // hairline beside an 11 pt label as the label's colour.
+        .background(DS.trackBg)
         .clipShape(Capsule())
-        .overlay(Capsule().stroke(Color.secondary.opacity(0.2)))
     }
 
     // MARK: - Data Filtering
@@ -2355,7 +2358,7 @@ struct OddsChartView: View {
                     let marker = visibleMarkers[placement.key]
                     Text(marker.label)
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2)
                         .background(.ultraThinMaterial)
@@ -2628,7 +2631,7 @@ struct OddsChartView: View {
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
                 Text(kicker)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                 Text(Self.momentCaptionText(for: headline))
                     .font(.caption2)
                     .foregroundStyle(.primary)
@@ -2747,7 +2750,7 @@ struct OddsChartView: View {
             if let reading {
                 let last = HStack(spacing: 3) {
                     Text("last")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                     Text(reading.text)
                         .fontWeight(.semibold)
                         .foregroundStyle(reading.ink)
@@ -2821,7 +2824,7 @@ struct OddsChartView: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
             // The tap target is the 44pt frame, not the caption-sized text: the
             // frame sits in the key's own row under the plot, so the plot box
             // never gives it a point, and the shape is laid on the frame.
@@ -2844,7 +2847,7 @@ struct OddsChartView: View {
                 Image(systemName: "chevron.up")
                     .font(.system(size: 8, weight: .bold))
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
             .frame(minWidth: 44, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
         }

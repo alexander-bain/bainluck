@@ -167,7 +167,7 @@ struct NativeConceptDiscoverCard: View {
             if let context = feedContext, !context.isEmpty, !whatHit {
                 Text(context)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(2)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)

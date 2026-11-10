@@ -1475,13 +1475,13 @@ struct EventAtlasFootballPeriodWinnersCardView11666: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(card.eyebrow)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                 Text(card.title)
                     .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(card.subtitle)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1497,7 +1497,7 @@ struct EventAtlasFootballPeriodWinnersCardView11666: View {
 
             Text(EventAtlasStates11666.independentChancesLabel)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .contain)
@@ -1513,11 +1513,11 @@ struct EventAtlasFootballPeriodWinnersCardView11666: View {
                 if let away = panel.awayScore, let home = panel.homeScore {
                     Text("\(card.awayShort) \(away) – \(home) \(card.homeShort)")
                         .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 } else {
                     Text("Score pending")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
 
@@ -1562,7 +1562,7 @@ struct EventAtlasFootballPeriodWinnersCardView11666: View {
                 } label: {
                     Image(systemName: "info.circle")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
                 }
@@ -1575,16 +1575,16 @@ struct EventAtlasFootballPeriodWinnersCardView11666: View {
                 if let pre = leg.pregameChance {
                     Text("○ \(formatProbability(pre))")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: true, vertical: false)
                 } else if card.phase == .before {
                     Text(EventAtlasStates11666.noRecentPrice)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 } else {
                     Text("○ —")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: true, vertical: false)
                 }
 
@@ -1596,7 +1596,7 @@ struct EventAtlasFootballPeriodWinnersCardView11666: View {
                 } else if leg.isStaleLive {
                     Text(EventAtlasStates11666.noRecentPrice)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
 
                 Spacer(minLength: 2)
@@ -1652,13 +1652,13 @@ struct EventAtlasFootballPairedMilestonesCardView11666: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(card.eyebrow)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                 Text(card.title)
                     .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("\(card.awayShort) vs \(card.homeShort) · \(card.family.statWords)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1695,7 +1695,7 @@ struct EventAtlasFootballPairedMilestonesCardView11666: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("\(group.targetLabel) \(card.family.unitPlural)")
                 .font(.caption.weight(.bold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
 
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 6) {
@@ -1731,7 +1731,7 @@ struct EventAtlasFootballPairedMilestonesCardView11666: View {
                     } label: {
                         Image(systemName: "info.circle")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
@@ -1746,15 +1746,15 @@ struct EventAtlasFootballPairedMilestonesCardView11666: View {
                     if let pre = slot.pregameChance {
                         Text("○ \(formatProbability(pre))")
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     } else if card.phase == .before {
                         Text(EventAtlasStates11666.noRecentPrice)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     } else {
                         Text("○ Unavailable")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     }
 
                     if let live = slot.liveChance {
@@ -1764,7 +1764,7 @@ struct EventAtlasFootballPairedMilestonesCardView11666: View {
                     } else if slot.isStaleLive {
                         Text(EventAtlasStates11666.noRecentPrice)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     }
                 }
 
@@ -1776,7 +1776,7 @@ struct EventAtlasFootballPairedMilestonesCardView11666: View {
             } else {
                 Text("Probability unavailable")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1815,7 +1815,7 @@ struct EventAtlasFootballCombinedYardsCardView11666: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("GROUND + AIR SPLIT")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
 
             switch card.splitState {
             case .hiddenBeforePlay:
@@ -1824,7 +1824,7 @@ struct EventAtlasFootballCombinedYardsCardView11666: View {
             case .absent(let message):
                 Text(message)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
 
             case .totalOnly(_, let formattedTotal, let splitUnavailableMessage):
@@ -1838,7 +1838,7 @@ struct EventAtlasFootballCombinedYardsCardView11666: View {
                 }
                 Text(splitUnavailableMessage)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
 
             case .decomposed(_, let formattedTotal, let ground, let air):
@@ -1868,7 +1868,7 @@ struct EventAtlasFootballCombinedYardsCardView11666: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(component.label)
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                 Spacer()
                 Text(component.formattedYards)
                     .font(.caption.weight(.semibold).monospacedDigit())

@@ -464,7 +464,8 @@ final class FinalForecastComparison11296Tests: XCTestCase {
         XCTAssertFalse(line.contains(".lineLimit("), "full names wrap; nothing is cut")
         XCTAssertTrue(line.contains(".fixedSize(horizontal:false,vertical:true)"))
         XCTAssertTrue(line.contains(".font(.caption)"), "a text style, so Dynamic Type ramps it")
-        XCTAssertTrue(line.contains(".foregroundStyle(.secondary)"), "secondary to the actual final")
+        // #12364: the readable secondary grey, not the system one.
+        XCTAssertTrue(line.contains(".foregroundStyle(DS.textSecondaryReadable)"), "secondary to the actual final")
     }
 
     // MARK: - The trimmed served fixture

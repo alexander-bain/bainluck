@@ -48,7 +48,7 @@ struct FeedView: View {
                             .fontWeight(.semibold)
                         Text(error)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .multilineTextAlignment(.center)
                         Button("Try Again") {
                             Task { await vm.startLoad() }
@@ -171,10 +171,10 @@ struct FeedView: View {
                 Section {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.clockwise.circle")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                         Text("Showing recent games — couldn't refresh")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                         Spacer()
                         Button("Retry") {
                             Task { await vm.startLoad() }
@@ -218,7 +218,7 @@ struct FeedView: View {
                             ProgressView()
                             Text("Loading games…")
                                 .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                         }
                         .frame(maxWidth: .infinity)
                         .accessibilityElement(children: .combine)
@@ -361,7 +361,7 @@ struct FeedView: View {
                 Text("\(items.count)")
                     .font(.caption2)
                     .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(Color.secondary.opacity(0.12))
@@ -426,7 +426,7 @@ struct FeedView: View {
                 Text("\(vm.groupedItems.count)")
                     .font(.caption2)
                     .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(Color.secondary.opacity(0.12))

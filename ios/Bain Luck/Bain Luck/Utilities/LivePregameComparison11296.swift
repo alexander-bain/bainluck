@@ -183,7 +183,7 @@ struct LiveHeadlineForecast11296: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(forecast.current.label)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                 Text(LiveProjectedFinal2920.pairText(forecast.current, awayName: awayName, homeName: homeName))
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Color.primary)
@@ -222,7 +222,7 @@ struct LivePregameBaselineLine11296: View {
             Text(LivePregameComparison11296.pairText(comparison, awayName: awayName, homeName: homeName))
         }
         .font(font)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(DS.textSecondaryReadable)
         .multilineTextAlignment(.leading)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -275,13 +275,13 @@ struct LiveForecastDetails11296: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(section.title).fontWeight(.semibold)
                     ForEach(Array(section.lines.enumerated()), id: \.offset) { _, line in
-                        Text(line).foregroundStyle(.secondary)
+                        Text(line).foregroundStyle(DS.textSecondaryReadable)
                     }
                 }
                 .accessibilityElement(children: .combine)
             }
             Text(Self.basis(forecast.current.admitted.provenance.period))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
         }
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityIdentifier(Self.accessibilityIdentifier)

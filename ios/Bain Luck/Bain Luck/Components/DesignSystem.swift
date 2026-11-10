@@ -17,6 +17,17 @@ enum DS {
     static let amber = Color(red: 0.96, green: 0.62, blue: 0.04)         // #F59E0B
     static let danger = Color(red: 0.94, green: 0.27, blue: 0.27)        // #EF4444
     static let trackBg = Color(red: 0.95, green: 0.96, blue: 0.96)       // #F3F4F6
+    /// #12364 — small grey text a reader can read: 6.0:1 on a white card and
+    /// 5.6:1 on `surface`. Apple's accessibility audit wants 4.5:1 for small
+    /// text; the system's secondary grey is about 3.4:1 and `textSecondary`
+    /// 4.4:1 on `surface`. It replaces the system `.secondary` on the
+    /// game page's small text.
+    static let textSecondaryReadable = Color(red: 0.37, green: 0.39, blue: 0.44) // #5E6370
+    /// #12364 — small blue text and links: 6.3:1 on white, 5.0:1 on its own
+    /// 15% tint. The system blue is 4.0:1 and `blue` 3.7:1.
+    static let blueReadable = Color(red: 0.00, green: 0.36, blue: 0.76)          // #005CC2
+    /// #12364 — a won or hit mark in text: 5.5:1 on white. The system green is 2.2:1.
+    static let greenReadable = Color(red: 0.02, green: 0.47, blue: 0.34)         // #047857
 
     static func probColor(_ value: Double) -> Color {
         if value >= 65 { return emerald }

@@ -211,7 +211,7 @@ struct NativeTournamentDiscoverCard: View {
             if presentation.showsFeedContext, let context = feedContext {
                 Text(context)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(2)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)

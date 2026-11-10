@@ -315,7 +315,7 @@ struct NativeEventDiscoverCard: View {
                             away: event.awayScore, home: event.homeScore,
                             authorityPeriod: event.espn?.period))
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -536,7 +536,7 @@ struct NativeEventDiscoverCard: View {
             ) {
                 Image(systemName: "square.and.arrow.up")
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .padding(8)
                     .background(Color.secondary.opacity(0.10), in: Circle())
                     .frame(minWidth: 44, minHeight: 44)
@@ -759,7 +759,7 @@ struct NativeEventDiscoverCard: View {
     private var winProbabilityLabel: some View {
         Text("Win Probability")
             .font(.caption2.weight(.medium))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
     }
 
     private var statusLayout: GameCardStatusColumn.Layout {
