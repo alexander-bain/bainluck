@@ -131,7 +131,28 @@ private struct GameActivityReading {
               let home = snapshot.homeScore, away != home else { return nil }
         return away < home ? .away : .home
     }
-    func steppedBack(_ side: Side) -> Bool { isStale || lowerScoredSide == side }
+    /// #10864 — the side the server's verdict says lost: it steps back even on a
+    /// level score settled another way. Without a verdict, the scoreboard rule.
+    var losingSide: Side? {
+        guard matches, snapshot.isFinal else { return nil }
+        switch snapshot.result {
+        case .home: return .away
+        case .away: return .home
+        case .draw: return nil
+        case nil: return lowerScoredSide
+        }
+    }
+    func steppedBack(_ side: Side) -> Bool { isStale || losingSide == side }
+    /// #10864 — "Won", "Lost" or "Draw" beside each final score, only when the
+    /// server stated the verdict. The saved widget prints the same words.
+    func verdict(_ side: Side) -> String? {
+        guard matches, snapshot.isFinal, let result = snapshot.result else { return nil }
+        switch result {
+        case .draw: return "Draw"
+        case .home: return side == .home ? "Won" : "Lost"
+        case .away: return side == .away ? "Won" : "Lost"
+        }
+    }
 
     func color(_ side: Side, onDark: Bool) -> Color {
         GameActivityColor.color(side == .home ? snapshot.homeColorHex : snapshot.awayColorHex, onDark: onDark)
@@ -210,6 +231,7 @@ private struct GameActivityReading {
     func rowSpoken(_ side: Side) -> String {
         var parts = [name(side), score(side).map { "\($0)" } ?? "score unavailable"]
         if let value = percent(side) { parts.append("\(percentText(value)) chance to win") }
+        if let verdict = verdict(side) { parts.append(verdict) }
         return parts.joined(separator: ", ")
     }
     var chanceSpoken: String {
@@ -355,6 +377,11 @@ private struct GameActivityTeamRow: View {
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(reading.lead == side && !reading.isStale ? .primary : .secondary)
+                    .frame(minWidth: 48, alignment: .trailing)
+            } else if let verdict = reading.verdict(side) {
+                Text(verdict)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(reading.steppedBack(side) ? .secondary : .primary)
                     .frame(minWidth: 48, alignment: .trailing)
             }
         }

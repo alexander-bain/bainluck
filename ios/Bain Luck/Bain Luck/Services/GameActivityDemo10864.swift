@@ -38,7 +38,8 @@ enum GameActivityDemo10864 {
             homeColorHex: "#E31837", awayColorHex: "#125740",
             periodLabel: final ? nil : "Q3 8:14",
             projectedHomeScore: final ? nil : 31, projectedAwayScore: final ? nil : 17,
-            projectionLabel: final ? nil : "Projected final")
+            projectionLabel: final ? nil : "Projected final",
+            servedResult: final ? "home" : nil)
     }
 
     @MainActor
