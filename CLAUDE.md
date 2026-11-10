@@ -62,7 +62,7 @@ Every frontend page needs 3 GA4 hooks before any conditional return: `usePageTra
 
 One branch and one PR per change. CI is the only integrator.
 Nothing reaches master except through a merged PR.
-Tier A merges on green. Tier B and policy: claude[bot] at head + Fable ACCEPT; author window merges.
+Tier A merges on green. Tier B: claude[bot] at head; Fable ACCEPT if reader-visible/destructive/eval (119-A); author window merges.
 Tier C requires Alex's tap.
 `live-path` is the two-minute lane for live delivery fixes.
 NOW #11852 is the only priority list and status line.

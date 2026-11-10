@@ -170,7 +170,7 @@ def test_day0_trim_keeps_product_rules_and_gates_at_the_entrypoint():
         "CI is the only integrator",
         "Nothing reaches master except through a merged PR",
         "Tier A merges on green",
-        "Tier B and policy: claude[bot] at head + Fable ACCEPT",
+        "Tier B: claude[bot] at head; Fable ACCEPT if reader-visible/destructive/eval (119-A)",
         "author window merges",
         "Tier C requires Alex's tap",
         "`live-path` is the two-minute lane",
