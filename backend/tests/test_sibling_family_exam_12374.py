@@ -91,14 +91,19 @@ class TestDatasetSplitAndSpendGuard:
 
         # Exceeding the $5/run cap raises ValueError before scoring
         over_run = estimate_sibling_family_exam_cost(
-            5000, passes=3, est_input_tokens_per_call=2000, est_output_tokens_per_call=1000
+            5000,
+            passes=3,
+            est_input_tokens_per_call=2000,
+            est_output_tokens_per_call=1000,
         )
         assert not over_run.within_caps
         assert "CAP_EXCEEDED" in over_run.format_banner()
 
         # Exceeding the $30/month cap raises ValueError
         with pytest.raises(ValueError, match="spend cap exceeded"):
-            run_sibling_family_exam(month_spent_before_usd=29.99, printer=lambda _: None)
+            run_sibling_family_exam(
+                month_spent_before_usd=29.99, printer=lambda _: None
+            )
 
     def test_wilson95_interval_matches_reference_bounds(self) -> None:
         assert wilson95_interval(0, 0) == (0.0, 0.0)
@@ -221,7 +226,9 @@ class TestEveryGatePassOrFail:
         assert syn_obs["better_pct"] == 95.0
         assert syn_obs["strict_amazing_k"] == 9
         assert syn_obs["strict_amazing_pct"] == 45.0
-        assert syn_obs["grade_mapping"] == "109-A: amazing + fine -> better, no -> worse"
+        assert (
+            syn_obs["grade_mapping"] == "109-A: amazing + fine -> better, no -> worse"
+        )
 
     def test_default_dataset_is_derived_from_real_proposer_and_nonzero_varied_api_usage(
         self,
@@ -320,7 +327,9 @@ class TestEveryGatePassOrFail:
             _graded_dataset(better_count=16, same_count=4, worse_count=0)
         )
         g1_below = next(
-            g for g in below_better["gate_results"] if g["id"] == "card_vs_single_member"
+            g
+            for g in below_better["gate_results"]
+            if g["id"] == "card_vs_single_member"
         )
         assert g1_below["result"] == "FAIL"
         assert below_better["result"] == "FAIL"
@@ -395,9 +404,7 @@ class TestEveryGatePassOrFail:
         first_test["passes"]["1"]["members"][0]["settled"] = True
 
         record = score_sibling_family_exam(cards)
-        g3 = next(
-            g for g in record["gate_results"] if g["id"] == "freshness_and_count"
-        )
+        g3 = next(g for g in record["gate_results"] if g["id"] == "freshness_and_count")
         assert g3["by_pass"]["1"]["result"] == "FAIL"
         assert g3["result"] == "FAIL"
         assert record["result"] == "FAIL"
@@ -437,14 +444,19 @@ class TestEveryGatePassOrFail:
         first_card = dataset[0]
         assert str(first_card["card_id"]) not in serialized
         assert str(first_card["parent_subject"]) not in serialized
-        assert str(first_card["passes"]["1"]["members"][0]["market_id"]) not in serialized
+        assert (
+            str(first_card["passes"]["1"]["members"][0]["market_id"]) not in serialized
+        )
 
         md = format_sibling_family_exam_markdown(record)
         assert "card_vs_single_member" in md
         assert "relation_truth" in md
         assert "freshness_and_count" in md
         assert "run_to_run_stability" in md
-        assert "the interval's low end is `83.9%`, which is what `20` cards from one grader can show" in md
+        assert (
+            "the interval's low end is `83.9%`, which is what `20` cards from one grader can show"
+            in md
+        )
         assert "**PASS**" in md
 
     def test_published_evals_json_and_docs_receipt_match_scorer_output_on_committed_dataset(
@@ -456,9 +468,16 @@ class TestEveryGatePassOrFail:
 
         repo_root = Path(__file__).resolve().parents[2]
         evals_json_path = (
-            repo_root / "frontend" / "lib" / "evals" / "data" / "sibling-family-exam-2026-11.json"
+            repo_root
+            / "frontend"
+            / "lib"
+            / "evals"
+            / "data"
+            / "sibling-family-exam-2026-11.json"
         )
-        docs_md_path = repo_root / "docs" / "discover" / "sibling-family-exam-2026-11.md"
+        docs_md_path = (
+            repo_root / "docs" / "discover" / "sibling-family-exam-2026-11.md"
+        )
 
         record = run_sibling_family_exam(printer=lambda _: None)
         expected_json = export_sibling_family_exam_for_evals(record)
@@ -471,9 +490,21 @@ class TestEveryGatePassOrFail:
 
         assert published_json == expected_json
         assert published_md.strip() == expected_md.strip()
-        assert published_json["cost"]["actual_usd"] == raw_dataset["actual_cost_usd"] == 0.0167
-        assert published_json["cost"]["input_tokens"] == raw_dataset["total_input_tokens"] == 58434
-        assert published_json["cost"]["output_tokens"] == raw_dataset["total_output_tokens"] == 13224
+        assert (
+            published_json["cost"]["actual_usd"]
+            == raw_dataset["actual_cost_usd"]
+            == 0.0167
+        )
+        assert (
+            published_json["cost"]["input_tokens"]
+            == raw_dataset["total_input_tokens"]
+            == 58434
+        )
+        assert (
+            published_json["cost"]["output_tokens"]
+            == raw_dataset["total_output_tokens"]
+            == 13224
+        )
 
     def test_nhl_100_points_players_and_teams_never_mix_when_both_present(self) -> None:
         import asyncio
@@ -482,18 +513,50 @@ class TestEveryGatePassOrFail:
         from app.utils.roundup_containers import RoundupMembers, load_roundup_definition
         from app.utils.sibling_family import produce_sibling_family
 
-        defn_path = (
-            Path(__file__).resolve().parents[1]
-            / "data"
-            / "containers"
-            / "nhl-players-100-points-2026-27.json"
+        containers_dir = Path(__file__).resolve().parents[1] / "data" / "containers"
+        liga_defn = load_roundup_definition(
+            containers_dir / "liga-profesional-relegation-2026.json"
         )
-        defn = load_roundup_definition(defn_path)
-        assert defn["slug"] == "nhl-players-100-points-2026-27"
-        assert defn["name"] == "Which NHL player will record 100+ points in 2026-27?"
-        assert defn["section_title"] == "2026-27 regular season"
-        assert defn["rule"]["group_id"] == "polymarket:1098356"
-        assert defn["rule"]["subject_unit"] == "players"
+        nhl_playoffs_defn = load_roundup_definition(
+            containers_dir / "nhl-playoffs-2026-27.json"
+        )
+        assert (
+            liga_defn["name"]
+            == "Which club will be relegated from the 2026 Liga Profesional (Argentina)?"
+        )
+        assert (
+            nhl_playoffs_defn["name"]
+            == "Which team will make the 2026-27 NHL Playoffs?"
+        )
+
+        defn = {
+            "slug": "nhl-players-100-points-2026-27",
+            "name": "Which NHL player will record 100+ points in 2026-27?",
+            "kind": "roundup",
+            "category": "sports",
+            "tag": "NHL",
+            "kicker": "NHL · APR 30",
+            "section_title": "2026-27 regular season",
+            "footer": "Each player is their own market. They don't add up to 100%.",
+            "membership": "sibling-family",
+            "relations": ["same_measure", "same_window", "sibling"],
+            "level": "grouped",
+            "rule": {
+                "producer": "sibling_family",
+                "source": "polymarket",
+                "group_id": "polymarket:1098356",
+                "template": "Will * record 100+ points?",
+                "title_template": "Which NHL player will record 100+ points in 2026-27?",
+                "kicker_prefix": "NHL",
+                "kicker_include_date": True,
+                "subject_unit": "players",
+                "outcome_name": "Yes",
+                "lead_rule": "nearest_open_deadline",
+                "closed_world": False,
+                "min_numbered_members": 3,
+                "card_rows": 5,
+            },
+        }
 
         shared_res = "2027-04-30T03:59:00+00:00"
         mixed_pool_without_gids = [
@@ -551,3 +614,414 @@ class TestEveryGatePassOrFail:
         assert "Colorado Avalanche" not in row_labels
         assert "Carolina Hurricanes" not in row_labels
         assert produced.sections[0]["title"] == "2026-27 regular season"
+
+    def test_rules_1_and_2_quote_freshness_age_mark_and_top_k_unnumbered_refusal(
+        self,
+    ) -> None:
+        from datetime import datetime, timezone
+
+        from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
+        from app.utils.sibling_family import select_sibling_family
+
+        now = datetime(2026, 11, 10, 18, 30, 0, tzinfo=timezone.utc)
+        res_date = "2027-05-31T23:59:00Z"
+
+        # 1. Clean cohort where one row is 9 hours old (>6h, <=7d): serves and passes observed_at
+        # on every shown row so RoundupCard renders the age mark ("9h ago").
+        clean_markets = [
+            {
+                "id": 7001,
+                "name": "Will Club A finish top 8?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 70011,
+                        "name": "Yes",
+                        "probability": 0.45,
+                        "last_updated": "2026-11-10T18:10:00Z",
+                    }
+                ],
+            },
+            {
+                "id": 7002,
+                "name": "Will Monaco finish top 8?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 70021,
+                        "name": "Yes",
+                        "probability": 0.31,
+                        "last_updated": "2026-11-10T08:29:53Z",
+                    }
+                ],
+            },
+            {
+                "id": 7003,
+                "name": "Will Club C finish top 8?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 70031,
+                        "name": "Yes",
+                        "probability": 0.25,
+                        "last_updated": "2026-11-10T17:50:00Z",
+                    }
+                ],
+            },
+        ]
+        served = select_sibling_family(clean_markets, now=now)
+        assert isinstance(served, RoundupMembers)
+        monaco_row = next(r for r in served.rows if r["label"] == "Monaco")
+        assert monaco_row["observed_at"] == "2026-11-10T08:29:53Z"
+
+        # 2. UECL top-8 specimen (polymarket:1024921): Brighton (28%, Oct 23, 18d old),
+        # SC Freiburg (19%, Oct 18, 23d old), Twente (19%, Oct 22, 19d old) alongside
+        # Monaco (31%, 9h old) -> stale quotes withheld and card refused.
+        uecl_top8_specimen = [
+            {
+                "id": 62916634,
+                "name": "Will Trabzonspor finish top 8 in UECL league phase?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 1,
+                        "name": "Yes",
+                        "probability": 0.33,
+                        "last_updated": "2026-11-03T15:31:24Z",
+                    }
+                ],
+            },
+            {
+                "id": 62916655,
+                "name": "Will Monaco finish top 8 in UECL league phase?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 2,
+                        "name": "Yes",
+                        "probability": 0.31,
+                        "last_updated": "2026-11-10T08:29:53Z",
+                    }
+                ],
+            },
+            {
+                "id": 62916637,
+                "name": "Will Brighton finish top 8 in UECL league phase?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 3,
+                        "name": "Yes",
+                        "probability": 0.28,
+                        "last_updated": "2026-10-23T07:00:35Z",
+                    }
+                ],
+            },
+            {
+                "id": 62916658,
+                "name": "Will SC Freiburg finish top 8 in UECL league phase?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 4,
+                        "name": "Yes",
+                        "probability": 0.19,
+                        "last_updated": "2026-10-18T20:46:24Z",
+                    }
+                ],
+            },
+            {
+                "id": 62916641,
+                "name": "Will Twente finish top 8 in UECL league phase?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "soccer",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 5,
+                        "name": "Yes",
+                        "probability": 0.19,
+                        "last_updated": "2026-10-22T23:09:47Z",
+                    }
+                ],
+            },
+        ]
+        uecl_refusal = select_sibling_family(uecl_top8_specimen, now=now)
+        assert isinstance(uecl_refusal, RoundupRefusal)
+        assert (
+            dict(uecl_refusal.reasons).get("family")
+            == "unnumbered_members_could_change_top_rows"
+        )
+        assert "Brighton" in dict(uecl_refusal.reasons).get("stale_quotes_withheld", ())
+
+        # 3. NHL 100-points specimen (polymarket:1098356): Kyle Connor's 41% is 24 days old
+        # AND 18 unnumbered players (including Nathan MacKinnon and David Pastrnak) sit in
+        # a top-5 cohort -> refused even if all priced players were fresh.
+        nhl_specimen = [
+            {
+                "id": 63105212,
+                "name": "Will Connor McDavid record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 11,
+                        "name": "Yes",
+                        "probability": 0.80,
+                        "last_updated": "2026-11-10T18:22:08Z",
+                    }
+                ],
+            },
+            {
+                "id": 63105215,
+                "name": "Will Nikita Kucherov record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 12,
+                        "name": "Yes",
+                        "probability": 0.545,
+                        "last_updated": "2026-11-10T18:22:08Z",
+                    }
+                ],
+            },
+            {
+                "id": 63218794,
+                "name": "Will Leon Draisaitl record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 13,
+                        "name": "Yes",
+                        "probability": 0.47,
+                        "last_updated": "2026-11-10T18:22:13Z",
+                    }
+                ],
+            },
+            {
+                "id": 63218805,
+                "name": "Will Kyle Connor record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 14,
+                        "name": "Yes",
+                        "probability": 0.41,
+                        "last_updated": "2026-10-17T17:53:03Z",
+                    }
+                ],
+            },
+            {
+                "id": 63218801,
+                "name": "Will Martin Necas record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 15,
+                        "name": "Yes",
+                        "probability": 0.33,
+                        "last_updated": "2026-11-06T20:45:07Z",
+                    }
+                ],
+            },
+            {
+                "id": 63218824,
+                "name": "Will Kirill Kaprizov record 100+ points?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "hockey",
+                "resolution_date": res_date,
+                "outcomes": [
+                    {
+                        "id": 16,
+                        "name": "Yes",
+                        "probability": 0.30,
+                        "last_updated": "2026-11-10T18:00:00Z",
+                    }
+                ],
+            },
+            *[
+                {
+                    "id": 63219000 + idx,
+                    "name": f"Will {player} record 100+ points?",
+                    "status": "open",
+                    "source": "polymarket",
+                    "category": "hockey",
+                    "resolution_date": res_date,
+                    "outcomes": [{"id": 100 + idx, "name": "Yes", "probability": None}],
+                }
+                for idx, player in enumerate(
+                    (
+                        "Nathan MacKinnon",
+                        "David Pastrnak",
+                        "Auston Matthews",
+                        "Mikko Rantanen",
+                        "Mitch Marner",
+                    )
+                )
+            ],
+        ]
+        nhl_refusal = select_sibling_family(nhl_specimen, now=now)
+        assert isinstance(nhl_refusal, RoundupRefusal)
+        assert (
+            dict(nhl_refusal.reasons).get("family")
+            == "unnumbered_members_could_change_top_rows"
+        )
+
+    def test_decision_123a_at_most_two_sibling_family_in_first_20_and_no_adjacent_grouped_cards(
+        self,
+    ) -> None:
+        from app.utils.roundup_containers import (
+            _is_roundup_bundle_card,
+            _is_sibling_family_bundle,
+            insert_roundup_feed_items,
+        )
+
+        # Build a 25-card Discover deck of ordinary futures/event cards.
+        base_deck = [
+            {
+                "type": "futures",
+                "score": float(100 - idx),
+                "headline": f"Story {idx}",
+                "data": {"id": 5000 + idx, "name": f"Market {idx}", "status": "open"},
+            }
+            for idx in range(25)
+        ]
+
+        def _make_roundup_bundle(
+            slug: str,
+            title: str,
+            *,
+            sibling: bool,
+        ) -> dict:
+            return {
+                "type": "bundle",
+                "score": 80.0,
+                "headline": title,
+                "data": {
+                    "id": f"roundup:{slug}",
+                    "title": title,
+                    "kind": "roundup",
+                    "story_key": f"roundup:{slug}",
+                    "collection_ref": {
+                        "slug": slug,
+                        "href": f"/collections/{slug}",
+                        "name": title,
+                        "revision": 1,
+                        "collection_count": 10,
+                    },
+                    "roundup": {
+                        "kicker": "ROUNDUP",
+                        "tag": "SPORTS",
+                        "footer": "Each row is its own market.",
+                        "relations": (
+                            ["same_measure", "same_window", "sibling"]
+                            if sibling
+                            else ["same_window"]
+                        ),
+                        "level": "grouped",
+                        "rows": [
+                            {"label": f"{slug} row {i}", "probability": 0.5 - i * 0.05}
+                            for i in range(3)
+                        ],
+                    },
+                },
+            }
+
+        # Mix existing round-up cards ("By November 30", "By December 31") with 5 eligible sibling-family cards.
+        roundup_cards = [
+            _make_roundup_bundle("by-november-30", "By November 30", sibling=False),
+            _make_roundup_bundle(
+                "liga-profesional-relegation-2026",
+                "Which clubs will be relegated from Argentina's Liga Profesional in 2026?",
+                sibling=True,
+            ),
+            _make_roundup_bundle("by-december-31", "By December 31", sibling=False),
+            _make_roundup_bundle(
+                "nhl-playoffs-2026-27",
+                "Which NHL team will make the 2026–27 playoffs?",
+                sibling=True,
+            ),
+            _make_roundup_bundle(
+                "gta-vi-album-features",
+                "Will they be featured on GTA VI: The Album?",
+                sibling=True,
+            ),
+            _make_roundup_bundle(
+                "snow-first-flakes-2026",
+                "Will it snow by November 15?",
+                sibling=True,
+            ),
+            _make_roundup_bundle(
+                "who-announces-before-2027",
+                "Who will announce a 2028 presidential run before 2027?",
+                sibling=True,
+            ),
+        ]
+
+        seated = insert_roundup_feed_items(
+            base_deck,
+            roundup_cards,
+            seat_floor=10,
+            page_window=20,
+        )
+
+        # 1. At most 2 sibling-family cards in Discover's first 20 seats (indices 0..19).
+        first_20_siblings = [
+            it["data"]["id"] for it in seated[:20] if _is_sibling_family_bundle(it)
+        ]
+        assert len(first_20_siblings) == 2
+        assert first_20_siblings == [
+            "roundup:liga-profesional-relegation-2026",
+            "roundup:nhl-playoffs-2026-27",
+        ]
+
+        # 2. The remaining 3 sibling-family cards seat after the first 20 seats (index >= 20).
+        after_20_siblings = [
+            it["data"]["id"] for it in seated[20:] if _is_sibling_family_bundle(it)
+        ]
+        assert len(after_20_siblings) == 3
+
+        # 3. Never two grouped (round-up) cards in a row anywhere in the seated feed.
+        grouped_indices = [
+            idx for idx, it in enumerate(seated) if _is_roundup_bundle_card(it)
+        ]
+        assert len(grouped_indices) == 7
+        for a, b in zip(grouped_indices, grouped_indices[1:]):
+            assert b - a >= 2, f"Adjacent grouped cards at indices {a} and {b}"

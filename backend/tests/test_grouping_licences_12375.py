@@ -32,7 +32,6 @@ from app.utils.grouping_licences import (
     promote_licensed_proposal_to_definition,
     run_licensed_promotion_pass,
     score_same_deadline_board_exam,
-    suspend_grouping_kind,
 )
 from app.utils.roundup_containers import (
     ROUNDUP_PRODUCERS,
@@ -108,9 +107,9 @@ def _licensed_subject_sequence_registry() -> dict:
     reg = copy.deepcopy(default_grouping_licences_registry())
     reg["kinds"]["subject_sequence"]["status"] = "PASS"
     reg["kinds"]["subject_sequence"]["exam_as_of"] = "2026-11-08"
-    reg["kinds"]["subject_sequence"]["exam_receipt"] = (
-        "docs/discover/subject-sequence-exam-2026-11.md"
-    )
+    reg["kinds"]["subject_sequence"][
+        "exam_receipt"
+    ] = "docs/discover/subject-sequence-exam-2026-11.md"
     return reg
 
 
@@ -173,7 +172,9 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
         assert outcome.promoted is True
         assert outcome.slug == "lakers-next-3-games"
         assert outcome.definition is not None
-        assert outcome.definition["membership"] == defn["membership"] == "subject_sequence"
+        assert (
+            outcome.definition["membership"] == defn["membership"] == "subject_sequence"
+        )
         assert outcome.definition["authored_by"] == {
             "kind": "proposer",
             "proposer_kind": "subject_sequence",
@@ -202,24 +203,20 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
         assert sib_outcome.promoted is False
         assert sib_outcome.reason == "kind_not_licensed:held"
 
-        # Under Decide 117-A, sibling_family is PASS and its 5 verified stable serve families
-        # are promoted into backend/data/containers/ with clean reader-facing slugs,
-        # proposal_id provenance, and review_path == "tier-b-pr" (mlb-world-series-pennant-2027
-        # is held out because thin off-season books moved Rays 54% -> 15.5% and Dodgers 32% -> 8%).
-        assert not (DEFAULT_CONTAINERS_DIR / "mlb-world-series-pennant-2027.json").exists()
+        # Under Decide 117-A and Rules 1-3 (#12374), sibling_family is PASS and the 2 clean
+        # verified families (liga-profesional-relegation-2026 and nhl-playoffs-2026-27) are
+        # promoted into backend/data/containers/, while the 3 families with stale quotes or
+        # unnumbered top-K contenders (nhl-players-100-points-2026-27, uecl-top-8-2026-27,
+        # uecl-playoff-places-2026-27) and the thin off-season mlb-world-series-pennant-2027
+        # family remain held out.
+        for held_slug in (
+            "mlb-world-series-pennant-2027",
+            "nhl-players-100-points-2026-27",
+            "uecl-top-8-2026-27",
+            "uecl-playoff-places-2026-27",
+        ):
+            assert not (DEFAULT_CONTAINERS_DIR / f"{held_slug}.json").exists()
         for promoted_slug, expected_proposal_id in (
-            (
-                "nhl-players-100-points-2026-27",
-                "proposed-polymarket-will-contenders-record-100-points",
-            ),
-            (
-                "uecl-top-8-2026-27",
-                "proposed-polymarket-will-teams-finish-top-8-in-uecl-league-phase",
-            ),
-            (
-                "uecl-playoff-places-2026-27",
-                "proposed-polymarket-will-teams-finish-9th-24th-in-uecl-league-phase",
-            ),
             (
                 "liga-profesional-relegation-2026",
                 "proposed-polymarket-will-contenders-be-relegated-from-the-2026-liga",
@@ -344,7 +341,9 @@ class TestExit3SecondKindExamVerdict:
         self,
     ) -> None:
         assert DEFAULT_SAME_DEADLINE_DATASET_PATH.exists()
-        raw_ds = json.loads(DEFAULT_SAME_DEADLINE_DATASET_PATH.read_text(encoding="utf-8"))
+        raw_ds = json.loads(
+            DEFAULT_SAME_DEADLINE_DATASET_PATH.read_text(encoding="utf-8")
+        )
         assert raw_ds["schema"] == "same-deadline-board-exam-dataset/1"
         assert len(raw_ds["deadlines"]) == 20
         total_candidates = sum(len(d["candidate_markets"]) for d in raw_ds["deadlines"])
@@ -364,7 +363,10 @@ class TestExit3SecondKindExamVerdict:
         ]
         for c in passing:
             assert 4 <= len(c["selected_market_ids"]) <= 6
-            assert all(isinstance(mid, int) and mid > 1_000_000 for mid in c["selected_market_ids"])
+            assert all(
+                isinstance(mid, int) and mid > 1_000_000
+                for mid in c["selected_market_ids"]
+            )
             assert c["distinct_categories"] >= 3
             assert c["all_same_calendar_day"] is True
             assert c["no_excluded_classes"] is True
@@ -418,7 +420,9 @@ class TestExit3SecondKindExamVerdict:
 
         # Parity check with committed docs receipt and grouping_licences.json
         repo_root = DEFAULT_LICENCES_PATH.parents[2]
-        receipt_path = repo_root / "docs" / "discover" / "same-deadline-board-exam-2026-11.md"
+        receipt_path = (
+            repo_root / "docs" / "discover" / "same-deadline-board-exam-2026-11.md"
+        )
         assert receipt_path.read_text(encoding="utf-8").strip() == md.strip()
         assert load_grouping_licences() == default_grouping_licences_registry()
 
@@ -549,13 +553,36 @@ class TestExit3SecondKindExamVerdict:
             rule={"producer": "subject_sequence", "cache": "none"},
             produce=lambda _db: RoundupMembers(
                 members=[
-                    {"id": 1, "event_id": 1, "status": "completed", "card": {"id": 1, "status": "completed"}},
-                    {"id": 2, "event_id": 2, "status": "scheduled", "card": {"id": 2, "status": "scheduled"}},
-                    {"id": 3, "event_id": 3, "status": "scheduled", "card": {"id": 3, "status": "scheduled"}},
+                    {
+                        "id": 1,
+                        "event_id": 1,
+                        "status": "completed",
+                        "card": {"id": 1, "status": "completed"},
+                    },
+                    {
+                        "id": 2,
+                        "event_id": 2,
+                        "status": "scheduled",
+                        "card": {"id": 2, "status": "scheduled"},
+                    },
+                    {
+                        "id": 3,
+                        "event_id": 3,
+                        "status": "scheduled",
+                        "card": {"id": 3, "status": "scheduled"},
+                    },
                 ],
                 rows=[
-                    {"event_id": 1, "label": "vs Grizzlies · Nov 10", "probability": 0.64},
-                    {"event_id": 2, "label": "@ Pelicans · Nov 13", "probability": 0.58},
+                    {
+                        "event_id": 1,
+                        "label": "vs Grizzlies · Nov 10",
+                        "probability": 0.64,
+                    },
+                    {
+                        "event_id": 2,
+                        "label": "@ Pelicans · Nov 13",
+                        "probability": 0.58,
+                    },
                     {"event_id": 3, "label": "vs Spurs · Nov 15", "probability": 0.53},
                 ],
                 footer="Combined win probability · next 3 games in schedule order",
