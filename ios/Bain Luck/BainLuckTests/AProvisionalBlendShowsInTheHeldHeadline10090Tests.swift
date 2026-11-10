@@ -442,7 +442,8 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
     /// source shows the hero is fed the headline. The chart's projection of the
     /// same preview is pinned in `TheHeldChartEndsOnThePreviewAtItsObservation10090Tests`.
     func testTheHeroAndItsSlideReadTheHeadlineAndTheChartReadsOnlyItsProjection() throws {
-        let page = try Self.source("Bain Luck/Views/EventDetailView.swift")
+        let fullPage = try Self.source("Bain Luck/Views/EventDetailView.swift")
+        let page = try Self.slice(fullPage, from: "struct EventDetailView: View {", to: "#if DEBUG")
         XCTAssertEqual(page.components(separatedBy: "heroSection(vm.headline(event))").count - 1, 1,
                        "the hero is drawn from the headline")
         XCTAssertFalse(page.contains("heroSection(event)"))
