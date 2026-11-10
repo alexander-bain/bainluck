@@ -64,6 +64,9 @@ function GroupingGradeSession() {
   const [saving, setSaving] = useState(false);
   const [tally, setTally] = useState<TallyEntry[]>([]);
   const [summary, setSummary] = useState<GroupingGradeSummary | null>(null);
+  const [existingGrades, setExistingGrades] = useState<
+    Array<{ grader: string; item_key: string }>
+  >([]);
 
   useEffect(() => {
     try {
@@ -82,12 +85,14 @@ function GroupingGradeSession() {
     async (slateId: string) => {
       try {
         const res = await adminFetchJSON<{
+          grades?: Array<{ grader: string; item_key: string }>;
           tally: TallyEntry[];
           summary: GroupingGradeSummary;
         }>(
           `/api/admin/ranking/grouping-grades?slate_id=${encodeURIComponent(slateId)}&days=30`,
           secret,
         );
+        setExistingGrades(res.grades || []);
         setTally(res.tally || []);
         setSummary(res.summary || null);
       } catch {
@@ -131,7 +136,16 @@ function GroupingGradeSession() {
       // storage unavailable
     }
     setGrader(resolvedGrader);
-    setIndex(0);
+    const graderLower = resolvedGrader.toLowerCase();
+    const gradedKeys = new Set(
+      existingGrades
+        .filter((g) => (g.grader || "").toLowerCase() === graderLower)
+        .map((g) => g.item_key),
+    );
+    const firstUngradedIdx = deck
+      ? deck.items.findIndex((it) => !gradedKeys.has(it.item_key))
+      : 0;
+    setIndex(firstUngradedIdx >= 0 ? firstUngradedIdx : 0);
     setGraded(0);
   };
 

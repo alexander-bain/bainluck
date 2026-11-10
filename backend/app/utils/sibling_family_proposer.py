@@ -163,8 +163,10 @@ _ALLOWED_HEADING_FILLER_TOKENS: frozenset[str] = frozenset(
         "where",
         "which",
         "who",
+        "whose",
         "will",
         "with",
+        "year",
         "deadline",
         "cities",
         "city",
@@ -243,19 +245,29 @@ def verify_word_for_word_quote(quote: str, market: Mapping[str, Any]) -> bool:
     return clean_quote in desc or clean_quote in name or clean_quote in corpus
 
 
+_FORBIDDEN_HEADING_GRAMMAR_RE = re.compile(
+    r"(?:\bwill\s+which\b|\b(?:subjects|contenders)\b|:\s*(?:candidates|teams|players|movies|cities|subjects|contenders)\b|\bthe\s+(?:candidates|teams|players|movies|cities|subjects|contenders)\s+(?:senate|governor|house|presidential)\b|^will\s+.+\s+(?:meet\s+with|speak\s+to|visit|snow\s+in)\s+(?:candidates|cities|subjects|contenders|\{deadline\})\b)",
+    re.IGNORECASE,
+)
+
+
 def verify_heading_from_market_words(
     heading: str,
     markets: Sequence[Mapping[str, Any]],
     *,
     subject_unit: str = "",
 ) -> bool:
-    """Verify that ``heading`` uses only words from ``markets``' own titles (plus ``{deadline}`` / ``subject_unit``) and no forbidden words."""
+    """Verify that ``heading`` uses only shared family words (plus ``{deadline}`` / ``subject_unit``), grammatical English, and no single-member subject tokens (#12500)."""
     clean = str(heading or "").strip()
     if not clean:
         return False
     if _FORBIDDEN_NARRATIVE_RE.search(clean):
         return False
+    if _FORBIDDEN_HEADING_GRAMMAR_RE.search(clean):
+        return False
     if "*" in clean or clean.endswith(":"):
+        return False
+    if clean[0].islower():
         return False
 
     without_placeholder = clean.replace("{deadline}", " ")
@@ -265,13 +277,26 @@ def verify_heading_from_market_words(
     if len(heading_tokens) < 3:
         return False
 
-    market_vocab: set[str] = set(_ALLOWED_HEADING_FILLER_TOKENS)
+    # Build vocabulary from tokens shared across all member titles (never a single
+    # member's subject name) plus allowed heading filler tokens and subject_unit.
+    member_token_sets: list[set[str]] = []
+    for m in markets:
+        m_toks = {f for _, f in _tokenize_title(str(m.get("name") or ""))}
+        if m_toks:
+            member_token_sets.append(m_toks)
+
+    if len(member_token_sets) >= 2:
+        shared_member_tokens = set.intersection(*member_token_sets)
+    elif len(member_token_sets) == 1:
+        shared_member_tokens = set(member_token_sets[0])
+    else:
+        shared_member_tokens = set()
+
+    market_vocab: set[str] = set(_ALLOWED_HEADING_FILLER_TOKENS) | shared_member_tokens
     if subject_unit:
         for _, f in _tokenize_title(subject_unit):
-            market_vocab.add(f)
-    for m in markets:
-        for _, f in _tokenize_title(str(m.get("name") or "")):
-            market_vocab.add(f)
+            if f not in {"subjects", "contenders"}:
+                market_vocab.add(f)
 
     for tok in heading_tokens:
         if tok not in market_vocab:
@@ -331,40 +356,131 @@ def _template_to_ilike_pattern(template_key: str, sample_titles: Sequence[str]) 
     return f"%{template_key.replace('*', '%')}%"
 
 
+_UNIT_INTERROGATIVE_LEAD: dict[str, str] = {
+    "cities": "Which city",
+    "movies": "Which movie",
+    "teams": "Which team",
+    "artists": "Who",
+    "candidates": "Who",
+    "contenders": "Who",
+    "subjects": "Who",
+}
+
+
 def _build_default_heading(
     template_key: str,
     sample_titles: Sequence[str],
     *,
     subject_unit: str,
 ) -> str:
-    """Construct a deterministic heading from the markets' own words (with ``{deadline}`` when titles state a deadline)."""
+    """Construct a deterministic, grammatical heading from the markets' shared words (#12500)."""
     has_stated_deadline = any(
         bool(_extract_stated_deadline(t).phrase) for t in sample_titles
     )
+    interrogative_lead = _UNIT_INTERROGATIVE_LEAD.get(subject_unit, "Who")
+
     if sample_titles:
-        first_stem = _extract_stated_deadline(sample_titles[0]).stem_text.rstrip("?.!").strip()
-        toks = _tokenize_title(first_stem)
+        stem_tok_lists = [
+            _tokenize_title(_extract_stated_deadline(t).stem_text.rstrip("?.!").strip())
+            for t in sample_titles
+            if _extract_stated_deadline(t).stem_text.strip()
+        ]
+        first_toks = stem_tok_lists[0] if stem_tok_lists else []
         words = template_key.split()
-        if "*" in words and toks:
-            star_idx = words.index("*")
-            prefix_len = star_idx
-            suffix_len = len(words) - star_idx - 1
-            prefix_raw = " ".join(raw for raw, _ in toks[:prefix_len]).strip()
+        if "*" in words and first_toks:
+            if len(stem_tok_lists) >= 2:
+                min_len = min(len(tl) for tl in stem_tok_lists)
+                pre = 0
+                while pre < min_len and len({tl[pre][1] for tl in stem_tok_lists}) == 1:
+                    pre += 1
+                suf = 0
+                while (
+                    suf < (min_len - pre)
+                    and len({tl[len(tl) - 1 - suf][1] for tl in stem_tok_lists}) == 1
+                ):
+                    suf += 1
+                prefix_len = pre
+                suffix_len = suf
+            else:
+                star_idx = words.index("*")
+                prefix_len = star_idx
+                suffix_len = len(words) - star_idx - 1
+            prefix_raw = " ".join(raw for raw, _ in first_toks[:prefix_len]).strip()
             suffix_raw = (
-                " ".join(raw for raw, _ in toks[len(toks) - suffix_len :]).strip()
+                " ".join(raw for raw, _ in first_toks[len(first_toks) - suffix_len :]).strip()
                 if suffix_len > 0
                 else ""
             )
-            replacement = subject_unit if subject_unit and subject_unit != "subjects" else "who"
-            if prefix_raw.lower() == "will":
-                replacement = f"which {subject_unit[:-1]}" if subject_unit.endswith("s") and subject_unit != "series" else "who"
-            parts = [p for p in (prefix_raw, replacement, suffix_raw) if p]
-            stem_heading = " ".join(parts)
-            if has_stated_deadline:
-                return f"{stem_heading} {{deadline}}?"
-            return f"{stem_heading}?"
-    base = template_key.replace("*", subject_unit or "who").strip()
-    return f"{base.capitalize()} {{deadline}}?" if has_stated_deadline else f"{base.capitalize()}?"
+            prefix_lower = prefix_raw.lower()
+
+            if prefix_lower in {"will", "will the", "will a", "will an"} and suffix_raw:
+                if suffix_raw.lower() == "be time person" and any(
+                    "person of the year" in str(t).lower() for t in sample_titles
+                ):
+                    suffix_raw = "be TIME Person of the Year"
+                if suffix_raw.lower().startswith("next fight "):
+                    stem_heading = f"Whose {suffix_raw}"
+                else:
+                    stem_heading = f"{interrogative_lead} will {suffix_raw}"
+                return f"{stem_heading} {{deadline}}?" if has_stated_deadline else f"{stem_heading}?"
+
+            if prefix_lower.startswith("will ") and suffix_raw:
+                cleaned_prefix = re.sub(r"\b(?:the|a|an)$", "", prefix_raw, flags=re.IGNORECASE).strip()
+                stem_heading = f"{cleaned_prefix} which {suffix_raw}"
+                return f"{stem_heading} {{deadline}}?" if has_stated_deadline else f"{stem_heading}?"
+
+            if not suffix_raw and prefix_raw:
+                cleaned_prefix = prefix_raw.rstrip(":-–— ").strip()
+                if cleaned_prefix:
+                    if cleaned_prefix.lower().startswith("will "):
+                        rest = cleaned_prefix[5:].strip()
+                        if subject_unit == "cities" or rest.lower().endswith(
+                            (" in", " visit", " travel to", " go to")
+                        ):
+                            if rest.lower().endswith(" in"):
+                                rest = rest[:-3].strip()
+                            stem_heading = f"Where will {rest}"
+                        else:
+                            stem_heading = f"Who will {rest}"
+                        return (
+                            f"{stem_heading} {{deadline}}?"
+                            if has_stated_deadline
+                            else f"{stem_heading}?"
+                        )
+                    if (
+                        re.search(r"\b(?:in|on|for|of|by|to|at|from)$", cleaned_prefix, re.IGNORECASE)
+                        and subject_unit in {"cities", "teams", "movies", "candidates", "artists", "states"}
+                    ):
+                        cleaned_prefix = f"{cleaned_prefix} {subject_unit}"
+                    q_mark = "?" if cleaned_prefix.lower().startswith(("who ", "what ", "which ", "when ", "where ", "will ", "how ")) else ""
+                    if has_stated_deadline:
+                        return f"{cleaned_prefix} {{deadline}}{q_mark}"
+                    return f"{cleaned_prefix}{q_mark}"
+
+            if not prefix_raw and suffix_raw:
+                if suffix_raw.lower().startswith("next fight "):
+                    stem_heading = f"Whose {suffix_raw}?"
+                else:
+                    stem_heading = suffix_raw[:1].upper() + suffix_raw[1:]
+                if has_stated_deadline:
+                    return f"{stem_heading.rstrip('?')} {{deadline}}"
+                return stem_heading
+
+            parts = [p for p in (prefix_raw, suffix_raw) if p]
+            stem_heading = " ".join(parts).strip()
+            if stem_heading:
+                stem_heading = stem_heading[:1].upper() + stem_heading[1:]
+                q_mark = "?" if stem_heading.lower().startswith(("who ", "what ", "which ", "when ", "where ", "will ", "how ")) else ""
+                if has_stated_deadline:
+                    return f"{stem_heading} {{deadline}}{q_mark}"
+                return f"{stem_heading}{q_mark}"
+
+    base = re.sub(r"\s+", " ", template_key.replace("*", "").strip())
+    if base.lower().startswith("will "):
+        rest = re.sub(r"^(?:will\s+(?:the|a|an)\s+|will\s+)", "", base, flags=re.IGNORECASE).strip()
+        base = f"{interrogative_lead} will {rest}"
+        return f"{base} {{deadline}}?" if has_stated_deadline else f"{base}?"
+    return f"{base.capitalize()} {{deadline}}" if has_stated_deadline else base.capitalize()
 
 
 def nominate_sibling_families(
@@ -927,25 +1043,60 @@ def propose_sibling_families(
             and len(already_happened_ids) == 0
         )
 
+        verdict_prob_by_mid: dict[int, float] = {}
+        verdict_outcome_by_mid: dict[int, str] = {}
+        if isinstance(verdict_obj, RoundupMembers):
+            for r in verdict_obj.rows:
+                rmid = int(r.get("market_id") or 0)
+                rp = r.get("probability")
+                if rmid > 0 and isinstance(rp, (int, float)) and not isinstance(rp, bool):
+                    verdict_prob_by_mid[rmid] = round(float(rp), 4)
+                    if r.get("outcome_name"):
+                        verdict_outcome_by_mid[rmid] = str(r["outcome_name"])
+
         member_rows: list[dict[str, Any]] = []
         for m, subj in zip(members, fam["subjects"]):
+            mid_int = int(m["id"])
             outs = m.get("outcomes") or m.get("top_outcomes") or ()
             yes_prob = None
+            outcome_label: Optional[str] = None
             for o in outs:
                 if isinstance(o, Mapping) and str(o.get("name") or o.get("label") or "").strip().lower() == "yes":
                     p = o.get("probability") if "probability" in o else o.get("current_probability")
                     if isinstance(p, (int, float)) and not isinstance(p, bool):
                         yes_prob = round(float(p), 4)
                     break
-            member_rows.append(
-                {
-                    "id": int(m["id"]),
-                    "name": str(m.get("name") or ""),
-                    "subject": subj,
-                    "resolution_date": m.get("resolution_date"),
-                    "yes_probability": yes_prob,
-                }
-            )
+            if yes_prob is None and mid_int in verdict_prob_by_mid:
+                yes_prob = verdict_prob_by_mid[mid_int]
+                outcome_label = verdict_outcome_by_mid.get(mid_int)
+            if yes_prob is None:
+                best_p: Optional[float] = None
+                best_lbl: Optional[str] = None
+                for o in outs:
+                    if not isinstance(o, Mapping):
+                        continue
+                    oname = str(o.get("name") or o.get("label") or "").strip()
+                    if oname.lower() == "no":
+                        continue
+                    p = o.get("probability") if "probability" in o else o.get("current_probability")
+                    if isinstance(p, (int, float)) and not isinstance(p, bool):
+                        fp = float(p)
+                        if best_p is None or fp > best_p:
+                            best_p = round(fp, 4)
+                            best_lbl = oname or None
+                if best_p is not None:
+                    yes_prob = best_p
+                    outcome_label = best_lbl
+            row_dict: dict[str, Any] = {
+                "id": mid_int,
+                "name": str(m.get("name") or ""),
+                "subject": subj,
+                "resolution_date": m.get("resolution_date"),
+                "yes_probability": yes_prob,
+            }
+            if outcome_label:
+                row_dict["outcome_label"] = outcome_label
+            member_rows.append(row_dict)
 
         families_out.append(
             {

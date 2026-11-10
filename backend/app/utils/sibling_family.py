@@ -626,6 +626,7 @@ def _extract_stated_deadline(title: str, default_year: int = 2026) -> _StatedDea
 def _clean_subject_display(raw_subject: str, *, strip_state_suffix: bool) -> str:
     """Format the extracted row subject from the market's own words."""
     subj = str(raw_subject or "").strip().rstrip("?.!:\u00b7").strip()
+    subj = re.sub(r"(?:'s|\u2019s)$", "", subj, flags=re.IGNORECASE).strip()
     if strip_state_suffix:
         m = _STATE_SUFFIX_RE.match(subj)
         if m is not None and m.group("state") in _US_STATE_CODES:

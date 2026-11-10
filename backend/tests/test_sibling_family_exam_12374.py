@@ -113,7 +113,8 @@ class TestEveryGatePassOrFail:
     def test_baseline_ungraded_test_set_holds_gate_1_and_passes_structural_gates(
         self,
     ) -> None:
-        record = score_sibling_family_exam(build_default_sibling_family_exam_dataset())
+        ungraded_cards = _graded_dataset(better_count=0, same_count=0, worse_count=0)
+        record = score_sibling_family_exam(ungraded_cards)
         assert record["schema"] == EXAM_SCHEMA_VERSION
         assert record["result"] == "HELD"
         assert record["licences"] == {"sibling_family": "HELD"}
@@ -137,6 +138,31 @@ class TestEveryGatePassOrFail:
         assert gates["run_to_run_stability"]["result"] == "PASS"
         assert gates["run_to_run_stability"]["observed"]["k"] == 32
         assert gates["run_to_run_stability"]["observed"]["n"] == 32
+
+    def test_109a_grade_mapping_pins_amazing_and_fine_to_better_and_no_to_worse_with_strict_reading(
+        self,
+    ) -> None:
+        from app.utils.sibling_family_exam import normalize_exam_human_grade
+
+        assert normalize_exam_human_grade("amazing") == "better"
+        assert normalize_exam_human_grade("fine") == "better"
+        assert normalize_exam_human_grade("no") == "worse"
+        assert normalize_exam_human_grade("shareable") == "better"
+        assert normalize_exam_human_grade("interesting") == "better"
+        assert normalize_exam_human_grade("neither") == "worse"
+        assert normalize_exam_human_grade(None) is None
+
+        committed_record = score_sibling_family_exam(build_default_sibling_family_exam_dataset())
+        assert committed_record["result"] == "PASS"
+        assert committed_record["licences"] == {"sibling_family": "HELD"}
+        g1_obs = committed_record["gate_results"][0]["observed"]
+        assert g1_obs["better_k"] == 19
+        assert g1_obs["worse_k"] == 1
+        assert g1_obs["graded_k"] == 20
+        assert g1_obs["better_pct"] == 95.0
+        assert g1_obs["strict_amazing_k"] == 9
+        assert g1_obs["strict_amazing_pct"] == 45.0
+        assert g1_obs["grade_mapping"] == "109-A: amazing + fine -> better, no -> worse"
 
     def test_default_dataset_is_derived_from_real_proposer_and_nonzero_varied_api_usage(
         self,
@@ -359,7 +385,7 @@ class TestEveryGatePassOrFail:
         assert "relation_truth" in md
         assert "freshness_and_count" in md
         assert "run_to_run_stability" in md
-        assert "Waiting for grades: 0 of 20 graded (20 ungraded)" in md
+        assert "Strict 'Amazing' 9/20 (45.0%)" in md
         assert "**HELD**" in md
         assert "**PASS**" in md
 

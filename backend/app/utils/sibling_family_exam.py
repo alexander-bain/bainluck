@@ -72,6 +72,31 @@ MAX_LIVE_MEMBERS = 6
 # Wilson 95% z-value (matches #11951 / #12118 exam machinery)
 WILSON_Z_95 = 1.959963984540054
 
+# Decide 109-A (Alex, 2026-11-09): on /grade/groupings, "amazing" (DB "shareable")
+# and "fine" (DB "interesting") count as "better", and "no" (DB "neither") counts
+# as "worse". The strict "amazing"-only reading is recorded alongside.
+GROUPING_GRADE_TO_EXAM_BUCKET: dict[str, str] = {
+    "amazing": "better",
+    "fine": "better",
+    "no": "worse",
+    "shareable": "better",
+    "interesting": "better",
+    "neither": "worse",
+    "better": "better",
+    "same": "same",
+    "worse": "worse",
+}
+STRICT_AMAZING_GRADES: frozenset[str] = frozenset({"amazing", "shareable"})
+GROUPING_PAGE_GRADES: frozenset[str] = frozenset(
+    {"amazing", "fine", "no", "shareable", "interesting", "neither"}
+)
+
+
+def normalize_exam_human_grade(grade: Any) -> str | None:
+    """Map `/grade/groupings` grades (`amazing`/`fine`/`no` or DB `shareable`/`interesting`/`neither`) to exam buckets (`better`/`same`/`worse`) per Decide 109-A."""
+    raw = str(grade or "").strip().lower()
+    return GROUPING_GRADE_TO_EXAM_BUCKET.get(raw)
+
 
 @dataclass(frozen=True)
 class SiblingExamCostEstimate:
@@ -421,17 +446,24 @@ def _score_split_for_pass(
     same = 0
     worse = 0
     ungraded = 0
+    strict_amazing = 0
+    has_grouping_page_grade = False
     relation_valid = 0
     duplicate_free = 0
     freshness_valid = 0
 
     for card in cards:
-        grade = str(card.get("human_grade") or "").strip().lower()
-        if grade == "better":
+        raw_grade = str(card.get("human_grade") or "").strip().lower()
+        if raw_grade in GROUPING_PAGE_GRADES:
+            has_grouping_page_grade = True
+        if raw_grade in STRICT_AMAZING_GRADES:
+            strict_amazing += 1
+        bucket = normalize_exam_human_grade(raw_grade)
+        if bucket == "better":
             better += 1
-        elif grade == "same":
+        elif bucket == "same":
             same += 1
-        elif grade == "worse":
+        elif bucket == "worse":
             worse += 1
         else:
             ungraded += 1
@@ -445,7 +477,7 @@ def _score_split_for_pass(
             freshness_valid += 1
 
     graded = better + same + worse
-    return {
+    out: dict[str, Any] = {
         "expected": n,
         "graded": graded,
         "ungraded": ungraded,
@@ -489,6 +521,15 @@ def _score_split_for_pass(
             "wilson95": list(wilson95_interval(freshness_valid, n)),
         },
     }
+    if has_grouping_page_grade:
+        out["strict_amazing"] = {
+            "k": strict_amazing,
+            "n": graded,
+            "ungraded": ungraded,
+            "pct": round((strict_amazing / graded) * 100.0, 1) if graded else None,
+            "wilson95": list(wilson95_interval(strict_amazing, graded)) if graded else None,
+        }
+    return out
 
 
 def score_sibling_family_exam(
@@ -602,28 +643,36 @@ def score_sibling_family_exam(
     )
     gate4_result = "PASS" if stability_ok else "FAIL"
 
+    gate1_observed: dict[str, Any] = {
+        "k": better_k,
+        "n": test_n,
+        "better_k": better_k,
+        "worse_k": worse_k,
+        "graded_k": graded_k,
+        "ungraded_k": ungraded_k,
+        "better_pct": round((better_k / graded_k) * 100.0, 1) if graded_k else None,
+        "worse_pct": round((worse_k / graded_k) * 100.0, 1) if graded_k else None,
+        "better_wilson95": (
+            list(wilson95_interval(better_k, graded_k)) if graded_k else None
+        ),
+        "worse_wilson95": (
+            list(wilson95_interval(worse_k, graded_k)) if graded_k else None
+        ),
+        "result": gate1_result,
+    }
+    if "strict_amazing" in p1_test:
+        sa = p1_test["strict_amazing"]
+        gate1_observed["strict_amazing_k"] = int(sa["k"])
+        gate1_observed["strict_amazing_pct"] = sa["pct"]
+        gate1_observed["strict_amazing_wilson95"] = sa["wilson95"]
+        gate1_observed["grade_mapping"] = "109-A: amazing + fine -> better, no -> worse"
+
     gate_results: list[dict[str, Any]] = [
         {
             "id": "card_vs_single_member",
             "bar": "Rated Better on >= 85% of held-out test cards (95% CI reported) and Worse on <= 10%",
             "scope": "test",
-            "observed": {
-                "k": better_k,
-                "n": test_n,
-                "better_k": better_k,
-                "worse_k": worse_k,
-                "graded_k": graded_k,
-                "ungraded_k": ungraded_k,
-                "better_pct": round((better_k / graded_k) * 100.0, 1) if graded_k else None,
-                "worse_pct": round((worse_k / graded_k) * 100.0, 1) if graded_k else None,
-                "better_wilson95": (
-                    list(wilson95_interval(better_k, graded_k)) if graded_k else None
-                ),
-                "worse_wilson95": (
-                    list(wilson95_interval(worse_k, graded_k)) if graded_k else None
-                ),
-                "result": gate1_result,
-            },
+            "observed": gate1_observed,
             "result": gate1_result,
         },
         {
@@ -822,8 +871,11 @@ def format_sibling_family_exam_markdown(
                             f"({obs['ungraded_k']} ungraded)"
                         )
                 else:
+                    sa_str = ""
+                    if "strict_amazing_k" in obs:
+                        sa_str = f", Strict 'Amazing' {obs['strict_amazing_k']}/{obs['graded_k']} ({obs['strict_amazing_pct']}%)"
                     across = (
-                        f"Better {obs['better_k']}/{obs['graded_k']} ({b_ci[0]}–{b_ci[1]}% CI), "
+                        f"Better {obs['better_k']}/{obs['graded_k']} ({b_ci[0]}–{b_ci[1]}% CI, 109-A: amazing+fine->better){sa_str}, "
                         f"Worse {obs['worse_k']}/{obs['graded_k']} ({w_ci[0]}–{w_ci[1]}% CI), "
                         f"Graded {obs['graded_k']}/{obs['n']}"
                     )
