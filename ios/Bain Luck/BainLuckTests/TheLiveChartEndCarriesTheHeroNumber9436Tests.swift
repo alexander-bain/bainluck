@@ -339,6 +339,50 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         XCTAssertGreaterThan(LiveChartEdgeMarkerPlan.labelCenter(tip: tip, label: label, plot: plot).y, tip.y)
     }
 
+    /// #12402 — When `_pin_blend_edge` adds a short horizontal pin at `tip.y`
+    /// after a climb inside the label's 64pt footprint, or when a climb reaches
+    /// 99.5% at the top edge (`tip.y = 1`), the label clears every drawn
+    /// segment in `runs` instead of painting over the climb.
+    func testTheLabelClearsPriorRunsBehindAFlatPinAndAtTheTopEdge12402() {
+        let plot = CGSize(width: 293, height: 214)
+        let label = CGSize(width: 64, height: 20)
+
+        // 1. Climb to y = 34 (84.3%) followed by a flat pin (285, 34) -> (293, 34):
+        //    `below` covers the climb (240, 96) -> (285, 34); `above` is clear.
+        let pinnedTip = CGPoint(x: 293, y: 34)
+        let pinnedFrom = CGPoint(x: 285, y: 34)
+        let pinnedRun = [CGPoint(x: 240, y: 96), pinnedFrom, pinnedTip]
+        let pinnedCenter = LiveChartEdgeMarkerPlan.labelCenter(
+            tip: pinnedTip, from: pinnedFrom, label: label, plot: plot, runs: [pinnedRun]
+        )
+        XCTAssertLessThan(pinnedCenter.y, pinnedTip.y, "places the label in the open band above the peak")
+        for i in 0..<(pinnedRun.count - 1) {
+            XCTAssertFalse(
+                LiveChartEdgeMarkerPlan.covers(
+                    pinnedCenter, label: label, from: pinnedRun[i], to: pinnedRun[i + 1]
+                )
+            )
+        }
+
+        // 2. Climb to 99.5% at the top edge (y = 1), where `above` clamps onto
+        //    the tip and `below` (y = 21) lands on the climb (235, 42) -> (293, 1):
+        //    steps below the climb's extent (y > 42 + 10) inside the plot.
+        let topTip = CGPoint(x: 293, y: 1)
+        let topFrom = CGPoint(x: 280, y: 8)
+        let topRun = [CGPoint(x: 235, y: 42), topFrom, topTip]
+        let topCenter = LiveChartEdgeMarkerPlan.labelCenter(
+            tip: topTip, from: topFrom, label: label, plot: plot, runs: [topRun]
+        )
+        for i in 0..<(topRun.count - 1) {
+            XCTAssertFalse(
+                LiveChartEdgeMarkerPlan.covers(
+                    topCenter, label: label, from: topRun[i], to: topRun[i + 1]
+                ),
+                "stepped center \(topCenter) must clear segment \(i)"
+            )
+        }
+    }
+
     func testTheLabelNeverLeavesThePlot() {
         let plot = CGSize(width: 293, height: 214)
         // `.large` and the capped `.xxLarge` label.

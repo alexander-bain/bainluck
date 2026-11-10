@@ -152,10 +152,20 @@ enum LiveChartEdgeMarkerPlan {
     /// plot has room to its right (the line ends at the dot, so nothing is
     /// covered). Otherwise right-aligned to the dot and stacked: on the side
     /// away from the plot edge the dot is nearest, unless that side would
-    /// cover the last segment (`from`) and the other side would not — the
-    /// newest move is the one thing the label must never hide. Clamped inside
-    /// the plot at both edges and at 0/100.
-    static func labelCenter(tip: CGPoint, from: CGPoint? = nil, label: CGSize, plot: CGSize) -> CGPoint {
+    /// cover the drawn line across the label's horizontal footprint (`runs`,
+    /// or `from -> tip` when no prior runs are supplied) and the other side
+    /// would not — the trajectory is the one thing the label must never hide
+    /// (#12402). When a steep finish near the top or bottom edge leaves both
+    /// stacked positions over the climb, step just clear of the drawn ink
+    /// extent across the label's span if that stepped position fits inside the
+    /// plot. Clamped inside the plot at both edges and at 0/100.
+    static func labelCenter(
+        tip: CGPoint,
+        from: CGPoint? = nil,
+        label: CGSize,
+        plot: CGSize,
+        runs: [[CGPoint]] = []
+    ) -> CGPoint {
         let radius = dotDiameter / 2
         func clamped(_ c: CGPoint) -> CGPoint {
             CGPoint(x: min(max(c.x, label.width / 2), max(plot.width - label.width / 2, label.width / 2)),
@@ -164,13 +174,53 @@ enum LiveChartEdgeMarkerPlan {
         if tip.x + radius + labelGap + label.width <= plot.width {
             return clamped(CGPoint(x: tip.x + radius + labelGap + label.width / 2, y: tip.y))
         }
-        let x = tip.x + radius - label.width / 2
+        let x = min(max(tip.x + radius - label.width / 2, label.width / 2),
+                    max(plot.width - label.width / 2, label.width / 2))
         let above = clamped(CGPoint(x: x, y: tip.y - radius - labelGap - label.height / 2))
         let below = clamped(CGPoint(x: x, y: tip.y + radius + labelGap + label.height / 2))
         let (preferred, other) = tip.y > plot.height / 2 ? (above, below) : (below, above)
-        guard let from, covers(preferred, label: label, from: from, to: tip),
-              !covers(other, label: label, from: from, to: tip) else { return preferred }
-        return other
+
+        let effectiveRuns: [[CGPoint]]
+        if !runs.isEmpty {
+            effectiveRuns = runs
+        } else if let from {
+            effectiveRuns = [[from, tip]]
+        } else {
+            effectiveRuns = []
+        }
+
+        func coversAny(_ center: CGPoint) -> Bool {
+            let box = CGRect(x: center.x - label.width / 2, y: center.y - label.height / 2,
+                             width: label.width, height: label.height)
+            if !effectiveRuns.isEmpty && box.insetBy(dx: -radius, dy: -radius).contains(tip) {
+                return true
+            }
+            for run in effectiveRuns where run.count >= 2 {
+                for i in 0..<(run.count - 1) {
+                    if covers(center, label: label, from: run[i], to: run[i + 1]) {
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+
+        guard !effectiveRuns.isEmpty, coversAny(preferred) else { return preferred }
+        if !coversAny(other) { return other }
+
+        let span = (x - label.width / 2)...(x + label.width / 2)
+        if let extent = OddsChartView.inkExtent9483(
+            runs: effectiveRuns, marks: [tip], across: span,
+            halfStroke: 1.5, markRadius: radius
+        ) {
+            let stepDown = clamped(CGPoint(x: x, y: extent.upperBound + labelGap + label.height / 2))
+            let stepUp = clamped(CGPoint(x: x, y: extent.lowerBound - labelGap - label.height / 2))
+            let candidates = tip.y <= plot.height / 2 ? [stepDown, stepUp] : [stepUp, stepDown]
+            if let clear = candidates.first(where: { !coversAny($0) }) {
+                return clear
+            }
+        }
+        return preferred
     }
 
     /// Whether a label centred at `center` lies over the segment `from`→`to`.
@@ -407,6 +457,7 @@ struct LiveChartEdgeMarker: View {
     let proxy: ChartProxy
     let plotFrame: CGRect
     let tail: LiveEdgeTail
+    var segments: [[ChartDataPoint]] = []
     let label: String
     var rising: Bool?
     let lineColor: Color
@@ -425,7 +476,7 @@ struct LiveChartEdgeMarker: View {
         LiveEdgeTipLayer(
             tipTime: tail.to.date.timeIntervalSinceReferenceDate,
             tipProbability: tail.to.probability,
-            from: tail.from, proxy: proxy, plotFrame: plotFrame,
+            from: tail.from, segments: segments, proxy: proxy, plotFrame: plotFrame,
             label: label, rising: rising, labelSize: labelSize,
             showsMarker: selection.date == nil && scenePhase == .active,
             lineColor: lineColor, lineStyle: lineStyle,
@@ -457,6 +508,7 @@ private struct LiveEdgeTipLayer: View, Animatable {
     var tipTime: TimeInterval
     var tipProbability: Double
     let from: LiveEdgeVertex?
+    let segments: [[ChartDataPoint]]
     let proxy: ChartProxy
     let plotFrame: CGRect
     let label: String
@@ -483,6 +535,19 @@ private struct LiveEdgeTipLayer: View, Animatable {
     /// The segment's start in plot-local points, for label placement.
     private func start(in plot: CGRect) -> CGPoint? {
         from.flatMap { point($0.date, $0.probability) }.map { CGPoint(x: $0.x - plot.minX, y: $0.y - plot.minY) }
+    }
+
+    /// The drawn primary runs in plot-local points, extended to the live tip.
+    private func plotRuns(tipLocal: CGPoint, fromLocal: CGPoint?) -> [[CGPoint]] {
+        var mapped = segments.flatMap { OddsChartView.screenRuns9483($0, proxy: proxy) }
+        if let fromLocal {
+            if !mapped.isEmpty {
+                mapped[mapped.count - 1].append(tipLocal)
+            } else {
+                mapped.append([fromLocal, tipLocal])
+            }
+        }
+        return mapped
     }
 
     var body: some View {
@@ -513,8 +578,10 @@ private struct LiveEdgeTipLayer: View, Animatable {
                         .position(tip)
                     let local = CGPoint(x: tip.x - plotFrame.minX, y: tip.y - plotFrame.minY)
                     let fromLocal = start(in: plotFrame)
-                    let center = LiveChartEdgeMarkerPlan.labelCenter(tip: local, from: fromLocal,
-                                                                    label: labelSize, plot: plotFrame.size)
+                    let center = LiveChartEdgeMarkerPlan.labelCenter(
+                        tip: local, from: fromLocal,
+                        label: labelSize, plot: plotFrame.size,
+                        runs: plotRuns(tipLocal: local, fromLocal: fromLocal))
                     Text(label)
                         .acceptedValueSlide(label, rising: rising)
                         .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())

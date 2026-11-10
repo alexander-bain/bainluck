@@ -2399,7 +2399,8 @@ struct OddsChartView: View {
                     // both sides of 50%.
                     LiveChartEdgeMarker(
                         selection: selection, proxy: proxy, plotFrame: plotFrame,
-                        tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
+                        tail: liveSplit.tail, segments: liveSplit.segments,
+                        label: "\(homeShort) \(liveEdge.homeLabel)",
                         rising: Self.liveEdgeRising(priceActivity, showsPreview: liveEdgeShowsPreview),
                         lineColor: colorForSource(liveSplit.source, sources: sources),
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
@@ -2446,14 +2447,16 @@ struct OddsChartView: View {
                 // #11666 Step E2 — when the Atlas settled result word (`✓ Won` / `✗ Lost`)
                 // is drawn at the terminal point, suppress the percentage label so the two
                 // do not collide as `"✓ Won 100%"`.
-                if let finishedEnd, atlasSettledResult == nil {
-                    finishedEndLabel9483(finishedEnd, line: endLine,
-                                         ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
-                                                                  gameStart: gameStartDate),
-                                         sides: axis.sides, proxy: proxy, plotFrame: plotFrame,
-                                         color: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
-                                         halfStroke: strokeStyleForSource(Self.primarySource(in: dataPoints),
-                                                                          sources: sources).lineWidth / 2)
+                if let finishedEnd {
+                    if atlasSettledResult == nil {
+                        finishedEndLabel9483(finishedEnd, line: endLine,
+                                             ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
+                                                                      gameStart: gameStartDate),
+                                             sides: axis.sides, proxy: proxy, plotFrame: plotFrame,
+                                             color: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
+                                             halfStroke: strokeStyleForSource(Self.primarySource(in: dataPoints),
+                                                                              sources: sources).lineWidth / 2)
+                    }
                 }
                 // #11356 (Design R2) — the held reading's dot sits on the line
                 // the readings are taken from, so it wears that line's colour:

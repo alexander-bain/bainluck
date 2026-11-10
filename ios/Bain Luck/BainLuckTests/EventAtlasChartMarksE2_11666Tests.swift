@@ -379,7 +379,7 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
         XCTAssertTrue(source.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {\n                    EventAtlasChartOverlay11666("))
         XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                            gameStart: kickoffDate"))
         XCTAssertTrue(source.contains("servedSettledResult: servedSettledResult,\n                        gameStart: kickoffDate,\n                        settledResult: atlasSettledResult"))
-        XCTAssertTrue(source.contains("if let finishedEnd, atlasSettledResult == nil"))
+        XCTAssertTrue(source.contains("if let finishedEnd {\n                    if atlasSettledResult == nil {"))
     }
 
     @MainActor
