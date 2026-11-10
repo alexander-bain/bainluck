@@ -107,14 +107,14 @@ struct EventHeadlinePhaseLabel9483: View {
         VStack(spacing: 2) {
             Text(phase.label)
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             if let baseline {
                 if ReleaseSurfaces.isEventPageAtlasEnabled() {
                     EventAtlasPregameMarkView11666(text: baseline)
                 } else {
                     Text(baseline)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
         }

@@ -2027,7 +2027,7 @@ struct EventAtlasCombatDetailsSheet11666: View {
                 Section("Provenance") {
                     Text(context.sourceDetail)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
             .navigationTitle("Market Details")

@@ -1363,13 +1363,13 @@ struct EventAtlasSoccerThreeWayCardView11666: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("90-MINUTE THREE-WAY")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Text(card.title)
                 .font(.headline.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
             Text(card.reason)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
             EventAtlasStoryCardMarkKeyView11666(
                 items: EventAtlasSoccerCards11666.threeWayMarkKey(for: card)
@@ -1398,18 +1398,18 @@ struct EventAtlasSoccerThreeWayCardView11666: View {
             } else {
                 Text(EventAtlasStates11666.noRecentPrice)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
             }
             Spacer(minLength: 4)
             if card.phase == .after {
                 if let res = leg.result {
                     Text(res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(res == .won ? Color.green : Color.secondary)
+                        .foregroundStyle(res == .won ? DS.greenReadable : DS.textSecondaryReadable)
                 } else {
                     Text(EventAtlasStates11666.resultNotConfirmed)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
         }
@@ -1441,7 +1441,7 @@ struct EventAtlasSoccerExactScoreCardView11666: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("EXACT SCORE")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Text(card.title)
                 .font(.headline.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
@@ -1469,17 +1469,17 @@ struct EventAtlasSoccerExactScoreCardView11666: View {
             if let chance = otherCell.chance {
                 Text(formatProbability(chance))
                     .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
             }
             if card.phase == .after {
                 if let res = otherCell.result {
                     Text(res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(res == .won ? Color.green : Color.secondary)
+                        .foregroundStyle(res == .won ? DS.greenReadable : DS.textSecondaryReadable)
                 } else {
                     Text(EventAtlasStates11666.resultNotConfirmed)
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
         }
@@ -1509,17 +1509,17 @@ struct EventAtlasSoccerExactScoreCardView11666: View {
             if let chance = cell.chance {
                 Text(formatProbability(chance))
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
             }
             if card.phase == .after {
                 if let res = cell.result {
                     Text(res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(res == .won ? Color.green : Color.secondary)
+                        .foregroundStyle(res == .won ? DS.greenReadable : DS.textSecondaryReadable)
                 } else {
                     Text(EventAtlasStates11666.resultNotConfirmed)
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
         }

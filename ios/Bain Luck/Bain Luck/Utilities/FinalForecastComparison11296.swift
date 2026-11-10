@@ -270,7 +270,7 @@ struct FinalForecastLine11296: View {
             Text(FinalForecastComparison11296.pairText(comparison, awayName: awayName, homeName: homeName))
         }
         .font(.caption)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(DS.textSecondaryReadable)
         .multilineTextAlignment(.leading)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)

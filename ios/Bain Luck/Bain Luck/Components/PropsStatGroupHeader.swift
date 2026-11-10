@@ -53,7 +53,7 @@ struct PropsStatGroupHeader: View {
         Text(label)
             .font(.caption.weight(.bold))
             .tracking(0.5)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
             .lineLimit(wraps ? nil : 1)
             .fixedSize(horizontal: false, vertical: wraps)
     }
@@ -61,9 +61,10 @@ struct PropsStatGroupHeader: View {
     @ViewBuilder
     private var captionText: some View {
         if let caption {
+            // #12364 — the system tertiary grey read about 1.7:1.
             Text(caption)
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

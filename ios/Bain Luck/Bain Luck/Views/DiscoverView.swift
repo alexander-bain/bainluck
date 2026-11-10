@@ -1881,7 +1881,7 @@ struct DiscoverView: View {
                         ProgressView()
                         Text("Loading predictions…")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 60)
@@ -1889,7 +1889,7 @@ struct DiscoverView: View {
                     VStack(spacing: 16) {
                         Image(systemName: "arrow.clockwise")
                             .font(.title2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                         Text("Couldn't load feed")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.primary)
@@ -1897,7 +1897,7 @@ struct DiscoverView: View {
                         // itself, so the reader is not being asked to rescue it.
                         Text(vm.isRecovering ? "Still trying…" : "Pull down to retry")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                         Button("Retry") {
                             Task { await vm.load(mayReorder: false) }
                         }
@@ -1922,7 +1922,7 @@ struct DiscoverView: View {
                                 .font(.caption.weight(.semibold))
                             Text("Couldn't refresh — pull down or retry")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                         }
                         Spacer()
                         Button("Retry") {
@@ -1952,7 +1952,7 @@ struct DiscoverView: View {
                                 .font(.caption.weight(.semibold))
                             Text("Right = more like this. Left = less like this.")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                         }
                         Spacer()
                         Button {
@@ -1961,7 +1961,7 @@ struct DiscoverView: View {
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                                 .frame(minWidth: 44, minHeight: 44)
                                 .contentShape(Rectangle())
                         }
@@ -2075,7 +2075,7 @@ struct DiscoverView: View {
                         VStack(spacing: 16) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.title2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                             Text("Couldn't find fresh markets")
                                 .font(.subheadline.weight(.medium))
                                 .foregroundStyle(.primary)
@@ -2096,7 +2096,7 @@ struct DiscoverView: View {
                             ProgressView()
                             Text("Finding fresh markets…")
                                 .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 60)
@@ -2828,7 +2828,7 @@ struct ExpandableNativeContextText: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(expanded || !canExpand ? fullText : compactText)
                 .font(font)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(expanded ? nil : 2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2885,13 +2885,13 @@ private struct NativeGroupCard: View {
                             Text(title.uppercased())
                                 .font(.caption2.weight(.bold))
                                 .tracking(0.8)
-                                .foregroundStyle(DS.textSecondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                                 .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
                             if sharedQuestion?.isEmpty != false {
                                 Text("\(items.count)")
                                     .font(.caption2)
-                                    .foregroundStyle(DS.textMuted)
+                                    .foregroundStyle(DS.textSecondaryReadable)
                             }
                         }
                         if let sharedQuestion, !sharedQuestion.isEmpty {
@@ -2940,11 +2940,12 @@ private struct NativeGroupCard: View {
             if let footer = DiscoverGroupRows.footerTitle(memberTypes: items.map(\.type), kind: kind, expanded: expanded) {
                 Divider()
                 Button { withAnimation { expanded = true } } label: {
+                    // #12364 — readable blue, and the whole 44 pt row is the button.
                     Text(footer)
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(DS.blue)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
+                        .foregroundStyle(DS.blueReadable)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -2974,14 +2975,14 @@ private struct NativeGroupCard: View {
             layout {
                 Text(DiscoverGroupRows.collectionTitle(for: ref))
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(DS.blue)
+                    .foregroundStyle(DS.blueReadable)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 2) {
                     Text(DiscoverGroupRows.collectionCountLabel(for: ref))
                         .font(.caption)
-                        .foregroundStyle(DS.textSecondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(DS.textMuted)
@@ -3113,7 +3114,7 @@ private struct NativeIPOComparisonRow: View {
                     if let mark = SourceLabels.label(for: data.source) {
                         Text(mark)
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     }
                 }
                 comparisonSummary(title: "Likely", point: likely, emphasized: true)
@@ -3126,7 +3127,7 @@ private struct NativeIPOComparisonRow: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .textCase(.uppercase)
             Text(point.map { compactRangeLabel($0.label) } ?? "-")
                 .font(.caption2.weight(emphasized ? .heavy : .semibold))
@@ -3161,7 +3162,7 @@ private struct NativeThresholdComparisonRow: View {
                 if let mark = SourceLabels.label(for: data.source) {
                     Text(mark)
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
 
@@ -3170,7 +3171,7 @@ private struct NativeThresholdComparisonRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(compactRangeLabel(point.label))
                             .font(.caption2.weight(.bold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
                         Text("\(Int(((point.probability ?? 0) * 100).rounded()))%")
@@ -3232,7 +3233,7 @@ private struct NativeCompactFuturesRow: View {
                     if let leader = data.topOutcomes?.first {
                         Text(leader.name)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -3641,7 +3642,7 @@ struct NativeGuessCard: View {
             if let category {
                 Text(category.uppercased())
                     .font(.system(size: 9, weight: .heavy))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.secondary.opacity(0.10), in: Capsule())
@@ -3662,7 +3663,7 @@ struct NativeGuessCard: View {
                 if let leader = data.topOutcomes?.first {
                     Text(leader.name)
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -3676,7 +3677,7 @@ struct NativeGuessCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(content.questionPrompt)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(threshold)%")
                     .font(.system(size: 46, weight: .black, design: .rounded).monospacedDigit())
@@ -3684,7 +3685,7 @@ struct NativeGuessCard: View {
                 if let subject = content.questionSubject {
                     Text(subject)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -3799,7 +3800,7 @@ struct NativeGuessCard: View {
 
             Text(content.resultSubject)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
 
@@ -3998,7 +3999,7 @@ private struct ShareSheet: View {
                 .font(.headline)
             Text(text)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .textSelection(.enabled)
             Button("Copy") {
                 copyToClipboard(text)

@@ -195,10 +195,11 @@ struct StatusBadge: View {
                         .font(.caption2)
                         .fontWeight(.medium)
                 }
-                .foregroundStyle(.blue)
+                // #12364 — the system blue on its own tint read about 2.9:1.
+                .foregroundStyle(DS.blueReadable)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(.blue.opacity(0.1))
+                .background(DS.blueReadable.opacity(0.1))
                 .clipShape(Capsule())
             } else {
                 EmptyView()

@@ -638,7 +638,7 @@ struct EventDetailView: View {
                                     Text("View Probability Models")
                                         .font(.caption2.weight(.medium))
                                 }
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(DS.blueReadable)
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 6)
@@ -1089,10 +1089,10 @@ struct EventDetailView: View {
         HStack(spacing: 8) {
             Image(systemName: "chart.bar.xaxis")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Text(EventState.noGameMarketsLine(status: status))
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Spacer()
         }
         .padding(12)
@@ -1307,7 +1307,7 @@ struct EventDetailView: View {
                     Text("Final")
                         .font(.caption2)
                         .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
             Spacer()
@@ -1654,7 +1654,7 @@ struct EventDetailView: View {
                         if carriesContext, let context = adoptedPregameContext9483(event) {
                             Text(context)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -1722,7 +1722,7 @@ struct EventDetailView: View {
                             .font(.caption2)
                             .fontWeight(.medium)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                 }
                 // #8841 — an unannounced start prints its day and "TBD", never
                 // the placeholder's clock.
@@ -1731,12 +1731,12 @@ struct EventDetailView: View {
                     for: event.commenceTime, relativeDays: false) {
                     Text(tbd)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 } else if carriesContext,
                    let commenceTime = event.commenceTime, let date = commenceTime.asDate {
                     Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
 
@@ -1816,7 +1816,7 @@ struct EventDetailView: View {
                         // in the verdict slot rather than in the number).
                         Text("Final")
                             .font(.title2.weight(.bold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     } else {
                         // #3430 — "Tigers Win" answered nothing on Clemson
                         // 10 – LSU 51, because both sides shorten to
@@ -1870,7 +1870,7 @@ struct EventDetailView: View {
                             let openDuel = pregame.percents
                             Text("\(pregameWord) \(formatProbability(awayOpen, renderedPercent: openDuel[0])) – \(formatProbability(opened.home, renderedPercent: openDuel[1]))")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                         } else {
                             let named = TeamShortName.shortPair(
                                 away: event.awayTeam, home: event.homeTeam,
@@ -1882,7 +1882,7 @@ struct EventDetailView: View {
                             // the verdict it sits under.
                             Text("\(pregameWord) \(named.home) \(formatProbability(opened.home))")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                                 .multilineTextAlignment(.center)
                                 .lineLimit(2)
                                 .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
@@ -2144,7 +2144,7 @@ struct EventDetailView: View {
                         // is pre-game, so there is no stream to report).
                         Text(OpeningLineHero.caption)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .frame(minHeight: 44)
                     } else {
                         // #10830 — stacked, the caption's reserved slot was the
@@ -2197,7 +2197,7 @@ struct EventDetailView: View {
                         Text("vs")
                             .font(.title2)
                             .fontWeight(.medium)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     }
                     if priceStreamingEligible { probabilityDetails(confidenceTier: nil) }
                 }
@@ -2982,7 +2982,7 @@ struct EventDetailView: View {
                                     .fixedSize()
                                 label
                                     .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(DS.textSecondaryReadable)
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.5)
                                     .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
@@ -3063,7 +3063,7 @@ struct EventDetailView: View {
                         .fixedSize()
                     Text(result.caption)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -3100,7 +3100,7 @@ struct EventDetailView: View {
                 .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
             Text(label)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3161,13 +3161,13 @@ struct EventDetailView: View {
     ) -> some View {
         let label = caption
             .font(.footnote)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
         return Group {
             if let pair = Self.projectedPair11285(figure) {
                 let scoreline = HStack(alignment: .firstTextBaseline, spacing: 6) {
                     projectedTeam11285(names.away, color: colors.away)
                     projectedPoints11285(pair.away)
-                    Text("\u{2013}").font(.headline).foregroundStyle(.secondary)
+                    Text("\u{2013}").font(.headline).foregroundStyle(DS.textSecondaryReadable)
                     projectedPoints11285(pair.home)
                     projectedTeam11285(names.home, color: colors.home)
                 }
@@ -3378,7 +3378,7 @@ struct EventDetailView: View {
                 // name, and no larger than AX1.
                 Text(pregame)
                     .font(adopted ? .caption : .caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(adopted ? nil : 1)
                     .minimumScaleFactor(adopted ? 1 : 0.5)
                     .dynamicTypeSize(...(adopted ? DynamicTypeSize.accessibility5 : Self.nflPairedCaptionTypeCeiling))
@@ -3414,7 +3414,7 @@ struct EventDetailView: View {
                 case .versus:
                     Text("vs")
                         .font(.title3.weight(.medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 case let .score(away, home, _):
                     Text("\(away)\u{2013}\(home)")
                         .font(.system(size: movement == .omitted ? eventHeadlineScoreSize9483 : 24,
@@ -3424,7 +3424,7 @@ struct EventDetailView: View {
                     if let caption = headline.centerCaption {
                         Text(caption)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(1)
                             .minimumScaleFactor(0.5)
                             .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
@@ -3570,7 +3570,7 @@ struct EventDetailView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                     Text("Game Info")
                         .font(.subheadline)
                         .fontWeight(.semibold)
@@ -3584,7 +3584,7 @@ struct EventDetailView: View {
                                 .font(.caption)
                                 .fontWeight(.medium)
                         }
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(Color.secondary.opacity(0.08))
@@ -3626,7 +3626,7 @@ struct EventDetailView: View {
                                     .fontWeight(.medium)
                             }
                         }
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(Color.secondary.opacity(0.08))
@@ -3643,7 +3643,7 @@ struct EventDetailView: View {
                             .font(.caption)
                             .fontWeight(.medium)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(Color.secondary.opacity(0.08))
@@ -3721,15 +3721,18 @@ struct EventDetailView: View {
                             Text(Self.sourcesToggleLabel(sourceCount: sourceEntries.count))
                                 .font(.caption2)
                                 .fontWeight(.medium)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.textSecondaryReadable)
                                 .rotationEffect(.degrees(showSources ? 180 : 0))
                         }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
+                    // #12364 — the whole 44 pt row is the button, not just its 13 pt label.
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
@@ -3745,7 +3748,7 @@ struct EventDetailView: View {
                         // is not the "Based on N sportsbooks" count above it.
                         Text(Self.bookmakerTableHeading(rowCount: bookmakers.count))
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .textCase(.uppercase)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16)
@@ -3835,7 +3838,7 @@ struct EventDetailView: View {
             if let detail {
                 Text(detail)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ageMark
@@ -3978,7 +3981,7 @@ struct EventDetailView: View {
                 .frame(width: 14, height: 2)
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
         }
     }
 
@@ -4294,7 +4297,7 @@ struct EventDetailView: View {
                         Text("\(league.label) Championship Grid")
                             .font(.subheadline)
                             .fontWeight(.medium)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -4387,7 +4390,7 @@ struct EventDetailView: View {
                 .fontWeight(.medium)
             Text(title)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
         }
         .frame(maxWidth: .infinity)
     }
@@ -4548,7 +4551,7 @@ private struct GameSegmentsView: View {
                     // explains one.
                     Text("Score by period")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
 
                 // UX-P090 — THE TOTAL COLUMN WAS OFF THE RIGHT EDGE OF EVERY IPHONE,
@@ -4954,7 +4957,7 @@ private struct LineMovementExplainerView: View {
 
             Text(text)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
@@ -4996,12 +4999,12 @@ private struct LineMovementExplainerView: View {
                 if let context = cleanedText(movement.context) {
                     Text(context)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("\(formatProbability(movement.homeProbBefore)) to \(formatProbability(movement.homeProbAfter)) home win probability")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
         }
@@ -5011,7 +5014,7 @@ private struct LineMovementExplainerView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
             Text(formatProbability(value))
                 .font(.caption.monospacedDigit().weight(.bold))

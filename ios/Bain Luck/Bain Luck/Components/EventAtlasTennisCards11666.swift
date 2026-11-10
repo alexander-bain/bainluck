@@ -1524,13 +1524,13 @@ struct EventAtlasTennisSetsCardView11666: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("SET BY SET")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Text(card.title)
                 .font(.headline.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
             Text(card.reason)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
             EventAtlasStoryCardMarkKeyView11666(
                 items: EventAtlasTennisCards11666.setsMarkKey(for: card)
@@ -1550,13 +1550,13 @@ struct EventAtlasTennisSetsCardView11666: View {
             HStack {
                 Text(step.label)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
                 Spacer()
                 if let winnerSide = step.winnerSide {
                     let winnerShort = winnerSide == .home ? card.homeShort : card.awayShort
                     Text("\(winnerShort) \(EventAtlasStates11666.wonWithCheck)")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Color.green)
+                        .foregroundStyle(DS.greenReadable)
                 }
             }
             legRow(step.home, color: homeColor)
@@ -1580,22 +1580,22 @@ struct EventAtlasTennisSetsCardView11666: View {
             } else {
                 Text(EventAtlasStates11666.noRecentPrice)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
             }
             Spacer(minLength: 4)
             if card.phase == .after {
                 if leg.hasResultConflict {
                     Text(EventAtlasStates11666.pending)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 } else if let res = leg.result {
                     Text(res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(res == .won ? Color.green : Color.secondary)
+                        .foregroundStyle(res == .won ? DS.greenReadable : DS.textSecondaryReadable)
                 } else {
                     Text(EventAtlasStates11666.pending)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
         }
@@ -1625,13 +1625,13 @@ struct EventAtlasTennisExactScoreCardView11666: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("EXACT MATCH SCORE")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
             Text(card.title)
                 .font(.headline.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
             Text(card.reason)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
             EventAtlasStoryCardMarkKeyView11666(
                 items: EventAtlasTennisCards11666.exactScoreMarkKey(for: card)
@@ -1660,21 +1660,21 @@ struct EventAtlasTennisExactScoreCardView11666: View {
             } else {
                 Text(EventAtlasStates11666.noRecentPrice)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.textSecondaryReadable)
             }
             if card.phase == .after {
                 if outcome.hasResultConflict {
                     Text(EventAtlasStates11666.pending)
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 } else if let res = outcome.result {
                     Text(res == .won ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(res == .won ? Color.green : Color.secondary)
+                        .foregroundStyle(res == .won ? DS.greenReadable : DS.textSecondaryReadable)
                 } else {
                     Text(EventAtlasStates11666.pending)
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
         }

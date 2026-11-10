@@ -380,7 +380,7 @@ struct NativeFuturesDiscoverCard: View {
                 if let sumExplanation = cardSumExplanation(data.cardSumReason) {
                     Text(sumExplanation)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -430,7 +430,7 @@ struct NativeFuturesDiscoverCard: View {
                     ) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .padding(8)
                             .background(Color.secondary.opacity(0.10), in: Circle())
                             .frame(minWidth: 44, minHeight: 44)

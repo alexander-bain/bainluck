@@ -140,7 +140,7 @@ struct EventAtlasHeroStateLabelView11666: View {
     var body: some View {
         Text(label)
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DS.textSecondaryReadable)
             .multilineTextAlignment(.center)
             .accessibilityIdentifier(
                 label == EventAtlasStates11666.noRecentPrice

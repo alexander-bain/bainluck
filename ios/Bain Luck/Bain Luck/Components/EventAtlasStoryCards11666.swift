@@ -457,7 +457,7 @@ struct EventAtlasStoryCardMarkKeyView11666: View {
                 .accessibilityHidden(true)
             Text(item.label)
                 .font(.caption2)
-                .foregroundStyle(item.glyph == .wonCheck ? Color.green : Color.secondary)
+                .foregroundStyle(item.glyph == .wonCheck ? DS.greenReadable : DS.textSecondaryReadable)
         }
     }
 
