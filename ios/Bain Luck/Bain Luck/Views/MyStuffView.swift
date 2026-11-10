@@ -1352,7 +1352,7 @@ private struct TeamFuturesSection: View {
 
             if allFlat.count + data.journeys.count > Self.initialShow {
                 Button {
-                    withAnimation { expanded.toggle() }
+                    withMotion12527 { expanded.toggle() }
                 } label: {
                     Text(expanded ? "Show less" : "See all \(uniqueCount) markets →")
                         .font(.caption)

@@ -1956,7 +1956,7 @@ struct DiscoverView: View {
                         }
                         Spacer()
                         Button {
-                            withAnimation { showSwipeHint = false }
+                            withMotion12527 { showSwipeHint = false }
                             UserDefaults.standard.set(true, forKey: "discover_swipe_hinted")
                         } label: {
                             Image(systemName: "xmark")
@@ -1971,7 +1971,7 @@ struct DiscoverView: View {
                     .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                     .padding(.horizontal)
                     .padding(.bottom, 8)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(ReducedMotion12527.transition(.opacity.combined(with: .move(edge: .top))))
                 }
 
                 // Cards (paginated — show `visibleCount` at a time)
@@ -2402,7 +2402,7 @@ struct DiscoverView: View {
         }
         if let next = nextGuessIdx, next < items.count {
             let targetId = itemId(items[next])
-            withAnimation(.easeInOut(duration: 0.3)) {
+            withMotion12527(.easeInOut(duration: 0.3)) {
                 proxy.scrollTo(targetId, anchor: .top)
             }
         }
@@ -2413,7 +2413,7 @@ struct DiscoverView: View {
             (i + 1) % 5 == 0
         }
         if let next = nextIdx, next < items.count {
-            withAnimation(.easeInOut(duration: 0.3)) {
+            withMotion12527(.easeInOut(duration: 0.3)) {
                 proxy.scrollTo(items[next].id, anchor: .top)
             }
         }
@@ -2606,7 +2606,7 @@ struct DiscoverView: View {
             orderingProfileVersion &+= 1
             pullEpoch &+= 1
             if let proxy {
-                withAnimation { proxy.scrollTo(Self.feedTopAnchor, anchor: .top) }
+                withMotion12527 { proxy.scrollTo(Self.feedTopAnchor, anchor: .top) }
             }
             // Deliberately NOT awaited by this function: `.refreshable` holds the
             // pull-to-refresh spinner — and the header with it — until the closure
@@ -2674,7 +2674,7 @@ struct DiscoverView: View {
             Task { await vm.loadMoreIfNeeded() }
         }
         if showSwipeHint {
-            withAnimation { showSwipeHint = false }
+            withMotion12527 { showSwipeHint = false }
             UserDefaults.standard.set(true, forKey: "discover_swipe_hinted")
         }
     }
@@ -2877,7 +2877,7 @@ private struct NativeGroupCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Button { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
+            Button { withMotion12527(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 6) {
@@ -2939,7 +2939,7 @@ private struct NativeGroupCard: View {
 
             if let footer = DiscoverGroupRows.footerTitle(memberTypes: items.map(\.type), kind: kind, expanded: expanded) {
                 Divider()
-                Button { withAnimation { expanded = true } } label: {
+                Button { withMotion12527 { expanded = true } } label: {
                     Text(footer)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(DS.blue)
@@ -3578,7 +3578,7 @@ struct NativeGuessCard: View {
         displayPct = content.animatesResult ? 0 : actualPct
         let isCorrect = g == "higher" ? actualPct > threshold : actualPct < threshold
         if content.animatesResult {
-            withAnimation(.easeOut(duration: 0.6)) { displayPct = actualPct }
+            withMotion12527(.easeOut(duration: 0.6)) { displayPct = actualPct }
         }
         onGuessCompleted?()
         AnalyticsService.trackPredictionSubmit(
@@ -3939,7 +3939,7 @@ private struct SwipeToDismiss<Content: View>: View {
                         feedbackStartedWith = nil
                         if swipe.commits(width: v.translation.width),
                            !DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) {
-                            withAnimation(.spring(response: 0.3)) {
+                            withMotion12527(.spring(response: 0.3)) {
                                 swipe.settleAfterCommit()
                             }
                             onRequiresSignIn()
@@ -3950,7 +3950,7 @@ private struct SwipeToDismiss<Content: View>: View {
                         let curve: Animation = swipe.commits(width: v.translation.width)
                             ? .easeOut(duration: 0.2)
                             : .spring(response: 0.3)
-                        let outcome = withAnimation(curve) {
+                        let outcome = withMotion12527(curve) {
                             swipe.end(width: v.translation.width)
                         }
                         guard outcome != .none else { return }

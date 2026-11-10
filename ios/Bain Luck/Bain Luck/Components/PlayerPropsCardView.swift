@@ -385,7 +385,7 @@ struct PlayerPropsCardView: View {
     private func filterButton(_ label: String, value: String) -> some View {
         let isActive = teamFilter == value
         return Button {
-            withAnimation(.easeInOut(duration: 0.15)) { teamFilter = value }
+            withMotion12527(.easeInOut(duration: 0.15)) { teamFilter = value }
         } label: {
             Text(label)
                 .font(.subheadline.weight(isActive ? .semibold : .medium))
@@ -764,7 +764,7 @@ struct PlayerPropsCardView: View {
             }
             if hiddenCount > 0 {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withMotion12527(.easeInOut(duration: 0.15)) {
                         if isOpen {
                             expandedFields.remove(field.id)
                         } else {

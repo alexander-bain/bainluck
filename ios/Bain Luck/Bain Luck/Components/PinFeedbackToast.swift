@@ -75,7 +75,7 @@ struct PinFeedbackToast: View {
                 .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 6)
                 .padding(.horizontal, 20)
                 .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(ReducedMotion12527.transition(.move(edge: .bottom).combined(with: .opacity)))
                 .allowsHitTesting(feedback.managementType != nil)
                 .id(feedback.id)
                 .task(id: feedback.id) {
@@ -83,7 +83,7 @@ struct PinFeedbackToast: View {
                     try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                     await MainActor.run {
                         if pinManager.feedback?.id == feedback.id {
-                            withAnimation(.easeOut(duration: 0.18)) {
+                            withMotion12527(.easeOut(duration: 0.18)) {
                                 pinManager.feedback = nil
                             }
                         }
@@ -97,6 +97,6 @@ struct PinFeedbackToast: View {
         .sheet(item: $pinManager.managementPresentation) { request in
             PinManagementView(focusType: request.focusType).environmentObject(pinManager)
         }
-        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: pinManager.feedback?.id)
+        .motionAnimation12527(.spring(response: 0.24, dampingFraction: 0.88), value: pinManager.feedback?.id)
     }
 }

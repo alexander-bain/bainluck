@@ -24,7 +24,7 @@ struct ProbabilityBar: View {
             .shadow(color: glowing ? homeColor.opacity(0.4) : .clear, radius: glowing ? 6 : 0)
         }
         .frame(height: height)
-        .animation(animated ? .easeInOut(duration: 0.5) : nil, value: awayProb)
-        .animation(animated ? .easeInOut(duration: 0.5) : nil, value: homeProb)
+        .motionAnimation12527(animated ? .easeInOut(duration: 0.5) : nil, value: awayProb)
+        .motionAnimation12527(animated ? .easeInOut(duration: 0.5) : nil, value: homeProb)
     }
 }

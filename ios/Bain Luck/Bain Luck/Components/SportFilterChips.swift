@@ -75,7 +75,7 @@ struct SportFilterChips: View {
         let isSelected = selectedCategory == category.id
         return Button {
             if isAll {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withMotion12527(.easeInOut(duration: 0.2)) {
                     selectedCategory = "all"
                 }
             } else if let route = category.route {

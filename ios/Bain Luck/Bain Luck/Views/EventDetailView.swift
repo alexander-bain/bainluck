@@ -3711,7 +3711,7 @@ struct EventDetailView: View {
             VStack(spacing: 0) {
                 Divider()
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withMotion12527(.easeInOut(duration: 0.2)) {
                         showSources.toggle()
                     }
                 } label: {
@@ -4249,7 +4249,7 @@ struct EventDetailView: View {
             }
             if allRows.count > Self.collapsedBookmakerRowLimit {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withMotion12527(.easeInOut(duration: 0.2)) {
                         showAllBookmakers.toggle()
                     }
                 } label: {

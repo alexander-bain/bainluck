@@ -434,7 +434,7 @@ struct NFLCardReader9483: View {
         let next = (cards.firstIndex { $0.id == visible } ?? 0) + delta
         guard cards.indices.contains(next) else { return }
         seated = true
-        withAnimation { visible = cards[next].id }
+        withMotion12527 { visible = cards[next].id }
         state.openCardID = cards[next].id
     }
 }

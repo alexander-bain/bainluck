@@ -225,12 +225,15 @@ extension StatusBadge {
 
 private struct PulseAnimation: ViewModifier {
     @State private var animating = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
+        // #12527 — with Reduce Motion on, the dot holds still at its resting size.
+        let pulsing = animating && !reduceMotion
         content
-            .scaleEffect(animating ? 1.3 : 1.0)
-            .opacity(animating ? 0.6 : 1.0)
-            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: animating)
+            .scaleEffect(pulsing ? 1.3 : 1.0)
+            .opacity(pulsing ? 0.6 : 1.0)
+            .motionAnimation12527(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: animating)
             .onAppear { animating = true }
     }
 }

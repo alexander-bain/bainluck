@@ -396,7 +396,7 @@ struct SearchView: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(isSearchFocused ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1.5)
         )
-        .animation(.easeInOut(duration: 0.2), value: isSearchFocused)
+        .motionAnimation12527(.easeInOut(duration: 0.2), value: isSearchFocused)
     }
 
     // MARK: - Sport Filter Chips
@@ -407,7 +407,7 @@ struct SearchView: View {
                 ForEach(filters) { filter in
                     let isSelected = viewModel.selectedSport == filter.key
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        withMotion12527(.easeInOut(duration: 0.2)) {
                             viewModel.selectedSport = filter.key
                         }
                         viewModel.onSportFilterChange()
