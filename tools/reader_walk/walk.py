@@ -5,20 +5,27 @@ Stdlib only, GET only, public pages only. It never signs in and reads no secret.
 
     python3 tools/reader_walk/walk.py                        # run the search walk, print the summary
     python3 tools/reader_walk/walk.py --out /tmp/walk.json   # also keep the whole run
-    python3 tools/reader_walk/walk.py --min-pass 34          # exit 1 below 34 passes
+    python3 tools/reader_walk/walk.py --min-pass 34          # exit 1 below 34 field-proved passes
 
 Every answer lands in exactly one of four states:
 
-  pass      a clean answer whose first screen holds what the reader meant
+  pass      a clean answer that holds the thing the reader asked for
   fail      a clean answer that does not
   degraded  the API said part of the answer is missing (its ``degraded`` list) and still
             said so on one retry
   error     no HTTP 200 after one retry
 
 A degraded or failed read is never an empty answer and never a speed sample (#12290).
-The checks in ``evals/reader-walk/queries/search-v1.json`` are the lenient reading: the
-expected thing is somewhere on the first screen. The README says what the strict reading
-still needs.
+
+A check proves its pass one of two ways, and a run reports them apart:
+
+  fields    the answer carries the requested object itself: a team's slug, a collection's
+            slug, a market's id, or a game in the asked-for sport starting in the
+            asked-for window
+  words     only the item's name was matched. This is a heuristic, not proof, and it is
+            never counted toward an acceptance number.
+
+Neither reading says where on the page the thing lands. Order is the browser walk's job.
 """
 
 from __future__ import annotations
@@ -29,16 +36,17 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, NamedTuple, Sequence
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_QUERIES = REPO / "evals" / "reader-walk" / "queries" / "search-v1.json"
 DEFAULT_API = "https://api.bainluck.com"
 USER_AGENT = "bainluck-reader-walk/1 (+https://github.com/alexander-bain/bainluck/issues/12528)"
 
-#: The lists a search answer can carry, in the order this walk reads them as one screen.
-FIRST_SCREEN_LISTS = (
+#: The lists a search answer can carry.
+LISTS = (
     "event_concepts",
     "collections",
     "teams",
@@ -50,13 +58,37 @@ FIRST_SCREEN_LISTS = (
 PER_LIST = 6
 RETRY_PAUSE_S = 2.0
 RAW_LIMIT_CHARS = 40_000
+#: A game that began up to this long ago still counts as "tonight".
+STARTED_HOURS_AGO = 6
 STATES = ("pass", "fail", "degraded", "error")
+PROOFS = ("fields", "words")
 CLASSES = ("entity", "alias", "entity+market", "set", "other topics", "honesty")
-SPEC_KEYS = {"empty", "kinds", "name_has_all", "name_has_any", "top", "min_count"}
+#: A ``where`` on one of these names the object itself; on any other field it only narrows.
+IDENTITY_FIELDS = ("id", "slug", "key")
+SPEC_KEYS = {
+    "empty",
+    "any_of",
+    "kinds",
+    "where",
+    "name_has_all",
+    "name_has_any",
+    "name_has_none",
+    "outcome_has_any",
+    "starts_within_hours",
+    "rank_in_list_max",
+    "min_count",
+}
+_WORD_KEYS = ("name_has_all", "name_has_any", "name_has_none", "outcome_has_any")
 _NAME_KEYS = ("name", "title", "text", "display_name", "label", "full_name")
 
-Item = tuple[str, str]
 Fetch = Callable[[str, str], tuple[int, int, Any]]
+
+
+class Item(NamedTuple):
+    kind: str
+    name: str
+    rank: int  # 1-based position inside its own list
+    raw: Mapping[str, Any]
 
 
 def name_of(value: Any) -> str:
@@ -70,21 +102,21 @@ def name_of(value: Any) -> str:
 
 
 def first_screen(payload: Any) -> list[Item]:
-    """The (list, name) pairs a reader gets first, at most ``PER_LIST`` from each list."""
+    """What an answer holds: at most ``PER_LIST`` rows from each list, each with its rank."""
     if not isinstance(payload, Mapping):
         return []
     items: list[Item] = []
-    for kind in FIRST_SCREEN_LISTS:
+    for kind in LISTS:
         rows = payload.get(kind) or []
         if not isinstance(rows, list):
             continue
-        for row in rows[:PER_LIST]:
+        for rank, row in enumerate(rows[:PER_LIST], 1):
             if kind == "results" and isinstance(row, Mapping):
                 home, away = name_of(row.get("home_team")), name_of(row.get("away_team"))
                 label = f"{away} at {home}" if (home or away) else name_of(row)
             else:
                 label = name_of(row)
-            items.append((kind, label))
+            items.append(Item(kind, label, rank, row if isinstance(row, Mapping) else {}))
     return items
 
 
@@ -92,65 +124,154 @@ def is_degraded(payload: Any) -> bool:
     return bool(isinstance(payload, Mapping) and payload.get("degraded"))
 
 
+def _is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
 def validate_spec(spec: Any) -> list[str]:
-    """Every problem with one query's check; an empty list means it can be run."""
+    """Every problem with one check; an empty list means it can be run."""
     if not isinstance(spec, Mapping):
         return ["the check is not an object"]
     problems = [f"unknown key {key!r}" for key in spec if key not in SPEC_KEYS]
-    if spec.get("empty") is True:
+    if "empty" in spec:
+        if spec.get("empty") is not True:
+            problems.append("'empty' may only be true")
         if set(spec) != {"empty"}:
             problems.append("an 'empty' check takes no other key")
         return problems
-    if "empty" in spec:
-        problems.append("'empty' may only be true")
+    if "any_of" in spec:
+        options = spec.get("any_of")
+        if set(spec) != {"any_of"}:
+            problems.append("an 'any_of' check takes no other key")
+        if not isinstance(options, list) or len(options) < 2:
+            problems.append("'any_of' needs at least two checks")
+        else:
+            for option in options:
+                problems.extend(validate_spec(option))
+        return problems
     kinds = spec.get("kinds")
-    if kinds is not None and (
-        not isinstance(kinds, list) or not kinds or any(k not in FIRST_SCREEN_LISTS for k in kinds)
-    ):
+    if kinds is not None and (not isinstance(kinds, list) or not kinds or any(k not in LISTS for k in kinds)):
         problems.append("'kinds' must be a non-empty list of known lists")
-    for key in ("name_has_all", "name_has_any"):
+    where = spec.get("where")
+    if where is not None:
+        if not isinstance(where, Mapping) or not where:
+            problems.append("'where' must name at least one field")
+        else:
+            for field, allowed in where.items():
+                if not isinstance(allowed, list) or not allowed or any(
+                    isinstance(v, bool) or not isinstance(v, (str, int)) or str(v).strip() in ("", "*") for v in allowed
+                ):
+                    problems.append(f"'where' field {field!r} needs a non-empty list of values")
+    for key in _WORD_KEYS:
         words = spec.get(key)
         if words is not None and (
             not isinstance(words, list) or not words or any(not isinstance(w, str) or not w.strip() for w in words)
         ):
             problems.append(f"{key!r} must be a non-empty list of words")
-    for key in ("top", "min_count"):
-        number = spec.get(key)
-        if number is not None and (not isinstance(number, int) or isinstance(number, bool) or number < 1):
+    for key in ("rank_in_list_max", "min_count", "starts_within_hours"):
+        if spec.get(key) is not None and not _is_count(spec[key]):
             problems.append(f"{key!r} must be a whole number of at least 1")
-    if not (kinds or spec.get("name_has_all") or spec.get("name_has_any")):
-        problems.append("the check names neither a list nor a word, so anything would pass")
+    if spec.get("starts_within_hours") is not None and kinds != ["results"]:
+        problems.append("'starts_within_hours' only reads games, so 'kinds' must be [\"results\"]")
+    selects = bool(where) or bool(spec.get("name_has_all")) or bool(spec.get("name_has_any"))
+    selects = selects or spec.get("starts_within_hours") is not None or bool(spec.get("outcome_has_any"))
+    if not selects:
+        problems.append("the check names no object, word or window, so an unrelated answer would pass")
     return problems
 
 
-def check(spec: Mapping[str, Any], items: Sequence[Item]) -> bool:
-    """True when the first screen holds what the reader meant, by the lenient reading."""
+def proof_of(spec: Mapping[str, Any]) -> str:
+    """How a pass on this check is proved: by ``fields`` or by ``words`` only."""
+    if spec.get("empty") is True:
+        return "fields"
+    if "any_of" in spec:
+        return "fields" if all(proof_of(option) == "fields" for option in spec["any_of"]) else "words"
+    where = spec.get("where") or {}
+    if any(field in IDENTITY_FIELDS for field in where):
+        return "fields"
+    if spec.get("starts_within_hours") is not None:
+        return "fields"
+    return "words"
+
+
+def _field_matches(raw: Mapping[str, Any], field: str, allowed: Sequence[Any]) -> bool:
+    value = raw.get(field)
+    if value is None or isinstance(value, (dict, list)):
+        return False
+    text = str(value).strip().lower()
+    for want in allowed:
+        wanted = str(want).strip().lower()
+        if wanted.endswith("*"):
+            if text.startswith(wanted[:-1]):
+                return True
+        elif text == wanted:
+            return True
+    return False
+
+
+def _outcome_has(raw: Mapping[str, Any], words: Sequence[str]) -> bool:
+    outcomes = raw.get("top_outcomes") or raw.get("outcomes") or []
+    names = [name_of(o).lower() for o in outcomes] if isinstance(outcomes, list) else []
+    return any(word in name for word in words for name in names)
+
+
+def _starts_within(raw: Mapping[str, Any], hours: int, now: datetime) -> bool:
+    stamp = raw.get("commence_time")
+    if not isinstance(stamp, str) or not stamp:
+        return False
+    try:
+        start = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return now - timedelta(hours=STARTED_HOURS_AGO) <= start <= now + timedelta(hours=hours)
+
+
+def check(spec: Mapping[str, Any], items: Sequence[Item], now: datetime) -> bool:
+    """True when the answer holds the thing the reader asked for. ``now`` is passed in, never read."""
     if spec.get("empty") is True:
         return len(items) == 0
-    pool = items if spec.get("top") is None else items[: int(spec["top"])]
+    if "any_of" in spec:
+        return any(check(option, items, now) for option in spec["any_of"])
     kinds = spec.get("kinds")
+    where = spec.get("where") or {}
     has_all = [w.lower() for w in spec.get("name_has_all") or ()]
     has_any = [w.lower() for w in spec.get("name_has_any") or ()]
+    has_none = [w.lower() for w in spec.get("name_has_none") or ()]
+    outcome_any = [w.lower() for w in spec.get("outcome_has_any") or ()]
+    rank_max = spec.get("rank_in_list_max")
+    hours = spec.get("starts_within_hours")
     hits = 0
-    for kind, name in pool:
-        text = name.lower()
-        if kinds and kind not in kinds:
+    for item in items:
+        text = item.name.lower()
+        if kinds and item.kind not in kinds:
+            continue
+        if rank_max is not None and item.rank > rank_max:
+            continue
+        if not all(_field_matches(item.raw, field, allowed) for field, allowed in where.items()):
             continue
         if any(word not in text for word in has_all):
             continue
         if has_any and not any(word in text for word in has_any):
             continue
+        if any(word in text for word in has_none):
+            continue
+        if outcome_any and not _outcome_has(item.raw, outcome_any):
+            continue
+        if hours is not None and not _starts_within(item.raw, hours, now):
+            continue
         hits += 1
     return hits >= int(spec.get("min_count") or 1)
 
 
-def classify(status: int, payload: Any, spec: Mapping[str, Any]) -> str:
+def classify(status: int, payload: Any, spec: Mapping[str, Any], now: datetime) -> str:
     """One of ``STATES``. Only a clean HTTP 200 can pass or fail."""
     if status != 200 or not isinstance(payload, Mapping):
         return "error"
     if is_degraded(payload):
         return "degraded"
-    return "pass" if check(spec, first_screen(payload)) else "fail"
+    return "pass" if check(spec, first_screen(payload), now) else "fail"
 
 
 def load_queries(path: Path = DEFAULT_QUERIES) -> list[dict[str, Any]]:
@@ -203,6 +324,8 @@ def summarize(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return {
         "queries": len(rows),
         "states": states,
+        "checks_by_proof": {p: sum(1 for r in rows if r["proof"] == p) for p in PROOFS},
+        "pass_by_proof": {p: sum(1 for r in rows if r["state"] == "pass" and r["proof"] == p) for p in PROOFS},
         "by_class": by_class,
         "first_call_degraded": sum(1 for r in rows if r.get("first_call_degraded")),
         "first_call_not_200": sum(1 for r in rows if r.get("first_call_status") != 200),
@@ -229,12 +352,17 @@ def _raw(payload: Any) -> Any:
     return payload if len(text) <= RAW_LIMIT_CHARS else text[:RAW_LIMIT_CHARS] + " …(cut)"
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def walk(
     queries: Sequence[Mapping[str, Any]],
     api: str = DEFAULT_API,
     *,
     fetch_fn: Fetch = fetch,
     sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], datetime] = _utc_now,
     pause_s: float = 0.15,
 ) -> list[dict[str, Any]]:
     """Ask every query: a first (cold) call, one retry if it wasn't clean, and a repeat."""
@@ -252,12 +380,13 @@ def walk(
             sleep(pause_s)
         repeat_status, ms_repeat, repeat_payload = fetch_fn(api, path)
         sleep(pause_s)
-        state = classify(judged_status, judged_payload, query["check"])
+        state = classify(judged_status, judged_payload, query["check"], clock())
         row: dict[str, Any] = {
             "class": query["class"],
             "q": query["q"],
             "expect": query["expect"],
             "state": state,
+            "proof": proof_of(query["check"]),
             "first_call_status": status,
             "first_call_degraded": bool(status == 200 and is_degraded(payload)),
             "degraded_lists": payload.get("degraded") if isinstance(payload, Mapping) else None,
@@ -266,7 +395,7 @@ def walk(
             "ms_cold": ms_first if clean_first else None,
             "ms_first_raw": ms_first,
             "ms_repeat": ms_repeat if (repeat_status == 200 and not is_degraded(repeat_payload)) else None,
-            "top": first_screen(judged_payload)[:4] if judged_status == 200 else [],
+            "holds": [[i.kind, i.name] for i in first_screen(judged_payload)[:4]] if judged_status == 200 else [],
         }
         if state != "pass":
             row["raw"] = _raw(judged_payload)  # keep the answer itself for anything that isn't a pass
@@ -275,10 +404,14 @@ def walk(
 
 
 def _print(summary: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> None:
-    states = summary["states"]
+    states, proved, asked = summary["states"], summary["pass_by_proof"], summary["checks_by_proof"]
     print(
         f"{states['pass']} pass, {states['fail']} fail, {states['degraded']} degraded, "
         f"{states['error']} error of {summary['queries']} searches"
+    )
+    print(
+        f"passes proved by fields: {proved['fields']} of {asked['fields']} | "
+        f"by words only (a heuristic, not proof): {proved['words']} of {asked['words']}"
     )
     cold, repeat = summary["cold"], summary["repeat"]
     print(
@@ -289,8 +422,8 @@ def _print(summary: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> Non
         print(f"  {name}: " + ", ".join(f"{counts[s]} {s}" for s in STATES if counts[s]))
     for row in rows:
         if row["state"] != "pass":
-            top = f"{row['top'][0][0]}: {row['top'][0][1]}" if row["top"] else "(nothing)"
-            print(f"  {row['state'].upper():8} | {row['class']} | {row['q']} | wanted {row['expect']} | got {top}")
+            got = f"{row['holds'][0][0]}: {row['holds'][0][1]}" if row["holds"] else "(nothing)"
+            print(f"  {row['state'].upper():8} | {row['class']} | {row['q']} | wanted {row['expect']} | first row {got}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -298,7 +431,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--api", default=DEFAULT_API)
     parser.add_argument("--queries", type=Path, default=DEFAULT_QUERIES)
     parser.add_argument("--out", type=Path, help="write the whole run here as JSON")
-    parser.add_argument("--min-pass", type=int, help="exit 1 when fewer searches pass")
+    parser.add_argument("--min-pass", type=int, help="exit 1 when fewer searches pass with field proof")
     args = parser.parse_args(argv)
     queries = load_queries(args.queries)
     rows = walk(queries, args.api)
@@ -306,14 +439,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     _print(summary, rows)
     if args.out:
         run = {
-            "walk_version": 1,
+            "walk_version": 2,
             "ran_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "api": args.api,
             "summary": summary,
             "rows": rows,
         }
         args.out.write_text(json.dumps(run, ensure_ascii=False, indent=1), encoding="utf-8")
-    if args.min_pass is not None and summary["states"]["pass"] < args.min_pass:
+    if args.min_pass is not None and summary["pass_by_proof"]["fields"] < args.min_pass:
         return 1
     return 0
 
