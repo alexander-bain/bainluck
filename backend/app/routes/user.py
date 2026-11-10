@@ -6,6 +6,7 @@ All endpoints require authentication unless noted otherwise.
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -1391,6 +1392,81 @@ def _many_winner_series_key(
     except (TypeError, ValueError):
         return None
     return external_id.split("-", 1)[0] or None
+
+
+async def _team_outcome_prices(
+    db: AsyncSession, outcome_ids: list[int]
+) -> tuple[list[dict], dict[str, str]]:
+    """#10090: fresh prices for team-page rows already on screen, by outcome id.
+
+    The row fields `_query_team_futures` serves for one leg — probability, 24h
+    move, rank, field size, graded winner — under the SAME refusals it applies:
+    open, not game-bound (`event_id IS NULL`), and not withheld by the market
+    page's screen plus board staleness (#8503, #11534). A refused leg gets an
+    explicit disposition (`withheld` / `closed`), never a bare number, so a row
+    stops showing a price the page would no longer serve. Which rows a team page
+    shows (coherence, series caps) is composition and stays with the full read.
+
+    FAILS CLOSED, unlike the page read: a screen that cannot run returns
+    `unresolved` for every leg, so a live patch never prints an unscreened price.
+    """
+    from app.routes.futures import withheld_price_outcome_ids_for_markets
+    from app.routes.prop_families import _board_staleness_withheld
+
+    dispositions = {f"outcome-{oid}": "missing" for oid in outcome_ids}
+    if not outcome_ids:
+        return [], dispositions
+    outcomes = (await db.execute(
+        select(FuturesOutcome).where(FuturesOutcome.id.in_(outcome_ids))
+    )).scalars().all()
+    market_ids = sorted({o.market_id for o in outcomes})
+    markets = (await db.execute(
+        select(FuturesMarket)
+        .where(FuturesMarket.id.in_(market_ids))
+        .options(selectinload(FuturesMarket.outcomes))
+    )).scalars().all() if market_ids else []
+    by_market = {m.id: m for m in markets}
+
+    screen = await db.begin_nested()
+    try:
+        withheld = await withheld_price_outcome_ids_for_markets(db, list(markets))
+        for market in markets:
+            stopped = await _board_staleness_withheld(db, market)
+            if stopped:
+                withheld[market.id] = withheld.get(market.id, set()) | stopped
+        await screen.commit()
+    except Exception:  # noqa: BLE001 — refuse, never patch unscreened
+        await screen.rollback()
+        logger.exception("team outcome prices: price screen failed for %s", market_ids)
+        for outcome in outcomes:
+            dispositions[f"outcome-{outcome.id}"] = "unresolved"
+        return [], dispositions
+
+    items = []
+    for outcome in outcomes:
+        key = f"outcome-{outcome.id}"
+        market = by_market.get(outcome.market_id)
+        if market is None or market.status != "open" or market.event_id is not None:
+            dispositions[key] = "closed"
+            continue
+        if outcome.id in withheld.get(market.id, ()):
+            dispositions[key] = "withheld"
+            continue
+        revision = outcome.__dict__.get("last_updated")
+        if isinstance(revision, datetime) and revision.tzinfo is None:
+            revision = revision.replace(tzinfo=timezone.utc)
+        items.append({
+            "outcome_id": outcome.id,
+            "market_id": market.id,
+            "probability": float(outcome.current_probability) if outcome.current_probability is not None else None,
+            "probability_change_24h": float(outcome.probability_change_24h) if outcome.probability_change_24h is not None else None,
+            "rank": outcome.rank,
+            "total_outcomes": len(market.outcomes),
+            "is_winner": bool(outcome.is_winner),
+            "price_revision_at": revision.isoformat() if isinstance(revision, datetime) else None,
+        })
+        dispositions[key] = "updated"
+    return items, dispositions
 
 
 def _prefer_coherent_team_items(per_team_items: dict[int, list[dict]]) -> None:
