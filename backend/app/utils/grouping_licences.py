@@ -359,6 +359,15 @@ _CAPTION_GRAMMAR_VIOLATION_RE = re.compile(
 )
 
 
+def _starts_with_ungrammatical_lowercase(text: str) -> bool:
+    """Return True if ``text`` begins with an all-lowercase word, allowing mixed-case brands (e.g. ``iPhone``, ``eBay``, ``xAI``)."""
+    clean = str(text or "").strip()
+    if not clean:
+        return False
+    first_word = clean.split()[0]
+    return first_word[0].islower() and not any(ch.isupper() for ch in first_word[1:])
+
+
 def _check_title_caption_violation(
     title: str,
     *,
@@ -370,7 +379,7 @@ def _check_title_caption_violation(
         return None
     if _CAPTION_GRAMMAR_VIOLATION_RE.search(clean):
         return f"Caption grammar violation in title ({clean!r})"
-    if clean[0].islower():
+    if _starts_with_ungrammatical_lowercase(clean):
         return f"Caption title starts with lowercase ({clean!r})"
     if enforce_single_member_check and len(row_labels) >= 2:
         norm_labels = [
@@ -404,9 +413,9 @@ def detect_served_card_violation(
       ``allow_settled_members=True``, e.g. completed games in a ``series_hub``),
     - fewer than 2 rows/members,
     - a row probability outside ``[0, 1]`` or ``[0, 100]``,
-    - a garbled caption title (``"Will which ..."``, raw placeholder tokens, or
-      a single member's subject name in a sibling-family title),
-    - duplicate row labels or an unpriced ``"No number yet"`` row.
+    - for ``sibling_family`` cards: a garbled caption title (``"Will which ..."``,
+      raw placeholder tokens, or a single member's subject name in a family title),
+      duplicate row labels, or an unpriced ``"No number yet"`` row.
     Returns ``None`` when the served card passes all checks.
     """
     data = card.get("data") if isinstance(card.get("data"), Mapping) else card
@@ -422,6 +431,21 @@ def detect_served_card_violation(
         or card.get("id")
         or "unknown-card"
     ).strip()
+
+    membership = str(
+        card.get("membership")
+        or (data.get("membership") if isinstance(data, Mapping) else "")
+        or roundup.get("membership")
+        or ""
+    ).strip()
+    producer_kind = str(
+        card.get("kind")
+        or card.get("producer")
+        or (data.get("producer") if isinstance(data, Mapping) else "")
+        or roundup.get("producer")
+        or ""
+    ).strip()
+    is_sibling = membership == "sibling-family" or producer_kind == "sibling_family"
 
     members: list[Mapping[str, Any]] = []
     if isinstance(card.get("members"), Sequence):
@@ -456,38 +480,32 @@ def detect_served_card_violation(
         if isinstance(prob, (int, float)) and not (0.0 <= float(prob) <= 1.0):
             return (slug, f"Served out-of-range probability in row {idx} ({prob})")
         val_str = str(r.get("value") or r.get("display_value") or "").strip().lower()
-        if "no number yet" in val_str:
+        if is_sibling and "no number yet" in val_str:
             return (slug, f"Served unpriced 'No number yet' row in row {idx}")
         lbl = str(r.get("label") or r.get("subject") or "").strip()
         if lbl:
             lbl_fold = lbl.lower()
-            if lbl_fold in seen_labels_fold:
+            if is_sibling and lbl_fold in seen_labels_fold:
                 return (slug, f"Served duplicate row label {lbl!r} in row {idx}")
             seen_labels_fold.add(lbl_fold)
             row_labels.append(lbl)
 
-    title = str(
-        card.get("title")
-        or card.get("name")
-        or (data.get("title") if isinstance(data, Mapping) else "")
-        or roundup.get("title")
-        or ((card.get("container") or {}).get("name") if isinstance(card.get("container"), Mapping) else "")
-        or ""
-    ).strip()
-    membership = str(
-        card.get("membership")
-        or (data.get("membership") if isinstance(data, Mapping) else "")
-        or roundup.get("membership")
-        or ""
-    ).strip()
-    is_sibling = membership == "sibling-family" or str(card.get("kind") or "") == "sibling_family"
-    caption_err = _check_title_caption_violation(
-        title,
-        row_labels=row_labels,
-        enforce_single_member_check=is_sibling,
-    )
-    if caption_err is not None:
-        return (slug, caption_err)
+    if is_sibling:
+        title = str(
+            card.get("title")
+            or card.get("name")
+            or (data.get("title") if isinstance(data, Mapping) else "")
+            or roundup.get("title")
+            or ((card.get("container") or {}).get("name") if isinstance(card.get("container"), Mapping) else "")
+            or ""
+        ).strip()
+        caption_err = _check_title_caption_violation(
+            title,
+            row_labels=row_labels,
+            enforce_single_member_check=True,
+        )
+        if caption_err is not None:
+            return (slug, caption_err)
 
     return None
 

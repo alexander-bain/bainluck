@@ -294,6 +294,7 @@ async def get_grades(
 
 SURFACE_GROUPING = "grouping"
 DEFAULT_GROUPING_SLATE_ID = "grouping-candidates-2026-11"
+EXAM_TEST_GROUPING_SLATE_ID = "sibling-family-exam-test-2026-11"
 GROUPING_GRADES = ("amazing", "fine", "no")
 # Lossless 1-to-1 bijection scoped to RankingGrade.surface == "grouping" so
 # writes satisfy Postgres ck_ranking_grades_grade ("grade IN ('shareable',
@@ -612,6 +613,124 @@ def _build_new_kind_deck_items(
     return deck_items
 
 
+def _build_sibling_exam_test_deck_items(
+    *,
+    start_position: int = 1,
+    dataset_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Build `/grade/groupings` deck items for the 20 fixed set-aside `test` cards (#12374 / #12500)."""
+    from app.utils.roundup_containers import RoundupMembers
+    from app.utils.sibling_family import select_sibling_family
+    from app.utils.sibling_family_exam import DEFAULT_EXAM_DATASET_PATH
+
+    path = dataset_path or DEFAULT_EXAM_DATASET_PATH
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="sibling-family exam dataset not found")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    as_of_val = str(raw.get("as_of") or "2026-11-08")
+    as_of_label = f"as of {as_of_val[:10]}" if as_of_val else ""
+
+    items: list[dict[str, Any]] = []
+    pos = start_position
+    for card in raw.get("cards") or []:
+        if card.get("split") != "test":
+            continue
+        rule = card.get("rule") or {}
+        candidates = list(card.get("candidate_markets") or [])
+        res = select_sibling_family(
+            candidates,
+            template=str(rule.get("template") or ""),
+            title_template=str(rule.get("title_template") or card.get("proposed_title") or ""),
+            kicker_prefix=str(rule.get("kicker_prefix") or "SIBLING FAMILY"),
+            kicker_include_date=bool(rule.get("kicker_include_date", True)),
+            subject_unit=str(rule.get("subject_unit") or "members"),
+            outcome_name=str(rule.get("outcome_name") or "Yes"),
+            lead_rule=str(rule.get("lead_rule") or "nearest_open_deadline"),
+            min_numbered_members=int(rule.get("min_numbered_members", 3)),
+            card_rows=int(rule.get("card_rows", 5)),
+            footer=str(
+                card.get("footer")
+                or "Each row is its own market. They don't add up to 100%."
+            ),
+        )
+        if not isinstance(res, RoundupMembers):
+            continue
+        preview_rows = [
+            {
+                "label": str(r.get("label") or ""),
+                "value": f"{int(r.get('rendered_percent', round(float(r['probability']) * 100)))}%",
+                "market_id": int(r.get("market_id") or 0),
+            }
+            for r in res.rows
+        ]
+        row_label_by_id = {
+            int(r.get("market_id") or 0): str(r.get("label") or "") for r in res.rows
+        }
+        single_members = []
+        for m in candidates:
+            mid = int(m.get("id") or 0)
+            p_val, _ = _extract_member_preview_price(m)
+            single_members.append(
+                {
+                    "id": mid,
+                    "name": str(m.get("name") or ""),
+                    "subject": row_label_by_id.get(mid) or str(m.get("name") or ""),
+                    "source": str(m.get("source") or card.get("source") or "polymarket"),
+                    "category": str(m.get("category") or card.get("category") or "other"),
+                    "yes_probability": p_val,
+                    "resolution_date": m.get("resolution_date"),
+                    "rule_quote": str(m.get("rule_quote") or m.get("description") or ""),
+                }
+            )
+        family_for_single = {
+            "name": str(res.title or card.get("proposed_title") or ""),
+            "source": str(card.get("source") or "polymarket"),
+            "category": str(card.get("category") or "other"),
+            "members": single_members,
+            "quotes": {},
+        }
+        cat_upper = str(card.get("category") or "other").upper()
+        slug = str(card.get("family_slug") or card.get("card_id"))
+        items.append(
+            {
+                "position": pos,
+                "item_key": slug,
+                "title": str(res.title or card.get("proposed_title") or slug),
+                "source": str(card.get("source") or "polymarket"),
+                "category": str(card.get("category") or "other"),
+                "template_key": f"{card.get('source')}:{rule.get('template')}",
+                "member_count": len(res.members),
+                "kind_verdict": "serve",
+                "refusal_reasons": [],
+                "trust_pass": True,
+                "proposed_kind": "sibling_family",
+                "as_of": as_of_val,
+                "as_of_label": as_of_label,
+                "proposed_card": {
+                    "kicker": str(res.kicker or rule.get("kicker_prefix") or cat_upper),
+                    "tag": cat_upper,
+                    "title": str(res.title or card.get("proposed_title") or slug),
+                    "rows": preview_rows,
+                    "count_line": str(
+                        res.count_line
+                        or f"Showing {len(preview_rows)} of {len(res.members)} members"
+                    ),
+                    "footer": str(
+                        res.footer
+                        or card.get("footer")
+                        or "Each row is its own market. They don't add up to 100%."
+                    ),
+                    "relations": ["sibling_of"],
+                    "level": "member",
+                    "as_of_label": as_of_label,
+                },
+                "best_single": select_best_single_member(family_for_single),
+            }
+        )
+        pos += 1
+    return items
+
+
 def load_grouping_grade_deck(
     *,
     candidates_path: Path | None = None,
@@ -629,6 +748,18 @@ def load_grouping_grade_deck(
             "model": DEFAULT_KIND_PROPOSER_MODEL,
             "question": "Is the grouping card worth more than its best single member?",
             "items": nk_items,
+        }
+    if slate_id == EXAM_TEST_GROUPING_SLATE_ID:
+        from app.utils.sibling_family_exam import DEFAULT_PROPOSER_MODEL
+
+        test_items = _build_sibling_exam_test_deck_items(start_position=1)
+        return {
+            "slate_id": slate_id,
+            "surface": SURFACE_GROUPING,
+            "generated_at": test_items[0].get("as_of") if test_items else None,
+            "model": DEFAULT_PROPOSER_MODEL,
+            "question": "Is the grouping card worth more than its best single member?",
+            "items": test_items,
         }
 
     target_path = candidates_path

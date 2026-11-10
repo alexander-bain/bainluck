@@ -37,12 +37,12 @@ afterEach(async () => {
 });
 
 describe("#12374: sibling-family exam data and /evals section", () => {
-  it("loads the committed sibling-family exam record with 20 set-aside test cards, PASS under 109-A (19/20) and strict Amazing reading (9/20)", async () => {
+  it("loads the committed sibling-family exam record with 20 set-aside test cards and Gate 1 not measured (0 of 20 test cards graded)", async () => {
     expect(siblingFamilyExamProblem(RAW_SIBLING_EXAM)).toBeNull();
     const exam = loadSiblingFamilyExam();
     expect(exam).not.toBeNull();
     expect(exam?.splitCounts).toEqual({ test: 20, dev: 12, all: 32 });
-    expect(exam?.result).toBe("pass");
+    expect(exam?.result).toBe("held");
     expect(exam?.licences).toEqual({ sibling_family: "held" });
     expect(exam?.cost.estimatedUsd).toBeLessThan(5.0);
     expect(exam?.cost.actualUsd).toBeLessThan(5.0);
@@ -53,13 +53,52 @@ describe("#12374: sibling-family exam data and /evals section", () => {
     expect(exam?.gates.map((g) => g.id)).toEqual([...SIBLING_EXAM_GATE_IDS]);
     const byId = Object.fromEntries(exam!.gates.map((g) => [g.id, g.result]));
     expect(byId).toEqual({
-      card_vs_single_member: "pass",
+      card_vs_single_member: "held",
       relation_truth: "pass",
       freshness_and_count: "pass",
       run_to_run_stability: "pass",
     });
 
     const el = await mount(<SiblingFamilyExamSection exam={exam!} />);
+    const gate1Row = el.querySelector('[data-sibling-gate="card_vs_single_member"]');
+    expect(gate1Row?.getAttribute("data-result")).toBe("held");
+    expect(gate1Row?.textContent).toContain("Not measured: 0 of 20 test cards graded (20 ungraded)");
+    expect(gate1Row?.textContent).not.toContain("19/20");
+    expect(gate1Row?.textContent).not.toContain("9/20");
+    const scan = scanEvalsDom(el);
+    expect(scan).toEqual({
+      bareNumbers: [],
+      figuresInPlanned: [],
+      figuresOutsideScope: [],
+    });
+  });
+
+  it("renders a graded Gate 1 under 109-A (19/20 better, 9/20 strict Amazing) with zero bare numbers", async () => {
+    const gradedRaw = JSON.parse(JSON.stringify(RAW_SIBLING_EXAM)) as Record<string, unknown>;
+    gradedRaw.result = "PASS";
+    const gates = gradedRaw.gate_results as Record<string, unknown>[];
+    gates[0] = {
+      ...gates[0],
+      result: "PASS",
+      observed: {
+        k: 19,
+        n: 20,
+        better_k: 19,
+        worse_k: 1,
+        graded_k: 20,
+        ungraded_k: 0,
+        better_pct: 95.0,
+        worse_pct: 5.0,
+        better_wilson95: [76.4, 99.1],
+        worse_wilson95: [0.9, 23.6],
+        strict_amazing_k: 9,
+        strict_amazing_pct: 45.0,
+        strict_amazing_wilson95: [25.8, 65.8],
+        result: "PASS",
+      },
+    };
+    const exam = loadSiblingFamilyExam(gradedRaw)!;
+    const el = await mount(<SiblingFamilyExamSection exam={exam} />);
     const gate1Row = el.querySelector('[data-sibling-gate="card_vs_single_member"]');
     expect(gate1Row?.getAttribute("data-result")).toBe("pass");
     expect(gate1Row?.textContent).toContain("19/20 (76.4–99.1%)");
@@ -97,7 +136,7 @@ describe("#12374: sibling-family exam data and /evals section", () => {
     ).toBeNull();
   });
 
-  it("renders ungraded Gate 1 as HELD ('Waiting for grades: 0 of 20 graded') rather than FAIL 0/20, with zero bare numbers", async () => {
+  it("renders ungraded Gate 1 as HELD ('Not measured: 0 of 20 test cards graded') rather than FAIL 0/20, with zero bare numbers", async () => {
     const ungradedRaw = JSON.parse(JSON.stringify(RAW_SIBLING_EXAM)) as Record<string, unknown>;
     ungradedRaw.result = "HELD";
     const gates = ungradedRaw.gate_results as Record<string, unknown>[];
@@ -146,7 +185,7 @@ describe("#12374: sibling-family exam data and /evals section", () => {
     ]);
 
     const gate1Row = el.querySelector('[data-sibling-gate="card_vs_single_member"]');
-    expect(gate1Row?.textContent).toContain("Waiting for grades: 0 of 20 graded (20 ungraded)");
+    expect(gate1Row?.textContent).toContain("Not measured: 0 of 20 test cards graded (20 ungraded)");
     expect(gate1Row?.textContent).not.toContain("0/20");
     expect(gate1Row?.textContent).not.toContain("0.0–16.1%");
 

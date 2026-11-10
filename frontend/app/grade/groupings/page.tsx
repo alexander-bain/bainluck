@@ -67,6 +67,13 @@ function GroupingGradeSession() {
   const [existingGrades, setExistingGrades] = useState<
     Array<{ grader: string; item_key: string }>
   >([]);
+  const [selectedSlate, setSelectedSlate] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      return sp.get("slate") || sp.get("slate_id") || "grouping-candidates-2026-11";
+    }
+    return "grouping-candidates-2026-11";
+  });
 
   useEffect(() => {
     try {
@@ -104,7 +111,11 @@ function GroupingGradeSession() {
 
   useEffect(() => {
     let cancelled = false;
-    adminFetchJSON<GroupingGradeDeck>("/api/admin/ranking/grouping-deck", secret)
+    const deckUrl =
+      selectedSlate && selectedSlate !== "grouping-candidates-2026-11"
+        ? `/api/admin/ranking/grouping-deck?slate_id=${encodeURIComponent(selectedSlate)}`
+        : "/api/admin/ranking/grouping-deck";
+    adminFetchJSON<GroupingGradeDeck>(deckUrl, secret)
       .then((d) => {
         if (cancelled) return;
         setDeck(d);
@@ -118,7 +129,7 @@ function GroupingGradeSession() {
     return () => {
       cancelled = true;
     };
-  }, [secret, loadTallyAndSummary]);
+  }, [secret, selectedSlate, loadTallyAndSummary]);
 
   const resolvedGrader = resolveGroupingGraderId(nameInput, kid, kidSlot);
 
@@ -208,6 +219,26 @@ function GroupingGradeSession() {
           {deck.items.length} proposed grouping cards shown beside each card&apos;s best single member.
           One question per pair: is the card worth more than the single?
         </p>
+
+        <div className="mt-3 flex flex-wrap gap-2" data-testid="grouping-slate-selector">
+          {[
+            { id: "grouping-candidates-2026-11", label: "Proposed candidates (32)" },
+            { id: "sibling-family-exam-test-2026-11", label: "Exam test cards (20)" },
+          ].map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setSelectedSlate(opt.id)}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                selectedSlate === opt.id
+                  ? "border-accent-brand bg-accent-brand text-text-inverse"
+                  : "border-surface-border bg-surface-card text-text-primary"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
 
         <label className="mt-4 flex items-center gap-2 text-sm font-medium text-text-secondary">
           <input

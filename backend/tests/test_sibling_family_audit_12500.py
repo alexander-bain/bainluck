@@ -116,6 +116,15 @@ def test_verify_heading_from_market_words_rejects_single_member_names_and_bad_gr
     assert not verify_heading_from_market_words(
         "Will subjects run for President in 2028?", markets, subject_unit="subjects"
     )
+    # Mixed-case brand name at start of heading (e.g. iPhone, eBay, xAI) is allowed.
+    iphone_markets = [
+        {"name": "Will iPhone 18 Pro ship in 2026?"},
+        {"name": "Will iPhone 18 Air ship in 2026?"},
+        {"name": "Will iPhone 18 Fold ship in 2026?"},
+    ]
+    assert verify_heading_from_market_words(
+        "iPhone 18 ship in 2026?", iphone_markets, subject_unit="models"
+    )
 
 
 def test_licence_promotion_and_served_card_guard_refuse_caption_and_data_violations() -> None:
@@ -206,6 +215,38 @@ def test_licence_promotion_and_served_card_guard_refuse_caption_and_data_violati
             }
         )
         is not None
+    )
+    # Non-sibling kinds (e.g. series_hub) with repeated row labels across games or
+    # 'contenders' in title must NOT be flagged for runtime suspension.
+    assert (
+        detect_served_card_violation(
+            {
+                "slug": "series-hub-celtics-heat",
+                "kind": "series_hub",
+                "title": "Eastern Conference contenders: Celtics vs Heat",
+                "rows": [
+                    {"label": "Boston Celtics", "probability": 0.62, "value": "62%"},
+                    {"label": "Boston Celtics", "probability": 0.58, "value": "58%"},
+                ],
+            },
+            allow_settled_members=True,
+        )
+        is None
+    )
+    # Mixed-case brand title (iPhone) on a sibling_family card must NOT be flagged.
+    assert (
+        detect_served_card_violation(
+            {
+                "slug": "sibling-iphone-18",
+                "kind": "sibling_family",
+                "title": "iPhone 18 ship in 2026?",
+                "rows": [
+                    {"label": "iPhone 18 Pro", "probability": 0.85, "value": "85%"},
+                    {"label": "iPhone 18 Air", "probability": 0.64, "value": "64%"},
+                ],
+            }
+        )
+        is None
     )
 
 

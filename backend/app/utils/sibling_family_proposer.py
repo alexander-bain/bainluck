@@ -267,7 +267,8 @@ def verify_heading_from_market_words(
         return False
     if "*" in clean or clean.endswith(":"):
         return False
-    if clean[0].islower():
+    first_word = clean.split()[0]
+    if first_word[0].islower() and not any(ch.isupper() for ch in first_word[1:]):
         return False
 
     without_placeholder = clean.replace("{deadline}", " ")

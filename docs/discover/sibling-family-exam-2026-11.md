@@ -3,7 +3,7 @@
 - **Date:** 2026-11-08
 - **Model:** `gpt-4o-mini`
 - **Split:** `12` `dev` cards + `20` set-aside `test` cards (`32` total across 3 passes = `96` proposer evaluations)
-- **Overall Exam Verdict:** **PASS**
+- **Overall Exam Verdict:** **HELD**
 - **Licence (`licences.sibling_family`):** **HELD**
 - **Ruling / Brief:** https://github.com/alexander-bain/bainluck/issues/12221 (§3, Decide 61-A / 63-A)
 - **Issue Receipt:** https://github.com/alexander-bain/bainluck/issues/12374
@@ -21,14 +21,15 @@
 
 | Gate | Scope | Bar | Pass 1 | Pass 2 | Pass 3 | Across Passes | Verdict |
 |------|-------|-----|--------|--------|--------|---------------|---------|
-| `card_vs_single_member` | `test` | Rated Better on >= 85% of held-out test cards (95% CI reported) and Worse on <= 10% | — | — | — | Better 19/20 (76.4–99.1% CI, 109-A: amazing+fine->better), Strict 'Amazing' 9/20 (45.0%), Worse 1/20 (0.9–23.6% CI), Graded 20/20 | **PASS** |
+| `card_vs_single_member` | `test` | Rated Better on >= 85% of held-out test cards (95% CI reported) and Worse on <= 10% | — | — | — | Not measured: 0 of 20 test cards graded (20 ungraded) | **HELD** |
 | `relation_truth` | `test` | 100% of member rows share the stated sibling_of parent and vary on the stated axis; 0 duplicate members | 20/20 (PASS) | 20/20 (PASS) | 20/20 (PASS) | — | **PASS** |
 | `freshness_and_count` | `test` | 100% of held-out test cards have 3-6 live, unsettled members | 20/20 (PASS) | 20/20 (PASS) | 20/20 (PASS) | — | **PASS** |
 | `run_to_run_stability` | `all` | Across 3 runs, >= 90% of proposed cards agree on their member set | — | — | — | 32/32 (89.3–100.0% CI) | **PASS** |
 
 ## Held-Out `test` Split Detail (20 Set-Aside Cards, 95% Wilson CI)
 
-- **Card vs single member (`Better`):** `19/20` (`95.0%`, 95% CI `76.4%–99.1%`), graded `20/20` on `/grade/groupings` (#12373)
+- **Card vs single member (`Better`):** Not measured: `0` of `20` test cards graded (`20` ungraded) on `/grade/groupings?slate=sibling-family-exam-test-2026-11` (#12373)
+- **Dev split human grades (`#12500`):** `6` of `12` `dev` cards graded by `alex bain` on `2026-11-09` (`6/6` better under Decide `109-A`, `3/6` strict `Amazing`, `6` `dev` ungraded), matched strictly by `family_slug`. The `20` fixed `test` cards are published as slate `sibling-family-exam-test-2026-11` on `/grade/groupings`; `licences.sibling_family` remains `HELD` until Gate 1 is measured on the `20` test cards.
 - **Relation truth (`sibling_of` parent + axis variation + 0 duplicates):** `20/20` (`100.0%`, 95% CI `83.9%–100.0%`)
 - **Freshness and count (`3–6` live, unsettled members):** `20/20` (`100.0%`, 95% CI `83.9%–100.0%`)
 

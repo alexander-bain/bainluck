@@ -9,7 +9,7 @@
 | Grouping Kind | Mode | Exam / Bar | Licence Status | Notes |
 |---------------|------|------------|----------------|-------|
 | `subject_sequence` | `rules_only` | No exam run yet (`exam_receipt: null`) | **HELD** | Held until a `subject_sequence` exam and human grading pass; `celtics-next-3-games` and `lakers-next-3-games` ship as hand-authored definitions |
-| `sibling_family` | `model_proposer` | 20 set-aside `test` cards (#12374, 4/4 gates `PASS`, Gate 1 `20/20` graded) | **HELD** | Held for human grading on `/grade/groupings` (#12373) |
+| `sibling_family` | `model_proposer` | 20 set-aside `test` cards (#12374, 3/4 gates `PASS`, Gate 1 `0/20` graded) | **HELD** | Held for human grading on `/grade/groupings` (#12373) |
 | `same_deadline_board` | `rules_proposer` | 20 coming calendar deadlines (Gates 2 & 3 `FAIL` at `7/20`, Gate 4 `PASS`, Gate 1 `HELD`) | **FAIL** | Only `7` of `20` coming calendar deadlines have 4–6 in-band binary markets across 3+ categories |
 
 ## 2. Second-Kind Exam: `same_deadline_board` (New Same-Deadline Boards for Each Coming Deadline)

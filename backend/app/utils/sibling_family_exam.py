@@ -666,6 +666,14 @@ def score_sibling_family_exam(
         gate1_observed["strict_amazing_pct"] = sa["pct"]
         gate1_observed["strict_amazing_wilson95"] = sa["wilson95"]
         gate1_observed["grade_mapping"] = "109-A: amazing + fine -> better, no -> worse"
+        gate1_observed["graded_on_pre_fix_headings"] = True
+        gate1_observed["grading_note"] = (
+            "Grades were recorded by Alex Bain on 2026-11-09 on the pre-#12500 headings "
+            "(preserved in graded_title on each card); licences.sibling_family stays HELD "
+            "until #12500 lands and Alex spot-checks the fixed cards."
+        )
+    elif graded_k == 0:
+        gate1_observed["status_note"] = f"not measured: 0 of {test_n} test cards graded"
 
     gate_results: list[dict[str, Any]] = [
         {
@@ -867,7 +875,7 @@ def format_sibling_family_exam_markdown(
                         )
                     else:
                         across = (
-                            f"Waiting for grades: {obs['graded_k']} of {obs['n']} graded "
+                            f"Not measured: {obs['graded_k']} of {obs['n']} test cards graded "
                             f"({obs['ungraded_k']} ungraded)"
                         )
                 else:
@@ -901,9 +909,9 @@ def format_sibling_family_exam_markdown(
             )
         else:
             better_line = (
-                f"- **Card vs single member (`Better`):** Waiting for grades: "
-                f"`{p1_test['graded']}` of `{p1_test['expected']}` graded "
-                f"(`{p1_test['ungraded']}` ungraded) on `/grade/groupings` (#12373)"
+                f"- **Card vs single member (`Better`):** Not measured: "
+                f"`{p1_test['graded']}` of `{p1_test['expected']}` test cards graded "
+                f"(`{p1_test['ungraded']}` ungraded) on `/grade/groupings?slate=sibling-family-exam-test-2026-11` (#12373)"
             )
     else:
         better_line = (
@@ -912,12 +920,15 @@ def format_sibling_family_exam_markdown(
             f"(`{p1_test['better']['pct']}%`, 95% CI `{b_ci[0]}%–{b_ci[1]}%`), "
             f"graded `{p1_test['graded']}/{p1_test['expected']}` on `/grade/groupings` (#12373)"
         )
+    p1_dev = exam_record["per_pass"]["1"]["dev"]
+    dev_sa = p1_dev.get("strict_amazing", {}).get("k", 0)
     lines.extend(
         [
             "",
             "## Held-Out `test` Split Detail (20 Set-Aside Cards, 95% Wilson CI)",
             "",
             better_line,
+            f"- **Dev split human grades (`#12500`):** `{p1_dev['graded']}` of `{p1_dev['expected']}` `dev` cards graded by `alex bain` on `2026-11-09` (`{p1_dev['better']['k']}/{p1_dev['graded']}` better under Decide `109-A`, `{dev_sa}/{p1_dev['graded']}` strict `Amazing`, `{p1_dev['ungraded']}` `dev` ungraded), matched strictly by `family_slug`. The `20` fixed `test` cards are published as slate `sibling-family-exam-test-2026-11` on `/grade/groupings`; `licences.sibling_family` remains `HELD` until Gate 1 is measured on the `20` test cards.",
             f"- **Relation truth (`sibling_of` parent + axis variation + 0 duplicates):** `{p1_test['relation_truth']['k']}/{p1_test['relation_truth']['n']}` (`{p1_test['relation_truth']['pct']}%`, 95% CI `{r_ci[0]}%–{r_ci[1]}%`)",
             f"- **Freshness and count (`3–6` live, unsettled members):** `{p1_test['freshness_and_count']['k']}/{p1_test['freshness_and_count']['n']}` (`{p1_test['freshness_and_count']['pct']}%`, 95% CI `{f_ci[0]}%–{f_ci[1]}%`)",
             "",

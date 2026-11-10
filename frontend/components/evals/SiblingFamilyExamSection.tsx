@@ -53,7 +53,7 @@ function SiblingCell({
       {waitingForGrades ? (
         <>
           <span className="mt-1 block" data-sibling-waiting-for-grades="">
-            {"Waiting for grades: "}
+            {(cell.gradedK ?? 0) === 0 ? "Not measured: " : "Waiting for grades: "}
             <Figure
               truth={truth}
               value={String(cell.gradedK)}
@@ -69,7 +69,7 @@ function SiblingCell({
             >
               {cell.n.toLocaleString("en-US")}
             </Figure>
-            {" graded ("}
+            {(cell.gradedK ?? 0) === 0 ? " test cards graded (" : " graded ("}
             <Figure
               truth={truth}
               value={String(ungradedCount)}
