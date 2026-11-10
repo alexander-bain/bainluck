@@ -7,7 +7,12 @@
  * `kid-<6hex>`), never real names.
  */
 
-import { formatTally, normalizeGraderName, type TallyEntry } from "@/lib/ranking/gradeSession";
+import {
+  formatTally,
+  handleGradeDeckReadError,
+  normalizeGraderName,
+  type TallyEntry,
+} from "@/lib/ranking/gradeSession";
 
 export const GROUPING_GRADES = ["amazing", "fine", "no"] as const;
 export type GroupingGrade = (typeof GROUPING_GRADES)[number];
@@ -109,4 +114,4 @@ export function resolveGroupingGraderId(
   return normalizeGraderName(nameInput).toLowerCase();
 }
 
-export { formatTally, type TallyEntry };
+export { formatTally, handleGradeDeckReadError, type TallyEntry };

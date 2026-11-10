@@ -24,6 +24,7 @@ import {
   GRADES,
   GRADE_LABELS,
   formatTally,
+  handleGradeDeckReadError,
   normalizeGraderName,
   type Grade,
   type GradeDeck,
@@ -52,7 +53,7 @@ export default function GradePage() {
 }
 
 function GradeSession() {
-  const { secret } = useAdminAuth();
+  const { secret, clearSecret } = useAdminAuth();
   const [deck, setDeck] = useState<GradeDeck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
@@ -97,12 +98,16 @@ function GradeSession() {
         void loadTally(d.slate_id);
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load the cards");
+        if (cancelled) return;
+        handleGradeDeckReadError(e, "Could not load the cards", {
+          clearSecret,
+          setError,
+        });
       });
     return () => {
       cancelled = true;
     };
-  }, [secret, loadTally]);
+  }, [secret, loadTally, clearSecret]);
 
   const start = () => {
     const name = normalizeGraderName(nameInput);

@@ -3,6 +3,7 @@
  * three grades, and the family tally line. The page owns fetching and state.
  */
 
+import { isAdminAuthError } from "@/lib/adminFetch";
 import type { FeedItem } from "@/lib/types";
 
 export const GRADES = ["shareable", "interesting", "neither"] as const;
@@ -48,4 +49,25 @@ export function normalizeGraderName(raw: string): string {
 export function formatTally(tally: TallyEntry[]): string {
   const parts = tally.filter((t) => t.today > 0).map((t) => `${t.grader} ${t.today}`);
   return parts.length ? `${parts.join(" · ")} today` : "";
+}
+
+/**
+ * #5952 / #6024 — when the initial deck read on `/grade` or `/grade/groupings`
+ * fails with 401/403, send the tab back to the secret prompt with
+ * `rejected: true` instead of stranding the grader on a bare error line with
+ * no way back. Non-auth failures still surface as an error message.
+ */
+export function handleGradeDeckReadError(
+  err: unknown,
+  fallbackMessage: string,
+  actions: {
+    clearSecret: (opts?: { rejected?: boolean }) => void;
+    setError: (message: string) => void;
+  },
+): void {
+  if (isAdminAuthError(err)) {
+    actions.clearSecret({ rejected: true });
+    return;
+  }
+  actions.setError(err instanceof Error ? err.message : fallbackMessage);
 }
