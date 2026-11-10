@@ -189,12 +189,142 @@ def anchor_provenance(external_id: str | None, event_row_missing: bool = False) 
 #: key is a pair the audit recorded as belonging on NO event, so an entry can
 #: never be used to make a real regression disappear, and asserts the map's
 #: exact contents, so a row cannot be added without the diff saying so.
+#:
+#: Adjudicated 2026-11-07 against production (#12144, fable/12144), the 22
+#: ``unadjudicated`` rows the sentinel had carried since 2026-11-06. Every one
+#: is a Kalshi game market whose attachment was tested two ways, and both had to
+#: agree before it went in here:
+#:
+#: * THE VENUE'S OWN PAGE. ``GET /trade-api/v2/events/<ticker>`` on Kalshi, the
+#:   row that outlives its markets (gotcha #35): ``title`` names the two clubs,
+#:   ``sub_title`` carries the game date ("AVL vs ARS (Aug 31)") and
+#:   ``product_metadata.competition`` the competition (EPL, Serie A, La Liga,
+#:   Bundesliga, DFB Pokal, Coppa Italia). For the one Sep 1 ticker the
+#:   markets still served too, and ``rules_primary`` named the same date.
+#: * THE SERVED EVENT. ``GET /api/events/<id>`` on api.bainluck.com: the same
+#:   two clubs, the same competition's sport key, a kickoff on the venue's date
+#:   (every one 11:30Z-19:30Z, so the venue's US-Eastern date IS the UTC date),
+#:   a final score, and a 32-hex Odds API ``external_id``.
+#:
+#: The frozen candidate lists already held 21 of the 22 destinations; the
+#: 2026-09-02 notes ("same-club distractor event only; no such fixture") were
+#: the adjudicator reading the market's ``commence_time`` as the kickoff — a
+#: Kalshi close time two days after the game (gotcha #14) — and finding no
+#: fixture on that day. The ticker date and the venue's page agree with the
+#: matcher on all 22.
+#:
+#: * 59173709 "Bologna vs Lazio" (KXSERIEAGAME-26AUG24BFCLAZ) -> 14959572
+#:   Bologna v Lazio, soccer_italy_serie_a, 2026-08-24 16:30Z, 0-1.
+#: * 59173715 "Altglienicke vs Wolfsburg" (KXDFBPOKALGAME-26AUG24ALTWOB)
+#:   -> 15290654 VSG Altglienicke v VfL Wolfsburg, soccer_germany_dfb_pokal,
+#:   2026-08-24 16:00Z, 3-3.
+#: * 59173714 "Verl vs Hamburg" (KXDFBPOKALGAME-26AUG24SCVHSV) -> 14968128
+#:   SC Verl v Hamburger SV, soccer_germany_dfb_pokal, 2026-08-24 16:00Z, 0-3.
+#: * 59173170 "Torino vs Monza" (KXCOPPAITALIAGAME-26SEP01TORMON) -> 15298814
+#:   Torino v Monza, soccer_italy_coppa_italia, 2026-09-01 19:00Z, 0-1; the
+#:   venue's markets still served, rules "originally scheduled for Sep 1, 2026".
+#: * 59173190 "Aston Villa vs Arsenal" (KXEPLGAME-26AUG31AVLARS) -> 15290734
+#:   Aston Villa v Arsenal, soccer_epl, 2026-08-31 19:00Z, 0-1.
+#: * 59173193 "Lecce vs Roma" (KXSERIEAGAME-26AUG31LECROM) -> 15291116
+#:   Lecce v AS Roma, soccer_italy_serie_a, 2026-08-31 16:30Z, 0-4.
+#: * 59173218 "Napoli vs Como" (KXSERIEAGAME-26AUG30NAPCOM) -> 15290723
+#:   Napoli v Como, soccer_italy_serie_a, 2026-08-30 16:30Z, 1-2.
+#: * 59173221 "Augsburg vs Schalke" (KXBUNDESLIGAGAME-26AUG30FCASCH)
+#:   -> 14970279 Augsburg v FC Schalke 04, soccer_germany_bundesliga. The row
+#:   read 2026-08-29 18:00Z at capture (Builder B's AUG30-vs-AUG29 flag); the
+#:   fixture moved to 2026-08-30 15:30Z and the Odds API re-issued it, so
+#:   14970279 is now tagged a proven duplicate of 15204696 (#2263) and
+#:   ``resolve_served_event`` serves the Aug 30 game, 3-0, with this market's
+#:   family on it. Ticker date == served date; one game, two rows, both ours.
+#: * 59173227 "Sunderland vs Fulham" (KXEPLGAME-26AUG30SUNFUL) -> 15290898
+#:   Sunderland v Fulham, soccer_epl, 2026-08-30 13:00Z, 1-0.
+#: * 59173229 "Chelsea vs Brighton" (KXEPLGAME-26AUG30CFCBRI) -> 15290743
+#:   Chelsea v Brighton and Hove Albion, soccer_epl, 2026-08-30 13:00Z, 4-3.
+#: * 59173338 "Sevilla vs Atletico" (KXLALIGAGAME-26AUG29SEVATM) -> 15290719
+#:   Sevilla v Atlético Madrid, soccer_spain_la_liga, 2026-08-29 19:30Z, 1-3.
+#: * 59173356 "Sassuolo vs Torino" (KXSERIEAGAME-26AUG29SASTOR) -> 15291114
+#:   Sassuolo v Torino, soccer_italy_serie_a, 2026-08-29 16:30Z, 2-1. The one
+#:   destination NOT in the frozen candidate list (the capture saw a single
+#:   candidate for this pair); the served row and the venue agree.
+#: * 59173357 "Monza vs Udinese" (KXSERIEAGAME-26AUG29MONUDI) -> 15291082
+#:   Monza v Udinese, soccer_italy_serie_a, 2026-08-29 16:30Z, 2-3.
+#: * 59173358 "Fiorentina vs Frosinone" (KXSERIEAGAME-26AUG29FIOFRO)
+#:   -> 15291113 Fiorentina v Frosinone, soccer_italy_serie_a,
+#:   2026-08-29 16:30Z, 0-3.
+#: * 59173359 "Tottenham vs Newcastle" (KXEPLGAME-26AUG29TOTNEW) -> 15290716
+#:   Tottenham Hotspur v Newcastle United, soccer_epl, 2026-08-29 16:30Z, 0-2.
+#: * 59173370 "Bournemouth vs Everton" (KXEPLGAME-26AUG29BOUEVE) -> 15290740
+#:   Bournemouth v Everton, soccer_epl, 2026-08-29 14:00Z, 1-1.
+#: * 59173374 "Mainz vs Paderborn" (KXBUNDESLIGAGAME-26AUG29M05PAD)
+#:   -> 14970284 FSV Mainz 05 v SC Paderborn, soccer_germany_bundesliga,
+#:   2026-08-29 13:30Z, 0-0.
+#: * 59173375 "FC Köln vs Hoffenheim" (KXBUNDESLIGAGAME-26AUG29KOETSG)
+#:   -> 14970278 1. FC Köln v TSG Hoffenheim, soccer_germany_bundesliga,
+#:   2026-08-29 13:30Z, 3-2.
+#: * 59173376 "Liverpool vs Nottingham" (KXEPLGAME-26AUG29LFCNFO) -> 15290887
+#:   Liverpool v Nottingham Forest, soccer_epl, 2026-08-29 11:30Z, 2-2.
+#: * 59173406 "Alaves vs Villarreal" (KXLALIGAGAME-26AUG28ALAVIL) -> 15291055
+#:   Alavés v Villarreal, soccer_spain_la_liga, 2026-08-28 19:30Z, 1-0.
+#: * 59173408 "Milan vs Venezia" (KXSERIEAGAME-26AUG28ACMVEN) -> 15291112
+#:   AC Milan v Venezia, soccer_italy_serie_a, 2026-08-28 18:45Z, 2-0.
+#: * 59173411 "Santander vs Elche" (KXLALIGAGAME-26AUG28SANELC) -> 15291054
+#:   Real Racing Club de Santander v Elche CF, soccer_spain_la_liga,
+#:   2026-08-28 17:00Z, 3-2.
+#:
+#: The sentinel's two ``self_answered`` rows, same adjudication. Neither
+#: CURRENT attachment is accepted — and an entry could not promote an id-less
+#: destination anyway, because provenance is checked before the map — but the
+#: decisions are recorded so nobody re-derives them:
+#:
+#: * 59173215 "Cagliari vs Inter" -> 15298708 is a WRONG attachment (#12275).
+#:   The destination is an id-less, scoreless "Cagliari v Inter" row at the
+#:   placeholder time 2026-08-30 00:00Z, now ``suspended``; the real fixture is
+#:   15291115 "Cagliari v Internazionale", soccer_italy_serie_a,
+#:   2026-08-30 18:45Z, closed 0-1, Odds API id — it sat in the pair's own
+#:   frozen candidate list, and it serves ZERO game markets while the twin
+#:   carries the whole Kalshi family. The map records 15291115 as the
+#:   adjudicated destination, so the row reads ``self_answered`` (RED) while
+#:   the market sits on the twin and ``baseline_stale`` the cycle after a lane
+#:   moves it, with no second baseline PR in between.
+#: * 59701031 "Raca vs 1914 Samorin" -> 15297320 is UNKNOWN, and has no entry.
+#:   The venue names the fixture (Slovakian Cup, "originally scheduled for
+#:   Sep 2, 2026") but no outside schedule covers the competition, the
+#:   destination is our own id-less row at 2026-09-02 00:00Z, still
+#:   ``scheduled`` with no score, and Kalshi settled all three markets at a
+#:   fair price (0.33) after closing them early on 2026-09-01 — its rules'
+#:   wording for a game cancelled or rescheduled. Nothing outside us can ever
+#:   corroborate it; not accepted.
 ACCEPTED_ATTACHMENTS: dict[int, int] = {
+    # 2026-09-03
     59173320: 15294048,
     59692113: 15297976,
     59692121: 15299112,
     59700394: 15291033,
     59700643: 15291104,
+    # 2026-11-07 (#12144)
+    59173170: 15298814,
+    59173190: 15290734,
+    59173193: 15291116,
+    59173215: 15291115,  # the adjudicated destination; the market is NOT there yet (#12275)
+    59173218: 15290723,
+    59173221: 14970279,
+    59173227: 15290898,
+    59173229: 15290743,
+    59173338: 15290719,
+    59173356: 15291114,
+    59173357: 15291082,
+    59173358: 15291113,
+    59173359: 15290716,
+    59173370: 15290740,
+    59173374: 14970284,
+    59173375: 14970278,
+    59173376: 15290887,
+    59173406: 15291055,
+    59173408: 15291112,
+    59173411: 15291054,
+    59173709: 14959572,
+    59173714: 14968128,
+    59173715: 15290654,
 }
 
 #: A market this old without a single price snapshot is not "sourced".
