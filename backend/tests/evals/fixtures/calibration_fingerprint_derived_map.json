@@ -31,7 +31,7 @@
     "compute_calibration_payload",
     "identity_quarantine_ctes"
   ],
-  "input_count": 93,
+  "input_count": 92,
   "inputs": [
     {
       "covered_by_value": false,
@@ -741,19 +741,6 @@
       "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
-      "name": "REUSABLE_ROSTER_ATTR",
-      "origin": "app.tasks.precompute_calibration:REUSABLE_ROSTER_ATTR",
-      "sql_interpolated": false,
-      "used_in": [
-        "_offer_roster_for_rebuild",
-        "_take_roster_for_rebuild",
-        "drop_roster_for_rebuild"
-      ]
-    },
-    {
-      "covered_by_value": false,
-      "definition_sha16": null,
-      "impact": "behavior_or_evidence",
       "name": "ROSTER_STREAM_BATCH",
       "origin": "app.tasks.precompute_calibration:ROSTER_STREAM_BATCH",
       "sql_interpolated": false,
@@ -1099,8 +1086,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "9a2bfd8d5dec51f1d6d729cbb79f8a56179591e3c2cabcc4338cf361c2f20ed0",
-  "uncovered_behavior_or_evidence": 52,
-  "uncovered_count": 79,
+  "source_sha256": "095398381dd7ed36c88f46003a4a4048523d6450f57c7e39f4bc38b7900810b4",
+  "uncovered_behavior_or_evidence": 51,
+  "uncovered_count": 78,
   "uncovered_sql_shaping": 27
 }
