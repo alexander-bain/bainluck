@@ -15,6 +15,12 @@ final class EventAtlasTennisCardsE6d_11666Tests: XCTestCase {
         XCTAssertTrue(EventAtlasTennisCards11666.applies(sportKey: "tennis_other", atlasEnabled: true))
         XCTAssertFalse(EventAtlasTennisCards11666.applies(sportKey: "soccer_epl", atlasEnabled: true))
         XCTAssertFalse(EventAtlasTennisCards11666.applies(sportKey: nil, atlasEnabled: true))
+
+        // Particled surnames keep their surname particles via TeamShortName.short (#7163 / #11666)
+        XCTAssertEqual(EventAtlasTennisCards11666.tennisPlayerShortName("Santiago De la Fuente"), "De la Fuente")
+        XCTAssertEqual(EventAtlasTennisCards11666.tennisPlayerShortName("De la Fuente"), "De la Fuente")
+        XCTAssertEqual(EventAtlasTennisCards11666.tennisPlayerShortName("Alex de Minaur"), "de Minaur")
+        XCTAssertEqual(EventAtlasTennisCards11666.tennisPlayerShortName("Carlos Alcaraz"), "Alcaraz")
     }
 
     func testMatchesTennisPlayerSidesAcrossFourTiersRejectsShortSubstringsAndSharedSurnameAmbiguity() {
