@@ -194,8 +194,15 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         client.setex(
             cache_key(sport_key, event_is_finished),
             ttl_for(market_ids),
-            json.dumps(list(market_ids)),
+            encoded,
         )
+        if market_ids:
+            # #12529: the copy a reader is served once the slot above expires.
+            client.setex(stale_key(sport_key, event_is_finished), STALE_TTL, encoded)
+        else:
+            # A sport whose season markets are gone must read as empty, not
+            # alternate between "none" and the old list for six hours.
+            client.delete(stale_key(sport_key, event_is_finished))
     except Exception:
         logger.warning(
             "season-market discovery: write failed for %s", sport_key
@@ -205,8 +212,12 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         """    client.setex(
         cache_key(sport_key, event_is_finished),
         ttl_for(market_ids),
-        json.dumps(list(market_ids)),
+        encoded,
     )
+    if market_ids:
+        client.setex(stale_key(sport_key, event_is_finished), STALE_TTL, encoded)
+    else:
+        client.delete(stale_key(sport_key, event_is_finished))
     return True""",
     ),
     (
@@ -222,8 +233,8 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "M19",
         MODULE,
         "the stored order is sorted — the positional tier cap picks other markets",
-        """            json.dumps(list(market_ids)),""",
-        """            json.dumps(sorted(market_ids)),""",
+        """    encoded = json.dumps(list(market_ids))""",
+        """    encoded = json.dumps(sorted(market_ids))""",
     ),
     (
         "M20",
