@@ -1,0 +1,464 @@
+{
+ "schema": "reader-walk-queries/1",
+ "issue": "https://github.com/alexander-bain/bainluck/issues/12528",
+ "reading": "lenient: the expected thing is somewhere on the first screen",
+ "queries": [
+  {
+   "class": "entity",
+   "q": "celtics",
+   "expect": "Boston Celtics team first",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "name_has_all": [
+     "celtics"
+    ],
+    "top": 3
+   }
+  },
+  {
+   "class": "entity",
+   "q": "patriots",
+   "expect": "New England Patriots team first",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "name_has_all": [
+     "new england"
+    ],
+    "top": 2
+   }
+  },
+  {
+   "class": "entity",
+   "q": "lakers",
+   "expect": "Lakers team",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "name_has_all": [
+     "lakers"
+    ],
+    "top": 3
+   }
+  },
+  {
+   "class": "entity",
+   "q": "chiefs",
+   "expect": "Kansas City Chiefs team",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "name_has_all": [
+     "chiefs"
+    ],
+    "top": 3
+   }
+  },
+  {
+   "class": "entity",
+   "q": "bruins",
+   "expect": "Boston Bruins team",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "name_has_all": [
+     "bruins"
+    ],
+    "top": 3
+   }
+  },
+  {
+   "class": "alias",
+   "q": "pats",
+   "expect": "New England Patriots",
+   "check": {
+    "name_has_all": [
+     "patriots"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "alias",
+   "q": "patroits",
+   "expect": "New England Patriots despite the typo",
+   "check": {
+    "name_has_all": [
+     "patriots"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "alias",
+   "q": "niners",
+   "expect": "San Francisco 49ers",
+   "check": {
+    "name_has_all": [
+     "49ers"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "alias",
+   "q": "celts",
+   "expect": "Boston Celtics",
+   "check": {
+    "name_has_all": [
+     "celtics"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "alias",
+   "q": "man u",
+   "expect": "Manchester United",
+   "check": {
+    "name_has_all": [
+     "manchester united"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "alias",
+   "q": "KC chiefs",
+   "expect": "Kansas City Chiefs",
+   "check": {
+    "name_has_all": [
+     "chiefs"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "entity+market",
+   "q": "superbowl patriots",
+   "expect": "Super Bowl winner market with the Patriots",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "name_has_all": [
+     "super bowl"
+    ]
+   }
+  },
+  {
+   "class": "entity+market",
+   "q": "super bowl patriots",
+   "expect": "Super Bowl winner market with the Patriots",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "name_has_all": [
+     "super bowl"
+    ]
+   }
+  },
+  {
+   "class": "entity+market",
+   "q": "patriots super bowl",
+   "expect": "Super Bowl winner market with the Patriots",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "name_has_all": [
+     "super bowl"
+    ]
+   }
+  },
+  {
+   "class": "entity+market",
+   "q": "super bowl",
+   "expect": "Super Bowl winner market",
+   "check": {
+    "name_has_all": [
+     "super bowl"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "entity+market",
+   "q": "who will win the super bowl",
+   "expect": "Super Bowl winner market",
+   "check": {
+    "name_has_all": [
+     "super bowl"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "entity+market",
+   "q": "celtics championship",
+   "expect": "NBA champion market",
+   "check": {
+    "kinds": [
+     "futures"
+    ],
+    "name_has_any": [
+     "nba",
+     "champion"
+    ]
+   }
+  },
+  {
+   "class": "entity+market",
+   "q": "nba champion",
+   "expect": "NBA champion market",
+   "check": {
+    "name_has_all": [
+     "nba"
+    ],
+    "name_has_any": [
+     "champion",
+     "finals"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "entity+market",
+   "q": "best picture",
+   "expect": "Oscars Best Picture market",
+   "check": {
+    "name_has_all": [
+     "best picture"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "entity+market",
+   "q": "oscars",
+   "expect": "Oscars collection or markets",
+   "check": {
+    "name_has_all": [
+     "oscar"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "set",
+   "q": "celtics next three games",
+   "expect": "the Celtics next-three-games set",
+   "check": {
+    "kinds": [
+     "event_concepts",
+     "collections"
+    ],
+    "name_has_all": [
+     "celtics"
+    ]
+   }
+  },
+  {
+   "class": "set",
+   "q": "celtics next 3 games",
+   "expect": "the Celtics next-three-games set",
+   "check": {
+    "kinds": [
+     "event_concepts",
+     "collections"
+    ],
+    "name_has_all": [
+     "celtics"
+    ]
+   }
+  },
+  {
+   "class": "set",
+   "q": "close games tonight",
+   "expect": "tonight's closest games",
+   "check": {
+    "kinds": [
+     "event_concepts",
+     "collections",
+     "results"
+    ]
+   }
+  },
+  {
+   "class": "set",
+   "q": "games tonight",
+   "expect": "tonight's games",
+   "check": {
+    "kinds": [
+     "event_concepts",
+     "collections",
+     "results"
+    ]
+   }
+  },
+  {
+   "class": "set",
+   "q": "nba tonight",
+   "expect": "tonight's NBA games",
+   "check": {
+    "kinds": [
+     "event_concepts",
+     "collections",
+     "results"
+    ]
+   }
+  },
+  {
+   "class": "set",
+   "q": "nfl week 10",
+   "expect": "NFL Week 10 collection",
+   "check": {
+    "kinds": [
+     "event_concepts",
+     "collections"
+    ],
+    "name_has_all": [
+     "week 10"
+    ]
+   },
+   "refresh": "weekly: the week number moves"
+  },
+  {
+   "class": "set",
+   "q": "nfl this week",
+   "expect": "this week's NFL collection",
+   "check": {
+    "kinds": [
+     "event_concepts",
+     "collections"
+    ],
+    "name_has_all": [
+     "week"
+    ]
+   }
+  },
+  {
+   "class": "set",
+   "q": "awards season",
+   "expect": "Awards Season collection",
+   "check": {
+    "name_has_any": [
+     "award",
+     "oscar"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "other topics",
+   "q": "will the fed cut rates",
+   "expect": "a Fed rate market",
+   "check": {
+    "name_has_any": [
+     "fed",
+     "rate"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "other topics",
+   "q": "fed december",
+   "expect": "a Fed December market",
+   "check": {
+    "name_has_all": [
+     "fed"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "other topics",
+   "q": "gemini",
+   "expect": "an AI-release market naming Gemini",
+   "check": {
+    "name_has_all": [
+     "gemini"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "other topics",
+   "q": "snow boston",
+   "expect": "a Boston weather market",
+   "check": {
+    "name_has_all": [
+     "boston"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "other topics",
+   "q": "ufo",
+   "expect": "the UFO markets Alex graded shareable",
+   "check": {
+    "name_has_any": [
+     "ufo",
+     "alien"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "other topics",
+   "q": "largest ipo 2026",
+   "expect": "the largest-IPO market",
+   "check": {
+    "name_has_all": [
+     "ipo"
+    ],
+    "top": 5
+   }
+  },
+  {
+   "class": "honesty",
+   "q": "giants",
+   "expect": "both Giants teams or a clear pick",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "name_has_all": [
+     "giants"
+    ],
+    "top": 4
+   }
+  },
+  {
+   "class": "honesty",
+   "q": "rangers",
+   "expect": "both Rangers teams or a clear pick",
+   "check": {
+    "kinds": [
+     "teams"
+    ],
+    "name_has_all": [
+     "rangers"
+    ],
+    "top": 4
+   }
+  },
+  {
+   "class": "honesty",
+   "q": "asdfgh",
+   "expect": "an honest empty state",
+   "check": {
+    "empty": true
+   }
+  }
+ ]
+}
