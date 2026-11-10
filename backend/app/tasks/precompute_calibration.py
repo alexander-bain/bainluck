@@ -3966,51 +3966,6 @@ def _record_roster_timings(runner, timings: dict) -> None:
         logger.warning("calibration: could not record roster timings", exc_info=True)
 
 
-#: #12340: where a publish pass that deferred its rebuild leaves its roster for
-#: the rebuild pass of the SAME beat. Measured on the 2026-11-09 07:49Z beat:
-#: ``stage_counts['read:futures_generation'] == 2`` and the two reads cost
-#: 345,971 ms between them, so the second read was a third of the rebuild window
-#: spent re-reading what the publish pass had just read.
-REUSABLE_ROSTER_ATTR = "_reusable_futures_roster"
-
-
-def _offer_roster_for_rebuild(runner, roster: list) -> None:
-    """Hold ``roster`` on ``runner`` for this beat's rebuild pass, keyed to its inputs.
-
-    The key is the staged-unit fingerprint (the statement the units run) and the
-    population version: the same two things the staged cursor is keyed to, so a
-    reused roster is one the cursor would have accepted from a fresh read. It
-    lives on the runner, which is this beat's object: nothing survives the beat.
-    """
-    setattr(runner, REUSABLE_ROSTER_ATTR, (
-        staged_unit_fingerprint(), getattr(runner, "population_version", None), roster,
-    ))
-
-
-def _take_roster_for_rebuild(runner) -> list | None:
-    """The publish pass's roster when its key still matches, else ``None``.
-
-    One use: the hold is released whether or not it matches, so the roster is
-    never kept past the pass that could use it.
-    """
-    held = getattr(runner, REUSABLE_ROSTER_ATTR, None)
-    drop_roster_for_rebuild(runner)
-    if held is None:
-        return None
-    fingerprint, population_version, roster = held
-    if fingerprint != staged_unit_fingerprint():
-        return None
-    if population_version != getattr(runner, "population_version", None):
-        return None
-    return roster
-
-
-def drop_roster_for_rebuild(runner) -> None:
-    """Release a held roster (a beat that will not run its rebuild pass)."""
-    if getattr(runner, REUSABLE_ROSTER_ATTR, None) is not None:
-        setattr(runner, REUSABLE_ROSTER_ATTR, None)
-
-
 def _calibration_population_ctes(
     *,
     curve_price: str | None = None,
@@ -6515,18 +6470,12 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
     )
 
     # -- Stage 1: freeze the generation ---------------------------------------
-    # #12340: the rebuild pass takes the roster its own beat's publish pass read
-    # when the inputs are unchanged, instead of reading it a second time.
-    roster = _take_roster_for_rebuild(runner) if rebuild_only else None
-    if roster is not None:
-        runner.ledger.record_gauge("roster:reused", 1)
-    else:
-        roster_timings: dict = {}
-        try:
-            with runner.stage("read:futures_generation"):
-                roster = await _read_futures_roster(db, roster_timings)
-        finally:
-            _record_roster_timings(runner, roster_timings)
+    roster_timings: dict = {}
+    try:
+        with runner.stage("read:futures_generation"):
+            roster = await _read_futures_roster(db, roster_timings)
+    finally:
+        _record_roster_timings(runner, roster_timings)
     await runner.commit(db)
 
     gen_digest = generation_fingerprint(roster)
@@ -6673,7 +6622,6 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
     if defer_rebuild:
         runner.defer_rebuild()
         runner.ledger.record_stage("staged:rebuild_deferred", 0)
-        _offer_roster_for_rebuild(runner, roster)
         logger.info(
             "calibration staged futures: generation %s — %d/%d units banked and a "
             "complete served bank of %d units; publishing from it FIRST and running "
@@ -9739,12 +9687,7 @@ async def _run_deferred_rebuild(runner) -> dict:
     terminal. Recording here rather than at each call site means the two paths
     cannot come to disagree about where the answer lives.
     """
-    try:
-        result = await _deferred_rebuild_pass(runner)
-    finally:
-        # #12340: every exit of the pass, including the ones that never read a
-        # roster (no window, lock held), releases the publish pass's roster.
-        drop_roster_for_rebuild(runner)
+    result = await _deferred_rebuild_pass(runner)
     outcome = getattr(runner, "outcome", None)
     if isinstance(outcome, dict):
         outcome["deferred_rebuild"] = result

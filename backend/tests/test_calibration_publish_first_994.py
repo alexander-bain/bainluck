@@ -350,11 +350,7 @@ class TestTheRebuildIsStillFunded:
         assert plan >= 2, "a partial-window scenario needs a plan of at least 2"
         # Room for the pass's own fixed stages plus all but one unit: at least
         # one unit banks, at least one is left, so the bank cannot promote.
-        #
-        # #12340: 200, not 300. The rebuild pass now reuses the publish pass's
-        # roster instead of reading it again, so it spends one stage (100 ms
-        # here) fewer before its units, and 300 admitted the whole plan.
-        window_ms = 200 + 100 * (plan - 1)
+        window_ms = 300 + 100 * (plan - 1)
         _merged, runner, db = await _publish_pass(pc, roster=roster, window_ms=window_ms)
         assert db.unit_reads == 0
         banked_before = len(store["cursor"]["committed_units"])
