@@ -1776,6 +1776,7 @@ struct EventDetailView: View {
                         .font(.caption2)
                         .fontWeight(.semibold)
                         .lineLimit(stacked ? nil : 2)
+                        .minimumScaleFactor(stacked ? 1.0 : 0.8)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.primary)
                     if hasScore {
@@ -1789,6 +1790,7 @@ struct EventDetailView: View {
                             .foregroundStyle(Color.primary)
                     }
                 }
+                .padding(.horizontal, stacked ? 0 : 4)
                 .frame(maxWidth: .infinity)
             }
             let centerColumn = stackBoundary12278 {
@@ -2244,6 +2246,7 @@ struct EventDetailView: View {
                         .font(.caption2)
                         .fontWeight(.semibold)
                         .lineLimit(stacked ? nil : 2)
+                        .minimumScaleFactor(stacked ? 1.0 : 0.8)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.primary)
                     if hasScore {
@@ -2257,6 +2260,7 @@ struct EventDetailView: View {
                             .foregroundStyle(Color.primary)
                     }
                 }
+                .padding(.horizontal, stacked ? 0 : 4)
                 .frame(maxWidth: .infinity)
             }
             // At larger text sizes the probability takes its own full-width
@@ -2288,6 +2292,7 @@ struct EventDetailView: View {
                     // #8320 — the live game's opening line was printed here too;
                     // it is in Game Info now (`openedText`), named.
                 }
+                .padding(.horizontal, stacked ? 0 : 6)
                 // THE LINE THAT CAUSED #3978, and it is only wrong in one of the
                 // two arrangements. In a row, refusing to compress is right: this
                 // column holds "LSU Tigers Win" and a 36pt duel, and letting SwiftUI

@@ -178,6 +178,12 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
             24,
             "EventDetailView must preserve all 24+ stackBoundary12278 seams across body, contentView, heroSection, and nflPairedHeadlineView (found \(boundaryOccurrences))"
         )
+        let minimumScaleOccurrences = source.components(separatedBy: ".minimumScaleFactor(stacked ? 1.0 : 0.8)").count - 1
+        XCTAssertEqual(
+            minimumScaleOccurrences,
+            2,
+            "Three-column hero away and home team labels must allow 0.8 minimumScaleFactor at regular Dynamic Type so multi-word names do not truncate or collide with the center verdict (#11666)"
+        )
     }
 
     @MainActor
