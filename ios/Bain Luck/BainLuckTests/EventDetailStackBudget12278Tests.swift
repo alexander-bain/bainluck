@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Vision
 import XCTest
 @testable import Bain_Luck
 
@@ -203,5 +204,82 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
         XCTAssertEqual(nav.pendingRoute, .eventDetail(id: 15342680))
         XCTAssertEqual(nav.consumeRoute(), .eventDetail(id: 15342680))
         XCTAssertNil(nav.consumeRoute(), "consumeRoute() must clear pendingRoute so a second observer never pushes twice")
+    }
+
+    @MainActor
+    func testThreeColumnHeroKeepsScoresLevelWhenOneTeamNameWrapsAt390px() throws {
+        let json = """
+        {
+          "id": 15331713,
+          "sport": "soccer_epl",
+          "league": "Premier League",
+          "home_team": "Chelsea",
+          "away_team": "Manchester United",
+          "commence_time": "2026-10-31T15:30:00Z",
+          "status": "completed",
+          "home_score": 34,
+          "away_score": 23,
+          "home_team_data": { "record": "5-1-4" },
+          "away_team_data": { "record": "1-5-4" },
+          "opening_odds": {
+            "home_probability": 0.44,
+            "away_probability": 0.30,
+            "draw_probability": 0.26,
+            "home_rendered_percent": 44,
+            "away_rendered_percent": 30
+          }
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let event = try decoder.decode(EventDetail.self, from: Data(json.utf8))
+
+        let view = EventDetailView(eventId: event.id)
+            .withLoadedEventForTest12278(event)
+            .heroSectionForTest12278(event)
+            .environmentObject(PinManager())
+            .environmentObject(NavigationCoordinator())
+            .padding(.horizontal, 16)
+            .frame(width: 390, alignment: .top)
+            .background(Color(.systemBackground))
+            .environment(\.colorScheme, .light)
+
+        let renderer = rendererForMeasurement(view)
+        renderer.scale = 3.0
+        let image = try XCTUnwrap(renderer.uiImage)
+        let cgImage = try XCTUnwrap(image.cgImage)
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+
+        let observations = try XCTUnwrap(request.results)
+        let seen = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
+        func midYPoints(matching exact: String) -> CGFloat? {
+            for obs in observations {
+                guard let top = obs.topCandidates(1).first,
+                      top.string.trimmingCharacters(in: .whitespacesAndNewlines) == exact else { continue }
+                // Vision boundingBox has origin at bottom-left in [0, 1]; convert to top-down points.
+                return (1.0 - obs.boundingBox.midY) * image.size.height
+            }
+            return nil
+        }
+
+        let awayScoreY = try XCTUnwrap(midYPoints(matching: "23"), "Expected away score '23' in rendered 390px hero (seen: \(seen))")
+        let homeScoreY = try XCTUnwrap(midYPoints(matching: "34"), "Expected home score '34' in rendered 390px hero (seen: \(seen))")
+        XCTAssertLessThanOrEqual(
+            abs(awayScoreY - homeScoreY),
+            1.5,
+            "Scores under wrapped ('Manchester United') and single-line ('Chelsea') team names must sit on the same horizontal line (awayY=\(awayScoreY), homeY=\(homeScoreY))"
+        )
+
+        let awayRecordY = try XCTUnwrap(midYPoints(matching: "1-5-4"), "Expected away record '1-5-4' (seen: \(seen))")
+        let homeRecordY = try XCTUnwrap(midYPoints(matching: "5-1-4"), "Expected home record '5-1-4' (seen: \(seen))")
+        XCTAssertLessThanOrEqual(
+            abs(awayRecordY - homeRecordY),
+            1.5,
+            "Team records must sit on the same horizontal line (awayRecordY=\(awayRecordY), homeRecordY=\(homeRecordY))"
+        )
     }
 }

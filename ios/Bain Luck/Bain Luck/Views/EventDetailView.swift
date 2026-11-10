@@ -1755,6 +1755,8 @@ struct EventDetailView: View {
                 // their own name, beside the actual result in sets.
                 tennisFinalHeadlineView(tennis, colors: colors)
             } else {
+            let hasAnyRecord = carriesContext
+                && (event.awayTeamData?.record != nil || event.homeTeamData?.record != nil)
             let awayColumn = stackBoundary12278 {
                 // Away team logo + score
                 VStack(spacing: 6) {
@@ -1772,13 +1774,25 @@ struct EventDetailView: View {
                         // word the two clubs share.
                         opponentName: event.homeTeam
                     )
-                    Text(event.awayTeam)
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .lineLimit(stacked ? nil : 2)
-                        .minimumScaleFactor(stacked ? 1.0 : 0.8)
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.primary)
+                    ZStack {
+                        if !stacked {
+                            Text(event.homeTeam)
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.8)
+                                .multilineTextAlignment(.center)
+                                .hidden()
+                                .accessibilityHidden(true)
+                        }
+                        Text(event.awayTeam)
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .lineLimit(stacked ? nil : 2)
+                            .minimumScaleFactor(stacked ? 1.0 : 0.8)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.primary)
+                    }
                     if hasScore {
                         Text("\(event.awayScore ?? 0)")
                             .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
@@ -1788,6 +1802,11 @@ struct EventDetailView: View {
                         Text(record)
                             .font(.caption)
                             .foregroundStyle(Color.primary)
+                    } else if !stacked && hasAnyRecord {
+                        Text(" ")
+                            .font(.caption)
+                            .hidden()
+                            .accessibilityHidden(true)
                     }
                 }
                 .padding(.horizontal, stacked ? 0 : 4)
@@ -2242,13 +2261,25 @@ struct EventDetailView: View {
                         sportKey: event.sport,
                         opponentName: event.awayTeam
                     )
-                    Text(event.homeTeam)
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .lineLimit(stacked ? nil : 2)
-                        .minimumScaleFactor(stacked ? 1.0 : 0.8)
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.primary)
+                    ZStack {
+                        if !stacked {
+                            Text(event.awayTeam)
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.8)
+                                .multilineTextAlignment(.center)
+                                .hidden()
+                                .accessibilityHidden(true)
+                        }
+                        Text(event.homeTeam)
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .lineLimit(stacked ? nil : 2)
+                            .minimumScaleFactor(stacked ? 1.0 : 0.8)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.primary)
+                    }
                     if hasScore {
                         Text("\(event.homeScore ?? 0)")
                             .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
@@ -2258,6 +2289,11 @@ struct EventDetailView: View {
                         Text(record)
                             .font(.caption)
                             .foregroundStyle(Color.primary)
+                    } else if !stacked && hasAnyRecord {
+                        Text(" ")
+                            .font(.caption)
+                            .hidden()
+                            .accessibilityHidden(true)
                     }
                 }
                 .padding(.horizontal, stacked ? 0 : 4)
@@ -5235,6 +5271,12 @@ extension EventDetailView {
 
     func heroSectionValueSizeForTest12278(_ event: EventDetail) -> Int {
         MemoryLayout.size(ofValue: heroSection(event))
+    }
+
+    func heroSectionForTest12278(_ detail: EventDetail) -> AnyView {
+        stackBoundary12278 {
+            heroSection(detail)
+        }
     }
 
     func nflPairedHeadlineValueSizeForTest12278(_ event: EventDetail) -> Int? {
