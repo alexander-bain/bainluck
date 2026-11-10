@@ -1,0 +1,43 @@
+{
+  "slug": "proposed-polymarket-will-the-contenders-make-the-2026-27-nhl-playoff",
+  "membership": "sibling-family",
+  "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "HOCKEY",
+  "name": "Who will make the 2026-27 NHL Playoffs?",
+  "category": "hockey",
+  "tag": "HOCKEY",
+  "section_title": "By deadline",
+  "footer": "Each row is its own market. They don't add up to 100%.",
+  "destination_href": "/collections/proposed-polymarket-will-the-contenders-make-the-2026-27-nhl-playoff",
+  "order": "probability_desc",
+  "presentation": "list",
+  "score": 77.5,
+  "authored_by": {
+    "kind": "proposer",
+    "proposer_kind": "sibling_family",
+    "licence_status": "PASS",
+    "exam_receipt": "docs/discover/sibling-family-exam-2026-11.md",
+    "review_path": "tier-b-pr",
+    "proposed_at": "2026-11-10"
+  },
+  "rule": {
+    "producer": "sibling_family",
+    "source": "polymarket",
+    "template": "will the * make the 2026-27 nhl playoffs",
+    "title_ilike": "Will the % make the 2026-27 NHL Playoffs%",
+    "title_template": "Who will make the 2026-27 NHL Playoffs?",
+    "kicker_prefix": "HOCKEY",
+    "kicker_include_date": false,
+    "subject_unit": "contenders",
+    "outcome_name": "Yes",
+    "lead_rule": "nearest_open_deadline",
+    "min_numbered_members": 3,
+    "card_rows": 5
+  }
+}

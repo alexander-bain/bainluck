@@ -1,0 +1,43 @@
+{
+  "slug": "proposed-polymarket-will-contenders-record-100-points",
+  "membership": "sibling-family",
+  "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "HOCKEY",
+  "name": "Who will record 100+ points?",
+  "category": "hockey",
+  "tag": "HOCKEY",
+  "section_title": "By deadline",
+  "footer": "Each row is its own market. They don't add up to 100%.",
+  "destination_href": "/collections/proposed-polymarket-will-contenders-record-100-points",
+  "order": "probability_desc",
+  "presentation": "list",
+  "score": 79.0,
+  "authored_by": {
+    "kind": "proposer",
+    "proposer_kind": "sibling_family",
+    "licence_status": "PASS",
+    "exam_receipt": "docs/discover/sibling-family-exam-2026-11.md",
+    "review_path": "tier-b-pr",
+    "proposed_at": "2026-11-10"
+  },
+  "rule": {
+    "producer": "sibling_family",
+    "source": "polymarket",
+    "template": "will * record 100 points",
+    "title_ilike": "Will % record 100+ points%",
+    "title_template": "Who will record 100+ points?",
+    "kicker_prefix": "HOCKEY",
+    "kicker_include_date": false,
+    "subject_unit": "contenders",
+    "outcome_name": "Yes",
+    "lead_rule": "nearest_open_deadline",
+    "min_numbered_members": 3,
+    "card_rows": 5
+  }
+}

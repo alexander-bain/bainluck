@@ -9,7 +9,7 @@
 | Grouping Kind | Mode | Exam / Bar | Licence Status | Notes |
 |---------------|------|------------|----------------|-------|
 | `subject_sequence` | `rules_only` | No exam run yet (`exam_receipt: null`) | **HELD** | Held until a `subject_sequence` exam and human grading pass; `celtics-next-3-games` and `lakers-next-3-games` ship as hand-authored definitions |
-| `sibling_family` | `model_proposer` | 20 set-aside `test` cards (#12374, 3/4 gates `PASS`, Gate 1 `0/20` graded) | **HELD** | Held for human grading on `/grade/groupings` (#12373) |
+| `sibling_family` | `model_proposer` | 20 set-aside `test` cards (#12374, 4/4 gates `PASS`, Gate 1 `20/20` graded) | **PASS** | All 4 gates `PASS` (`20/20` Better, `0/20` Worse, 95% CI `83.9%–100.0%` — the interval's low end is `83.9%`, which is what `20` cards from one grader can show; licensed under Decide 117-A) |
 | `same_deadline_board` | `rules_proposer` | 20 coming calendar deadlines (Gates 2 & 3 `FAIL` at `7/20`, Gate 4 `PASS`, Gate 1 `HELD`) | **FAIL** | Only `7` of `20` coming calendar deadlines have 4–6 in-band binary markets across 3+ categories |
 
 ## 2. Second-Kind Exam: `same_deadline_board` (New Same-Deadline Boards for Each Coming Deadline)
@@ -31,3 +31,4 @@
 
 - **Reviewed promotion (`promote_licensed_proposal_to_definition`):** Refuses unlicensed kinds (`HELD` / `FAIL` / `SUSPENDED`) or any kind without an `exam_receipt`. Once a kind earns `status: PASS` with its exam receipt, promotes proposals into `backend/data/containers/<slug>.json` with `authored_by.review_path = "tier-b-pr"`.
 - **Suspension (`detect_served_card_violation` + `suspend_grouping_kind`):** `run_licensed_promotion_pass` inspects `served_cards` for truth violations (settled members, fewer than 2 rows, out-of-range probabilities); one wrong served card transitions the kind's licence to `SUSPENDED` (recording `suspended_by_card_slug`, `suspended_reason`, and `suspended_at`) and stops new cards (`stopped_reason = "kind_suspended"`, `promoted_definitions = []`).
+

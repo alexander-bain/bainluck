@@ -37,13 +37,13 @@ afterEach(async () => {
 });
 
 describe("#12374: sibling-family exam data and /evals section", () => {
-  it("loads the committed sibling-family exam record with 20 set-aside test cards and Gate 1 not measured (0 of 20 test cards graded)", async () => {
+  it("loads the committed sibling-family exam record with 20 set-aside test cards and all 4 gates PASS under Decide 117-A", async () => {
     expect(siblingFamilyExamProblem(RAW_SIBLING_EXAM)).toBeNull();
     const exam = loadSiblingFamilyExam();
     expect(exam).not.toBeNull();
     expect(exam?.splitCounts).toEqual({ test: 20, dev: 12, all: 32 });
-    expect(exam?.result).toBe("held");
-    expect(exam?.licences).toEqual({ sibling_family: "held" });
+    expect(exam?.result).toBe("pass");
+    expect(exam?.licences).toEqual({ sibling_family: "pass" });
     expect(exam?.cost.estimatedUsd).toBeLessThan(5.0);
     expect(exam?.cost.actualUsd).toBeLessThan(5.0);
     expect(exam?.cost.replies).toBe(96);
@@ -53,7 +53,7 @@ describe("#12374: sibling-family exam data and /evals section", () => {
     expect(exam?.gates.map((g) => g.id)).toEqual([...SIBLING_EXAM_GATE_IDS]);
     const byId = Object.fromEntries(exam!.gates.map((g) => [g.id, g.result]));
     expect(byId).toEqual({
-      card_vs_single_member: "held",
+      card_vs_single_member: "pass",
       relation_truth: "pass",
       freshness_and_count: "pass",
       run_to_run_stability: "pass",
@@ -61,10 +61,14 @@ describe("#12374: sibling-family exam data and /evals section", () => {
 
     const el = await mount(<SiblingFamilyExamSection exam={exam!} />);
     const gate1Row = el.querySelector('[data-sibling-gate="card_vs_single_member"]');
-    expect(gate1Row?.getAttribute("data-result")).toBe("held");
-    expect(gate1Row?.textContent).toContain("Not measured: 0 of 20 test cards graded (20 ungraded)");
-    expect(gate1Row?.textContent).not.toContain("19/20");
-    expect(gate1Row?.textContent).not.toContain("9/20");
+    expect(gate1Row?.getAttribute("data-result")).toBe("pass");
+    expect(gate1Row?.textContent).toContain("20/20 (83.9–100.0%)");
+    expect(gate1Row?.textContent).toContain(
+      "Counting 'Amazing' and 'Fine' as better; strict 'Amazing' only: 20/20 (100.0%)"
+    );
+    expect(gate1Row?.textContent).toContain(
+      "The interval's low end is 83.9%, which is what 20 cards from one grader can show."
+    );
     const scan = scanEvalsDom(el);
     expect(scan).toEqual({
       bareNumbers: [],
@@ -139,6 +143,7 @@ describe("#12374: sibling-family exam data and /evals section", () => {
   it("renders ungraded Gate 1 as HELD ('Not measured: 0 of 20 test cards graded') rather than FAIL 0/20, with zero bare numbers", async () => {
     const ungradedRaw = JSON.parse(JSON.stringify(RAW_SIBLING_EXAM)) as Record<string, unknown>;
     ungradedRaw.result = "HELD";
+    ungradedRaw.licences = { sibling_family: "HELD" };
     const gates = ungradedRaw.gate_results as Record<string, unknown>[];
     gates[0] = {
       ...gates[0],

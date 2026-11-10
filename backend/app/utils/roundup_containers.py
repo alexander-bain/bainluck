@@ -1481,6 +1481,145 @@ def apply_novelty_seats(
     return result
 
 
+_SIBLING_TITLE_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "who",
+        "which",
+        "what",
+        "whose",
+        "will",
+        "the",
+        "a",
+        "an",
+        "to",
+        "with",
+        "in",
+        "of",
+        "for",
+        "on",
+        "at",
+        "by",
+        "be",
+        "from",
+        "into",
+        "team",
+        "teams",
+        "candidate",
+        "candidates",
+        "player",
+        "players",
+        "contender",
+        "contenders",
+        "city",
+        "cities",
+        "movie",
+        "movies",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    }
+)
+
+
+def _is_sibling_family_bundle(item: Mapping[str, Any]) -> bool:
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return False
+    roundup = data.get("roundup")
+    if not isinstance(roundup, Mapping):
+        return False
+    rels = roundup.get("relations") or ()
+    return "sibling" in rels or "sibling_of" in rels
+
+
+def _sibling_family_row_labels(item: Mapping[str, Any]) -> set[str]:
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return set()
+    roundup = data.get("roundup")
+    if not isinstance(roundup, Mapping):
+        return set()
+    labels: set[str] = set()
+    for r in roundup.get("rows") or ():
+        if not isinstance(r, Mapping):
+            continue
+        lbl = str(r.get("label") or r.get("subject") or "").strip().lower()
+        if lbl:
+            labels.add(lbl)
+    return labels
+
+
+def _sibling_family_title_tokens(item: Mapping[str, Any]) -> set[str]:
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return set()
+    title = str(data.get("title") or item.get("headline") or "").strip().lower()
+    # Strip trailing deadline clause ('by December 31, 2026', 'in 2026', etc.)
+    title = re.sub(
+        r"\b(?:by|before|on)\s+[a-z]+\s+\d{1,2}(?:,\s*\d{4})?\b",
+        " ",
+        title,
+    )
+    tokens = {
+        tok
+        for tok in re.findall(r"[a-z0-9]+", title)
+        if tok not in _SIBLING_TITLE_STOPWORDS and not re.fullmatch(r"20\d{2}", tok)
+    }
+    return tokens
+
+
+def _is_near_identical_sibling_family(
+    candidate_item: Mapping[str, Any],
+    seated_item: Mapping[str, Any],
+) -> bool:
+    """Return True when two ``sibling_family`` cards are near-identical (#12374).
+
+    Prevents near-identical families (such as ``"Who will Trump meet with by December 31, 2026?"``
+    and ``"Who will Trump speak to by November 30, 2026?"``, or ``"Which team will finish top 8 in UECL league phase?"``
+    and ``"Which team will finish 9th–24th in UECL league phase?"``) from both taking
+    seats on the same Discover screen:
+    - Sharing ``>= 2`` row labels and ``>= 50%`` of the smaller card's shown rows, or
+    - In the same category/tag, sharing ``>= 2`` content title tokens and ``>= 50%``
+      of the smaller title's content tokens.
+    """
+    if not (_is_sibling_family_bundle(candidate_item) and _is_sibling_family_bundle(seated_item)):
+        return False
+
+    labels_a = _sibling_family_row_labels(candidate_item)
+    labels_b = _sibling_family_row_labels(seated_item)
+    if labels_a and labels_b:
+        shared_labels = labels_a & labels_b
+        min_rows = min(len(labels_a), len(labels_b))
+        if len(shared_labels) >= 2 and (len(shared_labels) / min_rows) >= 0.5:
+            return True
+
+    tag_a = str(
+        ((candidate_item.get("data") or {}).get("roundup") or {}).get("tag") or ""
+    ).strip().upper()
+    tag_b = str(
+        ((seated_item.get("data") or {}).get("roundup") or {}).get("tag") or ""
+    ).strip().upper()
+    if not tag_a or not tag_b or tag_a == tag_b:
+        toks_a = _sibling_family_title_tokens(candidate_item)
+        toks_b = _sibling_family_title_tokens(seated_item)
+        if toks_a and toks_b:
+            shared_toks = toks_a & toks_b
+            min_toks = min(len(toks_a), len(toks_b))
+            if len(shared_toks) >= 2 and (len(shared_toks) / min_toks) >= 0.5:
+                return True
+
+    return False
+
+
 def insert_roundup_feed_items(
     items: list[dict[str, Any]],
     roundup_items: Sequence[dict[str, Any]],
@@ -1530,6 +1669,13 @@ def insert_roundup_feed_items(
         and it.get("type") == "bundle"
         and isinstance(it.get("data"), Mapping)
     }
+    seated_sibling_roundups: list[Mapping[str, Any]] = [
+        it
+        for it in result[:page_window]
+        if isinstance(it, Mapping)
+        and it.get("type") == "bundle"
+        and _is_sibling_family_bundle(it)
+    ]
 
     inserted_count = 0
     changed = False
@@ -1537,6 +1683,18 @@ def insert_roundup_feed_items(
         r_id = r_item["data"].get("id")
         if r_id in existing_bundle_ids:
             continue
+        if _is_sibling_family_bundle(r_item):
+            r_score = float(r_item.get("score") or 0.0)
+            if any(
+                _is_near_identical_sibling_family(r_item, prev)
+                for prev in seated_sibling_roundups
+            ) or any(
+                other is not r_item
+                and _is_near_identical_sibling_family(r_item, other)
+                and float(other.get("score") or 0.0) > r_score
+                for other in valid_roundups
+            ):
+                continue
 
         covered_ids = _roundup_covered_market_ids(r_item)
         earliest_post_opening_seat: Optional[int] = None
@@ -1583,6 +1741,8 @@ def insert_roundup_feed_items(
 
         result.insert(target_idx, card)
         existing_bundle_ids.add(r_id)
+        if _is_sibling_family_bundle(card) and target_idx < page_window:
+            seated_sibling_roundups.append(card)
         inserted_count += 1
         changed = True
 

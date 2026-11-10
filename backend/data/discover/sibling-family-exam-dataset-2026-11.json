@@ -1930,7 +1930,7 @@
       "parent_subject": "will trump meet with *",
       "axis": "candidates",
       "category": "politics",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -2077,7 +2077,11 @@
           "rule_quote": "Will Trump meet with Dario Amodei by November 30, 2026?"
         }
       ],
-      "graded_title": "Will Trump meet with candidates?"
+      "graded_title": "Who will Trump meet with {deadline}?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:17:33.725142+00:00",
+      "graded_family_slug": "proposed-polymarket-will-trump-meet-with-candidates",
+      "graded_note": "The grouping is SO much better!"
     },
     {
       "card_id": "test-14-proposed-polymarket-will-trump-speak-to-candidat",
@@ -2088,7 +2092,7 @@
       "parent_subject": "will trump speak to *",
       "axis": "candidates",
       "category": "politics",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -2235,7 +2239,11 @@
           "rule_quote": "Will Trump speak to Mohammed bin Salman by November 30?"
         }
       ],
-      "graded_title": "Will Trump speak to candidates?"
+      "graded_title": "Who will Trump speak to {deadline}?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:18:09.635165+00:00",
+      "graded_family_slug": "proposed-polymarket-will-trump-speak-to-candidates",
+      "graded_note": "How is this card different from the previous one? Speaking vs. meeting?"
     },
     {
       "card_id": "test-15-proposed-polymarket-will-contenders-be-relegated",
@@ -2246,7 +2254,7 @@
       "parent_subject": "will * be relegated from the 2026 brazil série a",
       "axis": "contenders",
       "category": "soccer",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -2393,7 +2401,11 @@
           "rule_quote": "Will Mirassol be relegated from the 2026 Brazil Série A?"
         }
       ],
-      "graded_title": "Will which contender be relegated from the 2026 Brazil Série A?"
+      "graded_title": "Who will be relegated from the 2026 Brazil Série A?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:18:28.985561+00:00",
+      "graded_family_slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-brazi",
+      "graded_note": "I don't care about soccer at all, but many people do, and"
     },
     {
       "card_id": "test-16-proposed-polymarket-will-subjects-be-time-person",
@@ -2404,7 +2416,7 @@
       "parent_subject": "will * be time person",
       "axis": "subjects",
       "category": "entertainment",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -2551,7 +2563,10 @@
           "rule_quote": "Will Donald Trump be TIME Person of the Year 2026?"
         }
       ],
-      "graded_title": "Will which subject be TIME Person?"
+      "graded_title": "Who will be TIME Person of the Year {deadline}?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:18:35.899218+00:00",
+      "graded_family_slug": "proposed-polymarket-will-subjects-be-time-person"
     },
     {
       "card_id": "test-17-proposed-polymarket-will-contenders-finish-top-8",
@@ -2562,7 +2577,7 @@
       "parent_subject": "will * finish top 8 in ucl league phase",
       "axis": "contenders",
       "category": "soccer",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -2709,7 +2724,10 @@
           "rule_quote": "Will Club Brugge finish top 8 in UCL league phase?"
         }
       ],
-      "graded_title": "Will which contender finish top 8 in UCL league phase?"
+      "graded_title": "Who will finish top 8 in UCL league phase?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:18:41.544153+00:00",
+      "graded_family_slug": "proposed-polymarket-will-contenders-finish-top-8-in-ucl-league-phase"
     },
     {
       "card_id": "test-18-proposed-polymarket-will-teams-be-relegated-from",
@@ -2720,7 +2738,7 @@
       "parent_subject": "will * be relegated from the 2026 peru liga 1",
       "axis": "teams",
       "category": "soccer",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -2867,7 +2885,10 @@
           "rule_quote": "Will Sport Huancayo be relegated from the 2026 Peru Liga 1?"
         }
       ],
-      "graded_title": "Will which team be relegated from the 2026 Peru Liga 1?"
+      "graded_title": "Which team will be relegated from the 2026 Peru Liga 1?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:18:46.753324+00:00",
+      "graded_family_slug": "proposed-polymarket-will-teams-be-relegated-from-the-2026-peru-liga"
     },
     {
       "card_id": "test-19-proposed-polymarket-will-artists-have-a-1-song-o",
@@ -2878,7 +2899,7 @@
       "parent_subject": "will * have a 1 song on the billboard hot 100",
       "axis": "artists",
       "category": "entertainment",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -3025,7 +3046,10 @@
           "rule_quote": "Will Tyler, The Creator have a #1 song on the Billboard Hot 100 in 2026?"
         }
       ],
-      "graded_title": "Will which artist have a #1 song on the Billboard Hot 100?"
+      "graded_title": "Who will have a #1 song on the Billboard Hot 100 {deadline}?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:19:14.464587+00:00",
+      "graded_family_slug": "proposed-polymarket-will-artists-have-a-1-song-on-the-billboard-hot"
     },
     {
       "card_id": "test-20-proposed-polymarket-will-teams-be-relegated-from",
@@ -3036,7 +3060,7 @@
       "parent_subject": "will * be relegated from the 2026 colombia primera a",
       "axis": "teams",
       "category": "soccer",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -3183,7 +3207,10 @@
           "rule_quote": "Will Once Caldas be relegated from the 2026 Colombia Primera A?"
         }
       ],
-      "graded_title": "Will which team be relegated from the 2026 Colombia Primera A?"
+      "graded_title": "Which team will be relegated from the 2026 Colombia Primera A?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:19:20.488151+00:00",
+      "graded_family_slug": "proposed-polymarket-will-teams-be-relegated-from-the-2026-colombia-p"
     },
     {
       "card_id": "test-21-proposed-polymarket-will-candidates-be-in-the-he",
@@ -3194,7 +3221,7 @@
       "parent_subject": "will * be in the headlines on sunday",
       "axis": "candidates",
       "category": "politics",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -3341,7 +3368,10 @@
           "rule_quote": "Will \"NFL / Football\" be in the headlines on Sunday?"
         }
       ],
-      "graded_title": "Will which candidate be in the headlines on Sunday?"
+      "graded_title": "Who will be in the headlines on Sunday?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:19:31.947164+00:00",
+      "graded_family_slug": "proposed-polymarket-will-candidates-be-in-the-headlines-on-sunday"
     },
     {
       "card_id": "test-22-proposed-polymarket-will-contenders-be-relegated",
@@ -3352,7 +3382,7 @@
       "parent_subject": "will * be relegated from the 2026 norway eliteserien",
       "axis": "contenders",
       "category": "soccer",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -3499,7 +3529,10 @@
           "rule_quote": "Will Fredrikstad be relegated from the 2026 Norway Eliteserien?"
         }
       ],
-      "graded_title": "Will which contender be relegated from the 2026 Norway Eliteserien?"
+      "graded_title": "Who will be relegated from the 2026 Norway Eliteserien?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:19:35.703664+00:00",
+      "graded_family_slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-norwa"
     },
     {
       "card_id": "test-23-proposed-polymarket-will-contenders-be-relegated",
@@ -3510,7 +3543,7 @@
       "parent_subject": "will * be relegated from the 2026 uzbekistan super league",
       "axis": "contenders",
       "category": "soccer",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -3657,7 +3690,10 @@
           "rule_quote": "Will Andijon be relegated from the 2026 Uzbekistan Super League?"
         }
       ],
-      "graded_title": "Will which contender be relegated from the 2026 Uzbekistan Super League?"
+      "graded_title": "Who will be relegated from the 2026 Uzbekistan Super League?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:19:39.497483+00:00",
+      "graded_family_slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-uzbek"
     },
     {
       "card_id": "test-24-proposed-polymarket-will-teams-be-relegated-from",
@@ -3668,7 +3704,7 @@
       "parent_subject": "will * be relegated from the 2026 ligapro serie a ecuador",
       "axis": "teams",
       "category": "soccer",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -3815,7 +3851,10 @@
           "rule_quote": "Will Deportivo Cuenca be relegated from the 2026 LigaPro Serie A (Ecuador)?"
         }
       ],
-      "graded_title": "Will which team be relegated from the 2026 LigaPro Serie A (Ecuador)?"
+      "graded_title": "Which team will be relegated from the 2026 LigaPro Serie A (Ecuador)?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:19:42.269710+00:00",
+      "graded_family_slug": "proposed-polymarket-will-teams-be-relegated-from-the-2026-ligapro-se"
     },
     {
       "card_id": "test-25-proposed-polymarket-will-teams-be-relegated-from",
@@ -3826,7 +3865,7 @@
       "parent_subject": "will * be relegated from the 2026 uruguayan primera división",
       "axis": "teams",
       "category": "soccer",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -3973,7 +4012,10 @@
           "rule_quote": "Will Central Español be relegated from the 2026 Uruguayan Primera División?"
         }
       ],
-      "graded_title": "Will which team be relegated from the 2026 Uruguayan Primera División?"
+      "graded_title": "Which team will be relegated from the 2026 Uruguayan Primera División?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:19:45.890379+00:00",
+      "graded_family_slug": "proposed-polymarket-will-teams-be-relegated-from-the-2026-uruguayan"
     },
     {
       "card_id": "test-26-proposed-polymarket-will-donald-trump-visit-cand",
@@ -3984,7 +4026,7 @@
       "parent_subject": "will donald trump visit *",
       "axis": "candidates",
       "category": "politics",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -4131,7 +4173,10 @@
           "rule_quote": "Will Donald Trump visit Canada in 2026?"
         }
       ],
-      "graded_title": "Will Donald Trump visit candidates?"
+      "graded_title": "Where will Donald Trump visit {deadline}?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:19:50.857771+00:00",
+      "graded_family_slug": "proposed-polymarket-will-donald-trump-visit-candidates"
     },
     {
       "card_id": "test-27-proposed-polymarket-will-it-snow-in-cities",
@@ -4142,7 +4187,7 @@
       "parent_subject": "will it snow in *",
       "axis": "cities",
       "category": "weather",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -4249,7 +4294,10 @@
           "rule_quote": "Will it snow in Indianapolis, IN by November 15?"
         }
       ],
-      "graded_title": "Will it snow in cities?"
+      "graded_title": "Where will it snow {deadline}?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:19:56.845352+00:00",
+      "graded_family_slug": "proposed-polymarket-will-it-snow-in-cities"
     },
     {
       "card_id": "test-28-proposed-polymarket-will-teams-advance-to-the-ea",
@@ -4260,7 +4308,7 @@
       "parent_subject": "will * advance to the eastern conference semifinals in the 2027 nba playoffs",
       "axis": "teams",
       "category": "basketball",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -4407,7 +4455,10 @@
           "rule_quote": "Will Philadelphia 76ers advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
         }
       ],
-      "graded_title": "Will which team advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?"
+      "graded_title": "Which team will advance to the Eastern Conference Semifinals in the 2027 NBA Playoffs?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:20:03.374135+00:00",
+      "graded_family_slug": "proposed-polymarket-will-teams-advance-to-the-eastern-conference-sem"
     },
     {
       "card_id": "test-29-proposed-polymarket-will-teams-advance-to-the-we",
@@ -4418,7 +4469,7 @@
       "parent_subject": "will * advance to the western conference finals in the 2027 nba playoffs",
       "axis": "teams",
       "category": "basketball",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -4565,7 +4616,10 @@
           "rule_quote": "Will Portland Trail Blazers advance to the Western Conference Finals in the 2027 NBA Playoffs?"
         }
       ],
-      "graded_title": "Will which team advance to the Western Conference Finals in the 2027 NBA Playoffs?"
+      "graded_title": "Which team will advance to the Western Conference Finals in the 2027 NBA Playoffs?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:20:15.264630+00:00",
+      "graded_family_slug": "proposed-polymarket-will-teams-advance-to-the-western-conference-fin"
     },
     {
       "card_id": "test-30-proposed-polymarket-will-teams-advance-to-the-we",
@@ -4576,7 +4630,7 @@
       "parent_subject": "will * advance to the western conference semifinals in the 2027 nba playoffs",
       "axis": "teams",
       "category": "basketball",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -4723,7 +4777,10 @@
           "rule_quote": "Will Denver Nuggets advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
         }
       ],
-      "graded_title": "Will which team advance to the Western Conference Semifinals in the 2027 NBA Playoffs?"
+      "graded_title": "Which team will advance to the Western Conference Semifinals in the 2027 NBA Playoffs?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:20:17.932536+00:00",
+      "graded_family_slug": "proposed-polymarket-will-teams-advance-to-the-western-conference-sem"
     },
     {
       "card_id": "test-31-proposed-polymarket-will-teams-be-relegated-from",
@@ -4734,7 +4791,7 @@
       "parent_subject": "will * be relegated from the 2026 venezuelan primera división",
       "axis": "teams",
       "category": "soccer",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -4881,7 +4938,10 @@
           "rule_quote": "Will Metropolitanos be relegated from the 2026 Venezuelan Primera División?"
         }
       ],
-      "graded_title": "Will which team be relegated from the 2026 Venezuelan Primera División?"
+      "graded_title": "Which team will be relegated from the 2026 Venezuelan Primera División?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:20:22.928100+00:00",
+      "graded_family_slug": "proposed-polymarket-will-teams-be-relegated-from-the-2026-venezuelan"
     },
     {
       "card_id": "test-32-proposed-polymarket-will-contenders-be-relegated",
@@ -4892,7 +4952,7 @@
       "parent_subject": "will * be relegated from the 2026 allsvenskan sweden",
       "axis": "contenders",
       "category": "soccer",
-      "human_grade": null,
+      "human_grade": "amazing",
       "rule": {
         "producer": "sibling_family",
         "source": "polymarket",
@@ -5039,7 +5099,11 @@
           "rule_quote": "Will IF Elfsborg be relegated from the 2026 Allsvenskan (Sweden)?"
         }
       ],
-      "graded_title": "Will which contender be relegated from the 2026 Allsvenskan (Sweden)?"
+      "graded_title": "Who will be relegated from the 2026 Allsvenskan (Sweden)?",
+      "grader": "alex bain",
+      "graded_at": "2026-11-10T15:20:29.746599+00:00",
+      "graded_family_slug": "proposed-polymarket-will-contenders-be-relegated-from-the-2026-allsv"
     }
-  ]
+  ],
+  "as_of": "2026-11-10"
 }

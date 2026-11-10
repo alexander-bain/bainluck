@@ -1,0 +1,43 @@
+{
+  "slug": "proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
+  "membership": "sibling-family",
+  "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "BASEBALL",
+  "name": "Which team will advance to the World Series in the 2027 MLB Playoffs?",
+  "category": "baseball",
+  "tag": "BASEBALL",
+  "section_title": "By deadline",
+  "footer": "Each row is its own market. They don't add up to 100%.",
+  "destination_href": "/collections/proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
+  "order": "probability_desc",
+  "presentation": "list",
+  "score": 78.0,
+  "authored_by": {
+    "kind": "proposer",
+    "proposer_kind": "sibling_family",
+    "licence_status": "PASS",
+    "exam_receipt": "docs/discover/sibling-family-exam-2026-11.md",
+    "review_path": "tier-b-pr",
+    "proposed_at": "2026-11-10"
+  },
+  "rule": {
+    "producer": "sibling_family",
+    "source": "polymarket",
+    "template": "will * advance to the world series in the 2027 mlb playoffs",
+    "title_ilike": "Will % advance to the World Series in the 2027 MLB Playoffs%",
+    "title_template": "Which team will advance to the World Series in the 2027 MLB Playoffs?",
+    "kicker_prefix": "BASEBALL",
+    "kicker_include_date": false,
+    "subject_unit": "teams",
+    "outcome_name": "Yes",
+    "lead_rule": "nearest_open_deadline",
+    "min_numbered_members": 3,
+    "card_rows": 5
+  }
+}

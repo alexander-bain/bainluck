@@ -157,24 +157,34 @@ class TestEveryGatePassOrFail:
         assert normalize_exam_human_grade(None) is None
 
         cards = build_default_sibling_family_exam_dataset()
-        # Every graded card's grade must name that card's own family_slug; ungraded cardsStay null.
+        # Every graded card's grade must name that card's own family_slug; ungraded cards stay null.
         graded_cards = [c for c in cards if c.get("human_grade") is not None]
-        assert len(graded_cards) == 6
+        assert len(graded_cards) == 26
+        graded_test = [c for c in graded_cards if c["split"] == "test"]
+        graded_dev = [c for c in graded_cards if c["split"] == "dev"]
+        assert len(graded_test) == 20
+        assert len(graded_dev) == 6
         for c in cards:
             assert "graded_item_key" not in c
             if c.get("human_grade") is not None:
-                assert c["split"] == "dev"
                 assert c.get("graded_family_slug") == c["family_slug"]
             else:
                 assert "graded_family_slug" not in c
 
         committed_record = score_sibling_family_exam(cards)
-        assert committed_record["result"] == "HELD"
-        assert committed_record["licences"] == {"sibling_family": "HELD"}
+        assert committed_record["result"] == "PASS"
+        assert committed_record["licences"] == {"sibling_family": "PASS"}
         g1_obs = committed_record["gate_results"][0]["observed"]
-        assert g1_obs["graded_k"] == 0
-        assert g1_obs["ungraded_k"] == 20
-        assert g1_obs["status_note"] == "not measured: 0 of 20 test cards graded"
+        assert g1_obs["graded_k"] == 20
+        assert g1_obs["ungraded_k"] == 0
+        assert g1_obs["better_k"] == 20
+        assert g1_obs["worse_k"] == 0
+        assert g1_obs["better_pct"] == 100.0
+        assert g1_obs["better_wilson95"] == [83.9, 100.0]
+        assert g1_obs["strict_amazing_k"] == 20
+        assert g1_obs["strict_amazing_pct"] == 100.0
+        assert g1_obs["graded_on_pre_fix_headings"] is False
+        assert "83.9%" in g1_obs["grading_note"]
 
         p1_dev = committed_record["per_pass"]["1"]["dev"]
         assert p1_dev["expected"] == 12
@@ -434,8 +444,7 @@ class TestEveryGatePassOrFail:
         assert "relation_truth" in md
         assert "freshness_and_count" in md
         assert "run_to_run_stability" in md
-        assert "Not measured: 0 of 20 test cards graded (20 ungraded)" in md
-        assert "**HELD**" in md
+        assert "the interval's low end is `83.9%`, which is what `20` cards from one grader can show" in md
         assert "**PASS**" in md
 
     def test_published_evals_json_and_docs_receipt_match_scorer_output_on_committed_dataset(

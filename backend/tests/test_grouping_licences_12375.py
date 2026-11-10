@@ -123,8 +123,8 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
         assert get_kind_licence_status(reg, "subject_sequence") == "HELD"
         assert reg["kinds"]["subject_sequence"]["exam_receipt"] is None
         assert is_kind_licensed_for_promotion(reg, "subject_sequence") is False
-        assert get_kind_licence_status(reg, "sibling_family") == "HELD"
-        assert is_kind_licensed_for_promotion(reg, "sibling_family") is False
+        assert get_kind_licence_status(reg, "sibling_family") == "PASS"
+        assert is_kind_licensed_for_promotion(reg, "sibling_family") is True
         assert get_kind_licence_status(reg, "same_deadline_board") == "FAIL"
         assert is_kind_licensed_for_promotion(reg, "same_deadline_board") is False
 
@@ -193,12 +193,32 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
         assert subj_outcome.promoted is False
         assert subj_outcome.reason == "kind_not_licensed:held"
 
+        held_sib_reg = copy.deepcopy(reg)
+        held_sib_reg["kinds"]["sibling_family"]["status"] = "HELD"
         sib_outcome = promote_licensed_proposal_to_definition(
             {"kind": "sibling_family", "slug": "sibling-fed-cuts"},
-            registry=reg,
+            registry=held_sib_reg,
         )
         assert sib_outcome.promoted is False
         assert sib_outcome.reason == "kind_not_licensed:held"
+
+        # Under Decide 117-A, sibling_family is PASS and its 6 verified serve families
+        # are promoted into backend/data/containers/ with review_path == "tier-b-pr"
+        for promoted_slug in (
+            "proposed-polymarket-will-contenders-record-100-points",
+            "proposed-polymarket-will-teams-finish-top-8-in-uecl-league-phase",
+            "proposed-polymarket-will-teams-finish-9th-24th-in-uecl-league-phase",
+            "proposed-polymarket-will-contenders-be-relegated-from-the-2026-liga",
+            "proposed-polymarket-will-teams-advance-to-the-world-series-in-the-20",
+            "proposed-polymarket-will-the-contenders-make-the-2026-27-nhl-playoff",
+        ):
+            p_path = DEFAULT_CONTAINERS_DIR / f"{promoted_slug}.json"
+            assert p_path.exists()
+            p_defn = load_roundup_definition(p_path)
+            assert p_defn["authored_by"]["proposer_kind"] == "sibling_family"
+            assert p_defn["authored_by"]["licence_status"] == "PASS"
+            assert p_defn["authored_by"]["review_path"] == "tier-b-pr"
+            assert promoted_slug in ROUNDUP_PRODUCERS
 
         board_outcome = promote_licensed_proposal_to_definition(
             {"kind": "same_deadline_board", "slug": "by-january-31"},

@@ -246,7 +246,7 @@ def verify_word_for_word_quote(quote: str, market: Mapping[str, Any]) -> bool:
 
 
 _FORBIDDEN_HEADING_GRAMMAR_RE = re.compile(
-    r"(?:\bwill\s+which\b|\b(?:subjects|contenders)\b|:\s*(?:candidates|teams|players|movies|cities|subjects|contenders)\b|\bthe\s+(?:candidates|teams|players|movies|cities|subjects|contenders)\s+(?:senate|governor|house|presidential)\b|^will\s+.+\s+(?:meet\s+with|speak\s+to|visit|snow\s+in)\s+(?:candidates|cities|subjects|contenders|\{deadline\})\b)",
+    r"(?:\bwill\s+which\b|^\s*will\s+(?:the\s+)?(?:subjects|contenders)\b|:\s*(?:candidates|teams|players|movies|cities|subjects|contenders)\b|\bthe\s+(?:candidates|teams|players|movies|cities|subjects|contenders)\s+(?:senate|governor|house|presidential)\b|^will\s+.+\s+(?:meet\s+with|speak\s+to|visit|snow\s+in)\s+(?:candidates|cities|subjects|contenders|\{deadline\})\b)",
     re.IGNORECASE,
 )
 
