@@ -378,6 +378,16 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
         )
         XCTAssertTrue(topRightEdge.placesLeftOfDot)
         XCTAssertEqual(topRightEdge.labelY, 28)
+
+        // Bottom-edge terminal dot on a taller chart (e.g. dotY = 280 on a 300pt/380pt plot) stays beside its dot.
+        let bottomRightEdge = EventAtlasChartMarks11666.resultWordPlacement(
+            result: .lost,
+            dotX: 300,
+            dotY: 280,
+            plotWidth: 320
+        )
+        XCTAssertTrue(bottomRightEdge.placesLeftOfDot)
+        XCTAssertEqual(bottomRightEdge.labelY, 280)
     }
 
     func testOddsChartViewGatesE2HeaderAndOverlayBehindEventPageAtlasEnabled() throws {

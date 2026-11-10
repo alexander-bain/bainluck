@@ -292,8 +292,9 @@ nonisolated enum EventAtlasChartMarks11666 {
 
     /// Computes the placement of the settled result word (`✓ Won` or `✗ Lost`) beside the last recorded dot.
     /// Reserves the top 20pt period-chip band (`OddsChartView.endLabelTopReserve9483`) plus half the badge height
-    /// (`minTopY = 28`) when placed left of a right-edge terminal dot so `✓ Won` never overlaps the `Final`
-    /// period marker chip at `y = 10`.
+    /// (`minTopY = OddsChartView.endLabelTopReserve9483 + 8`) when placed left of a right-edge terminal dot
+    /// so `✓ Won` never overlaps the `Final` period marker chip at `y = 10`, without capping lower dots on tall
+    /// iPad or Full Screen charts.
     static func resultWordPlacement(
         result: EventAtlasSettledResult11666,
         dotX: CGFloat,
@@ -303,7 +304,7 @@ nonisolated enum EventAtlasChartMarks11666 {
         let placesLeft = dotX > plotWidth - 56 && dotX - 48 > 0
         let offset: CGFloat = 26
         let labelX = placesLeft ? dotX - offset : dotX + offset
-        let minTopY: CGFloat = placesLeft ? 28 : 10
+        let minTopY: CGFloat = placesLeft ? OddsChartView.endLabelTopReserve9483 + 8 : 10
         return EventAtlasResultWordPlacement11666(
             result: result,
             word: result.word,
@@ -311,7 +312,7 @@ nonisolated enum EventAtlasChartMarks11666 {
             dotX: dotX,
             dotY: dotY,
             labelX: labelX,
-            labelY: min(max(minTopY, dotY), 210)
+            labelY: max(minTopY, dotY)
         )
     }
 }
