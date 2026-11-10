@@ -84,6 +84,7 @@ afterEach(() => {
 test.each([
   ["atp-brussels", "atp-tennis-brussels-belgium-singles-winner"],
   ["atp-basel", "atp-basel-winner"],
+  ["atp-basel-winner", "atp-basel-winner"],
 ])("%s opens the existing resolver's canonical tennis hub", async (slug, canonical) => {
   mockTournament.mockRejectedValue(httpError(404));
   mockConcept.mockResolvedValue(concept(`event:tennis:${canonical}`));
@@ -91,7 +92,7 @@ test.each([
   await renderSlug(slug);
 
   expect(mockTournament.mock.calls).toEqual([[slug, HUB_SECTIONS_FIRST]]);
-  expect(mockConcept).toHaveBeenCalledWith(`event:tennis:${slug}-winner`);
+  expect(mockConcept).toHaveBeenCalledWith(`event:tennis:${slug}`);
   expect(mockRouter.replace).toHaveBeenCalledWith(`/event/tennis/${canonical}`);
   expect(host.textContent).not.toContain("Tournament unavailable");
   mockTracking.forEach((track) => expect(track).toHaveBeenCalled());
@@ -155,6 +156,7 @@ test.each([
   await renderSlug();
   expect(mockRouter.replace).not.toHaveBeenCalled();
   expect(host.textContent).toContain("Tournament unavailable");
+  expect(host.textContent).toContain("We could not verify this tournament link.");
 });
 
 test("a stale first 404 cannot start the fallback after the slug changes", async () => {

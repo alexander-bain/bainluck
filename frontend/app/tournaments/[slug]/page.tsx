@@ -331,7 +331,8 @@ export default function TournamentPage() {
         // Only an absent registered route earns this second existence lookup.
         if (failure?.status === 404) {
           try {
-            const concept = await fetchEventConcept(`event:tennis:${slug}-winner`);
+            // The existing tennis adapter canonicalizes bare tournament aliases.
+            const concept = await fetchEventConcept(`event:tennis:${slug}`);
             if (cancelled) return;
             const key = concept.event?.key;
             if (
@@ -342,6 +343,12 @@ export default function TournamentPage() {
               router.replace(eventPath(key));
               return;
             }
+            setError({
+              title: "Tournament unavailable",
+              message: "We could not verify this tournament link.",
+            });
+            setLoading(false);
+            return;
           } catch (fallbackFailure) {
             if (cancelled) return;
             if ((fallbackFailure as ApiError)?.status === 404) {
