@@ -16,14 +16,7 @@ from sqlalchemy import select, and_, or_, func, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, joinedload, selectinload
 
-from app.models import (
-    Event,
-    FuturesMarket,
-    FuturesOutcome,
-    FuturesOddsSnapshot,
-    Sport,
-    Team,
-)
+from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
@@ -287,11 +280,7 @@ def _apply_settled_winner_freeze(
         # the fabricated-loss repair's, not this read path's.
     elif not winners and champion_name:
         norm = _norm_outcome_name(champion_name)
-        named = [
-            o
-            for o in (market.outcomes or [])
-            if _norm_outcome_name(getattr(o, "name", "")) == norm
-        ]
+        named = [o for o in (market.outcomes or []) if _norm_outcome_name(getattr(o, "name", "")) == norm]
         if len(named) == 1:
             champs = [named[0]]
     # #698 — a champion whose own detail row says "Result unknown" is not
@@ -443,9 +432,7 @@ def _freeze_one_winner_line(
             point["settlement_basis"] = served_basis
         outcome_history[champ.id] = {
             "outcome_id": champ.id,
-            "name": outcome_names.get(
-                champ.id, getattr(champ, "name", None) or "Unknown"
-            ),
+            "name": outcome_names.get(champ.id, getattr(champ, "name", None) or "Unknown"),
             "history": [point],
             "eliminated": False,
             "eliminated_at": None,
@@ -576,10 +563,7 @@ def _is_evidenced_loss(outcome) -> bool:
     """
     if getattr(outcome, "is_winner", None) is not False:
         return False
-    return (
-        getattr(outcome, "resolution_source", None)
-        in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
-    )
+    return getattr(outcome, "resolution_source", None) in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
 
 
 def _detail_withholds_result(market, outcome) -> bool:
@@ -719,18 +703,14 @@ def _drop_post_decision_republication(history, graded_value):
     finding anything.
     """
     first_at = next(
-        (
-            i
-            for i, pt in enumerate(history)
-            if _at_grade(pt.get("probability"), graded_value)
-        ),
+        (i for i, pt in enumerate(history) if _at_grade(pt.get("probability"), graded_value)),
         None,
     )
     if first_at is None:
         return history  # never reached its grade in-window: nothing was decided here
     returns = 0
     prev_at = True
-    for pt in history[first_at + 1 :]:
+    for pt in history[first_at + 1:]:
         at = _at_grade(pt.get("probability"), graded_value)
         if at and not prev_at:
             returns += 1
@@ -738,9 +718,7 @@ def _drop_post_decision_republication(history, graded_value):
     if returns < _GRADE_RETURN_MIN:
         return history  # a journey, not an echo — see the docstring
     return history[: first_at + 1] + [
-        pt
-        for pt in history[first_at + 1 :]
-        if _at_grade(pt.get("probability"), graded_value)
+        pt for pt in history[first_at + 1:] if _at_grade(pt.get("probability"), graded_value)
     ]
 
 
@@ -773,16 +751,11 @@ def _detect_round_boundaries_from_eliminations(outcome_histories, existing_bound
     for i, cluster in enumerate(clusters):
         if len(cluster) >= 2:
             avg_ts = sum(cluster) / len(cluster)
-            boundaries.append(
-                {
-                    "timestamp": datetime.fromtimestamp(
-                        avg_ts, tz=timezone.utc
-                    ).isoformat(),
-                    "label": "Round " + str(i + 1),
-                }
-            )
+            boundaries.append({
+                "timestamp": datetime.fromtimestamp(avg_ts, tz=timezone.utc).isoformat(),
+                "label": "Round " + str(i + 1),
+            })
     return boundaries if boundaries else None
-
 
 def _derive_round_boundaries(metadata: dict | None) -> list[dict] | None:
     """Extract round boundary markers from FuturesMarket.market_metadata.round_history.
@@ -796,10 +769,7 @@ def _derive_round_boundaries(metadata: dict | None) -> list[dict] | None:
     if not round_history:
         return None
     return [
-        {
-            "timestamp": entry["timestamp"],
-            "label": entry.get("label", f"R{entry.get('round', '?')}"),
-        }
+        {"timestamp": entry["timestamp"], "label": entry.get("label", f"R{entry.get('round', '?')}")}
         for entry in round_history
         if "timestamp" in entry
     ]
@@ -815,7 +785,7 @@ async def debug_futures_sources(db: AsyncSession = Depends(get_db)):
     query = select(
         FuturesMarket.source,
         FuturesMarket.status,
-        func.count(FuturesMarket.id).label("count"),
+        func.count(FuturesMarket.id).label("count")
     ).group_by(FuturesMarket.source, FuturesMarket.status)
 
     result = await db.execute(query)
@@ -833,24 +803,14 @@ async def debug_futures_sources(db: AsyncSession = Depends(get_db)):
     samples = {}
     for source in breakdown.keys():
         sample_query = (
-            select(
-                FuturesMarket.id,
-                FuturesMarket.name,
-                FuturesMarket.status,
-                FuturesMarket.updated_at,
-            )
+            select(FuturesMarket.id, FuturesMarket.name, FuturesMarket.status, FuturesMarket.updated_at)
             .where(FuturesMarket.source == source)
             .order_by(FuturesMarket.updated_at.desc())
             .limit(3)
         )
         sample_result = await db.execute(sample_query)
         samples[source] = [
-            {
-                "id": r.id,
-                "name": r.name,
-                "status": r.status,
-                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
-            }
+            {"id": r.id, "name": r.name, "status": r.status, "updated_at": r.updated_at.isoformat() if r.updated_at else None}
             for r in sample_result.all()
         ]
 
@@ -890,22 +850,17 @@ async def debug_sport_mapping(db: AsyncSession = Depends(get_db)):
     for r in markets_result.all():
         # Compute what _infer_base_sport would return
         inferred_key = _infer_base_sport(r.external_id) if r.external_id else None
-        markets.append(
-            {
-                "id": r.id,
-                "name": r.name,
-                "external_id": r.external_id,
-                "sport_id": r.sport_id,
-                "linked_sport_key": r.sport_key,
-                "linked_sport_name": r.sport_name,
-                "inferred_base_sport": inferred_key,
-                "inferred_sport_id": (
-                    sport_map.get(inferred_key) if inferred_key else None
-                ),
-                "linking_works": r.sport_id is not None
-                and r.sport_id == sport_map.get(inferred_key),
-            }
-        )
+        markets.append({
+            "id": r.id,
+            "name": r.name,
+            "external_id": r.external_id,
+            "sport_id": r.sport_id,
+            "linked_sport_key": r.sport_key,
+            "linked_sport_name": r.sport_name,
+            "inferred_base_sport": inferred_key,
+            "inferred_sport_id": sport_map.get(inferred_key) if inferred_key else None,
+            "linking_works": r.sport_id is not None and r.sport_id == sport_map.get(inferred_key),
+        })
 
     # Summary: count linked vs unlinked
     linked = sum(1 for m in markets if m["sport_id"])
@@ -948,9 +903,7 @@ async def get_available_futures():
             "count": len(sports),
         }
     except Exception as e:
-        raise HTTPException(
-            status_code=502, detail=f"Error fetching from Odds API: {str(e)}"
-        )
+        raise HTTPException(status_code=502, detail=f"Error fetching from Odds API: {str(e)}")
 
 
 # ── /movers: why "Biggest Movers" cost 11 s of database time to produce ten
@@ -1063,9 +1016,9 @@ def _build_movers_query(limit: int, *, pooled: bool):
             .where(*conditions, FuturesMarket.status.in_(_MOVERS_OPEN_STATUSES))
         )
 
-    return query.order_by(func.abs(FuturesOutcome.probability_change_24h).desc()).limit(
-        limit
-    )
+    return query.order_by(
+        func.abs(FuturesOutcome.probability_change_24h).desc()
+    ).limit(limit)
 
 
 #: The route's own write-through TTL, unchanged from LAT-P108. A reader that
@@ -1146,22 +1099,13 @@ def _movers_payload(outcomes, hours: int) -> dict:
                 "name": o.name,
                 "market_id": o.market_id,
                 "market_name": o.market.name if o.market else None,
-                "current_probability": (
-                    float(o.current_probability)
-                    if o.current_probability is not None
-                    else None
-                ),
+                "current_probability": float(o.current_probability) if o.current_probability is not None else None,
                 # #10248 D5: a DataGolf leg serves its dated move, not a 90 s one.
                 "probability_change_24h": (
                     float(chg)
-                    if (
-                        chg := reader_change_24h(
-                            o.market,
-                            o.id,
-                            o.current_probability,
-                            o.probability_change_24h,
-                        )
-                    )
+                    if (chg := reader_change_24h(
+                        o.market, o.id, o.current_probability, o.probability_change_24h
+                    ))
                     else None
                 ),
                 # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
@@ -1253,9 +1197,7 @@ async def get_live_futures(
                             "american_odds": o.american_odds,
                             "probability": round(o.probability, 4),
                         }
-                        for o in sorted(
-                            m.outcomes, key=lambda x: x.probability, reverse=True
-                        )
+                        for o in sorted(m.outcomes, key=lambda x: x.probability, reverse=True)
                     ],
                 }
                 for m in markets
@@ -1263,17 +1205,13 @@ async def get_live_futures(
             "bookmaker_count": len(markets),
         }
     except Exception as e:
-        raise HTTPException(
-            status_code=502, detail=f"Error fetching from Odds API: {str(e)}"
-        )
+        raise HTTPException(status_code=502, detail=f"Error fetching from Odds API: {str(e)}")
 
 
 @router.get("/canonical-keys")
 async def list_canonical_keys(
     sport: Optional[str] = Query(None, description="Filter by sport category"),
-    has_multiple_sources: bool = Query(
-        False, description="Only show keys with 2+ sources"
-    ),
+    has_multiple_sources: bool = Query(False, description="Only show keys with 2+ sources"),
     limit: int = Query(50, description="Max results"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1340,8 +1278,8 @@ async def browse_futures(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= datetime.now(timezone.utc),
         ),
-        ~FuturesMarket.name.ilike("% vs %"),
-        ~FuturesMarket.name.ilike("% vs. %"),
+        ~FuturesMarket.name.ilike('% vs %'),
+        ~FuturesMarket.name.ilike('% vs. %'),
     ]
 
     if category:
@@ -1388,9 +1326,7 @@ async def browse_futures(
         # `id` is the PK, so the sort is now unique and OFFSET paging is
         # consistent; it costs one extra comparison on ties in a sort node the
         # query already pays for, and adds no index requirement.
-        .order_by(
-            FuturesMarket.resolution_date.asc().nulls_last(), FuturesMarket.id.asc()
-        )
+        .order_by(FuturesMarket.resolution_date.asc().nulls_last(), FuturesMarket.id.asc())
         .limit(limit)
         .offset(offset)
     )
@@ -1481,7 +1417,8 @@ async def browse_futures(
         # a market whose every outcome is a placeholder keeps its rows rather than
         # rendering a card with no subtitle at all.
         real_outcomes = [
-            o for o in deduped if not is_placeholder_outcome_name(o.name)
+            o for o in deduped
+            if not is_placeholder_outcome_name(o.name)
         ] or list(deduped)
         # #6993, THE THIRD AND WORST SITE OF THE SAME BYPASS. `/api/futures/109485`
         # served `24,800 or below 1.0` as `top_outcomes[0]` here while
@@ -1503,11 +1440,8 @@ async def browse_futures(
         # and rank 1 is the only rank this payload's consumer renders.
         sorted_outcomes = sorted(
             real_outcomes,
-            key=lambda o: (
-                0
-                if o.id in withheld
-                else (float(o.current_probability) if o.current_probability else 0)
-            ),
+            key=lambda o: 0 if o.id in withheld
+            else (float(o.current_probability) if o.current_probability else 0),
             reverse=True,
         )
         # #4253: same drop as detail and search, and browse needs it for the same
@@ -1548,22 +1482,13 @@ async def browse_futures(
             od = {
                 "id": o.id,
                 "name": o.name,
-                "probability": (
-                    float(o.current_probability)
-                    if o.current_probability is not None
-                    else None
-                ),
+                "probability": float(o.current_probability) if o.current_probability is not None else None,
                 # #10248 D5 — `reader_change_24h`.
                 "movement": (
                     float(chg)
-                    if (
-                        chg := reader_change_24h(
-                            market,
-                            o.id,
-                            o.current_probability,
-                            o.probability_change_24h,
-                        )
-                    )
+                    if (chg := reader_change_24h(
+                        market, o.id, o.current_probability, o.probability_change_24h
+                    ))
                     else None
                 ),
             }
@@ -1608,21 +1533,15 @@ async def browse_futures(
                 o["movement"] = None
         leader_pick_order(display_outcomes)
         top3 = display_outcomes[:3]
-        items.append(
-            {
-                "id": market.id,
-                "name": market.name,
-                "llm_sport_category": market.llm_sport_category,
-                "source": market.source,
-                "resolution_date": (
-                    market.resolution_date.isoformat()
-                    if market.resolution_date
-                    else None
-                ),
-                "top_outcomes": top3,
-                "outcome_count": len(real_outcomes),
-            }
-        )
+        items.append({
+            "id": market.id,
+            "name": market.name,
+            "llm_sport_category": market.llm_sport_category,
+            "source": market.source,
+            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            "top_outcomes": top3,
+            "outcome_count": len(real_outcomes),
+        })
 
     return {
         "items": items,
@@ -1732,8 +1651,8 @@ async def _build_futures_categories(db: AsyncSession) -> dict:
                 FuturesMarket.resolution_date.is_(None),
                 FuturesMarket.resolution_date >= now,
             ),
-            ~FuturesMarket.name.ilike("% vs %"),
-            ~FuturesMarket.name.ilike("% vs. %"),
+            ~FuturesMarket.name.ilike('% vs %'),
+            ~FuturesMarket.name.ilike('% vs. %'),
         )
         .group_by(category_key)
         .order_by(func.count(FuturesMarket.id).desc())
@@ -1900,17 +1819,13 @@ _HAS_ANY_OUTCOME_ROW = exists().where(
 @router.get("/faceted")
 async def faceted_futures_search(
     tags: Optional[str] = Query(None, description="JSON array of tags"),
-    sport: Optional[str] = Query(
-        None, description="Sport tag value (e.g., basketball)"
-    ),
+    sport: Optional[str] = Query(None, description="Sport tag value (e.g., basketball)"),
     category: Optional[str] = Query(None, description="llm_sport_category filter"),
     stakes: Optional[str] = Query(None, description="Stakes tag value"),
     narrative: Optional[str] = Query(None, description="Narrative tag value"),
     audience: Optional[str] = Query(None, description="Audience tag value"),
     q: Optional[str] = Query(None, description="Search within market names"),
-    sort: Optional[str] = Query(
-        None, description="Sort order: soonest (default), newest, trending"
-    ),
+    sort: Optional[str] = Query(None, description="Sort order: soonest (default), newest, trending"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(25, ge=1, le=100, description="Results per page"),
     db: AsyncSession = Depends(get_db),
@@ -1930,12 +1845,7 @@ async def faceted_futures_search(
         except (ValueError, TypeError):
             pass
 
-    convenience = {
-        "sport": sport,
-        "stakes": stakes,
-        "narrative": narrative,
-        "audience": audience,
-    }
+    convenience = {"sport": sport, "stakes": stakes, "narrative": narrative, "audience": audience}
     for ns, val in convenience.items():
         if val:
             tag_filter.append(f"{ns}:{val}")
@@ -1985,9 +1895,7 @@ async def faceted_futures_search(
         trending_sub = (
             select(
                 FuturesOutcome.market_id,
-                func.max(func.abs(FuturesOutcome.probability_change_24h)).label(
-                    "max_move"
-                ),
+                func.max(func.abs(FuturesOutcome.probability_change_24h)).label("max_move"),
             )
             .group_by(FuturesOutcome.market_id)
             .subquery()
@@ -2002,9 +1910,7 @@ async def faceted_futures_search(
             # movement, so `nulls_last()` parks a very large block at the tail
             # in arbitrary order. Measured on production 2026-09-18, golf at
             # `per_page=20`: 88 slots, 78 distinct markets.
-            .order_by(
-                trending_sub.c.max_move.desc().nulls_last(), FuturesMarket.id.asc()
-            )
+            .order_by(trending_sub.c.max_move.desc().nulls_last(), FuturesMarket.id.asc())
             .offset(offset_val)
             .limit(per_page)
         )
@@ -2018,9 +1924,7 @@ async def faceted_futures_search(
             # whose timestamp genuinely changes between two page fetches can
             # still move across a boundary — that is inherent to offset paging
             # over a mutating sort key and is NOT claimed fixed here.
-            .order_by(
-                FuturesMarket.updated_at.desc().nulls_last(), FuturesMarket.id.asc()
-            )
+            .order_by(FuturesMarket.updated_at.desc().nulls_last(), FuturesMarket.id.asc())
             .offset(offset_val)
             .limit(per_page)
         )
@@ -2033,9 +1937,7 @@ async def faceted_futures_search(
             # Total order, as above: this is the DEFAULT sort, so it is the one
             # the native futures browser pages on. Measured on production
             # 2026-09-18, golf at `per_page=20`: 88 slots, 79 distinct.
-            .order_by(
-                FuturesMarket.resolution_date.asc().nulls_last(), FuturesMarket.id.asc()
-            )
+            .order_by(FuturesMarket.resolution_date.asc().nulls_last(), FuturesMarket.id.asc())
             .offset(offset_val)
             .limit(per_page)
         )
@@ -2044,7 +1946,8 @@ async def faceted_futures_search(
     formatted = []
     for market in markets:
         real_outcomes = [
-            o for o in market.outcomes if not _GARBAGE_OUTCOME_RE.match(o.name or "")
+            o for o in market.outcomes
+            if not _GARBAGE_OUTCOME_RE.match(o.name or "")
         ]
         # #6993, the same bypass as `/browse` above and the reason this arm is not
         # a lesser copy of it: `/api/futures/faceted` is what the iOS client reads
@@ -2056,11 +1959,8 @@ async def faceted_futures_search(
         withheld = await _withheld_price_outcome_ids(db, market)
         sorted_outcomes = sorted(
             real_outcomes,
-            key=lambda o: (
-                0
-                if o.id in withheld
-                else (float(o.current_probability) if o.current_probability else 0)
-            ),
+            key=lambda o: 0 if o.id in withheld
+            else (float(o.current_probability) if o.current_probability else 0),
             reverse=True,
         )
         top3 = []
@@ -2068,22 +1968,13 @@ async def faceted_futures_search(
             od = {
                 "id": o.id,
                 "name": o.name,
-                "probability": (
-                    float(o.current_probability)
-                    if o.current_probability is not None
-                    else None
-                ),
+                "probability": float(o.current_probability) if o.current_probability is not None else None,
                 # #10248 D5 — `reader_change_24h`.
                 "movement": (
                     float(chg)
-                    if (
-                        chg := reader_change_24h(
-                            market,
-                            o.id,
-                            o.current_probability,
-                            o.probability_change_24h,
-                        )
-                    )
+                    if (chg := reader_change_24h(
+                        market, o.id, o.current_probability, o.probability_change_24h
+                    ))
                     else None
                 ),
             }
@@ -2092,37 +1983,31 @@ async def faceted_futures_search(
                     if field in od:
                         od[field] = None
             top3.append(od)
-        formatted.append(
-            {
-                "id": market.id,
-                "name": market.name,
-                "llm_sport_category": market.llm_sport_category,
-                "source": market.source,
-                "resolution_date": (
-                    market.resolution_date.isoformat()
-                    if market.resolution_date
-                    else None
-                ),
-                # STRIPPED — SCHEDULED, not yet executed. Queue 333, C272/B4 census (#1620).
-                # Unlike the annotated fields in this file, no retention argument survived:
-                # it is a stored taxonomy column surfaced on browse rows, declared by both
-                # typed clients, read by neither, for five months (introduced 2026-03-01,
-                # `39a70392`). It is not diagnostic, not a request-echo, and not half of a
-                # rendered pair.
-                # Old-build check RECORDED (Item 0's rule — not a grep of the current tree):
-                # iOS `marketTags` is `[String]?` — OPTIONAL — so removal is decode-safe for
-                # builds already shipped; no crash, the key simply stops arriving.
-                # NOT stripped here because a strip is Red: it spans this producer, the web
-                # types, the native model, and it moves the typecheck baseline, which the CI
-                # ratchet fails on in BOTH directions (gotcha #10). Scheduled deliberately
-                # rather than taken opportunistically.
-                "market_tags": market.market_tags or [],
-                "top_outcomes": top3,
-                "outcome_count": len(real_outcomes),
-                "image_url": market.image_url,
-                "hook_description": market.hook_description,
-            }
-        )
+        formatted.append({
+            "id": market.id,
+            "name": market.name,
+            "llm_sport_category": market.llm_sport_category,
+            "source": market.source,
+            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            # STRIPPED — SCHEDULED, not yet executed. Queue 333, C272/B4 census (#1620).
+            # Unlike the annotated fields in this file, no retention argument survived:
+            # it is a stored taxonomy column surfaced on browse rows, declared by both
+            # typed clients, read by neither, for five months (introduced 2026-03-01,
+            # `39a70392`). It is not diagnostic, not a request-echo, and not half of a
+            # rendered pair.
+            # Old-build check RECORDED (Item 0's rule — not a grep of the current tree):
+            # iOS `marketTags` is `[String]?` — OPTIONAL — so removal is decode-safe for
+            # builds already shipped; no crash, the key simply stops arriving.
+            # NOT stripped here because a strip is Red: it spans this producer, the web
+            # types, the native model, and it moves the typecheck baseline, which the CI
+            # ratchet fails on in BOTH directions (gotcha #10). Scheduled deliberately
+            # rather than taken opportunistically.
+            "market_tags": market.market_tags or [],
+            "top_outcomes": top3,
+            "outcome_count": len(real_outcomes),
+            "image_url": market.image_url,
+            "hook_description": market.hook_description,
+        })
 
     # Facet counts
     # #6354: the same answerability gate as `conditions` above, in SQL because this half
@@ -2173,9 +2058,7 @@ async def faceted_futures_search(
 async def list_futures_markets(
     sport: Optional[str] = Query(None, description="Filter by sport key"),
     status: str = Query("open", description="Filter by status (open, resolved, all)"),
-    source: Optional[str] = Query(
-        None, description="Filter by source (odds_api, kalshi)"
-    ),
+    source: Optional[str] = Query(None, description="Filter by source (odds_api, kalshi)"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -2240,7 +2123,8 @@ async def list_futures_markets(
 
     return {
         "markets": [
-            _format_market_summary(market, source_count_map) for market in markets
+            _format_market_summary(market, source_count_map)
+            for market in markets
         ],
         "count": len(markets),
     }
@@ -2255,17 +2139,9 @@ async def list_futures_markets(
 
 @router.get("/playoff-grid")
 async def get_playoff_grid(
-    sport: str = Query(
-        ...,
-        description="Sport category (basketball, football, hockey, baseball, golf, soccer, tennis)",
-    ),
-    league: str = Query(
-        "",
-        description="League filter (NBA, NFL, NHL, MLB, NCAAB, NCAAF, etc.). Optional.",
-    ),
-    season: str = Query(
-        "", description="Season filter (2025-26, 2025). Auto-detected if omitted."
-    ),
+    sport: str = Query(..., description="Sport category (basketball, football, hockey, baseball, golf, soccer, tennis)"),
+    league: str = Query("", description="League filter (NBA, NFL, NHL, MLB, NCAAB, NCAAF, etc.). Optional."),
+    season: str = Query("", description="Season filter (2025-26, 2025). Auto-detected if omitted."),
     top_n: int = Query(40, ge=1, le=64, description="Max teams/participants to return"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2439,7 +2315,10 @@ async def get_playoff_grid(
         """,
         re.IGNORECASE | re.VERBOSE,
     )
-    all_markets = [m for m in all_markets if not _NOT_PROGRESSION_RE.search(m.name)]
+    all_markets = [
+        m for m in all_markets
+        if not _NOT_PROGRESSION_RE.search(m.name)
+    ]
 
     # --- Classify each market into a stage ---
     # Group by stage, allowing multiple markets per stage (from different sources)
@@ -2455,7 +2334,9 @@ async def get_playoff_grid(
 
         # ALWAYS use name-based classification — canonical keys are unreliable
         # (Polymarket assigns "championship" key to draft, awards, stat leaders, etc.)
-        stage_key = classify_market_stage(m.name, m.external_id, m.market_tier, stages)
+        stage_key = classify_market_stage(
+            m.name, m.external_id, m.market_tier, stages
+        )
 
         # Only include stages that are part of this sport's progression
         if stage_key and any(s["key"] == stage_key for s in stages):
@@ -2507,7 +2388,9 @@ async def get_playoff_grid(
             # Prevents NCAAB teams from appearing in NBA grid, etc.
             exact_sport_key = _LEAGUE_TO_SPORT_KEY[league_upper]
             team_query = team_query.where(
-                Team.sport_id.in_(select(Sport.id).where(Sport.key == exact_sport_key))
+                Team.sport_id.in_(
+                    select(Sport.id).where(Sport.key == exact_sport_key)
+                )
             )
         elif league_upper:
             # Unknown league — try ILIKE match
@@ -2532,11 +2415,7 @@ async def get_playoff_grid(
                 "secondary_color": t.secondary_color,
                 # Only include record when standings data has active season info
                 # (prevents showing stale past-season records during offseason)
-                "record": (
-                    t.current_record
-                    if (t.standings_data or {}).get("wins") is not None
-                    else None
-                ),
+                "record": t.current_record if (t.standings_data or {}).get("wins") is not None else None,
                 "conference": (t.standings_data or {}).get("conference"),
                 "division": (t.standings_data or {}).get("division"),
             }
@@ -2549,7 +2428,7 @@ async def get_playoff_grid(
                 # "Oklahoma City" from "Oklahoma City Thunder"
                 sport_team_lookup[parts[0].lower()] = t_dict
             # Index alternate names
-            for alt in t.alternate_names or []:
+            for alt in (t.alternate_names or []):
                 sport_team_lookup[alt.lower()] = t_dict
 
     # Market-level league validation: reject markets from wrong leagues
@@ -2557,55 +2436,18 @@ async def get_playoff_grid(
     # Strategy: If the market name explicitly mentions a DIFFERENT league, reject it.
     if league_upper:
         _OTHER_LEAGUES = {
-            "NBA": [
-                r"\bMLS\b",
-                r"\bWNBA\b",
-                r"\bNHL\b",
-                r"\bNFL\b",
-                r"\bMLB\b",
-                r"\bNCAA\b",
-                r"\bPGA\b",
-            ],
-            "NFL": [
-                r"\bNBA\b",
-                r"\bMLS\b",
-                r"\bWNBA\b",
-                r"\bNHL\b",
-                r"\bMLB\b",
-                r"\bNCAA\b",
-            ],
-            "NHL": [
-                r"\bNBA\b",
-                r"\bMLS\b",
-                r"\bWNBA\b",
-                r"\bNFL\b",
-                r"\bMLB\b",
-                r"\bNCAA\b",
-            ],
-            "MLB": [
-                r"\bNBA\b",
-                r"\bMLS\b",
-                r"\bWNBA\b",
-                r"\bNHL\b",
-                r"\bNFL\b",
-                r"\bNCAA\b",
-            ],
-            "MLS": [
-                r"\bNBA\b",
-                r"\bWNBA\b",
-                r"\bNHL\b",
-                r"\bNFL\b",
-                r"\bMLB\b",
-                r"\bNCAA\b",
-            ],
+            "NBA": [r"\bMLS\b", r"\bWNBA\b", r"\bNHL\b", r"\bNFL\b", r"\bMLB\b", r"\bNCAA\b", r"\bPGA\b"],
+            "NFL": [r"\bNBA\b", r"\bMLS\b", r"\bWNBA\b", r"\bNHL\b", r"\bMLB\b", r"\bNCAA\b"],
+            "NHL": [r"\bNBA\b", r"\bMLS\b", r"\bWNBA\b", r"\bNFL\b", r"\bMLB\b", r"\bNCAA\b"],
+            "MLB": [r"\bNBA\b", r"\bMLS\b", r"\bWNBA\b", r"\bNHL\b", r"\bNFL\b", r"\bNCAA\b"],
+            "MLS": [r"\bNBA\b", r"\bWNBA\b", r"\bNHL\b", r"\bNFL\b", r"\bMLB\b", r"\bNCAA\b"],
         }
         wrong_league_patterns = _OTHER_LEAGUES.get(league_upper, [])
         if wrong_league_patterns:
             wrong_league_re = re.compile("|".join(wrong_league_patterns), re.IGNORECASE)
             for stage_key in list(stage_market_groups.keys()):
                 stage_market_groups[stage_key] = [
-                    m
-                    for m in stage_market_groups[stage_key]
+                    m for m in stage_market_groups[stage_key]
                     if not wrong_league_re.search(m.name)
                 ]
 
@@ -2616,19 +2458,15 @@ async def get_playoff_grid(
             validated = []
             for m in stage_market_groups[stage_key]:
                 non_binary_outcomes = [
-                    o
-                    for o in m.outcomes
-                    if o.name
-                    and not re.match(r"^(yes|no)$", o.name.strip(), re.IGNORECASE)
+                    o for o in m.outcomes
+                    if o.name and not re.match(r"^(yes|no)$", o.name.strip(), re.IGNORECASE)
                 ]
                 if not non_binary_outcomes:
                     validated.append(m)
                     continue
                 matched = 0
                 for o in non_binary_outcomes:
-                    name = re.sub(
-                        r"^(?:Yes|No)\s*[-:]\s*", "", o.name, flags=re.IGNORECASE
-                    ).strip()
+                    name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", o.name, flags=re.IGNORECASE).strip()
                     name_lower = name.lower()
                     if name_lower in sport_team_lookup:
                         matched += 1
@@ -2656,18 +2494,12 @@ async def get_playoff_grid(
         the outcome name against the sport's team list.
         """
         if outcome.team_id and outcome.team_id in team_info:
-            return (
-                f"team:{outcome.team_id}",
-                outcome.team_id,
-                team_info[outcome.team_id],
-            )
+            return f"team:{outcome.team_id}", outcome.team_id, team_info[outcome.team_id]
 
         # Try name-based resolution against sport teams
         name = outcome.name or ""
         # Strip "Yes: " / "No: " prefixes (Kalshi format)
-        clean_name = re.sub(
-            r"^(?:Yes|No)\s*[-:]\s*", "", name, flags=re.IGNORECASE
-        ).strip()
+        clean_name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", name, flags=re.IGNORECASE).strip()
 
         # Exact match on full cleaned name
         t_info = sport_team_lookup.get(clean_name.lower())
@@ -2708,10 +2540,7 @@ async def get_playoff_grid(
     # This filters out player names (Wembanyama, Edwards), wrong-league teams
     # (NCAAB teams in NBA grid), and other non-team outcomes
     require_team_resolution = bool(sport_team_lookup) and sport_lower in (
-        "basketball",
-        "football",
-        "hockey",
-        "baseball",
+        "basketball", "football", "hockey", "baseball",
     )
 
     for stage_key, markets in stage_market_groups.items():
@@ -2732,17 +2561,13 @@ async def get_playoff_grid(
                     continue
 
                 if merge_key not in participants:
-                    t_info = resolved_info or (
-                        team_info.get(o.team_id) if o.team_id else None
-                    )
+                    t_info = resolved_info or (team_info.get(o.team_id) if o.team_id else None)
                     participants[merge_key] = {
                         "name": resolved_info["name"] if resolved_info else o.name,
                         "team_id": resolved_team_id or o.team_id,
                         "logo_url": t_info["logo_url"] if t_info else None,
                         "primary_color": t_info["primary_color"] if t_info else None,
-                        "secondary_color": (
-                            t_info["secondary_color"] if t_info else None
-                        ),
+                        "secondary_color": t_info["secondary_color"] if t_info else None,
                         "conference": t_info["conference"] if t_info else None,
                         "division": t_info["division"] if t_info else None,
                         "record": t_info["record"] if t_info else None,
@@ -2750,11 +2575,7 @@ async def get_playoff_grid(
                     }
 
                 p = participants[merge_key]
-                prob = (
-                    float(o.current_probability)
-                    if o.current_probability is not None
-                    else None
-                )
+                prob = float(o.current_probability) if o.current_probability is not None else None
 
                 # Update team info if resolved in this iteration but not before
                 effective_team_id = resolved_team_id or o.team_id
@@ -2780,26 +2601,19 @@ async def get_playoff_grid(
                     }
 
                 stage_data = p["stages"][stage_key]
-                stage_data["sources"].append(
-                    {
-                        "source": source,
-                        "probability": prob,
-                        "market_id": m.id,
-                        # #10248 D5 — `reader_change_24h`.
-                        "change_24h": (
-                            float(chg)
-                            if (
-                                chg := reader_change_24h(
-                                    m,
-                                    o.id,
-                                    o.current_probability,
-                                    o.probability_change_24h,
-                                )
-                            )
-                            else None
-                        ),
-                    }
-                )
+                stage_data["sources"].append({
+                    "source": source,
+                    "probability": prob,
+                    "market_id": m.id,
+                    # #10248 D5 — `reader_change_24h`.
+                    "change_24h": (
+                        float(chg)
+                        if (chg := reader_change_24h(
+                            m, o.id, o.current_probability, o.probability_change_24h
+                        ))
+                        else None
+                    ),
+                })
 
     # --- Infer conference from conference/pennant stage market names ---
     # When standings_data doesn't have conference (e.g., NFL offseason), we can
@@ -2837,30 +2651,20 @@ async def get_playoff_grid(
                 if _SKIP_OUTCOME_RE.search(o.name):
                     continue
                 merge_key, _, _ = _resolve_outcome_team(o)
-                if merge_key in participants and not participants[merge_key].get(
-                    "conference"
-                ):
+                if merge_key in participants and not participants[merge_key].get("conference"):
                     participants[merge_key]["conference"] = detected_conf
 
     # Average probabilities across sources per stage
     for p in participants.values():
         for stage_key, stage_data in p["stages"].items():
-            probs = [
-                s["probability"]
-                for s in stage_data["sources"]
-                if s["probability"] is not None
-            ]
+            probs = [s["probability"] for s in stage_data["sources"] if s["probability"] is not None]
             if probs:
                 avg_prob = sum(probs) / len(probs)
                 stage_data["probability"] = round(avg_prob, 4)
                 # Pick best market_id (prefer source with most outcomes for linking)
                 stage_data["market_id"] = stage_data["sources"][0]["market_id"]
                 # Average 24h changes
-                changes = [
-                    s["change_24h"]
-                    for s in stage_data["sources"]
-                    if s["change_24h"] is not None
-                ]
+                changes = [s["change_24h"] for s in stage_data["sources"] if s["change_24h"] is not None]
                 if changes:
                     stage_data["change_24h"] = round(sum(changes) / len(changes), 4)
                 # Detect clinched / eliminated
@@ -2875,18 +2679,12 @@ async def get_playoff_grid(
         stage_total = sum(
             p["stages"][stage_key]["probability"]
             for p in participants.values()
-            if stage_key in p["stages"]
-            and p["stages"][stage_key]["probability"] is not None
+            if stage_key in p["stages"] and p["stages"][stage_key]["probability"] is not None
         )
-        if (
-            stage_total > 0 and abs(stage_total - 1.0) > 0.05
-        ):  # Only normalize if >5% off
+        if stage_total > 0 and abs(stage_total - 1.0) > 0.05:  # Only normalize if >5% off
             scale = 1.0 / stage_total
             for p in participants.values():
-                if (
-                    stage_key in p["stages"]
-                    and p["stages"][stage_key]["probability"] is not None
-                ):
+                if stage_key in p["stages"] and p["stages"][stage_key]["probability"] is not None:
                     p["stages"][stage_key]["probability"] = round(
                         p["stages"][stage_key]["probability"] * scale, 4
                     )
@@ -2906,9 +2704,7 @@ async def get_playoff_grid(
                 return (stage_def["order"], stage_data["probability"])
         return (0, 0)
 
-    sorted_participants = sorted(participants.values(), key=sort_key, reverse=True)[
-        :top_n
-    ]
+    sorted_participants = sorted(participants.values(), key=sort_key, reverse=True)[:top_n]
 
     # Build ordered stages response
     stages_response = []
@@ -2916,16 +2712,14 @@ async def get_playoff_grid(
         if stage_def["key"] in stage_market_groups:
             markets_in_stage = stage_market_groups[stage_def["key"]]
             sources_in_stage = list({m.source or "unknown" for m in markets_in_stage})
-            stages_response.append(
-                {
-                    "key": stage_def["key"],
-                    "label": stage_def["label"],
-                    "order": stage_def["order"],
-                    "market_count": len(markets_in_stage),
-                    "sources": sources_in_stage,
-                    "market_ids": [m.id for m in markets_in_stage],
-                }
-            )
+            stages_response.append({
+                "key": stage_def["key"],
+                "label": stage_def["label"],
+                "order": stage_def["order"],
+                "market_count": len(markets_in_stage),
+                "sources": sources_in_stage,
+                "market_ids": [m.id for m in markets_in_stage],
+            })
 
     return {
         "sport": sport_lower,
@@ -2947,7 +2741,7 @@ async def get_playoff_grid(
 #: "Division" tab printed "Limited price history available" over a market whose
 #: single-market endpoint served 5,065 points.
 _EXTEND_TIERS = [
-    (20, 720),  # <20 snapshots -> try 30 days
+    (20, 720),   # <20 snapshots -> try 30 days
     (10, 2160),  # <10 snapshots -> try 90 days
 ]
 
@@ -3149,13 +2943,12 @@ def _market_is_decided(market: dict) -> bool:
     if not printed or max(printed) < FEED_LOCKED_CERTAIN_HIGH:
         return False
     return all(
-        p >= FEED_LOCKED_CERTAIN_HIGH or p <= FEED_LOCKED_CERTAIN_LOW for p in printed
+        p >= FEED_LOCKED_CERTAIN_HIGH or p <= FEED_LOCKED_CERTAIN_LOW
+        for p in printed
     )
 
 
-async def _grouped_feed_container_parent_ids(
-    db: AsyncSession, markets: list
-) -> set[int]:
+async def _grouped_feed_container_parent_ids(db: AsyncSession, markets: list) -> set[int]:
     """Pool rows that are Polymarket game containers, which the strip withholds (#9466).
 
     Production, 2026-09-28 21:20Z, ``/sports`` at 390px: five Jingshan doubles
@@ -3203,9 +2996,7 @@ async def _grouped_feed_container_parent_ids(
         ).all()
     except Exception:  # noqa: BLE001
         await savepoint.rollback()
-        logger.warning(
-            "grouped-feed container read failed; serving unfiltered", exc_info=True
-        )
+        logger.warning("grouped-feed container read failed; serving unfiltered", exc_info=True)
         return set()
     await savepoint.commit()
     return _search_container_parents_among(candidates, rows)
@@ -3251,7 +3042,8 @@ async def load_container_field_folds(
             pool_by_group[str(group_id)] += 1
 
     candidates = [
-        gid for gid, n in pool_by_group.items() if n >= CONTAINER_FOLD_MIN_POOL_MEMBERS
+        gid for gid, n in pool_by_group.items()
+        if n >= CONTAINER_FOLD_MIN_POOL_MEMBERS
     ]
     if not candidates:
         return {}
@@ -3377,9 +3169,7 @@ async def grouped_feed_slate(db: AsyncSession, filters: list, limit: int):
         select(
             FuturesMarket.id.label("market_id"),
             FuturesMarket.event_id.label("event_id"),
-            case((game.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1).label(
-                "postseason"
-            ),
+            case((game.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1).label("postseason"),
             case((league.key.in_(tier1_keys), 1), else_=2).label("tier"),
             game.commence_time.label("commence_time"),
             # Inside a game, the questions the game card does NOT already ask
@@ -3535,7 +3325,8 @@ def select_ungrouped_markets(
     return [
         m
         for m in market_dicts
-        if m["id"] not in grouped_market_ids and _market_has_priced_outcome(m)
+        if m["id"] not in grouped_market_ids
+        and _market_has_priced_outcome(m)
         # #9899: an answered question is dropped above the slice too, so its
         # slot backfills from the pool like a priceless one's.
         and not _market_is_decided(m)
@@ -3635,14 +3426,9 @@ async def _publish_grouped_feed_cache(cache_key: str, payload: dict) -> None:
 async def grouped_feed(
     request: Request,
     response: Response,
-    category: Optional[str] = Query(
-        None, description="Filter by category (sports, crypto, politics, weather)"
-    ),
+    category: Optional[str] = Query(None, description="Filter by category (sports, crypto, politics, weather)"),
     sport: Optional[str] = Query(None, description="Filter by sport"),
-    sports_only: bool = Query(
-        False,
-        description="Restrict to /sports-page sport categories (excludes esports/geopolitics/crypto/etc.)",
-    ),
+    sports_only: bool = Query(False, description="Restrict to /sports-page sport categories (excludes esports/geopolitics/crypto/etc.)"),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
@@ -3736,16 +3522,16 @@ async def grouped_feed(
         # keeps this route circular-import-safe.
         from app.routes.feed import SPORTS_PAGE_CATEGORIES
 
-        filters.append(FuturesMarket.llm_sport_category.in_(SPORTS_PAGE_CATEGORIES))
+        filters.append(
+            FuturesMarket.llm_sport_category.in_(SPORTS_PAGE_CATEGORIES)
+        )
 
     # #10208 — the /sports strip (sports-only, no narrower filter) also reads the
     # current major-game slate, which the recency pool alone never reaches.
     slate_market_ids: list = []
     slate_market_event: dict = {}
     if sports_only and not sport and not category:
-        slate_market_ids, slate_market_event = await grouped_feed_slate(
-            db, filters, limit
-        )
+        slate_market_ids, slate_market_event = await grouped_feed_slate(db, filters, limit)
 
     stmt = (
         select(FuturesMarket)
@@ -3780,7 +3566,9 @@ async def grouped_feed(
         # Slate rows first, in slate order, so the ungrouped pass's `[:limit]`
         # can never cut the very rows the lead below is built from.
         slate_rank = {mid: i for i, mid in enumerate(slate_market_ids)}
-        markets = sorted(markets, key=lambda m: slate_rank.get(m.id, len(slate_rank)))
+        markets = sorted(
+            markets, key=lambda m: slate_rank.get(m.id, len(slate_rank))
+        )
     # #9466: a game container's legs are copies of its own sub-markets.
     container_parent_ids = await _grouped_feed_container_parent_ids(db, markets)
 
@@ -3878,40 +3666,38 @@ async def grouped_feed(
             grouped_market_ids.add(market_id)
         entries = fold["entries"][:CONTAINER_FOLD_CARD_ROWS]
         representative = _pool_by_group.get(group_id, {})
-        feed_items.append(
-            {
-                # Deliberately `market`, not a new row type. `propStripAdmission`
-                # fails closed on a type it does not know, so a fresh one would have
-                # dropped every folded card instead of rendering it — the same trap
-                # the exact-score ladders had to route around (UX-1052 item 2).
-                "type": "market",
-                "market": {
-                    # The LEADING MEMBER, not the parent. The card is a link, and
-                    # the parent field row is the one place these prices are wrong
-                    # (#4163: 0.000000 for an 83% leader), so a tap must not land
-                    # there. The leader's own market page says the same thing about
-                    # the same field and says it correctly.
-                    "id": entries[0]["market_id"],
-                    "name": fold["title"],
-                    "source": (fold["sources"] or [None])[0],
-                    "category": representative.get("category"),
-                    "sport": representative.get("sport"),
-                    "outcomes": [
-                        {
-                            "id": e["market_id"],
-                            "name": e["name"],
-                            "probability": e["probability"],
-                            "american_odds": probability_to_american(e["probability"]),
-                            "market_id": e["market_id"],
-                            "market_name": fold["title"],
-                            "group_id": group_id,
-                            "source": e["source"],
-                        }
-                        for e in entries
-                    ],
-                },
-            }
-        )
+        feed_items.append({
+            # Deliberately `market`, not a new row type. `propStripAdmission`
+            # fails closed on a type it does not know, so a fresh one would have
+            # dropped every folded card instead of rendering it — the same trap
+            # the exact-score ladders had to route around (UX-1052 item 2).
+            "type": "market",
+            "market": {
+                # The LEADING MEMBER, not the parent. The card is a link, and
+                # the parent field row is the one place these prices are wrong
+                # (#4163: 0.000000 for an 83% leader), so a tap must not land
+                # there. The leader's own market page says the same thing about
+                # the same field and says it correctly.
+                "id": entries[0]["market_id"],
+                "name": fold["title"],
+                "source": (fold["sources"] or [None])[0],
+                "category": representative.get("category"),
+                "sport": representative.get("sport"),
+                "outcomes": [
+                    {
+                        "id": e["market_id"],
+                        "name": e["name"],
+                        "probability": e["probability"],
+                        "american_odds": probability_to_american(e["probability"]),
+                        "market_id": e["market_id"],
+                        "market_name": fold["title"],
+                        "group_id": group_id,
+                        "source": e["source"],
+                    }
+                    for e in entries
+                ],
+            },
+        })
 
     for group_key, group_markets in stat_prop_groups.items():
         if len(group_markets) < 2:
@@ -3919,30 +3705,24 @@ async def grouped_feed(
         for gm in group_markets:
             grouped_market_ids.add(gm["id"])
         first = group_markets[0]
-        feed_items.append(
-            {
-                "type": "stat_prop",
-                "group_key": group_key,
-                "player_name": first.get("player_name", ""),
-                "stat_category": first.get("stat_category", ""),
-                "lines": [
-                    {
-                        "id": gm["id"],
-                        "name": gm["name"],
-                        "probability": (
-                            gm["outcomes"][0]["probability"]
-                            if gm.get("outcomes")
-                            else None
-                        ),
-                        "threshold_value": gm.get("threshold_value", 0),
-                        "threshold_direction": gm.get("threshold_direction", "above"),
-                        "source": gm.get("source", ""),
-                    }
-                    for gm in group_markets
-                ],
-                "market_count": len(group_markets),
-            }
-        )
+        feed_items.append({
+            "type": "stat_prop",
+            "group_key": group_key,
+            "player_name": first.get("player_name", ""),
+            "stat_category": first.get("stat_category", ""),
+            "lines": [
+                {
+                    "id": gm["id"],
+                    "name": gm["name"],
+                    "probability": gm["outcomes"][0]["probability"] if gm.get("outcomes") else None,
+                    "threshold_value": gm.get("threshold_value", 0),
+                    "threshold_direction": gm.get("threshold_direction", "above"),
+                    "source": gm.get("source", ""),
+                }
+                for gm in group_markets
+            ],
+            "market_count": len(group_markets),
+        })
 
     for group_key, group_markets in playoff_groups.items():
         if len(group_markets) < 2:
@@ -3950,48 +3730,40 @@ async def grouped_feed(
         for gm in group_markets:
             grouped_market_ids.add(gm["id"])
         first = group_markets[0]
-        feed_items.append(
-            {
-                "type": "playoff_progression",
-                "group_key": group_key,
-                "entity_name": first.get("team_name", ""),
-                "stages": [
-                    {
-                        "id": gm["id"],
-                        "name": gm["name"],
-                        "stage_name": gm.get("stage_name", ""),
-                        "stage_order": gm.get("stage_order", 0),
-                        "probability": (
-                            gm["outcomes"][0]["probability"]
-                            if gm.get("outcomes")
-                            else None
-                        ),
-                        "source": gm.get("source", ""),
-                    }
-                    for gm in group_markets
-                ],
-                "market_count": len(group_markets),
-            }
-        )
+        feed_items.append({
+            "type": "playoff_progression",
+            "group_key": group_key,
+            "entity_name": first.get("team_name", ""),
+            "stages": [
+                {
+                    "id": gm["id"],
+                    "name": gm["name"],
+                    "stage_name": gm.get("stage_name", ""),
+                    "stage_order": gm.get("stage_order", 0),
+                    "probability": gm["outcomes"][0]["probability"] if gm.get("outcomes") else None,
+                    "source": gm.get("source", ""),
+                }
+                for gm in group_markets
+            ],
+            "market_count": len(group_markets),
+        })
 
     for tournament_key, grid in placement_groups.items():
         # The grid CONSUMES its markets: leaving them ungrouped would put the
         # five cards back underneath the thing built to replace them.
         for mid in grid["market_ids"]:
             grouped_market_ids.add(mid)
-        feed_items.append(
-            {
-                "type": "placement_grid",
-                "group_key": f"placement:{tournament_key}",
-                "title": grid["tournament"],
-                "columns": grid["columns"],
-                # The card shows a readable field and says how deep the real one is.
-                "rows": grid["rows"][:PLACEMENT_GRID_FEED_ROWS],
-                "row_total": grid["row_total"],
-                "market_count": len(grid["market_ids"]),
-                "sources": grid["sources"],
-            }
-        )
+        feed_items.append({
+            "type": "placement_grid",
+            "group_key": f"placement:{tournament_key}",
+            "title": grid["tournament"],
+            "columns": grid["columns"],
+            # The card shows a readable field and says how deep the real one is.
+            "rows": grid["rows"][:PLACEMENT_GRID_FEED_ROWS],
+            "row_total": grid["row_total"],
+            "market_count": len(grid["market_ids"]),
+            "sources": grid["sources"],
+        })
 
     def _group_title(outcomes: list[dict], scope: str) -> str:
         # #1102: build a context-carrying title from the parent market name
@@ -4029,33 +3801,31 @@ async def grouped_feed(
         ]
         if _exact_score_field_nobody_prices(field):
             continue
-        feed_items.append(
-            {
-                "type": "threshold",
-                # UX-1052 item 2 — the discriminator the renderer reads. Kept
-                # inside the `threshold` row type on purpose: the strip's
-                # fail-closed admission (`propStripAdmission`) refuses any row type
-                # it does not recognise, so a brand-new type would have silently
-                # dropped every exact-score card instead of relabelling it.
-                "kind": "exact_score",
-                "group_key": f"exact_score:{scope}",
-                "title": _group_title(outcomes, scope),
-                "points": [
-                    {
-                        "id": o["id"],
-                        "name": o["name"],
-                        "probability": o.get("probability"),
-                        # The rung label IS the outcome. No threshold is claimed.
-                        "label": o["score_label"],
-                        "threshold_value": 0,
-                        "threshold_unit": "",
-                        "threshold_direction": "exact",
-                    }
-                    for o in outcomes
-                ],
-                "outcome_count": len(outcomes),
-            }
-        )
+        feed_items.append({
+            "type": "threshold",
+            # UX-1052 item 2 — the discriminator the renderer reads. Kept
+            # inside the `threshold` row type on purpose: the strip's
+            # fail-closed admission (`propStripAdmission`) refuses any row type
+            # it does not recognise, so a brand-new type would have silently
+            # dropped every exact-score card instead of relabelling it.
+            "kind": "exact_score",
+            "group_key": f"exact_score:{scope}",
+            "title": _group_title(outcomes, scope),
+            "points": [
+                {
+                    "id": o["id"],
+                    "name": o["name"],
+                    "probability": o.get("probability"),
+                    # The rung label IS the outcome. No threshold is claimed.
+                    "label": o["score_label"],
+                    "threshold_value": 0,
+                    "threshold_unit": "",
+                    "threshold_direction": "exact",
+                }
+                for o in outcomes
+            ],
+            "outcome_count": len(outcomes),
+        })
 
     for scope, outcomes in threshold_groups.items():
         if len(outcomes) < 2:
@@ -4067,26 +3837,24 @@ async def grouped_feed(
         # Total Games" come back lower in the strip as a plain market card
         # with the same three numbers.
         grouped_market_ids.update(o["market_id"] for o in outcomes)
-        feed_items.append(
-            {
-                "type": "threshold",
-                "kind": "threshold",
-                "group_key": f"threshold:{scope}",
-                "title": _group_title(outcomes, scope),
-                "points": [
-                    {
-                        "id": o["id"],
-                        "name": o["name"],
-                        "probability": o.get("probability"),
-                        "threshold_value": o.get("threshold_value", 0),
-                        "threshold_unit": o.get("threshold_unit", ""),
-                        "threshold_direction": o.get("threshold_direction", "above"),
-                    }
-                    for o in outcomes
-                ],
-                "outcome_count": len(outcomes),
-            }
-        )
+        feed_items.append({
+            "type": "threshold",
+            "kind": "threshold",
+            "group_key": f"threshold:{scope}",
+            "title": _group_title(outcomes, scope),
+            "points": [
+                {
+                    "id": o["id"],
+                    "name": o["name"],
+                    "probability": o.get("probability"),
+                    "threshold_value": o.get("threshold_value", 0),
+                    "threshold_unit": o.get("threshold_unit", ""),
+                    "threshold_direction": o.get("threshold_direction", "above"),
+                }
+                for o in outcomes
+            ],
+            "outcome_count": len(outcomes),
+        })
 
     # #2710 — DROP THE PRICELESS ONES BEFORE TRUNCATING, NOT AFTER.
     #
@@ -4110,26 +3878,24 @@ async def grouped_feed(
     ungrouped = select_ungrouped_markets(market_dicts, grouped_market_ids, limit)
 
     for m in ungrouped:
-        feed_items.append(
-            {
-                "type": "market",
-                "market": {
-                    "id": m["id"],
-                    "name": m["name"],
-                    "source": m["source"],
-                    "category": m.get("category"),
-                    "sport": m.get("sport"),
-                    # #2789: leader-first BEFORE the truncation. `FuturesMarket.outcomes`
-                    # declares no `order_by=`, so `m["outcomes"]` arrives in whatever order
-                    # the selectinload returned, and taking five off the front of that is a
-                    # uniform random sample the card then stamps `1 2 3 4 5` on. Measured on
-                    # the live /sports shape: 0 of 5 five-outcome cards led with their
-                    # favourite, and the 192-golfer Winner market shipped a top row of 0.09%
-                    # while the true leader (11.8%) was not on the card at all.
-                    "outcomes": leader_first_outcomes(m["outcomes"])[:5],
-                },
-            }
-        )
+        feed_items.append({
+            "type": "market",
+            "market": {
+                "id": m["id"],
+                "name": m["name"],
+                "source": m["source"],
+                "category": m.get("category"),
+                "sport": m.get("sport"),
+                # #2789: leader-first BEFORE the truncation. `FuturesMarket.outcomes`
+                # declares no `order_by=`, so `m["outcomes"]` arrives in whatever order
+                # the selectinload returned, and taking five off the front of that is a
+                # uniform random sample the card then stamps `1 2 3 4 5` on. Measured on
+                # the live /sports shape: 0 of 5 five-outcome cards led with their
+                # favourite, and the 192-golfer Winner market shipped a top row of 0.09%
+                # while the true leader (11.8%) was not on the card at all.
+                "outcomes": leader_first_outcomes(m["outcomes"])[:5],
+            },
+        })
 
     # #10208 — lead with the current slate, one card per game, BEFORE the cut.
     feed_items = lead_with_slate(
@@ -4144,8 +3910,9 @@ async def grouped_feed(
         # `market` type for the renderer's sake (see the fold above). Counting
         # it by its type would file it as ungrouped and understate the grouping
         # by exactly the thing this endpoint was just taught to do.
-        "total_grouped": len([f for f in feed_items if f["type"] != "market"])
-        + len(container_folds),
+        "total_grouped": len(
+            [f for f in feed_items if f["type"] != "market"]
+        ) + len(container_folds),
         "total_ungrouped": len(ungrouped),
         "group_counts": {
             "stat_prop": len(stat_prop_groups),
@@ -4171,13 +3938,9 @@ async def grouped_feed(
 async def get_multi_market_history(
     market_ids: str = Query(..., description="Comma-separated market IDs to aggregate"),
     hours: int = Query(168, description="Hours of history (default 7 days)"),
-    top_n: int = Query(
-        10, description="Number of top outcomes to return (default 10, max 50)"
-    ),
+    top_n: int = Query(10, description="Number of top outcomes to return (default 10, max 50)"),
     db: AsyncSession = Depends(get_db),
-    history_range: Optional[str] = Query(
-        None, alias="range", description=_FULL_RANGE_DOC
-    ),
+    history_range: Optional[str] = Query(None, alias="range", description=_FULL_RANGE_DOC),
 ):
     """
     Get aggregated historical odds across multiple markets (cross-source).
@@ -4192,14 +3955,10 @@ async def get_multi_market_history(
     try:
         parsed_ids = [int(x.strip()) for x in market_ids.split(",") if x.strip()]
     except ValueError:
-        raise HTTPException(
-            status_code=400, detail="market_ids must be comma-separated integers"
-        )
+        raise HTTPException(status_code=400, detail="market_ids must be comma-separated integers")
 
     if not parsed_ids:
-        raise HTTPException(
-            status_code=400, detail="At least one market_id is required"
-        )
+        raise HTTPException(status_code=400, detail="At least one market_id is required")
 
     # Single market: delegate to the standard endpoint logic.
     #
@@ -4251,7 +4010,9 @@ async def get_multi_market_history(
 
     merged_outcomes: dict[str, dict] = {}
     for market in markets:
-        for outcome in drop_duplicate_legs(market.outcomes, lambda o: o.external_id):
+        for outcome in drop_duplicate_legs(
+            market.outcomes, lambda o: o.external_id
+        ):
             merge_key = _progression_merge_key(outcome)
             if merge_key not in merged_outcomes:
                 merged_outcomes[merge_key] = {
@@ -4263,14 +4024,10 @@ async def get_multi_market_history(
             entry = merged_outcomes[merge_key]
             entry["outcome_ids"].append(outcome.id)
             if outcome.current_probability is not None:
-                entry["current_probabilities"].append(
-                    float(outcome.current_probability)
-                )
+                entry["current_probabilities"].append(float(outcome.current_probability))
             # #10248 D5 — `reader_change_24h`.
             chg = reader_change_24h(
-                market,
-                outcome.id,
-                outcome.current_probability,
+                market, outcome.id, outcome.current_probability,
                 outcome.probability_change_24h,
             )
             if chg is not None:
@@ -4280,11 +4037,7 @@ async def get_multi_market_history(
     # Track merge_key alongside each entry for later lookup
     sorted_merged: list[tuple[str, dict]] = sorted(
         merged_outcomes.items(),
-        key=lambda kv: (
-            mean(kv[1]["current_probabilities"])
-            if kv[1]["current_probabilities"]
-            else 0
-        ),
+        key=lambda kv: mean(kv[1]["current_probabilities"]) if kv[1]["current_probabilities"] else 0,
         reverse=True,
     )
 
@@ -4401,8 +4154,7 @@ async def get_multi_market_history(
         db,
         SimpleNamespace(source="kalshi" if _kalshi_ids else None, id=primary_market.id),
         _kalshi_ids,
-        since=datetime.now(timezone.utc)
-        - timedelta(hours=max(hours, _EXTEND_TIERS[-1][1])),
+        since=datetime.now(timezone.utc) - timedelta(hours=max(hours, _EXTEND_TIERS[-1][1])),
         full_range=full_range,
     )
     # `range=full` with a thinned live read: a capture the bound skipped claims
@@ -4412,10 +4164,7 @@ async def get_multi_market_history(
     _multi_claims, _multi_unknown = snapshots, []
     if older_live is not None:
         _multi_claims, _multi_unknown = await older_live.archive_claims(
-            db,
-            archive,
-            snapshots,
-            _kalshi_ids,
+            db, archive, snapshots, _kalshi_ids,
             supported=_support_filter(_multi_outcomes, _multi_field_ids),
         )
     _archive_by_outcome = archive.served(
@@ -4452,20 +4201,16 @@ async def get_multi_market_history(
         _merge_oids: dict[str, list[int]] = defaultdict(list)
         for oid, mk in oid_to_merge_key.items():
             _merge_oids[mk].append(oid)
-        _seats = sorted(
-            {
-                (mk, row.captured_at, sibling)
-                for oid, rows in _archive_by_outcome.items()
-                if (mk := oid_to_merge_key.get(oid)) is not None
-                for row in rows
-                if row.captured_at not in merged_time_groups.get(mk, {})
-                for sibling in _merge_oids[mk]
-            },
-            key=lambda seat: (seat[0], seat[1], seat[2]),
-        )
+        _seats = sorted({
+            (mk, row.captured_at, sibling)
+            for oid, rows in _archive_by_outcome.items()
+            if (mk := oid_to_merge_key.get(oid)) is not None
+            for row in rows
+            if row.captured_at not in merged_time_groups.get(mk, {})
+            for sibling in _merge_oids[mk]
+        }, key=lambda seat: (seat[0], seat[1], seat[2]))
         _held = await older_live.instant_claims(
-            db,
-            [(sibling, at, at) for _mk, at, sibling in _seats],
+            db, [(sibling, at, at) for _mk, at, sibling in _seats],
             supported=_support_filter(_multi_outcomes, _multi_field_ids),
         )
         for (mk, at, _s), state in zip(_seats, _held):
@@ -4503,16 +4248,12 @@ async def get_multi_market_history(
         for captured_at in sorted(time_groups.keys()):
             probs = time_groups[captured_at]
             avg_prob = mean(probs)
-            history.append(
-                {
-                    "timestamp": captured_at.isoformat(),
-                    "probability": avg_prob,
-                    "american_odds": (
-                        probability_to_american(avg_prob) if avg_prob > 0 else None
-                    ),
-                    "bookmaker": "consensus",
-                }
-            )
+            history.append({
+                "timestamp": captured_at.isoformat(),
+                "probability": avg_prob,
+                "american_odds": probability_to_american(avg_prob) if avg_prob > 0 else None,
+                "bookmaker": "consensus",
+            })
         if merged_archive.get(mk):
             for row in merged_archive[mk].values():
                 history.append(archive_history_point(row))
@@ -4520,15 +4261,13 @@ async def get_multi_market_history(
             history.sort(key=lambda pt: _parse_stamp(pt["timestamp"]))
 
         elim = _detect_elimination(history)
-        outcome_history_list.append(
-            {
-                "outcome_id": synthetic_id,
-                "name": entry["name"],
-                "history": history,
-                "eliminated": elim["eliminated"],
-                "eliminated_at": elim["eliminated_at"],
-            }
-        )
+        outcome_history_list.append({
+            "outcome_id": synthetic_id,
+            "name": entry["name"],
+            "history": history,
+            "eliminated": elim["eliminated"],
+            "eliminated_at": elim["eliminated_at"],
+        })
 
     # Round boundaries from primary market
     explicit_boundaries = _derive_round_boundaries(primary_market.market_metadata)
@@ -4551,19 +4290,13 @@ async def get_multi_market_history(
         ),
         # #683 — additive, and only when the reader asked for the whole history.
         **(
-            {
-                "history_range": archive.range_block(
-                    _live_window_start,
-                    archive_rows_served,
-                    [
-                        oid
-                        for oid in _kalshi_ids
-                        if oid_to_merge_key.get(oid) in _served_merge_keys
-                    ],
-                    live_basis=_live_basis,
-                    live_thinned=bool(older_live and older_live.thinned),
-                )
-            }
+            {"history_range": archive.range_block(
+                _live_window_start,
+                archive_rows_served,
+                [oid for oid in _kalshi_ids if oid_to_merge_key.get(oid) in _served_merge_keys],
+                live_basis=_live_basis,
+                live_thinned=bool(older_live and older_live.thinned),
+            )}
             if full_range
             else {}
         ),
@@ -4918,7 +4651,8 @@ def _unsupported_price_verdicts(
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             _as_float(latest_trade.get(o.id)),
-            has_trade_evidence=o.id in latest_trade and latest_trade[o.id] is not None,
+            has_trade_evidence=o.id in latest_trade
+            and latest_trade[o.id] is not None,
             in_exclusive_field=in_exclusive_field,
         )
         # #7747. An OR, so the arms are independent screens over one candidate
@@ -4932,7 +4666,8 @@ def _unsupported_price_verdicts(
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             _as_float(latest_trade.get(o.id)),
-            has_trade_evidence=o.id in latest_trade and latest_trade[o.id] is not None,
+            has_trade_evidence=o.id in latest_trade
+            and latest_trade[o.id] is not None,
             in_exclusive_field=in_exclusive_field,
             # `getattr` throughout: a caller may hand this a market whose
             # outcomes never loaded these columns, and an absent stamp must read
@@ -4954,7 +4689,8 @@ def _unsupported_price_verdicts(
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             _as_float(latest_trade.get(o.id)),
-            has_trade_evidence=o.id in latest_trade and latest_trade[o.id] is not None,
+            has_trade_evidence=o.id in latest_trade
+            and latest_trade[o.id] is not None,
             in_exclusive_field=in_exclusive_field,
             volume_24h=getattr(o, "volume_24h", None),
             volume_24h_at=getattr(o, "volume_24h_at", None),
@@ -5528,7 +5264,8 @@ async def _game_container_leg_sides(
     return {
         ext: sides[f"{ext}_yes"].strip()
         for (sid, ext), sides in sides_by_sibling.items()
-        if f"{ext}_yes" in sides and _outcomes_name_two_sides(list(sides.values()))
+        if f"{ext}_yes" in sides
+        and _outcomes_name_two_sides(list(sides.values()))
     }
 
 
@@ -5903,10 +5640,7 @@ async def _game_container_of_event_id(
 
     # Read with getattr first, as `_game_container_leg_sides` does: the thin
     # serializer fixtures across the suite carry no `group_id` or `source`.
-    if (
-        not getattr(market, "group_id", None)
-        or getattr(market, "source", None) != "polymarket"
-    ):
+    if not getattr(market, "group_id", None) or getattr(market, "source", None) != "polymarket":
         return None
     candidates = _search_container_parent_candidates([market])
     if not candidates:
@@ -6066,10 +5800,7 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
             await db.execute(
                 _verified_title_market_stmt().where(FuturesMarket.id.in_(other_ids))
             )
-        )
-        .unique()
-        .scalars()
-        .all()
+        ).unique().scalars().all()
     }
     loaded[market.id] = market
     if any(m.market_id not in loaded for m in members):
@@ -6192,9 +5923,7 @@ async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
     if ttl > 0 and key is not None:
         now = _time.monotonic()
         if len(_VERIFIED_TITLE_CACHE) >= _VERIFIED_TITLE_CACHE_MAX:
-            for stale in [
-                k for k, (exp, _v) in _VERIFIED_TITLE_CACHE.items() if exp <= now
-            ]:
+            for stale in [k for k, (exp, _v) in _VERIFIED_TITLE_CACHE.items() if exp <= now]:
                 del _VERIFIED_TITLE_CACHE[stale]
             if len(_VERIFIED_TITLE_CACHE) >= _VERIFIED_TITLE_CACHE_MAX:
                 _VERIFIED_TITLE_CACHE.clear()
@@ -6260,9 +5989,7 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     changed = False
     if isinstance(verdict, Composition):
         for row in detail["outcomes"]:
-            changed |= _overlay_current(
-                row, verdict.overlay.get(row["id"]), "probability"
-            )
+            changed |= _overlay_current(row, verdict.overlay.get(row["id"]), "probability")
     # A source-only/refused composition can retain complete references. A
     # changed blend has no historical field with those same contributors;
     # its old source-only references are still withheld by _overlay_current.
@@ -6276,10 +6003,8 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
         else None
     )
     scaled = normalize_display_probs(
-        detail["outcomes"],
-        mutually_exclusive=detail.get("mutually_exclusive", True),
-        field_complete=not detail.get("prices_withheld"),
-        question=detail.get("name"),
+        detail["outcomes"], mutually_exclusive=detail.get("mutually_exclusive", True),
+        field_complete=not detail.get("prices_withheld"), question=detail.get("name"),
     )
     if comparisons is not None:
         had_openings = any(
@@ -6301,11 +6026,7 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     elif scaled:
         detail["openings_withheld"] = True
         for row in detail["outcomes"]:
-            for key in (
-                "opening_probability",
-                "opening_american_odds",
-                "probability_change_24h",
-            ):
+            for key in ("opening_probability", "opening_american_odds", "probability_change_24h"):
                 row[key] = None
     assign_display_ranks(detail["outcomes"])
     # The stored sentence was written about the source row's numbers.
@@ -6315,18 +6036,9 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
 
 
 def _timeline_history_blocks(
-    market,
-    venue,
-    venue_served: list,
-    venue_unknown: list,
-    archive,
-    archive_rows_served: list,
-    top_outcome_ids: set,
-    *,
-    full: bool,
-    window_start: datetime,
-    live_basis: Optional[str],
-    older_live,
+    market, venue, venue_served: list, venue_unknown: list, archive,
+    archive_rows_served: list, top_outcome_ids: set, *,
+    full: bool, window_start: datetime, live_basis: Optional[str], older_live,
 ) -> dict:
     """`/probability-timeline`'s venue/archive/range statement, for BOTH returns.
 
@@ -6341,9 +6053,7 @@ def _timeline_history_blocks(
     # `venue_history` key can be the SAME object: a receipt that described a
     # second `describe()` call would be describing a different read.
     # #683 rule 5: the charted venue points withheld UNKNOWN, as a scoped refusal.
-    _charted_venue_unknown = [
-        r for r in venue_unknown if r.outcome_id in top_outcome_ids
-    ]
+    _charted_venue_unknown = [r for r in venue_unknown if r.outcome_id in top_outcome_ids]
     if _charted_venue_unknown:
         venue.refusals.append(
             {**ARCHIVE_OVERLAP_REFUSAL, "points": len(_charted_venue_unknown)}
@@ -6386,19 +6096,13 @@ def _timeline_history_blocks(
         ),
         # #683 — additive, and only when the reader asked for the whole history.
         **(
-            {
-                "history_range": archive.range_block(
-                    window_start,
-                    archive_rows_served,
-                    top_outcome_ids,
-                    live_basis=live_basis or ARCHIVE_BASIS_HOURS,
-                    venue_first=min(
-                        (r.captured_at for r in venue_served), default=None
-                    ),
-                    live_thinned=bool(older_live and older_live.thinned),
-                    venue_unresolved=venue_unknown,
-                )
-            }
+            {"history_range": archive.range_block(
+                window_start, archive_rows_served, top_outcome_ids,
+                live_basis=live_basis or ARCHIVE_BASIS_HOURS,
+                venue_first=min((r.captured_at for r in venue_served), default=None),
+                live_thinned=bool(older_live and older_live.thinned),
+                venue_unresolved=venue_unknown,
+            )}
             if full
             else {}
         ),
@@ -6429,9 +6133,7 @@ async def _finish_verified_timeline(
         "market_id": market.id,
     }
     board = _format_market_detail(
-        market,
-        None,
-        await _withheld_price_outcome_ids(db, market),
+        market, None, await _withheld_price_outcome_ids(db, market),
         normalize_numbers=False,
     )
     _apply_verified_title_to_detail(board, verdict, market)
@@ -6439,9 +6141,7 @@ async def _finish_verified_timeline(
     for meta in payload.get("outcomes") or []:
         if meta.get("id") is not None:
             if isinstance(verdict, Composition):
-                _overlay_current(
-                    meta, verdict.overlay.get(meta["id"]), "current_probability"
-                )
+                _overlay_current(meta, verdict.overlay.get(meta["id"]), "current_probability")
             row = current.get(meta["id"])
             if row is not None:
                 meta["current_probability"] = row["probability"]
@@ -6457,8 +6157,7 @@ async def _finish_verified_timeline(
             if isinstance(verdict, Composition):
                 parts = [verdict.overlay.get(i) for i in field_ids]
                 meta["contributing_sources"] = [
-                    s
-                    for s in VERIFIED_TITLE_SOURCES
+                    s for s in VERIFIED_TITLE_SOURCES
                     if any(p is not None and s in p.contributing_sources for p in parts)
                 ]
     return payload
@@ -6482,9 +6181,7 @@ RELATED_EVENTS_LIMIT = 20
 RELATED_EVENTS_FOLD_HEADROOM = RELATED_EVENTS_LIMIT
 
 
-def _outcome_names_its_team(
-    outcome_name: Optional[str], team_name: Optional[str]
-) -> bool:
+def _outcome_names_its_team(outcome_name: Optional[str], team_name: Optional[str]) -> bool:
     """Is this outcome the team itself ("Los Angeles Dodgers", or "Dodgers")?
 
     Case, spacing and punctuation are ignored; a nickname counts when the team's
@@ -6604,9 +6301,7 @@ async def get_related_events(
         # this value and the row prints it.
         if o.id in withheld:
             return None
-        return (
-            float(o.current_probability) if o.current_probability is not None else None
-        )
+        return float(o.current_probability) if o.current_probability is not None else None
 
     def _leader(group):
         return min(
@@ -6622,8 +6317,7 @@ async def get_related_events(
         for tid, group in outcomes_by_team.items()
     }
     player_field = any(
-        len(group) > 1 and not team_named[tid]
-        for tid, group in outcomes_by_team.items()
+        len(group) > 1 and not team_named[tid] for tid, group in outcomes_by_team.items()
     )
 
     # ═══ A TEAM WITH NOTHING SHOWN HAS NO ROW, AND A GAME WITH NO ROW IS NOT
@@ -6871,35 +6565,27 @@ async def get_related_events(
         for team_id in [event.home_team_id, event.away_team_id]:
             if team_id in team_outcome_map:
                 side = "home" if team_id == event.home_team_id else "away"
-                linked_teams.append(
-                    {
-                        "side": side,
-                        "team_name": (
-                            event.home_team_name
-                            if side == "home"
-                            else event.away_team_name
-                        ),
-                        **team_outcome_map[team_id],
-                    }
-                )
+                linked_teams.append({
+                    "side": side,
+                    "team_name": event.home_team_name if side == "home" else event.away_team_name,
+                    **team_outcome_map[team_id],
+                })
 
-        formatted_events.append(
-            {
-                "event_id": event.id,
-                "home_team": event.home_team_name,
-                "away_team": event.away_team_name,
-                "commence_time": event.commence_time.isoformat(),
-                # Q438: the lifecycle invariant, not the raw column. See
-                # `app/utils/lifecycle.served_event_status`.
-                "status": served_event_status(
-                    event.status, event.commence_time, datetime.now(timezone.utc)
-                ),
-                "sport": event.sport.key if event.sport else None,
-                "home_score": event.home_score,
-                "away_score": event.away_score,
-                "linked_teams": linked_teams,
-            }
-        )
+        formatted_events.append({
+            "event_id": event.id,
+            "home_team": event.home_team_name,
+            "away_team": event.away_team_name,
+            "commence_time": event.commence_time.isoformat(),
+            # Q438: the lifecycle invariant, not the raw column. See
+            # `app/utils/lifecycle.served_event_status`.
+            "status": served_event_status(
+                event.status, event.commence_time, datetime.now(timezone.utc)
+            ),
+            "sport": event.sport.key if event.sport else None,
+            "home_score": event.home_score,
+            "away_score": event.away_score,
+            "linked_teams": linked_teams,
+        })
 
     return {
         "market_id": market_id,
@@ -7124,7 +6810,6 @@ async def get_progression(
     # Filter out non-golf false positives (soccer, esports, etc.) for golf markets
     if sport_cat == "golf":
         from app.routes.golf import _is_golf_market
-
         unique_markets = [m for m in unique_markets if _is_golf_market(m)]
 
     # --- Classify each market into a stage ---
@@ -7144,7 +6829,9 @@ async def get_progression(
     stage_markets: dict[str, FuturesMarket] = {}
     stage_secondary_markets: dict[str, list[FuturesMarket]] = defaultdict(list)
     for m in unique_markets:
-        stage_key = classify_market_stage(m.name, m.external_id, m.market_tier, stages)
+        stage_key = classify_market_stage(
+            m.name, m.external_id, m.market_tier, stages
+        )
         if not stage_key:
             continue
         if stage_key in stage_markets:
@@ -7168,7 +6855,9 @@ async def get_progression(
 
     team_info: dict[int, dict] = {}
     if all_team_ids:
-        team_result = await db.execute(select(Team).where(Team.id.in_(all_team_ids)))
+        team_result = await db.execute(
+            select(Team).where(Team.id.in_(all_team_ids))
+        )
         for t in team_result.scalars().all():
             team_info[t.id] = {
                 "logo_url": t.logo_url_small or t.logo_url,
@@ -7194,11 +6883,7 @@ async def get_progression(
                     "status": {},
                 }
             p = participants[merge_key]
-            prob = (
-                float(o.current_probability)
-                if o.current_probability is not None
-                else None
-            )
+            prob = float(o.current_probability) if o.current_probability is not None else None
             p["probabilities"][stage_key] = prob
             # #10248 D5 — `reader_change_24h`.
             chg = reader_change_24h(
@@ -7251,7 +6936,8 @@ async def get_progression(
             p = participants[merge_key]
             primary_prob = p["probabilities"].get(stage_key)
             sources = (
-                extra_probs if primary_prob is None else [primary_prob, *extra_probs]
+                extra_probs if primary_prob is None
+                else [primary_prob, *extra_probs]
             )
             # Quantize each source to 3dp before averaging, then quantize the mean.
             # This is not cosmetic: it is GET /api/golf's own arithmetic
@@ -7276,8 +6962,7 @@ async def get_progression(
             p = participants[merge_key]
             primary_change = p["changes_24h"].get(stage_key)
             p["changes_24h"][stage_key] = mean(
-                extra_changes
-                if primary_change is None
+                extra_changes if primary_change is None
                 else [primary_change, *extra_changes]
             )
 
@@ -7325,11 +7010,9 @@ async def get_progression(
                 p["status"]["win"] = "eliminated"
 
     # Sort participants by highest-stage probability (rightmost stage first)
-    stage_order = sorted(
-        stage_markets.keys(),
-        key=lambda k: next((s["order"] for s in stages if s["key"] == k), 0),
-        reverse=True,
-    )
+    stage_order = sorted(stage_markets.keys(), key=lambda k: next(
+        (s["order"] for s in stages if s["key"] == k), 0
+    ), reverse=True)
 
     def sort_key(p: dict) -> tuple:
         for sk in stage_order:
@@ -7338,24 +7021,20 @@ async def get_progression(
                 return (1, prob)
         return (0, 0)
 
-    sorted_participants = sorted(participants.values(), key=sort_key, reverse=True)[
-        :top_n
-    ]
+    sorted_participants = sorted(participants.values(), key=sort_key, reverse=True)[:top_n]
 
     # Build ordered stages response (only include stages that have markets)
     stages_response = []
     for stage in sorted(stages, key=lambda s: s["order"]):
         if stage["key"] in stage_markets:
             m = stage_markets[stage["key"]]
-            stages_response.append(
-                {
-                    "key": stage["key"],
-                    "label": stage["label"],
-                    "order": stage["order"],
-                    "market_id": m.id,
-                    "market_name": m.name,
-                }
-            )
+            stages_response.append({
+                "key": stage["key"],
+                "label": stage["label"],
+                "order": stage["order"],
+                "market_id": m.id,
+                "market_name": m.name,
+            })
 
     return {
         "sport": sport_cat,
@@ -7604,9 +7283,7 @@ class _GenericVenueHistory:
             kept.extend(r for r in rows if r.captured_at in free)
         return kept
 
-    def describe(
-        self, served_rows: list, *, scale_refused: Optional[str] = None
-    ) -> dict:
+    def describe(self, served_rows: list, *, scale_refused: Optional[str] = None) -> dict:
         """The reader's own statement of what it served and why — metadata only."""
         stamps = [r.captured_at for r in served_rows]
         payload = self.payload or {}
@@ -7643,11 +7320,8 @@ class _GenericVenueHistory:
 
 
 def _venue_field_columns(
-    market: FuturesMarket,
-    charted_outcomes: list,
-    venue_by_outcome: dict,
-    *,
-    field_complete: bool = True,
+    market: FuturesMarket, charted_outcomes: list, venue_by_outcome: dict,
+    *, field_complete: bool = True,
 ) -> tuple[Optional[str], dict]:
     """The venue's per-instant columns, plus the HOLE refusal if one has a gap.
 
@@ -7667,9 +7341,7 @@ def _venue_field_columns(
     The columns are returned alongside the verdict because the caller that needs
     both would otherwise build them twice over the same rows.
     """
-    if not _venue_field_squeezable(
-        market, charted_outcomes, field_complete=field_complete
-    ):
+    if not _venue_field_squeezable(market, charted_outcomes, field_complete=field_complete):
         return None, {}
     pair = _venue_pair_admission(
         market, charted_outcomes, venue_by_outcome, field_complete=field_complete
@@ -7704,10 +7376,8 @@ def _venue_field_squeezable(
         and not unsqueezed_board
         and cumulative_outcome_ladder(
             [{"name": getattr(o, "name", "")} for o in charted_outcomes],
-            dates=True,
-            question=getattr(market, "name", None),
-        )
-        is None
+            dates=True, question=getattr(market, "name", None),
+        ) is None
     )
 
 
@@ -7759,8 +7429,7 @@ def _verify_pair_bank(
 
     if not any(
         p.peer_at is not None or p.pair_dropped
-        for points in accepted.values()
-        for p in points
+        for points in accepted.values() for p in points
     ):
         return None, None
     cached = (payload or {}).get("outcomes") or {}
@@ -7809,11 +7478,8 @@ def _tag_pair_partner(rows: list, pair: Optional[tuple]) -> None:
 
 
 def _venue_pair_admission(
-    market: FuturesMarket,
-    charted_outcomes: list,
-    venue_by_outcome: dict,
-    *,
-    field_complete: bool = True,
+    market: FuturesMarket, charted_outcomes: list, venue_by_outcome: dict,
+    *, field_complete: bool = True,
 ) -> Optional[_PairAdmission]:
     """Admit identity-verified, annotated binary pairs without changing their clocks.
 
@@ -7830,9 +7496,7 @@ def _venue_pair_admission(
     """
     from app.utils.async_binary_pair import pair_is_incoherent
 
-    if not _venue_field_squeezable(
-        market, charted_outcomes, field_complete=field_complete
-    ):
+    if not _venue_field_squeezable(market, charted_outcomes, field_complete=field_complete):
         return None
     charted_ids = {int(o.id) for o in charted_outcomes}
     if len(charted_ids) != 2:
@@ -7863,8 +7527,7 @@ def _venue_pair_admission(
         # Keyed per tier too: two tiers may hold pairs sharing a knowledge time,
         # and each is its own column for the scale question (lane1's N3).
         columns[(row_a.pair_at, row_a.tier)] = {
-            oid_a: float(row_a.probability),
-            oid_b: float(row_b.probability),
+            oid_a: float(row_a.probability), oid_b: float(row_b.probability)
         }
         stamp = None if row_a.captured_at == row_b.captured_at else row_a.pair_at
         admitted[(oid_a, row_a.captured_at)] = stamp
@@ -7875,12 +7538,8 @@ def _venue_pair_admission(
 
 
 def _venue_points_countable_as_density(
-    market: FuturesMarket,
-    charted_outcomes: list,
-    venue_rows: list,
-    charted_ids: set,
-    *,
-    field_complete: bool = True,
+    market: FuturesMarket, charted_outcomes: list, venue_rows: list, charted_ids: set,
+    *, field_complete: bool = True,
 ) -> int:
     """How many venue rows the SPARSE-WINDOW gate may count. Zero when refused.
 
@@ -7965,9 +7624,7 @@ def _venue_scale_refusal(
     )
     if hole:
         return hole
-    if field_complete and _venue_field_squeezable(
-        market, charted_outcomes, field_complete=field_complete
-    ):
+    if field_complete and _venue_field_squeezable(market, charted_outcomes, field_complete=field_complete):
         return None
     if columns:
         # An incomplete field cannot adopt a book's separate vig conversion.
@@ -7976,14 +7633,11 @@ def _venue_scale_refusal(
 
         printed = devigged_consensus_by_time(
             {at: {market.source: col} for at, col in columns.items()},
-            mutually_exclusive=True,
-            field_complete=False,
+            mutually_exclusive=True, field_complete=False,
         )
         for at, column in columns.items():
-            if any(
-                abs(printed.get(at, {}).get(oid, raw + 1.0) - raw) > 5e-5
-                for oid, raw in column.items()
-            ):
+            if any(abs(printed.get(at, {}).get(oid, raw + 1.0) - raw) > 5e-5
+                   for oid, raw in column.items()):
                 return "printed_scale_is_not_the_venue_raw_scale"
     # Unsqueezed fields retain the prior raw-scale guard for unrelated book
     # transformations; normalizing a non-exclusive or unknown field is refused.
@@ -7998,11 +7652,7 @@ def _venue_scale_refusal(
 
 
 def _venue_display_probabilities(
-    market,
-    outcomes: list,
-    by_outcome: dict,
-    *,
-    field_complete: bool,
+    market, outcomes: list, by_outcome: dict, *, field_complete: bool,
     pair: Optional[_PairAdmission] = None,
 ) -> dict:
     """Normalized full-field values keyed by (leg, its ORIGINAL observation time)."""
@@ -8016,15 +7666,11 @@ def _venue_display_probabilities(
     names = {o.id: getattr(o, "name", "") for o in outcomes}
     printed = {}
     for at, column in columns.items():
-        rows = [
-            {"id": oid, "name": names.get(oid, ""), "probability": p}
-            for oid, p in column.items()
-        ]
+        rows = [{"id": oid, "name": names.get(oid, ""), "probability": p}
+                for oid, p in column.items()]
         normalize_display_probs(
-            rows,
-            mutually_exclusive=getattr(market, "mutually_exclusive", True),
-            field_complete=field_complete,
-            question=getattr(market, "name", None),
+            rows, mutually_exclusive=getattr(market, "mutually_exclusive", True),
+            field_complete=field_complete, question=getattr(market, "name", None),
         )
         printed[at] = {r["id"]: r["probability"] for r in rows}
     values = {}
@@ -8051,9 +7697,7 @@ def _venue_rows_served(venue_cells: dict) -> list:
     them are therefore real venue instants, and can be compared directly with
     the timestamps in the timeline.
     """
-    return [
-        row for cells in venue_cells.values() for rows in cells.values() for row in rows
-    ]
+    return [row for cells in venue_cells.values() for rows in cells.values() for row in rows]
 
 
 def _request_path_redis():
@@ -8077,9 +7721,7 @@ def _request_path_redis():
 
 
 async def _load_generic_venue_history(
-    market: FuturesMarket,
-    charted_outcomes: list,
-    exclusive_field_ids: set,
+    market: FuturesMarket, charted_outcomes: list, exclusive_field_ids: set,
     db: Optional[AsyncSession] = None,
 ) -> _GenericVenueHistory:
     """Read + vet the venue history. NEVER raises, NEVER calls a provider.
@@ -8131,19 +7773,14 @@ async def _load_generic_venue_history(
                 built = payload_built_at(payload)
                 if built is not None:
                     settled = bool(payload.get("market_settled"))
-                    remaining = (
-                        declared_ttl_seconds(settled=settled)
-                        - (datetime.now(timezone.utc) - built).total_seconds()
-                    )
+                    remaining = declared_ttl_seconds(settled=settled) - (
+                        datetime.now(timezone.utc) - built
+                    ).total_seconds()
                     if remaining > 0:
                         await asyncio.to_thread(
-                            write_cached_history,
-                            market.id,
-                            payload,
-                            settled=settled,
-                            rc=_request_path_redis(),
-                            ttl_s=int(remaining),
-                            only_if_absent=True,
+                            write_cached_history, market.id, payload,
+                            settled=settled, rc=_request_path_redis(),
+                            ttl_s=int(remaining), only_if_absent=True,
                         )
         if payload is None:
             venue.state = "cold"
@@ -8172,11 +7809,8 @@ async def _load_generic_venue_history(
         else:
             venue.state = "warm" if venue.rows else "empty"
     except Exception as exc:  # noqa: BLE001 — history enrichment never fails a chart
-        logger.warning(
-            "generic venue history unavailable for market %s: %s",
-            getattr(market, "id", None),
-            str(exc)[:200],
-        )
+        logger.warning("generic venue history unavailable for market %s: %s",
+                       getattr(market, "id", None), str(exc)[:200])
         venue.rows = {}
         venue.state = "unavailable"
     return venue
@@ -8262,9 +7896,7 @@ def _leg_absent_beside_dense_sibling(
         return leg_absent_beside_dense_sibling(
             by_line,
             fillable_lines={o.id for o in fillable},
-            graded_lines={
-                o.id for o in fillable if getattr(o, "is_winner", None) is not None
-            },
+            graded_lines={o.id for o in fillable if getattr(o, "is_winner", None) is not None},
             min_reference=_VENUE_FILL_THIN_CAPTURES,
             declared_grains=grains,
             window_end=now,
@@ -8273,11 +7905,8 @@ def _leg_absent_beside_dense_sibling(
     # above this handler reproduces `typeahead_outcome_arm_mutations:M2-NO-LIMIT`
     # verbatim — the same collision noted at `_consider_generic_history_fill`.)
     except Exception as exc:  # noqa: BLE001 — eligibility never fails a chart
-        logger.warning(
-            "generic venue history: leg coverage check failed for %s: %s",
-            getattr(market, "id", None),
-            str(exc)[:200],
-        )
+        logger.warning("generic venue history: leg coverage check failed for %s: %s",
+                       getattr(market, "id", None), str(exc)[:200])
         return False
 
 
@@ -8309,11 +7938,7 @@ def _headline_moved_past_history(
             payload_attempted_at,
         )
 
-        if (
-            not venue.applicable
-            or venue.state == "unavailable"
-            or venue.payload is None
-        ):
+        if not venue.applicable or venue.state == "unavailable" or venue.payload is None:
             return False
         if (getattr(market, "status", None) or "").lower() in _SETTLED_STATUSES:
             return False
@@ -8327,35 +7952,22 @@ def _headline_moved_past_history(
         captures: dict[int, list] = defaultdict(list)
         for row in capture_rows:
             # Captures only: a settlement marker is not an observation of trading.
-            if (
-                row.outcome_id in lines
-                and getattr(row, "bookmaker", None) != "settlement"
-            ):
+            if row.outcome_id in lines and getattr(row, "bookmaker", None) != "settlement":
                 captures[row.outcome_id].append(
-                    (
-                        getattr(row, "captured_at", None),
-                        getattr(row, "probability", None),
-                    )
+                    (getattr(row, "captured_at", None), getattr(row, "probability", None))
                 )
         return headline_moved_past_history(
             captures, lines, bank_attempted_at=payload_attempted_at(venue.payload)
         )
     except Exception as exc:  # noqa: BLE001 — eligibility never fails a chart
-        logger.warning(
-            "generic venue history: moved-price check failed for %s: %s",
-            getattr(market, "id", None),
-            str(exc)[:200],
-        )
+        logger.warning("generic venue history: moved-price check failed for %s: %s",
+                       getattr(market, "id", None), str(exc)[:200])
         return False
 
 
 def _plan_and_dispatch_generic_history_fill(
-    market,
-    charted_outcomes: list,
-    payload: Optional[dict],
-    chart_is_thin: bool,
-    chart_is_coarse: bool = False,
-    headline_moved: bool = False,
+    market, charted_outcomes: list, payload: Optional[dict], chart_is_thin: bool,
+    chart_is_coarse: bool = False, headline_moved: bool = False,
 ) -> str:
     """Win the claim, spend it, hand it back if the broker refuses. Sync; run off-loop.
 
@@ -8366,13 +7978,9 @@ def _plan_and_dispatch_generic_history_fill(
     from app.tasks.generic_market_history_fill import plan_on_demand_fill, release_claim
 
     plan = plan_on_demand_fill(
-        market,
-        charted_outcomes,
-        payload,
-        chart_is_thin=chart_is_thin,
-        chart_is_coarse=chart_is_coarse,
-        headline_moved=headline_moved,
-        rc=_request_path_redis(),
+        market, charted_outcomes, payload,
+        chart_is_thin=chart_is_thin, chart_is_coarse=chart_is_coarse,
+        headline_moved=headline_moved, rc=_request_path_redis(),
     )
     if not plan.get("enqueue"):
         return str(plan.get("reason"))
@@ -8380,28 +7988,19 @@ def _plan_and_dispatch_generic_history_fill(
         from app.tasks import fill_generic_market_history
 
         fill_generic_market_history.apply_async(
-            kwargs={"market_ids": [int(market.id)]},
-            queue="background",
+            kwargs={"market_ids": [int(market.id)]}, queue="background",
         )
         return "requested"
     except Exception as exc:  # noqa: BLE001 — a broker hiccup must not hold the claim
         release_claim(market.id)
-        logger.warning(
-            "generic venue history: dispatch failed for market %s: %s",
-            market.id,
-            str(exc)[:200],
-        )
+        logger.warning("generic venue history: dispatch failed for market %s: %s",
+                       market.id, str(exc)[:200])
         return "dispatch_failed"
 
 
 async def _consider_generic_history_fill(
-    venue: _GenericVenueHistory,
-    market: FuturesMarket,
-    charted_outcomes: list,
-    *,
-    chart_is_thin: bool,
-    chart_is_coarse: bool = False,
-    headline_moved: bool = False,
+    venue: _GenericVenueHistory, market: FuturesMarket, charted_outcomes: list,
+    *, chart_is_thin: bool, chart_is_coarse: bool = False, headline_moved: bool = False,
 ) -> None:
     """Ask the background lane for this market's venue history, at most once."""
     if not venue.applicable or venue.state == "unavailable":
@@ -8413,10 +8012,8 @@ async def _consider_generic_history_fill(
         from types import SimpleNamespace
 
         market_ref = SimpleNamespace(
-            id=market.id,
-            source=market.source,
-            external_id=market.external_id,
-            status=market.status,
+            id=market.id, source=market.source,
+            external_id=market.external_id, status=market.status,
             # #7736 — the planner needs the durable "this market held a bank
             # once" stamp to tell an EVICTED venue history from one that never
             # existed. Already-loaded column, so this is a dict reference and
@@ -8424,17 +8021,12 @@ async def _consider_generic_history_fill(
             market_metadata=market.market_metadata,
         )
         outcome_refs = [
-            SimpleNamespace(id=o.id, external_id=o.external_id)
-            for o in charted_outcomes
+            SimpleNamespace(id=o.id, external_id=o.external_id) for o in charted_outcomes
         ]
         venue.fill = await asyncio.to_thread(
             _plan_and_dispatch_generic_history_fill,
-            market_ref,
-            outcome_refs,
-            venue.payload,
-            chart_is_thin,
-            chart_is_coarse,
-            headline_moved,
+            market_ref, outcome_refs, venue.payload, chart_is_thin,
+            chart_is_coarse, headline_moved,
         )
     # (Load bearing for `scan_mutation_residue.py` Pass B — without a line here
     # the closing paren above plus the bare `noqa` below reproduce
@@ -8442,20 +8034,15 @@ async def _consider_generic_history_fill(
     # verbatim and this file reads as mutation residue. Do not delete.)
     except Exception as exc:  # noqa: BLE001 — a chart never fails on its refill
         venue.fill = "error"
-        logger.warning(
-            "generic venue history: fill consideration failed for %s: %s",
-            market.id,
-            str(exc)[:200],
-        )
+        logger.warning("generic venue history: fill consideration failed for %s: %s",
+                       market.id, str(exc)[:200])
 
 
 @router.get("/{market_id}/probability-timeline")
 async def get_probability_timeline(
     market_id: int,
     top: int = Query(10, ge=1, le=50, description="Number of top outcomes to show"),
-    hours: int = Query(
-        168, ge=1, le=8760, description="Hours of history (default 7 days)"
-    ),
+    hours: int = Query(168, ge=1, le=8760, description="Hours of history (default 7 days)"),
     db: AsyncSession = Depends(get_db),
     representation: str = Query(
         REPRESENTATION_SOURCE,
@@ -8466,9 +8053,7 @@ async def get_probability_timeline(
             "market's own."
         ),
     ),
-    history_range: Optional[str] = Query(
-        None, alias="range", description=_FULL_RANGE_DOC
-    ),
+    history_range: Optional[str] = Query(None, alias="range", description=_FULL_RANGE_DOC),
 ):
     """
     Get a time-bucketed probability timeline for a futures market.
@@ -8495,16 +8080,16 @@ async def get_probability_timeline(
     if representation == REPRESENTATION_VERIFIED_TITLE:
         # #9387: identity and quotes in ONE statement — see the helper.
         result = await db.execute(
-            _verified_title_market_stmt(outcome_team=True).where(
-                FuturesMarket.id == market_id
-            )
+            _verified_title_market_stmt(outcome_team=True)
+            .where(FuturesMarket.id == market_id)
         )
         market = result.unique().scalar_one_or_none()
     else:
         result = await db.execute(
             select(FuturesMarket)
             .options(
-                selectinload(FuturesMarket.outcomes).selectinload(FuturesOutcome.team),
+                selectinload(FuturesMarket.outcomes)
+                .selectinload(FuturesOutcome.team),
                 selectinload(FuturesMarket.sport),
             )
             .where(FuturesMarket.id == market_id)
@@ -8539,7 +8124,9 @@ async def get_probability_timeline(
     # an inflated Field line after being dropped from the table.
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 
-    charted_outcomes = drop_duplicate_legs(market.outcomes, lambda o: o.external_id)
+    charted_outcomes = drop_duplicate_legs(
+        market.outcomes, lambda o: o.external_id
+    )
 
     # 🔴 #7284 — THE PARTICIPANT TABLE ASKS THE BOARD; IT DOES NOT RE-DERIVE IT.
     #
@@ -8611,20 +8198,15 @@ async def get_probability_timeline(
     all_outcome_ids = [o.id for o in charted_outcomes]
 
     if not all_outcome_ids:
-        return await _finish_verified_timeline(
-            db,
-            market,
-            {
-                "market_id": market_id,
-                "market_name": market.name,
-                "hours": hours,
-                "actual_hours": hours,
-                "top": top,
-                "timeline": [],
-                "outcomes": [],
-            },
-            representation,
-        )
+        return await _finish_verified_timeline(db, market, {
+            "market_id": market_id,
+            "market_name": market.name,
+            "hours": hours,
+            "actual_hours": hours,
+            "top": top,
+            "timeline": [],
+            "outcomes": [],
+        }, representation)
 
     # Fetch all snapshots
     snapshot_query = (
@@ -8677,17 +8259,14 @@ async def get_probability_timeline(
     venue_unknown: list = []
     if older_live is not None:
         venue_rows, venue_unknown = await older_live.withhold_venue(
-            db,
-            venue_rows,
+            db, venue_rows,
             supported=_support_filter(charted_outcomes, _field_ids),
         )
     # #683 — the archive store, read once over the widest window the tiers below
     # may adopt and cut to the served one after. Kalshi markets only. `range=full`
     # reads its whole lifetime instead.
     archive = await load_archive_history(
-        db,
-        market,
-        all_outcome_ids,
+        db, market, all_outcome_ids,
         since=min(cutoff, now - timedelta(hours=2160)),
         full_range=full_range,
     )
@@ -8708,7 +8287,9 @@ async def get_probability_timeline(
     # window full of hourly captures of a market the venue publishes by the
     # minute; `captures_are_coarse` asks that second question, per line.
     _thin = len(snapshots) < _VENUE_FILL_THIN_CAPTURES
-    _coarse = captures_are_coarse(_capture_lines(snapshots), window_hours=actual_hours)
+    _coarse = captures_are_coarse(
+        _capture_lines(snapshots), window_hours=actual_hours
+    )
     # #11162 — OR one fillable line is absent where a dense sibling was observed:
     # both questions above read the chart through its densest part.
     _leg_absent = _leg_absent_beside_dense_sibling(venue, market, snapshots)
@@ -8721,11 +8302,8 @@ async def get_probability_timeline(
         + (f" or {_HEADLINE_MOVED_BASIS}" if _moved else "")
     )
     await _consider_generic_history_fill(
-        venue,
-        market,
-        charted_outcomes,
-        chart_is_thin=_thin,
-        chart_is_coarse=_coarse or _leg_absent or _moved,
+        venue, market, charted_outcomes,
+        chart_is_thin=_thin, chart_is_coarse=_coarse or _leg_absent or _moved,
         headline_moved=_moved,
     )
 
@@ -8734,14 +8312,10 @@ async def get_probability_timeline(
     # are snapshot-dense, so extending would only re-introduce the pre-event dead
     # zone the clamp exists to remove.
     # And under `range=full`: the window already starts at the first capture.
-    _TIMELINE_EXTEND_TIERS = (
-        []
-        if clamped_to_start or full_range
-        else [
-            (20, 720),  # <20 snapshots -> try 30 days
-            (10, 2160),  # <10 snapshots -> try 90 days
-        ]
-    )
+    _TIMELINE_EXTEND_TIERS = [] if clamped_to_start or full_range else [
+        (20, 720),   # <20 snapshots -> try 30 days
+        (10, 2160),  # <10 snapshots -> try 90 days
+    ]
     # #7547: where the served window actually begins, so a cell straddling it is
     # judged only on the part a capture could have reached.
     window_start = cutoff
@@ -8750,12 +8324,8 @@ async def get_probability_timeline(
         # toward "is this window sparse" exactly as a capture does. A market the
         # venue documents well stops being stretched to 90 days to find nine
         # points, and `actual_hours` keeps describing the window served.
-        if (
-            len(snapshots) + len(venue_rows)
-        ) < threshold and extended_hours > actual_hours:
-            extended_cutoff = datetime.now(timezone.utc) - timedelta(
-                hours=extended_hours
-            )
+        if (len(snapshots) + len(venue_rows)) < threshold and extended_hours > actual_hours:
+            extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=extended_hours)
             ext_query = (
                 select(FuturesOddsSnapshot)
                 .where(
@@ -8785,10 +8355,7 @@ async def get_probability_timeline(
     _timeline_unknown: list = []
     if older_live is not None:
         _timeline_claims, _timeline_unknown = await older_live.archive_claims(
-            db,
-            archive,
-            _timeline_claims,
-            all_outcome_ids,
+            db, archive, _timeline_claims, all_outcome_ids,
             supported=_support_filter(charted_outcomes, _field_ids),
         )
     archive_by_outcome = archive.served(
@@ -8823,33 +8390,20 @@ async def get_probability_timeline(
         # archive/venue/range statement a drawn one does, so a reader can tell
         # "older history withheld" from "no history". A market with no archive,
         # no venue seam and no `range=full` adds no key: today's empty shape.
-        return await _finish_verified_timeline(
-            db,
-            market,
-            {
-                "market_id": market_id,
-                "market_name": market.name,
-                "hours": requested_hours,
-                "actual_hours": actual_hours,
-                "top": top,
-                "timeline": [],
-                "outcomes": [],
-                **_timeline_history_blocks(
-                    market,
-                    venue,
-                    [],
-                    venue_unknown,
-                    archive,
-                    [],
-                    top_outcome_ids,
-                    full=full_range,
-                    window_start=window_start,
-                    live_basis=_live_basis,
-                    older_live=older_live,
-                ),
-            },
-            representation,
-        )
+        return await _finish_verified_timeline(db, market, {
+            "market_id": market_id,
+            "market_name": market.name,
+            "hours": requested_hours,
+            "actual_hours": actual_hours,
+            "top": top,
+            "timeline": [],
+            "outcomes": [],
+            **_timeline_history_blocks(
+                market, venue, [], venue_unknown, archive, [], top_outcome_ids,
+                full=full_range, window_start=window_start,
+                live_basis=_live_basis, older_live=older_live,
+            ),
+        }, representation)
     # #7284: the SERIES KEY is a name, so the label the table prints and the key
     # the line is filed under have to be the same string or the phone cannot join
     # them. Taking both from the board means a repaired rung name (#6479's
@@ -8874,7 +8428,9 @@ async def get_probability_timeline(
         if snap.probability is not None:
             ts = int(snap.captured_at.timestamp())
             bucket_key = (ts // bucket_seconds) * bucket_seconds
-            outcome_buckets[snap.outcome_id][bucket_key].append(float(snap.probability))
+            outcome_buckets[snap.outcome_id][bucket_key].append(
+                float(snap.probability)
+            )
             capture_instants[snap.outcome_id][bucket_key][snap.captured_at].append(
                 float(snap.probability)
             )
@@ -8962,9 +8518,7 @@ async def get_probability_timeline(
     for row in sorted(venue_rows, key=lambda r: r.captured_at):
         if row.outcome_id not in top_outcome_ids or row.probability is None:
             continue
-        bucket_key = (
-            int(row.captured_at.timestamp()) // bucket_seconds
-        ) * bucket_seconds
+        bucket_key = (int(row.captured_at.timestamp()) // bucket_seconds) * bucket_seconds
         if _cell_is_covered(row.outcome_id, bucket_key):
             continue
         venue_cells[row.outcome_id][bucket_key].append(row)
@@ -9062,23 +8616,19 @@ async def get_probability_timeline(
     # could not decide is UNKNOWN: the close is not seated, and is counted.
     _skipped_cells: dict[tuple[int, datetime], str] = {}
     if older_live is not None and older_live.thinned and archive_by_outcome:
-        _cells = sorted(
-            {
-                (oid, row.captured_at)
-                for oid, rows in archive_by_outcome.items()
-                if oid in top_outcome_ids
-                for row in rows
-                if int(row.captured_at.timestamp()) % bucket_seconds == 0
-                and outcome_names[oid]
-                not in entries_by_instant.get(row.captured_at, {}).get("outcomes", {})
-            }
-        )
+        _cells = sorted({
+            (oid, row.captured_at)
+            for oid, rows in archive_by_outcome.items()
+            if oid in top_outcome_ids
+            for row in rows
+            if int(row.captured_at.timestamp()) % bucket_seconds == 0
+            and outcome_names[oid]
+            not in entries_by_instant.get(row.captured_at, {}).get("outcomes", {})
+        })
         _held = await older_live.instant_claims(
             db,
-            [
-                (oid, at, at + timedelta(seconds=bucket_seconds, microseconds=-1))
-                for oid, at in _cells
-            ],
+            [(oid, at, at + timedelta(seconds=bucket_seconds, microseconds=-1))
+             for oid, at in _cells],
             supported=_support_filter(charted_outcomes, _field_ids),
         )
         _skipped_cells = {cell: state for cell, state in zip(_cells, _held) if state}
@@ -9111,14 +8661,13 @@ async def get_probability_timeline(
     )
     _timeline_settled_at = getattr(market, "settled_at", None)
     await add_timeline_steps(
-        db,
-        entries_by_instant,
+        db, entries_by_instant,
         {oid: outcome_names[oid] for oid in top_outcome_ids if oid in outcome_names},
         now=now,
         until=(
-            _timeline_settled_at
-            if _timeline_settled_at is not None
-            else None if (market.status or "").lower() == "resolved" else now
+            _timeline_settled_at if _timeline_settled_at is not None
+            else None if (market.status or "").lower() == "resolved"
+            else now
         ),
     )
 
@@ -9158,15 +8707,14 @@ async def get_probability_timeline(
         # the Field row is the one line on the table still on the raw scale, and
         # a reader adding the column up gets a total the page disagrees with.
         field_current = sum(
-            canonical_board[o.id]["probability"] or 0.0 for o in sorted_outcomes[top:]
+            canonical_board[o.id]["probability"] or 0.0
+            for o in sorted_outcomes[top:]
         )
-        outcomes_meta.append(
-            {
-                "id": None,
-                "name": "Field",
-                "current_probability": round(field_current, 6),
-            }
-        )
+        outcomes_meta.append({
+            "id": None,
+            "name": "Field",
+            "current_probability": round(field_current, 6),
+        })
 
     payload = {
         "market_id": market_id,
@@ -9199,25 +8747,15 @@ async def get_probability_timeline(
         "outcomes": outcomes_meta,
         # #7351 / #683 — the venue, archive and range statements; see the helper.
         **_timeline_history_blocks(
-            market,
-            venue,
-            _venue_rows_served(venue_cells),
-            venue_unknown,
-            archive,
-            archive_rows_served,
-            top_outcome_ids,
-            full=full_range,
-            window_start=window_start,
-            live_basis=_live_basis,
-            older_live=older_live,
+            market, venue, _venue_rows_served(venue_cells), venue_unknown,
+            archive, archive_rows_served, top_outcome_ids,
+            full=full_range, window_start=window_start,
+            live_basis=_live_basis, older_live=older_live,
         ),
     }
     # #9387: last, after every history read, and only when opted in.
     return await _finish_verified_timeline(
-        db,
-        market,
-        payload,
-        representation,
+        db, market, payload, representation,
         field_ids=[o.id for o in sorted_outcomes[top:]],
     )
 
@@ -9239,16 +8777,17 @@ async def get_cross_source_timeline(
     # Find all markets sharing this canonical key
     markets_result = await db.execute(
         select(FuturesMarket)
-        .options(selectinload(FuturesMarket.outcomes).selectinload(FuturesOutcome.team))
+        .options(
+            selectinload(FuturesMarket.outcomes)
+            .selectinload(FuturesOutcome.team)
+        )
         .where(FuturesMarket.canonical_market_key == canonical_key)
         .order_by(FuturesMarket.source)
     )
     markets = markets_result.scalars().unique().all()
 
     if not markets:
-        raise HTTPException(
-            status_code=404, detail="No markets found for this canonical key"
-        )
+        raise HTTPException(status_code=404, detail="No markets found for this canonical key")
 
     sources = sorted(set(m.source for m in markets))
 
@@ -9260,7 +8799,9 @@ async def get_cross_source_timeline(
 
     merged_outcomes: dict[str, dict] = {}
     for market in markets:
-        for outcome in drop_duplicate_legs(market.outcomes, lambda o: o.external_id):
+        for outcome in drop_duplicate_legs(
+            market.outcomes, lambda o: o.external_id
+        ):
             merge_key = _outcome_merge_key(outcome)
             if merge_key not in merged_outcomes:
                 merged_outcomes[merge_key] = {
@@ -9276,22 +8817,16 @@ async def get_cross_source_timeline(
             entry = merged_outcomes[merge_key]
             entry["outcome_ids"].append(outcome.id)
             if outcome.current_probability is not None:
-                entry["current_probabilities"].append(
-                    float(outcome.current_probability)
-                )
+                entry["current_probabilities"].append(float(outcome.current_probability))
             # #10248 D5 — `reader_change_24h`.
             chg = reader_change_24h(
-                market,
-                outcome.id,
-                outcome.current_probability,
+                market, outcome.id, outcome.current_probability,
                 outcome.probability_change_24h,
             )
             if chg is not None:
                 entry["changes_24h"].append(float(chg))
             if outcome.opening_probability is not None:
-                entry["opening_probabilities"].append(
-                    float(outcome.opening_probability)
-                )
+                entry["opening_probabilities"].append(float(outcome.opening_probability))
             if outcome.rank is not None:
                 entry["ranks"].append(outcome.rank)
             # Prefer the team-linked entry for name/team
@@ -9435,17 +8970,9 @@ async def get_cross_source_timeline(
     # Build outcome metadata
     outcomes_meta = []
     for entry in top_entries:
-        avg_prob = (
-            mean(entry["current_probabilities"])
-            if entry["current_probabilities"]
-            else None
-        )
+        avg_prob = mean(entry["current_probabilities"]) if entry["current_probabilities"] else None
         avg_change = mean(entry["changes_24h"]) if entry["changes_24h"] else None
-        avg_opening = (
-            mean(entry["opening_probabilities"])
-            if entry["opening_probabilities"]
-            else None
-        )
+        avg_opening = mean(entry["opening_probabilities"]) if entry["opening_probabilities"] else None
         best_rank = min(entry["ranks"]) if entry["ranks"] else None
 
         meta: dict = {
@@ -9453,12 +8980,8 @@ async def get_cross_source_timeline(
             "name": entry["name"],
             "current_probability": round(avg_prob, 6) if avg_prob is not None else None,
             "rank": best_rank,
-            "probability_change_24h": (
-                round(avg_change, 6) if avg_change is not None else None
-            ),
-            "opening_probability": (
-                round(avg_opening, 6) if avg_opening is not None else None
-            ),
+            "probability_change_24h": round(avg_change, 6) if avg_change is not None else None,
+            "opening_probability": round(avg_opening, 6) if avg_opening is not None else None,
         }
         team = entry.get("team")
         if team:
@@ -9481,13 +9004,11 @@ async def get_cross_source_timeline(
         for entry in remaining:
             if entry["current_probabilities"]:
                 field_current += mean(entry["current_probabilities"])
-        outcomes_meta.append(
-            {
-                "id": None,
-                "name": "Field",
-                "current_probability": round(field_current, 6),
-            }
-        )
+        outcomes_meta.append({
+            "id": None,
+            "name": "Field",
+            "current_probability": round(field_current, 6),
+        })
 
     return {
         "market_id": markets[0].id,
@@ -9565,8 +9086,7 @@ def _measure_timeline_coverage(timeline: list) -> dict:
     by up to one `bucket_seconds`, which is a second error covering the first.
     """
     stamps = [
-        s
-        for s in (_parse_stamp((b or {}).get("timestamp")) for b in (timeline or []))
+        s for s in (_parse_stamp((b or {}).get("timestamp")) for b in (timeline or []))
         if s is not None
     ]
     return _coverage_of(stamps)
@@ -9669,7 +9189,7 @@ def _select_charted_outcome_ids(
             _prefer_chartable and o.id in chartable_ids,
             o.current_probability or 0,
         ),
-        reverse=True,
+        reverse=True
     )[:capped_n]
     outcome_ids = [o.id for o in sorted_outcomes]
     # #225 Item 3 — settled charts show the completed journey: the graded
@@ -9688,10 +9208,7 @@ def _select_charted_outcome_ids(
     if champion and not any(getattr(o, "is_winner", False) for o in charted_outcomes):
         _cnorm = _norm_outcome_name(champion)
         for o in charted_outcomes:
-            if (
-                _norm_outcome_name(getattr(o, "name", "")) == _cnorm
-                and o.id not in _selected
-            ):
+            if _norm_outcome_name(getattr(o, "name", "")) == _cnorm and o.id not in _selected:
                 outcome_ids.append(o.id)
                 _selected.add(o.id)
     return outcome_ids
@@ -9702,9 +9219,7 @@ async def get_futures_history(
     market_id: int,
     outcome_id: Optional[int] = Query(None, description="Filter to specific outcome"),
     hours: int = Query(168, description="Hours of history (default 7 days)"),
-    top_n: int = Query(
-        10, description="Number of top outcomes to return (default 10, max 50)"
-    ),
+    top_n: int = Query(10, description="Number of top outcomes to return (default 10, max 50)"),
     champion: Optional[str] = Query(
         None,
         description="Settled winner-field champion NAME (#232). When the market carries "
@@ -9712,9 +9227,7 @@ async def get_futures_history(
         "evolution line to 1.0. Callers pass the concept's authoritative structural crown.",
     ),
     db: AsyncSession = Depends(get_db),
-    history_range: Optional[str] = Query(
-        None, alias="range", description=_FULL_RANGE_DOC
-    ),
+    history_range: Optional[str] = Query(None, alias="range", description=_FULL_RANGE_DOC),
 ):
     """
     Get historical odds movement for a futures market.
@@ -9748,7 +9261,9 @@ async def get_futures_history(
     # rows served on 112868 where the board served three).
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 
-    charted_outcomes = drop_duplicate_legs(market.outcomes, lambda o: o.external_id)
+    charted_outcomes = drop_duplicate_legs(
+        market.outcomes, lambda o: o.external_id
+    )
 
     # #7747 — #7103'S GATE, WHICH THIS SIDE OF THE PAGE NEVER GOT. The detail
     # serializer passes `field_complete=prices_withheld == 0` into the same two
@@ -9976,21 +9491,17 @@ async def get_futures_history(
     # it (rule 4), and one in a gap no capture reached stands.
     field_venue_rows = venue.in_window(
         ARCHIVE_LIFETIME_FLOOR if full_range else cutoff,
-        _supported_field,
-        _field_outcome_ids,
+        _supported_field, _field_outcome_ids,
     )
     # An UNKNOWN venue point (rule 5) is not drawn, but it is a real venue
     # observation, so it still claims the archive interval it sits in.
     field_venue_unknown: list = []
     if older_live is not None:
         field_venue_rows, field_venue_unknown = await older_live.withhold_venue(
-            db,
-            field_venue_rows,
+            db, field_venue_rows,
             supported=_support_filter(charted_outcomes, _history_field_ids),
         )
-        _charted_unknown = [
-            r for r in field_venue_unknown if r.outcome_id in charted_ids
-        ]
+        _charted_unknown = [r for r in field_venue_unknown if r.outcome_id in charted_ids]
         if _charted_unknown:
             venue.refusals.append(
                 {**ARCHIVE_OVERLAP_REFUSAL, "points": len(_charted_unknown)}
@@ -9999,12 +9510,8 @@ async def get_futures_history(
     # the widest window the tiers below may adopt, then cut to the window that
     # is actually served. Kalshi markets only; every other board issues no query.
     archive = await load_archive_history(
-        db,
-        market,
-        _field_outcome_ids,
-        since=min(
-            cutoff, datetime.now(timezone.utc) - timedelta(hours=_EXTEND_TIERS[-1][1])
-        ),
+        db, market, _field_outcome_ids,
+        since=min(cutoff, datetime.now(timezone.utc) - timedelta(hours=_EXTEND_TIERS[-1][1])),
         full_range=full_range,
     )
     # The live rows an archive interval must yield to: the field's supported
@@ -10017,17 +9524,10 @@ async def get_futures_history(
     # is density nobody draws, and counting it held the gate shut over the exact
     # empty chart #7936's first half was built to fill.
     # #11157: a pair bank this reader refuses below is no density either.
-    venue_density = (
-        0
-        if venue.pair_refusal
-        else _venue_points_countable_as_density(
-            market,
-            charted_outcomes,
-            field_venue_rows,
-            charted_ids,
-            # #7954's flag, the same one the reader's refusal is asked with below.
-            field_complete=_field_complete,
-        )
+    venue_density = 0 if venue.pair_refusal else _venue_points_countable_as_density(
+        market, charted_outcomes, field_venue_rows, charted_ids,
+        # #7954's flag, the same one the reader's refusal is asked with below.
+        field_complete=_field_complete,
     )
     # #7547 — the same two questions as the timeline route above: too FEW points,
     # or enough points spaced too COARSELY to carry the movement the venue holds.
@@ -10045,19 +9545,14 @@ async def get_futures_history(
     if _moved:
         venue.thin_basis = (
             f"{venue.thin_basis} or {_HEADLINE_MOVED_BASIS}"
-            if venue.thin_basis
-            else _HEADLINE_MOVED_BASIS
+            if venue.thin_basis else _HEADLINE_MOVED_BASIS
         )
     await _consider_generic_history_fill(
-        venue,
-        market,
-        charted_outcomes,
+        venue, market, charted_outcomes,
         chart_is_thin=len(snapshots) < _EXTEND_TIERS[0][0],
         chart_is_coarse=captures_are_coarse(
             _capture_lines(snapshots), window_hours=actual_hours
-        )
-        or _leg_absent
-        or _moved,
+        ) or _leg_absent or _moved,
         headline_moved=_moved,
     )
 
@@ -10070,9 +9565,7 @@ async def get_futures_history(
             and (len(snapshots) + venue_density) < threshold
             and extended_hours > actual_hours
         ):
-            extended_cutoff = datetime.now(timezone.utc) - timedelta(
-                hours=extended_hours
-            )
+            extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=extended_hours)
             ext_query = (
                 select(FuturesOddsSnapshot)
                 .join(
@@ -10131,17 +9624,10 @@ async def get_futures_history(
             # THE SAME RULE ON BOTH SIDES OF THE COMPARISON, or the widening is
             # scored against a density the narrow window does not have either.
             # The wider window re-selects, so its refusal verdict is its own.
-            extended_venue_density = (
-                0
-                if venue.pair_refusal
-                else (
-                    _venue_points_countable_as_density(
-                        market,
-                        charted_outcomes,
-                        extended_field_venue_rows,
-                        ext_charted_ids,
-                        field_complete=_field_complete,
-                    )
+            extended_venue_density = 0 if venue.pair_refusal else (
+                _venue_points_countable_as_density(
+                    market, charted_outcomes, extended_field_venue_rows, ext_charted_ids,
+                    field_complete=_field_complete,
                 )
             )
             if (len(extended_snapshots) + extended_venue_density) > (
@@ -10294,8 +9780,7 @@ async def get_futures_history(
         (r.outcome_id, r.bookmaker, r.captured_at) for r in _archive_claims
     }
     incomplete_history_times = {
-        r.captured_at
-        for r in field_rows
+        r.captured_at for r in field_rows
         if (r.outcome_id, r.bookmaker, r.captured_at) not in supported_history_keys
     }
     devigged = devigged_consensus_by_time(
@@ -10335,11 +9820,7 @@ async def get_futures_history(
         # #11157 — an identity-admitted pair whose annotations did not verify is
         # refused HERE, on this reader only (lane1's R1).
         venue_scale_refusal = venue.pair_refusal or _venue_scale_refusal(
-            market,
-            charted_outcomes,
-            field_venue_by_outcome,
-            outcome_time_groups,
-            devigged,
+            market, charted_outcomes, field_venue_by_outcome, outcome_time_groups, devigged,
             # #7954: the SAME flag the line above was printed with, never a
             # re-derivation — a second predicate here would be free to answer
             # differently from the arithmetic this has to agree with, which is
@@ -10353,32 +9834,20 @@ async def get_futures_history(
             # halves the verdict above admitted, each at its own instant; a half
             # with no partner in its cell is withheld and counted.
             venue.pair_admission = _venue_pair_admission(
-                market,
-                charted_outcomes,
-                field_venue_by_outcome,
+                market, charted_outcomes, field_venue_by_outcome,
                 field_complete=_field_complete,
             )
             if venue.pair_admission is not None:
                 _admitted = venue.pair_admission.admitted
-                venue_by_outcome = defaultdict(
-                    list,
-                    {
-                        oid: [r for r in rows if (oid, r.captured_at) in _admitted]
-                        for oid, rows in venue_by_outcome.items()
-                    },
-                )
+                venue_by_outcome = defaultdict(list, {
+                    oid: [r for r in rows if (oid, r.captured_at) in _admitted]
+                    for oid, rows in venue_by_outcome.items()
+                })
     venue_rows_served: list = []
-    venue_display_values = (
-        _venue_display_probabilities(
-            market,
-            charted_outcomes,
-            field_venue_by_outcome,
-            field_complete=_field_complete,
-            pair=venue.pair_admission,
-        )
-        if not venue_scale_refusal
-        else {}
-    )
+    venue_display_values = _venue_display_probabilities(
+        market, charted_outcomes, field_venue_by_outcome,
+        field_complete=_field_complete, pair=venue.pair_admission,
+    ) if not venue_scale_refusal else {}
 
     # Archive intervals follow the same full-field rule; live evidence still
     # wins actual overlap only. Preserve interval provenance and its own close.
@@ -10386,10 +9855,7 @@ async def get_futures_history(
     _field_unknown: list = []
     if older_live is not None:
         _field_claims, _field_unknown = await older_live.archive_claims(
-            db,
-            archive,
-            _field_claims,
-            _field_outcome_ids,
+            db, archive, _field_claims, _field_outcome_ids,
             supported=_support_filter(charted_outcomes, _history_field_ids),
         )
     field_archive_by_outcome = archive.served(
@@ -10399,33 +9865,21 @@ async def get_futures_history(
         unresolved=_field_unknown,
     )
     archive_by_outcome: dict[int, list] = {
-        oid: rows
-        for oid, rows in field_archive_by_outcome.items()
-        if oid in charted_ids
+        oid: rows for oid, rows in field_archive_by_outcome.items() if oid in charted_ids
     }
     archive_scale_refusal: Optional[str] = None
     if field_archive_by_outcome:
         archive_scale_refusal = _venue_scale_refusal(
-            market,
-            charted_outcomes,
-            field_archive_by_outcome,
-            outcome_time_groups,
-            devigged,
-            field_complete=_field_complete,
+            market, charted_outcomes, field_archive_by_outcome, outcome_time_groups,
+            devigged, field_complete=_field_complete,
         )
         if archive_scale_refusal:
             archive_by_outcome = {}
     archive_rows_served: list = []
-    archive_display_values = (
-        _venue_display_probabilities(
-            market,
-            charted_outcomes,
-            field_archive_by_outcome,
-            field_complete=_field_complete,
-        )
-        if not archive_scale_refusal
-        else {}
-    )
+    archive_display_values = _venue_display_probabilities(
+        market, charted_outcomes, field_archive_by_outcome,
+        field_complete=_field_complete,
+    ) if not archive_scale_refusal else {}
 
     # Build aggregated history: one data point per timestamp per outcome
     outcome_history = {}
@@ -10433,15 +9887,13 @@ async def get_futures_history(
     # venue history is byte-for-byte what it was; an outcome our polls never
     # reached inside the window follows.
     _history_order = list(outcome_time_groups.keys()) + [
-        oid
-        for oid in outcome_ids
+        oid for oid in outcome_ids
         if oid in venue_by_outcome and oid not in outcome_time_groups
     ]
     # #683: a leg the archive alone speaks for (no capture, no venue point) is
     # drawn too — the zero-snapshot outcome this arm exists for.
     _history_order += [
-        oid
-        for oid in outcome_ids
+        oid for oid in outcome_ids
         if oid in archive_by_outcome and oid not in _history_order
     ]
     for oid in _history_order:
@@ -10456,21 +9908,19 @@ async def get_futures_history(
             if point is None or oid not in point:
                 continue
             avg_prob = point[oid]
-            history.append(
-                {
-                    "timestamp": captured_at.isoformat(),
-                    "probability": avg_prob,
-                    # WITHHELD, NOT RECONVERTED (#5835's rule, two screens up in
-                    # this file). A de-vigged, squeezed probability is not a price
-                    # any book quoted, so running it back through
-                    # `probability_to_american` would print exactly the thing #6757
-                    # just stopped this surface doing. Nothing renders this field
-                    # off /history — the chart reads `probability`, and the
-                    # progression table reads the DETAIL payload's odds.
-                    "american_odds": None,
-                    "bookmaker": "consensus",
-                }
-            )
+            history.append({
+                "timestamp": captured_at.isoformat(),
+                "probability": avg_prob,
+                # WITHHELD, NOT RECONVERTED (#5835's rule, two screens up in
+                # this file). A de-vigged, squeezed probability is not a price
+                # any book quoted, so running it back through
+                # `probability_to_american` would print exactly the thing #6757
+                # just stopped this surface doing. Nothing renders this field
+                # off /history — the chart reads `probability`, and the
+                # progression table reads the DETAIL payload's odds.
+                "american_odds": None,
+                "bookmaker": "consensus",
+            })
         # #8296 — THE LINE REACHES THE HERO'S COLUMN TOO. The carry above completed
         # the column, but this loop draws a line only at its own rows, so a leg
         # that did not move at the last instant stopped short of it (KBO: Samsung
@@ -10487,21 +9937,17 @@ async def get_futures_history(
             and oid not in resolved_ids
         ):
             _closing = carried_endpoint(
-                oid,
-                devigged,
-                own=time_groups.keys(),
+                oid, devigged, own=time_groups.keys(),
                 observed=observed_at.get(oid, ()),
                 drawn_last=history[-1]["probability"] if history else None,
             )
             if _closing is not None:
-                history.append(
-                    {
-                        "timestamp": _closing[0].isoformat(),
-                        "probability": _closing[1],
-                        "american_odds": None,
-                        "bookmaker": "consensus",
-                    }
-                )
+                history.append({
+                    "timestamp": _closing[0].isoformat(),
+                    "probability": _closing[1],
+                    "american_odds": None,
+                    "bookmaker": "consensus",
+                })
         # #7351: the venue's own observations at the instants no capture claims.
         # Original timestamp and provenance, plus the raw quote whenever full-field
         # normalization changes its value; an old sample never becomes a fresh poll.
@@ -10586,22 +10032,14 @@ async def get_futures_history(
     # served on each settlement point as `settlement_basis`.
     _settle_ts, _settle_basis = _settled_chart_stamp_basis(market, outcome_history)
     _apply_settled_winner_freeze(
-        market,
-        outcome_history,
-        outcome_names,
-        outcome_id,
-        champion,
-        settle_ts=_settle_ts,
-        settle_basis=_settle_basis,
+        market, outcome_history, outcome_names, outcome_id, champion,
+        settle_ts=_settle_ts, settle_basis=_settle_basis,
     )
     # And the mirror: a leg the grader says LOST ends at 0.0, not at the last
     # price the field happened to be trading it at (two golfers who missed the
     # BMW PGA cut had their lines end at 84%).
     _apply_settled_loser_freeze(
-        market,
-        outcome_history,
-        _settle_ts,
-        outcome_id_filter=outcome_id,
+        market, outcome_history, _settle_ts, outcome_id_filter=outcome_id,
         settle_basis=_settle_basis,
     )
 
@@ -10674,9 +10112,7 @@ async def get_futures_history(
     # #683 — additive, and only when the reader asked for the whole history.
     if full_range:
         response["history_range"] = archive.range_block(
-            _archive_window,
-            archive_rows_served,
-            charted_ids,
+            _archive_window, archive_rows_served, charted_ids,
             live_basis=_live_basis or ARCHIVE_BASIS_HOURS,
             venue_first=min((r.captured_at for r in venue_rows_served), default=None),
             live_thinned=bool(older_live and older_live.thinned),
@@ -10686,39 +10122,34 @@ async def get_futures_history(
     return response
 
 
-def _format_market_summary(
-    market: FuturesMarket, source_count_map: dict = None
-) -> dict:
+def _format_market_summary(market: FuturesMarket, source_count_map: dict = None) -> dict:
     """Format a market for list view with top outcomes."""
     # Filter out placeholder outcomes before sorting/display
     real_outcomes = [
-        o for o in market.outcomes if not _GARBAGE_OUTCOME_RE.match(o.name or "")
+        o for o in market.outcomes
+        if not _GARBAGE_OUTCOME_RE.match(o.name or "")
     ]
 
     # Sort outcomes by probability
     sorted_outcomes = sorted(
-        real_outcomes, key=lambda o: o.current_probability or 0, reverse=True
+        real_outcomes,
+        key=lambda o: o.current_probability or 0,
+        reverse=True
     )
 
     outcome_dicts = [
         {
             "id": o.id,
             "name": o.name,
-            "probability": (
-                float(o.current_probability)
-                if o.current_probability is not None
-                else None
-            ),
+            "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
             "rank": o.rank,
             # #10248 D5 — `reader_change_24h`.
             "movement": (
                 float(chg)
-                if (
-                    chg := reader_change_24h(
-                        market, o.id, o.current_probability, o.probability_change_24h
-                    )
-                )
+                if (chg := reader_change_24h(
+                    market, o.id, o.current_probability, o.probability_change_24h
+                ))
                 else None
             ),
         }
@@ -10755,9 +10186,7 @@ def _format_market_summary(
         "llm_sport_category": market.llm_sport_category,
         "status": market.status,
         "source": market.source,
-        "resolution_date": (
-            market.resolution_date.isoformat() if market.resolution_date else None
-        ),
+        "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         "top_outcomes": top_outcomes,
         "outcome_count": len(real_outcomes),
         "category_tags": market.category_tags or [],
@@ -10892,7 +10321,9 @@ async def _load_market_sources(
     return bookmakers, source_breakdown
 
 
-async def _get_source_breakdown(db: AsyncSession, outcome_ids: list[int]) -> list[dict]:
+async def _get_source_breakdown(
+    db: AsyncSession, outcome_ids: list[int]
+) -> list[dict]:
     """Get the latest probability per bookmaker for each outcome.
 
     Returns a list of per-source rows sorted alphabetically by bookmaker.
@@ -10975,7 +10406,8 @@ async def _get_source_breakdown(db: AsyncSession, outcome_ids: list[int]) -> lis
     # relation (`unnest`), and an expanding IN cannot be a FROM item. CAST(...)
     # rather than `::integer[]` — asyncpg parses the `::` spelling as a bind.
     rows = await db.execute(
-        sql_text("""
+        sql_text(
+            """
             WITH RECURSIVE pairs AS (
                 SELECT o.outcome_id,
                        (SELECT s.bookmaker
@@ -11007,13 +10439,12 @@ async def _get_source_breakdown(db: AsyncSession, outcome_ids: list[int]) -> lis
                      LIMIT 1
                    ) AS latest
              WHERE p.bookmaker IS NOT NULL
-            """),
+            """
+        ),
         {"outcome_ids": list(outcome_ids)},
     )
 
-    staleness_cutoff = datetime.now(timezone.utc) - timedelta(
-        days=SOURCE_STALENESS_DAYS
-    )
+    staleness_cutoff = datetime.now(timezone.utc) - timedelta(days=SOURCE_STALENESS_DAYS)
 
     by_bookmaker: dict[str, dict] = {}
     for outcome_id, bookmaker, probability, captured_at in rows.all():
@@ -11198,7 +10629,9 @@ def _format_market_detail(
     # divisions carry no price, but this one kept its last quote until graded.
     valid_outcomes = drop_out_division_legs(valid_outcomes, out_division_labels)
     sorted_outcomes = sorted(
-        valid_outcomes, key=lambda o: o.current_probability or 0, reverse=True
+        valid_outcomes,
+        key=lambda o: o.current_probability or 0,
+        reverse=True
     )
     targets_settlement_display = settlement_display_applies(market)
 
@@ -11874,9 +11307,7 @@ def _format_market_detail(
     raw_outcome_count = len(outcomes)
     has_named_outcome = any(not is_field_outcome(o.get("name")) for o in outcomes)
     outcomes = drop_dominant_field_outcomes(
-        outcomes,
-        lambda o: o.get("name"),
-        lambda o: 1.0 if has_named_outcome and o.get("probability") == 1.0 else None,
+        outcomes, lambda o: o.get("name"), lambda o: 1.0 if has_named_outcome and o.get("probability") == 1.0 else None,
         is_winner_of=_is_graded_winner,
     )
     raw_dominant_dropped = raw_outcome_count - len(outcomes)
@@ -12007,9 +11438,7 @@ def _format_market_detail(
     # (#4788, argued at the `resolution_source` key above): the column is
     # `boolean NULL DEFAULT false`, so a `True` beside a NULL source is a row
     outcomes = drop_dominant_field_outcomes(
-        outcomes,
-        lambda o: o.get("name"),
-        lambda o: o.get("probability"),
+        outcomes, lambda o: o.get("name"), lambda o: o.get("probability"),
         is_winner_of=_is_graded_winner,
     )
     # The SAME predicate, and it has to be the same one: `leader_pick_order`
@@ -12136,7 +11565,9 @@ def _format_market_detail(
     # left it a price. A dropped or withheld leg is never offered as a hero.
     lead_outcome_id = None
     if lead_leg:
-        lead_ids = {o.id for o in (market.outcomes or []) if o.external_id == lead_leg}
+        lead_ids = {
+            o.id for o in (market.outcomes or []) if o.external_id == lead_leg
+        }
         served_leads = [
             o["id"]
             for o in outcomes
@@ -12262,14 +11693,8 @@ def _format_market_detail(
         # dispatch and fell back to the generic ranked table for every shape.
         "market_type": market.market_type,
         "mutually_exclusive": market.mutually_exclusive,
-        "commence_time": (
-            market.commence_time.isoformat()
-            if hasattr(market, "commence_time") and market.commence_time
-            else None
-        ),
-        "resolution_date": (
-            market.resolution_date.isoformat() if market.resolution_date else None
-        ),
+        "commence_time": market.commence_time.isoformat() if hasattr(market, 'commence_time') and market.commence_time else None,
+        "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         "outcomes": outcomes,
         "outcome_count": len(outcomes),
         # #8892: on a game container, the outcome a hero should lead with — the
@@ -12401,24 +11826,15 @@ async def get_group(
             m.outcomes,
             key=lambda x: -(0 if x.id in withheld else (x.current_probability or 0)),
         ):
-            obs_iso = (
-                o.last_updated.isoformat()
-                if getattr(o, "last_updated", None) is not None
-                else None
-            )
             od = {
                 "id": o.id,
                 "name": o.name,
                 "probability": o.current_probability,
-                "american_odds": (
-                    probability_to_american(o.current_probability)
-                    if o.current_probability and 0 < o.current_probability < 1
-                    else None
-                ),
+                "american_odds": probability_to_american(o.current_probability) if o.current_probability and 0 < o.current_probability < 1 else None,
                 "market_id": m.id,
                 "source": m.source,
-                "last_updated": obs_iso,
-                "observed_at": obs_iso,
+                "last_updated": o.last_updated.isoformat() if getattr(o, "last_updated", None) else None,
+                "observed_at": o.last_updated.isoformat() if getattr(o, "last_updated", None) else None,
             }
             if o.id in withheld:
                 # Keyed on presence so the refusal covers any price field this
@@ -12445,36 +11861,26 @@ async def get_group(
         ):
             all_outcomes.extend(outcomes)
 
-        market_list.append(
-            {
-                "id": m.id,
-                "name": m.name,
-                "source": m.source,
-                "external_id": m.external_id,
-                "group_type": m.group_type,
-                "group_position": m.group_position,
-                "canonical_market_key": m.canonical_market_key,
-                # Shape field (#194) — same contract as the detail payload above.
-                "market_type": m.market_type,
-                "market_tier": m.market_tier,
-                "llm_sport_category": m.llm_sport_category,
-                "status": m.status,
-                "market_metadata": m.market_metadata,
-                "commence_time": (
-                    m.commence_time.isoformat() if m.commence_time else None
-                ),
-                "resolution_date": (
-                    m.resolution_date.isoformat() if m.resolution_date else None
-                ),
-                "updated_at": (
-                    m.updated_at.isoformat()
-                    if getattr(m, "updated_at", None) is not None
-                    else None
-                ),
-                "outcomes": outcomes,
-                "outcome_count": len(outcomes),
-            }
-        )
+        market_list.append({
+            "id": m.id,
+            "name": m.name,
+            "source": m.source,
+            "external_id": m.external_id,
+            "group_type": m.group_type,
+            "group_position": m.group_position,
+            "canonical_market_key": m.canonical_market_key,
+            # Shape field (#194) — same contract as the detail payload above.
+            "market_type": m.market_type,
+            "market_tier": m.market_tier,
+            "llm_sport_category": m.llm_sport_category,
+            "status": m.status,
+            "market_metadata": m.market_metadata,
+            "commence_time": m.commence_time.isoformat() if m.commence_time else None,
+            "resolution_date": m.resolution_date.isoformat() if m.resolution_date else None,
+            "updated_at": m.updated_at.isoformat() if getattr(m, "updated_at", None) else None,
+            "outcomes": outcomes,
+            "outcome_count": len(outcomes),
+        })
 
     # Detect threshold groups across all outcomes
     threshold_groups = detect_threshold_groups(all_outcomes)
@@ -12515,9 +11921,7 @@ async def get_group(
 
 @router.get("/groups")
 async def list_groups(
-    source: Optional[str] = Query(
-        None, description="Filter by source (polymarket, kalshi)"
-    ),
+    source: Optional[str] = Query(None, description="Filter by source (polymarket, kalshi)"),
     group_type: Optional[str] = Query(None, description="Filter by group type"),
     sport: Optional[str] = Query(None, description="Filter by sport category"),
     limit: int = Query(50, ge=1, le=200),
@@ -12571,8 +11975,9 @@ async def list_groups(
     rows = result.all()
 
     # Count total
-    count_stmt = select(func.count(func.distinct(FuturesMarket.group_id))).where(
-        and_(*filters)
+    count_stmt = (
+        select(func.count(func.distinct(FuturesMarket.group_id)))
+        .where(and_(*filters))
     )
     total = (await db.execute(count_stmt)).scalar() or 0
 
@@ -12588,9 +11993,7 @@ async def list_groups(
                 "representative_name": row.representative_name,
                 "representative_id": row.representative_id,
                 "sources": row.sources or [],
-                "last_updated": (
-                    row.last_updated.isoformat() if row.last_updated else None
-                ),
+                "last_updated": row.last_updated.isoformat() if row.last_updated else None,
             }
             for row in rows
         ],

@@ -194,12 +194,18 @@ class RoundupMembers:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
         object.__setattr__(self, "feed_item", feed_item)
-        object.__setattr__(self, "footer", str(footer) if footer is not None else None)
+        object.__setattr__(
+            self, "footer", str(footer) if footer is not None else None
+        )
         object.__setattr__(
             self, "count_line", str(count_line) if count_line is not None else None
         )
-        object.__setattr__(self, "title", str(title) if title is not None else None)
-        object.__setattr__(self, "kicker", str(kicker) if kicker is not None else None)
+        object.__setattr__(
+            self, "title", str(title) if title is not None else None
+        )
+        object.__setattr__(
+            self, "kicker", str(kicker) if kicker is not None else None
+        )
         object.__setattr__(
             self,
             "destination_href",
@@ -216,20 +222,12 @@ class RoundupMembers:
         object.__setattr__(
             self,
             "parent_slug",
-            (
-                str(parent_slug).strip()
-                if parent_slug is not None and str(parent_slug).strip()
-                else None
-            ),
+            str(parent_slug).strip() if parent_slug is not None and str(parent_slug).strip() else None,
         )
         object.__setattr__(
             self,
             "parent_name",
-            (
-                str(parent_name).strip()
-                if parent_name is not None and str(parent_name).strip()
-                else None
-            ),
+            str(parent_name).strip() if parent_name is not None and str(parent_name).strip() else None,
         )
         object.__setattr__(
             self,
@@ -399,7 +397,9 @@ class RoundupProducer:
         object.__setattr__(self, "section_titles", titles_tuple)
         object.__setattr__(self, "footer", str(footer))
         object.__setattr__(self, "produce", produce)
-        object.__setattr__(self, "membership", str(membership or "computed-produced"))
+        object.__setattr__(
+            self, "membership", str(membership or "computed-produced")
+        )
         object.__setattr__(self, "relations", relations_tuple)
         object.__setattr__(self, "level", str(raw_level or "member"))
         object.__setattr__(
@@ -442,8 +442,7 @@ class RoundupProducer:
             if parent_slug is not None
             else (
                 rule.get("parent_slug")
-                if isinstance(rule, Mapping)
-                and isinstance(rule.get("parent_slug"), str)
+                if isinstance(rule, Mapping) and isinstance(rule.get("parent_slug"), str)
                 else None
             )
         )
@@ -452,8 +451,7 @@ class RoundupProducer:
             if parent_name is not None
             else (
                 rule.get("parent_name")
-                if isinstance(rule, Mapping)
-                and isinstance(rule.get("parent_name"), str)
+                if isinstance(rule, Mapping) and isinstance(rule.get("parent_name"), str)
                 else None
             )
         )
@@ -470,20 +468,16 @@ class RoundupProducer:
         object.__setattr__(
             self,
             "parent_slug",
-            (
-                str(raw_parent_slug).strip()
-                if raw_parent_slug and str(raw_parent_slug).strip()
-                else None
-            ),
+            str(raw_parent_slug).strip()
+            if raw_parent_slug and str(raw_parent_slug).strip()
+            else None,
         )
         object.__setattr__(
             self,
             "parent_name",
-            (
-                str(raw_parent_name).strip()
-                if raw_parent_name and str(raw_parent_name).strip()
-                else None
-            ),
+            str(raw_parent_name).strip()
+            if raw_parent_name and str(raw_parent_name).strip()
+            else None,
         )
         object.__setattr__(
             self,
@@ -594,15 +588,21 @@ def compose_roundup_container(
         ]
         total_members = len(normalized)
     effective_dest_href = (
-        members.destination_href
-        if isinstance(members, RoundupMembers) and members.destination_href
-        else None
-    ) or producer.destination_href
+        (
+            members.destination_href
+            if isinstance(members, RoundupMembers) and members.destination_href
+            else None
+        )
+        or producer.destination_href
+    )
     effective_parent_slug = (
-        members.parent_slug
-        if isinstance(members, RoundupMembers) and members.parent_slug
-        else None
-    ) or producer.parent_slug
+        (
+            members.parent_slug
+            if isinstance(members, RoundupMembers) and members.parent_slug
+            else None
+        )
+        or producer.parent_slug
+    )
     effective_parent_name = (
         (
             members.parent_name
@@ -712,9 +712,7 @@ def compose_roundup_feed_item(
     if getattr(members, "suppress_feed_item", False):
         return None
     if not members.members:
-        return (
-            copy.deepcopy(members.feed_item) if members.feed_item is not None else None
-        )
+        return copy.deepcopy(members.feed_item) if members.feed_item is not None else None
     rows = list(members.rows)
     normalized = [_normalize_member_entry(x) for x in members.members]
     member_ids = [int(m["id"]) for m in normalized]
@@ -790,11 +788,15 @@ def compose_roundup_feed_item(
         roundup_contract["presentation"] = producer.presentation
     if members.count_line:
         roundup_contract["count_line"] = members.count_line
-    raw_caption = members.caption if members.caption is not None else producer.caption
+    raw_caption = (
+        members.caption if members.caption is not None else producer.caption
+    )
     if raw_caption is not None:
         from app.utils.grouping_captions import compose_container_caption
 
-        caption_members: Sequence[Mapping[str, Any]] = rows if rows else normalized
+        caption_members: Sequence[Mapping[str, Any]] = (
+            rows if rows else normalized
+        )
         verified_caption = compose_container_caption(
             {"caption": raw_caption},
             members=caption_members,
@@ -871,10 +873,7 @@ async def _store_roundup_cache_entry(
     )
     if isinstance(db, AsyncSession):
         try:
-            from app.utils.request_cache import (
-                bounded_redis_call,
-                get_shared_async_redis,
-            )
+            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
             encoded = json.dumps(
                 {
@@ -915,7 +914,8 @@ async def _cache_roundup_timeout_refusal(
     is_fixture_seq = isinstance(db, (list, tuple))
     rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
     no_cache = (
-        rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair"
+        rule_cfg.get("cache") == "none"
+        or rule_cfg.get("producer") == "yardstick_pair"
     )
     if is_fixture_seq or no_cache or not container_read_cache_enabled():
         return
@@ -991,10 +991,7 @@ async def evaluate_roundup_producer(
             return copy.deepcopy(cached[1]), copy.deepcopy(cached[2])
         if isinstance(db, AsyncSession):
             try:
-                from app.utils.request_cache import (
-                    bounded_redis_call,
-                    get_shared_async_redis,
-                )
+                from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
                 client = await get_shared_async_redis()
                 res = await bounded_redis_call(
@@ -1223,7 +1220,9 @@ def roundup_feed_enabled(
         and not category
         and not sport
         and containers_read_enabled()
-        and any(p.enabled is None or p.enabled() for p in ROUNDUP_PRODUCERS.values())
+        and any(
+            p.enabled is None or p.enabled() for p in ROUNDUP_PRODUCERS.values()
+        )
     )
 
 
@@ -1258,10 +1257,7 @@ def _is_roundup_bundle_card(card: Any) -> bool:
         isinstance(card, Mapping)
         and card.get("type") == "bundle"
         and isinstance(card.get("data"), Mapping)
-        and (
-            card["data"].get("kind") == "roundup"
-            or isinstance(card["data"].get("roundup"), Mapping)
-        )
+        and card["data"].get("kind") == "roundup"
     )
 
 
@@ -1313,7 +1309,9 @@ def _opening_eligible_floor_index(
             and seating.kind in GROUP_KINDS
             and isinstance(card, dict)
         ):
-            reason, restricted_by = _group_members(card, by_event_id, now=effective_now)
+            reason, restricted_by = _group_members(
+                card, by_event_id, now=effective_now
+            )
             if reason is None:
                 seating.restricted_by = restricted_by
                 seating.restricted = bool(restricted_by)
@@ -1412,7 +1410,9 @@ def _is_roundup_opening_eligible(
     seating = classify_card(dict(card), now=effective_now)
     if seating is None:
         return False
-    reason, restricted_by = _group_members(dict(card), by_event_id, now=effective_now)
+    reason, restricted_by = _group_members(
+        dict(card), by_event_id, now=effective_now
+    )
     if reason is not None or restricted_by:
         return False
     return not bool(seating.restricted)
@@ -1464,7 +1464,9 @@ def apply_novelty_seats(
 
     target_non_roundup_eligible = max(0, int(seat_floor) - len(novelty_cards))
     insert_at = min(
-        _opening_eligible_floor_index(remaining, target_non_roundup_eligible, now=now),
+        _opening_eligible_floor_index(
+            remaining, target_non_roundup_eligible, now=now
+        ),
         len(remaining),
     )
 
@@ -1591,10 +1593,7 @@ def _is_near_identical_sibling_family(
     - In the same category/tag, sharing ``>= 2`` content title tokens and ``>= 50%``
       of the smaller title's content tokens.
     """
-    if not (
-        _is_sibling_family_bundle(candidate_item)
-        and _is_sibling_family_bundle(seated_item)
-    ):
+    if not (_is_sibling_family_bundle(candidate_item) and _is_sibling_family_bundle(seated_item)):
         return False
 
     labels_a = _sibling_family_row_labels(candidate_item)
@@ -1605,16 +1604,12 @@ def _is_near_identical_sibling_family(
         if len(shared_labels) >= 2 and (len(shared_labels) / min_rows) >= 0.5:
             return True
 
-    tag_a = (
-        str(((candidate_item.get("data") or {}).get("roundup") or {}).get("tag") or "")
-        .strip()
-        .upper()
-    )
-    tag_b = (
-        str(((seated_item.get("data") or {}).get("roundup") or {}).get("tag") or "")
-        .strip()
-        .upper()
-    )
+    tag_a = str(
+        ((candidate_item.get("data") or {}).get("roundup") or {}).get("tag") or ""
+    ).strip().upper()
+    tag_b = str(
+        ((seated_item.get("data") or {}).get("roundup") or {}).get("tag") or ""
+    ).strip().upper()
     if not tag_a or not tag_b or tag_a == tag_b:
         toks_a = _sibling_family_title_tokens(candidate_item)
         toks_b = _sibling_family_title_tokens(seated_item)
@@ -1769,7 +1764,6 @@ def insert_roundup_feed_items(
     *,
     seat_floor: int = ROUNDUP_SEAT_FLOOR,
     page_window: int = 20,
-    max_sibling_family_in_top_20: int = MAX_SIBLING_FAMILY_IN_TOP_20,
     now: Optional[datetime] = None,
     returning_reader: bool = False,
     seen_card_keys: Optional[Sequence[str] | set[str]] = None,
@@ -1779,8 +1773,7 @@ def insert_roundup_feed_items(
 ) -> list[dict[str, Any]]:
     """Place served round-up cards on Discover in page one's back half without changing scores.
 
-    Under the Oct 7–8 ranking rulings (#4080 / #5100 / #5105 / #10356 / #10357 / #11902)
-    and Alex's Decision 123 (123-A, #12374):
+    Under the Oct 7–8 ranking rulings (#4080 / #5100 / #5105 / #10356 / #10357 / #11902):
     * Covered standalone ``futures`` members fold into the round-up wherever they sit
       in the deck (Rule 3, including inside indices ``0..seat_floor-1``), so no market
       appears twice on the feed.
@@ -1789,12 +1782,12 @@ def insert_roundup_feed_items(
       both before and after ``seat_opening``), or at its earliest replaced
       post-opening member's seat when that is past the opening-eligible floor,
       inheriting the neighbour's score at that seat without modifying any card's score.
-    * Under Decision 123-A (#12374), at most ``max_sibling_family_in_top_20`` (2)
-      ``sibling_family`` cards seat in Discover's first ``page_window`` (20) seats, and
-      no two grouped (round-up) cards sit adjacent anywhere in the seated list.
     * Under Decide 32-C (#12091 / #12376), when ``returning_reader=True``, up to
       ``novelty_seat_cap`` (2) unseen, opening-eligible round-up cards take the
       novelty seats at the back of the opening ten; first-time readers get zero.
+    * Under Decision 123-A (#12374), at most ``MAX_SIBLING_FAMILY_IN_TOP_20`` (2)
+      sibling-family round-up cards seat in Discover's first ``page_window`` (20)
+      seats, and no two round-up cards sit in adjacent seats.
     """
     if not items or not roundup_items:
         return items
@@ -1809,15 +1802,16 @@ def insert_roundup_feed_items(
     if not valid_roundups:
         return items
 
+    raw_items = list(items)
+    initial_floor_idx = _opening_eligible_floor_index(raw_items, seat_floor, now=now)
+    preexisting_post_opening_roundups: list[Mapping[str, Any]] = []
+    preexisting_target_by_id: dict[Any, int] = {}
     result: list[dict[str, Any]] = []
-    preexisting_post_opening_roundups: list[dict[str, Any]] = []
-    preexisting_min_seat_by_id: dict[Any, int] = {}
     changed = False
-    for idx, it in enumerate(items):
-        if idx >= seat_floor and _is_roundup_bundle_card(it):
+    for idx, it in enumerate(raw_items):
+        if idx >= initial_floor_idx and _is_roundup_bundle_card(it):
             preexisting_post_opening_roundups.append(it)
-            if idx >= page_window and isinstance(it.get("data"), Mapping):
-                preexisting_min_seat_by_id[it["data"].get("id")] = idx
+            preexisting_target_by_id[it.get("data", {}).get("id")] = idx
             changed = True
         else:
             result.append(it)
@@ -1858,10 +1852,6 @@ def insert_roundup_feed_items(
     else:
         sorted_combined = list(valid_roundups)
 
-    # When both non-sibling round-ups and sibling-family round-ups are present,
-    # interleave the first two sibling-family round-ups among the leading non-sibling
-    # round-ups so both seat in the first 20 alongside the deadline boards without
-    # sitting back-to-back (Decision 123-A).
     non_sibs = [it for it in sorted_combined if not _is_sibling_family_bundle(it)]
     sibs = [it for it in sorted_combined if _is_sibling_family_bundle(it)]
     if non_sibs and sibs:
@@ -1906,9 +1896,6 @@ def insert_roundup_feed_items(
     if not accepted_roundups and not changed:
         return items
 
-    # Fold covered standalone futures cards across all accepted round-ups before seating
-    # so removing a covered standalone card never removes the separator between two
-    # already-placed round-up cards.
     earliest_seat_by_id: dict[Any, Optional[int]] = {}
     for r_item in accepted_roundups:
         r_id = r_item["data"].get("id")
@@ -1935,78 +1922,46 @@ def insert_roundup_feed_items(
         earliest_seat_by_id[r_id] = (
             earliest_post_opening_seat
             if earliest_post_opening_seat is not None
-            else preexisting_min_seat_by_id.get(r_id)
+            else preexisting_target_by_id.get(r_id)
         )
 
-    # When returning_reader=True, up to novelty_seat_cap unseen opening-eligible
-    # round-ups will be promoted out of post-opening into indices < seat_floor.
-    novelty_sibling_allowance = 0
-    if returning_reader and novelty_seat_cap > 0 and seat_floor > 0:
-        cap = min(int(novelty_seat_cap), int(seat_floor))
-        unseen_count = 0
-        for r_item in accepted_roundups:
-            if not _is_unseen_roundup_card(
-                r_item,
-                seen_card_keys=seen_card_keys,
-                seen_futures_ids=seen_futures_ids,
-                seen_event_ids=seen_event_ids,
-            ):
-                continue
-            if not _is_roundup_opening_eligible(r_item, result, now=now):
-                continue
-            unseen_count += 1
-            if _is_sibling_family_bundle(r_item):
-                novelty_sibling_allowance += 1
-            if unseen_count >= cap:
-                break
-
-    effective_sibling_top_20_cap = (
-        int(max_sibling_family_in_top_20) + novelty_sibling_allowance
-    )
-    sibling_in_top_20_count = len(seated_sibling_roundups)
-
+    inserted_count = 0
     for r_item in accepted_roundups:
         r_id = r_item["data"].get("id")
-        is_sibling = _is_sibling_family_bundle(r_item)
+        is_sibling_card = _is_sibling_family_bundle(r_item)
         floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
+        default_seat = floor_idx + inserted_count
         earliest_post_opening_seat = earliest_seat_by_id.get(r_id)
         target_seat = (
             earliest_post_opening_seat
             if earliest_post_opening_seat is not None
-            else floor_idx
+            else default_seat
         )
+        if is_sibling_card and len(seated_sibling_roundups) >= MAX_SIBLING_FAMILY_IN_TOP_20:
+            target_seat = max(target_seat, page_window)
 
-        min_idx = floor_idx
-        if is_sibling and sibling_in_top_20_count >= effective_sibling_top_20_cap:
-            if len(result) < page_window:
-                continue
-            min_idx = max(floor_idx, page_window)
-
-        target_idx = _find_non_adjacent_roundup_seat(
+        desired_idx = min(max(floor_idx, target_seat), len(result))
+        non_adj_idx = _find_non_adjacent_roundup_seat(
             result,
-            target_seat,
-            floor_idx=min_idx,
+            desired_idx,
+            floor_idx=max(
+                floor_idx,
+                page_window
+                if (is_sibling_card and len(seated_sibling_roundups) >= MAX_SIBLING_FAMILY_IN_TOP_20)
+                else floor_idx,
+            ),
             candidate_item=r_item,
             page_window=page_window,
         )
-        if target_idx is None:
+        if non_adj_idx is None:
             continue
+        target_idx = non_adj_idx
         if (
-            is_sibling
+            is_sibling_card
+            and len(seated_sibling_roundups) >= MAX_SIBLING_FAMILY_IN_TOP_20
             and target_idx < page_window
-            and sibling_in_top_20_count >= effective_sibling_top_20_cap
         ):
-            if len(result) < page_window:
-                continue
-            target_idx = _find_non_adjacent_roundup_seat(
-                result,
-                page_window,
-                floor_idx=max(floor_idx, page_window),
-                candidate_item=r_item,
-                page_window=page_window,
-            )
-            if target_idx is None:
-                continue
+            continue
 
         card = copy.deepcopy(dict(r_item))
         if result:
@@ -2022,9 +1977,9 @@ def insert_roundup_feed_items(
                     child["score"] = card["score"]
 
         result.insert(target_idx, card)
-        if is_sibling and target_idx < page_window:
-            sibling_in_top_20_count += 1
+        if is_sibling_card and target_idx < page_window:
             seated_sibling_roundups.append(card)
+        inserted_count += 1
         changed = True
 
     if not changed:
@@ -2184,13 +2139,19 @@ def validate_roundup_definition(
 
     rule_raw = data.get("rule")
     if not isinstance(rule_raw, Mapping):
-        raise ValueError(f"Round-up definition {slug!r}{loc} requires a 'rule' mapping")
+        raise ValueError(
+            f"Round-up definition {slug!r}{loc} requires a 'rule' mapping"
+        )
     producer_kind = str(rule_raw.get("producer") or "").strip()
     if not producer_kind:
-        raise ValueError(f"Round-up definition {slug!r}{loc} requires 'rule.producer'")
+        raise ValueError(
+            f"Round-up definition {slug!r}{loc} requires 'rule.producer'"
+        )
 
     relations_raw = (
-        data.get("relations") if "relations" in data else rule_raw.get("relations")
+        data.get("relations")
+        if "relations" in data
+        else rule_raw.get("relations")
     )
     if not isinstance(relations_raw, (list, tuple)) or not relations_raw:
         raise ValueError(
@@ -2210,11 +2171,10 @@ def validate_roundup_definition(
             )
         relations_list.append(rel_clean)
 
-    level_raw = data.get("level") if "level" in data else rule_raw.get("level")
-    if (
-        not isinstance(level_raw, str)
-        or level_raw.strip() not in CLOSED_PERMISSION_LEVELS
-    ):
+    level_raw = (
+        data.get("level") if "level" in data else rule_raw.get("level")
+    )
+    if not isinstance(level_raw, str) or level_raw.strip() not in CLOSED_PERMISSION_LEVELS:
         raise ValueError(
             f"Round-up definition {slug!r}{loc} has invalid 'level' {level_raw!r}; "
             f"allowed: {sorted(CLOSED_PERMISSION_LEVELS)}"
@@ -2225,8 +2185,12 @@ def validate_roundup_definition(
             f"Round-up definition {slug!r}{loc} sets level='equivalent' without 'twin' in relations (71-A)"
         )
 
-    has_primary_selector = any(bool(rule_raw.get(k)) for k in SELECTOR_RULE_KEYS)
-    has_occasion_id = any(bool(rule_raw.get(k)) for k in OCCASION_ID_RULE_KEYS)
+    has_primary_selector = any(
+        bool(rule_raw.get(k)) for k in SELECTOR_RULE_KEYS
+    )
+    has_occasion_id = any(
+        bool(rule_raw.get(k)) for k in OCCASION_ID_RULE_KEYS
+    )
     has_non_empty_hand_list = any(
         isinstance(rule_raw.get(k), (list, tuple)) and len(rule_raw.get(k)) > 0
         for k in HAND_LIST_ID_RULE_KEYS
@@ -2240,10 +2204,8 @@ def validate_roundup_definition(
             f"Round-up definition {slug!r}{loc} uses a hand list of market IDs "
             f"without a selector or 'id_list_reason' (73-A)"
         )
-    if (
-        not has_primary_selector
-        and not has_occasion_id
-        and not (has_non_empty_hand_list and id_list_reason)
+    if not has_primary_selector and not has_occasion_id and not (
+        has_non_empty_hand_list and id_list_reason
     ):
         raise ValueError(
             f"Round-up definition {slug!r}{loc} requires a selector in 'rule' (73-A)"
@@ -2263,7 +2225,9 @@ def validate_roundup_definition(
         data.get("parent_name") or rule_raw.get("parent_name") or ""
     ).strip()
     raw_children = (
-        data.get("children") if "children" in data else rule_raw.get("children")
+        data.get("children")
+        if "children" in data
+        else rule_raw.get("children")
     )
     children_list: list[dict[str, Any]] = []
     if isinstance(raw_children, (list, tuple)):
@@ -2306,7 +2270,10 @@ def load_roundup_definitions_from_dir(
     definitions: list[dict[str, Any]] = []
     for path in sorted(dir_path.glob("*.json")):
         defn = load_roundup_definition(path)
-        if producer_kind is not None and defn["rule"].get("producer") != producer_kind:
+        if (
+            producer_kind is not None
+            and defn["rule"].get("producer") != producer_kind
+        ):
             continue
         definitions.append(defn)
     return definitions
