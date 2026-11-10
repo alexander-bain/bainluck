@@ -62,6 +62,10 @@ struct Bain_LuckApp: App {
         // time since launch rather than time since whichever screen happened to
         // measure itself first (latency/121).
         AppLaunchClock.touch()
+        #if DEBUG && os(iOS) && canImport(ActivityKit)
+        // #10864 — the simulator's Live Activity demo; launch argument only.
+        GameActivityDemo10864.runIfAsked()
+        #endif
         // Decode the last-good deck while Firebase and the window bootstrap run,
         // instead of starting disk I/O only after Discover's appearance task.
         // Detached work enters APIClient's actor; it does not touch UI or relax
