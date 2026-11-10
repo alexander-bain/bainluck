@@ -68,8 +68,7 @@ nonisolated enum EventAtlasTennisCards11666 {
     static func tennisPlayerShortName(_ fullName: String) -> String {
         let cleaned = fullName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return "" }
-        let parts = cleaned.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-        return parts.last ?? cleaned
+        return TeamShortName.short(cleaned, sportKey: "tennis_atp")
     }
 
     static func normalizePlayerPlain(_ value: String) -> String {
