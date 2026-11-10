@@ -28,6 +28,10 @@ passes both.
 A degraded or failed read is never counted as an empty answer and never as a speed
 sample (Builder B's point on #12290). "asdfgh" passes only on a clean, empty answer.
 
+A fifth state is about the check, not the site. **Expired** means the check named a week
+or a market that is past its `valid_until` date. It is reported as needing a refresh and
+is never a pass or a fail.
+
 ## A check names the object, not a word in its title
 
 The first draft matched words in titles. Builder B's review (#12541) showed six searches
@@ -40,6 +44,9 @@ tonight" passed on a Premier League match. So every check now names what was ask
   outcomes;
 - games by sport and by a start window around the run's clock ("tonight" is from six
   hours ago to eighteen hours ahead).
+- an ambiguous name ("giants") by both teams, each by its own slug. One team returned
+  twice is not both;
+- "this week" by this week's page, with the date the check stops being true.
 
 A check that only matches words is still allowed, and is reported apart as `words`: a
 heuristic, never proof, never counted toward an acceptance number. Today no committed
@@ -48,8 +55,10 @@ check is words-only, and a test fails if one is added without saying so.
 Two tests keep this honest: no committed check passes on an unrelated answer, and every
 committed check passes on its own example row.
 
-Market ids and week numbers move, so those searches carry a `refresh` note. They get
-moved forward at the weekly look.
+Market ids and week numbers move, so those searches carry a `refresh` note and get
+moved forward at the weekly look. Where the end date is known, the check also carries
+`valid_until`, so a stale check reports itself as expired and can't be read as a failure
+of the site.
 
 ## What a pass does not say
 
@@ -84,9 +93,12 @@ side by side and never mixed.
 | 8:36 AM PT | words in titles | 22 | 10 | 5 | 1.8 s | 4.2 s |
 | 9:02 AM PT | words in titles | 27 | 10 | 0 | 1.6 s | 3.6 s |
 | 9:25 AM PT | the object by its fields | 22 | 10 | 5 | 1.9 s | 4.4 s |
+| 9:39 AM PT | the object by its fields, as committed | 26 | 9 | 2 | 1.4 s | 3.4 s |
 
 The first three rows are history, not a baseline: their checks could pass on the wrong
-answer. The baseline is the last row.
+answer. The baseline is the last two rows: 22 to 26 of 37, fifteen minutes apart with no
+deploy between them. Nine searches failed on both runs; the rest of the difference is
+degraded lookups and one answer that comes and goes.
 
 The same search can change state between runs with no deploy in between. "super bowl
 patriots" passed at 7:40 AM, then came back as a clean, empty answer at 8:36, 9:03 and

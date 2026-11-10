@@ -1,7 +1,7 @@
 {
  "schema": "reader-walk-queries/2",
  "issue": "https://github.com/alexander-bain/bainluck/issues/12528",
- "reading": "each check names the object the reader asked for; 'example' is a canned answer row that must pass",
+ "reading": "each check names the object the reader asked for; 'example' is a canned answer row that must pass; 'valid_until' is the last day a calendar-bound check means what it says",
  "queries": [
   {
    "class": "entity",
@@ -697,19 +697,20 @@
      "name": "NFL 2026 · Week 10"
     }
    },
-   "refresh": "weekly: the week number moves"
+   "refresh": "weekly: the week number moves",
+   "valid_until": "2026-11-16"
   },
   {
    "class": "set",
    "q": "nfl this week",
-   "expect": "an NFL week page, first among collections",
+   "expect": "this week's NFL page (Week 10), first among collections",
    "check": {
     "kinds": [
      "collections"
     ],
     "where": {
      "slug": [
-      "nfl-2026-week-*"
+      "nfl-2026-week-10"
      ]
     },
     "rank_in_list_max": 1
@@ -721,7 +722,8 @@
      "name": "NFL 2026 · Week 10"
     }
    },
-   "note": "The slug proves an NFL week page, not that it is this week's. The browser walk checks the dates."
+   "refresh": "weekly: the week number moves",
+   "valid_until": "2026-11-16"
   },
   {
    "class": "set",
@@ -874,7 +876,8 @@
      "name": "Snow in Boston in Dec 2026?"
     }
    },
-   "refresh": "monthly: each month has its own market"
+   "refresh": "monthly: each month has its own market",
+   "valid_until": "2026-12-31"
   },
   {
    "class": "other topics",
@@ -937,16 +940,28 @@
    "q": "giants",
    "expect": "both Giants teams, New York and San Francisco",
    "check": {
-    "kinds": [
-     "teams"
-    ],
-    "where": {
-     "slug": [
-      "new-york-giants",
-      "san-francisco-giants-mlb"
-     ]
-    },
-    "min_count": 2
+    "all_of": [
+     {
+      "kinds": [
+       "teams"
+      ],
+      "where": {
+       "slug": [
+        "new-york-giants"
+       ]
+      }
+     },
+     {
+      "kinds": [
+       "teams"
+      ],
+      "where": {
+       "slug": [
+        "san-francisco-giants-mlb"
+       ]
+      }
+     }
+    ]
    },
    "example": {
     "kind": "teams",
@@ -967,16 +982,28 @@
    "q": "rangers",
    "expect": "both Rangers teams, New York and Texas",
    "check": {
-    "kinds": [
-     "teams"
-    ],
-    "where": {
-     "slug": [
-      "new-york-rangers",
-      "texas-rangers-mlb"
-     ]
-    },
-    "min_count": 2
+    "all_of": [
+     {
+      "kinds": [
+       "teams"
+      ],
+      "where": {
+       "slug": [
+        "new-york-rangers"
+       ]
+      }
+     },
+     {
+      "kinds": [
+       "teams"
+      ],
+      "where": {
+       "slug": [
+        "texas-rangers-mlb"
+       ]
+      }
+     }
+    ]
    },
    "example": {
     "kind": "teams",

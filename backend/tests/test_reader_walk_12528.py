@@ -1,5 +1,7 @@
 """#12528: the reader walk sorts every answer into pass, fail, degraded or error.
 
+(A fifth state, expired, is about a check past its date, never about the site.)
+
 ``tools/reader_walk/walk.py`` is a stdlib-only script, loaded by path so these tests read
 exactly what gets run. Nothing here calls the live site: every answer is canned, and the
 clock is passed in.
@@ -9,6 +11,8 @@ What these pin:
     Builder B found on the first draft (#12541): a check names the object asked for;
   * every committed check passes on its own example row;
   * a pass is proved by fields or by words, and the two are counted apart;
+  * an ambiguous name needs both teams, not one team twice; "this week" names this week;
+    and a check past its date is expired, never a pass or a fail (Builder B, #12541);
   * a degraded answer is never a pass, and an error is never an empty answer (#12290);
   * only a clean first call is a cold speed sample, and only a clean repeat is a repeat
     sample; the retry is the answer that gets judged; a non-pass keeps its raw answer.
@@ -171,11 +175,51 @@ def test_a_slug_prefix_and_either_of_two_objects():
     assert _state("oscars", _answer(collections=[{"slug": "oscars-2027", "name": "Oscars 2027"}])) == "pass"
     assert _state("oscars", _answer(collections=[{"slug": "awards-2027", "name": "Oscars and more"}])) == "fail"
     assert _state("oscars", _answer(futures=[{"id": 6173044, "name": "Oscar Winner: Best Picture"}])) == "fail"
-    week = [{"slug": "nfl-2026-week-11", "name": "NFL Week 11"}, {"slug": "nfl-2026-week-10", "name": "NFL Week 10"}]
-    assert _state("nfl this week", _answer(collections=week)) == "pass"
-    assert _state("nfl week 10", _answer(collections=week)) == "pass"
-    assert _state("nfl week 10", _answer(collections=week[:1])) == "fail"
-    assert _state("nfl this week", _answer(collections=[{"slug": "oscars-2027", "name": "x"}] + week)) == "fail"
+    assert _state("awards season", _answer(collections=[{"slug": "roundup-golden-globes-best-picture", "name": "x"}])) == "pass"
+    assert _state("awards season", _answer(collections=[{"slug": "roundup-cfp-picture", "name": "Awards season"}])) == "fail"
+
+
+def test_this_week_means_this_week_and_an_ambiguous_name_needs_both_teams():
+    week_1 = {"slug": "nfl-2026-week-1", "name": "NFL Week 1"}
+    week_10 = {"slug": "nfl-2026-week-10", "name": "NFL Week 10"}
+    week_11 = {"slug": "nfl-2026-week-11", "name": "NFL Week 11"}
+    # Any NFL week page is not this week's page.
+    assert _state("nfl this week", _answer(collections=[week_1])) == "fail"
+    assert _state("nfl this week", _answer(collections=[week_10, week_11])) == "pass"
+    # This week's page has to come first among collections; "nfl week 10" only has to be there.
+    assert _state("nfl this week", _answer(collections=[week_11, week_10])) == "fail"
+    assert _state("nfl week 10", _answer(collections=[week_11, week_10])) == "pass"
+    assert _state("nfl week 10", _answer(collections=[week_11])) == "fail"
+    # One team returned twice is not both teams.
+    ny, sf = {"slug": "new-york-giants", "name": "New York Giants"}, {"slug": "san-francisco-giants-mlb", "name": "San Francisco Giants"}
+    assert _state("giants", _answer(teams=[ny, dict(ny)])) == "fail"
+    assert _state("giants", _answer(teams=[sf, dict(sf)])) == "fail"
+    assert _state("giants", _answer(teams=[ny, sf])) == "pass"
+    nyr, tex = {"slug": "new-york-rangers", "name": "New York Rangers"}, {"slug": "texas-rangers-mlb", "name": "Texas Rangers"}
+    assert _state("rangers", _answer(teams=[nyr, dict(nyr)])) == "fail"
+    assert _state("rangers", _answer(teams=[tex, {"slug": "rangers", "name": "Rangers"}])) == "fail"
+    assert _state("rangers", _answer(teams=[{"slug": "rangers", "name": "Rangers"}, tex, nyr])) == "pass"
+
+
+def test_a_check_past_its_date_is_expired_and_never_a_pass_or_a_fail():
+    hit = _answer(collections=[{"slug": "nfl-2029-week-18", "name": "Week 18"}])
+    check = {"kinds": ["collections"], "where": {"slug": ["nfl-2029-week-18"]}}
+    stale = {"class": "set", "q": "nfl this week", "expect": "this week", "check": check, "valid_until": "2029-12-31"}
+    fresh = {**stale, "q": "nfl next year", "valid_until": "2030-12-31"}
+    last_day = {**stale, "q": "nfl today", "valid_until": "2030-01-15"}
+    fetch, _calls = _scripted([(200, 500, hit)] * 6)
+    rows = walk.walk([stale, fresh, last_day], "https://example.invalid", fetch_fn=fetch, sleep=lambda _s: None, clock=lambda: NOW)
+    # The stale check would have passed on this answer; it is reported as expired instead.
+    assert [r["state"] for r in rows] == ["expired", "pass", "pass"]
+    assert "raw" not in rows[0]
+    assert walk.is_expired(last_day, NOW) is False
+    assert walk.is_expired(last_day, NOW + timedelta(days=1)) is True
+    summary = walk.summarize(rows)
+    assert summary["states"] == {"pass": 2, "fail": 0, "degraded": 0, "error": 0, "expired": 1}
+    assert summary["pass_by_proof"] == {"fields": 2, "words": 0}
+    # The committed calendar-bound checks carry a date; a malformed one is refused.
+    assert BY_TEXT["nfl this week"]["valid_until"] == BY_TEXT["nfl week 10"]["valid_until"]
+    assert _raises(walk.valid_until, {"valid_until": "next week"}) is not None
 
 
 def test_a_team_plus_market_search_needs_that_teams_outcome_on_the_card():
@@ -187,7 +231,6 @@ def test_a_team_plus_market_search_needs_that_teams_outcome_on_the_card():
     assert _state("superbowl patriots", _answer(futures=[lookalike])) == "fail"
     assert _state("super bowl", _answer(futures=[without])) == "pass"
     assert _state("super bowl", _answer(futures=[lookalike])) == "fail"
-    assert _state("giants", _answer(teams=[{"slug": "new-york-giants", "name": "New York Giants"}])) == "fail"
 
 
 def test_tonight_is_a_window_around_the_clock_that_was_passed_in():
@@ -221,6 +264,8 @@ def test_how_a_pass_is_proved():
     both = [{"kinds": ["teams"], "where": {"slug": ["a"]}}, {"kinds": ["futures"], "name_has_all": ["a"]}]
     assert walk.proof_of({"any_of": both}) == "words"
     assert walk.proof_of({"any_of": [both[0], both[0]]}) == "fields"
+    assert walk.proof_of({"all_of": both}) == "words"
+    assert walk.proof_of({"all_of": [both[0], both[0]]}) == "fields"
 
 
 def test_a_check_an_unrelated_answer_would_pass_is_refused():
@@ -243,11 +288,15 @@ def test_a_check_an_unrelated_answer_would_pass_is_refused():
         {"kinds": ["teams"], "where": {"slug": [True]}},
         {"kinds": ["teams"], "where": {"slug": ["a"]}, "rank_in_list_max": 0},
         {"kinds": ["teams"], "where": {"slug": ["a"]}, "top": 3},
+        {"kinds": ["teams"], "where": {"slug": ["a"]}, "min_count": 2},
         {"kinds": ["teams"], "starts_within_hours": 18},
         {"kinds": ["futures"], "name_has_all": [" "]},
         {"any_of": [ok]},
         {"any_of": [ok, {"kinds": ["collections"]}]},
         {"any_of": [ok, ok], "kinds": ["teams"]},
+        {"all_of": [ok]},
+        {"all_of": [ok, {"kinds": ["collections"]}]},
+        {"all_of": [ok, ok], "min_count": 2},
         "teams",
     ]
     for spec in refused:
@@ -267,6 +316,7 @@ def test_a_bad_query_file_is_refused_with_its_reason(tmp_path):
     assert "expects" in _raises(walk.load_queries, write([{**good, "expect": ""}]))
     assert "unrelated answer would pass" in _raises(walk.load_queries, write([{**good, "check": {"kinds": ["teams"]}}]))
     assert "no queries" in _raises(walk.load_queries, write([]))
+    assert "valid_until" in _raises(walk.load_queries, write([{**good, "valid_until": "Nov 16"}]))
 
 
 def _scripted(answers):
@@ -336,14 +386,14 @@ def test_only_clean_calls_are_speed_samples_and_the_retry_is_what_gets_judged():
     assert rows[4]["raw"] == {"_error": "timeout"}
 
     summary = walk.summarize(rows)
-    assert summary["states"] == {"pass": 3, "fail": 0, "degraded": 1, "error": 1}
+    assert summary["states"] == {"pass": 3, "fail": 0, "degraded": 1, "error": 1, "expired": 0}
     assert summary["checks_by_proof"] == {"fields": 4, "words": 1}
     assert summary["pass_by_proof"] == {"fields": 2, "words": 1}
     assert summary["first_call_degraded"] == 2
     assert summary["first_call_not_200"] == 1
     assert summary["cold"] == {"n": 2, "p50_ms": 900, "p90_ms": 900, "p95_ms": 900, "max_ms": 900}
     assert summary["repeat"]["n"] == 4
-    assert summary["by_class"]["honesty"] == {"pass": 0, "fail": 0, "degraded": 0, "error": 1}
+    assert summary["by_class"]["honesty"] == {"pass": 0, "fail": 0, "degraded": 0, "error": 1, "expired": 0}
 
 
 def test_percentiles_use_nearest_rank_and_say_none_for_nothing():

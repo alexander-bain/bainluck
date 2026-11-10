@@ -17,6 +17,9 @@ Every answer lands in exactly one of four states:
 
 A degraded or failed read is never an empty answer and never a speed sample (#12290).
 
+A fifth state is about the check, not the site: ``expired`` means the check named a week
+or a market that has passed its ``valid_until`` date, so it says nothing until refreshed.
+
 A check proves its pass one of two ways, and a run reports them apart:
 
   fields    the answer carries the requested object itself: a team's slug, a collection's
@@ -60,7 +63,7 @@ RETRY_PAUSE_S = 2.0
 RAW_LIMIT_CHARS = 40_000
 #: A game that began up to this long ago still counts as "tonight".
 STARTED_HOURS_AGO = 6
-STATES = ("pass", "fail", "degraded", "error")
+STATES = ("pass", "fail", "degraded", "error", "expired")
 PROOFS = ("fields", "words")
 CLASSES = ("entity", "alias", "entity+market", "set", "other topics", "honesty")
 #: A ``where`` on one of these names the object itself; on any other field it only narrows.
@@ -68,6 +71,7 @@ IDENTITY_FIELDS = ("id", "slug", "key")
 SPEC_KEYS = {
     "empty",
     "any_of",
+    "all_of",
     "kinds",
     "where",
     "name_has_all",
@@ -76,7 +80,6 @@ SPEC_KEYS = {
     "outcome_has_any",
     "starts_within_hours",
     "rank_in_list_max",
-    "min_count",
 }
 _WORD_KEYS = ("name_has_all", "name_has_any", "name_has_none", "outcome_has_any")
 _NAME_KEYS = ("name", "title", "text", "display_name", "label", "full_name")
@@ -139,16 +142,17 @@ def validate_spec(spec: Any) -> list[str]:
         if set(spec) != {"empty"}:
             problems.append("an 'empty' check takes no other key")
         return problems
-    if "any_of" in spec:
-        options = spec.get("any_of")
-        if set(spec) != {"any_of"}:
-            problems.append("an 'any_of' check takes no other key")
-        if not isinstance(options, list) or len(options) < 2:
-            problems.append("'any_of' needs at least two checks")
-        else:
-            for option in options:
-                problems.extend(validate_spec(option))
-        return problems
+    for joiner in ("any_of", "all_of"):
+        if joiner in spec:
+            options = spec.get(joiner)
+            if set(spec) != {joiner}:
+                problems.append(f"an {joiner!r} check takes no other key")
+            if not isinstance(options, list) or len(options) < 2:
+                problems.append(f"{joiner!r} needs at least two checks")
+            else:
+                for option in options:
+                    problems.extend(validate_spec(option))
+            return problems
     kinds = spec.get("kinds")
     if kinds is not None and (not isinstance(kinds, list) or not kinds or any(k not in LISTS for k in kinds)):
         problems.append("'kinds' must be a non-empty list of known lists")
@@ -168,7 +172,7 @@ def validate_spec(spec: Any) -> list[str]:
             not isinstance(words, list) or not words or any(not isinstance(w, str) or not w.strip() for w in words)
         ):
             problems.append(f"{key!r} must be a non-empty list of words")
-    for key in ("rank_in_list_max", "min_count", "starts_within_hours"):
+    for key in ("rank_in_list_max", "starts_within_hours"):
         if spec.get(key) is not None and not _is_count(spec[key]):
             problems.append(f"{key!r} must be a whole number of at least 1")
     if spec.get("starts_within_hours") is not None and kinds != ["results"]:
@@ -184,8 +188,9 @@ def proof_of(spec: Mapping[str, Any]) -> str:
     """How a pass on this check is proved: by ``fields`` or by ``words`` only."""
     if spec.get("empty") is True:
         return "fields"
-    if "any_of" in spec:
-        return "fields" if all(proof_of(option) == "fields" for option in spec["any_of"]) else "words"
+    for joiner in ("any_of", "all_of"):
+        if joiner in spec:
+            return "fields" if all(proof_of(option) == "fields" for option in spec[joiner]) else "words"
     where = spec.get("where") or {}
     if any(field in IDENTITY_FIELDS for field in where):
         return "fields"
@@ -234,6 +239,8 @@ def check(spec: Mapping[str, Any], items: Sequence[Item], now: datetime) -> bool
         return len(items) == 0
     if "any_of" in spec:
         return any(check(option, items, now) for option in spec["any_of"])
+    if "all_of" in spec:
+        return all(check(option, items, now) for option in spec["all_of"])
     kinds = spec.get("kinds")
     where = spec.get("where") or {}
     has_all = [w.lower() for w in spec.get("name_has_all") or ()]
@@ -242,7 +249,6 @@ def check(spec: Mapping[str, Any], items: Sequence[Item], now: datetime) -> bool
     outcome_any = [w.lower() for w in spec.get("outcome_has_any") or ()]
     rank_max = spec.get("rank_in_list_max")
     hours = spec.get("starts_within_hours")
-    hits = 0
     for item in items:
         text = item.name.lower()
         if kinds and item.kind not in kinds:
@@ -261,8 +267,8 @@ def check(spec: Mapping[str, Any], items: Sequence[Item], now: datetime) -> bool
             continue
         if hours is not None and not _starts_within(item.raw, hours, now):
             continue
-        hits += 1
-    return hits >= int(spec.get("min_count") or 1)
+        return True
+    return False
 
 
 def classify(status: int, payload: Any, spec: Mapping[str, Any], now: datetime) -> str:
@@ -272,6 +278,20 @@ def classify(status: int, payload: Any, spec: Mapping[str, Any], now: datetime) 
     if is_degraded(payload):
         return "degraded"
     return "pass" if check(spec, first_screen(payload), now) else "fail"
+
+
+def valid_until(query: Mapping[str, Any]) -> datetime | None:
+    """The end of the last day a calendar-bound check still means what it says, in UTC."""
+    stamp = query.get("valid_until")
+    if stamp is None:
+        return None
+    day = datetime.strptime(str(stamp), "%Y-%m-%d")
+    return day.replace(tzinfo=timezone.utc) + timedelta(days=1)
+
+
+def is_expired(query: Mapping[str, Any], now: datetime) -> bool:
+    end = valid_until(query)
+    return end is not None and now >= end
 
 
 def load_queries(path: Path = DEFAULT_QUERIES) -> list[dict[str, Any]]:
@@ -294,6 +314,10 @@ def load_queries(path: Path = DEFAULT_QUERIES) -> list[dict[str, Any]]:
         problems = validate_spec(row.get("check"))
         if problems:
             raise ValueError(f"{path}: {text!r}: {'; '.join(problems)}")
+        try:
+            valid_until(row)
+        except ValueError:
+            raise ValueError(f"{path}: {text!r}: 'valid_until' must be a date like 2026-11-16") from None
     return queries
 
 
@@ -380,13 +404,16 @@ def walk(
             sleep(pause_s)
         repeat_status, ms_repeat, repeat_payload = fetch_fn(api, path)
         sleep(pause_s)
-        state = classify(judged_status, judged_payload, query["check"], clock())
+        now = clock()
+        # A check past its date says nothing about the site, so it is never a pass or a fail.
+        state = "expired" if is_expired(query, now) else classify(judged_status, judged_payload, query["check"], now)
         row: dict[str, Any] = {
             "class": query["class"],
             "q": query["q"],
             "expect": query["expect"],
             "state": state,
             "proof": proof_of(query["check"]),
+            "valid_until": query.get("valid_until"),
             "first_call_status": status,
             "first_call_degraded": bool(status == 200 and is_degraded(payload)),
             "degraded_lists": payload.get("degraded") if isinstance(payload, Mapping) else None,
@@ -397,7 +424,7 @@ def walk(
             "ms_repeat": ms_repeat if (repeat_status == 200 and not is_degraded(repeat_payload)) else None,
             "holds": [[i.kind, i.name] for i in first_screen(judged_payload)[:4]] if judged_status == 200 else [],
         }
-        if state != "pass":
+        if state not in ("pass", "expired"):
             row["raw"] = _raw(judged_payload)  # keep the answer itself for anything that isn't a pass
         rows.append(row)
     return rows
@@ -408,6 +435,7 @@ def _print(summary: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> Non
     print(
         f"{states['pass']} pass, {states['fail']} fail, {states['degraded']} degraded, "
         f"{states['error']} error of {summary['queries']} searches"
+        + (f" ({states['expired']} more had a check past its date and were not judged)" if states["expired"] else "")
     )
     print(
         f"passes proved by fields: {proved['fields']} of {asked['fields']} | "
@@ -421,7 +449,9 @@ def _print(summary: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> Non
     for name, counts in summary["by_class"].items():
         print(f"  {name}: " + ", ".join(f"{counts[s]} {s}" for s in STATES if counts[s]))
     for row in rows:
-        if row["state"] != "pass":
+        if row["state"] == "expired":
+            print(f"  EXPIRED  | {row['class']} | {row['q']} | refresh this check: it was valid until {row['valid_until']}")
+        elif row["state"] != "pass":
             got = f"{row['holds'][0][0]}: {row['holds'][0][1]}" if row["holds"] else "(nothing)"
             print(f"  {row['state'].upper():8} | {row['class']} | {row['q']} | wanted {row['expect']} | first row {got}")
 
