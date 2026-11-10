@@ -71,6 +71,7 @@ test('every 119-A category is on the list, and alarms, tests and docs are not', 
     'frontend/app/discover/page.tsx', 'frontend/lib/format.ts', 'ios/Bain Luck/Views/X.swift',
     'ios/Bain Luck/BainLuckWatch/Y.swift', 'backend/app/routes/events.py', 'backend/app/routes/admin_teams.py',
     'backend/app/utils/live_blend.py', 'backend/app/utils/feed_reasons.py', 'backend/app/utils/aggregation.py',
+    'backend/app/utils/kalshi_threshold_label.py',
     'backend/app/services/event_registry.py', 'backend/app/tasks/prediction_market_matching.py',
     'backend/data/containers/nfl.json', 'backend/data/evals/sibling.json', 'backend/tests/evals/test_x.py',
     'tools/release/tier_b.cjs', '.github/workflows/ci.yml', 'docs/release-loop/tier-b-review-brief.md',
@@ -80,7 +81,7 @@ test('every 119-A category is on the list, and alarms, tests and docs are not', 
   for (const name of [
     'backend/tests/test_team_merge.py', 'frontend/__tests__/Card.test.tsx', 'docs/notes.md',
     'backend/app/tasks/watchdog.py', 'backend/app/tasks/horizon_sentinel.py',
-    'backend/app/tasks/grid_sentinel.py', 'CLAUDE.md',
+    'backend/app/tasks/grid_sentinel.py', 'backend/app/utils/issue_labels.py', 'CLAUDE.md',
   ]) assert.equal(fableHits([{filename: name}]).length, 0, name);
 });
 

@@ -20,7 +20,8 @@ const FABLE_PATHS = [
   // API responses a page reads, and every admin handler (some are destructive).
   {why: 'reader-visible or destructive (API route)', re: /^backend\/app\/routes\//},
   // Blending, matching, ranking and formatting code.
-  {why: 'reader-visible (blend, match, rank or format code)', re: /^backend\/app\/(utils|services|tasks)\/[^/]*(blend|aggregat|probab|price|feed|rank|display|format|caption|label|match|registry|copy|headline|hero|ladder|settle|winner)[^/]*\.py$/},
+  // (`issue_labels.py` is the alarm-filing taxonomy, not a reader label.)
+  {why: 'reader-visible (blend, match, rank or format code)', re: /^backend\/app\/(utils|services|tasks)\/(?!issue_labels\.py$)[^/]*(blend|aggregat|probab|price|feed|rank|display|format|caption|label|match|registry|copy|headline|hero|ladder|settle|winner)[^/]*\.py$/},
   // Container and licence data.
   {why: 'reader-visible (container or licence data)', re: /^backend\/data\/containers\/|licen[cs]e/i},
   // Evals, gates, exams, grades and the release machinery itself.
