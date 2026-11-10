@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Public display-only snapshot. Shared access requires the entitled App Group container.
 nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
@@ -471,29 +472,51 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         }
     }
 
-    static func compactAge(observedAt: Date, now: Date) -> String? {
+    enum AgeUnit: Sendable { case minute, hour, day }
+
+    /// #12316: the one age rule for the face and the Smart Stack card: whole units counted
+    /// from the reading's own observation time, rounded down (minutes below an hour, hours
+    /// below a day, then days). The app's own freshness labels round down too
+    /// (`WatchObservationAge`). nil for a missing, future or non-finite observation.
+    static func wholeAge(observedAt: Date, now: Date) -> (count: Int, unit: AgeUnit)? {
         let raw = now.timeIntervalSince(observedAt)
         guard raw.isFinite, raw >= 0 else { return nil }
-        let seconds = Int(raw)
-        if seconds < 60 { return "<1m ago" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m ago" }
+        let minutes = Int(raw) / 60
+        if minutes < 60 { return (minutes, .minute) }
         let hours = minutes / 60
-        if hours < 24 { return "\(hours)h ago" }
-        return "\(hours / 24)d ago"
+        if hours < 24 { return (hours, .hour) }
+        return (hours / 24, .day)
+    }
+
+    /// The face's words for `wholeAge`.
+    static func compactAge(observedAt: Date, now: Date) -> String? {
+        guard let age = wholeAge(observedAt: observedAt, now: now) else { return nil }
+        switch age.unit {
+        case .minute: return age.count == 0 ? "<1m ago" : "\(age.count)m ago"
+        case .hour: return "\(age.count)h ago"
+        case .day: return "\(age.count)d ago"
+        }
     }
 
     static func spokenAge(observedAt: Date, now: Date) -> String? {
-        let raw = now.timeIntervalSince(observedAt)
-        guard raw.isFinite, raw >= 0 else { return nil }
-        let seconds = Int(raw)
-        if seconds < 60 { return "less than 1 minute ago" }
-        let minutes = seconds / 60
-        if minutes < 60 { return minutes == 1 ? "1 minute ago" : "\(minutes) minutes ago" }
-        let hours = minutes / 60
-        if hours < 24 { return hours == 1 ? "1 hour ago" : "\(hours) hours ago" }
-        let days = hours / 24
-        return days == 1 ? "1 day ago" : "\(days) days ago"
+        guard let age = wholeAge(observedAt: observedAt, now: now) else { return nil }
+        let count = age.count
+        switch age.unit {
+        case .minute: return count == 0 ? "less than 1 minute ago" : count == 1 ? "1 minute ago" : "\(count) minutes ago"
+        case .hour: return count == 1 ? "1 hour ago" : "\(count) hours ago"
+        case .day: return count == 1 ? "1 day ago" : "\(count) days ago"
+        }
+    }
+
+    /// The Smart Stack card's words for `wholeAge`. The card has one entry and no timeline, so
+    /// watchOS counts its age on by itself; a date offset in whole days, hours or minutes rounds
+    /// down exactly like `wholeAge` ("1 minute" until two minutes have passed). The relative
+    /// style it replaces rounded to the nearest minute, so the card said "2 minutes ago" beside
+    /// the face's "1m ago". The card adds " ago".
+    @available(iOS 18.0, macOS 15.0, watchOS 11.0, *)
+    static func liveAgeFormat(observedAt: Date) -> SystemFormatStyle.DateOffset {
+        SystemFormatStyle.DateOffset(to: observedAt, allowedFields: [.day, .hour, .minute],
+                                     maxFieldCount: 1, sign: .never)
     }
 
     /// WidgetKit renders each entry at its fixed date. Plan the actual text transitions

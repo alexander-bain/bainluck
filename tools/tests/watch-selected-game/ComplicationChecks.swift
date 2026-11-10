@@ -357,6 +357,7 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     print("PASS: circular canonical identity, original clocks, rounding/draw, final/score, old/malformed/wrong compact payload, offline and one-time enrichment")
     try runRectangularComplicationChecks()
     try runSmartStackRelevanceChecks()
+    try runSharedAgeRuleChecks()
 }
 
 /// Deterministic #4933 checks for all six large-rectangular (`accessoryRectangular`) states and line/character budgets.

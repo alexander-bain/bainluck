@@ -88,7 +88,8 @@ SMART_STACK_CONTENT = (
     "var liveAge: Bool = false",
     "if liveAge, let leadIn = reading.metadataLeadIn(at: now) {\n"
     "                liveMetadata(reading, leadIn: leadIn)",
-    'return Text("\\(leadIn)\\(.currentDate, format: age)")',
+    "let age = WatchRectangularReading.liveAgeFormat(observedAt: reading.observedAt)",
+    'return Text("\\(leadIn)\\(.currentDate, format: age) ago")',
     ".minimumScaleFactor(0.85)\n            .truncationMode(.middle)",
     "observedClock: WatchRectangularReading.spokenClock(observedAt: reading.observedAt))",
 )
@@ -118,6 +119,31 @@ def require_smart_stack(content, widget, publisher):
         assert pin in content, pin
     for pin in SMART_STACK_PUBLISHER:
         assert pin in publisher, pin
+
+
+def require_one_age_rule(snapshot, content):
+    """#12316: the face and the Smart Stack card print the same whole number of minutes for the
+    same reading. One rule, `wholeAge`: whole units from the reading's own time, rounded down.
+    The face prints it per entry; the card hands watchOS a date offset that rounds the same way
+    (the relative style it replaced rounded to the nearest minute)."""
+    for pin in (
+        "    static func wholeAge(observedAt: Date, now: Date) -> (count: Int, unit: AgeUnit)? {",
+        "        let minutes = Int(raw) / 60\n        if minutes < 60 { return (minutes, .minute) }",
+        "        SystemFormatStyle.DateOffset(to: observedAt, allowedFields: [.day, .hour, .minute],\n"
+        "                                     maxFieldCount: 1, sign: .never)",
+    ):
+        assert pin in snapshot, pin
+    assert snapshot.count("guard let age = wholeAge(observedAt: observedAt, now: now) else { return nil }") == 2, (
+        "the face's words and the spoken age both come from the one rule"
+    )
+    for pin in (
+        "let age = WatchRectangularReading.liveAgeFormat(observedAt: reading.observedAt)",
+        'return Text("\\(leadIn)\\(.currentDate, format: age) ago")',
+    ):
+        assert pin in content, pin
+    for source in (snapshot, content):
+        for forbidden in ("DateReference", "style: .relative", "RelativeDateTimeFormatter", ".reference(to:"):
+            assert forbidden not in source, forbidden
 
 
 def require_shared_reading(refresh, publisher, store, view, widget, project):
@@ -339,6 +365,30 @@ class SelectedGameScopeTests(unittest.TestCase):
                 altered[index] = altered[index].replace(old, new, 1)
                 with self.assertRaises(AssertionError):
                     require_smart_stack(*altered)
+
+    def test_face_and_card_print_the_same_whole_minutes(self):
+        sources = [
+            (ROOT / (APP + name)).read_text()
+            for name in ("WatchComplicationSnapshot.swift", "WatchSavedComplicationContent.swift")
+        ]
+        require_one_age_rule(*sources)
+        for index, old, new in (
+            (1, "let age = WatchRectangularReading.liveAgeFormat(observedAt: reading.observedAt)",
+             "let age = SystemFormatStyle.DateReference(to: reading.observedAt, allowedFields: [.day, .hour, .minute], maxFieldCount: 1)"),
+            (1, "liveAgeFormat(observedAt: reading.observedAt)", "liveAgeFormat(observedAt: now)"),
+            (1, "(.currentDate, format: age) ago\")", "(.currentDate, format: age)\")"),
+            (0, "allowedFields: [.day, .hour, .minute],\n", "allowedFields: [.day, .hour, .minute, .second],\n"),
+            (0, "maxFieldCount: 1, sign: .never)", "maxFieldCount: 2, sign: .never)"),
+            (0, "        let minutes = Int(raw) / 60\n", "        let minutes = Int((raw + 30) / 60)\n"),
+            (0, "        guard let age = wholeAge(observedAt: observedAt, now: now) else { return nil }\n        switch",
+             "        guard let age = wholeAge(observedAt: observedAt, now: now.addingTimeInterval(30)) else { return nil }\n        switch"),
+        ):
+            with self.subTest(index=index, old=old):
+                altered = sources.copy()
+                self.assertIn(old, altered[index])
+                altered[index] = altered[index].replace(old, new, 1)
+                with self.assertRaises(AssertionError):
+                    require_one_age_rule(*altered)
 
     def test_face_and_card_share_one_reading_and_each_file_keeps_one_writer(self):
         sources = [

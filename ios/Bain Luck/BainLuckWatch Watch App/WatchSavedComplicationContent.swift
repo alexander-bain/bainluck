@@ -82,12 +82,12 @@ struct WatchSavedComplicationContent: View {
         }
     }
 
-    /// #12316 Smart Stack card: the face's words, then an age that keeps counting. A long
-    /// line loses its middle, so both "Saved" and the age stay visible.
+    /// #12316 Smart Stack card: the face's words, then an age that keeps counting with the
+    /// face's rounding (the same whole number of minutes at every moment). A long line loses
+    /// its middle, so both "Saved" and the age stay visible.
     private func liveMetadata(_ reading: WatchRectangularReading, leadIn: String) -> some View {
-        let age = SystemFormatStyle.DateReference(
-            to: reading.observedAt, allowedFields: [.day, .hour, .minute], maxFieldCount: 1)
-        return Text("\(leadIn)\(.currentDate, format: age)")
+        let age = WatchRectangularReading.liveAgeFormat(observedAt: reading.observedAt)
+        return Text("\(leadIn)\(.currentDate, format: age) ago")
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(.secondary)
             .lineLimit(1)

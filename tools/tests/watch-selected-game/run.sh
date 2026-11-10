@@ -20,6 +20,7 @@ swiftc -parse-as-library -swift-version 5 -D DEBUG \
   "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchUIFixture.swift" \
   "$ROOT/tools/tests/watch-selected-game/LaunchRouteChecks.swift" \
   "$ROOT/tools/tests/watch-selected-game/ComplicationChecks.swift" \
+  "$ROOT/tools/tests/watch-selected-game/AgeRuleChecks.swift" \
   "$ROOT/tools/tests/watch-selected-game/ContinuationChecks.swift" \
   "$ROOT/tools/tests/watch-selected-game/FlowChecks.swift" \
   "$ROOT/tools/tests/watch-selected-game/IdentityChecks.swift" \
