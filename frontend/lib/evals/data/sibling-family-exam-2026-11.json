@@ -43,7 +43,8 @@
         "worse_pct": null,
         "better_wilson95": null,
         "worse_wilson95": null,
-        "result": "HELD"
+        "result": "HELD",
+        "status_note": "not measured: 0 of 20 test cards graded"
       },
       "result": "HELD"
     },
@@ -169,28 +170,37 @@
       },
       "dev": {
         "expected": 12,
-        "graded": 0,
-        "ungraded": 12,
+        "graded": 6,
+        "ungraded": 6,
         "better": {
-          "k": 0,
-          "n": 0,
-          "ungraded": 12,
-          "pct": null,
-          "wilson95": null
+          "k": 6,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
         },
         "same": {
           "k": 0,
-          "n": 0,
-          "ungraded": 12,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "worse": {
           "k": 0,
-          "n": 0,
-          "ungraded": 12,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "relation_truth": {
           "k": 12,
@@ -217,33 +227,52 @@
           "wilson95": [
             75.8,
             100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
           ]
         }
       },
       "all": {
         "expected": 32,
-        "graded": 0,
-        "ungraded": 32,
+        "graded": 6,
+        "ungraded": 26,
         "better": {
-          "k": 0,
-          "n": 0,
-          "ungraded": 32,
-          "pct": null,
-          "wilson95": null
+          "k": 6,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
         },
         "same": {
           "k": 0,
-          "n": 0,
-          "ungraded": 32,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "worse": {
           "k": 0,
-          "n": 0,
-          "ungraded": 32,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "relation_truth": {
           "k": 32,
@@ -270,6 +299,16 @@
           "wilson95": [
             89.3,
             100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
           ]
         }
       }
@@ -330,28 +369,37 @@
       },
       "dev": {
         "expected": 12,
-        "graded": 0,
-        "ungraded": 12,
+        "graded": 6,
+        "ungraded": 6,
         "better": {
-          "k": 0,
-          "n": 0,
-          "ungraded": 12,
-          "pct": null,
-          "wilson95": null
+          "k": 6,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
         },
         "same": {
           "k": 0,
-          "n": 0,
-          "ungraded": 12,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "worse": {
           "k": 0,
-          "n": 0,
-          "ungraded": 12,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "relation_truth": {
           "k": 12,
@@ -378,33 +426,52 @@
           "wilson95": [
             75.8,
             100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
           ]
         }
       },
       "all": {
         "expected": 32,
-        "graded": 0,
-        "ungraded": 32,
+        "graded": 6,
+        "ungraded": 26,
         "better": {
-          "k": 0,
-          "n": 0,
-          "ungraded": 32,
-          "pct": null,
-          "wilson95": null
+          "k": 6,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
         },
         "same": {
           "k": 0,
-          "n": 0,
-          "ungraded": 32,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "worse": {
           "k": 0,
-          "n": 0,
-          "ungraded": 32,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "relation_truth": {
           "k": 32,
@@ -431,6 +498,16 @@
           "wilson95": [
             89.3,
             100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
           ]
         }
       }
@@ -491,28 +568,37 @@
       },
       "dev": {
         "expected": 12,
-        "graded": 0,
-        "ungraded": 12,
+        "graded": 6,
+        "ungraded": 6,
         "better": {
-          "k": 0,
-          "n": 0,
-          "ungraded": 12,
-          "pct": null,
-          "wilson95": null
+          "k": 6,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
         },
         "same": {
           "k": 0,
-          "n": 0,
-          "ungraded": 12,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "worse": {
           "k": 0,
-          "n": 0,
-          "ungraded": 12,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "relation_truth": {
           "k": 12,
@@ -539,33 +625,52 @@
           "wilson95": [
             75.8,
             100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
           ]
         }
       },
       "all": {
         "expected": 32,
-        "graded": 0,
-        "ungraded": 32,
+        "graded": 6,
+        "ungraded": 26,
         "better": {
-          "k": 0,
-          "n": 0,
-          "ungraded": 32,
-          "pct": null,
-          "wilson95": null
+          "k": 6,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
         },
         "same": {
           "k": 0,
-          "n": 0,
-          "ungraded": 32,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "worse": {
           "k": 0,
-          "n": 0,
-          "ungraded": 32,
-          "pct": null,
-          "wilson95": null
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
         },
         "relation_truth": {
           "k": 32,
@@ -592,6 +697,16 @@
           "wilson95": [
             89.3,
             100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
           ]
         }
       }

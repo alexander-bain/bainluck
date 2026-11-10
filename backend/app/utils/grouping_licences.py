@@ -22,6 +22,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -352,18 +353,69 @@ def record_runtime_kind_suspension(
     return updated
 
 
+_CAPTION_GRAMMAR_VIOLATION_RE = re.compile(
+    r"(?:\bwill\s+which\b|\b(?:subjects|contenders)\b|:\s*(?:candidates|teams|players|movies|cities|subjects|contenders)\b|\bthe\s+(?:candidates|teams|players|movies|cities|subjects|contenders)\s+(?:senate|governor|house|presidential)\b)",
+    re.IGNORECASE,
+)
+
+
+def _starts_with_ungrammatical_lowercase(text: str) -> bool:
+    """Return True if ``text`` begins with an all-lowercase word, allowing mixed-case brands (e.g. ``iPhone``, ``eBay``, ``xAI``)."""
+    clean = str(text or "").strip()
+    if not clean:
+        return False
+    first_word = clean.split()[0]
+    return first_word[0].islower() and not any(ch.isupper() for ch in first_word[1:])
+
+
+def _check_title_caption_violation(
+    title: str,
+    *,
+    row_labels: Sequence[str] = (),
+    enforce_single_member_check: bool = True,
+) -> str | None:
+    clean = str(title or "").strip()
+    if not clean:
+        return None
+    if _CAPTION_GRAMMAR_VIOLATION_RE.search(clean):
+        return f"Caption grammar violation in title ({clean!r})"
+    if _starts_with_ungrammatical_lowercase(clean):
+        return f"Caption title starts with lowercase ({clean!r})"
+    if enforce_single_member_check and len(row_labels) >= 2:
+        norm_labels = [
+            str(lbl or "").strip()
+            for lbl in row_labels
+            if len(str(lbl or "").strip()) >= 4
+            and not str(lbl or "").strip().isdigit()
+        ]
+        if len(set(l.lower() for l in norm_labels)) >= 2:
+            matched_in_title = [
+                lbl
+                for lbl in norm_labels
+                if re.search(rf"\b{re.escape(lbl)}\b", clean, re.IGNORECASE)
+            ]
+            if len(matched_in_title) == 1:
+                return (
+                    f"Single-member subject {matched_in_title[0]!r} leaked into family title ({clean!r})"
+                )
+    return None
+
+
 def detect_served_card_violation(
     card: Mapping[str, Any],
     *,
     allow_settled_members: bool = False,
 ) -> tuple[str, str] | None:
-    """Inspect a served grouping card or container payload for truth violations (§5).
+    """Inspect a served grouping card or container payload for truth violations (§5, #12500).
 
     Returns ``(card_slug, violation_reason)`` when a served card carries:
     - a settled/closed/completed member in an open grouping card (unless
       ``allow_settled_members=True``, e.g. completed games in a ``series_hub``),
     - fewer than 2 rows/members,
-    - a row probability outside ``[0, 1]`` or ``[0, 100]``.
+    - a row probability outside ``[0, 1]`` or ``[0, 100]``,
+    - for ``sibling_family`` cards: a garbled caption title (``"Will which ..."``,
+      raw placeholder tokens, or a single member's subject name in a family title),
+      duplicate row labels, or an unpriced ``"No number yet"`` row.
     Returns ``None`` when the served card passes all checks.
     """
     data = card.get("data") if isinstance(card.get("data"), Mapping) else card
@@ -379,6 +431,21 @@ def detect_served_card_violation(
         or card.get("id")
         or "unknown-card"
     ).strip()
+
+    membership = str(
+        card.get("membership")
+        or (data.get("membership") if isinstance(data, Mapping) else "")
+        or roundup.get("membership")
+        or ""
+    ).strip()
+    producer_kind = str(
+        card.get("kind")
+        or card.get("producer")
+        or (data.get("producer") if isinstance(data, Mapping) else "")
+        or roundup.get("producer")
+        or ""
+    ).strip()
+    is_sibling = membership == "sibling-family" or producer_kind == "sibling_family"
 
     members: list[Mapping[str, Any]] = []
     if isinstance(card.get("members"), Sequence):
@@ -406,10 +473,39 @@ def detect_served_card_violation(
     if rows and len(rows) < 2:
         return (slug, f"Served fewer than 2 rows (count={len(rows)})")
 
+    row_labels: list[str] = []
+    seen_labels_fold: set[str] = set()
     for idx, r in enumerate(rows, start=1):
         prob = r.get("probability")
         if isinstance(prob, (int, float)) and not (0.0 <= float(prob) <= 1.0):
             return (slug, f"Served out-of-range probability in row {idx} ({prob})")
+        val_str = str(r.get("value") or r.get("display_value") or "").strip().lower()
+        if is_sibling and "no number yet" in val_str:
+            return (slug, f"Served unpriced 'No number yet' row in row {idx}")
+        lbl = str(r.get("label") or r.get("subject") or "").strip()
+        if lbl:
+            lbl_fold = lbl.lower()
+            if is_sibling and lbl_fold in seen_labels_fold:
+                return (slug, f"Served duplicate row label {lbl!r} in row {idx}")
+            seen_labels_fold.add(lbl_fold)
+            row_labels.append(lbl)
+
+    if is_sibling:
+        title = str(
+            card.get("title")
+            or card.get("name")
+            or (data.get("title") if isinstance(data, Mapping) else "")
+            or roundup.get("title")
+            or ((card.get("container") or {}).get("name") if isinstance(card.get("container"), Mapping) else "")
+            or ""
+        ).strip()
+        caption_err = _check_title_caption_violation(
+            title,
+            row_labels=row_labels,
+            enforce_single_member_check=True,
+        )
+        if caption_err is not None:
+            return (slug, caption_err)
 
     return None
 
@@ -484,6 +580,57 @@ def promote_licensed_proposal_to_definition(
         proposal.get("membership")
         or ("subject_sequence" if kind == "subject_sequence" else "computed-produced")
     )
+
+    prop_title = str(
+        proposal.get("name")
+        or proposal.get("title")
+        or rule.get("title_template")
+        or ""
+    ).strip()
+    prop_subjects: list[str] = [
+        str(s).strip()
+        for s in (proposal.get("subjects") or ())
+        if str(s or "").strip()
+    ]
+    if not prop_subjects and isinstance(proposal.get("members"), Sequence):
+        for m in proposal["members"]:
+            if isinstance(m, Mapping) and str(m.get("subject") or "").strip():
+                prop_subjects.append(str(m["subject"]).strip())
+    caption_err = _check_title_caption_violation(
+        prop_title,
+        row_labels=prop_subjects,
+        enforce_single_member_check=(kind == "sibling_family" or membership == "sibling-family"),
+    )
+    if caption_err is not None:
+        return PromotionOutcome(
+            promoted=False,
+            kind=kind,
+            slug=slug,
+            reason=f"caption_violation:{caption_err}",
+        )
+    if isinstance(proposal.get("rows"), Sequence):
+        seen_prop_labels: set[str] = set()
+        for r in proposal["rows"]:
+            if not isinstance(r, Mapping):
+                continue
+            v_str = str(r.get("value") or "").strip().lower()
+            if "no number yet" in v_str:
+                return PromotionOutcome(
+                    promoted=False,
+                    kind=kind,
+                    slug=slug,
+                    reason="data_violation:unpriced_row",
+                )
+            lbl = str(r.get("label") or "").strip().lower()
+            if lbl:
+                if lbl in seen_prop_labels:
+                    return PromotionOutcome(
+                        promoted=False,
+                        kind=kind,
+                        slug=slug,
+                        reason=f"data_violation:duplicate_row_label:{lbl}",
+                    )
+                seen_prop_labels.add(lbl)
 
     definition: dict[str, Any] = {
         "slug": slug,
