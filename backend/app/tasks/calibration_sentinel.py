@@ -51,6 +51,10 @@ from app.tasks.precompute_calibration import (
     market_is_esports_multi_bundle,
     market_needs_mex_normalization,
 )
+# #12421: the round-market pattern the curve's `golf_round_price_unanchored`
+# gate withholds on. The curve writes it as a literal (its fingerprint covers
+# it); the repair rail owns the constant and a test pins the two equal.
+from app.tasks.repair_golf_round_closing_line import ROUND_SERIES_PATTERN
 from app.utils.calibration_provability import (
     PROVABILITY_NOT_PROVABLE,
     provability_from_share,
@@ -98,6 +102,10 @@ KNOWN_CLASS_KEYS: tuple[str, ...] = (
     # #1011: counted per outcome by the events scan (a soccer moneyline row NOT
     # graded three-way), no longer a structural shortcut keyed on the category.
     "soccer_2way",
+    # #12421: the curve's #938 gate (every Kalshi golf ROUND market). Without it
+    # the sentinel filed #12421/#12426 as unexplained P1 breaks over rows the
+    # published curve never shows.
+    "golf_round_price_unanchored",
 )
 
 # Exact union of the SCAN-COUNTED known classes, computed in SQL on the same pass
@@ -423,7 +431,8 @@ def classify_coverage(
 
     ``overlap_fractions`` maps a known-class key to the fraction of the cohort's
     outcomes it covers (esports_multi_bundle / malformed_binary / mex_normalization
-    / void / heuristic / poly_placeholder / kalshi_prop_threshold). The vocabulary
+    / void / heuristic / poly_placeholder / kalshi_prop_threshold /
+    golf_round_price_unanchored). The vocabulary
     must stay a SUPERSET of what the curve actually excludes: any exclusion the
     curve ships but this cannot name reads as a fully unexplained break and files
     a P1 against a cohort that is already handled (CAL-P013 — six such issues were
@@ -641,6 +650,10 @@ WITH base AS (
         -- the sentinel cannot EXPLAIN a cohort the curve already drops, and
         -- files it as a fully unexplained P1 break.
         {prop_threshold} AS is_kalshi_prop_threshold,
+        -- #12421: the curve's `golf_round_price_unanchored` gate (#938), keyed on
+        -- the same structure: a Kalshi golf market whose ticker's first segment
+        -- names a round. Never on the price or the outcome.
+        {golf_round} AS is_golf_round_price_unanchored,
         COALESCE(fo.calibration_probability, fo.opening_probability) AS cp,
         COUNT(*) OVER (PARTITION BY fo.market_id) AS n_outcomes,
         SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) OVER (PARTITION BY fo.market_id) AS n_winners,
@@ -674,6 +687,7 @@ SELECT
     SUM(CASE WHEN resolution_source IN {void_in} THEN 1 ELSE 0 END) AS void_n,
     SUM(CASE WHEN resolution_source IN {heuristic_in} THEN 1 ELSE 0 END) AS heuristic_n,
     SUM(CASE WHEN is_kalshi_prop_threshold THEN 1 ELSE 0 END) AS kalshi_prop_threshold_n,
+    SUM(CASE WHEN is_golf_round_price_unanchored THEN 1 ELSE 0 END) AS golf_round_price_unanchored_n,
     -- #1905: the EXACT union of the five scan-counted known classes, on the same
     -- pass. The per-class SUMs above double-count any outcome in two classes (an
     -- outcome can be both void and malformed_binary), so they can neither be
@@ -715,6 +729,7 @@ _KNOWN_UNION_SQL = """(
                    OR resolution_source IN {void_in}
                    OR resolution_source IN {heuristic_in}
                    OR is_kalshi_prop_threshold
+                   OR is_golf_round_price_unanchored
              )"""
 
 # Events population: moneyline home/away split (2-way). Draws are intentionally
@@ -814,6 +829,7 @@ SELECT
     0 AS void_n,
     0 AS heuristic_n,
     0 AS kalshi_prop_threshold_n,
+    0 AS golf_round_price_unanchored_n,
     SUM(CASE WHEN soccer_2way THEN 1 ELSE 0 END) AS soccer_2way_n,
     -- soccer_2way is the only shipped exclusion on events, so it IS the union.
     SUM(CASE WHEN soccer_2way THEN 1 ELSE 0 END) AS any_known_n,
@@ -875,6 +891,11 @@ _FUTURES_MINING_SQL = _FUTURES_MINING_SQL.format(
         calibration_probability="fo.calibration_probability",
         opening_probability="fo.opening_probability",
     ),
+    golf_round=(
+        "(fm.source = 'kalshi'"
+        " AND COALESCE(fm.llm_sport_category, 'unknown') = 'golf'"
+        f" AND split_part(fm.external_id, '-', 1) ~ '{ROUND_SERIES_PATTERN}')"
+    ),
     band_sources=_in_list(_PLACEHOLDER_BAND_SOURCES),
     band_predicate=_band_predicate("cp"),
     band_label=PRICE_BAND_PLACEHOLDER,
@@ -898,6 +919,10 @@ def _fold_row_into_cohort(cohort: dict, row: dict) -> None:
     cohort["overlap_counts"]["void"] += row["void_n"]
     cohort["overlap_counts"]["heuristic"] += row["heuristic_n"]
     cohort["overlap_counts"]["kalshi_prop_threshold"] += row["kalshi_prop_threshold_n"]
+    # #12421: `.get`, so a row from a scan that predates the column folds as 0.
+    cohort["overlap_counts"]["golf_round_price_unanchored"] += (
+        row.get("golf_round_price_unanchored_n") or 0
+    )
     # #1011: emitted by the events scan only; a futures row folds as 0.
     cohort["overlap_counts"]["soccer_2way"] += row.get("soccer_2way_n") or 0
     # Exact per-scan-row union folds additively across rows: the mining scan
@@ -936,6 +961,7 @@ def _new_cohort(cohort_key: tuple[tuple[str, str], ...], sample_row: dict) -> di
             "mex_normalization": 0,
             "void": 0,
             "kalshi_prop_threshold": 0,
+            "golf_round_price_unanchored": 0,
             "heuristic": 0,
             "soccer_2way": 0,
             _UNION_KEY: 0,
@@ -1222,6 +1248,12 @@ _PLAYBOOK_BRANCHES = {
         "read-side, no regrade. The published curve ALREADY drops these rows, so "
         "compare the cell's RAW MCE against the published one before treating it "
         "as a break: on #1142 that was 21.33pp raw vs 3.69pp published"
+    ),
+    "golf_round_price_unanchored": (
+        "curve-exclusion (Kalshi golf ROUND market: its only start time is the "
+        "round's close, so no price can be placed before the round; #938) — "
+        "read-side, no regrade. The published curve ALREADY withholds every such "
+        "market (see `golf_round_timing_filter` in /api/calibration)"
     ),
 }
 
