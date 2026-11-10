@@ -327,6 +327,34 @@ def _families(body):
     return body.get("futures_families") or []
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("withdrawn_position", [5, 8, 12])
+async def test_the_count_moves_with_the_card_it_withdraws(
+    withdrawn_position, monkeypatch
+):
+    """#5516: an incomplete board is absent from both the page and its promise."""
+    from app.routes.events import _futures_card_has_no_answer
+
+    window = _family()
+    withdrawn = window[withdrawn_position]
+    withdrawn.mutually_exclusive = True
+    withdrawn.outcomes = [
+        _outcome("Carlos Alcaraz", 0.24, withdrawn.id * 10 + 1),
+        _outcome("Jannik Sinner", 0.18, withdrawn.id * 10 + 2),
+    ]
+    assert _futures_card_has_no_answer(withdrawn)
+    assert not _futures_card_has_no_answer(window[0])
+    async for client in _client(window, monkeypatch):
+        body = await _search(client)
+
+    assert withdrawn.id not in _flat_ids(body)
+    assert withdrawn.id not in _shown_ids(body)
+    assert len(body["futures"]) == PAGE  # Healthy cards refill the vacancy.
+    assert len(_families(body)) == 1
+    assert _families(body)[0]["member_count"] == FAMILY_SIZE - 1
+    assert _families(body)[0]["more_count"] == len(_below_ids(body)) == HONEST_MORE
+
+
 def _flat_ids(body):
     return [m["id"] for m in (body.get("futures") or [])]
 
