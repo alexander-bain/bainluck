@@ -367,6 +367,17 @@ final class EventAtlasChartMarksE2_11666Tests: XCTestCase {
         XCTAssertEqual(rightEdge.word, "✗ Lost")
         XCTAssertTrue(rightEdge.placesLeftOfDot)
         XCTAssertLessThan(rightEdge.labelX, rightEdge.dotX)
+
+        // Right-edge terminal dot at 100% (dotY = 0) steps below the top 20pt period-chip band
+        // so `✓ Won` never overlaps the `Final` period marker chip at y = 10.
+        let topRightEdge = EventAtlasChartMarks11666.resultWordPlacement(
+            result: .won,
+            dotX: 300,
+            dotY: 0,
+            plotWidth: 320
+        )
+        XCTAssertTrue(topRightEdge.placesLeftOfDot)
+        XCTAssertEqual(topRightEdge.labelY, 28)
     }
 
     func testOddsChartViewGatesE2HeaderAndOverlayBehindEventPageAtlasEnabled() throws {
