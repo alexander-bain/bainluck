@@ -96,10 +96,11 @@ LOTTE_POLY = _market(
     ],
 )
 
-# CONTROL: a real field. One golfer moved 0.10 → 0.22; the rest held.
+# CONTROL: a unit-mass variant of the real field, so #11995 leaves its scale
+# alone. One golfer moved 0.10 → 0.22; the complete current column sums to one.
 UTAH_MOVER = (1, "Ben Griffin", 0.22, 0.21, 0.23, 0.10)
 UTAH_REST = [
-    (10 + i, f"Utah Golfer{chr(65 + i)}", 0.05, 0.045, 0.055, 0.06) for i in range(15)
+    (10 + i, f"Utah Golfer{chr(65 + i)}", 0.052, 0.049, 0.055, 0.06) for i in range(15)
 ]
 UTAH_KALSHI = _market(
     63135268,
@@ -130,6 +131,20 @@ def _golf_db(markets):
 
 @pytest.fixture(autouse=True)
 def _no_schedule_and_the_measured_basis(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+    at = (datetime.now(timezone.utc) - timedelta(hours=18)).isoformat()
+    monkeypatch.setattr(
+        UTAH_KALSHI,
+        "market_metadata",
+        {
+            DATED_BASIS_METADATA_KEY: {
+                str(o.id): [BASIS[o.id], at] for o in UTAH_KALSHI.outcomes
+            }
+        },
+    )
+
     async def _empty():
         return []
 
@@ -186,13 +201,13 @@ class TestControlARealFieldStillMoves:
         assert g["movement_24h"] == pytest.approx(0.12, abs=1e-3)
         assert body["biggest_movers"][0]["name"] == "Ben Griffin"
 
-    async def test_without_the_guard_lotte_owned_the_movers(self, monkeypatch):
-        """The BEFORE: with the column accepted, the five fake drops outrank the real move."""
+    async def test_a_display_scale_change_independently_refuses_a_raw_move(self, monkeypatch):
+        """#11995: a converted field cannot spend its raw bank on a displayed move."""
         monkeypatch.setattr(golf_route, "_basis_column_is_not_a_field", lambda legs: False)
         body = await _body([LOTTE_KALSHI, LOTTE_POLY, UTAH_KALSHI])
         top = [m for m in body["biggest_movers"] if "LOTTE" in m["tournament_name"]]
-        assert len(top) >= 4
-        assert _golfer(body, "LOTTE", "Auston Kim")["movement_24h"] == pytest.approx(-0.094, abs=1e-3)
+        assert top == []
+        assert _golfer(body, "LOTTE", "Auston Kim")["movement_24h"] is None
 
 
 class TestTheRuleBothArms:

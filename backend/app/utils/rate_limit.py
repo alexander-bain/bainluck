@@ -57,6 +57,8 @@ _FRESH_EVENT_PATH = r"/api/events/[1-9][0-9]*(?:/history)?"
 FRESH_FEED_PRICE_RATE_LIMIT = "60/minute"
 _FRESH_FEED_PRICE_MAX = 60
 _FRESH_FEED_PRICE_PATH = "/api/feed/price-cards"
+# #10090: the team page's row re-read spends the same card-refresh budget.
+_FRESH_OUTCOME_PRICE_PATH = "/api/feed/outcome-prices"
 # 2s detail+history (web) or detail+timeline (native) pairs spend60/min; bounded headroom for initial/reconnect reads.
 # This ceiling is not a claim of measured server capacity.
 FRESH_MARKET_RATE_LIMIT = "120/minute"
@@ -298,7 +300,9 @@ def _get_fresh_event_limit():
 
 
 def _is_fresh_feed_price_read(request: Request) -> bool:
-    return request.method == "GET" and request.url.path == _FRESH_FEED_PRICE_PATH
+    return request.method == "GET" and request.url.path in (
+        _FRESH_FEED_PRICE_PATH, _FRESH_OUTCOME_PRICE_PATH,
+    )
 
 
 def _get_fresh_feed_price_limit():

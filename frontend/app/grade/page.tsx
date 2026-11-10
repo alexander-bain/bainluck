@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import DiscoverCard from "@/components/DiscoverCard";
@@ -23,6 +24,7 @@ import {
   GRADES,
   GRADE_LABELS,
   formatTally,
+  handleGradeDeckReadError,
   normalizeGraderName,
   type Grade,
   type GradeDeck,
@@ -51,7 +53,7 @@ export default function GradePage() {
 }
 
 function GradeSession() {
-  const { secret } = useAdminAuth();
+  const { secret, clearSecret } = useAdminAuth();
   const [deck, setDeck] = useState<GradeDeck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
@@ -96,12 +98,16 @@ function GradeSession() {
         void loadTally(d.slate_id);
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load the cards");
+        if (cancelled) return;
+        handleGradeDeckReadError(e, "Could not load the cards", {
+          clearSecret,
+          setError,
+        });
       });
     return () => {
       cancelled = true;
     };
-  }, [secret, loadTally]);
+  }, [secret, loadTally, clearSecret]);
 
   const start = () => {
     const name = normalizeGraderName(nameInput);
@@ -256,6 +262,11 @@ function Shell({ children, tally }: { children: React.ReactNode; tally?: string 
       <div className="mx-auto max-w-md">
         {children}
         {tally && <p className="mt-6 text-center text-sm text-text-muted">{tally}</p>}
+        <p className="mt-4 text-center text-xs text-text-muted">
+          <Link href="/grade/groupings" className="hover:underline">
+            Grade proposed grouping cards beside best single member →
+          </Link>
+        </p>
       </div>
     </div>
   );

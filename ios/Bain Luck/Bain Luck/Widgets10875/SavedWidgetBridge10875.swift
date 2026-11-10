@@ -34,6 +34,8 @@ nonisolated enum SavedWidgetBridge10875 {
     static let storageKey = "bainluck.widget.savedItems.v1"
     /// The kind the app reloads when the saved set or the account changes.
     static let widgetKind = "SavedItemWidget10875"
+    /// #12305 — the "My game" control's kind, reloaded when the saved items change.
+    static let controlKind = "SavedItemControl12305"
     static let guestScope = "guest"
     /// The server's bound (`routes/user.py` `MAX_PINS_PER_TYPE`), not the
     /// device's add limit: `PinManager.loadFromServer` adopts an account's
@@ -150,6 +152,33 @@ nonisolated struct SavedWidgetBridgeStore10875 {
         guard read() != snapshot, let data = try? JSONEncoder().encode(snapshot) else { return false }
         defaults.set(data, forKey: SavedWidgetBridge10875.storageKey)
         return true
+    }
+}
+
+/// #12305 — where the "My game" control goes, and what it is called. Pure, so
+/// the press-time rule is the tested rule: the chosen item's own page while it is
+/// the reader's saved item, otherwise My Stuff, where saved items are managed
+/// (the saved widget's tap rule). Every link is one the app's intent door
+/// accepts (`IntentLinks10873`).
+nonisolated enum SavedWidgetControlLink12305 {
+    static let myStuff = IntentLinks10873.myStuff
+
+    static func url(entityID: String?, snapshot: SavedWidgetSnapshot10875?) -> URL {
+        guard let subject = savedSubject(entityID: entityID, snapshot: snapshot) else { return myStuff }
+        return subject.url ?? myStuff
+    }
+
+    /// A choice that is no longer this reader's is named for where it goes:
+    /// its title would say what another account saved.
+    static func title(entityID: String?, chosenTitle: String, snapshot: SavedWidgetSnapshot10875?) -> String {
+        savedSubject(entityID: entityID, snapshot: snapshot) == nil ? "My Stuff" : chosenTitle
+    }
+
+    private static func savedSubject(entityID: String?, snapshot: SavedWidgetSnapshot10875?) -> SavedWidgetSubject10875? {
+        guard let entityID, let parsed = SavedWidgetSelection10875.parse(entityID: entityID),
+              SavedWidgetSelectionStatus10875.of(scope: parsed.scope, subject: parsed.subject, in: snapshot) == .saved
+        else { return nil }
+        return parsed.subject
     }
 }
 

@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Bain_Luck
 
@@ -32,6 +33,18 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
         )
         XCTAssertEqual(
             EventAtlasStoryCards11666.finishMarkKey(for: liveCard).map(\.label),
+            ["Earlier forecast", "Recorded", "Change"]
+        )
+
+        let liveScheduledStartCard = NFLFinishCard9483(
+            phase: .during,
+            pregame: .init(away: 21.0, home: 24.5, at: nil),
+            projectedNow: .init(away: 27.5, home: 20.5, at: Date(timeIntervalSince1970: 1_762_003_600)),
+            final: nil,
+            pregameBasis: .scheduledStart
+        )
+        XCTAssertEqual(
+            EventAtlasStoryCards11666.finishMarkKey(for: liveScheduledStartCard).map(\.label),
             ["Pregame", "Recorded", "Change"]
         )
 
@@ -39,7 +52,8 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
             phase: .after,
             pregame: .init(away: 21.0, home: 24.5, at: nil),
             projectedNow: nil,
-            final: .init(away: 28, home: 21, at: Date(timeIntervalSince1970: 1_762_010_800))
+            final: .init(away: 28, home: 21, at: Date(timeIntervalSince1970: 1_762_010_800)),
+            pregameBasis: .scheduledStart
         )
         XCTAssertEqual(
             EventAtlasStoryCards11666.finishMarkKey(for: finishedCard).map(\.label),
@@ -56,7 +70,7 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
         )
         XCTAssertEqual(
             EventAtlasStoryCards11666.finishMarkKey(for: tiedFinal).map(\.label),
-            ["Pregame", "Final"]
+            ["Earlier forecast", "Final"]
         )
         XCTAssertNil(EventAtlasStoryCards11666.finishWinnerBadge(for: tiedFinal, isHome: true))
         XCTAssertNil(EventAtlasStoryCards11666.finishWinnerBadge(for: tiedFinal, isHome: false))
@@ -259,8 +273,139 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
         XCTAssertTrue(nflCards.contains("EventAtlasStoryCardMarkKeyView11666"))
         XCTAssertTrue(nflCards.contains("EventAtlasStoryCards11666.finishWinnerBadge"))
         XCTAssertTrue(nflCards.contains("EventAtlasStoryCards11666.milestoneVerdict"))
+        XCTAssertTrue(nflCards.contains("atlas-finish-card-details-button-11666"))
+        XCTAssertTrue(nflCards.contains("state.detailsRowID = \"finish\""))
         XCTAssertTrue(nbaCards.contains("EventAtlasStoryCards11666.ladderMarkKey"))
         XCTAssertTrue(nbaCards.contains("EventAtlasStoryCards11666.ladderReadout"))
         XCTAssertTrue(reader.contains("EventAtlasStoryCards11666.readerDetailsModel"))
+    }
+
+    @MainActor
+    func testMarkKeyAccessibilitySummaryAndScaledMetricRendering() throws {
+        let liveFinish = NFLFinishCard9483(
+            phase: .during,
+            pregame: .init(away: 21, home: 24.5, at: Date(timeIntervalSince1970: 1_762_450_000)),
+            projectedNow: .init(away: 17, home: 27, at: Date(timeIntervalSince1970: 1_762_455_000)),
+            final: nil,
+            pregameBasis: .scheduledStart
+        )
+        let items = EventAtlasStoryCards11666.finishMarkKey(for: liveFinish)
+        XCTAssertEqual(
+            EventAtlasStoryCards11666.markKeyAccessibilitySummary(items),
+            "Mark key: Pregame, Recorded, Change"
+        )
+        XCTAssertEqual(EventAtlasStoryCards11666.markKeyAccessibilitySummary([]), "")
+
+        let earlierFinish = NFLFinishCard9483(
+            phase: .during,
+            pregame: .init(away: 21, home: 24.5, at: Date(timeIntervalSince1970: 1_762_440_000)),
+            projectedNow: .init(away: 17, home: 27, at: Date(timeIntervalSince1970: 1_762_455_000)),
+            final: nil
+        )
+        let earlierItems = EventAtlasStoryCards11666.finishMarkKey(for: earlierFinish)
+        XCTAssertEqual(
+            EventAtlasStoryCards11666.markKeyAccessibilitySummary(earlierItems),
+            "Mark key: Earlier forecast, Recorded, Change"
+        )
+        let finishSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: "finish",
+                cards: [.finish(earlierFinish)],
+                rows: [:],
+                awayName: "Eagles",
+                homeName: "Cowboys"
+            )
+        )
+        XCTAssertEqual(finishSheet.id, "finish-details")
+        XCTAssertEqual(finishSheet.primaryReadingLabel, "Projected now")
+        XCTAssertEqual(finishSheet.pregameBaseline, "Eagles 21 · Cowboys 24.5")
+
+        // Before kick-off (basis == .pregamePrice), pregame_mark holds the opening price rather than a
+        // commence-time pin, so Details must leave pregameBaseline nil for both fresh and stale quotes.
+        let pregameCard = NFLMilestoneCard9483(
+            id: "milestone-pre",
+            player: "CeeDee Lamb",
+            stat: "Receiving Yards",
+            side: .home,
+            basis: .pregamePrice,
+            rungs: [.init(threshold: 75, chance: 0.10, observedAt: "2026-11-06T20:15:00Z", rowID: "r75", hit: nil)],
+            actual: nil
+        )
+        let pregameProp = GameMarketPlayerProp(
+            marketName: "Player Receiving Yards",
+            outcomeName: "CeeDee Lamb: 75+",
+            threshold: 75,
+            overProbability: 0.10,
+            source: "draftkings",
+            movement: nil,
+            playerHeadshot: nil,
+            playerTeam: "DAL",
+            actual: nil,
+            hit: nil,
+            pregameMark: 0.265,
+            observedAt: "2026-11-06T20:15:00Z"
+        )
+        let freshPregameSheet = EventAtlasStoryCards11666.detailsModel(
+            for: pregameProp,
+            card: pregameCard,
+            rowID: "r75"
+        )
+        XCTAssertEqual(freshPregameSheet.primaryReadingLabel, "Last quote")
+        XCTAssertEqual(freshPregameSheet.primaryReadingValue, "10%")
+        XCTAssertNil(freshPregameSheet.pregameBaseline)
+
+        let stalePregameCard = pregameCard.current(at: ISO8601DateFormatter().date(from: "2026-11-08T20:15:00Z")!)
+        XCTAssertNil(stalePregameCard.rungs.first?.chance)
+        let stalePregameSheet = EventAtlasStoryCards11666.detailsModel(
+            for: pregameProp,
+            card: stalePregameCard,
+            rowID: "r75"
+        )
+        XCTAssertEqual(stalePregameSheet.primaryReadingLabel, "Last quote")
+        XCTAssertEqual(stalePregameSheet.primaryReadingValue, "10%")
+        XCTAssertNil(stalePregameSheet.pregameBaseline)
+
+        // After kick-off (basis == .pregameMark), rung.chance ?? prop.pregameMark is the admitted pin.
+        let startedCard = NFLMilestoneCard9483(
+            id: "milestone-live",
+            player: "CeeDee Lamb",
+            stat: "Receiving Yards",
+            side: .home,
+            basis: .pregameMark,
+            rungs: [.init(threshold: 75, chance: 0.265, observedAt: nil, rowID: "r75", hit: nil)],
+            actual: nil
+        )
+        let startedSheet = EventAtlasStoryCards11666.detailsModel(
+            for: pregameProp,
+            card: startedCard,
+            rowID: "r75"
+        )
+        XCTAssertEqual(startedSheet.primaryReadingLabel, "Last quote")
+        XCTAssertEqual(startedSheet.primaryReadingValue, "10%")
+        XCTAssertEqual(startedSheet.pregameBaseline, "27%")
+
+        // Unmatched rowID never falls back to the first rung.
+        let unmatchedSheet = EventAtlasStoryCards11666.detailsModel(
+            for: nil,
+            card: startedCard,
+            rowID: "missing-row"
+        )
+        XCTAssertEqual(unmatchedSheet.outcomeTitle, "Player milestone")
+        XCTAssertNil(unmatchedSheet.pregameBaseline)
+
+        let keyView = EventAtlasStoryCardMarkKeyView11666(items: items)
+            .padding(12)
+            .frame(width: 390, alignment: .leading)
+            .background(Color(.systemBackground))
+        let rDefault = rendererForMeasurement(keyView)
+        rDefault.scale = 2.0
+        let imgDefault = try XCTUnwrap(rDefault.uiImage)
+        XCTAssertEqual(Int(imgDefault.size.width), 390)
+
+        let rA11y = rendererForMeasurement(keyView, at: .accessibility3)
+        rA11y.scale = 2.0
+        let imgA11y = try XCTUnwrap(rA11y.uiImage)
+        XCTAssertEqual(Int(imgA11y.size.width), 390)
+        XCTAssertGreaterThanOrEqual(imgA11y.size.height, imgDefault.size.height)
     }
 }

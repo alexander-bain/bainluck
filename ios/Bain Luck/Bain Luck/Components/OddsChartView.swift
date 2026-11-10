@@ -523,6 +523,8 @@ struct OddsChartView: View {
     /// the full-size tennis header's result line, never by a reading.
     var homeScore: Int?
     var awayScore: Int?
+    /// #11666 Step E2 — the page's authoritative served settled result (`event.heroSettledResult`).
+    var servedSettledResult: String? = nil
     /// True while the live push stream is delivering (#2687). Read only by the
     /// fullscreen chart, which covers the page's toolbar and so carries the
     /// page's one freshness status itself (#8320).
@@ -850,6 +852,7 @@ struct OddsChartView: View {
          sportKey: String? = nil,
          homeScore: Int? = nil,
          awayScore: Int? = nil,
+         servedSettledResult: String? = nil,
          refreshStreaming: Bool = false,
          liveUpdateStatus: LiveUpdateStatus = .hidden,
          priceActivity: LivePriceActivity? = nil,
@@ -885,6 +888,7 @@ struct OddsChartView: View {
         self.sportKey = sportKey
         self.homeScore = homeScore
         self.awayScore = awayScore
+        self.servedSettledResult = servedSettledResult
         self.refreshStreaming = refreshStreaming
         self.liveUpdateStatus = liveUpdateStatus
         self.priceActivity = priceActivity
@@ -1172,7 +1176,9 @@ struct OddsChartView: View {
                             homeName: homeTeamName ?? homeShort,
                             primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: history.winProbSources ?? [:]),
                             homeScore: homeScore,
-                            awayScore: awayScore
+                            awayScore: awayScore,
+                            servedSettledResult: servedSettledResult,
+                            gameStart: kickoffDate
                         )
                     }
                     // #9517 — no readout row here at rest: the hero above says it.
@@ -2356,13 +2362,45 @@ struct OddsChartView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
+                let atlasSettledResult: EventAtlasSettledResult11666? = ReleaseSurfaces.isEventPageAtlasEnabled()
+                    ? EventAtlasChartMarks11666.settledResult(
+                        dataPoints: dataPoints,
+                        checkpoints: checkpoints,
+                        history: vm.history,
+                        status: status,
+                        sides: axis.sides,
+                        homeScoreOverride: homeScore,
+                        awayScoreOverride: awayScore,
+                        servedSettledResult: servedSettledResult
+                    )
+                    : nil
+                if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                    EventAtlasChartOverlay11666(
+                        selection: selection,
+                        proxy: proxy,
+                        plotFrame: plotFrame,
+                        dataPoints: dataPoints,
+                        checkpoints: checkpoints,
+                        history: vm.history,
+                        status: status,
+                        sides: axis.sides,
+                        includesOpening: drawnRange == .all,
+                        primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
+                        homeScore: homeScore,
+                        awayScore: awayScore,
+                        servedSettledResult: servedSettledResult,
+                        gameStart: kickoffDate,
+                        settledResult: atlasSettledResult
+                    )
+                }
                 if let liveSplit, let liveEdge {
                     // #11356 — the tail, and the arrival halo at its end, wear
                     // the primary line's own colour: one line, one identity, on
                     // both sides of 50%.
                     LiveChartEdgeMarker(
                         selection: selection, proxy: proxy, plotFrame: plotFrame,
-                        tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
+                        tail: liveSplit.tail, segments: liveSplit.segments,
+                        label: "\(homeShort) \(liveEdge.homeLabel)",
                         rising: Self.liveEdgeRising(priceActivity, showsPreview: liveEdgeShowsPreview),
                         lineColor: colorForSource(liveSplit.source, sources: sources),
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
@@ -2406,14 +2444,19 @@ struct OddsChartView: View {
                 // in, below it when it fell. Static (no finger state is read),
                 // so a scrub never rebuilds it; VoiceOver reads the resting
                 // readout instead.
+                // #11666 Step E2 — when the Atlas settled result word (`✓ Won` / `✗ Lost`)
+                // is drawn at the terminal point, suppress the percentage label so the two
+                // do not collide as `"✓ Won 100%"`.
                 if let finishedEnd {
-                    finishedEndLabel9483(finishedEnd, line: endLine,
-                                         ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
-                                                                  gameStart: gameStartDate),
-                                         sides: axis.sides, proxy: proxy, plotFrame: plotFrame,
-                                         color: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
-                                         halfStroke: strokeStyleForSource(Self.primarySource(in: dataPoints),
-                                                                          sources: sources).lineWidth / 2)
+                    if atlasSettledResult == nil {
+                        finishedEndLabel9483(finishedEnd, line: endLine,
+                                             ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
+                                                                      gameStart: gameStartDate),
+                                             sides: axis.sides, proxy: proxy, plotFrame: plotFrame,
+                                             color: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
+                                             halfStroke: strokeStyleForSource(Self.primarySource(in: dataPoints),
+                                                                              sources: sources).lineWidth / 2)
+                    }
                 }
                 // #11356 (Design R2) — the held reading's dot sits on the line
                 // the readings are taken from, so it wears that line's colour:
@@ -2434,22 +2477,6 @@ struct OddsChartView: View {
                                           sportKey: sportKey, floatingCard: floatingCard)
                     .readingPhases(readoutContext(dataPoints: dataPoints, checkpoints: checkpoints,
                                                   pageGaveCard: pageGaveCard))
-                if ReleaseSurfaces.isEventPageAtlasEnabled() {
-                    EventAtlasChartOverlay11666(
-                        selection: selection,
-                        proxy: proxy,
-                        plotFrame: plotFrame,
-                        dataPoints: dataPoints,
-                        checkpoints: checkpoints,
-                        history: vm.history,
-                        status: status,
-                        sides: axis.sides,
-                        includesOpening: drawnRange == .all,
-                        primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
-                        homeScore: homeScore,
-                        awayScore: awayScore
-                    )
-                }
                 // #925 — the scrub. `chartXSelection` lost the touch to the
                 // page's scroll the moment a thumb drifted vertically (Alex's
                 // build-20 recording, 14781697). The futures chart solved the

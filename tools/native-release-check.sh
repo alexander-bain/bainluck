@@ -37,6 +37,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="$REPO_ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
 LOG="${NATIVE_RELEASE_LOG:-/tmp/native-release-check.txt}"
 ARCHIVE="${NATIVE_RELEASE_ARCHIVE:-/tmp/BainLuck-release-check.xcarchive}"
+DERIVED_DATA="${NATIVE_RELEASE_DERIVED_DATA:-/tmp/BainLuck-release-check-DerivedData}"
 
 if [ ! -d "$PROJECT" ]; then
   echo "FAIL: no project at $PROJECT" >&2
@@ -53,6 +54,7 @@ xcodebuild \
   -scheme "Bain Luck" \
   -destination 'generic/platform=iOS' \
   -archivePath "$ARCHIVE" \
+  -derivedDataPath "$DERIVED_DATA" \
   -disableAutomaticPackageResolution \
   OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -disable-sandbox' \
   archive > "$LOG" 2>&1
@@ -105,6 +107,12 @@ fi
 if [ "$fail" -ne 0 ]; then
   echo
   echo "RELEASE CHECK: FAIL  (log: $LOG)"
+  exit 1
+fi
+
+if ! python3 "$REPO_ROOT/tools/ios_stack_frame_guard_12278.py" "$DERIVED_DATA"; then
+  echo
+  echo "RELEASE CHECK: FAIL (EventDetailView stack frame guard #12278 exceeded 64 KB)"
   exit 1
 fi
 

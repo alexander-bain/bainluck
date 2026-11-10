@@ -26,10 +26,17 @@ nonisolated enum EventAtlasStoryCards11666 {
         let label: String
     }
 
+    /// Accessibility summary string for a story card's mark-grammar key.
+    static func markKeyAccessibilitySummary(_ items: [MarkKeyItem11666]) -> String {
+        guard !items.isEmpty else { return "" }
+        return "Mark key: \(items.map(\.label).joined(separator: ", "))"
+    }
+
     /// Builds the mark-grammar key items for a finish card (`NFLFinishCard9483`).
     static func finishMarkKey(for card: NFLFinishCard9483) -> [MarkKeyItem11666] {
+        let initialLabel = card.namesDistinctBasis ? NFLFinishCard9483.earlierForecast : "Pregame"
         var items: [MarkKeyItem11666] = [
-            MarkKeyItem11666(glyph: .hollowSquare, label: "Pregame")
+            MarkKeyItem11666(glyph: .hollowSquare, label: initialLabel)
         ]
         if card.projectedNow != nil && card.final == nil {
             items.append(MarkKeyItem11666(glyph: .filledSquare, label: "Recorded"))
@@ -176,6 +183,7 @@ nonisolated enum EventAtlasStoryCards11666 {
             pregameBaseline: pregameText,
             observedAtText: observedText,
             statusSummary: finish.missingCurrentNote,
+            statusLabel: "Delivery",
             sourceLabel: nil
         )
     }
@@ -186,9 +194,11 @@ nonisolated enum EventAtlasStoryCards11666 {
         card: NFLMilestoneCard9483? = nil,
         rowID: String
     ) -> EventAtlasDetailsSheetModel11666 {
-        let rung = card?.rungs.first(where: { $0.rowID == rowID }) ?? card?.rungs.first
+        let rung = card?.rungs.first(where: { $0.rowID == rowID })
         let hit = prop?.hit ?? rung?.hit
-        let pregameProb = rung?.chance ?? prop?.pregameMark
+        let pregameProb: Double? = card?.basis == .pregamePrice
+            ? nil
+            : (rung?.chance ?? prop?.pregameMark)
         let pregameText = pregameProb.map { formatProbability($0) }
         let primaryLabel: String
         let primaryValue: String
@@ -196,7 +206,7 @@ nonisolated enum EventAtlasStoryCards11666 {
             primaryLabel = "Result"
             let actualPart = (prop?.actual ?? card?.actual).map { " · Final \(NFLFinishCardView9483.points($0))" } ?? ""
             primaryValue = (hit ? "✓ HIT" : "✗ MISS") + actualPart
-        } else if let quote = prop?.overProbability {
+        } else if let quote = prop?.overProbability ?? (card?.basis == .pregamePrice ? rung?.chance : nil) {
             primaryLabel = "Last quote"
             primaryValue = formatProbability(quote)
         } else if let pregameText {
@@ -204,7 +214,7 @@ nonisolated enum EventAtlasStoryCards11666 {
             primaryValue = pregameText
         } else {
             primaryLabel = "Reading"
-            primaryValue = "No recent probability"
+            primaryValue = EventAtlasStates11666.noRecentPrice
         }
 
         let outcomeTitle: String
@@ -273,10 +283,15 @@ nonisolated enum EventAtlasStoryCards11666 {
         }
 
         let observedText = SourceAge.preciseStamp(detail.observedAt)
-        let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: detail.source,
-            sourceCount: 1
-        )
+        let sourceLabel: String?
+        if detail.source == nil && detail.sourceCount > 1 {
+            sourceLabel = "\(detail.sourceCount) sources, not blended"
+        } else {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: detail.source,
+                sourceCount: 1
+            )
+        }
         return EventAtlasDetailsSheetModel11666(
             id: "ladder-\(detail.label)",
             outcomeTitle: detail.label,
@@ -308,6 +323,65 @@ nonisolated enum EventAtlasStoryCards11666 {
                let entry = scoring.entries.first(where: { $0.id == rowID || $0.rowId == rowID }) {
                 return EventAtlasNhlCards11666.detailsModel(for: entry, card: scoring)
             }
+            if case .soccerThreeWay(let threeWay) = card,
+               let leg = threeWay.legs.first(where: { $0.id == rowID }) {
+                return EventAtlasSoccerCards11666.detailsModel(for: leg, card: threeWay)
+            }
+            if case .soccerBothTeams(let bothTeams) = card,
+               let leg = bothTeams.legs.first(where: { $0.id == rowID }) {
+                return EventAtlasSoccerCards11666.detailsModel(for: leg, card: bothTeams)
+            }
+            if case .soccerFirstTeam(let firstTeam) = card,
+               let leg = firstTeam.legs.first(where: { $0.id == rowID }) {
+                return EventAtlasSoccerCards11666.detailsModel(for: leg, card: firstTeam)
+            }
+            if case .soccerHalves(let halves) = card {
+                for section in halves.sections {
+                    if let leg = section.legs.first(where: { $0.id == rowID }) {
+                        return EventAtlasSoccerCards11666.detailsModel(for: leg, section: section, card: halves)
+                    }
+                }
+            }
+            if case .soccerExactScore(let exactScore) = card {
+                if let cell = exactScore.cells.first(where: { $0.id == rowID || $0.key == rowID }) {
+                    return EventAtlasSoccerCards11666.detailsModel(for: cell, card: exactScore)
+                }
+                if let otherCell = exactScore.otherCell,
+                   (otherCell.id == rowID || otherCell.key == rowID) {
+                    return EventAtlasSoccerCards11666.detailsModel(for: otherCell, card: exactScore)
+                }
+            }
+            if case .tennisSets(let tennisSets) = card {
+                for step in tennisSets.sets {
+                    if step.home.id == rowID {
+                        return EventAtlasTennisCards11666.detailsModel(for: step.home, card: tennisSets)
+                    }
+                    if step.away.id == rowID {
+                        return EventAtlasTennisCards11666.detailsModel(for: step.away, card: tennisSets)
+                    }
+                }
+            }
+            if case .tennisExactScore(let tennisExactScore) = card,
+               let outcome = tennisExactScore.outcomes.first(where: { $0.id == rowID || $0.key == rowID }) {
+                return EventAtlasTennisCards11666.detailsModel(for: outcome, card: tennisExactScore)
+            }
+            if case .nflPeriodWinners(let periodWinners) = card {
+                for panel in periodWinners.panels {
+                    if let leg = panel.legs.first(where: { $0.id == rowID }) {
+                        return EventAtlasFootballCards11666.detailsModel(for: leg, panel: panel, card: periodWinners)
+                    }
+                }
+            }
+            if case .nflPairedMilestones(let pairedMilestones) = card {
+                for group in pairedMilestones.groups {
+                    if let away = group.away, away.id == rowID {
+                        return EventAtlasFootballCards11666.detailsModel(for: away, card: pairedMilestones)
+                    }
+                    if let home = group.home, home.id == rowID {
+                        return EventAtlasFootballCards11666.detailsModel(for: home, card: pairedMilestones)
+                    }
+                }
+            }
         }
         if rowID == "finish" {
             for card in cards {
@@ -337,6 +411,11 @@ nonisolated enum EventAtlasStoryCards11666 {
                 matchedMilestone = milestone
                 break
             }
+            if case .nflCombinedYards(let combined) = card,
+               combined.milestone.rungs.contains(where: { $0.rowID == rowID }) {
+                matchedMilestone = combined.milestone
+                break
+            }
         }
         return detailsModel(for: rows[rowID], card: matchedMilestone, rowID: rowID)
     }
@@ -346,21 +425,40 @@ nonisolated enum EventAtlasStoryCards11666 {
 /// `ReleaseSurfaces.isEventPageAtlasEnabled()` is active.
 struct EventAtlasStoryCardMarkKeyView11666: View {
     let items: [EventAtlasStoryCards11666.MarkKeyItem11666]
+    @ScaledMetric(relativeTo: .caption2) private var glyphSize: CGFloat = 7
+    @ScaledMetric(relativeTo: .caption2) private var changeWidth: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption2) private var barHeight: CGFloat = 8
+    @ScaledMetric(relativeTo: .caption2) private var crossFontSize: CGFloat = 8
 
     var body: some View {
-        HStack(spacing: 10) {
-            ForEach(items) { item in
-                HStack(spacing: 4) {
-                    glyphView(item.glyph)
-                        .accessibilityHidden(true)
-                    Text(item.label)
-                        .font(.caption2)
-                        .foregroundStyle(item.glyph == .wonCheck ? Color.green : Color.secondary)
+        if !items.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    ForEach(items) { item in
+                        itemRow(item)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(items) { item in
+                        itemRow(item)
+                    }
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(EventAtlasStoryCards11666.markKeyAccessibilitySummary(items))
+            .accessibilityIdentifier("atlas-story-card-mark-key-11666")
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("atlas-story-card-mark-key-11666")
+    }
+
+    private func itemRow(_ item: EventAtlasStoryCards11666.MarkKeyItem11666) -> some View {
+        HStack(spacing: 4) {
+            glyphView(item.glyph)
+                .accessibilityHidden(true)
+            Text(item.label)
+                .font(.caption2)
+                .foregroundStyle(item.glyph == .wonCheck ? Color.green : Color.secondary)
+        }
     }
 
     @ViewBuilder
@@ -369,30 +467,30 @@ struct EventAtlasStoryCardMarkKeyView11666: View {
         case .hollowCircle:
             Circle()
                 .strokeBorder(Color.secondary, lineWidth: 1.5)
-                .frame(width: 7, height: 7)
+                .frame(width: glyphSize, height: glyphSize)
         case .filledCircle:
             Circle()
                 .fill(Color.primary)
-                .frame(width: 7, height: 7)
+                .frame(width: glyphSize, height: glyphSize)
         case .hollowSquare:
             Rectangle()
                 .strokeBorder(Color.secondary, lineWidth: 1.5)
-                .frame(width: 7, height: 7)
+                .frame(width: glyphSize, height: glyphSize)
         case .filledSquare:
             Rectangle()
                 .fill(Color.primary)
-                .frame(width: 7, height: 7)
+                .frame(width: glyphSize, height: glyphSize)
         case .changeLine:
             Rectangle()
                 .fill(Color.secondary)
-                .frame(width: 10, height: 1.5)
+                .frame(width: changeWidth, height: 1.5)
         case .verticalBar:
             Rectangle()
                 .fill(Color.primary)
-                .frame(width: 1.5, height: 8)
+                .frame(width: 1.5, height: barHeight)
         case .cross:
             Image(systemName: "plus")
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: crossFontSize, weight: .bold))
                 .foregroundStyle(Color.primary)
         case .wonCheck, .hitMissVerdict:
             EmptyView()

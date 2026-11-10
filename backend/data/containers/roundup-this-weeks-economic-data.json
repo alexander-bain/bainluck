@@ -2,6 +2,11 @@
   "slug": "roundup-this-weeks-economic-data",
   "membership": "computed-produced",
   "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "same_window"
+  ],
+  "level": "member",
   "kicker": "THIS WEEK'S DATA",
   "name": "What this week's releases are expected to show",
   "category": "economics",

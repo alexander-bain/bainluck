@@ -71,6 +71,8 @@ struct GolfTournamentView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 8)
+                } else if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                    atlasSection(presentation)
                 } else {
                     fieldSection(presentation)
                 }
@@ -79,6 +81,14 @@ struct GolfTournamentView: View {
             .padding(.bottom, 40)
         }
         .refreshable { await vm.load() }
+    }
+
+    @inline(never)
+    private func atlasSection(_ presentation: GolfTournamentPresentation) -> some View {
+        EventAtlasGolfTournamentSection11666(
+            presentation: presentation,
+            atlasData: vm.atlasData
+        )
     }
 
     /// The title bar already says the tournament's name, so this does not.
@@ -141,6 +151,16 @@ struct GolfTournamentView: View {
                 ForEach(shown) { row in
                     fieldRow(row)
                 }
+                ForEach(presentation.overflowOutcomes) { outcome in
+                    HStack {
+                        Text(outcome.name)
+                        Spacer()
+                        Text(outcome.renderedPercent.map { formatProbability(outcome.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", outcome.probability * 100))
+                            .monospacedDigit()
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                }
             }
 
             // The rest of the field is behind a toggle rather than 132 rows of
@@ -187,7 +207,7 @@ struct GolfTournamentView: View {
 
             Spacer()
 
-            Text(String(format: "%.1f%%", row.probability * 100))
+            Text(row.probabilityLabel)
                 .font(.subheadline)
                 .fontWeight(.semibold)
                 .monospacedDigit()

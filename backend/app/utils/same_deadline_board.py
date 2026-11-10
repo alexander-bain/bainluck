@@ -577,7 +577,9 @@ def _classify_candidate(
         return None, "stored_date_mismatch"
 
     mtype = str(market.get("market_type") or "yes_no").strip().lower()
-    if mtype not in {"yes_no", "binary", "container_member", "unshaped", ""}:
+    # `claim` is the shape a lone-"Yes" Kalshi binary carries from classifier v3
+    # (#12221); before it, those rows read `unshaped`.
+    if mtype not in {"yes_no", "binary", "claim", "container_member", "unshaped", ""}:
         return None, f"non_binary_market_type:{mtype}"
 
     raw_outcomes = market.get("outcomes")
@@ -1109,7 +1111,7 @@ async def _load_markets_from_db(
                 or_(
                     FuturesMarket.market_type.is_(None),
                     FuturesMarket.market_type.in_(
-                        ("yes_no", "binary", "container_member", "unshaped")
+                        ("yes_no", "binary", "claim", "container_member", "unshaped")
                     ),
                 ),
             )
@@ -1324,10 +1326,15 @@ def build_same_deadline_board_producer(
         footer=footer,
         produce=_produce,
         membership=str(definition.get("membership") or "computed-produced"),
+        relations=definition.get("relations"),
+        level=definition.get("level"),
         rule=dict(rule),
         tag=tag,
         kicker=kicker,
         story_key=f"roundup:{slug.removeprefix('roundup-')}",
+        parent_slug=definition.get("parent_slug"),
+        parent_name=definition.get("parent_name"),
+        children=definition.get("children"),
         enabled=enabled,
     )
 
@@ -1349,6 +1356,7 @@ BY_DECEMBER_31_PRODUCER: Any = build_same_deadline_board_producer(
     enabled=by_december_31_enabled,
 )
 _rc().register_roundup_producer(BY_DECEMBER_31_PRODUCER)
+_rc()._register_builtin_producers()
 
 
 async def by_november_30(

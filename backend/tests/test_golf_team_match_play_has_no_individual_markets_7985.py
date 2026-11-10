@@ -422,15 +422,130 @@ def served(monkeypatch):
     monkeypatch.setattr(golf_route, "_get_golf_schedule", _no_schedule)
     monkeypatch.setattr(golf_route, "_fetch_24h_snapshots", _no_snapshots)
 
-    async def _run():
-        markets = (
-            _presidents_cup_phantom_markets()
-            + [_presidents_cup_real_team_market()]
-            + _stroke_play_control_markets()
-        )
+    async def _run(markets=None):
+        if markets is None:
+            markets = (
+                _presidents_cup_phantom_markets()
+                + [_presidents_cup_real_team_market()]
+                + _stroke_play_control_markets()
+            )
         return await get_golf(db=_DB(markets))
 
     return _run
+
+
+def _ryder_cup_winner_markets():
+    """The two three-outcome winner fields read on Nov 7, 2026."""
+    return [
+        _Market(
+            3970169,
+            "kalshi",
+            "KXRYDERCUP-27",
+            "2027 Ryder Cup Winner",
+            [
+                _Outcome("Team Europe", 0.54),
+                _Outcome("Team USA", 0.43),
+                _Outcome("Tie", 0.065),
+            ],
+            mutually_exclusive=True,
+        ),
+        _Market(
+            59703247,
+            "polymarket",
+            "polymarket_ryder",
+            "2027 Ryder Cup Winner",
+            [_Outcome("Europe", 0.51), _Outcome("USA", 0.43), _Outcome("Tie", 0.041)],
+            mutually_exclusive=True,
+        ),
+    ]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("usa_name", ["USA", "U.S.", "United States", "America"])
+async def test_three_way_cup_winner_blends_both_teams_and_tie_before_allocation(
+    served, reverse, usa_name
+):
+    markets = _ryder_cup_winner_markets()
+    markets[1].outcomes[1].name = usa_name
+    if reverse:
+        markets.reverse()
+    card = _card(await served(markets), "Ryder Cup")
+    sides = {
+        golf_route.canonical_team_side_name(row["name"]): row for row in card["golfers"]
+    }
+    assert set(sides) == {"europe", "usa"}
+    assert sides["europe"]["sources"] == {"kalshi": 0.54, "polymarket": 0.51}
+    assert sides["usa"]["sources"] == {"kalshi": 0.43, "polymarket": 0.43}
+    (tie,) = card["overflow_outcomes"]
+    assert tie["name"] == "Tie"
+    assert tie["sources"] == {"kalshi": 0.065, "polymarket": 0.041}
+    assert "rank" not in tie
+    assert [
+        sides["europe"]["rendered_percent"],
+        sides["usa"]["rendered_percent"],
+        tie["rendered_percent"],
+    ] == [52, 43, 5]
+    assert sum(row["probability"] for row in [*sides.values(), tie]) == pytest.approx(1)
+    assert card["_all_golfers"] == card["golfers"]
+
+
+@pytest.mark.parametrize("refusal", ["partial_mass", "unknown_price", "result"])
+async def test_three_way_cup_preserves_shared_allocation_refusals(served, refusal):
+    markets = _ryder_cup_winner_markets()
+    if refusal == "partial_mass":
+        for market in markets:
+            for outcome in market.outcomes:
+                outcome.current_probability *= 0.2
+    elif refusal == "unknown_price":
+        markets[1].outcomes[-1].current_probability = None
+    else:
+        winner = markets[0].outcomes[0]
+        winner.is_winner = True
+        winner.resolution_source = "clean_resolution"
+    card = _card(await served(markets), "Ryder Cup")
+    rows = [*card["golfers"], *card.get("overflow_outcomes", [])]
+    assert len(rows) == 3
+    assert all("rendered_percent" not in row for row in rows)
+    europe = next(
+        row
+        for row in rows
+        if golf_route.normalize_team_side_name(row["name"]) == "europe"
+    )
+    expected = 0.105 if refusal == "partial_mass" else 0.525
+    assert europe["probability"] == pytest.approx(expected)
+
+
+async def test_two_way_promotion_does_not_replace_an_allocated_three_way_cup(served):
+    markets = _ryder_cup_winner_markets()
+    markets.append(
+        _Market(
+            99002,
+            "kalshi",
+            "KXRYDERPAIR-27",
+            "2027 Ryder Cup Winner",
+            [_Outcome("Team Europe", 0.7), _Outcome("Team USA", 0.3)],
+            mutually_exclusive=True,
+        )
+    )
+    card = _card(await served(markets), "Ryder Cup")
+    assert len(card["h2h_matchups"]) == 1
+    assert [row["rendered_percent"] for row in card["golfers"]] == [52, 43]
+    assert card["overflow_outcomes"][0]["rendered_percent"] == 5
+
+
+@pytest.mark.parametrize("side", ["World", "International", "Rest of the World"])
+async def test_presidents_cup_aliases_share_one_winner_row(served, side):
+    markets = _ryder_cup_winner_markets()
+    for market in markets:
+        market.name = "2027 Presidents Cup Winner"
+    markets[0].outcomes[0].name = "Team World"
+    markets[1].outcomes[0].name = side
+    card = _card(await served(markets), "Presidents Cup")
+    assert len(card["golfers"]) == 2
+    world = card["golfers"][0]
+    assert world["sources"] == {"kalshi": 0.54, "polymarket": 0.51}
+    assert world["rendered_percent"] == 52
+    assert card["overflow_outcomes"][0]["rendered_percent"] == 5
 
 
 def _card(body, name_fragment):
@@ -490,7 +605,8 @@ class TestTheCardSurvivesOnItsTeamMarket:
 
         assert card is not None
         assert [g["name"] for g in card["golfers"]][:1] == ["Ludvig Aberg"]
-        assert card["golfers"][0]["probability"] == pytest.approx(0.105, abs=0.002)
+        assert card["golfers"][0]["probability"] == pytest.approx(0.105)
+        assert all("rendered_percent" not in g for g in card["golfers"])
 
 
 # ──────────────────────────────────────────────────────────────────────────────

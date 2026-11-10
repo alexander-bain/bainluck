@@ -1,0 +1,715 @@
+{
+  "schema": "sibling-family-exam/1",
+  "as_of": "2026-11-08",
+  "ruling": "https://github.com/alexander-bain/bainluck/issues/12221",
+  "receipt": "https://github.com/alexander-bain/bainluck/issues/12374",
+  "model": "gpt-4o-mini",
+  "result": "HELD",
+  "licences": {
+    "sibling_family": "HELD"
+  },
+  "split_counts": {
+    "test": 20,
+    "dev": 12,
+    "all": 32
+  },
+  "cost": {
+    "estimated_usd": 0.0383,
+    "actual_usd": 0.0167,
+    "basis": "usage_rated",
+    "replies": 96,
+    "input_tokens": 58434,
+    "output_tokens": 13224,
+    "per_run_cap_usd": 5.0,
+    "monthly_cap_usd": 30.0
+  },
+  "hashes": {
+    "dataset_sha256": "b7f92afbfd524a1f034f67db549dc3bf69febe2f373a42c1c1c1e8af610ca1aa",
+    "scorer_sha256": "754d2509bc7c12333255d328d86486815ded63f42543540d70d2156497af69f7"
+  },
+  "gate_results": [
+    {
+      "id": "card_vs_single_member",
+      "bar": "Rated Better on >= 85% of held-out test cards (95% CI reported) and Worse on <= 10%",
+      "scope": "test",
+      "observed": {
+        "k": 0,
+        "n": 20,
+        "better_k": 0,
+        "worse_k": 0,
+        "graded_k": 0,
+        "ungraded_k": 20,
+        "better_pct": null,
+        "worse_pct": null,
+        "better_wilson95": null,
+        "worse_wilson95": null,
+        "result": "HELD",
+        "status_note": "not measured: 0 of 20 test cards graded"
+      },
+      "result": "HELD"
+    },
+    {
+      "id": "relation_truth",
+      "bar": "100% of member rows share the stated sibling_of parent and vary on the stated axis; 0 duplicate members",
+      "scope": "test",
+      "by_pass": {
+        "1": {
+          "k": 20,
+          "n": 20,
+          "duplicate_cards": 0,
+          "result": "PASS"
+        },
+        "2": {
+          "k": 20,
+          "n": 20,
+          "duplicate_cards": 0,
+          "result": "PASS"
+        },
+        "3": {
+          "k": 20,
+          "n": 20,
+          "duplicate_cards": 0,
+          "result": "PASS"
+        }
+      },
+      "result": "PASS"
+    },
+    {
+      "id": "freshness_and_count",
+      "bar": "100% of held-out test cards have 3-6 live, unsettled members",
+      "scope": "test",
+      "by_pass": {
+        "1": {
+          "k": 20,
+          "n": 20,
+          "result": "PASS"
+        },
+        "2": {
+          "k": 20,
+          "n": 20,
+          "result": "PASS"
+        },
+        "3": {
+          "k": 20,
+          "n": 20,
+          "result": "PASS"
+        }
+      },
+      "result": "PASS"
+    },
+    {
+      "id": "run_to_run_stability",
+      "bar": "Across 3 runs, >= 90% of proposed cards agree on their member set",
+      "scope": "all",
+      "observed": {
+        "k": 32,
+        "n": 32,
+        "wilson95": [
+          89.3,
+          100.0
+        ],
+        "result": "PASS"
+      },
+      "result": "PASS"
+    }
+  ],
+  "per_pass": {
+    "1": {
+      "test": {
+        "expected": 20,
+        "graded": 0,
+        "ungraded": 20,
+        "better": {
+          "k": 0,
+          "n": 0,
+          "ungraded": 20,
+          "pct": null,
+          "wilson95": null
+        },
+        "same": {
+          "k": 0,
+          "n": 0,
+          "ungraded": 20,
+          "pct": null,
+          "wilson95": null
+        },
+        "worse": {
+          "k": 0,
+          "n": 0,
+          "ungraded": 20,
+          "pct": null,
+          "wilson95": null
+        },
+        "relation_truth": {
+          "k": 20,
+          "n": 20,
+          "pct": 100.0,
+          "wilson95": [
+            83.9,
+            100.0
+          ]
+        },
+        "duplicate_free": {
+          "k": 20,
+          "n": 20,
+          "pct": 100.0,
+          "wilson95": [
+            83.9,
+            100.0
+          ]
+        },
+        "freshness_and_count": {
+          "k": 20,
+          "n": 20,
+          "pct": 100.0,
+          "wilson95": [
+            83.9,
+            100.0
+          ]
+        }
+      },
+      "dev": {
+        "expected": 12,
+        "graded": 6,
+        "ungraded": 6,
+        "better": {
+          "k": 6,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
+        },
+        "same": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "worse": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "relation_truth": {
+          "k": 12,
+          "n": 12,
+          "pct": 100.0,
+          "wilson95": [
+            75.8,
+            100.0
+          ]
+        },
+        "duplicate_free": {
+          "k": 12,
+          "n": 12,
+          "pct": 100.0,
+          "wilson95": [
+            75.8,
+            100.0
+          ]
+        },
+        "freshness_and_count": {
+          "k": 12,
+          "n": 12,
+          "pct": 100.0,
+          "wilson95": [
+            75.8,
+            100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
+          ]
+        }
+      },
+      "all": {
+        "expected": 32,
+        "graded": 6,
+        "ungraded": 26,
+        "better": {
+          "k": 6,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
+        },
+        "same": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "worse": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "relation_truth": {
+          "k": 32,
+          "n": 32,
+          "pct": 100.0,
+          "wilson95": [
+            89.3,
+            100.0
+          ]
+        },
+        "duplicate_free": {
+          "k": 32,
+          "n": 32,
+          "pct": 100.0,
+          "wilson95": [
+            89.3,
+            100.0
+          ]
+        },
+        "freshness_and_count": {
+          "k": 32,
+          "n": 32,
+          "pct": 100.0,
+          "wilson95": [
+            89.3,
+            100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
+          ]
+        }
+      }
+    },
+    "2": {
+      "test": {
+        "expected": 20,
+        "graded": 0,
+        "ungraded": 20,
+        "better": {
+          "k": 0,
+          "n": 0,
+          "ungraded": 20,
+          "pct": null,
+          "wilson95": null
+        },
+        "same": {
+          "k": 0,
+          "n": 0,
+          "ungraded": 20,
+          "pct": null,
+          "wilson95": null
+        },
+        "worse": {
+          "k": 0,
+          "n": 0,
+          "ungraded": 20,
+          "pct": null,
+          "wilson95": null
+        },
+        "relation_truth": {
+          "k": 20,
+          "n": 20,
+          "pct": 100.0,
+          "wilson95": [
+            83.9,
+            100.0
+          ]
+        },
+        "duplicate_free": {
+          "k": 20,
+          "n": 20,
+          "pct": 100.0,
+          "wilson95": [
+            83.9,
+            100.0
+          ]
+        },
+        "freshness_and_count": {
+          "k": 20,
+          "n": 20,
+          "pct": 100.0,
+          "wilson95": [
+            83.9,
+            100.0
+          ]
+        }
+      },
+      "dev": {
+        "expected": 12,
+        "graded": 6,
+        "ungraded": 6,
+        "better": {
+          "k": 6,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
+        },
+        "same": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "worse": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "relation_truth": {
+          "k": 12,
+          "n": 12,
+          "pct": 100.0,
+          "wilson95": [
+            75.8,
+            100.0
+          ]
+        },
+        "duplicate_free": {
+          "k": 12,
+          "n": 12,
+          "pct": 100.0,
+          "wilson95": [
+            75.8,
+            100.0
+          ]
+        },
+        "freshness_and_count": {
+          "k": 12,
+          "n": 12,
+          "pct": 100.0,
+          "wilson95": [
+            75.8,
+            100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
+          ]
+        }
+      },
+      "all": {
+        "expected": 32,
+        "graded": 6,
+        "ungraded": 26,
+        "better": {
+          "k": 6,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
+        },
+        "same": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "worse": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "relation_truth": {
+          "k": 32,
+          "n": 32,
+          "pct": 100.0,
+          "wilson95": [
+            89.3,
+            100.0
+          ]
+        },
+        "duplicate_free": {
+          "k": 32,
+          "n": 32,
+          "pct": 100.0,
+          "wilson95": [
+            89.3,
+            100.0
+          ]
+        },
+        "freshness_and_count": {
+          "k": 32,
+          "n": 32,
+          "pct": 100.0,
+          "wilson95": [
+            89.3,
+            100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
+          ]
+        }
+      }
+    },
+    "3": {
+      "test": {
+        "expected": 20,
+        "graded": 0,
+        "ungraded": 20,
+        "better": {
+          "k": 0,
+          "n": 0,
+          "ungraded": 20,
+          "pct": null,
+          "wilson95": null
+        },
+        "same": {
+          "k": 0,
+          "n": 0,
+          "ungraded": 20,
+          "pct": null,
+          "wilson95": null
+        },
+        "worse": {
+          "k": 0,
+          "n": 0,
+          "ungraded": 20,
+          "pct": null,
+          "wilson95": null
+        },
+        "relation_truth": {
+          "k": 20,
+          "n": 20,
+          "pct": 100.0,
+          "wilson95": [
+            83.9,
+            100.0
+          ]
+        },
+        "duplicate_free": {
+          "k": 20,
+          "n": 20,
+          "pct": 100.0,
+          "wilson95": [
+            83.9,
+            100.0
+          ]
+        },
+        "freshness_and_count": {
+          "k": 20,
+          "n": 20,
+          "pct": 100.0,
+          "wilson95": [
+            83.9,
+            100.0
+          ]
+        }
+      },
+      "dev": {
+        "expected": 12,
+        "graded": 6,
+        "ungraded": 6,
+        "better": {
+          "k": 6,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
+        },
+        "same": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "worse": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "relation_truth": {
+          "k": 12,
+          "n": 12,
+          "pct": 100.0,
+          "wilson95": [
+            75.8,
+            100.0
+          ]
+        },
+        "duplicate_free": {
+          "k": 12,
+          "n": 12,
+          "pct": 100.0,
+          "wilson95": [
+            75.8,
+            100.0
+          ]
+        },
+        "freshness_and_count": {
+          "k": 12,
+          "n": 12,
+          "pct": 100.0,
+          "wilson95": [
+            75.8,
+            100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 6,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
+          ]
+        }
+      },
+      "all": {
+        "expected": 32,
+        "graded": 6,
+        "ungraded": 26,
+        "better": {
+          "k": 6,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 100.0,
+          "wilson95": [
+            61.0,
+            100.0
+          ]
+        },
+        "same": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "worse": {
+          "k": 0,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 0.0,
+          "wilson95": [
+            0.0,
+            39.0
+          ]
+        },
+        "relation_truth": {
+          "k": 32,
+          "n": 32,
+          "pct": 100.0,
+          "wilson95": [
+            89.3,
+            100.0
+          ]
+        },
+        "duplicate_free": {
+          "k": 32,
+          "n": 32,
+          "pct": 100.0,
+          "wilson95": [
+            89.3,
+            100.0
+          ]
+        },
+        "freshness_and_count": {
+          "k": 32,
+          "n": 32,
+          "pct": 100.0,
+          "wilson95": [
+            89.3,
+            100.0
+          ]
+        },
+        "strict_amazing": {
+          "k": 3,
+          "n": 6,
+          "ungraded": 26,
+          "pct": 50.0,
+          "wilson95": [
+            18.8,
+            81.2
+          ]
+        }
+      }
+    }
+  }
+}

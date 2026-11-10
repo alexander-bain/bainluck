@@ -7,7 +7,8 @@ SQLite. None of them runs either lifecycle task, and the two tasks are where the
 repair is actually spent:
 
   * `espn_sync._transition_event_statuses_impl` — suspends a row that has
-    outlived `wall_clock_bound_hours + 0.5`;
+    outlived `wall_clock_bound_hours + 0.5` (since #12369, an unwatched soccer
+    row outliving the bound itself);
   * `odds_polling.detect_and_close_stale_events` — holds a row it considers
     inside its bound and never reaches its staleness checks at all.
 
@@ -33,7 +34,7 @@ BOTH tasks at once:
 
 | reading | bound | espn suspends at | odds holds until |
 |---|---|---|---|
-| repaired (shadow anchor ignored) | 2.5h | >3.0h → **fires** | 2.5h → **released** |
+| repaired (shadow anchor ignored) | 2.5h | >2.5h → **fires** (>3.0h before #12369) | 2.5h → **released** |
 | pre-#4075 (anchor counts) | 4.0h | >4.5h → holds | 4.0h → held |
 """
 
@@ -89,7 +90,8 @@ class TestTheSpecimenStillSeparatesTheTwoReadings:
         where both readings agree and every test below would pass vacuously.
         """
         repaired, old = 2.5, 4.0
-        # espn suspends at `bound + 0.5`; odds releases above `bound`.
+        # espn suspends above `bound` (above `bound + 0.5` before #12369, which
+        # the specimen also clears); odds releases above `bound`.
         assert repaired + 0.5 < SPECIMEN_HOURS <= old
         assert repaired < SPECIMEN_HOURS <= old
 

@@ -239,6 +239,7 @@ struct NFLFinishCardView9483: View {
     let homeName: String
     let awayColor: Color
     let homeColor: Color
+    var state: NFLCardDeckState9483? = nil
     var expanded = false
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
     /// The line the chart draws each team's name on, at the top of its band.
@@ -265,9 +266,26 @@ struct NFLFinishCardView9483: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(card.kicker.uppercased())
-                .font(.caption.weight(.bold))
-                .foregroundStyle(homeColor)
+            HStack(alignment: .firstTextBaseline) {
+                Text(card.kicker.uppercased())
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(homeColor)
+                if expanded, ReleaseSurfaces.isEventPageAtlasEnabled(), let state {
+                    Spacer(minLength: 8)
+                    Button {
+                        state.detailsRowID = "finish"
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Forecast details")
+                    .accessibilityIdentifier("atlas-finish-card-details-button-11666")
+                }
+            }
             Text(card.headline(awayName: awayName, homeName: homeName))
                 .font(.title3.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
@@ -505,8 +523,15 @@ struct NFLMilestoneCardView9483: View {
             Text(card.caption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if ReleaseSurfaces.isEventPageAtlasEnabled() {
                 EventAtlasStoryCardMarkKeyView11666(items: EventAtlasStoryCards11666.milestoneMarkKey(for: card))
+                PlayerMilestoneComparison9483(
+                    card: card,
+                    selectedRowID: rung?.rowID,
+                    isFinal: card.isFinal,
+                    color: color
+                )
             }
             if let profile = card.profile {
                 chart(profile, selected: rung)
@@ -567,7 +592,7 @@ struct NFLMilestoneCardView9483: View {
     }
 
     @ViewBuilder private var actualFigure: some View {
-        if let actual = card.actual {
+        if !ReleaseSurfaces.isEventPageAtlasEnabled(), let actual = card.actual {
             VStack(alignment: .trailing, spacing: 0) {
                 Text(NFLFinishCardView9483.points(actual))
                     .font(.title.weight(.bold).monospacedDigit())
@@ -801,7 +826,7 @@ struct NFLEventCardView9483: View {
             switch card {
             case .finish(let finish):
                 NFLFinishCardView9483(card: finish, awayName: awayName, homeName: homeName,
-                                      awayColor: awayColor, homeColor: homeColor, expanded: expanded)
+                                      awayColor: awayColor, homeColor: homeColor, state: state, expanded: expanded)
             case .milestone(let milestone):
                 NFLMilestoneCardView9483(
                     card: milestone,
@@ -813,9 +838,55 @@ struct NFLEventCardView9483: View {
             case .mlb(let mlb):
                 MLBFinalCardView11284(card: mlb, awayColor: awayColor, homeColor: homeColor,
                                       state: state, expanded: expanded)
+            case .cricket(let cricket):
+                EventAtlasCricketCardView11666(card: cricket)
+            case .esports(let esports):
+                EventAtlasEsportsCardView11666(card: esports, awayColor: awayColor, homeColor: homeColor)
+            case .rugbyAfl(let rugbyAfl):
+                EventAtlasRugbyAflCardView11666(card: rugbyAfl)
+            case .lacrosseDartsSquash(let lds):
+                EventAtlasLacrosseDartsSquashCardView11666(card: lds)
             case .nhlScoring(let nhl):
                 EventAtlasNhlScoringCardView11666(card: nhl, awayColor: awayColor, homeColor: homeColor,
                                                   state: state, expanded: expanded)
+            case .soccerThreeWay(let threeWay):
+                EventAtlasSoccerThreeWayCardView11666(card: threeWay, awayColor: awayColor, homeColor: homeColor,
+                                                      state: state, expanded: expanded)
+            case .soccerBothTeams(let bothTeams):
+                EventAtlasSoccerBothTeamsCardView11666(card: bothTeams, state: state, expanded: expanded)
+            case .soccerFirstTeam(let firstTeam):
+                EventAtlasSoccerFirstTeamCardView11666(card: firstTeam, awayColor: awayColor, homeColor: homeColor,
+                                                       state: state, expanded: expanded)
+            case .soccerHalves(let halves):
+                EventAtlasSoccerHalvesCardView11666(card: halves, awayColor: awayColor, homeColor: homeColor,
+                                                    state: state, expanded: expanded)
+            case .soccerExactScore(let exactScore):
+                EventAtlasSoccerExactScoreCardView11666(card: exactScore, state: state, expanded: expanded)
+            case .tennisSets(let tennisSets):
+                EventAtlasTennisSetsCardView11666(card: tennisSets, awayColor: awayColor, homeColor: homeColor,
+                                                  state: state, expanded: expanded)
+            case .tennisExactScore(let tennisExactScore):
+                EventAtlasTennisExactScoreCardView11666(card: tennisExactScore, awayColor: awayColor, homeColor: homeColor,
+                                                        state: state, expanded: expanded)
+            case .nflPeriodWinners(let periodWinners):
+                EventAtlasFootballPeriodWinnersCardView11666(card: periodWinners, awayColor: awayColor, homeColor: homeColor,
+                                                             state: state, expanded: expanded)
+            case .nflPairedMilestones(let pairedMilestones):
+                EventAtlasFootballPairedMilestonesCardView11666(card: pairedMilestones, awayColor: awayColor, homeColor: homeColor,
+                                                                state: state, expanded: expanded)
+            case .nflCombinedYards(let combinedYards):
+                EventAtlasFootballCombinedYardsCardView11666(
+                    card: combinedYards,
+                    color: PlayerPropsTeam.color(for: combinedYards.milestone.side, home: homeColor, away: awayColor),
+                    state: state,
+                    expanded: expanded
+                )
+            case .combatMethod(let combatMethod):
+                EventAtlasCombatMethodCardView11666(card: combatMethod)
+            case .combatRounds(let combatRounds):
+                EventAtlasCombatRoundCardView11666(card: combatRounds)
+            case .combatDuration(let combatDuration):
+                EventAtlasCombatDurationCardView11666(card: combatDuration)
             }
         }
         .padding(16)

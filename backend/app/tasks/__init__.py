@@ -775,6 +775,7 @@ celery_app.conf.task_routes = {
     # heavy task (main app, not `bainluck-heavy`).
     "app.tasks.assemble_theme_collections": {"queue": "background"},
     "app.tasks.rebuild_theme_snapshot": {"queue": "background"},
+    "app.tasks.refresh_awards_occasions": {"queue": "background"},
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
@@ -1335,14 +1336,40 @@ def poll_futures_odds(self):
 
 @celery_app.task(bind=True, name="app.tasks.poll_kalshi_markets", soft_time_limit=600, time_limit=660)
 def poll_kalshi_markets(self, event_ticker=None):
-    """Poll prediction markets from Kalshi (11 min limit for market backfill)."""
+    """Poll prediction markets from Kalshi (11 min limit for market backfill).
+
+    #12019: the full poll never shares worker-heavy with the matcher — the two
+    together were R15-killed mid-poll. Turn rules: `app.tasks.heavy_memory_turns`.
+    """
     from app.tasks.kalshi import _poll_kalshi_markets
-    poll = (
-        _poll_kalshi_markets(event_ticker=event_ticker)
-        if event_ticker is not None
-        else _poll_kalshi_markets()
-    )
-    return _tracked_run("poll_kalshi", poll)
+
+    if event_ticker is not None:
+        return _tracked_run(
+            "poll_kalshi", _poll_kalshi_markets(event_ticker=event_ticker)
+        )
+
+    from app.tasks import heavy_memory_turns as turns
+    from app.utils.single_flight import single_flight
+
+    start_mb = turns.rss_mb()
+    with single_flight(turns.LEASE_TASK, ttl_seconds=turns.POLL_LEASE_TTL_S) as lease:
+        if not lease.acquired:
+            if self.request.retries < turns.POLL_MAX_RETRIES:
+                turns.mark_poll_pending()
+                raise self.retry(
+                    countdown=turns.POLL_RETRY_COUNTDOWN_S,
+                    max_retries=turns.POLL_MAX_RETRIES,
+                )
+            logger.warning(
+                "poll_kalshi_markets: %s still held after %d retries; polling anyway",
+                lease.key,
+                self.request.retries,
+            )
+        turns.clear_poll_pending()
+        try:
+            return _tracked_run("poll_kalshi", _poll_kalshi_markets())
+        finally:
+            turns.log_memory("poll_kalshi_markets", start_mb)
 
 
 @celery_app.task(
@@ -2558,9 +2585,30 @@ def backfill_market_shapes(self, limit: int = 40000, dry_run: bool = False):
 
 @celery_app.task(bind=True, name="app.tasks.match_prediction_markets", time_limit=870, soft_time_limit=840)
 def match_prediction_markets(self, limit: int = 500):
-    """Match game-level prediction markets to events and write win_prob_snapshots."""
+    """Match game-level prediction markets to events and write win_prob_snapshots.
+
+    #12019: declines a tick while the full Kalshi poll or the calibration beat
+    runs or waits for the dyno (`app.tasks.heavy_memory_turns`); the next tick
+    is 15 minutes away.
+    """
+    from app.tasks import heavy_memory_turns as turns
     from app.tasks.prediction_market_matching import _match_prediction_markets
-    return _tracked_run("prediction_market_match", _match_prediction_markets(limit))
+    from app.utils.single_flight import single_flight
+
+    if turns.poll_is_pending():
+        return {"skipped": True, "reason": "kalshi_poll_pending", "task": turns.LEASE_TASK}
+    if turns.calibration_is_pending():
+        return {"skipped": True, "reason": "calibration_pending", "task": turns.LEASE_TASK}
+    start_mb = turns.rss_mb()
+    with single_flight(turns.LEASE_TASK, ttl_seconds=turns.MATCH_LEASE_TTL_S) as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        try:
+            return _tracked_run(
+                "prediction_market_match", _match_prediction_markets(limit)
+            )
+        finally:
+            turns.log_memory("match_prediction_markets", start_mb)
 
 
 @celery_app.task(bind=True, name="app.tasks.poll_live_prediction_markets")
@@ -5784,6 +5832,23 @@ def grid_sentinel(self, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.grouping_sentinel")
+def grouping_sentinel(self, post=True, file_issues=True):
+    """Grouping Sentinel (#12231): count the market families no grouping covers
+    (five or more open, priced markets alive 48 h), new venue series, unshaped
+    markets and frames written, and post the counts on #12221 once a week
+    through the rail's report path. Report-only (72-A): it files nothing until
+    Thu Nov 26, then at most five issues a run through ``reconcile_issue``.
+    Read-only against market data. The 840s soft limit (under the 900s hard
+    limit) sits above the run's 600s definitions deadline plus its paged reads,
+    so a slow run ends tracked, never SIGKILLed (#966)."""
+    from app.tasks.grouping_sentinel import _run_grouping_sentinel
+    return _tracked_run(
+        "grouping_sentinel",
+        _run_grouping_sentinel(post=post, file_issues=file_issues),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900,
                  name="app.tasks.anchor_schedule_sentinel")
 def anchor_schedule_sentinel(self, file_issues=True):
@@ -5866,6 +5931,37 @@ def assemble_containers(self, apply=True, only=None):
         "assemble_containers",
         _run_assemble_containers(apply=apply, only=only),
     )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=120,
+    time_limit=150,
+    name="app.tasks.refresh_awards_occasions",
+)
+def refresh_awards_occasions(self):
+    """Refresh ceremony evidence for enabled, reviewed definitions (#11935)."""
+    from app.tasks.awards_occasions import refresh_awards_occasions as refresh
+    from app.utils.roundup_containers import ROUNDUP_PRODUCERS
+    from app.utils.single_flight import single_flight
+
+    enabled = any(
+        (producer.rule or {}).get("producer") == "awards_ceremony"
+        and (producer.enabled is None or producer.enabled())
+        for producer in ROUNDUP_PRODUCERS.values()
+    )
+    if not enabled:
+        return {
+            "terminal": "skipped",
+            "reason": "ceremony_definitions_disabled",
+            "model_cost_usd": 0,
+        }
+    with single_flight("app.tasks.refresh_awards_occasions", ttl_seconds=180) as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        if lease.reason == "redis_unavailable":
+            raise RuntimeError("Awards occasion evidence lease unavailable")
+        return _tracked_run("awards_occasions", refresh())
 
 
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
@@ -6846,9 +6942,35 @@ def send_morning_digest(self):
 # open) — this queue restores availability, not compute speed.
 @celery_app.task(bind=True, soft_time_limit=1500, time_limit=1560, name="app.tasks.precompute_calibration_main")
 def precompute_calibration_main(self):
-    """Precompute main /api/calibration response and cache in Redis (every 1h)."""
+    """Precompute main /api/calibration response and cache in Redis (every 1h).
+
+    #12019 (Nov 9): never starts beside the matcher on worker-heavy — each
+    reaches about 1 GB alone and the pair were R15-killed together. It takes the
+    poll's turn rules (`app.tasks.heavy_memory_turns`).
+    """
+    from app.tasks import heavy_memory_turns as turns
     from app.tasks.precompute_calibration import _precompute_calibration_main
-    return _tracked_run("precompute_calibration_main", _precompute_calibration_main())
+    from app.utils.single_flight import single_flight
+
+    start_mb = turns.rss_mb()
+    with single_flight(turns.LEASE_TASK, ttl_seconds=turns.CALIBRATION_LEASE_TTL_S) as lease:
+        if not lease.acquired:
+            if self.request.retries < turns.CALIBRATION_MAX_RETRIES:
+                turns.mark_calibration_pending()
+                raise self.retry(
+                    countdown=turns.CALIBRATION_RETRY_COUNTDOWN_S,
+                    max_retries=turns.CALIBRATION_MAX_RETRIES,
+                )
+            logger.warning(
+                "precompute_calibration_main: %s still held after %d retries; running anyway",
+                lease.key,
+                self.request.retries,
+            )
+        turns.clear_calibration_pending()
+        try:
+            return _tracked_run("precompute_calibration_main", _precompute_calibration_main())
+        finally:
+            turns.log_memory("precompute_calibration_main", start_mb)
 
 
 @celery_app.task(bind=True, soft_time_limit=1500, time_limit=1560,
@@ -7107,6 +7229,29 @@ def warm_typeahead_gold_set(self):
     if isinstance(summary, dict) and summary.get("terminal") == "skipped":
         raise self.retry(countdown=15)
     return summary
+
+
+@celery_app.task(
+    bind=True, soft_time_limit=150, time_limit=180, name="app.tasks.refresh_open_futures_outcomes"
+)
+def refresh_open_futures_outcomes(self, budget_seconds: int = None):
+    """#4437 Decide 89-A: one maintenance pass over `open_futures_outcomes`.
+
+    See `app.tasks.open_futures_outcomes`. The first fill (all twelve slices,
+    ~30 s) runs inside an ordinary pass; a pass cut short by its budget returns
+    `partial` and resumes at its cursor.
+    """
+    from app.tasks.open_futures_outcomes import (
+        PASS_BUDGET_SECONDS,
+        _refresh_open_futures_outcomes,
+    )
+
+    return _tracked_run(
+        "refresh_open_futures_outcomes",
+        _refresh_open_futures_outcomes(
+            budget_seconds=PASS_BUDGET_SECONDS if budget_seconds is None else int(budget_seconds)
+        ),
+    )
 
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=140, name="app.tasks.warm_search_head")
@@ -8399,11 +8544,8 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 125},
         "options": {"queue": "background"},
     },
-    "generate-discover-comparison-candidates": {
-        "task": "app.tasks.generate_discover_comparison_candidates",
-        "schedule": crontab(minute=20, hour=9),
-        "kwargs": {"limit": 60},
-    },
+    # "generate-discover-comparison-candidates" retired off its timer by #12372
+    # (2026-11-08, #12221 Part 1 §1): replaced by the offline sibling-family proposer.
     "evaluate-discover-with-llm-daily": {
         "task": "app.tasks.evaluate_discover_with_llm",
         "schedule": crontab(minute=35, hour=9),
@@ -8713,6 +8855,16 @@ celery_app.conf.beat_schedule = {
         # the assigned migration slot.
         "schedule": crontab(minute="23,53"),
         "options": {"queue": "heavy"},
+    },
+    "refresh-open-futures-outcomes": {
+        "task": "app.tasks.refresh_open_futures_outcomes",
+        # #4437 Decide 89-A: every 5 minutes at :02/:07/..., clear of the :00 and
+        # :15 tops of the hour. A pass that never comes leaves the state to
+        # expire after 15 minutes, and readers fall back to `futures_outcomes`;
+        # so a late or skipped fire costs speed, never correctness. ~5 s of
+        # database time a pass (one 1/12 slice, one delta, one anti-join).
+        "schedule": crontab(minute="2-59/5"),
+        "options": {"queue": "background"},
     },
     "warm-search-head": {
         "task": "app.tasks.warm_search_head",
@@ -9033,6 +9185,16 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.grid_sentinel",
         "schedule": crontab(minute=25, hour=7),  # Daily 07:25 UTC
         "options": {"queue": "heavy"},
+    },
+    "grouping-sentinel-weekly": {
+        # #12231: the weekly count of market families no grouping covers, posted
+        # on #12221 (report-only until Thu Nov 26, 72-A). Thursday 16:00 UTC
+        # (8 AM PT) on background, as Fable answered on #12231 (Nov 6, 9:28 PM):
+        # a weekly, rules-only read with no reader waiting on it, so it is not
+        # one of #233's morning alarms that need a guaranteed heavy slot.
+        "task": "app.tasks.grouping_sentinel",
+        "schedule": crontab(minute=0, hour=16, day_of_week=4),  # Weekly Thursday 16:00 UTC
+        "options": {"queue": "background"},
     },
     "grid-register-sentinel-daily": {
         # Queue #295: diff every committed grid register against live source
@@ -9497,6 +9659,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.assemble_theme_collections",
         "schedule": crontab(minute=59),
         "options": {"queue": "background"},
+    },
+    "refresh-awards-occasions-hourly": {
+        "task": "app.tasks.refresh_awards_occasions",
+        "schedule": crontab(minute=47),
+        "options": {"queue": "background", "expires": 3600},
     },
     # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------
     #

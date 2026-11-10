@@ -848,7 +848,11 @@ class TestFuturesRecallArmsAreUnionedNotOred:
         `nba champion` measured 6,387ms with the filters only on the outer query
         versus 701ms with them pushed into each arm.
         """
-        assert "select(FuturesMarket.id).where(arm, *_futures_open_now)" in SEARCH_CODE, (
+        # #4437: the builder takes the predicate as a parameter whose DEFAULT is
+        # the full `_futures_open_now`, so the ordered slice can push only the
+        # cheap two. Every other caller still pushes the full predicate.
+        assert "def _futures_candidates_in(arms, open_now=_futures_open_now):" in SEARCH_CODE
+        assert "select(FuturesMarket.id).where(arm, *open_now)" in SEARCH_CODE, (
             "the open/unresolved filters are no longer pushed into each UNION "
             "arm — measured 6,387ms -> 701ms on `nba champion`"
         )
@@ -856,7 +860,10 @@ class TestFuturesRecallArmsAreUnionedNotOred:
     def test_the_outer_query_still_carries_the_filters_too(self):
         """Deliberate redundancy: the predicate stays correct if the push-down
         is ever removed. Cheap, because the outer query sees only candidate ids."""
-        assert "*_futures_open_now," in SEARCH_CODE
+        # #4437: re-pointed with the builder's parameter; the default IS the full
+        # predicate, and only `_futures_slice_query` passes the cheap two.
+        assert "def _futures_window_query(candidate_filter, open_now=_futures_open_now):" in SEARCH_CODE
+        assert "*open_now," in SEARCH_CODE
 
     def test_the_ored_shape_would_fail_this_guard(self):
         """Mutation check — the guard must reject the shape it replaced.
@@ -939,7 +946,10 @@ class TestTypeaheadIsBoundedAndIndexable:
             "CORRELATED_OUTCOME_ARM reintroduced in /typeahead: measured 3,468ms "
             "vs 66.8ms for the set-identical non-correlated IN form"
         )
-        assert "select(FuturesOutcome.market_id).where(" in TYPEAHEAD_CODE, (
+        # #4437 (Decide 89-A): the arm's subquery is built by `_outcome_market_ids`,
+        # which returns the same non-correlated `SELECT market_id ... WHERE` (over
+        # `open_futures_outcomes` while that copy is current).
+        assert "_outcome_market_ids(_ta_outcome_cond)" in TYPEAHEAD_CODE, (
             "the non-correlated outcome subquery is gone from /typeahead"
         )
 
@@ -972,7 +982,7 @@ class TestTypeaheadIsBoundedAndIndexable:
             "them both admitting `d'or`"
         )
         gate_at = TYPEAHEAD_CODE.find("if _has_extractable_trigram(_ta_q_compact)")
-        arm_at = TYPEAHEAD_CODE.find("select(FuturesOutcome.market_id).where(")
+        arm_at = TYPEAHEAD_CODE.find("_outcome_market_ids(_ta_outcome_cond)")
         assert 0 < gate_at < arm_at, (
             "the outcome arm is not inside the unservable-pattern gate"
         )

@@ -100,13 +100,13 @@ enum MLBVenueResult11284: Hashable {
 /// Details show what was on screen until Refresh. Every value is named for
 /// what it is — saved chance, last recorded quote, final count, venue
 /// result — and none is merged into another.
-struct MLBOriginal11284: Equatable, Identifiable {
-    struct Field: Equatable {
+struct MLBOriginal11284: Equatable, Identifiable, Sendable {
+    struct Field: Equatable, Sendable {
         let label: String
         let value: String
     }
 
-    struct Section: Equatable {
+    struct Section: Equatable, Sendable {
         let title: String?
         let fields: [Field]
     }
@@ -114,6 +114,8 @@ struct MLBOriginal11284: Equatable, Identifiable {
     let id: String
     let title: String
     let sections: [Section]
+    var rawSource: String? = nil
+    var sourceCount: Int = 1
 
     static func stamp(_ iso: String?) -> String {
         SourceAge.preciseStamp(iso) ?? "time unavailable"
@@ -206,7 +208,8 @@ struct MLBOriginal11284: Equatable, Identifiable {
         if let venue = SourceLabels.label(for: row.source) {
             fields.append(Field(label: "Venue", value: venue))
         }
-        fields.append(Field(label: "Pregame chance", value: "Unavailable"))
+        fields.append(Field(label: "Pregame chance",
+                            value: openChance(row.pregameMark).map { formatProbability($0) } ?? "Unavailable"))
         fields.append(Field(label: "Venue result",
                             value: MLBVenueResult11284.venue(isWinner: row.isWinner,
                                                              resolutionSource: row.resolutionSource).label))
@@ -289,7 +292,9 @@ enum MLBFinalDeck11284 {
             MLBHomeRunCard11284.build(markets, eventID: input.eventID).map { .homeRuns($0) },
             MLBMilestoneCard11284.build(markets, teams: teams, eventID: input.eventID).map { .strikeouts($0) },
             MLBTotalsCard11284.build(markets?.gameQuestionMatrix, actualTotal: total,
-                                     eventID: input.eventID).map { .totals($0) },
+                                     eventID: input.eventID,
+                                     homeName: input.homeTeam, awayName: input.awayTeam,
+                                     homeScore: input.homeScore, awayScore: input.awayScore).map { .totals($0) },
             MLBExtraInningsCard11284.build(markets?.other ?? [], eventID: input.eventID).map { .extraInnings($0) },
             MLBSeriesCard11284.build(series, eventID: input.eventID).map { .series($0) },
         ]
@@ -643,6 +648,10 @@ struct MLBTotalsCard11284: Equatable {
     let lines: [Line]
     /// Home + away from the final score; nil without one. Never a quote.
     let actualTotal: Int?
+    var homeName: String = ""
+    var awayName: String = ""
+    var homeScore: Int? = nil
+    var awayScore: Int? = nil
 
     var reason: String { "Every full-game run line, with the venue's result" }
 
@@ -663,7 +672,9 @@ struct MLBTotalsCard11284: Equatable {
         return "Final \(actualTotal) runs · \(total > line.line ? "above" : "below") this line"
     }
 
-    static func build(_ matrix: EventQuestionMatrix?, actualTotal: Int?, eventID: Int) -> MLBTotalsCard11284? {
+    static func build(_ matrix: EventQuestionMatrix?, actualTotal: Int?, eventID: Int,
+                      homeName: String = "", awayName: String = "",
+                      homeScore: Int? = nil, awayScore: Int? = nil) -> MLBTotalsCard11284? {
         guard let matrix, matrix.contract == NBAEventCards9483.matrixContract,
               matrix.displayScope == nil || matrix.displayScope == QuestionMatrixScope.game.rawValue
         else { return nil }
@@ -686,7 +697,9 @@ struct MLBTotalsCard11284: Equatable {
         for line in lines { counts[line.line, default: 0] += 1 }
         let kept = lines.filter { counts[$0.line] == 1 }.sorted { $0.line < $1.line }
         guard kept.count >= NBAEventCards9483.minimumLadderLines else { return nil }
-        return MLBTotalsCard11284(eventID: eventID, lines: kept, actualTotal: actualTotal)
+        return MLBTotalsCard11284(eventID: eventID, lines: kept, actualTotal: actualTotal,
+                                  homeName: homeName, awayName: awayName,
+                                  homeScore: homeScore, awayScore: awayScore)
     }
 }
 
@@ -718,12 +731,13 @@ struct MLBExtraInningsCard11284: Equatable {
         return stat == "extra innings"
     }
 
-    static func build(_ rows: [GameMarketOther], eventID: Int) -> MLBExtraInningsCard11284? {
+    static func build(_ rows: [GameMarketOther], eventID: Int, now: Date = Date()) -> MLBExtraInningsCard11284? {
         if ReleaseSurfaces.isEventPageAtlasEnabled() {
             let entries = EventAtlasMlbCards11666.buildExtraInningsEntries(
                 rows: rows,
                 finished: true,
-                isBefore: false
+                isBefore: false,
+                now: now
             )
             let outcomes = entries.map { entry in
                 var fields: [MLBOriginal11284.Field] = [
@@ -745,7 +759,9 @@ struct MLBExtraInningsCard11284: Equatable {
                 let original = MLBOriginal11284(
                     id: "mlb-o:\(eventID):\(entry.id)",
                     title: entry.marketTitle,
-                    sections: [.init(title: nil, fields: fields)]
+                    sections: [.init(title: nil, fields: fields)],
+                    rawSource: entry.source,
+                    sourceCount: entry.sourceCount
                 )
                 return Outcome(
                     label: entry.label,
@@ -760,7 +776,8 @@ struct MLBExtraInningsCard11284: Equatable {
         let outcomes = rows.filter { isExtraInnings($0) }.map { row in
             Outcome(label: row.outcomeName, venue: SourceLabels.label(for: row.source),
                     venueResult: .venue(isWinner: row.isWinner, resolutionSource: row.resolutionSource),
-                    original: MLBOriginal11284.other(row, eventID: eventID))
+                    original: MLBOriginal11284.other(row, eventID: eventID),
+                    pregameChance: MLBOriginal11284.openChance(row.pregameMark))
         }
         return outcomes.isEmpty ? nil : MLBExtraInningsCard11284(eventID: eventID, outcomes: outcomes)
     }

@@ -1,16 +1,20 @@
 "use client";
 
-import { Suspense, useState, useEffect, useRef } from "react";
+import { Suspense, useState, useEffect, useMemo, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { markSearchDestination } from "@/lib/searchFunnel";
 import Link from "next/link";
 import { searchEvents, fetchSearchSuggestions } from "@/lib/api";
 import { getLeagueDisplay, getEmojiForLeague, getSportLabel } from "@/lib/sportCategories";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
+import { useSearchPriceStream } from "@/hooks/useSearchPriceStream";
+import { patchSearchFamilies, searchAnswerMarkets } from "@/lib/searchFuturesStream";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import SearchFamilyCard from "@/components/SearchFamilyCard";
 import SearchTeamCard from "@/components/SearchTeamCard";
+import DiscoverCollectionCard from "@/components/discover/DiscoverCollectionCard";
+import { admitSearchCollection } from "@/lib/discover/collectionFeed";
 import { familyShownIds } from "@/components/searchFamilyDisplay";
 import CategoryBrowser from "@/components/CategoryBrowser";
 import LoadingState from "@/components/LoadingState";
@@ -22,7 +26,12 @@ import { END_OF_FEED_CATEGORIES } from "@/components/discover/EndOfFeedCard";
 import { eventPath } from "@/lib/eventKey";
 import { hostCuesForEvents } from "@/lib/sameFixtureHostCue";
 import { trackEvent } from "@/lib/analytics";
-import type { SearchResponse, SearchSuggestion } from "@/lib/types";
+import type { FuturesFamily, FuturesMarket, SearchResponse, SearchSuggestion } from "@/lib/types";
+
+// Stable, so an absent answer does not reset the live-price book each render.
+const NO_FUTURES: FuturesMarket[] = [];
+const NO_FAMILIES: FuturesFamily[] = [];
+const NO_EVENTS: SearchResponse["results"] = [];
 
 // Representative example queries spanning the search gold-set's classes (a team,
 // a season future, a politics question) — a self-contained zero-state that works
@@ -212,6 +221,31 @@ function SearchContent() {
     isMaxReached: isFuturesMaxReached
   } = usePinnedFutures();
 
+  // #10090: the open Kalshi/Polymarket futures cards, flat and in families,
+  // re-price live while the page is open (`hooks/useSearchPriceStream`), and
+  // so do its scheduled and live games.
+  // Called before any early return; the input is memoised on the answer, since
+  // a new array is a new answer and resets the live-price book.
+  const answerMarkets = useMemo(
+    () => searchAnswerMarkets(results?.futures ?? NO_FUTURES, results?.futures_families ?? NO_FAMILIES),
+    [results],
+  );
+  const answerEvents = results?.results ?? NO_EVENTS;
+  const { patchMarket: patchLive, patchEvent } = useSearchPriceStream(answerMarkets, answerEvents);
+  const liveEvents = useMemo(() => {
+    const next = answerEvents.map(patchEvent);
+    return next.every((e, i) => e === answerEvents[i]) ? answerEvents : next;
+  }, [answerEvents, patchEvent]);
+  const liveFutures = useMemo(() => {
+    const served = results?.futures ?? NO_FUTURES;
+    const next = served.map(patchLive);
+    return next.every((m, i) => m === served[i]) ? served : next;
+  }, [results, patchLive]);
+  const liveFamilies = useMemo(
+    () => patchSearchFamilies(results?.futures_families ?? NO_FAMILIES, patchLive),
+    [results, patchLive],
+  );
+
   useEffect(() => {
     if (!query || query.length < 2) {
       setResults(null);
@@ -246,6 +280,7 @@ function SearchContent() {
         setIsLoading(false);
         const eventCount = data.results?.length ?? 0;
         const futuresCount = data.futures?.length ?? 0;
+        const collectionCount = (data.collections ?? []).filter((card) => admitSearchCollection(card)).length;
         track('search_submit', {
           query,
           results_count: eventCount,
@@ -259,7 +294,7 @@ function SearchContent() {
         // `query` is passed RAW on purpose — the sanitation boundary turns it
         // into query_hash/length/word_count and hard-drops the text, and that
         // hash is what joins this to search_submit / search_result_click.
-        if (eventCount === 0 && futuresCount === 0) {
+        if (eventCount === 0 && futuresCount === 0 && collectionCount === 0) {
           track('search_no_results', {
             query,
             results_count: 0,
@@ -342,6 +377,11 @@ function SearchContent() {
   const hasTeams = results?.teams && results.teams.length > 0;
   const hasFutures = results?.futures && results.futures.length > 0;
   const hasEvents = results?.results && results.results.length > 0;
+  const collections = (results?.collections ?? []).flatMap((card) => {
+    const entry = admitSearchCollection(card);
+    return entry ? [entry] : [];
+  });
+  const hasCollections = collections.length > 0;
   // #7529 — a split-squad home-and-home puts the same two clubs on this
   // page twice at the same minute; the cue is the only thing telling those
   // two cards apart. Empty map on every other query.
@@ -353,9 +393,9 @@ function SearchContent() {
   // #993 L2-42: composed families render first; the market_ids shown inside a
   // family (headline + its shown members) are filtered from the flat list so
   // nothing double-renders. Backend is the composition source of truth.
-  const families = results?.futures_families ?? [];
+  const families = liveFamilies;
   const shownIds = familyShownIds(families);
-  const flatFutures = (results?.futures ?? []).filter((m) => !shownIds.has(m.id));
+  const flatFutures = liveFutures.filter((m) => !shownIds.has(m.id));
   const hasFamilies = families.length > 0;
   const hasFlatFutures = flatFutures.length > 0;
 
@@ -369,6 +409,7 @@ function SearchContent() {
     hasFutures: !!hasFutures,
     hasTeams: !!hasTeams,
     hasEventConcepts,
+    hasCollections,
     degraded: results?.degraded,
   });
 
@@ -391,7 +432,8 @@ function SearchContent() {
 
   const totalCount = (results.teams?.length ?? 0)
     + (results.pagination?.total_results ?? 0)
-    + (results.futures?.length ?? 0);
+    + (results.futures?.length ?? 0)
+    + collections.length;
 
   return (
     <div>
@@ -411,6 +453,7 @@ function SearchContent() {
           {hasTeams && ` · ${results.teams.length} team${results.teams.length !== 1 ? "s" : ""}`}
           {hasEvents && ` · ${results.pagination.total_results} game${results.pagination.total_results !== 1 ? "s" : ""}`}
           {hasFutures && ` · ${results.futures.length} market${results.futures.length !== 1 ? "s" : ""}`}
+          {hasCollections && ` · ${collections.length} collection${collections.length !== 1 ? "s" : ""}`}
         </p>
       </div>
 
@@ -458,6 +501,15 @@ function SearchContent() {
         </div>
       )}
 
+      {hasCollections && (
+        <section className="mb-8" aria-label="Collections">
+          <SectionHeader title="Collections" count={collections.length} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {collections.map((entry) => <DiscoverCollectionCard key={entry.slug} entry={entry} />)}
+          </div>
+        </section>
+      )}
+
       {/* Events section — tournament concept pages, first-class above markets (L2-65) */}
       {hasEventConcepts && (
         <section className="mb-8">
@@ -503,7 +555,7 @@ function SearchContent() {
         <section className="mb-8">
           <SectionHeader title="Games" count={results.pagination.total_results} />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {results.results.map((event, index) => (
+            {liveEvents.map((event, index) => (
               <div key={event.id} onClick={() => {
                 track('search_result_click', {
                   query: query,

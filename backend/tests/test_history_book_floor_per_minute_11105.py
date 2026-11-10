@@ -396,7 +396,17 @@ def _body(payload):
 async def test_a_game_with_three_or_more_books_draws_exactly_the_line_it_drew(
     monkeypatch,
 ):
-    offset = _offset()
+    # Both replays change only the floor. A minute rollover between calls adds
+    # a whole bucket, even after _body removes each call's live-edge point.
+    captured_now = datetime.now(UTC)
+
+    class FixedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return captured_now.astimezone(tz) if tz else captured_now.replace(tzinfo=None)
+
+    monkeypatch.setattr("app.routes.events.datetime", FixedClock)
+    offset = captured_now.replace(second=0, microsecond=0) - _STORED_ANCHOR
     wp, odds = _specimen(offset)
     odds = _with_more_books(odds)
     admitted = {

@@ -2,6 +2,7 @@
 
 import gc
 import json
+import os
 import sys
 
 import pytest
@@ -34,6 +35,56 @@ def pytest_runtest_logreport(report):
     line = rerun_annotation(report)
     if line:
         print("\n" + line, flush=True)
+        # #12252 item 2: the flake sentinel reads retries from this file (uploaded as an
+        # artifact), one call per page instead of one annotation read per job.
+        path = os.environ.get("FLAKY_RETRIES_FILE")
+        if path:
+            with open(path, "a") as fh:
+                fh.write(report.nodeid + "\n")
+
+
+def quarantined_tests() -> frozenset[str]:
+    """#12252 item 2: test ids with an open `Flaky: <id>` issue, handed in by CI's
+    change-scope as JSON. Anything unreadable is an empty set — the safe side, where
+    every test still blocks."""
+    try:
+        ids = json.loads(os.environ.get("CI_QUARANTINE") or "[]")
+    except ValueError:
+        return frozenset()
+    return frozenset(i for i in ids if isinstance(i, str)) if isinstance(ids, list) else frozenset()
+
+
+_QUARANTINED = quarantined_tests()
+
+
+def quarantine_forgives(report, quarantined=None, mode=None) -> bool:
+    """A quarantined test's failure does not fail a REQUIRED job: it is reported as a pass
+    with a warning, so the job's own `N passed` count checks still hold. Only the call and
+    teardown phases — a setup error still fails (forgiving it would run the test body
+    without its fixtures). The `flaky-canary` job sets CI_QUARANTINE_MODE=canary and sees
+    every real outcome."""
+    quarantined = _QUARANTINED if quarantined is None else quarantined
+    mode = os.environ.get("CI_QUARANTINE_MODE") if mode is None else mode
+    return (
+        mode != "canary"
+        and report.failed
+        and report.when in ("call", "teardown")
+        and report.nodeid in quarantined
+    )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if quarantine_forgives(report):
+        print(
+            f"\n::warning title=Quarantined flaky test (#12252)::{report.nodeid} failed in "
+            f"{report.when}; not blocking while its 'Flaky:' issue is open — flaky-canary reports it",
+            flush=True,
+        )
+        report.outcome = "passed"
+        report.longrepr = None
 
 
 @pytest.fixture
@@ -160,11 +211,52 @@ def _llm_budget_ledger_in_memory():
 
 
 @pytest.fixture(autouse=True)
+def _verified_title_cache_off_unless_a_test_sets_it(monkeypatch):
+    """#12335 step 2: the verified-title verdict cache is OFF in tests unless a
+    test turns it on — rigs reuse market ids with different boards, and a verdict
+    kept from one test would be served to the next."""
+    monkeypatch.setenv("VERIFIED_TITLE_CACHE_SECONDS", "0")
+
+
+@pytest.fixture(autouse=True)
+def _no_background_verified_title_crosses_tests():
+    """#12335 step 4: a Search composition left running in the background is
+    single-flight per market id, so one test's task (a 30 s fake, say) would be
+    joined by the next test asking for the same id. Each test starts empty."""
+    import sys
+
+    def _drop():
+        events = sys.modules.get("app.routes.events")
+        held = getattr(events, "_VERIFIED_TITLE_BACKGROUND", None)
+        if not held:
+            return
+        for task in list(held.values()):
+            try:
+                task.cancel()
+            except RuntimeError:  # its loop is already closed
+                pass
+        held.clear()
+
+    _drop()
+    yield
+    _drop()
+
+
+@pytest.fixture(autouse=True)
 def _prematch_reading_cache_process_tier_only(monkeypatch):
     """#10090: the pre-match reading cache's Redis tier is OFF in tests unless a
     test installs a fake client and turns it on — a developer's local Redis
     would otherwise carry one test's held rows into the next."""
     monkeypatch.setenv("PREMATCH_READING_CACHE_SHARED", "0")
+
+
+@pytest.fixture(autouse=True)
+def _sentinel_red_comment_cadence_off_unless_a_test_sets_it(monkeypatch):
+    """#12276: the sentinel rail's "Still RED" cadence keeps its last comment in
+    Redis. Off in tests unless a test turns it on with a fake client — a
+    developer's local Redis would otherwise carry one test's comment into the
+    next, and the rail's older tests expect every RED run to comment."""
+    monkeypatch.setenv("SENTINEL_RED_COMMENT_CADENCE", "off")
 
 
 @pytest.fixture(autouse=True)

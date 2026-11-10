@@ -2,6 +2,12 @@
   "slug": "snow-first-flakes-2026",
   "membership": "sibling-family",
   "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
   "kicker": "SNOW · NOV 15",
   "name": "Will it snow by November 15?",
   "category": "weather",

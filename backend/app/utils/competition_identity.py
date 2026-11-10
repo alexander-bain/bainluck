@@ -191,6 +191,9 @@ def _edition_block(entry: dict[str, Any] | None) -> dict[str, Any] | None:
         "concept_key": entry.get("concept_key"),
         "start": start.isoformat() if start else None,
         "end": end.isoformat() if end else None,
+        # #12201: "approximate" means a conventional window that nobody has
+        # announced. The client prints it as a month, never as a day.
+        "date_confidence": entry.get("date_confidence"),
     }
 
 

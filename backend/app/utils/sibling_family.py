@@ -625,12 +625,58 @@ def _extract_stated_deadline(title: str, default_year: int = 2026) -> _StatedDea
 
 def _clean_subject_display(raw_subject: str, *, strip_state_suffix: bool) -> str:
     """Format the extracted row subject from the market's own words."""
-    subj = str(raw_subject or "").strip().rstrip("?.!:")
+    subj = str(raw_subject or "").strip().rstrip("?.!:\u00b7").strip()
+    subj = re.sub(r"(?:'s|\u2019s)$", "", subj, flags=re.IGNORECASE).strip()
     if strip_state_suffix:
         m = _STATE_SUFFIX_RE.match(subj)
         if m is not None and m.group("state") in _US_STATE_CODES:
             return m.group("city").strip()
     return subj
+
+
+def _match_declared_template(
+    stem_text: str,
+    declared_template: str,
+) -> Optional[tuple[str, str]]:
+    """Match ``stem_text`` against an explicit single-wildcard ``declared_template`` (e.g. ``* rotten tomatoes score``).
+
+    Used only when a stored definition declares an explicit ``template`` with at
+    least ``MIN_SHARED_TOKENS`` literal words, allowing multi-word subject titles
+    (such as film titles) to match the declared template without relaxing
+    ``detect_sibling_template_pair``'s ``MAX_SUBJECT_RATIO`` when ``template=None``.
+    """
+    hint_stem = fold_template_key(_extract_stated_deadline(declared_template).stem_text)
+    if hint_stem.count("*") != 1:
+        hint_stem = fold_template_key(declared_template)
+    if hint_stem.count("*") != 1:
+        return None
+
+    hint_words = hint_stem.split()
+    if "*" not in hint_words:
+        return None
+    star_idx = hint_words.index("*")
+    prefix_words = hint_words[:star_idx]
+    suffix_words = hint_words[star_idx + 1 :]
+    if len(prefix_words) + len(suffix_words) < MIN_SHARED_TOKENS:
+        return None
+
+    toks = _tokenize_title(stem_text)
+    if len(toks) <= len(prefix_words) + len(suffix_words):
+        return None
+    folded_toks = [f for _, f in toks]
+    if prefix_words and folded_toks[: len(prefix_words)] != prefix_words:
+        return None
+    if suffix_words and folded_toks[len(folded_toks) - len(suffix_words) :] != suffix_words:
+        return None
+
+    subj_end = len(toks) - len(suffix_words) if suffix_words else len(toks)
+    subj_slice = toks[len(prefix_words) : subj_end]
+    if not subj_slice:
+        return None
+    raw_subject = " ".join(raw for raw, _ in subj_slice).strip()
+    if not raw_subject:
+        return None
+    return hint_stem, raw_subject
 
 
 def _check_member_coherence(
@@ -973,6 +1019,7 @@ def select_sibling_family(
     section_titles: Optional[Sequence[str]] = None,
     footer: str = "Each row is its own market. They don't add up to 100%.",
     exclude_combined_market: bool = True,
+    release_window_days: Optional[int] = None,
     now: Optional[datetime] = None,
     withheld_by_market: Optional[Mapping[int, set[int]]] = None,
 ) -> Any:
@@ -1064,6 +1111,23 @@ def select_sibling_family(
             return RoundupRefusal((("family", "combined_market_only"),))
         return RoundupRefusal((("family", "empty_pool"),))
 
+    if release_window_days is not None and int(release_window_days) > 0:
+        window_end_et = today_et + timedelta(days=int(release_window_days))
+        windowed_candidates: list[Mapping[str, Any]] = []
+        for m in candidate_markets:
+            res_dt = _parse_dt(m.get("resolution_date"))
+            stated_dl = _extract_stated_deadline(str(m.get("name") or ""))
+            cohort_d = (
+                stated_dl.deadline_date
+                if stated_dl.deadline_date is not None
+                else (res_dt.astimezone(timezone.utc).date() if res_dt is not None else None)
+            )
+            if cohort_d is not None and today_et <= cohort_d <= window_end_et:
+                windowed_candidates.append(m)
+        if not windowed_candidates:
+            return RoundupRefusal((("family", "no_open_deadline"),))
+        candidate_markets = windowed_candidates
+
     # One-venue-only check across candidate markets.
     venues: set[str] = set()
     for m in candidate_markets:
@@ -1124,6 +1188,25 @@ def select_sibling_family(
             bucket = family_groups.setdefault(t_key, {})
             bucket.setdefault(id_i, subj_i)
             bucket.setdefault(id_j, subj_j)
+
+    # When a stored definition declares an explicit template (with >= MIN_SHARED_TOKENS
+    # literal words), include any candidate whose stem matches the declared template
+    # so multi-word titles (such as 4+ word film names) join the family cleanly.
+    if template:
+        declared_matches: dict[str, dict[int, str]] = {}
+        for m in candidate_markets:
+            mid = int(m["id"])
+            matched_decl = _match_declared_template(
+                stems_by_id[mid].stem_text, template
+            )
+            if matched_decl is not None:
+                decl_key, decl_subj = matched_decl
+                declared_matches.setdefault(decl_key, {})[mid] = decl_subj
+        for decl_key, decl_map in declared_matches.items():
+            if len(decl_map) >= 2:
+                bucket = family_groups.setdefault(decl_key, {})
+                for mid, decl_subj in decl_map.items():
+                    bucket.setdefault(mid, decl_subj)
 
     if not family_groups:
         if exceeded_ratio:
@@ -1191,9 +1274,22 @@ def select_sibling_family(
                 if shared_rung_band is not None and len(shared_rung_band) == 2
                 else (0.05, 0.95)
             )
-            open_member_rungs: list[dict[str, tuple[float, float]]] = []
+            rungs_by_mid: dict[int, dict[str, tuple[float, float]]] = {}
+            cohort_mids: dict[Optional[date], list[int]] = {}
             for mid in matched_subjects:
                 m = by_id[mid]
+                res_dt = _parse_dt(m.get("resolution_date"))
+                stated_dl = stems_by_id[mid]
+                c_date = (
+                    stated_dl.deadline_date
+                    if stated_dl.deadline_date is not None
+                    else (
+                        res_dt.astimezone(timezone.utc).date()
+                        if res_dt is not None
+                        else None
+                    )
+                )
+                cohort_mids.setdefault(c_date, []).append(mid)
                 if str(m.get("status") or "open").strip().lower() != "open":
                     continue
                 raw_outs = m.get("outcomes") or m.get("top_outcomes") or ()
@@ -1225,31 +1321,75 @@ def select_sibling_family(
                     if math.isfinite(p_val) and 0.0 < p_val < 1.0:
                         rung_map[oname.casefold()] = (pt[1], p_val)
                 if rung_map:
-                    open_member_rungs.append(rung_map)
+                    rungs_by_mid[mid] = rung_map
 
-            if len(open_member_rungs) < min_numbered_members:
+            if len(rungs_by_mid) < min_numbered_members:
                 return RoundupRefusal((("family", "too_few_numbered_members"),))
 
-            shared_keys = set(open_member_rungs[0].keys())
-            for rm in open_member_rungs[1:]:
-                shared_keys &= set(rm.keys())
+            # Evaluate cohorts in chronological order (nearest open deadline first) so an
+            # early-listed film in a later cohort with different rungs never blocks this week's cohort.
+            dated_cohorts = sorted(
+                (d for d in cohort_mids if d is not None and d >= today_et)
+            )
+            cohort_groups_to_try: list[list[dict[str, tuple[float, float]]]] = []
+            for d in dated_cohorts:
+                c_rungs = [
+                    rungs_by_mid[mid]
+                    for mid in cohort_mids[d]
+                    if mid in rungs_by_mid
+                ]
+                if len(c_rungs) >= min_numbered_members:
+                    cohort_groups_to_try.append(c_rungs)
+            if not cohort_groups_to_try:
+                cohort_groups_to_try.append(list(rungs_by_mid.values()))
 
-            qualifying_rungs: list[tuple[float, str]] = []
-            for r_key in shared_keys:
-                in_band = sum(
-                    1
-                    for rm in open_member_rungs
-                    if band_low <= rm[r_key][1] <= band_high
-                )
-                if in_band >= min_numbered_members:
-                    thresh_val = open_member_rungs[0][r_key][0]
-                    qualifying_rungs.append((thresh_val, r_key))
+            chosen_rung_key: Optional[str] = None
+            for open_member_rungs in cohort_groups_to_try:
+                shared_keys = set(open_member_rungs[0].keys())
+                for rm in open_member_rungs[1:]:
+                    shared_keys &= set(rm.keys())
 
-            if not qualifying_rungs:
+                qualifying_rungs: list[tuple[float, str]] = []
+                for r_key in shared_keys:
+                    in_band = sum(
+                        1
+                        for rm in open_member_rungs
+                        if band_low <= rm[r_key][1] <= band_high
+                    )
+                    if in_band >= min_numbered_members:
+                        thresh_val = open_member_rungs[0][r_key][0]
+                        qualifying_rungs.append((thresh_val, r_key))
+
+                if qualifying_rungs:
+                    qualifying_rungs.sort(key=lambda pair: (pair[0], pair[1]))
+                    chosen_rung_key = qualifying_rungs[-1][1]
+                    break
+
+            if chosen_rung_key is None:
                 return RoundupRefusal((("family", "no_shared_rung_in_band"),))
 
-            qualifying_rungs.sort(key=lambda pair: (pair[0], pair[1]))
-            target_outcome_folded = qualifying_rungs[-1][1]
+            target_outcome_folded = chosen_rung_key
+            # Exclude secondary cohorts whose members do not carry the chosen shared rung.
+            if len(cohort_mids) > 1:
+                valid_mids: dict[int, str] = {}
+                for _c_date, mids_in_cohort in cohort_mids.items():
+                    if all(
+                        any(
+                            isinstance(o, Mapping)
+                            and str(o.get("name") or o.get("label") or "").strip().casefold()
+                            == target_outcome_folded
+                            for o in (
+                                by_id[m_id].get("outcomes")
+                                or by_id[m_id].get("top_outcomes")
+                                or ()
+                            )
+                        )
+                        for m_id in mids_in_cohort
+                    ):
+                        for m_id in mids_in_cohort:
+                            valid_mids[m_id] = matched_subjects[m_id]
+                if valid_mids:
+                    matched_subjects = valid_mids
 
     # Build _SiblingMember objects and validate outcomes & resolution dates.
     parsed_members: list[_SiblingMember] = []
@@ -1871,6 +2011,12 @@ async def produce_sibling_family(
         else (2 if closed_world else None)
     )
     card_rows = int(rule.get("card_rows", 2 if closed_world else 5))
+    raw_window_days = rule.get("release_window_days")
+    release_window_days: Optional[int] = (
+        int(raw_window_days)
+        if isinstance(raw_window_days, int) and not isinstance(raw_window_days, bool)
+        else None
+    )
     footer = str(
         definition.get("footer")
         or "Each row is its own market. They don't add up to 100%."
@@ -1934,6 +2080,7 @@ async def produce_sibling_family(
         card_rows=card_rows,
         section_titles=section_titles,
         footer=footer,
+        release_window_days=release_window_days,
         now=now,
         withheld_by_market=withheld_by_market,
     )
@@ -2208,6 +2355,8 @@ def build_sibling_family_producer(
         footer=footer,
         produce=_produce,
         membership=membership,
+        relations=definition.get("relations"),
+        level=definition.get("level"),
         rule=rule if isinstance(rule, Mapping) else None,
         tag=tag,
         kicker=kicker,

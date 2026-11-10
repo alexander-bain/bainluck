@@ -561,21 +561,27 @@ function SenateMap({ map }: { map: Record<string, number> | null }) {
             const p = map[st];
             const empty = p == null;
             return (
-              <div
+              <button
                 key={`${r}-${c}`}
+                type="button"
+                disabled={empty}
+                aria-label={empty ? `${st}, no race data` : `${st}, ${p.toFixed(0)}% Democratic probability`}
                 className={empty ? s.senateCellEmpty : s.senateCell}
                 style={!empty ? { background: probColor(p) } : undefined}
                 onMouseEnter={() => !empty && setHover({ st, p })}
                 onMouseLeave={() => setHover(null)}
+                onFocus={() => !empty && setHover({ st, p })}
+                onBlur={() => setHover(null)}
+                onClick={() => setHover({ st, p })}
               >
                 {st}
-              </div>
+              </button>
             );
           })
         )}
       </div>
       <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-muted)", display: "flex", justifyContent: "space-between" }}>
-        <span>{Object.keys(map).length} states with Senate race data · Hover for detail</span>
+        <span>{Object.keys(map).length} {Object.keys(map).length === 1 ? "state" : "states"} with Senate race data · Select a state for detail</span>
         {hover && (
           <span style={{ color: "var(--text-primary)", fontFamily: "var(--font-mono, monospace)" }}>
             <b>{hover.st}</b> — Dem prob <b className={s.probNum}>{hover.p.toFixed(0)}%</b>
@@ -613,11 +619,6 @@ function SectionHead({
           {totalLabel || `${count} markets`}
         </span>
       </h2>
-      {count > 10 && (
-        <div className={s.sectionActions}>
-          <span className={s.sectionLink}>View all →</span>
-        </div>
-      )}
     </div>
   );
 }

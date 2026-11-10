@@ -113,7 +113,70 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
         XCTAssertEqual(details.pregameBaseline, "9%")
         XCTAssertEqual(details.observedAtText, "Oct 19, 4:55 PM PT")
         XCTAssertEqual(details.statusSummary, "Reached 1+")
+        XCTAssertEqual(details.statusLabel, "Comparison")
         XCTAssertEqual(details.sourceLabel, "Kalshi")
+        XCTAssertEqual(details.originalSections.count, 2)
+
+        // Strikeout target original ("Pregame mark · Over") preserves pregameBaseline,
+        // Pending venue result, and all frozen original sections (Over, Under, count).
+        let strikeoutOriginal = MLBOriginal11284(
+            id: "mlb-o:15330459:target:glasnow-7+",
+            title: "Tyler Glasnow · 7+ strikeouts",
+            sections: [
+                .init(
+                    title: "Over · Tyler Glasnow: Strikeouts O/U 6.5",
+                    fields: [
+                        .init(label: "Original side", value: "Over"),
+                        .init(label: "Line", value: "6.5"),
+                        .init(label: "Venue", value: "Kalshi"),
+                        .init(label: "Pregame mark · Over", value: "58%"),
+                        .init(label: "Venue result", value: "Pending"),
+                    ]
+                ),
+                .init(
+                    title: "Under · Tyler Glasnow: Strikeouts O/U 6.5",
+                    fields: [
+                        .init(label: "Original side", value: "Under"),
+                    ]
+                ),
+                .init(
+                    title: "7+ strikeouts",
+                    fields: [
+                        .init(label: "Official final", value: "Unavailable"),
+                        .init(label: "Against 7+", value: "Final result unavailable"),
+                    ]
+                ),
+            ]
+        )
+        let strikeoutDetails = EventAtlasMlbCards11666.detailsModel(for: strikeoutOriginal)
+        XCTAssertEqual(strikeoutDetails.pregameBaseline, "58%")
+        XCTAssertEqual(strikeoutDetails.primaryReadingLabel, "Venue result")
+        XCTAssertEqual(strikeoutDetails.primaryReadingValue, "Pending")
+        XCTAssertEqual(strikeoutDetails.statusLabel, "Comparison")
+        XCTAssertEqual(strikeoutDetails.originalSections.count, 3)
+
+        // Extra-innings markKey says "✓ Won" (never "✓ Won / ✗ Lost", since ✗ Lost cannot occur under #11284)
+        let extraCard = MLBExtraInningsCard11284(
+            eventID: 15330459,
+            outcomes: [
+                .init(
+                    label: "Yes",
+                    venue: "Kalshi",
+                    venueResult: .notConfirmed,
+                    original: original,
+                    pregameChance: 0.11
+                ),
+                .init(
+                    label: "No",
+                    venue: "Kalshi",
+                    venueResult: .won,
+                    original: original,
+                    pregameChance: 0.89
+                ),
+            ]
+        )
+        let extraKeyItems = EventAtlasMlbCards11666.markKey(for: .extraInnings(extraCard))
+        XCTAssertEqual(extraKeyItems.map(\.label), ["Pregame", "✓ Won"])
     }
 
     func testExtraInningsUsesSingleVenueOrBlendedPregameMarkAndWithholdsUnblendedMultiSource() throws {
@@ -142,7 +205,7 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
                 "observed_at": "2026-10-20T03:25:00Z",
                 "source": "kalshi",
                 "is_winner": true,
-                "resolution_source": "kalshi"
+                "resolution_source": "api_settlement"
             }
         ]
         """
@@ -162,38 +225,38 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
         XCTAssertEqual(singleEntries[1].venueResult, .won)
 
         // 2. Multiple unblended sources without a blended row -> withholds pregameChance (never averages)
-        // and conflicting venue grades -> .pending
+        // and conflicting venue grades -> .pending, while case variants ("no", "YES") canonicalize and sort Yes first.
         let multiUnblendedJSON = """
         [
             {
                 "market_name": "MIL at LAD: Extra Innings",
-                "outcome_name": "Yes",
-                "probability": 0.10,
-                "pregame_mark": 0.10,
-                "observed_at": "2026-10-20T03:25:00Z",
-                "source": "kalshi",
-                "is_winner": true,
-                "resolution_source": "kalshi"
-            },
-            {
-                "market_name": "MIL at LAD: Extra Innings",
-                "outcome_name": "Yes",
-                "probability": 0.14,
-                "pregame_mark": 0.14,
-                "observed_at": "2026-10-20T03:25:00Z",
-                "source": "polymarket",
-                "is_winner": false,
-                "resolution_source": "polymarket"
-            },
-            {
-                "market_name": "MIL at LAD: Extra Innings",
-                "outcome_name": "No",
+                "outcome_name": "no",
                 "probability": 0.90,
                 "pregame_mark": 0.90,
                 "observed_at": "2026-10-20T03:25:00Z",
                 "source": "kalshi",
                 "is_winner": true,
-                "resolution_source": "kalshi"
+                "resolution_source": "api_settlement"
+            },
+            {
+                "market_name": "MIL at LAD: Extra Innings",
+                "outcome_name": "YES",
+                "probability": 0.10,
+                "pregame_mark": 0.10,
+                "observed_at": "2026-10-20T03:25:00Z",
+                "source": "kalshi",
+                "is_winner": true,
+                "resolution_source": "api_settlement"
+            },
+            {
+                "market_name": "MIL at LAD: Extra Innings",
+                "outcome_name": "yes",
+                "probability": 0.14,
+                "pregame_mark": 0.14,
+                "observed_at": "2026-10-20T03:25:00Z",
+                "source": "polymarket",
+                "is_winner": false,
+                "resolution_source": "clob_authoritative"
             }
         ]
         """
@@ -205,6 +268,8 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
             now: now
         )
         XCTAssertEqual(multiEntries.count, 2)
+        XCTAssertEqual(multiEntries.map(\.label), ["Yes", "No"])
+        XCTAssertEqual(multiEntries.map(\.id), ["mlb-extra:yes", "mlb-extra:no"])
         XCTAssertNil(multiEntries[0].pregameChance, "Unblended multi-source pregameChance must be withheld, never averaged")
         XCTAssertNil(multiEntries[0].source)
         XCTAssertEqual(multiEntries[0].sourceCount, 2)
@@ -247,5 +312,88 @@ final class EventAtlasMlbCardsE6a_11666Tests: XCTestCase {
             legacyMlbRange.lowerBound,
             "Atlas readerDetailsModel branch must precede legacy MLBOriginalDetails11284 branch in NFLCardReader9483"
         )
+    }
+
+    @MainActor
+    func testExtraInningsCardBuildsAndRoutesMultiSourceAttributionThroughReaderDetailsModel() throws {
+        let now = try XCTUnwrap("2026-10-26T04:00:00Z".asDate)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        let unblendedJSON = """
+        [
+            {"_market_id": 980, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "Yes", "probability": 0.01, "pregame_mark": 0.11, "observed_at": "2026-10-25T23:50:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 981, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "Yes", "probability": 0.01, "pregame_mark": 0.14, "observed_at": "2026-10-25T23:50:00Z", "source": "polymarket", "is_winner": false, "resolution_source": "clob_authoritative"},
+            {"_market_id": 980, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "No", "probability": 0.99, "pregame_mark": 0.88, "observed_at": "2026-10-25T23:50:00Z", "source": "blended", "is_winner": true, "resolution_source": "api_settlement"},
+            {"_market_id": 981, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "No", "probability": 0.99, "pregame_mark": 0.86, "observed_at": "2026-10-25T23:50:00Z", "source": "kalshi", "is_winner": true, "resolution_source": "api_settlement"}
+        ]
+        """
+        let rows = try decoder.decode([GameMarketOther].self, from: Data(unblendedJSON.utf8))
+        let extraCard = try XCTUnwrap(MLBExtraInningsCard11284.build(rows, eventID: 9901, now: now))
+        let cards: [NFLEventCard9483] = [.mlb(.extraInnings(extraCard))]
+
+        let yesOutcome = try XCTUnwrap(extraCard.outcomes.first(where: { $0.label == "Yes" }))
+        let yesSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: yesOutcome.id,
+                cards: cards,
+                rows: [:],
+                awayName: "Yankees",
+                homeName: "Dodgers"
+            )
+        )
+        XCTAssertEqual(yesSheet.outcomeTitle, "Yes")
+        XCTAssertEqual(yesSheet.sourceLabel, "2 sources, not blended")
+
+        let noOutcome = try XCTUnwrap(extraCard.outcomes.first(where: { $0.label == "No" }))
+        let noSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: noOutcome.id,
+                cards: cards,
+                rows: [:],
+                awayName: "Yankees",
+                homeName: "Dodgers"
+            )
+        )
+        XCTAssertEqual(noSheet.outcomeTitle, "No")
+        XCTAssertEqual(noSheet.primaryReadingLabel, "Result")
+        XCTAssertEqual(noSheet.primaryReadingValue, EventAtlasStates11666.wonWithCheck)
+        XCTAssertEqual(noSheet.pregameBaseline, "88%")
+        XCTAssertEqual(noSheet.sourceLabel, "Blended (2 sources)")
+
+        // Single-source ("kalshi" -> "Kalshi") and unknown-source ("unknown_provider" -> nil)
+        let singleAndUnknownJSON = """
+        [
+            {"_market_id": 990, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "Yes", "probability": 0.01, "pregame_mark": 0.12, "observed_at": "2026-10-25T23:50:00Z", "source": "kalshi", "is_winner": false, "resolution_source": "api_settlement"},
+            {"_market_id": 990, "market_name": "NYY at LAD: Extra Innings", "outcome_name": "No", "probability": 0.99, "pregame_mark": 0.88, "observed_at": "2026-10-25T23:50:00Z", "source": "unknown_provider", "is_winner": true, "resolution_source": "api_settlement"}
+        ]
+        """
+        let singleRows = try decoder.decode([GameMarketOther].self, from: Data(singleAndUnknownJSON.utf8))
+        let singleCard = try XCTUnwrap(MLBExtraInningsCard11284.build(singleRows, eventID: 9902, now: now))
+        let singleCards: [NFLEventCard9483] = [.mlb(.extraInnings(singleCard))]
+
+        let singleYes = try XCTUnwrap(singleCard.outcomes.first(where: { $0.label == "Yes" }))
+        let singleYesSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: singleYes.id,
+                cards: singleCards,
+                rows: [:],
+                awayName: "Yankees",
+                homeName: "Dodgers"
+            )
+        )
+        XCTAssertEqual(singleYesSheet.sourceLabel, "Kalshi")
+
+        let unknownNo = try XCTUnwrap(singleCard.outcomes.first(where: { $0.label == "No" }))
+        let unknownNoSheet = try XCTUnwrap(
+            EventAtlasStoryCards11666.readerDetailsModel(
+                rowID: unknownNo.id,
+                cards: singleCards,
+                rows: [:],
+                awayName: "Yankees",
+                homeName: "Dodgers"
+            )
+        )
+        XCTAssertNil(unknownNoSheet.sourceLabel, "Unknown source with sourceCount == 1 must omit Venue and return nil sourceLabel")
     }
 }

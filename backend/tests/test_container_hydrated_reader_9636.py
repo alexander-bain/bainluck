@@ -299,6 +299,69 @@ def _cards_hydrated(session):
     ]
 
 
+async def test_related_link_presentation_is_served_with_the_full_market_cards():
+    hub, events, markets = _nfl_week()
+    markets[0].market_type = "duel"
+    markets.extend([
+        _market(9104, "2H Spread: Bills (-17.5)", event_id=501, market_type="duel"),
+        _market(9105, "Chiefs vs Bills: Weather Delay", event_id=501, market_type="claim"),
+    ])
+    hub.edges.extend([
+        ("unclassified", "market", 9104, hub.id, "matcher", 1.0),
+        ("unclassified", "market", 9105, hub.id, "matcher", 1.0),
+    ])
+    session = _Session(hub, events=events, markets=markets)
+
+    payload = await _get(session, hub.slug)
+
+    members = [member for section in payload["sections"] for member in section["members"]]
+    by_id = {member["id"]: member for member in members}
+    assert payload["revision"] == hub.revision
+    assert {member["id"] for member in members if member["type"] == "market"} == {
+        9101, 9102, 9103, 9104, 9105,
+    }
+    assert by_id[9101]["card"]["collection_link_presentation"] == "game"
+    assert by_id[9102]["card"]["collection_link_presentation"] == "inline"
+    assert by_id[9103]["card"]["collection_link_presentation"] == "inline"
+    assert by_id[9104]["card"]["collection_link_presentation"] == "secondary"
+    assert by_id[9105]["card"]["collection_link_presentation"] == "secondary"
+    assert by_id[501]["question_ids"] == [9101, 9103, 9104, 9105]
+    assert all(by_id[market_id]["card"]["top_outcomes"] for market_id in range(9101, 9106))
+    unclassified = next(section for section in payload["sections"] if section["class"] == "unclassified")
+    assert unclassified["count"] == 2
+
+
+@pytest.mark.parametrize("failed_id,expected_count", [(None, 13), (9300, 12)])
+async def test_long_related_metadata_uses_the_successfully_hydrated_members(
+    monkeypatch, failed_id, expected_count
+):
+    from app.routes import events as event_route
+
+    original_format = event_route._format_futures_for_search
+
+    def format_market(market, withheld=None):
+        if market.id == failed_id:
+            raise ValueError("representative serialization failure")
+        return original_format(market, withheld)
+
+    monkeypatch.setattr(event_route, "_format_futures_for_search", format_market)
+    hub, events, markets = _nfl_week()
+    for index in range(11):
+        market_id = 9300 + index
+        markets.append(_market(market_id, f"Spread: Bills (-{index + 1}.5)", event_id=501))
+        hub.edges.append(("unclassified", "market", market_id, hub.id, "matcher", 1.0))
+
+    payload = await _get(_Session(hub, events=events, markets=markets), hub.slug)
+
+    members = [member for section in payload["sections"] for member in section["members"]]
+    related = [member for member in members if member.get("event_id") == 501]
+    assert len(related) == expected_count
+    assert all(
+        ("collection_link_presentation" in member["card"]) == (expected_count <= 12)
+        for member in related
+    )
+
+
 # ---------------------------------------------------------------------------
 # States: only `published` carries members
 # ---------------------------------------------------------------------------

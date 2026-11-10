@@ -249,6 +249,7 @@ from app.utils.feed_cache import (
     FEED_PAGE_BASE_BUILT_AT_FIELD,
     base_from_last_good,
     build_feed_cache_metadata,
+    dumps_feed_cache,
     encode_base_last_good,
     feed_edition_token,
     feed_page_base_built_at,
@@ -334,6 +335,7 @@ from app.utils.personalization import (
     compute_futures_multiplier,
     compute_sport_affinity_multiplier,
     followed_sport_categories,
+    is_returning_reader,
     my_stuff_admits_followed_sport,
 )
 from app.routes.admin_utils import _check_admin_auth, _resolve_admin_email
@@ -5063,9 +5065,7 @@ async def get_feed(
                     # pins both halves so neither can be changed by accident.
                     if _inert_fresh_ttl > 0 and _inert_stale_ttl > 0:
                         try:
-                            _shared_json = _json_module.dumps(
-                                _shared_payload, default=str
-                            )
+                            _shared_json = dumps_feed_cache(_shared_payload)
 
                             async def _publish_inert_private(
                                 _client=_shared_redis,
@@ -5371,9 +5371,7 @@ async def get_feed(
                     and _base_opening.token != _base_body.get(FEED_EDITION_FIELD)
                 ):
                     try:
-                        _composed_json = _json_module.dumps(
-                            _base_opening.manifest, default=str
-                        )
+                        _composed_json = dumps_feed_cache(_base_opening.manifest)
 
                         async def _publish_composed_manifest(
                             _client=_shared_redis,
@@ -6402,6 +6400,20 @@ async def get_feed(
                     else ROUNDUP_READ_BUDGET_SECONDS
                 ),
                 now=now,
+                returning_reader=(
+                    not _prewarm_rebuild and is_returning_reader(ctx)
+                ),
+                seen_card_keys=(
+                    set(ctx.recent_seen_keys) | set(ctx.recent_dismissed_keys)
+                ),
+                seen_futures_ids=(
+                    set(ctx.recent_seen_futures_ids)
+                    | set(ctx.recent_dismissed_futures_ids)
+                ),
+                seen_event_ids=(
+                    set(ctx.recent_seen_event_ids)
+                    | set(ctx.recent_dismissed_event_ids)
+                ),
             )
             if _capture is not None and feed_items is not _before_roundups:
                 _capture.abandon("roundup_containers")
@@ -6923,7 +6935,7 @@ async def get_feed(
         # publication entirely (guarded above).
         if _cache_key and not _is_degraded_build and _shared_redis is not None:
             try:
-                _payload_json = _json_module.dumps(payload, default=str)
+                _payload_json = dumps_feed_cache(payload)
 
                 async def _publish_feed_cache(
                     _client=_shared_redis,
@@ -6966,7 +6978,7 @@ async def get_feed(
                         built_at=time.time(),
                     )
                     if _manifest is not None:
-                        _manifest_json = _json_module.dumps(_manifest, default=str)
+                        _manifest_json = dumps_feed_cache(_manifest)
 
                         async def _publish_edition_manifest(
                             _client=_shared_redis,
@@ -7013,9 +7025,7 @@ async def get_feed(
                 and _shared_redis is not None
             ):
                 try:
-                    _seated_json = _json_module.dumps(
-                        _seated_mint.manifest, default=str
-                    )
+                    _seated_json = dumps_feed_cache(_seated_mint.manifest)
 
                     async def _publish_seated_manifest(
                         _client=_shared_redis,
@@ -7101,9 +7111,7 @@ async def get_feed(
                         oldest_artifact_age_s=_consumed_age_s,
                         strict_artifact_age_s=_strict_age_s,
                     )
-                    _page_base_json = _json_module.dumps(
-                        _page_base_body, default=str
-                    )
+                    _page_base_json = dumps_feed_cache(_page_base_body)
                     # #11259: the durable copy the incomplete-build terminals
                     # fall back to. Kept no longer than it may be served at —
                     # the bound is on content age, and the origin is never
@@ -11048,6 +11056,7 @@ async def _load_personalization_context(
     feature_affinities = _build_discover_feature_affinities(feature_interaction_rows)
     recent_seen_event_ids: set[int] = set()
     recent_seen_futures_ids: set[int] = set()
+    recent_seen_keys: set[str] = set()
     recent_seen_event_at: dict[int, datetime] = {}
     recent_seen_futures_at: dict[int, datetime] = {}
     recent_dismissed_event_ids: set[int] = set()
@@ -11112,15 +11121,15 @@ async def _load_personalization_context(
                 action == "impression"
                 and last_seen_dt
                 and last_seen_dt >= seen_cutoff
-                # The seen sets and their timestamp maps are keyed by ROW ID and
-                # are read as such (`market.id in …`, `.get(market.id)`). A
-                # key-shaped impression has no row id to contribute, so it is
-                # counted as seen by nothing rather than inserted as `None` —
-                # which would not have matched anything anyway, and would have
-                # put a junk `None` key in the recycling timestamps.
-                and item_id is not None
             ):
-                if item_type == "event":
+                # The numeric seen sets and their timestamp maps are keyed by
+                # ROW ID and are read as such (`market.id in …`,
+                # `.get(market.id)`). A key-shaped impression is recorded in
+                # `recent_seen_keys` (#12376, Decide 32-C) and never inserted
+                # as `None` into the row-id sets or recycling timestamps.
+                if item_id is None:
+                    recent_seen_keys.add(str(item_id_raw).strip())
+                elif item_type == "event":
                     recent_seen_event_ids.add(item_id)
                     recent_seen_event_at[item_id] = last_seen_dt
                 elif item_type == "futures":
@@ -11200,6 +11209,7 @@ async def _load_personalization_context(
         discover_feature_affinities=feature_affinities,
         recent_seen_event_ids=recent_seen_event_ids,
         recent_seen_futures_ids=recent_seen_futures_ids,
+        recent_seen_keys=recent_seen_keys,
         recent_seen_event_at=recent_seen_event_at,
         recent_seen_futures_at=recent_seen_futures_at,
         recent_dismissed_event_ids=recent_dismissed_event_ids,
@@ -12506,6 +12516,20 @@ async def _score_events(
             # `generate_event_reason`, which calls the same composer) and as the
             # `headline` the web caption chain actually renders. None on every
             # non-live card and on any live card whose evidence supports nothing.
+            #
+            # #12279 — and its current percent is the one the card prints. The
+            # serializer below rounds this same pair once, as a duel, into
+            # `current_odds.*_rendered_percent`; the sentence used to round its
+            # own side alone, which is one point higher on a trailing side that
+            # sits on a half-percent (0.335: card 33, sentence 34).
+            _live_percents = (
+                duel_percents_by_side(
+                    away_probability=current_away_prob,
+                    home_probability=current_home_prob,
+                )
+                if current_home_prob is not None
+                else None
+            )
             _live_claim = compose_live_claim(
                 home_team=event.home_team_name,
                 away_team=event.away_team_name,
@@ -12530,6 +12554,7 @@ async def _score_events(
                 score_source=getattr(event, "score_source", None),
                 score_observed_at=getattr(event, "score_observed_at", None),
                 now=now,
+                live_percents=_live_percents,
             )
 
             # #6181 — THE PRE-MATCH ROW AND THE SENTENCE UNDER IT ARE ONE ANSWER.
@@ -12584,6 +12609,8 @@ async def _score_events(
                 score_source=getattr(event, "score_source", None),
                 score_observed_at=getattr(event, "score_observed_at", None),
                 now=now,
+                # #12279 — same printed percents as the claim above.
+                live_percents=_live_percents,
             )
 
             # Compute event_tags on-the-fly (fresh, not stale persisted)
@@ -12774,6 +12801,17 @@ async def _score_events(
                     highlight_result, for_ranking=True
                 ),
             }
+            # #12279 — which current percent the sentence above states, and whose.
+            # The web card repaints its number when a venue moves (#10090's
+            # preview) before the next read brings a sentence for that number;
+            # this lets it hide a sentence that no longer states the number on
+            # the card instead of printing two numbers for one team. Absent when
+            # the sentence states no current percent.
+            if _live_claim is not None and _live_claim.stated_side is not None:
+                item["live_claim_percent"] = {
+                    "side": _live_claim.stated_side,
+                    "percent": _live_claim.stated_percent,
+                }
 
             # #4541: a marquee GAME leads the tab on its OCCASION, not on its drama.
             #
@@ -16747,7 +16785,9 @@ async def _score_golf_tournaments(
 
         # Build the reason text
         leader = golfers[0]
-        leader_pct = round(leader["probability"] * 100, 1)
+        leader_pct = leader.get("rendered_percent")
+        if leader_pct is None:
+            leader_pct = round(leader["probability"] * 100, 1)
         champion = t.get("champion")
         # `or`, not a .get() default: UX-P185 lets `tour_label` be present-and-None
         # for a tournament whose tour we cannot evidence, and a .get() default only
@@ -16855,6 +16895,8 @@ async def _score_golf_tournaments(
                 {
                     "name": g["name"],
                     "probability": g["probability"],
+                    **({"rendered_percent": g["rendered_percent"]}
+                       if g.get("rendered_percent") is not None else {}),
                     "rank": g["rank"],
                     "movement_24h": g.get("movement_24h"),
                     # #7226 — the flag the `reason` gate 50 lines above already

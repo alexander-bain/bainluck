@@ -197,16 +197,86 @@ def _is_eligible(
     return False
 
 
-def _lead_sort_key(item: dict, now: datetime) -> tuple:
+def _is_marquee_game(item: dict) -> bool:
+    """Tier 1, read off the card's tags (the feed computes them from the sport
+    key when it builds the card, so every NFL, NBA, MLB, NHL and top-soccer game
+    carries it).
+
+    The marquee line ``routes/feed._discover_event_is_marquee`` draws for the
+    arms on either side of the live window (#4898 before kickoff, #4681 after the
+    final). Mirrored rather than imported, because this module cannot import the
+    route; a test asserts the two agree.
+    """
+    data = item.get("data") or {}
+    return "tier:1" in (data.get("event_tags") or [])
+
+
+def _lead_rank(item: dict) -> float:
+    """The rank the lead orders by, the score the feed already gave the card."""
+    return float(item.get("_rank_score") or item.get("score") or 0)
+
+
+def _league_turns(items: list[dict]) -> dict[int, int]:
+    """Each live marquee game's turn within its own league: 0 for the league's
+    best-ranked live game, 1 for its second, and so on.
+
+    #12368 (b), Fable's call 6:03 PM PT Mon Nov 9: one lead seat per top-tier
+    league before a second game from the same league. Turns are taken in the
+    order the marquee group already uses, rank first and the input order on a
+    tie (``sorted`` is stable), so a league's games never change places with
+    each other. Keyed by ``id()`` because the caller holds these same dicts.
+    """
+    turns: dict[int, int] = {}
+    taken: dict[str | None, int] = {}
+    live_marquee = [
+        it
+        for it in items
+        if ((it.get("data") or {}).get("status") or "").strip().lower() == "live"
+        and _is_marquee_game(it)
+    ]
+    for it in sorted(live_marquee, key=lambda it: -_lead_rank(it)):
+        league = (it.get("data") or {}).get("sport")
+        turns[id(it)] = taken.get(league, 0)
+        taken[league] = turns[id(it)] + 1
+    return turns
+
+
+def _lead_sort_key(item: dict, now: datetime, league_turn: int = 0) -> tuple:
     """Live games first, then the soonest to start.
 
-    Within the live tier the existing rank order decides, so a marquee live game
-    still beats a routine one — this pass re-orders, it does not re-judge.
+    Within the live tier a marquee game comes first, and the existing rank order
+    decides inside each group — this pass re-orders, it does not re-judge.
+
+    #12368 — the marquee group is what makes "a marquee live game still beats a
+    routine one" true on Discover. It used to be left to rank, and on Discover
+    rank cannot carry it: a live game's score reads drama (closeness, lead
+    changes, momentum), and the demotion caps a game without enough of it at 35.
+    A first-quarter game has had little time to make any, so a game with more
+    drama, in any league, outranks it. Sun Nov 8 at 7:15 AM PT the live Bengals @
+    Falcons game served at 35, behind a live EPL match at 97; at 10:16 AM seven
+    NFL games were live and the three lead seats (11-13 once #5105 seats the
+    opening) went to Princeton @ Siena, Panthers @ Bruins and Aston Villa @
+    Manchester United. Before kickoff #4898 protects three marquee games into
+    this lead; without this group that protection ended at kickoff, exactly when
+    the reader came for the game.
+
+    #12368 (b) — and inside the marquee group, ``league_turn`` (from
+    :func:`_league_turns`) seats each top-tier league's best live game before
+    any league's second. Mon Nov 9 at 5:45 PM PT the night's only NFL game,
+    Bills @ Vikings (82), sat at seat 29 behind three live NBA games (98, 94,
+    94) that held all three lead seats. On Sunday's page the turn changes
+    nothing: the Bruins, Villa and one NFL game are each their league's first.
     """
     data = item.get("data") or {}
     status = (data.get("status") or "").strip().lower()
     if status == "live":
-        return (0, 0.0, -float(item.get("_rank_score") or item.get("score") or 0))
+        marquee = _is_marquee_game(item)
+        return (
+            0,
+            0 if marquee else 1,
+            league_turn if marquee else 0,
+            -_lead_rank(item),
+        )
     commence = _parse_dt(data.get("commence_time"))
     seconds_away = (commence - now).total_seconds() if commence else float("inf")
     return (1, seconds_away, 0.0)
@@ -231,7 +301,8 @@ def select_tonights_games(
         for it in feed_items
         if _is_eligible(it, now, soon_window_hours, protected_event_ids)
     ]
-    eligible.sort(key=lambda it: _lead_sort_key(it, now))
+    turns = _league_turns(eligible)
+    eligible.sort(key=lambda it: _lead_sort_key(it, now, turns.get(id(it), 0)))
     return eligible[:max_lead]
 
 

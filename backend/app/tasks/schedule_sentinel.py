@@ -84,7 +84,10 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.utils import season_windows
-from app.utils.name_normalization import expand_city_abbreviations
+from app.utils.name_normalization import (
+    college_state_expansion,
+    expand_city_abbreviations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +141,24 @@ class LeagueSpec:
     partial_by_design: bool = False
     season_key: Optional[str] = None     # season_windows slug (defaults to slug)
     uncovered_reason: Optional[str] = None
+    #: Extra ESPN scoreboard query params (#12083) — see the NCAAB entry below.
+    espn_params: tuple[tuple[str, str], ...] = ()
+    #: A college feed, where a non-leading "St" is "State" (#12083) — see
+    #: ``_norm_name``.
+    college_names: bool = False
+
+
+# #12083 — THE DEFAULT COLLEGE BASKETBALL BOARD IS ESPN'S FEATURED SLATE.
+# `mens-college-basketball/scoreboard?dates=20261107` answered
+# 2 games; with `groups=50` (all of Division I) it answered 61, and 36 and 50 on
+# the next two days against 4 and 5 (measured Nov 8). Our NCAAB rows are real
+# games ESPN's full board lists, so every settled one the featured board left
+# out was filed as a critical EXTRA ("a result for a game the authority says
+# never happened"): 46 of the 48 REAL findings over Nov 7-9. `espn_api`
+# learned the same for football in #8682 (`ESPN_FULL_SLATE_GROUPS`, FBS = 80);
+# the sentinel builds its own request, so it asks here. `limit=500` changed no
+# day measured; it keeps a day busier than ESPN's default page whole.
+_NCAAB_FULL_SLATE = (("groups", "50"), ("limit", "500"))
 
 
 SCHEDULE_LEAGUES: tuple[LeagueSpec, ...] = (
@@ -153,9 +174,11 @@ SCHEDULE_LEAGUES: tuple[LeagueSpec, ...] = (
     LeagueSpec("ucl", ("soccer_uefa_champs_league",), "espn",
                ("soccer", "uefa.champions"), tz="Europe/London"),
     LeagueSpec("ncaaf", ("americanfootball_ncaaf",), "espn",
-               ("football", "college-football"), partial_by_design=True),
+               ("football", "college-football"), partial_by_design=True,
+               college_names=True),
     LeagueSpec("ncaab", ("basketball_ncaab",), "espn",
-               ("basketball", "mens-college-basketball"), partial_by_design=True),
+               ("basketball", "mens-college-basketball"), partial_by_design=True,
+               espn_params=_NCAAB_FULL_SLATE, college_names=True),
     # --- declared NOT COVERED ----------------------------------------------
     LeagueSpec("npb", ("baseball_npb",), None, tz="Asia/Tokyo",
                uncovered_reason="no free authoritative NPB schedule adapter"),
@@ -207,8 +230,28 @@ _WHOLE_NAME_FOLDS = {
     "los angeles fc": "lafc",
 }
 
+#: #12083: ESPN's spelling of a college club -> ours, as whole phrases of the
+#: normalized name, college feeds only. The first run on the full Division I
+#: board filed 2 critical EXTRA, each one real game under two spellings: our
+#: "Albany Great Danes" vs ESPN's "UAlbany Great Danes" (0.5 under the 0.60 bar)
+#: and "CSU Bakersfield Roadrunners" vs "Cal State Bakersfield Roadrunners"
+#: (0.4). Every pair is measured: our team row on one side, ESPN's board on the
+#: other; the last five are the replay residue behind #12381.
+_COLLEGE_NAME_FOLDS = {
+    "ualbany": "albany",
+    "cal state": "csu",
+    "long island university": "liu",
+    "george washington": "gw",
+    "iu indianapolis": "iupui",
+    "ut martin": "tenn martin",
+    "lopes": "antelopes",
+}
+_COLLEGE_FOLD_RE = re.compile(
+    r"\b(" + "|".join(sorted(map(re.escape, _COLLEGE_NAME_FOLDS), key=len, reverse=True)) + r")\b"
+)
 
-def _norm_name(s: Optional[str]) -> str:
+
+def _norm_name(s: Optional[str], college: bool = False) -> str:
     """Lowercase, strip punctuation to spaces, collapse whitespace.
 
     Punctuation becomes a SPACE rather than being deleted so ``"St.Louis
@@ -227,20 +270,40 @@ def _norm_name(s: Optional[str]) -> str:
     tokens only, so the same-city guard is unchanged ("LA Clippers" still
     misses "Los Angeles Lakers" at 0.5). A city-only club name then folds to
     its one-token form (``_WHOLE_NAME_FOLDS``) so "Los Angeles FC" is never a
-    subset of "LA Galaxy"."""
+    subset of "LA Galaxy".
+
+    ``college=True`` (#12083) reads a non-leading ``st`` as ``state`` first, by
+    the shared rule (``college_state_expansion``, #9836): we store "Wichita St
+    Shockers" and ESPN prints "Wichita State Shockers", which scored 0.5 and
+    filed a critical MISATTACHED against the right club. A leading ``st`` stays
+    Saint ("St. John's"). College feeds only: in "FC St. Gallen" the ``st`` is
+    not leading and is still Saint. It runs before the city expansion, so the
+    ``st`` a city fold writes ("stl" -> "st louis") is never touched. ESPN's
+    college spellings then fold to ours (``_COLLEGE_NAME_FOLDS``), after the
+    ``st`` rule so "Cal St" reaches "csu" too."""
     s = unicodedata.normalize("NFKD", s or "")
     s = "".join(c for c in s if not unicodedata.combining(c)).lower()
     s = re.sub(r"['‘’ʻ]", "", s)
     s = re.sub(r"[^a-z0-9]+", " ", s)
-    s = expand_city_abbreviations(" ".join(s.split()))
+    tokens = s.split()
+    if college:
+        tokens = [college_state_expansion(i, t) or t for i, t in enumerate(tokens)]
+        tokens = _COLLEGE_FOLD_RE.sub(
+            lambda m: _COLLEGE_NAME_FOLDS[m.group(1)], " ".join(tokens)
+        ).split()
+    s = expand_city_abbreviations(" ".join(tokens))
     return _WHOLE_NAME_FOLDS.get(s, s)
 
 
-def _name_tokens(s: Optional[str]) -> frozenset:
-    return frozenset(t for t in _norm_name(s).split() if t not in _TEAM_STOPWORDS)
+def _name_tokens(s: Optional[str], college: bool = False) -> frozenset:
+    return frozenset(
+        t for t in _norm_name(s, college).split() if t not in _TEAM_STOPWORDS
+    )
 
 
-def name_similarity(a: Optional[str], b: Optional[str]) -> float:
+def name_similarity(
+    a: Optional[str], b: Optional[str], college: bool = False
+) -> float:
     """0.0–1.0 similarity between two club names. Pure.
 
     Deliberately stricter than plain token OVERLAP, which the existing
@@ -251,13 +314,15 @@ def name_similarity(a: Optional[str], b: Optional[str]) -> float:
       * identical normalized strings           → 1.0
       * one token set contains the other       → 0.85  ("Red Sox" ⊂ "Boston Red Sox")
       * otherwise                              → Jaccard  (Cubs/White Sox → 0.25)
+
+    ``college`` is passed through to ``_norm_name``.
     """
-    na, nb = _norm_name(a), _norm_name(b)
+    na, nb = _norm_name(a, college), _norm_name(b, college)
     if not na or not nb:
         return 0.0
     if na == nb:
         return 1.0
-    ta, tb = _name_tokens(a), _name_tokens(b)
+    ta, tb = _name_tokens(a, college), _name_tokens(b, college)
     if not ta or not tb:
         return 0.0
     if ta <= tb or tb <= ta:
@@ -283,6 +348,13 @@ class TruthGame:
     away_score: Optional[int] = None
     doubleheader: bool = False
     game_number: int = 1
+    #: ESPN's competitor ``team.id`` per side, when the source is ESPN (#12083).
+    #: The id space ``teams.espn_id`` holds, so a MISATTACHED check can compare
+    #: the clubs themselves instead of how two sources spell them.
+    home_team_id: Optional[str] = None
+    away_team_id: Optional[str] = None
+    #: ESPN's ``competitions[0].neutralSite`` (#12083).
+    neutral_site: bool = False
 
     @property
     def label(self) -> str:
@@ -413,18 +485,20 @@ def parse_espn_payload(payload: Any) -> TruthResult:
             )
             home = away = ""
             hs = aws = None
+            hid = aid = None
             for c in comps.get("competitors") or []:
                 team = c.get("team") or {}
                 nm = team.get("displayName") or team.get("name") or ""
+                tid = str(team["id"]) if team.get("id") not in (None, "") else None
                 raw_score = c.get("score")
                 try:
                     sc = int(raw_score) if raw_score not in (None, "") else None
                 except (TypeError, ValueError):
                     sc = None
                 if c.get("homeAway") == "home":
-                    home, hs = nm, sc
+                    home, hs, hid = nm, sc, tid
                 else:
-                    away, aws = nm, sc
+                    away, aws, aid = nm, sc, tid
             start_raw = ev.get("date") or comps.get("date")
             start = (
                 datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
@@ -435,6 +509,8 @@ def parse_espn_payload(payload: Any) -> TruthResult:
                 home=home, away=away, start=start,
                 state=_espn_state(status_name), raw_state=status_name,
                 home_score=hs, away_score=aws,
+                home_team_id=hid, away_team_id=aid,
+                neutral_site=comps.get("neutralSite") is True,
             ))
         except Exception as exc:  # gotcha #42
             logger.warning("ESPN event parse failed: %s", exc)
@@ -458,7 +534,7 @@ async def fetch_truth(client: httpx.AsyncClient, spec: LeagueSpec,
     elif spec.truth == "espn" and spec.espn_path:
         sport, league = spec.espn_path
         url = f"{ESPN_SCOREBOARD_BASE}/{sport}/{league}/scoreboard"
-        params = {"dates": day.strftime("%Y%m%d")}
+        params = {"dates": day.strftime("%Y%m%d"), **dict(spec.espn_params)}
         parse = parse_espn_payload
         source = "espn"
     else:
@@ -501,6 +577,9 @@ class OurEvent:
     espn_id: Optional[str] = None
     statpal_fixture_id: Optional[str] = None
     external_id: Optional[str] = None
+    #: The FK teams' own ``teams.espn_id`` (#12083) — the club, by ESPN's id.
+    home_fk_espn_id: Optional[str] = None
+    away_fk_espn_id: Optional[str] = None
 
     @property
     def individuated(self) -> bool:
@@ -546,12 +625,13 @@ def _finding(check: str, severity: str, detail: str, *,
 # ---------------------------------------------------------------------------
 # Pairing — two stages so a consecutive-day series can never cross-pair.
 # ---------------------------------------------------------------------------
-def _pair_score(o: OurEvent, t: TruthGame) -> tuple[float, str]:
+def _pair_score(o: OurEvent, t: TruthGame,
+                college: bool = False) -> tuple[float, str]:
     """Best (similarity, orientation) for one candidate pair. Pure."""
-    aligned = min(name_similarity(o.home_name, t.home),
-                  name_similarity(o.away_name, t.away))
-    swapped = min(name_similarity(o.home_name, t.away),
-                  name_similarity(o.away_name, t.home))
+    aligned = min(name_similarity(o.home_name, t.home, college),
+                  name_similarity(o.away_name, t.away, college))
+    swapped = min(name_similarity(o.home_name, t.away, college),
+                  name_similarity(o.away_name, t.home, college))
     if aligned >= swapped:
         return aligned, "aligned"
     return swapped, "swapped"
@@ -564,7 +644,8 @@ def _hours_apart(o: OurEvent, t: TruthGame) -> Optional[float]:
 
 
 def pair_events(truth: list[TruthGame], ours: list[OurEvent],
-                truth_id_attr: Optional[str] = None) -> dict:
+                truth_id_attr: Optional[str] = None,
+                college: bool = False) -> dict:
     """One-to-one pairing of truth games against our events. Pure.
 
     **Stage 0 — IDENTITY (ruling 042, Codex C-SEN-1).** When the truth source's
@@ -638,7 +719,7 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent],
                 if t.key in (None, "") or oi is None or oi < 0 or oi in taken_o:
                     continue
                 o = ours[oi]
-                score, orient = _pair_score(o, t)
+                score, orient = _pair_score(o, t, college)
             except Exception as exc:  # gotcha #42
                 logger.warning("schedule sentinel id pairing failed: %s", exc)
                 continue
@@ -669,7 +750,7 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent],
                 if oi in taken_o:
                     continue
                 try:  # gotcha #42 — one poison row never voids the whole pass
-                    score, orient = _pair_score(o, t)
+                    score, orient = _pair_score(o, t, college)
                     if score < MATCH_BAR:
                         continue
                     dt = _hours_apart(o, t)
@@ -701,7 +782,7 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent],
         try:  # gotcha #42
             best: tuple[float, Optional[TruthGame]] = (0.0, None)
             for t in truth:
-                score, _ = _pair_score(o, t)
+                score, _ = _pair_score(o, t, college)
                 dt = _hours_apart(o, t)
                 if (score >= MATCH_BAR and (dt is None or dt <= LOOSE_PAIR_HOURS)
                         and score > best[0]):
@@ -760,7 +841,7 @@ def reconcile(truth: list[TruthGame], ours: list[OurEvent], spec: LeagueSpec,
     now = now or datetime.now(timezone.utc)
     out: list[dict] = []
     truth_id_attr = _TRUTH_ID_ATTR.get(spec.truth or "")
-    paired = pair_events(truth, ours, truth_id_attr)
+    paired = pair_events(truth, ours, truth_id_attr, college=spec.college_names)
     L = spec.slug.upper()
 
     # --- Which pairs did we actually VERIFY? (ruling 042, Codex C-SEN-1/C-SEN-2) -
@@ -1033,13 +1114,25 @@ def _check_pair(p: dict, truth: list[TruthGame], spec: LeagueSpec,
     # against the authority is exactly the comparison those rows survive, so this
     # check compares the club the FK RESOLVES TO, and records `names_agree` to
     # state, per finding, that a names-only check would have passed it.
+    #
+    # #12083: WHEN BOTH SIDES NAME THE CLUB BY ESPN'S OWN ID AND THE IDS AGREE,
+    # THE FK RESOLVES TO THE OFFICIAL CLUB, however the two sources spell it.
+    # Team 17165 is "Appalachian State Mountaineers" and ESPN prints "App State
+    # Mountaineers" for the same id; a name bar cannot see that, and it filed a
+    # critical MISATTACHED against the right club (#10783). The id only CLEARS
+    # a name mismatch: ids that disagree, or an id missing on either side, leave
+    # the name test exactly as it was, so this adds no finding.
+    aligned = p["orientation"] == "aligned"
+    college = spec.college_names
     sides = (
         ("home", o.home_team_id, o.home_fk_name, o.home_name,
-         t.home if p["orientation"] == "aligned" else t.away),
+         t.home if aligned else t.away, o.home_fk_espn_id,
+         t.home_team_id if aligned else t.away_team_id),
         ("away", o.away_team_id, o.away_fk_name, o.away_name,
-         t.away if p["orientation"] == "aligned" else t.home),
+         t.away if aligned else t.home, o.away_fk_espn_id,
+         t.away_team_id if aligned else t.home_team_id),
     )
-    for side, fk_id, fk_name, declared, official in sides:
+    for side, fk_id, fk_name, declared, official, fk_espn, official_id in sides:
         if fk_id is None:
             out.append(_finding(
                 "schedule_team_unlinked", "info",
@@ -1048,8 +1141,10 @@ def _check_pair(p: dict, truth: list[TruthGame], spec: LeagueSpec,
                 kind="MISATTACHED", tier="linkage", event_id=o.id, side=side,
             ))
             continue
-        if name_similarity(fk_name, official) < MATCH_BAR:
-            names_agree = name_similarity(declared, official) >= MATCH_BAR
+        if fk_espn and official_id and str(fk_espn) == str(official_id):
+            continue
+        if name_similarity(fk_name, official, college) < MATCH_BAR:
+            names_agree = name_similarity(declared, official, college) >= MATCH_BAR
             out.append(_finding(
                 "schedule_misattached", "critical",
                 f"{L} event {o.id} {side}_team_id={fk_id} dereferences to "
@@ -1062,12 +1157,20 @@ def _check_pair(p: dict, truth: list[TruthGame], spec: LeagueSpec,
             ))
 
     # --- Home/away orientation --------------------------------------------
+    # #12083: at a NEUTRAL SITE home/away is a designation, and two sources may
+    # designate it differently: ESPN puts Colorado at home for San Diego State v
+    # Colorado at Pechanga Arena; The Odds API puts San Diego State there. That
+    # alone is not a defect, so it is explained, not filed. What a reader can be
+    # misled by is the SCORE on the wrong club, and the score check below is
+    # orientation-aware and still files it.
     if p["orientation"] == "swapped":
         out.append(_finding(
             "schedule_home_away_swapped", "critical",
             f"{L} event {o.id} has home/away REVERSED against the official "
             f"{t.label}",
             kind="MISATTACHED", event_id=o.id,
+            **({"explain_hint": "neutral site: home/away is a designation"}
+               if t.neutral_site else {}),
         ))
 
     # --- Mis-dated (stage-2 pair) ------------------------------------------
@@ -1426,6 +1529,8 @@ async def load_our_events(spec: LeagueSpec, days: list[_date]) -> list[OurEvent]
             Event.home_team_id, Event.away_team_id, Event.home_score,
             Event.away_score, Event.commence_time,
             home_t.name.label("home_fk_name"), away_t.name.label("away_fk_name"),
+            home_t.espn_id.label("home_fk_espn_id"),
+            away_t.espn_id.label("away_fk_espn_id"),
             # The provider game ids, so the pairing below can dereference rather
             # than compare strings (ruling 042). Omitting them is what let an
             # id-less row consume authoritative truth and report GREEN.
@@ -1459,6 +1564,7 @@ async def load_our_events(spec: LeagueSpec, days: list[_date]) -> list[OurEvent]
                 away_score=r.away_score, commence_time=ct,
                 espn_id=r.espn_id, statpal_fixture_id=r.statpal_fixture_id,
                 external_id=r.external_id,
+                home_fk_espn_id=r.home_fk_espn_id, away_fk_espn_id=r.away_fk_espn_id,
             ))
         except Exception as exc:  # gotcha #42
             logger.warning("schedule sentinel row load failed: %s", exc)

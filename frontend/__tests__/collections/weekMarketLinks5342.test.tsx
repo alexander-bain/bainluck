@@ -29,7 +29,7 @@ jest.mock("@/components/Analytics", () => ({ useAnalyticsContext: () => ({ track
 
 import CollectionHub from "@/components/collections/CollectionHub";
 import {
-  forgetAcceptedCollections, parseCollection, reconcileCollectionContext, RELATED_LINK_LIMIT, relatedMarketLinks, settleCollectionPage, settleCollectionRead,
+  fetchCollection, forgetAcceptedCollections, parseCollection, reconcileCollectionContext, RELATED_LINK_LIMIT, relatedMarketLinks, settleCollectionPage, settleCollectionRead,
 } from "@/lib/collections";
 import savedWeek5 from "../fixtures/nflWeek5Rev34Container5342.20261020.json";
 import { event, nflHub, question } from "./fixtures";
@@ -127,6 +127,143 @@ describe("Week 5 (saved revision 34): the attached O/U 47.5 is one tap from the 
     const refreshed = parseCollection({ ...week5(), revision: 35 }, W5);
     const settled = settleCollectionRead(W5, { hub: refreshed });
     expect(reconcileCollectionContext(context, settled.hub!)).toEqual({ slug: W5, memberKey: midGame, offset: 148, expanded: [] });
+  });
+});
+
+describe("NFL related links use the shared presentation decision (#12337)", () => {
+  const currentWeek = () => {
+    const raw = nflHub();
+    const entries = [
+      { id: 700, name: "Panthers vs. Saints", presentation: "game" },
+      { id: 701, name: "Panthers vs. Saints", presentation: "game" },
+      { id: 702, name: "Buccaneers vs. Cowboys: O/U 47.5", presentation: "inline" },
+      { id: 703, name: "2H Spread: Colts (-17.5)", presentation: "secondary" },
+      { id: 704, name: "Buffalo vs New York J: Weather Delay", presentation: "secondary" },
+      { id: 705, name: "A market from an older response", presentation: undefined },
+    ];
+    const game = event(7);
+    game.question_ids = entries.map((entry) => entry.id);
+    raw.sections[0].members[0] = game;
+    raw.sections[1] = { class: "unclassified", count: entries.length, members: entries.map((entry) => {
+      const market = question(entry.id, 7, "open", "americanfootball_nfl");
+      Object.assign(market.card, { name: entry.name, collection_link_presentation: entry.presentation });
+      return market;
+    }) };
+    raw.member_count = 3 + entries.length + 1;
+    return raw;
+  };
+
+  test("both winner venues stay in membership and the game card represents them once", () => {
+    const { hub, html } = draw(currentWeek(), "nfl-2026-week-4");
+    expect(hub.note).toBeNull();
+    expect(hub.related["event:7"].map((market) => market.id)).toEqual([700, 701, 702, 703, 704, 705]);
+    expect(relatedMarketLinks(hub, "event:7").map((market) => market.id)).toEqual([702, 705]);
+    expect(html).not.toContain('data-related-market="market:700"');
+    expect(html).not.toContain('data-related-market="market:701"');
+    expect(html).toContain('data-collection-member="event:7"');
+    expect(html).toContain('data-more-on-game="event:7"');
+  });
+
+  test("raw rungs and weather contracts keep their exact links behind a closed disclosure", () => {
+    const { hub, html } = draw(currentWeek(), "nfl-2026-week-4");
+    expect(relatedMarketLinks(hub, "event:7", "secondary").map((market) => market.id)).toEqual([703, 704]);
+    const inline = list(html, "event:7")!;
+    expect(inline).toContain('/futures/702');
+    expect(inline).toContain('/futures/705');
+    expect(inline).not.toContain("Spread");
+    expect(inline).not.toContain("Weather Delay");
+    const disclosure = /<details data-secondary-markets="event:7"[^>]*>.*?<\/details>/.exec(html)?.[0];
+    expect(disclosure).toBeDefined();
+    expect(disclosure).not.toMatch(/<details[^>]*\bopen(?:=|\s|>)/);
+    expect(disclosure).toContain("More linked markets");
+    expect(disclosure).toContain('href="/futures/703" data-related-market="market:703"');
+    expect(disclosure).toContain('href="/futures/704" data-related-market="market:704"');
+    expect(disclosure).not.toMatch(/\d%|Won|Lost|Result/);
+  });
+
+  test("a standalone market retains its full card even if its link presentation is game", () => {
+    const raw = currentWeek();
+    const market = raw.sections[1].members[0] as ReturnType<typeof question>;
+    market.event_id = null;
+    const { hub, html } = draw(raw, "nfl-2026-week-4");
+    expect(hub.sections.flatMap((section) => section.members).some((member) => member.id === 700)).toBe(true);
+    expect(html).toContain('data-collection-member="market:700"');
+  });
+});
+
+describe("the compact NFL page accounts for its long linked lists (#12337)", () => {
+  const compactWeek = () => {
+    const raw = nflHub();
+    const game = event(7);
+    game.question_ids = [];
+    Object.assign(game, { related_count: 4972 });
+    raw.sections[0].members[0] = game;
+    raw.sections = [raw.sections[0], raw.sections[2]];
+    raw.member_count = 4;
+    return { ...raw, related_summary: { count: 4972, unclassified_count: 3487 } };
+  };
+
+  test("games and standalone cards render with an explicit unclassified count and game-page link", () => {
+    const { hub, html } = draw(compactWeek(), "nfl-2026-week-4");
+    expect(hub.note).toBeNull();
+    expect(hub.members).toHaveLength(4);
+    expect(hub.relatedSummary).toEqual({ count: 4972, unclassifiedCount: 3487 });
+    expect(html).toContain("4,972");
+    expect(html).toContain("more linked markets");
+    expect(html).toContain("3,487");
+    expect(html).toContain("uncategorized");
+    expect(html.indexOf("data-related-market-summary")).toBeGreaterThan(html.lastIndexOf("data-collection-member="));
+    expect(html).toContain('data-more-on-game="event:7"');
+    expect(html).toContain('data-collection-member="market:72"');
+    expect(html).not.toContain('data-collection-member="market:70"');
+  });
+
+  test.each([
+    { count: -1, unclassified_count: 0 },
+    { count: 4972, unclassified_count: 4973 },
+  ])("an invalid summary is a failed read", (summary) => {
+    expect(() => parseCollection({ ...compactWeek(), related_summary: summary }, "nfl-2026-week-4")).toThrow(/isn't available/);
+  });
+
+  test.each([
+    undefined,
+    { count: 4971, unclassified_count: 3487 },
+  ])("a mismatched summary keeps the page with its partial-read note", (summary) => {
+    const { hub, html } = draw({ ...compactWeek(), related_summary: summary }, "nfl-2026-week-4");
+    expect(hub.members).toHaveLength(4);
+    expect(hub.relatedSummary).toBeUndefined();
+    expect(hub.note).toBe("Some games or questions aren't available right now.");
+    expect(html).toContain('data-collection-member="event:7"');
+    expect(html).not.toContain("data-related-market-summary");
+  });
+
+  test("a rejected summarized game keeps its healthy siblings and hides the summary", () => {
+    const raw = compactWeek();
+    Object.assign(raw.sections[0].members[0].card, { home_team: "" });
+
+    const { hub, html } = draw(raw, "nfl-2026-week-4");
+
+    expect(hub.members).toHaveLength(3);
+    expect(hub.relatedSummary).toBeUndefined();
+    expect(hub.note).toBe("Some games or questions aren't available right now.");
+    expect(html).toContain('data-collection-member="event:8"');
+    expect(html).toContain('data-collection-member="market:72"');
+    expect(html).not.toContain('data-collection-member="event:7"');
+    expect(html).not.toContain("data-related-market-summary");
+  });
+
+  test("the normal NFL request opts into the compact response and accepts an older full response", async () => {
+    const savedFetch = global.fetch;
+    const read = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => nflHub() });
+    global.fetch = read;
+    try {
+      expect((await fetchCollection("nfl-2026-week-4")).state).toBe("published");
+      const url = new URL(String(read.mock.calls[0][0]));
+      expect(url.pathname).toBe("/api/containers/nfl-2026-week-4");
+      expect(url.searchParams.get("compact")).toBe("true");
+    } finally {
+      global.fetch = savedFetch;
+    }
   });
 });
 

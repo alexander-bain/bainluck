@@ -1,4 +1,5 @@
 import AppIntents
+import CoreSpotlight
 import Foundation
 
 /// #10873 — the one identity Siri and Shortcuts may pick: a game (`/events/<id>`)
@@ -55,6 +56,13 @@ nonisolated struct GameOrMarketEntity10873: AppEntity {
         return (kind, id)
     }
 }
+
+/// #12315 — so a Spotlight entry can name the game or market it is
+/// (`SpotlightSystemIndexClient10874`). The entries stay #10874's own, one
+/// account at a time: nothing calls `indexAppEntities`, which would write a
+/// second copy that the account purge never clears.
+@available(iOS 18.0, *)
+extension GameOrMarketEntity10873: IndexedEntity {}
 
 nonisolated struct GameOrMarketQuery10873: EntityStringQuery {
     func entities(for identifiers: [String]) async throws -> [GameOrMarketEntity10873] {

@@ -1,0 +1,3012 @@
+{
+ "_note": "#12298: recorded 2026-11-07 from production, Arkansas at Auburn (15339961, live). served = the page history read at the end of a 22-minute session (trimmed to 20:35Z on); frames = every stream probability frame the page received during the session; hero = the detail read beside the last history read.",
+ "served": {
+  "event_id": 15339961,
+  "home_team": "Auburn Tigers",
+  "away_team": "Arkansas Razorbacks",
+  "commence_time": "2026-11-07T17:45:00+00:00",
+  "status": "live",
+  "win_prob_sources": {
+   "kalshi": {
+    "display_name": "Kalshi",
+    "type": "market",
+    "color": "#22c55e",
+    "dash_pattern": "8 4",
+    "description": "Win probability from Kalshi, a CFTC-regulated prediction market where real money is traded on event outcomes. Kalshi odds represent the consensus of market participants betting on game outcomes.",
+    "methodology": "The midpoint of the bid/ask spread for the 'Yes' contract on the game outcome market. Kalshi contracts settle at $1 if the event occurs and $0 otherwise, so the price directly represents the market's implied probability.",
+    "attribution_url": "https://kalshi.com",
+    "attribution_name": "Kalshi",
+    "snapshot_count": 245
+   },
+   "polymarket": {
+    "display_name": "Polymarket",
+    "type": "market",
+    "color": "#3b82f6",
+    "dash_pattern": "8 4",
+    "description": "Win probability from Polymarket, the world's largest prediction market by volume. Polymarket prices reflect the consensus of thousands of traders betting real money on game outcomes.",
+    "methodology": "The outcome price from Polymarket's CLOB (Central Limit Order Book). Prices range from $0.00 to $1.00 and directly represent implied probability. For binary markets, the 'Yes' price equals the market's probability estimate.",
+    "attribution_url": "https://polymarket.com",
+    "attribution_name": "Polymarket",
+    "snapshot_count": 236
+   },
+   "espn": {
+    "display_name": "ESPN",
+    "type": "model",
+    "color": "#f97316",
+    "dash_pattern": "6 3",
+    "description": "ESPN's proprietary predictive model that updates on every play during live games. Uses game situation data including score, field position, down, distance, and time remaining.",
+    "methodology": "ESPN's internal win probability model, same data shown on ESPN.com game pages. Methodology is not publicly documented.",
+    "attribution_url": "https://www.espn.com",
+    "attribution_name": "ESPN",
+    "snapshot_count": 134
+   },
+   "stat_model": {
+    "display_name": "Bain Luck Model",
+    "type": "model",
+    "color": "#8b5cf6",
+    "dash_pattern": "4 4",
+    "description": "An open win probability model using sport-specific methodology. Clock sports (NFL, NBA, NHL) use a normal distribution model inspired by nflfastR. Baseball uses a Poisson run-scoring model based on Tom Tango's methodology.",
+    "methodology": "Clock sports: Based on Hal Stern's research. Final margin modeled as N(score_diff + spread \u00d7 remaining_fraction, base_std \u00d7 \u221aremaining_fraction). Baseball: Based on Tom Tango's 'The Book'. Remaining runs modeled as Poisson(runs_per_half_inning \u00d7 half_innings_remaining). Normal approximation gives P(home wins) accounting for asymmetric half-innings, walk-off rule, and home field advantage (~54% historical home win rate).",
+    "attribution_url": "https://www.pro-football-reference.com/about/win_prob.htm",
+    "attribution_name": "nflfastR / PFR methodology",
+    "snapshot_count": 176
+   }
+  },
+  "blend_edge_pinned": true,
+  "blend_edge_observed_at": "2026-11-07T21:01:56.151048+00:00",
+  "blend_edge_fold_revision": {
+   "15339961": 6128
+  },
+  "history_fold_revision": null,
+  "aggregate_line": [
+   {
+    "timestamp": "2026-11-07T20:35:00+00:00",
+    "home_probability": 0.653404
+   },
+   {
+    "timestamp": "2026-11-07T20:36:00+00:00",
+    "home_probability": 0.639057
+   },
+   {
+    "timestamp": "2026-11-07T20:37:00+00:00",
+    "home_probability": 0.632717
+   },
+   {
+    "timestamp": "2026-11-07T20:38:00+00:00",
+    "home_probability": 0.7175
+   },
+   {
+    "timestamp": "2026-11-07T20:39:00+00:00",
+    "home_probability": 0.723413
+   },
+   {
+    "timestamp": "2026-11-07T20:40:00+00:00",
+    "home_probability": 0.699935
+   },
+   {
+    "timestamp": "2026-11-07T20:41:00+00:00",
+    "home_probability": 0.723243
+   },
+   {
+    "timestamp": "2026-11-07T20:42:00+00:00",
+    "home_probability": 0.724574
+   },
+   {
+    "timestamp": "2026-11-07T20:43:00+00:00",
+    "home_probability": 0.684822
+   },
+   {
+    "timestamp": "2026-11-07T20:44:00+00:00",
+    "home_probability": 0.674074
+   },
+   {
+    "timestamp": "2026-11-07T20:45:00+00:00",
+    "home_probability": 0.673396
+   },
+   {
+    "timestamp": "2026-11-07T20:46:00+00:00",
+    "home_probability": 0.663152
+   },
+   {
+    "timestamp": "2026-11-07T20:47:00+00:00",
+    "home_probability": 0.634152
+   },
+   {
+    "timestamp": "2026-11-07T20:48:00+00:00",
+    "home_probability": 0.593565
+   },
+   {
+    "timestamp": "2026-11-07T20:49:00+00:00",
+    "home_probability": 0.630087
+   },
+   {
+    "timestamp": "2026-11-07T20:50:00+00:00",
+    "home_probability": 0.630087
+   },
+   {
+    "timestamp": "2026-11-07T20:51:00+00:00",
+    "home_probability": 0.612583
+   },
+   {
+    "timestamp": "2026-11-07T20:52:00+00:00",
+    "home_probability": 0.62627
+   },
+   {
+    "timestamp": "2026-11-07T20:53:00+00:00",
+    "home_probability": 0.696239
+   },
+   {
+    "timestamp": "2026-11-07T20:54:00+00:00",
+    "home_probability": 0.706048
+   },
+   {
+    "timestamp": "2026-11-07T20:55:00+00:00",
+    "home_probability": 0.745174
+   },
+   {
+    "timestamp": "2026-11-07T20:56:00+00:00",
+    "home_probability": 0.810409
+   },
+   {
+    "timestamp": "2026-11-07T20:57:00+00:00",
+    "home_probability": 0.8738
+   },
+   {
+    "timestamp": "2026-11-07T20:58:00+00:00",
+    "home_probability": 0.909148
+   },
+   {
+    "timestamp": "2026-11-07T20:59:00+00:00",
+    "home_probability": 0.906709
+   },
+   {
+    "timestamp": "2026-11-07T21:00:00+00:00",
+    "home_probability": 0.913648
+   },
+   {
+    "timestamp": "2026-11-07T21:01:00+00:00",
+    "home_probability": 0.870683
+   },
+   {
+    "timestamp": "2026-11-07T21:02:00+00:00",
+    "home_probability": 0.870683
+   },
+   {
+    "timestamp": "2026-11-07T21:02:01.076015+00:00",
+    "home_probability": 0.870683
+   }
+  ],
+  "win_prob_history": {
+   "kalshi": [
+    {
+     "timestamp": "2026-11-07T20:35:38.812392+00:00",
+     "home_probability": 0.55,
+     "away_probability": 0.45,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:36:18.261266+00:00",
+     "home_probability": 0.59,
+     "away_probability": 0.41,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:36:55.847006+00:00",
+     "home_probability": 0.545,
+     "away_probability": 0.455,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:37:36.432450+00:00",
+     "home_probability": 0.585,
+     "away_probability": 0.415,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:38:33.437189+00:00",
+     "home_probability": 0.725,
+     "away_probability": 0.275,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:39:31.809239+00:00",
+     "home_probability": 0.72,
+     "away_probability": 0.28,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:40:11.957427+00:00",
+     "home_probability": 0.645,
+     "away_probability": 0.355,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:40:49.629412+00:00",
+     "home_probability": 0.67,
+     "away_probability": 0.33,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:41:29.724816+00:00",
+     "home_probability": 0.71,
+     "away_probability": 0.29,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:42:08.887009+00:00",
+     "home_probability": 0.72,
+     "away_probability": 0.28,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:42:48.965263+00:00",
+     "home_probability": 0.675,
+     "away_probability": 0.325,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:43:51.036274+00:00",
+     "home_probability": 0.675,
+     "away_probability": 0.325,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:44:48.217678+00:00",
+     "home_probability": 0.675,
+     "away_probability": 0.325,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:45:46.937828+00:00",
+     "home_probability": 0.675,
+     "away_probability": 0.325,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:46:30.161647+00:00",
+     "home_probability": 0.665,
+     "away_probability": 0.335,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:47:10.132769+00:00",
+     "home_probability": 0.665,
+     "away_probability": 0.335,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:48:10.494542+00:00",
+     "home_probability": 0.575,
+     "away_probability": 0.425,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:49:32.146331+00:00",
+     "home_probability": 0.635,
+     "away_probability": 0.365,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:50:23.953234+00:00",
+     "home_probability": 0.635,
+     "away_probability": 0.365,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:51:24.362711+00:00",
+     "home_probability": 0.625,
+     "away_probability": 0.375,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:52:05.862088+00:00",
+     "home_probability": 0.585,
+     "away_probability": 0.415,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:52:48.267627+00:00",
+     "home_probability": 0.685,
+     "away_probability": 0.315,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:53:31.504727+00:00",
+     "home_probability": 0.735,
+     "away_probability": 0.265,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:54:33.056988+00:00",
+     "home_probability": 0.735,
+     "away_probability": 0.265,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:55:13.064030+00:00",
+     "home_probability": 0.795,
+     "away_probability": 0.205,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:55:53.594329+00:00",
+     "home_probability": 0.815,
+     "away_probability": 0.185,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:56:34.720389+00:00",
+     "home_probability": 0.77,
+     "away_probability": 0.23,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:57:13.955288+00:00",
+     "home_probability": 0.895,
+     "away_probability": 0.105,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:58:21.410073+00:00",
+     "home_probability": 0.895,
+     "away_probability": 0.105,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:59:00.277958+00:00",
+     "home_probability": 0.905,
+     "away_probability": 0.095,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:59:40.612183+00:00",
+     "home_probability": 0.895,
+     "away_probability": 0.105,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T21:00:25.828816+00:00",
+     "home_probability": 0.905,
+     "away_probability": 0.095,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T21:01:06.320428+00:00",
+     "home_probability": 0.805,
+     "away_probability": 0.195,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T21:01:43.500370+00:00",
+     "home_probability": 0.815,
+     "away_probability": 0.185,
+     "draw_probability": null,
+     "game_state": null
+    }
+   ],
+   "polymarket": [
+    {
+     "timestamp": "2026-11-07T20:35:07.909050+00:00",
+     "home_probability": 0.68,
+     "away_probability": 0.32,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:35:47.862249+00:00",
+     "home_probability": 0.655,
+     "away_probability": 0.345,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:36:29.000386+00:00",
+     "home_probability": 0.605,
+     "away_probability": 0.395,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:37:08.506945+00:00",
+     "home_probability": 0.605,
+     "away_probability": 0.395,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:37:48.575473+00:00",
+     "home_probability": 0.605,
+     "away_probability": 0.395,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:38:29.645284+00:00",
+     "home_probability": 0.715,
+     "away_probability": 0.285,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:39:30.466008+00:00",
+     "home_probability": 0.72,
+     "away_probability": 0.28,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:40:10.581322+00:00",
+     "home_probability": 0.665,
+     "away_probability": 0.335,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:40:50.971280+00:00",
+     "home_probability": 0.68,
+     "away_probability": 0.32,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:41:31.230614+00:00",
+     "home_probability": 0.725,
+     "away_probability": 0.275,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:42:12.097115+00:00",
+     "home_probability": 0.73,
+     "away_probability": 0.27,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:43:31.798791+00:00",
+     "home_probability": 0.675,
+     "away_probability": 0.325,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:44:25.494967+00:00",
+     "home_probability": 0.675,
+     "away_probability": 0.325,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:45:29.517466+00:00",
+     "home_probability": 0.675,
+     "away_probability": 0.325,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:46:11.537828+00:00",
+     "home_probability": 0.685,
+     "away_probability": 0.315,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:46:52.868016+00:00",
+     "home_probability": 0.655,
+     "away_probability": 0.345,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:47:31.904269+00:00",
+     "home_probability": 0.605,
+     "away_probability": 0.395,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:48:12.317768+00:00",
+     "home_probability": 0.575,
+     "away_probability": 0.425,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:49:33.788303+00:00",
+     "home_probability": 0.645,
+     "away_probability": 0.355,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:51:05.738266+00:00",
+     "home_probability": 0.635,
+     "away_probability": 0.365,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:51:48.243763+00:00",
+     "home_probability": 0.585,
+     "away_probability": 0.415,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:52:28.982743+00:00",
+     "home_probability": 0.58,
+     "away_probability": 0.42,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:53:31.558606+00:00",
+     "home_probability": 0.735,
+     "away_probability": 0.265,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:54:13.303493+00:00",
+     "home_probability": 0.735,
+     "away_probability": 0.265,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:55:01.114024+00:00",
+     "home_probability": 0.735,
+     "away_probability": 0.265,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:56:01.570825+00:00",
+     "home_probability": 0.755,
+     "away_probability": 0.245,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:56:41.324688+00:00",
+     "home_probability": 0.895,
+     "away_probability": 0.105,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:57:52.801158+00:00",
+     "home_probability": 0.895,
+     "away_probability": 0.105,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:58:43.854320+00:00",
+     "home_probability": 0.905,
+     "away_probability": 0.095,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T20:59:35.337763+00:00",
+     "home_probability": 0.9,
+     "away_probability": 0.1,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T21:00:35.812954+00:00",
+     "home_probability": 0.905,
+     "away_probability": 0.095,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T21:01:15.983097+00:00",
+     "home_probability": 0.81,
+     "away_probability": 0.19,
+     "draw_probability": null,
+     "game_state": null
+    },
+    {
+     "timestamp": "2026-11-07T21:01:56.151048+00:00",
+     "home_probability": 0.825,
+     "away_probability": 0.175,
+     "draw_probability": null,
+     "game_state": null
+    }
+   ],
+   "espn": [
+    {
+     "timestamp": "2026-11-07T20:35:03.858562+00:00",
+     "home_probability": 0.6781,
+     "away_probability": 0.3219,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "11:39",
+      "period": "11:39 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:35:57.047358+00:00",
+     "home_probability": 0.6781,
+     "away_probability": 0.3219,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "11:39",
+      "period": "11:39 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:37:05.272830+00:00",
+     "home_probability": 0.5523,
+     "away_probability": 0.4477,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "11:39",
+      "period": "11:39 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:38:57.788023+00:00",
+     "home_probability": 0.7009,
+     "away_probability": 0.2991,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "11:39",
+      "period": "11:39 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:39:56.563984+00:00",
+     "home_probability": 0.7009,
+     "away_probability": 0.2991,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "11:32",
+      "period": "11:32 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:41:03.702653+00:00",
+     "home_probability": 0.6906,
+     "away_probability": 0.3094,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "10:19",
+      "period": "10:19 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:42:14.820419+00:00",
+     "home_probability": 0.741,
+     "away_probability": 0.259,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "10:05",
+      "period": "10:05 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:43:08.260148+00:00",
+     "home_probability": 0.6729,
+     "away_probability": 0.3271,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "9:32",
+      "period": "9:32 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:43:56.388851+00:00",
+     "home_probability": 0.6729,
+     "away_probability": 0.3271,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "9:32",
+      "period": "9:32 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:44:56.530363+00:00",
+     "home_probability": 0.6729,
+     "away_probability": 0.3271,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "9:32",
+      "period": "9:32 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:46:00.477987+00:00",
+     "home_probability": 0.6712,
+     "away_probability": 0.3288,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "9:32",
+      "period": "9:32 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:46:56.903340+00:00",
+     "home_probability": 0.6561,
+     "away_probability": 0.3439,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "9:07",
+      "period": "9:07 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:47:56.969038+00:00",
+     "home_probability": 0.5727,
+     "away_probability": 0.4273,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "8:32",
+      "period": "8:32 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:48:56.729533+00:00",
+     "home_probability": 0.6266,
+     "away_probability": 0.3734,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "8:23",
+      "period": "8:23 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:49:56.695024+00:00",
+     "home_probability": 0.6266,
+     "away_probability": 0.3734,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "8:23",
+      "period": "8:23 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:50:57.390949+00:00",
+     "home_probability": 0.6266,
+     "away_probability": 0.3734,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "8:23",
+      "period": "8:23 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:51:56.894950+00:00",
+     "home_probability": 0.6266,
+     "away_probability": 0.3734,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "8:23",
+      "period": "8:23 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:53:56.619856+00:00",
+     "home_probability": 0.7385,
+     "away_probability": 0.2615,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "6:30",
+      "period": "6:30 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:54:56.359751+00:00",
+     "home_probability": 0.6935,
+     "away_probability": 0.3065,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "5:49",
+      "period": "5:49 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:55:56.639015+00:00",
+     "home_probability": 0.7852,
+     "away_probability": 0.2148,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "5:00",
+      "period": "5:00 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:56:56.779153+00:00",
+     "home_probability": 0.9216,
+     "away_probability": 0.0784,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "3:56",
+      "period": "3:56 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:59:56.452775+00:00",
+     "home_probability": 0.9125,
+     "away_probability": 0.0875,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "3:51",
+      "period": "3:51 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 23
+     }
+    },
+    {
+     "timestamp": "2026-11-07T21:00:57.245521+00:00",
+     "home_probability": 0.9347,
+     "away_probability": 0.0653,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "3:27",
+      "period": "3:27 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 23
+     }
+    },
+    {
+     "timestamp": "2026-11-07T21:02:01+00:00",
+     "home_probability": 0.9347,
+     "away_probability": 0.0653,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "3:27",
+      "period": "3:27 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 23
+     },
+     "live_edge": true,
+     "evidence": {
+      "kind": "live_edge"
+     }
+    }
+   ],
+   "stat_model": [
+    {
+     "timestamp": "2026-11-07T20:35:03.858562+00:00",
+     "home_probability": 0.8024,
+     "away_probability": 0.1976,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "11:39",
+      "period": "11:39 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:37:05.272830+00:00",
+     "home_probability": 0.8024,
+     "away_probability": 0.1976,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "11:39",
+      "period": "11:39 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:38:57.788023+00:00",
+     "home_probability": 0.8024,
+     "away_probability": 0.1976,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "11:39",
+      "period": "11:39 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:39:56.563984+00:00",
+     "home_probability": 0.8026,
+     "away_probability": 0.1974,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "11:32",
+      "period": "11:32 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:41:03.702653+00:00",
+     "home_probability": 0.8056,
+     "away_probability": 0.1944,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "10:19",
+      "period": "10:19 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:42:14.820419+00:00",
+     "home_probability": 0.8062,
+     "away_probability": 0.1938,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "10:05",
+      "period": "10:05 - 4th Quarter",
+      "away_score": 13,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:43:08.260148+00:00",
+     "home_probability": 0.6222,
+     "away_probability": 0.3778,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "9:32",
+      "period": "9:32 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:44:56.530363+00:00",
+     "home_probability": 0.6222,
+     "away_probability": 0.3778,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "9:32",
+      "period": "9:32 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:46:00.477987+00:00",
+     "home_probability": 0.6222,
+     "away_probability": 0.3778,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "9:32",
+      "period": "9:32 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:46:56.903340+00:00",
+     "home_probability": 0.6196,
+     "away_probability": 0.3804,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "9:07",
+      "period": "9:07 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:47:56.969038+00:00",
+     "home_probability": 0.6158,
+     "away_probability": 0.3842,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "8:32",
+      "period": "8:32 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:48:56.729533+00:00",
+     "home_probability": 0.6148,
+     "away_probability": 0.3852,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "8:23",
+      "period": "8:23 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:49:56.695024+00:00",
+     "home_probability": 0.6148,
+     "away_probability": 0.3852,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "8:23",
+      "period": "8:23 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:50:57.390949+00:00",
+     "home_probability": 0.6148,
+     "away_probability": 0.3852,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "8:23",
+      "period": "8:23 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:51:56.894950+00:00",
+     "home_probability": 0.6148,
+     "away_probability": 0.3852,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "8:23",
+      "period": "8:23 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:52:56.666044+00:00",
+     "home_probability": 0.6072,
+     "away_probability": 0.3928,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "7:17",
+      "period": "7:17 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:53:56.619856+00:00",
+     "home_probability": 0.6014,
+     "away_probability": 0.3986,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "6:30",
+      "period": "6:30 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:54:56.359751+00:00",
+     "home_probability": 0.596,
+     "away_probability": 0.404,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "5:49",
+      "period": "5:49 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:55:56.639015+00:00",
+     "home_probability": 0.5892,
+     "away_probability": 0.4108,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "5:00",
+      "period": "5:00 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:56:56.779153+00:00",
+     "home_probability": 0.5792,
+     "away_probability": 0.4208,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "3:56",
+      "period": "3:56 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 16,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:57:56.444234+00:00",
+     "home_probability": 0.9872,
+     "away_probability": 0.0128,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "3:56",
+      "period": "3:56 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 23,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T20:59:56.452775+00:00",
+     "home_probability": 0.9878,
+     "away_probability": 0.0122,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "3:51",
+      "period": "3:51 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 23,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T21:00:57.245521+00:00",
+     "home_probability": 0.9908,
+     "away_probability": 0.0092,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "3:27",
+      "period": "3:27 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 23,
+      "time_source": "espn"
+     }
+    },
+    {
+     "timestamp": "2026-11-07T21:02:01+00:00",
+     "home_probability": 0.9908,
+     "away_probability": 0.0092,
+     "draw_probability": null,
+     "game_state": {
+      "clock": "3:27",
+      "period": "3:27 - 4th Quarter",
+      "away_score": 16,
+      "home_score": 23,
+      "time_source": "espn"
+     },
+     "live_edge": true,
+     "evidence": {
+      "kind": "live_edge"
+     }
+    }
+   ]
+  },
+  "history": [
+   {
+    "timestamp": "2026-11-07T20:36:00+00:00",
+    "home_probability": 0.6576,
+    "away_probability": 0.3424,
+    "over_under": 40.8,
+    "projected_home_score": 22.0,
+    "projected_away_score": 18.8,
+    "bookmaker_count": 3,
+    "probability_range": {
+     "min": 0.5835,
+     "max": 0.6974
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:37:00+00:00",
+    "home_probability": 0.6695,
+    "away_probability": 0.3305,
+    "over_under": 41.0,
+    "projected_home_score": 22.0,
+    "projected_away_score": 19.0,
+    "bookmaker_count": 2,
+    "probability_range": {
+     "min": 0.6515,
+     "max": 0.6875
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:38:00+00:00",
+    "home_probability": 0.7035,
+    "away_probability": 0.2965,
+    "over_under": 40.8,
+    "projected_home_score": 22.0,
+    "projected_away_score": 18.8,
+    "bookmaker_count": 2,
+    "probability_range": {
+     "min": 0.6782,
+     "max": 0.7287
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:39:00+00:00",
+    "home_probability": 0.7131,
+    "away_probability": 0.2869,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null,
+    "bookmaker_count": 7,
+    "probability_range": {
+     "min": 0.6782,
+     "max": 0.7424
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:40:00+00:00",
+    "home_probability": 0.7158,
+    "away_probability": 0.2842,
+    "over_under": 39.5,
+    "projected_home_score": 21.5,
+    "projected_away_score": 18.0,
+    "bookmaker_count": 7,
+    "probability_range": {
+     "min": 0.6932,
+     "max": 0.7424
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:41:00+00:00",
+    "home_probability": 0.7281,
+    "away_probability": 0.2719,
+    "over_under": 39.5,
+    "projected_home_score": 21.5,
+    "projected_away_score": 18.0,
+    "bookmaker_count": 4,
+    "probability_range": {
+     "min": 0.6945,
+     "max": 0.7495
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:42:00+00:00",
+    "home_probability": 0.7246,
+    "away_probability": 0.2754,
+    "over_under": 39.5,
+    "projected_home_score": 21.5,
+    "projected_away_score": 18.0,
+    "bookmaker_count": 3,
+    "probability_range": {
+     "min": 0.6813,
+     "max": 0.7571
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:43:00+00:00",
+    "home_probability": 0.701,
+    "away_probability": 0.299,
+    "over_under": 39.5,
+    "projected_home_score": 21.5,
+    "projected_away_score": 18.0,
+    "bookmaker_count": 3,
+    "probability_range": {
+     "min": 0.6789,
+     "max": 0.7366
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:44:00+00:00",
+    "home_probability": 0.6903,
+    "away_probability": 0.3097,
+    "over_under": 39.5,
+    "projected_home_score": 21.5,
+    "projected_away_score": 18.0,
+    "bookmaker_count": 3,
+    "probability_range": {
+     "min": 0.6842,
+     "max": 0.6965
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:45:00+00:00",
+    "home_probability": 0.6728,
+    "away_probability": 0.3272,
+    "over_under": 39.5,
+    "projected_home_score": 21.5,
+    "projected_away_score": 18.0,
+    "bookmaker_count": 2,
+    "probability_range": {
+     "min": 0.6726,
+     "max": 0.6731
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:47:00+00:00",
+    "home_probability": 0.6539,
+    "away_probability": 0.3461,
+    "over_under": 39.5,
+    "projected_home_score": 21.5,
+    "projected_away_score": 18.0,
+    "bookmaker_count": 4,
+    "probability_range": {
+     "min": 0.643,
+     "max": 0.6693
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:48:00+00:00",
+    "home_probability": 0.5913,
+    "away_probability": 0.4087,
+    "over_under": 39.5,
+    "projected_home_score": 21.0,
+    "projected_away_score": 18.5,
+    "bookmaker_count": 4,
+    "probability_range": {
+     "min": 0.5805,
+     "max": 0.6071
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:49:00+00:00",
+    "home_probability": 0.6111,
+    "away_probability": 0.3889,
+    "over_under": 39.5,
+    "projected_home_score": 21.0,
+    "projected_away_score": 18.5,
+    "bookmaker_count": 4,
+    "probability_range": {
+     "min": 0.5888,
+     "max": 0.623
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:50:00+00:00",
+    "home_probability": 0.6102,
+    "away_probability": 0.3898,
+    "over_under": 39.5,
+    "projected_home_score": 21.2,
+    "projected_away_score": 18.3,
+    "bookmaker_count": 3,
+    "probability_range": {
+     "min": 0.5721,
+     "max": 0.6334
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:51:00+00:00",
+    "home_probability": 0.62,
+    "away_probability": 0.38,
+    "over_under": 39.5,
+    "projected_home_score": 21.0,
+    "projected_away_score": 18.5,
+    "bookmaker_count": 2,
+    "probability_range": {
+     "min": 0.6161,
+     "max": 0.6238
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:53:00+00:00",
+    "home_probability": 0.6384,
+    "away_probability": 0.3616,
+    "over_under": 39.5,
+    "projected_home_score": 21.2,
+    "projected_away_score": 18.2,
+    "bookmaker_count": 4,
+    "probability_range": {
+     "min": 0.6018,
+     "max": 0.6731
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:54:00+00:00",
+    "home_probability": 0.7216,
+    "away_probability": 0.2784,
+    "over_under": 39.5,
+    "projected_home_score": 21.5,
+    "projected_away_score": 18.0,
+    "bookmaker_count": 3,
+    "probability_range": {
+     "min": 0.7091,
+     "max": 0.7424
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:55:00+00:00",
+    "home_probability": 0.7134,
+    "away_probability": 0.2866,
+    "over_under": 39.2,
+    "projected_home_score": 21.4,
+    "projected_away_score": 17.9,
+    "bookmaker_count": 4,
+    "probability_range": {
+     "min": 0.695,
+     "max": 0.7236
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:56:00+00:00",
+    "home_probability": 0.7903,
+    "away_probability": 0.2097,
+    "over_under": 39.5,
+    "projected_home_score": 22.3,
+    "projected_away_score": 17.2,
+    "bookmaker_count": 5,
+    "probability_range": {
+     "min": 0.7495,
+     "max": 0.819
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:57:00+00:00",
+    "home_probability": 0.7847,
+    "away_probability": 0.2153,
+    "over_under": 39.1,
+    "projected_home_score": 21.3,
+    "projected_away_score": 17.8,
+    "bookmaker_count": 5,
+    "probability_range": {
+     "min": 0.7386,
+     "max": 0.8955
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:58:00+00:00",
+    "home_probability": 0.898,
+    "away_probability": 0.102,
+    "over_under": 39.5,
+    "projected_home_score": 23.2,
+    "projected_away_score": 16.3,
+    "bookmaker_count": 4,
+    "probability_range": {
+     "min": 0.8885,
+     "max": 0.9091
+    }
+   },
+   {
+    "timestamp": "2026-11-07T20:59:00+00:00",
+    "home_probability": 0.8965,
+    "away_probability": 0.1035,
+    "over_under": 39.5,
+    "projected_home_score": 23.1,
+    "projected_away_score": 16.4,
+    "bookmaker_count": 4,
+    "probability_range": {
+     "min": 0.8885,
+     "max": 0.9072
+    }
+   },
+   {
+    "timestamp": "2026-11-07T21:00:00+00:00",
+    "home_probability": 0.8961,
+    "away_probability": 0.1039,
+    "over_under": 39.5,
+    "projected_home_score": 23.0,
+    "projected_away_score": 16.5,
+    "bookmaker_count": 5,
+    "probability_range": {
+     "min": 0.8833,
+     "max": 0.9129
+    }
+   },
+   {
+    "timestamp": "2026-11-07T21:01:00+00:00",
+    "home_probability": 0.9061,
+    "away_probability": 0.0939,
+    "over_under": 39.5,
+    "projected_home_score": 23.2,
+    "projected_away_score": 16.2,
+    "bookmaker_count": 2,
+    "probability_range": {
+     "min": 0.905,
+     "max": 0.9072
+    }
+   }
+  ],
+  "bookmaker_history": {}
+ },
+ "frames": [
+  {
+   "event_id": 15339961,
+   "p": 0.6895,
+   "source": "kalshi",
+   "source_value": 0.645,
+   "updated_at": "2026-11-07T20:40:11.957427+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5983
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.699935,
+   "source": "polymarket",
+   "source_value": 0.705,
+   "updated_at": "2026-11-07T20:40:30.630564+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5984
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.712978,
+   "source": "kalshi",
+   "source_value": 0.695,
+   "updated_at": "2026-11-07T20:40:32.13962+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5985
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.706457,
+   "source": "kalshi",
+   "source_value": 0.67,
+   "updated_at": "2026-11-07T20:40:49.629412+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5986
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.699935,
+   "source": "polymarket",
+   "source_value": 0.68,
+   "updated_at": "2026-11-07T20:40:50.97128+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5987
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.698852,
+   "source": "stat_model",
+   "source_value": 0.8056,
+   "updated_at": "2026-11-07T20:41:04.960051+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5989
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.710591,
+   "source": "kalshi",
+   "source_value": 0.715,
+   "updated_at": "2026-11-07T20:41:09.640389+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5990
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.717113,
+   "source": "polymarket",
+   "source_value": 0.705,
+   "updated_at": "2026-11-07T20:41:10.882062+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5991
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.715809,
+   "source": "kalshi",
+   "source_value": 0.71,
+   "updated_at": "2026-11-07T20:41:29.724816+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5992
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.721026,
+   "source": "polymarket",
+   "source_value": 0.725,
+   "updated_at": "2026-11-07T20:41:31.230614+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5993
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.723243,
+   "source": "betting",
+   "source_value": 0.7236,
+   "updated_at": "2026-11-07T20:41:34.625218+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5994
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.724548,
+   "source": "kalshi",
+   "source_value": 0.715,
+   "updated_at": "2026-11-07T20:41:50.49452+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5995
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.725852,
+   "source": "kalshi",
+   "source_value": 0.72,
+   "updated_at": "2026-11-07T20:42:08.887009+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5996
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.727157,
+   "source": "polymarket",
+   "source_value": 0.73,
+   "updated_at": "2026-11-07T20:42:12.097115+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5997
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.733783,
+   "source": "stat_model",
+   "source_value": 0.8062,
+   "updated_at": "2026-11-07T20:42:15.909543+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 5999
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.719435,
+   "source": "kalshi",
+   "source_value": 0.665,
+   "updated_at": "2026-11-07T20:42:28.912166+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6000
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.721965,
+   "source": "betting",
+   "source_value": 0.7333,
+   "updated_at": "2026-11-07T20:42:29.030323+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6001
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.707617,
+   "source": "polymarket",
+   "source_value": 0.675,
+   "updated_at": "2026-11-07T20:42:32.032982+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6002
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.710226,
+   "source": "kalshi",
+   "source_value": 0.675,
+   "updated_at": "2026-11-07T20:42:48.965263+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6003
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.685343,
+   "source": "stat_model",
+   "source_value": 0.6222,
+   "updated_at": "2026-11-07T20:43:10.039814+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6005
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.684822,
+   "source": "betting",
+   "source_value": 0.7313,
+   "updated_at": "2026-11-07T20:43:27.481948+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6006
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.684822,
+   "source": "polymarket",
+   "source_value": 0.675,
+   "updated_at": "2026-11-07T20:43:31.798791+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6007
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.684822,
+   "source": "kalshi",
+   "source_value": 0.675,
+   "updated_at": "2026-11-07T20:43:51.036274+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6008
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.684822,
+   "source": "stat_model",
+   "source_value": 0.6222,
+   "updated_at": "2026-11-07T20:43:57.718445+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6010
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.674074,
+   "source": "betting",
+   "source_value": 0.6901,
+   "updated_at": "2026-11-07T20:44:21.085899+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6011
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.674074,
+   "source": "polymarket",
+   "source_value": 0.675,
+   "updated_at": "2026-11-07T20:44:25.494967+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6012
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.674074,
+   "source": "kalshi",
+   "source_value": 0.675,
+   "updated_at": "2026-11-07T20:44:48.217678+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6013
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.674074,
+   "source": "stat_model",
+   "source_value": 0.6222,
+   "updated_at": "2026-11-07T20:44:57.809397+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6015
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.673396,
+   "source": "betting",
+   "source_value": 0.6875,
+   "updated_at": "2026-11-07T20:45:14.009998+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6016
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.673396,
+   "source": "polymarket",
+   "source_value": 0.675,
+   "updated_at": "2026-11-07T20:45:29.517466+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6017
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.673396,
+   "source": "kalshi",
+   "source_value": 0.675,
+   "updated_at": "2026-11-07T20:45:46.937828+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6018
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.673174,
+   "source": "stat_model",
+   "source_value": 0.6222,
+   "updated_at": "2026-11-07T20:46:01.444403+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6020
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.67187,
+   "source": "kalshi",
+   "source_value": 0.67,
+   "updated_at": "2026-11-07T20:46:09.997254+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6021
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.674478,
+   "source": "polymarket",
+   "source_value": 0.685,
+   "updated_at": "2026-11-07T20:46:11.537828+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6022
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.673174,
+   "source": "kalshi",
+   "source_value": 0.665,
+   "updated_at": "2026-11-07T20:46:30.161647+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6023
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.67187,
+   "source": "polymarket",
+   "source_value": 0.68,
+   "updated_at": "2026-11-07T20:46:31.630423+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6024
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.669261,
+   "source": "kalshi",
+   "source_value": 0.655,
+   "updated_at": "2026-11-07T20:46:50.349775+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6025
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.662739,
+   "source": "polymarket",
+   "source_value": 0.655,
+   "updated_at": "2026-11-07T20:46:52.868016+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6026
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.660543,
+   "source": "stat_model",
+   "source_value": 0.6196,
+   "updated_at": "2026-11-07T20:46:57.985938+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6028
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.663152,
+   "source": "kalshi",
+   "source_value": 0.665,
+   "updated_at": "2026-11-07T20:47:10.132769+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6029
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.66837,
+   "source": "polymarket",
+   "source_value": 0.675,
+   "updated_at": "2026-11-07T20:47:11.815197+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6030
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.663622,
+   "source": "betting",
+   "source_value": 0.6693,
+   "updated_at": "2026-11-07T20:47:21.160733+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6031
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.645361,
+   "source": "kalshi",
+   "source_value": 0.595,
+   "updated_at": "2026-11-07T20:47:30.259537+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6032
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.6271,
+   "source": "polymarket",
+   "source_value": 0.605,
+   "updated_at": "2026-11-07T20:47:31.904269+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6033
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.624491,
+   "source": "polymarket",
+   "source_value": 0.595,
+   "updated_at": "2026-11-07T20:47:52.044767+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6034
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.613283,
+   "source": "stat_model",
+   "source_value": 0.6158,
+   "updated_at": "2026-11-07T20:47:58.288002+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6036
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.597057,
+   "source": "betting",
+   "source_value": 0.6071,
+   "updated_at": "2026-11-07T20:48:07.548113+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6037
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.591839,
+   "source": "kalshi",
+   "source_value": 0.575,
+   "updated_at": "2026-11-07T20:48:10.494542+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6038
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.586622,
+   "source": "polymarket",
+   "source_value": 0.575,
+   "updated_at": "2026-11-07T20:48:12.317768+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6039
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.602274,
+   "source": "kalshi",
+   "source_value": 0.635,
+   "updated_at": "2026-11-07T20:48:30.533235+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6040
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.620535,
+   "source": "polymarket",
+   "source_value": 0.645,
+   "updated_at": "2026-11-07T20:48:32.745746+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6041
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.627478,
+   "source": "stat_model",
+   "source_value": 0.6148,
+   "updated_at": "2026-11-07T20:48:57.86779+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6043
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.630087,
+   "source": "betting",
+   "source_value": 0.6171,
+   "updated_at": "2026-11-07T20:49:09.107861+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6044
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.630087,
+   "source": "kalshi",
+   "source_value": 0.635,
+   "updated_at": "2026-11-07T20:49:32.146331+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6045
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.630087,
+   "source": "polymarket",
+   "source_value": 0.645,
+   "updated_at": "2026-11-07T20:49:33.788303+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6046
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.627478,
+   "source": "polymarket",
+   "source_value": 0.635,
+   "updated_at": "2026-11-07T20:49:55.790354+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6047
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.627478,
+   "source": "stat_model",
+   "source_value": 0.6148,
+   "updated_at": "2026-11-07T20:49:57.771384+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6049
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.627478,
+   "source": "betting",
+   "source_value": 0.6171,
+   "updated_at": "2026-11-07T20:50:17.736411+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6050
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.627478,
+   "source": "kalshi",
+   "source_value": 0.635,
+   "updated_at": "2026-11-07T20:50:23.953234+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6051
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.627478,
+   "source": "stat_model",
+   "source_value": 0.6148,
+   "updated_at": "2026-11-07T20:50:58.520675+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6053
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.627478,
+   "source": "polymarket",
+   "source_value": 0.635,
+   "updated_at": "2026-11-07T20:51:05.738266+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6054
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.628235,
+   "source": "betting",
+   "source_value": 0.62,
+   "updated_at": "2026-11-07T20:51:21.724747+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6055
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.625626,
+   "source": "kalshi",
+   "source_value": 0.625,
+   "updated_at": "2026-11-07T20:51:24.362711+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6056
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.623017,
+   "source": "polymarket",
+   "source_value": 0.625,
+   "updated_at": "2026-11-07T20:51:27.038605+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6057
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.609974,
+   "source": "kalshi",
+   "source_value": 0.575,
+   "updated_at": "2026-11-07T20:51:45.817755+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6058
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.599539,
+   "source": "polymarket",
+   "source_value": 0.585,
+   "updated_at": "2026-11-07T20:51:48.243763+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6059
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.599539,
+   "source": "stat_model",
+   "source_value": 0.6148,
+   "updated_at": "2026-11-07T20:51:58.064119+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6061
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.602148,
+   "source": "kalshi",
+   "source_value": 0.585,
+   "updated_at": "2026-11-07T20:52:05.862088+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6062
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.602148,
+   "source": "betting",
+   "source_value": 0.62,
+   "updated_at": "2026-11-07T20:52:11.121598+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6063
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.600843,
+   "source": "kalshi",
+   "source_value": 0.58,
+   "updated_at": "2026-11-07T20:52:28.154951+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6064
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.599539,
+   "source": "polymarket",
+   "source_value": 0.58,
+   "updated_at": "2026-11-07T20:52:28.982743+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6065
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.62693,
+   "source": "kalshi",
+   "source_value": 0.685,
+   "updated_at": "2026-11-07T20:52:48.267627+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6066
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.654322,
+   "source": "polymarket",
+   "source_value": 0.685,
+   "updated_at": "2026-11-07T20:52:49.127362+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6067
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.653661,
+   "source": "stat_model",
+   "source_value": 0.6072,
+   "updated_at": "2026-11-07T20:52:57.719575+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6068
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.656061,
+   "source": "betting",
+   "source_value": 0.6292,
+   "updated_at": "2026-11-07T20:53:12.622034+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6069
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.682148,
+   "source": "polymarket",
+   "source_value": 0.735,
+   "updated_at": "2026-11-07T20:53:31.558606+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6071
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.669104,
+   "source": "kalshi",
+   "source_value": 0.735,
+   "updated_at": "2026-11-07T20:53:31.504727+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6070
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.680843,
+   "source": "polymarket",
+   "source_value": 0.73,
+   "updated_at": "2026-11-07T20:53:53.169748+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6072
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.694935,
+   "source": "stat_model",
+   "source_value": 0.6014,
+   "updated_at": "2026-11-07T20:53:57.862421+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6074
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.711083,
+   "source": "betting",
+   "source_value": 0.6911,
+   "updated_at": "2026-11-07T20:54:10.936968+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6075
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.712387,
+   "source": "polymarket",
+   "source_value": 0.735,
+   "updated_at": "2026-11-07T20:54:13.303493+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6076
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.712387,
+   "source": "kalshi",
+   "source_value": 0.735,
+   "updated_at": "2026-11-07T20:54:33.056988+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6077
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.704561,
+   "source": "kalshi",
+   "source_value": 0.705,
+   "updated_at": "2026-11-07T20:54:52.944971+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6078
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.698222,
+   "source": "stat_model",
+   "source_value": 0.596,
+   "updated_at": "2026-11-07T20:54:57.762841+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6080
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.698222,
+   "source": "polymarket",
+   "source_value": 0.735,
+   "updated_at": "2026-11-07T20:55:01.114024+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6081
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.7217,
+   "source": "kalshi",
+   "source_value": 0.795,
+   "updated_at": "2026-11-07T20:55:13.06403+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6082
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.728587,
+   "source": "betting",
+   "source_value": 0.7175,
+   "updated_at": "2026-11-07T20:55:13.85683+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6083
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.728587,
+   "source": "betting",
+   "source_value": 0.7175,
+   "updated_at": "2026-11-07T20:55:13.85683+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6083
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.746848,
+   "source": "polymarket",
+   "source_value": 0.805,
+   "updated_at": "2026-11-07T20:55:21.542682+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6084
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.748152,
+   "source": "kalshi",
+   "source_value": 0.8,
+   "updated_at": "2026-11-07T20:55:33.092306+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6085
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.752065,
+   "source": "kalshi",
+   "source_value": 0.815,
+   "updated_at": "2026-11-07T20:55:53.594329+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6086
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.750761,
+   "source": "kalshi",
+   "source_value": 0.81,
+   "updated_at": "2026-11-07T20:55:54.524372+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6087
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.76213,
+   "source": "stat_model",
+   "source_value": 0.5892,
+   "updated_at": "2026-11-07T20:55:57.974265+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6089
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.749087,
+   "source": "polymarket",
+   "source_value": 0.755,
+   "updated_at": "2026-11-07T20:56:01.570825+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6090
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.7674,
+   "source": "betting",
+   "source_value": 0.7877,
+   "updated_at": "2026-11-07T20:56:09.78211+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6091
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.750443,
+   "source": "kalshi",
+   "source_value": 0.745,
+   "updated_at": "2026-11-07T20:56:14.618265+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6092
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.747835,
+   "source": "polymarket",
+   "source_value": 0.745,
+   "updated_at": "2026-11-07T20:56:21.2284+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6093
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.754357,
+   "source": "kalshi",
+   "source_value": 0.77,
+   "updated_at": "2026-11-07T20:56:34.720389+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6094
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.793487,
+   "source": "polymarket",
+   "source_value": 0.895,
+   "updated_at": "2026-11-07T20:56:41.324688+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6095
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.828704,
+   "source": "kalshi",
+   "source_value": 0.905,
+   "updated_at": "2026-11-07T20:56:53.894999+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6096
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.845626,
+   "source": "stat_model",
+   "source_value": 0.5792,
+   "updated_at": "2026-11-07T20:56:58.693354+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6098
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.84093,
+   "source": "betting",
+   "source_value": 0.7697,
+   "updated_at": "2026-11-07T20:57:07.19881+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6099
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.838322,
+   "source": "kalshi",
+   "source_value": 0.895,
+   "updated_at": "2026-11-07T20:57:13.955288+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6100
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.838322,
+   "source": "polymarket",
+   "source_value": 0.895,
+   "updated_at": "2026-11-07T20:57:45.654471+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6101
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.838322,
+   "source": "kalshi",
+   "source_value": 0.895,
+   "updated_at": "2026-11-07T20:57:45.705404+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6102
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.838322,
+   "source": "polymarket",
+   "source_value": 0.895,
+   "updated_at": "2026-11-07T20:57:52.801158+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6103
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.8738,
+   "source": "stat_model",
+   "source_value": 0.9872,
+   "updated_at": "2026-11-07T20:57:57.512726+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6104
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.906539,
+   "source": "betting",
+   "source_value": 0.8952,
+   "updated_at": "2026-11-07T20:58:03.431594+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6105
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.906539,
+   "source": "kalshi",
+   "source_value": 0.895,
+   "updated_at": "2026-11-07T20:58:21.410073+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6106
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.910452,
+   "source": "kalshi",
+   "source_value": 0.91,
+   "updated_at": "2026-11-07T20:58:41.913051+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6107
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.913061,
+   "source": "polymarket",
+   "source_value": 0.905,
+   "updated_at": "2026-11-07T20:58:43.85432+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6108
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.911757,
+   "source": "kalshi",
+   "source_value": 0.905,
+   "updated_at": "2026-11-07T20:59:00.277958+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6109
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.911757,
+   "source": "betting",
+   "source_value": 0.8952,
+   "updated_at": "2026-11-07T20:59:16.861562+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6110
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.910452,
+   "source": "polymarket",
+   "source_value": 0.9,
+   "updated_at": "2026-11-07T20:59:35.337763+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6111
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.907843,
+   "source": "kalshi",
+   "source_value": 0.895,
+   "updated_at": "2026-11-07T20:59:40.612183+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6112
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.906539,
+   "source": "polymarket",
+   "source_value": 0.895,
+   "updated_at": "2026-11-07T20:59:55.37411+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6113
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.905404,
+   "source": "stat_model",
+   "source_value": 0.9878,
+   "updated_at": "2026-11-07T20:59:57.593624+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6115
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.9041,
+   "source": "kalshi",
+   "source_value": 0.89,
+   "updated_at": "2026-11-07T21:00:03.346193+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6116
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.901491,
+   "source": "kalshi",
+   "source_value": 0.88,
+   "updated_at": "2026-11-07T21:00:06.27536+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6117
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.901361,
+   "source": "betting",
+   "source_value": 0.8947,
+   "updated_at": "2026-11-07T21:00:15.126389+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6118
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.907883,
+   "source": "kalshi",
+   "source_value": 0.905,
+   "updated_at": "2026-11-07T21:00:25.828816+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6119
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.910491,
+   "source": "polymarket",
+   "source_value": 0.905,
+   "updated_at": "2026-11-07T21:00:35.812954+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6120
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.913648,
+   "source": "stat_model",
+   "source_value": 0.9908,
+   "updated_at": "2026-11-07T21:00:58.529991+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6122
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.887561,
+   "source": "kalshi",
+   "source_value": 0.805,
+   "updated_at": "2026-11-07T21:01:06.320428+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6123
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.862778,
+   "source": "polymarket",
+   "source_value": 0.81,
+   "updated_at": "2026-11-07T21:01:15.983097+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6124
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.864161,
+   "source": "betting",
+   "source_value": 0.9,
+   "updated_at": "2026-11-07T21:01:22.662603+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6125
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.865465,
+   "source": "polymarket",
+   "source_value": 0.815,
+   "updated_at": "2026-11-07T21:01:36.091261+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6126
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.868074,
+   "source": "kalshi",
+   "source_value": 0.815,
+   "updated_at": "2026-11-07T21:01:43.50037+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6127
+   }
+  },
+  {
+   "event_id": 15339961,
+   "p": 0.870683,
+   "source": "polymarket",
+   "source_value": 0.825,
+   "updated_at": "2026-11-07T21:01:56.151048+00:00",
+   "status": "live",
+   "rev": {
+    "15339961": 6128
+   }
+  }
+ ],
+ "hero": {
+  "status": "live",
+  "hero_probability": 0.870683,
+  "hero_probability_source": "blend",
+  "hero_probability_observed_at": "2026-11-07T21:01:56.151048+00:00",
+  "blend_fold_revision": {
+   "15339961": 6128
+  }
+ }
+}

@@ -1512,6 +1512,18 @@ export interface SeriesMarketOutcome {
   settled?: boolean;
   /** True won, false lost, null nobody has looked. Only read when `settled`. */
   is_winner?: boolean | null;
+  /** #9715: explicit settled state ("Won" | "Lost") preserved against live movement. */
+  settled_state?: "Won" | "Lost" | null;
+  /** #9715: during-game baseline status and labeled game-start movement. */
+  baseline_status?: "ok" | "missing_baseline" | "pre_game" | "settled_preserved";
+  baseline_kind?: "game_start" | null;
+  baseline_label?: string | null;
+  baseline_probability?: number | null;
+  baseline_at?: string | null;
+  movement_since_baseline?: number | null;
+  movement_percentage_points?: number | null;
+  market_open_probability?: number | null;
+  market_open_label?: string | null;
 }
 
 export interface SeriesMarket {
@@ -1521,6 +1533,39 @@ export interface SeriesMarket {
   status: string | null;
   resolution_date: string | null;
   outcomes: SeriesMarketOutcome[];
+  /** #9715: 3-family classification and distribution contract. */
+  series_family?:
+    | "series_winner"
+    | "exact_series_score"
+    | "series_total_games"
+    | "series_spread"
+    | "other_series";
+  series_family_label?: string;
+  distribution_kind?: "exhaustive" | "independent_binary";
+  exhaustive?: boolean;
+  normalize_to_unit_sum?: boolean;
+  sum_note?: string | null;
+  baseline_status?: "ok" | "missing_baseline" | "pre_game" | "settled_preserved";
+  baseline_kind?: "game_start" | null;
+  baseline_label?: string | null;
+  baseline_at?: string | null;
+}
+
+export interface SeriesContextData {
+  section_title: string;
+  series_hub_slug?: string | null;
+  series_hub_href?: string | null;
+  series_score_summary?: string | null;
+  families_present: string[];
+  core_families_present: string[];
+  missing_families: string[];
+  inventory_status: "complete" | "partial" | "empty";
+  baseline_status: "ok" | "missing_baseline" | "pre_game" | "settled_preserved";
+  baseline_kind: "game_start" | null;
+  baseline_label: string | null;
+  game_start: string | null;
+  markets: SeriesMarket[];
+  markets_by_family: Record<string, SeriesMarket[]>;
 }
 
 export interface RelatedFuturesResponse {
@@ -1530,6 +1575,7 @@ export interface RelatedFuturesResponse {
   home_team_futures: RelatedFuture[];
   away_team_futures: RelatedFuture[];
   series_markets: SeriesMarket[];
+  series_context?: SeriesContextData | null;
   total_count: number;
   summary: string | null;
   event_status?: string;
@@ -1608,6 +1654,7 @@ export interface SearchResponse {
   futures: FuturesMarket[];
   futures_families?: FuturesFamily[]; // #993: composed topical families (additive)
   event_concepts?: SearchEventConcept[]; // #999 L2-65: tournament pages, first-class
+  collections?: FeedCollectionData[];
   teams: SearchTeam[];
   pagination: SearchPagination;
   sports: SearchSportFacet[];
@@ -2089,6 +2136,7 @@ export interface FeedTournamentData {
   golfers: {
     name: string;
     probability: number;
+    rendered_percent?: number | null;
     rank: number;
     movement_24h: number | null;
     // #7226 — is `movement_24h` a dated 23-25h snapshot subtraction, or the
@@ -2232,6 +2280,12 @@ export interface FeedBundleData {
 export type FeedRoundupRow = {
   /** "NFC East: Cowboys" — the division, game, or outcome label. */
   label: string;
+  /** Optional short opponent label for subject_sequence strip cards (e.g. "at Bucks"). */
+  opponent_label?: string | null;
+  /** Optional short date label for subject_sequence strip cards (e.g. "Sun Nov 8"). */
+  date_label?: string | null;
+  /** Optional UTC ISO kickoff timestamp for sequence ordering. */
+  commence_time?: string | null;
   /** The row's probability, a fraction in [0, 1]. */
   probability: number;
   /** The server's whole-percent rendering of `probability`, when it sent one. */
@@ -2256,6 +2310,11 @@ export interface FeedRoundupContract {
   tag?: string | null;
   footer: string;
   count_line?: string | null;
+  relations?: string[];
+  level?: string | null;
+  order?: string | null;
+  presentation?: string | null;
+  destination_href?: string | null;
   rows: FeedRoundupRow[];
 }
 
@@ -2265,6 +2324,7 @@ export interface FeedRoundupContract {
 // card's preview `item_count`.
 export interface FeedThemeCollectionRef {
   slug: string;
+  href?: string;
   name: string;
   revision: number;
   collection_count: number;
@@ -2275,6 +2335,8 @@ export interface FeedThemeCollectionRef {
 // `collection_card`). Every field is optional because the client admits the
 // card only after checking it — see `lib/discover/collectionFeed.ts`.
 export interface FeedCollectionData {
+  /** Typeahead heading verified non-empty by the live publication reader. */
+  has_members?: boolean;
   type?: "collection";
   id?: number;
   slug?: string;
@@ -2305,6 +2367,10 @@ export interface FeedItem {
   reason: string;
   headline: string | null;
   context_summary?: string | null;
+  /** #12279 — the current percent a live event's movement sentence states, and
+   *  whose. Absent when the sentence states none (an underdog lead quotes only
+   *  the kickoff price). */
+  live_claim_percent?: { side: "home" | "away"; percent: number } | null;
   data:
     | FeedEventData
     | FeedFuturesData
@@ -2515,6 +2581,7 @@ export interface SharedTeamFuturesResponse {
 export interface GolfGolfer {
   name: string;
   probability: number;
+  rendered_percent?: number | null;
   american_odds: number | null;
   opening_probability: number | null;
   movement_24h: number | null;
@@ -2535,6 +2602,8 @@ export interface GolfH2HMatchup {
   golfer_a: { name: string; probability: number };
   golfer_b: { name: string; probability: number };
 }
+
+export type GolfOverflowOutcome = Pick<GolfGolfer, "name" | "probability" | "rendered_percent">;
 
 export interface GolfTournament {
   key: string;
@@ -2557,6 +2626,7 @@ export interface GolfTournament {
   market_names?: string[];
   market_sources?: string[];
   golfers: GolfGolfer[];
+  overflow_outcomes?: GolfOverflowOutcome[];
   prop_markets?: GolfPropMarket[];
   /** #9212 — see `FeedTournamentData.champion`. */
   champion?: string | null;
@@ -2667,6 +2737,7 @@ export interface GolfTournamentDetailResponse {
     resolution_date: string | null;
   };
   golfers: GolfGolfer[];
+  overflow_outcomes?: GolfOverflowOutcome[];
   markets: GolfMarketGroup[];
   related_futures?: {
     market_id: number;
@@ -2712,6 +2783,7 @@ export interface GolfLeaderboardPlayer {
   thru: string;
   hole: string;
   win_prob: number;
+  rendered_percent?: number | null;
   win_prob_change: number | null;
   position_change: number | null;
   top_5_prob: number | null;
@@ -2758,6 +2830,8 @@ export interface ProgressionParticipant {
   seed: number | null;
   record: string | null;
   probabilities: Record<string, number | null>;
+  /** Complete-field server allocation, carried by the exact golf card receipt. */
+  rendered_percents?: Record<string, number | null>;
   changes_24h: Record<string, number | null>;
   /** null = live/trading. "missing"/"unavailable" come from the championship
    *  grid register cutover (Q295) and render as an honest empty cell. */
@@ -3085,6 +3159,7 @@ export interface ProbabilityTimelineResponse {
 export interface MarchMadnessTeam {
   team_name: string;
   probability: number;
+  rendered_percent?: number | null;
   movement_24h: number | null;
   opening_probability: number | null;
   sources: Record<string, number>;
@@ -3253,8 +3328,8 @@ export interface SportHierarchyListResponse {
 export interface EventConceptCompetitor {
   name: string;
   probability: number | null;
-  // #6816: the server's decided whole percent for a proven two-sided bout's hero
-  // (combat `co_equal_list`). Both-or-neither via `servedBoutPercents`.
+  // Server allocation for a complete one-winner field, or a proven two-sided
+  // bout's hero (#6816, both-or-neither via `servedBoutPercents`).
   rendered_percent?: number | null;
   // L2-81: authoritative settled winner flag (from resolution). When the event is
   // settled the leaderboard renders the champion as "Won" instead of a stale %.
@@ -3390,6 +3465,7 @@ export interface EventConceptResponse {
     kind: "winner_field" | "co_equal_list";
     label: string;
     competitors: EventConceptCompetitor[];
+    overflow_outcomes?: GolfOverflowOutcome[];
     evolution_market_id?: number | null;
   };
   sections: EventConceptSection[];
@@ -3465,6 +3541,9 @@ export interface CompetitionEdition {
   concept_key: string | null;
   start: string | null; // ISO date (YYYY-MM-DD)
   end: string | null; // ISO date (YYYY-MM-DD)
+  // #12201: "approximate" is a conventional window nobody has announced. It
+  // prints as a month ("September 2027"), never a day, and no days count to it.
+  date_confidence?: "confirmed" | "approximate" | null;
 }
 
 /* ─── Tournament extensions on a standard event page (UX-P152) ───

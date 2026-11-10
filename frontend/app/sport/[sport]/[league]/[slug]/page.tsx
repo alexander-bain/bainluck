@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchGolfTournament, fetchGolfLeaderboard, fetchSportHierarchyDetail, fetchFuturesHistory } from "@/lib/api";
+import { fetchGolfTournament, fetchGolfLeaderboard, fetchSportHierarchyDetail, fetchFuturesHistory, formatProbability } from "@/lib/api";
 import type {
   GolfTournamentDetailResponse,
   GolfGolfer,
@@ -136,8 +136,12 @@ function EvolutionViewWithCallback({
 // is being used.
 // ============================================================================
 
-function formatProb(value: number | null | undefined, unit: "percent" | "fraction"): string {
+function formatProb(value: number | null | undefined, unit: "percent" | "fraction", rendered?: number | null): string {
   if (value == null) return "-";
+  if (unit === "fraction" && typeof rendered === "number" &&
+      Number.isInteger(rendered) && rendered >= 0 && rendered <= 100) {
+    return formatProbability(value, { rendered });
+  }
   const pct = unit === "percent" ? value : value * 100;
   if (pct >= 10) return `${pct.toFixed(0)}%`;
   return `${pct.toFixed(1)}%`;
@@ -161,6 +165,7 @@ type UnifiedRow = {
   today?: string;
   thru?: string;
   win?: number | null;          // fraction 0..1
+  win_rendered_percent?: number | null;
   top_5?: number | null;        // percent
   top_10?: number | null;
   top_20?: number | null;
@@ -201,6 +206,8 @@ function UnifiedBoard({
           today: p.today || undefined,
           thru: p.thru || p.hole || undefined,
           win: g?.probability ?? (p.win_prob > 0 ? p.win_prob / 100 : null),
+          // Keep the allocation with the same source selected for the price.
+          win_rendered_percent: g?.probability != null ? g.rendered_percent : p.rendered_percent,
           top_5: g?.top_5_prob ?? p.top_5_prob ?? null,
           top_10: g?.top_10_prob ?? p.top_10_prob ?? null,
           top_20: g?.top_20_prob ?? p.top_20_prob ?? null,
@@ -214,6 +221,7 @@ function UnifiedBoard({
     return golfers.map((g) => ({
       name: g.name,
       win: g.probability,
+      win_rendered_percent: g.rendered_percent,
       top_5: g.top_5_prob ?? null,
       top_10: g.top_10_prob ?? null,
       top_20: g.top_20_prob ?? null,
@@ -304,7 +312,7 @@ function UnifiedBoard({
                       raw != null && raw > 0.05 ? "text-emerald-600" : "text-text-primary"
                     }`}
                   >
-                    {formatProb(raw, "fraction")}
+                    {formatProb(raw, "fraction", r.win_rendered_percent)}
                   </span>
                 );
               }

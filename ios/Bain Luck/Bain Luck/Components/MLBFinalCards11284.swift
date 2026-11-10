@@ -18,7 +18,7 @@ struct MLBFinalCardView11284: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+            if ReleaseSurfaces.isEventPageAtlasEnabled(), card.family != .totals {
                 EventAtlasStoryCardMarkKeyView11666(items: EventAtlasMlbCards11666.markKey(for: card))
             }
             switch card {
@@ -31,7 +31,8 @@ struct MLBFinalCardView11284: View {
                     color: PlayerPropsTeam.color(for: milestone.side, home: homeColor, away: awayColor),
                     state: state, expanded: expanded)
             case .totals(let totals):
-                MLBTotalsCardView11284(card: totals, color: homeColor, state: state, expanded: expanded)
+                MLBTotalsCardView11284(card: totals, color: homeColor, awayColor: awayColor,
+                                       state: state, expanded: expanded)
             case .extraInnings(let extra):
                 MLBExtraInningsCardView11284(card: extra, state: state, expanded: expanded)
             case .series(let series):
@@ -378,6 +379,7 @@ struct MLBMilestoneCardView11284: View {
 struct MLBTotalsCardView11284: View {
     let card: MLBTotalsCard11284
     let color: Color
+    var awayColor: Color = .secondary
     @ObservedObject var state: NFLCardDeckState9483
     var expanded = false
     @Environment(\.dynamicTypeSize) private var size
@@ -404,6 +406,26 @@ struct MLBTotalsCardView11284: View {
 
     var body: some View {
         let selected = selectedIndex.map { card.lines[$0] }
+        if ReleaseSurfaces.isEventPageAtlasEnabled() {
+            MLBTotalTargetsCardView11284(
+                card: card,
+                selectedOptionKey: selected?.optionKey,
+                homeName: card.homeName,
+                awayName: card.awayName,
+                homeColor: color,
+                awayColor: awayColor,
+                homeScore: card.homeScore,
+                awayScore: card.awayScore,
+                expanded: expanded,
+                onSelect: { state.selectMLB($0, slot: slot) },
+                onDetails: { state.detailsRowID = $0 }
+            )
+        } else {
+            legacyBody(selected: selected)
+        }
+    }
+
+    private func legacyBody(selected: MLBTotalsCard11284.Line?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             MLBStoryHeading11284(kicker: "Runs · final result", title: "Where the total finished",
                                  reason: card.reason)

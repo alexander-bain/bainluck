@@ -718,8 +718,8 @@ async def search(seeded_db):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
 
-        async def _do(q: str) -> dict:
-            resp = await client.get("/api/events/search", params={"q": q})
+        async def _do(q: str, **params) -> dict:
+            resp = await client.get("/api/events/search", params={"q": q, **params})
             assert resp.status_code == 200, f"{q!r} -> HTTP {resp.status_code}"
             return resp.json()
 
@@ -2662,6 +2662,140 @@ async def typeahead_with_a_rostered_player(search_with_a_rostered_player, typeah
     events_route._roster_index_expires_at = 0.0
     yield typeahead
     events_route._roster_index_expires_at = 0.0
+
+
+@pytest.fixture
+async def search_with_bears_namesakes(seeded_db, search):
+    """#12366: Chicago's schedule beside a live college and a newer final."""
+    from sqlalchemy import select
+    from zoneinfo import ZoneInfo
+
+    from app.models.models import Event, Sport, Team
+
+    _engine, maker = seeded_db
+    now = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
+
+    def on_day(days):
+        return (now + timedelta(days=days)).replace(
+            hour=12, minute=0, second=0, microsecond=0,
+        )
+
+    async with maker() as session:
+        sports = {
+            row.key: row
+            for row in (await session.execute(select(Sport))).scalars().all()
+        }
+        for key, name, aliases in (
+            ("americanfootball_nfl", "Chicago Bears", ["Bears"]),
+            ("basketball_ncaab", "Maine Black Bears", ["Black Bears"]),
+            ("basketball_wncaab", "Missouri State Bears", ["Bears"]),
+        ):
+            session.add(Team(
+                sport_id=sports[key].id, name=name, alternate_names=aliases,
+            ))
+        for key, home, away, kickoff, status in (
+            ("americanfootball_nfl", "Chicago Bears", "New Orleans Saints", on_day(1), "scheduled"),
+            ("americanfootball_nfl", "Detroit Lions", "Chicago Bears", on_day(8), "scheduled"),
+            ("americanfootball_nfl", "Chicago Bears", "Tampa Bay Buccaneers", on_day(-2), "completed"),
+            ("basketball_ncaab", "Maine Black Bears", "Manhattan Jaspers", now - timedelta(minutes=5), "live"),
+            ("basketball_wncaab", "Wyoming Cowgirls", "Missouri State Bears", on_day(-1), "completed"),
+        ):
+            session.add(Event(
+                sport_id=sports[key].id, home_team_name=home, away_team_name=away,
+                commence_time=kickoff, status=status,
+                home_score=9 if status != "scheduled" else None,
+                away_score=8 if status != "scheduled" else None,
+            ))
+        await session.commit()
+    return search
+
+
+async def test_bears_names_its_franchise_before_live_and_newer_college_games(
+    search_with_bears_namesakes,
+):
+    payload = await search_with_bears_namesakes("bears")
+    assert payload["teams"][0]["name"] == "Chicago Bears"
+    assert _game_pairs(payload) == [
+        "Chicago Bears v New Orleans Saints",
+        "Detroit Lions v Chicago Bears",
+        "Chicago Bears v Tampa Bay Buccaneers",
+        "Maine Black Bears v Manhattan Jaspers",
+        "Wyoming Cowgirls v Missouri State Bears",
+    ]
+
+
+async def test_bears_franchise_order_is_applied_before_the_page_cut(
+    search_with_bears_namesakes,
+):
+    first = await search_with_bears_namesakes("bears", per_page=2, page=1)
+    second = await search_with_bears_namesakes("bears", per_page=2, page=2)
+    assert _game_pairs(first) == [
+        "Chicago Bears v New Orleans Saints", "Detroit Lions v Chicago Bears",
+    ]
+    assert _game_pairs(second)[0] == "Chicago Bears v Tampa Bay Buccaneers"
+
+
+async def test_bears_today_keeps_the_readers_explicit_day_ahead_of_the_club(
+    search_with_bears_namesakes,
+):
+    payload = await search_with_bears_namesakes("bears today")
+    assert _game_pairs(payload)[0] == "Maine Black Bears v Manhattan Jaspers"
+
+
+async def test_naming_a_bears_college_keeps_its_game(
+    search_with_bears_namesakes,
+):
+    payload = await search_with_bears_namesakes("maine black bears")
+    assert _game_pairs(payload) == ["Maine Black Bears v Manhattan Jaspers"]
+
+
+async def test_bears_explicit_college_sport_keeps_its_game(
+    search_with_bears_namesakes,
+):
+    payload = await search_with_bears_namesakes("bears", sport="basketball_ncaab")
+    assert _game_pairs(payload) == ["Maine Black Bears v Manhattan Jaspers"]
+
+
+async def test_an_unfinished_bears_nickname_keeps_the_existing_state_order(
+    search_with_bears_namesakes,
+):
+    payload = await search_with_bears_namesakes("bear")
+    assert _game_pairs(payload)[0] == "Maine Black Bears v Manhattan Jaspers"
+
+
+async def test_two_exact_giants_franchises_keep_the_live_game_first(seeded_db, search):
+    from sqlalchemy import select
+
+    from app.models.models import Event, Sport, Team
+
+    _engine, maker = seeded_db
+    now = datetime.now(timezone.utc)
+    async with maker() as session:
+        nfl = (await session.execute(
+            select(Sport).where(Sport.key == "americanfootball_nfl")
+        )).scalar_one()
+        mlb = (await session.execute(
+            select(Sport).where(Sport.key == "baseball_mlb")
+        )).scalar_one()
+        session.add_all([
+            Team(sport_id=nfl.id, name="New York Giants", alternate_names=["Giants"]),
+            Team(sport_id=mlb.id, name="San Francisco Giants", alternate_names=["Giants"]),
+            Event(
+                sport_id=nfl.id, home_team_name="New York Giants",
+                away_team_name="Philadelphia Eagles", status="scheduled",
+                commence_time=now + timedelta(days=1),
+            ),
+            Event(
+                sport_id=mlb.id, home_team_name="San Francisco Giants",
+                away_team_name="Los Angeles Dodgers", status="live",
+                commence_time=now - timedelta(hours=1), home_score=1, away_score=0,
+            ),
+        ])
+        await session.commit()
+    assert _game_pairs(await search("giants")) == [
+        "San Francisco Giants v Los Angeles Dodgers",
+        "New York Giants v Philadelphia Eagles",
+    ]
 
 
 def _typeahead_rows(payload) -> list[tuple[str, str]]:

@@ -296,7 +296,8 @@ class TestBeatScheduleCompleteness:
         "enrich-discover-llm-metadata",
         "enrich-snippet-angles",
         "enrich-cu-v2-profiles",
-        "generate-discover-comparison-candidates",
+        # "generate-discover-comparison-candidates" retired off its timer by #12372
+        # (2026-11-08): replaced by the sibling-family proposer.
         "evaluate-discover-with-llm-daily",
         "snapshot-discover-ground-truth-diagnostics-daily",
         "snapshot-discover-label-eval-run-daily",
@@ -371,6 +372,9 @@ class TestBeatScheduleCompleteness:
         # cannot land silently.
         "rebuild-typeahead-index",
         "typeahead-index-sentinel",
+        # #4437 Decide 89-A — keeps `open_futures_outcomes` equal to open
+        # markets' outcome names, every 5 minutes. Gotcha #12.
+        "refresh-open-futures-outcomes",
         # LAT-P090 (#2211) — the `/search` response-cache head warmer. Gotcha
         # #12: this allowlist is the reason a new beat entry cannot land
         # silently.
@@ -379,6 +383,7 @@ class TestBeatScheduleCompleteness:
         # Gotcha #12: this allowlist is the reason a new beat entry cannot land
         # silently.
         "warm-container-hubs",
+        "refresh-awards-occasions-hourly",
         # LAT-P109 (#2255) — the trigram GIN pending-list flush that keeps cold
         # `/api/events/search` off the 4 MB sawtooth. Gotcha #12: this allowlist
         # is the reason a new beat entry cannot land silently.
@@ -401,6 +406,8 @@ class TestBeatScheduleCompleteness:
         "mlb-schedule-coverage-daily",
         "flow-sentinel-daily",
         "grid-sentinel-daily",
+        # #12231 — weekly grouping sentinel, report-only on #12221 until Nov 26.
+        "grouping-sentinel-weekly",
         "grid-register-sentinel-daily",
         "tournament-register-sentinel-daily",
         # UX-P139 — targeted re-price of register-pinned tournament markets.

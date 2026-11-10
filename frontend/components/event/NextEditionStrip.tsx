@@ -37,13 +37,16 @@ interface NextEditionStripProps {
 
 export default function NextEditionStrip({ competition, settled }: NextEditionStripProps) {
   const next = competition?.next_edition;
-  const window = formatEditionWindow(next?.start, next?.end);
+  // #12201: an edition nobody has announced is printed as its month, with no
+  // countdown. A day or a day count would state a date that doesn't exist yet.
+  const approximate = next?.date_confidence === "approximate";
+  const window = formatEditionWindow(next?.start, next?.end, approximate);
   if (!settled || !competition || !next || !window) return null;
 
   const name = competition.name || next.name;
   if (!name) return null;
 
-  const days = daysUntil(next.start, new Date());
+  const days = approximate ? null : daysUntil(next.start, new Date());
 
   return (
     <section
@@ -54,7 +57,8 @@ export default function NextEditionStrip({ competition, settled }: NextEditionSt
         Next edition
       </div>
       <p className="text-sm leading-relaxed text-text-primary">
-        <span className="font-semibold">{name}</span> returns {window}
+        <span className="font-semibold">{name}</span> returns {approximate ? "in " : ""}
+        {window}
         {days !== null && (
           <span className="text-text-secondary"> · in {days.toLocaleString()} days</span>
         )}

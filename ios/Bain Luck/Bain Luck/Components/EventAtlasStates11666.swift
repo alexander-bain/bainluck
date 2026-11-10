@@ -39,6 +39,7 @@ nonisolated enum EventAtlasStates11666 {
     static let wonWithCheck = "✓ Won"
     static let lostWithCross = "✗ Lost"
     static let pending = "Pending"
+    static let resultNotConfirmed = "Result not confirmed"
     static let resultUnavailable = "Result unavailable"
     static let independentChancesLabel = "Independent chances · do not add to 100"
 
@@ -51,7 +52,7 @@ nonisolated enum EventAtlasStates11666 {
         case .hidden:
             return nil
         case .awaitingUpdate:
-            return atlasEnabled ? loading : status.title
+            return status.title
         case .interrupted:
             return atlasEnabled ? updateInterrupted : status.title
         case .live, .autoRefresh:

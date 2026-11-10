@@ -331,7 +331,8 @@ def membership(text):
     )
     expected = {}
     for job, block in blocks.items():
-        if job in ("release-required", "deploy"):
+        # #12252: flaky-canary is non-required and continue-on-error; it never pays for a commit.
+        if job in ("release-required", "deploy", "flaky-canary"):
             continue
         name = re.search(r"^    name: (.+)$", block, re.M)
         label = name.group(1).strip() if name else job
@@ -467,7 +468,7 @@ def validate_jobs(jobs, expected):
     require(len(names) == len(set(names)), "ambiguous job names")
     actual = {j["name"]: j for j in jobs}
     require(
-        set(actual) == set(expected) | {"release-required", "deploy"},
+        set(actual) == set(expected) | {"release-required", "deploy", "flaky-canary"},
         "incomplete or unexpected job membership",
     )
     for name, (kind, value, count, block) in expected.items():

@@ -43,7 +43,8 @@ The display shapes (census-derived), each with a canonical Discover render
     participation    Top-N / multi-winner contract   → top-3 (own cohort identity)
     container_member a yes/no member of a decomposed field (shared group_id)
                                                      → rolls up into a container
-    unshaped         0- or 1-outcome / incomplete    → (no native kernel)
+    unshaped         0 outcomes, or 1 that is not a  → (no native kernel)
+                     lone "Yes" (#12221) / incomplete
 """
 
 from __future__ import annotations
@@ -85,7 +86,10 @@ SIDE_THRESHOLD = "threshold"
 # market's outcomes. Deliberately separate from the display shape above.
 # ---------------------------------------------------------------------------
 
-CLASSIFIER_VERSION = 2
+#: 3 (#12221, Nov 7 2026): a lone "Yes" is a claim; an "N+" ladder is cumulative; a Kalshi
+#: field the venue declares not mutually exclusive is independent. Each only resolves a row
+#: that v2 left `unshaped` or `unknown`; no v2 verdict that was proved changes.
+CLASSIFIER_VERSION = 3
 
 REL_COMPLEMENTS = "complements"  # Yes/No, Over/Under — sums to 1, one winner
 REL_COMPETITORS = "competitors"  # named mutually-exclusive field, one winner
@@ -146,6 +150,11 @@ _CUMULATIVE_RE = re.compile(
     r"\babove\b|\bbelow\b|\bor more\b|\bor fewer\b|\bor higher\b|\bor less\b)",
     re.I,
 )
+
+# #12221: Kalshi's own spelling of "at least N" — "7+ wins", "Joe Burrow: 1+",
+# "Hageman, 26+ pts", "1460+". A digit then "+", never "+3.5" (a spread line) or
+# "2+2". Read only where v2 had no verdict (see `_outcome_relation`).
+_PLUS_LADDER_RE = re.compile(r"\d\s*\+(?![\d+])")
 
 # A single outcome name that reads as a numeric threshold / range / bin.
 # Examples that should match:
@@ -286,6 +295,15 @@ def classify_market_shape(
     # 1. unshaped — 0/1-outcome rows (level markets w/ no sides; 1-sided "before
     #    20XX" long-horizon contracts). No native kernel; explicit incomplete
     #    state per census schema-implication (4).
+    #    #12221: except a lone "Yes". Kalshi stores every single-market event as
+    #    one outcome named "Yes" by design (`tasks/kalshi._kalshi_outcome_name`,
+    #    rule 1), so that row IS the whole yes/no market; the "No" is its
+    #    complement. On Nov 7 2026 those 954 rows were every open Kalshi binary,
+    #    and no open market in the table was a `claim` at all.
+    if n == 1 and _norm(names[0]) == "yes":
+        if group_id and group_size > 1:
+            return SHAPE_CONTAINER_MEMBER, SIDE_YES_NO
+        return SHAPE_CLAIM, SIDE_YES_NO
     if n < 2:
         return SHAPE_UNSHAPED, None
 
@@ -377,6 +395,7 @@ def _outcome_relation(
     push_possible,
     event_id: int | None,
     venue_leg_count: int | None = None,
+    source: str | None = None,
 ) -> dict:
     """Probabilistic-semantics core: derive the outcome relation, exhaustiveness,
     winner cardinality, push capability, confidence, and evidence.
@@ -401,6 +420,16 @@ def _outcome_relation(
         relation = REL_CONDITIONAL
         confidence = "high" if parent_condition_id else "medium"
         evidence.append("conditional_parent")
+    elif len(names) == 1 and name_set == {"yes"}:
+        # #12221: one leg of a yes/no pair (see `classify_market_shape` step 1).
+        # The relation is the pair's; the SET we hold is provably not the whole
+        # partition, so `exhaustive` is False and no winner count is claimed —
+        # the winner may be the "No" we do not store.
+        relation = REL_COMPLEMENTS
+        exhaustive = False
+        ew = None
+        confidence = "high"
+        evidence.append("single_yes_leg")
     elif len(names) < 2:
         relation = REL_UNKNOWN
     elif name_set <= _YES_NO_TOKENS:
@@ -425,6 +454,7 @@ def _outcome_relation(
         cumulative_count = sum(
             bool(_CUMULATIVE_RE.search(nm) and _NUMBER_RE.search(nm)) for nm in names
         )
+        plus_ladder_count = sum(bool(_PLUS_LADDER_RE.search(nm)) for nm in names)
         has_draw = bool(name_set & _DRAW_TOKENS)
         top_n = bool(source_kind and _TOP_N_RE.search(source_kind))
 
@@ -456,6 +486,24 @@ def _outcome_relation(
             exhaustive = True
             confidence = "high"
             evidence.append("exactly_one_structured")
+        # #12221: the two rules below only resolve what v2 called unknown; every
+        # branch above is untouched, so no proved verdict moves.
+        elif plus_ladder_count >= 2 and plus_ladder_count * 2 >= len(names):
+            relation = REL_CUMULATIVE
+            exhaustive = False
+            confidence = "medium"
+            evidence.append("plus_threshold_outcomes")
+        elif source == "kalshi" and mutually_exclusive is False:
+            # Kalshi's event flag is a contract term ("only one market in this
+            # event can resolve Yes" when true), and our ingest defaults it to
+            # True when absent (`services/kalshi_api.py`), so False is the
+            # venue saying more than one leg may win. Polymarket's flag is
+            # `neg_risk`, a settlement mechanism, not that statement — its
+            # non-neg-risk bundles stay unknown (#12323).
+            relation = REL_PARTICIPATION
+            exhaustive = False
+            confidence = "medium"
+            evidence.append("venue_not_mutually_exclusive")
         else:
             relation = REL_UNKNOWN
             confidence = "low"
@@ -621,6 +669,7 @@ def classify_market_semantics(
         push_possible=push_possible,
         event_id=event_id,
         venue_leg_count=venue_leg_count,
+        source=_norm(source),
     )
 
     fingerprint = input_fingerprint(

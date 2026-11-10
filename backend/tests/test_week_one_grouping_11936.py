@@ -524,6 +524,8 @@ class TestPrimitivesInvariantsAndFolderLoading:
                     "slug": "tennis-this-week",
                     "membership": "event-derived",
                     "kind": "roundup",
+                    "relations": ["same_measure", "same_window"],
+                    "level": "member",
                     "kicker": "TENNIS · THIS WEEK",
                     "name": "This week's tournaments",
                     "category": "tennis",
@@ -550,6 +552,18 @@ class TestPrimitivesInvariantsAndFolderLoading:
         """#12221 §4 item 5: one env switch per kind disables the producer cleanly."""
         reset_roundup_cache_for_tests()
         tournaments = _make_live_golf_tournaments(toto_flat_placeholder=False)
+        # The producer reads the wall clock; the fixture's tournaments are the
+        # week of Nov 5-8, so pin "now" inside it (gotcha 44). Unpinned, this
+        # failed every CI run from Mon Nov 9 with all three "outside_play_week".
+        import app.utils.week_events as week_events
+
+        real_produce = week_events.produce_week_events
+
+        async def _produce_at_nov_6(db: Any, definition: Any, **kw: Any) -> Any:
+            kw.setdefault("now", NOW_NOV_6)
+            return await real_produce(db, definition, **kw)
+
+        monkeypatch.setattr(week_events, "produce_week_events", _produce_at_nov_6)
         monkeypatch.setenv("WEEK_EVENTS_ENABLED", "false")
         fi, cp = await evaluate_roundup_producer(GOLF_THIS_WEEK_PRODUCER, tournaments)
         assert fi is None and cp is None

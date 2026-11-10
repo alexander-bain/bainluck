@@ -166,9 +166,17 @@ class TestConceptsSurviveTheYearTurning:
         assert got[0]["name"] == f"Vuelta a España {expected_year}"
 
     @pytest.mark.asyncio
-    async def test_two_editions_in_flight_stay_two_cards(self, at_clock):
+    async def test_two_editions_in_flight_stay_two_cards(self, at_clock, monkeypatch):
         """A market resolving next year must NOT be folded into this year's card.
-        The edition guard is the reason the old config existed; keep it working."""
+        The edition guard is the reason the old config existed; keep it working.
+
+        The calendar is emptied for this one because it is about the edition
+        guard alone. A real row for either year (vuelta-2027, since #12201) would
+        decide that card's status by its race window, and that race ends in
+        September, long before these synthetic markets resolve."""
+        import app.utils.majors_calendar as mc
+
+        monkeypatch.setattr(mc, "calendar_entry_by_concept_key", lambda path=None: {})
         when = datetime(2027, 12, 20, 12, 0, tzinfo=timezone.utc)
         at_clock(when)
         rows = [

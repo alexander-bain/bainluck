@@ -345,6 +345,19 @@ def leader_deadline_clause(
     return f"{pct}% chance {DEADLINE_PREPOSITION} {label}"
 
 
+#: #12428 — the codes that state a resolution window. Each is keyed on the
+#: market's ONE stored `resolution_date`, which on a date ladder is the earliest
+#: rung's (#9782), so none may share a caption with a ladder rung's level.
+_RESOLUTION_WINDOW_CODES = frozenset(
+    {
+        "resolving_soon_1d",
+        "resolving_soon_2d",
+        "resolving_soon_7d",
+        "resolving_soon_30d",
+    }
+)
+
+
 def _deadline_fallback(
     leader_name: str | None,
     leader_probability: Optional[float],
@@ -352,6 +365,7 @@ def _deadline_fallback(
     *,
     leader_is_ladder_rung: bool,
     leader_deadline_preposition: str | None,
+    ranking_input: bool,
 ) -> str:
     """The level clause a generator prints INSTEAD of falling silent, or "".
 
@@ -361,12 +375,30 @@ def _deadline_fallback(
     widen this gate is three chances to print a deadline the venue never
     asserted.
 
-    ``leader_is_ladder_rung`` still wins. A proven cumulative ladder (#4640) is
-    refused here as well as above — its rungs nest, so the loosest is dearest by
-    arithmetic and a level clause would hand the reader the same non-contest with
-    a preposition in front of it.
+    ``leader_is_ladder_rung`` refuses in the HEADLINE only (``ranking_input``).
+    #4640 refuses a CONTEST: a ladder's loosest rung is dearest by arithmetic,
+    so calling it the favorite claims a race that does not exist. A level names
+    one rung's own price and claims nothing about any other rung, which is the
+    whole of #6470's safety argument, and on a cumulative deadline ladder the
+    rung it names is the board's own answer to "will it happen within this
+    window".
+
+    #12428 — this refusal used to cover all three slots, written when no date
+    board could be a ladder. #7667 made every board with two or more live date
+    rungs one, by reading the venue's "by" as the ladder's direction: the same
+    word that licenses this clause. The two rules cancelled on exactly #6470's
+    population, and "Bloomberg IPO?" and "Kimi (Moonshot AI) IPO?" sat in the
+    top three of Discover's futures with no caption at all.
+
+    The headline keeps the refusal because it is a RANKING input
+    (`explanation_score_rank` reads it, and reads neither caption). Lifting it
+    there would move these cards' order, a ranking change riding a copy fix,
+    which #4805 and #4842 declined for the same reason. Its slot stays empty
+    and falls through to `primary_reason` exactly as before.
     """
-    if leader_is_ladder_rung or leader_probability is None:
+    if leader_probability is None:
+        return ""
+    if leader_is_ladder_rung and ranking_input:
         return ""
     return leader_deadline_clause(
         leader_name,
@@ -1328,6 +1360,13 @@ class LiveClaim(NamedTuple):
 
     claim_type: str
     sentence: str
+    # #12279 — the CURRENT percent a movement sentence states, and whose it is
+    # ("home" or "away"). None on a claim that states no current percent (an
+    # underdog lead quotes only the kickoff price). Served beside the sentence
+    # so a client that repaints the card's number can tell whether the sentence
+    # still states the number on the card.
+    stated_side: Optional[str] = None
+    stated_percent: Optional[int] = None
 
 
 def _away_kickoff_price(
@@ -1385,6 +1424,7 @@ def compose_live_claim(
     score_source: Optional[str] = None,
     score_observed_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
+    live_percents: Optional[Mapping[str, Optional[int]]] = None,
 ) -> Optional[LiveClaim]:
     """The one supported claim this live card may make, or None. (T10-1, #5439)
 
@@ -1403,6 +1443,15 @@ def compose_live_claim(
     observation stamp and ``now`` is the caller's fixed clock. Without all three
     a current-leading claim is refused (see `score_observation_is_current`);
     the price sentence is unaffected.
+
+    #12279 — ``live_percents`` is ``{"home": int|None, "away": int|None}``, the
+    two whole percents this LIVE card prints, rounded once as a duel by
+    `graded_card.duel_percents_by_side` over the card's own `current_odds`
+    pair. A movement sentence states its current percent from here, the live
+    twin of #6181's ``prematch_percents``: the card derives its trailing side
+    as ``100 - leader``, so on a half-percent the raw probability rounds one
+    point above the number printed beside it (0.335: the card prints 33, the
+    probability rounds to 34).
     """
     claim = select_live_claim(
         status=status,
@@ -1479,7 +1528,8 @@ def compose_live_claim(
     # this evidence is about.
     change = home_probability - opening_home_prob
     if change > 0:
-        mover, was, now_prob = home_team, opening_home_prob, home_probability
+        mover, side = home_team, "home"
+        was, now_prob = opening_home_prob, home_probability
     else:
         # #6238 — BOTH ENDPOINTS OF AN AWAY MOVE ARE THE COMPLEMENT ON A
         # DRAW-PRICED SPORT: `was` is `1 − home` by construction here, and the
@@ -1491,20 +1541,41 @@ def compose_live_claim(
         # move: the home team's chance falling IS the reason the away team's
         # rose, and both numbers here are the honest home leg.
         if sport_prices_a_draw(sport):
+            now_text, now_pct = _stated_now("home", home_probability, live_percents)
             return LiveClaim(
                 "movement",
                 f"{home_team} chance fell from {_display_pct(opening_home_prob)}% "
-                f"to {_display_pct(home_probability)}%",
+                f"to {now_text}%",
+                "home",
+                now_pct,
             )
-        mover = away_team
+        mover, side = away_team, "away"
         was = 1 - opening_home_prob
         now_prob = (
             away_probability if away_probability is not None else 1 - home_probability
         )
+    now_text, now_pct = _stated_now(side, now_prob, live_percents)
     return LiveClaim(
         "movement",
-        f"{mover} chance rose from {_display_pct(was)}% to {_display_pct(now_prob)}%",
+        f"{mover} chance rose from {_display_pct(was)}% to {now_text}%",
+        side,
+        now_pct,
     )
+
+
+def _stated_now(
+    side: str,
+    probability: float,
+    live_percents: Optional[Mapping[str, Optional[int]]],
+) -> tuple[str, Optional[int]]:
+    """A movement sentence's current percent, as written and as an integer. (#12279)
+
+    The card's own printed percent for ``side`` when the caller has it, so the
+    sentence states the number beside it; `rendered_percent` otherwise, as before.
+    """
+    printed = live_percents.get(side) if live_percents else None
+    stated = int(printed) if printed is not None else rendered_percent(probability)
+    return _display_pct(probability, printed), stated
 
 
 def generate_event_reason(
@@ -1524,6 +1595,7 @@ def generate_event_reason(
     score_source: Optional[str] = None,
     score_observed_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
+    live_percents: Optional[Mapping[str, Optional[int]]] = None,
 ) -> str:
     """
     Generate a one-line explanation for why an event is interesting.
@@ -1544,6 +1616,9 @@ def generate_event_reason(
     ``score_source``/``score_observed_at``/``now`` (#10561) reach only the live
     composer: a live "leading" sentence needs a current score observation. The
     settled sentences read a final score, which does not expire.
+
+    ``live_percents`` (#12279) reaches only the live composer too: the two whole
+    percents the LIVE card prints, so its movement sentence states them.
     """
     reasons = set(highlight_reasons)
 
@@ -1799,6 +1874,9 @@ def generate_event_reason(
             score_source=score_source,
             score_observed_at=score_observed_at,
             now=now,
+            # #12279 — the card's printed percents, so `reason` and `headline`
+            # state the same number.
+            live_percents=live_percents,
         )
 
         if claim is not None and claim.claim_type == "underdog_lead":
@@ -2402,6 +2480,7 @@ def generate_futures_reason(
         rendered_leader_percent,
         leader_is_ladder_rung=leader_is_ladder_rung,
         leader_deadline_preposition=leader_deadline_preposition,
+        ranking_input=False,
     )
     # #6187: and likewise — may any template below use a comparative at all?
     # #7844 ANDs the second half of that question in, resolved in the same place
@@ -2613,7 +2692,7 @@ def generate_futures_reason(
             # title said "by <blank>" it can still be a DEADLINE, and the level
             # clause is the true sentence this rung was always owed. Empty
             # whenever that word is absent, i.e. every case that reached here
-            # before.
+            # before. A rung of a "by...?" ladder takes it too (#12428).
             return _deadline
         pct = _display_pct(leader_probability, rendered_leader_percent)
         # #6187 — the only leader template whose subject is followed by the
@@ -2675,12 +2754,15 @@ def generate_futures_headline(
     _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
     # #6470: resolved once beside the refusal it answers, so a template can
     # never print the level clause without having consulted that refusal.
+    # #12428: the headline is the one slot `explanation_score_rank` reads, so
+    # it alone keeps the ladder refusal — see `_deadline_fallback`.
     _deadline = _deadline_fallback(
         leader_name,
         leader_probability,
         rendered_leader_percent,
         leader_is_ladder_rung=leader_is_ladder_rung,
         leader_deadline_preposition=leader_deadline_preposition,
+        ranking_input=True,
     )
     # #6187 + #7844: likewise — see `generate_futures_reason`.
     _lead_visible = lead_is_printable(
@@ -3008,12 +3090,21 @@ def generate_futures_context_summary(
         # resolves within a month"). Every other unnameable leader is as empty
         # as it was.
         if _leader_is_unnameable(leader_name, leader_is_ladder_rung):
+            # #12428 — except on a ladder rung WHERE A WINDOW SPEAKS. The
+            # suffixes are keyed on the market's one stored date, which on a
+            # date ladder is the EARLIEST rung's (#9782), while the level names
+            # the rung the card leads with. "38% chance by June 30, 2027;
+            # resolves within a week" would be two deadlines in one caption, so
+            # there the caption stays the bare window it was.
+            if leader_is_ladder_rung and reasons & _RESOLUTION_WINDOW_CODES:
+                return ""
             return _deadline_fallback(
                 leader_name,
                 leader_probability,
                 rendered_leader_percent,
                 leader_is_ladder_rung=leader_is_ladder_rung,
                 leader_deadline_preposition=leader_deadline_preposition,
+                ranking_input=False,
             )
         if leader_name and leader_probability is not None:
             return leader_standing_clause(

@@ -37,10 +37,19 @@ struct ContentView: View {
             // #10873: a Siri/Shortcuts "open" arrives as the same canonical link
             // a shared URL carries, and goes through the same router. A link
             // posted before this view mounted (cold launch) is replayed once;
-            // `consume()` clears it so a remount never replays it.
+            // `consume()` clears it so a remount never replays it. A sheet or
+            // full-screen view left open is closed first, or the destination
+            // opens behind it (`IntentRouteCloser10873`).
             .onReceive(IntentRouteHandoff10873.shared.settledPosts) { _ in
                 guard let link = IntentRouteHandoff10873.shared.consume() else { return }
-                _ = navCoordinator.handleURL(link)
+                let navigation = navCoordinator
+                #if os(iOS)
+                IntentRouteCloser10873.closePresentations(over: IntentRouteCloser10873.foregroundRoots()) {
+                    _ = navigation.handleURL(link)
+                }
+                #else
+                _ = navigation.handleURL(link)
+                #endif
             }
             .task {
                 // #1847 defect D: unsent reports used to be retried ONLY when

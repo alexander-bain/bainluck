@@ -1,0 +1,3682 @@
+{
+  "schema": "same-deadline-board-exam-dataset/1",
+  "as_of": "2026-11-08T22:00:00Z",
+  "source_api": "https://api.bainluck.com",
+  "deadlines": [
+    {
+      "deadline": "2026-11-15",
+      "title": "By November 15",
+      "deadline_phrase": "by November 15",
+      "candidate_markets": [
+        {
+          "id": 69610309,
+          "name": "US x Iran Effective Ceasefire by November 15?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-11-15T20:29:00+00:00",
+          "updated_at": "2026-11-09T13:33:08.922071+00:00",
+          "prices_updated_at": "2026-11-09T13:35:32.516648+00:00",
+          "top_outcomes": [
+            {
+              "id": 260868672,
+              "name": "No",
+              "probability": 0.545,
+              "american_odds": -120,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 55
+            },
+            {
+              "id": 260868671,
+              "name": "Yes",
+              "probability": 0.455,
+              "american_odds": 120,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 45
+            }
+          ]
+        },
+        {
+          "id": 68884990,
+          "name": "Will Iran target an Arab country by November 15, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-11-16T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:51:49.315596+00:00",
+          "prices_updated_at": "2026-11-09T09:28:02.821078+00:00",
+          "top_outcomes": [
+            {
+              "id": 258338391,
+              "name": "Yes",
+              "probability": 0.9195,
+              "american_odds": -1142,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 92
+            },
+            {
+              "id": 258338392,
+              "name": "No",
+              "probability": 0.0805,
+              "american_odds": 1142,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 8
+            }
+          ]
+        },
+        {
+          "id": 69707021,
+          "name": "Putin meets with Iranian officials by November 15?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-11-16T04:59:00+00:00",
+          "updated_at": "2026-11-09T10:35:57.319267+00:00",
+          "prices_updated_at": "2026-11-09T10:32:27.578936+00:00",
+          "top_outcomes": [
+            {
+              "id": 261311412,
+              "name": "No",
+              "probability": 0.91,
+              "american_odds": -1011,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 91
+            },
+            {
+              "id": 261311411,
+              "name": "Yes",
+              "probability": 0.09,
+              "american_odds": 1011,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 9
+            }
+          ]
+        },
+        {
+          "id": 68971480,
+          "name": "Anthropic reports another AI sandbox escape by November 15?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-11-16T04:59:00+00:00",
+          "updated_at": "2026-11-09T09:36:24.786094+00:00",
+          "prices_updated_at": "2026-11-09T09:28:20.879489+00:00",
+          "top_outcomes": [
+            {
+              "id": 258658075,
+              "name": "No",
+              "probability": 0.835,
+              "american_odds": -506,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 84
+            },
+            {
+              "id": 258658074,
+              "name": "Yes",
+              "probability": 0.165,
+              "american_odds": 506,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 16
+            }
+          ]
+        },
+        {
+          "id": 69703622,
+          "name": "Will Iran target Iraq by November 15, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-11-16T04:59:00+00:00",
+          "updated_at": "2026-11-09T09:36:24.786094+00:00",
+          "prices_updated_at": "2026-11-09T09:28:02.908231+00:00",
+          "top_outcomes": [
+            {
+              "id": 261294543,
+              "name": "Yes",
+              "probability": 0.865,
+              "american_odds": -641,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 86
+            },
+            {
+              "id": 261294544,
+              "name": "No",
+              "probability": 0.135,
+              "american_odds": 641,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 14
+            }
+          ]
+        },
+        {
+          "id": 69331431,
+          "name": "Will Hezbollah target Israel by November 15, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-11-16T04:59:00+00:00",
+          "updated_at": "2026-11-09T09:28:30.094563+00:00",
+          "prices_updated_at": "2026-11-09T09:28:30.094563+00:00",
+          "top_outcomes": [
+            {
+              "id": 259967557,
+              "name": "No",
+              "probability": 0.87,
+              "american_odds": -669,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 87
+            },
+            {
+              "id": 259967556,
+              "name": "Yes",
+              "probability": 0.13,
+              "american_odds": 669,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 13
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "deadline": "2026-11-20",
+      "title": "By November 20",
+      "deadline_phrase": "by November 20",
+      "candidate_markets": [
+        {
+          "id": 67305931,
+          "name": "Will Anthropic IPO by November 20, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "economics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-11-21T04:59:00+00:00",
+          "updated_at": "2026-11-09T13:34:49.085068+00:00",
+          "prices_updated_at": "2026-11-09T13:35:44.520400+00:00",
+          "top_outcomes": [
+            {
+              "id": 252708156,
+              "name": "Yes",
+              "probability": 0.575,
+              "american_odds": -135,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 57
+            },
+            {
+              "id": 252708157,
+              "name": "No",
+              "probability": 0.425,
+              "american_odds": 135,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 43
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "deadline": "2026-11-26",
+      "title": "By November 26",
+      "deadline_phrase": "by November 26",
+      "candidate_markets": []
+    },
+    {
+      "deadline": "2026-11-30",
+      "title": "By November 30",
+      "deadline_phrase": "by November 30",
+      "candidate_markets": [
+        {
+          "id": 68370833,
+          "name": "Who will Trump speak to by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T09:27:46.312319+00:00",
+          "prices_updated_at": "2026-11-09T09:27:46.312319+00:00",
+          "top_outcomes": [
+            {
+              "id": 256631642,
+              "name": "Xi Jinping",
+              "probability": 0.959,
+              "american_odds": -2339,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256674202,
+              "name": "Friedrich Merz",
+              "probability": 0.93,
+              "american_odds": -1329,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256631644,
+              "name": "Mark Carney",
+              "probability": 0.927,
+              "american_odds": -1270,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256631643,
+              "name": "Vladimir Putin",
+              "probability": 0.91,
+              "american_odds": -1011,
+              "rank": 4,
+              "movement": -0.005,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256884982,
+              "name": "Mohammed bin Salman",
+              "probability": 0.785,
+              "american_odds": -365,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 68370847,
+          "name": "Who will Trump meet with by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T09:27:47.032360+00:00",
+          "prices_updated_at": "2026-11-08T08:43:48.596508+00:00",
+          "top_outcomes": [
+            {
+              "id": 256631669,
+              "name": "Xi Jinping",
+              "probability": 0.9545,
+              "american_odds": -2098,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256631670,
+              "name": "Vladimir Putin",
+              "probability": 0.9,
+              "american_odds": -900,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256659423,
+              "name": "Mark Carney",
+              "probability": 0.805,
+              "american_odds": -413,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256631674,
+              "name": "Luiz In\u00e1cio Lula da Silva",
+              "probability": 0.42,
+              "american_odds": 138,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256647293,
+              "name": "Elon Musk",
+              "probability": 0.245,
+              "american_odds": 308,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 61980422,
+          "name": "Lowest Mississippi level at St. Louis by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "tech",
+          "llm_sport_category": "weather",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-02T04:59:00+00:00",
+          "updated_at": "2026-11-09T05:31:38.921552+00:00",
+          "prices_updated_at": "2026-11-09T05:31:38.921552+00:00",
+          "top_outcomes": [
+            {
+              "id": 234071753,
+              "name": "1.00 to 2.99 ft",
+              "probability": 0.77638191,
+              "american_odds": -340,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 78
+            },
+            {
+              "id": 234010743,
+              "name": "-1.00 to 0.99 ft",
+              "probability": 0.14572864,
+              "american_odds": 590,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 15
+            },
+            {
+              "id": 234010742,
+              "name": "-3.00 to -1.01 ft",
+              "probability": 0.07236181,
+              "american_odds": 1289,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 7
+            },
+            {
+              "id": 234094997,
+              "name": "3.00 ft or more",
+              "probability": 0.00301508,
+              "american_odds": 33233,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 0
+            },
+            {
+              "id": 234010741,
+              "name": "Below -3.00 ft",
+              "probability": 0.00251256,
+              "american_odds": 39900,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 0
+            }
+          ]
+        },
+        {
+          "id": 66803492,
+          "name": "\"You Can See Everything\" total domestic gross by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "quantity",
+          "category": "entertainment",
+          "llm_sport_category": "entertainment",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:35:04.613686+00:00",
+          "prices_updated_at": "2026-11-09T07:45:38.453999+00:00",
+          "top_outcomes": [
+            {
+              "id": 252603553,
+              "name": "100-125M",
+              "probability": 0.78399607,
+              "american_odds": -396,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 78
+            },
+            {
+              "id": 252603556,
+              "name": "75-100M",
+              "probability": 0.18114875,
+              "american_odds": 442,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 18
+            },
+            {
+              "id": 251149247,
+              "name": "125-150M",
+              "probability": 0.02798233,
+              "american_odds": 3409,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 3
+            },
+            {
+              "id": 252603554,
+              "name": "150-175M",
+              "probability": 0.00441826,
+              "american_odds": 22122,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 1
+            },
+            {
+              "id": 251149248,
+              "name": "50-75M",
+              "probability": 0.00147275,
+              "american_odds": 66567,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 0
+            }
+          ]
+        },
+        {
+          "id": 61980420,
+          "name": "Lowest Mississippi level at Baton Rouge by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "quantity",
+          "category": "tech",
+          "llm_sport_category": "weather",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-02T04:59:00+00:00",
+          "updated_at": "2026-11-09T05:31:38.787585+00:00",
+          "prices_updated_at": "2026-11-09T05:31:38.787585+00:00",
+          "top_outcomes": [
+            {
+              "id": 233959362,
+              "name": "6.00 ft or more",
+              "probability": 0.71753751,
+              "american_odds": -226,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 72
+            },
+            {
+              "id": 234071749,
+              "name": "5.00 to 5.99 ft",
+              "probability": 0.21727884,
+              "american_odds": 376,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 22
+            },
+            {
+              "id": 234168878,
+              "name": "4.00 to 4.99 ft",
+              "probability": 0.04500776,
+              "american_odds": 2199,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 4
+            },
+            {
+              "id": 234018295,
+              "name": "3.00 to 3.99 ft",
+              "probability": 0.01603725,
+              "american_odds": 6352,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 2
+            },
+            {
+              "id": 234168879,
+              "name": "Below 3.00 ft",
+              "probability": 0.00413864,
+              "american_odds": 24900,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 0
+            }
+          ]
+        },
+        {
+          "id": 68806012,
+          "name": "Who will Trump publicly insult by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T09:27:55.277743+00:00",
+          "prices_updated_at": "2026-11-09T09:27:55.277743+00:00",
+          "top_outcomes": [
+            {
+              "id": 258157910,
+              "name": "Barack Obama",
+              "probability": 0.943,
+              "american_odds": -1654,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 258098939,
+              "name": "Ilhan Omar",
+              "probability": 0.624,
+              "american_odds": -166,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 258137227,
+              "name": "Letitia James",
+              "probability": 0.62,
+              "american_odds": -163,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 258613688,
+              "name": "Hillary Clinton",
+              "probability": 0.45,
+              "american_odds": 122,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 258613690,
+              "name": "Elizabeth Warren",
+              "probability": 0.44,
+              "american_odds": 127,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 68806011,
+          "name": "Who will Trump publicly praise by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T09:27:55.036687+00:00",
+          "prices_updated_at": "2026-11-05T12:34:03.290008+00:00",
+          "top_outcomes": [
+            {
+              "id": 259218906,
+              "name": "Xi Jinping",
+              "probability": 0.9335,
+              "american_odds": -1404,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 258098925,
+              "name": "Benjamin Netanyahu",
+              "probability": 0.89,
+              "american_odds": -809,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 259914748,
+              "name": "Elon Musk",
+              "probability": 0.7985,
+              "american_odds": -396,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 258081270,
+              "name": "Luiz In\u00e1cio Lula da Silva",
+              "probability": 0.515,
+              "american_odds": -106,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 258081269,
+              "name": "Volodymyr Zelenskyy",
+              "probability": 0.45,
+              "american_odds": 122,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 68370855,
+          "name": "Will __ ships transit the Strait of Hormuz on any day by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "quantity",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T09:27:47.518330+00:00",
+          "prices_updated_at": "2026-11-09T09:27:47.518330+00:00",
+          "top_outcomes": [
+            {
+              "id": 257046567,
+              "name": "10+",
+              "probability": 0.265,
+              "american_odds": 277,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256757078,
+              "name": "20+",
+              "probability": 0.175,
+              "american_odds": 471,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256860425,
+              "name": "30+",
+              "probability": 0.05,
+              "american_odds": 1900,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 256808410,
+              "name": "40+",
+              "probability": 0.045,
+              "american_odds": 2122,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 257046571,
+              "name": "50+",
+              "probability": 0.0475,
+              "american_odds": 2005,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 62611724,
+          "name": "Trump meets with Putin by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T13:34:44.923309+00:00",
+          "prices_updated_at": "2026-11-09T13:35:30.516078+00:00",
+          "price_observed_at": "2026-11-09T13:35:30.516078+00:00",
+          "top_outcomes": [
+            {
+              "id": 236494393,
+              "name": "Yes",
+              "probability": 0.88,
+              "rendered_percent": 88,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 236494394,
+              "name": "No",
+              "probability": 0.12,
+              "rendered_percent": 12,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 61341170,
+          "name": "Will Anthropic IPO by November 30, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "economics",
+          "llm_sport_category": "economics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T13:34:49.085068+00:00",
+          "prices_updated_at": "2026-11-09T13:35:54.524273+00:00",
+          "price_observed_at": "2026-11-09T13:35:54.524273+00:00",
+          "top_outcomes": [
+            {
+              "id": 230903790,
+              "name": "Yes",
+              "probability": 0.825,
+              "rendered_percent": 83,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 230903791,
+              "name": "No",
+              "probability": 0.175,
+              "rendered_percent": 17,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 68320839,
+          "name": "Will a 7.0+ earthquake occur worldwide by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "weather",
+          "llm_sport_category": "weather",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T08:37:18.907310+00:00",
+          "prices_updated_at": "2026-11-09T13:35:58.524696+00:00",
+          "price_observed_at": "2026-11-09T13:35:58.524696+00:00",
+          "top_outcomes": [
+            {
+              "id": 256451685,
+              "name": "Yes",
+              "probability": 0.56,
+              "rendered_percent": 56,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 256451686,
+              "name": "No",
+              "probability": 0.44,
+              "rendered_percent": 44,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 62141888,
+          "name": "Next Claude Opus (5.6+) released by November 30, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "tech",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-11-30T23:59:00+00:00",
+          "updated_at": "2026-11-09T06:39:10.392677+00:00",
+          "prices_updated_at": "2026-11-09T13:33:58.452799+00:00",
+          "price_observed_at": "2026-11-09T13:33:58.452799+00:00",
+          "top_outcomes": [
+            {
+              "id": 234765389,
+              "name": "Yes",
+              "probability": 0.495,
+              "rendered_percent": 50,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 234765390,
+              "name": "No",
+              "probability": 0.505,
+              "rendered_percent": 50,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 63889649,
+          "name": "Will Valve add sticker trade-ups by November 30, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "esports",
+          "llm_sport_category": "esports",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 5,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-10-31T05:50:01.675786+00:00",
+          "prices_updated_at": "2026-10-31T05:50:01.675786+00:00",
+          "price_observed_at": "2026-10-31T05:50:01.675786+00:00",
+          "top_outcomes": [
+            {
+              "id": 240612458,
+              "name": "Yes",
+              "probability": 0.495,
+              "rendered_percent": 50,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 240612459,
+              "name": "No",
+              "probability": 0.5,
+              "rendered_percent": 50,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 66907859,
+          "name": "Another GTA VI trailer released by November 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "entertainment",
+          "llm_sport_category": "entertainment",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T07:45:32.413691+00:00",
+          "prices_updated_at": "2026-11-09T13:35:26.515761+00:00",
+          "price_observed_at": "2026-11-09T13:35:26.515761+00:00",
+          "top_outcomes": [
+            {
+              "id": 251306316,
+              "name": "Yes",
+              "probability": 0.185,
+              "rendered_percent": 19,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 251306317,
+              "name": "No",
+              "probability": 0.815,
+              "rendered_percent": 81,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "deadline": "2026-12-05",
+      "title": "By December 5",
+      "deadline_phrase": "by December 5",
+      "candidate_markets": []
+    },
+    {
+      "deadline": "2026-12-10",
+      "title": "By December 10",
+      "deadline_phrase": "by December 10",
+      "candidate_markets": []
+    },
+    {
+      "deadline": "2026-12-15",
+      "title": "By December 15",
+      "deadline_phrase": "by December 15",
+      "candidate_markets": [
+        {
+          "id": 61341172,
+          "name": "Will Anthropic IPO by December 15, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "economics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-16T04:59:00+00:00",
+          "updated_at": "2026-11-09T13:34:49.085068+00:00",
+          "prices_updated_at": "2026-11-09T13:37:08.755973+00:00",
+          "top_outcomes": [
+            {
+              "id": 230903794,
+              "name": "Yes",
+              "probability": 0.865,
+              "american_odds": -641,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 86
+            },
+            {
+              "id": 230903795,
+              "name": "No",
+              "probability": 0.135,
+              "american_odds": 641,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 14
+            }
+          ]
+        },
+        {
+          "id": 69205589,
+          "name": "Next James Bond announced by December 15, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "entertainment",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-16T04:59:00+00:00",
+          "updated_at": "2026-11-09T06:40:27.213788+00:00",
+          "prices_updated_at": "2026-11-09T06:40:27.213788+00:00",
+          "top_outcomes": [
+            {
+              "id": 259505521,
+              "name": "Yes",
+              "probability": 0.8,
+              "american_odds": -400,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 80
+            },
+            {
+              "id": 259505522,
+              "name": "No",
+              "probability": 0.2,
+              "american_odds": 400,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 20
+            }
+          ]
+        },
+        {
+          "id": 66864232,
+          "name": "Next Astra Model (6.1+) released by December 15, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-16T04:59:00+00:00",
+          "updated_at": "2026-11-09T04:35:50.477624+00:00",
+          "prices_updated_at": "2026-11-09T04:35:50.477624+00:00",
+          "top_outcomes": [
+            {
+              "id": 251146146,
+              "name": "Yes",
+              "probability": 0.938,
+              "american_odds": -1513,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 94
+            },
+            {
+              "id": 251146147,
+              "name": "No",
+              "probability": 0.062,
+              "american_odds": 1513,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 6
+            }
+          ]
+        },
+        {
+          "id": 64874901,
+          "name": "Muse Charm released by December 15, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-16T04:59:00+00:00",
+          "updated_at": "2026-11-06T00:34:21.859197+00:00",
+          "prices_updated_at": "2026-11-06T14:51:59.547973+00:00",
+          "top_outcomes": [
+            {
+              "id": 243958904,
+              "name": "Yes",
+              "probability": 0.76,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 76
+            },
+            {
+              "id": 243958905,
+              "name": "No",
+              "probability": 0.24,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 24
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "deadline": "2026-12-20",
+      "title": "By December 20",
+      "deadline_phrase": "by December 20",
+      "candidate_markets": []
+    },
+    {
+      "deadline": "2026-12-25",
+      "title": "By December 25",
+      "deadline_phrase": "by December 25",
+      "candidate_markets": []
+    },
+    {
+      "deadline": "2026-12-31",
+      "title": "By December 31",
+      "deadline_phrase": "by December 31",
+      "candidate_markets": [
+        {
+          "id": 19927933,
+          "name": "Strait of Hormuz traffic returns to normal by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "economics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:52:24.590458+00:00",
+          "prices_updated_at": "2026-11-09T12:35:49.108108+00:00",
+          "top_outcomes": [
+            {
+              "id": 106731691,
+              "name": "Yes",
+              "probability": 0.085,
+              "american_odds": 1076,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 22979752,
+          "name": "Will Anthropic\u2019s valuation hit __ by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "economics",
+          "llm_sport_category": "economics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-05T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:30:32.960925+00:00",
+          "prices_updated_at": "2026-11-09T12:30:32.960925+00:00",
+          "top_outcomes": [
+            {
+              "id": 116713690,
+              "name": "\u2191$1.5T",
+              "probability": 0.759,
+              "american_odds": -315,
+              "rank": 5,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 116713687,
+              "name": "\u2191$1.75T",
+              "probability": 0.475,
+              "american_odds": 111,
+              "rank": 6,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 116713684,
+              "name": "\u2191$1.0T",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 116713688,
+              "name": "\u2191$1.1T",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 116713682,
+              "name": "\u2191$1.25T",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            }
+          ]
+        },
+        {
+          "id": 5455924,
+          "name": "Will China invade Taiwan by December 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2028-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:30:10.933145+00:00",
+          "prices_updated_at": "2026-11-09T12:30:10.933145+00:00",
+          "top_outcomes": [
+            {
+              "id": 27956685,
+              "name": "Yes",
+              "probability": 0.085,
+              "american_odds": 1076,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 8422080,
+          "name": "Pete Hegseth out as Secretary of Defense by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "politics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:51:37.774132+00:00",
+          "prices_updated_at": "2026-11-09T12:30:14.842846+00:00",
+          "top_outcomes": [
+            {
+              "id": 45473325,
+              "name": "Yes",
+              "probability": 0.455,
+              "american_odds": 120,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 58918693,
+          "name": "Who will attend a round of US-Iran peace talks by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T03:45:45.645627+00:00",
+          "prices_updated_at": "2026-11-09T13:22:45.019828+00:00",
+          "top_outcomes": [
+            {
+              "id": 240380623,
+              "name": "Steve Witkoff",
+              "probability": 1.0,
+              "american_odds": 170,
+              "rank": 6,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 218633930,
+              "name": "Abbas Araghchi",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 218633928,
+              "name": "Jared Kushner",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 218633933,
+              "name": "Mohammed bin Abdulrahman Al Thani",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 218633929,
+              "name": "Steve Witkoff",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            }
+          ]
+        },
+        {
+          "id": 20565977,
+          "name": "Which cities will Russia enter by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:30:29.654214+00:00",
+          "prices_updated_at": "2026-11-09T12:30:29.654214+00:00",
+          "top_outcomes": [
+            {
+              "id": 109183482,
+              "name": "Druzkhivka",
+              "probability": 0.165,
+              "american_odds": 506,
+              "rank": 3,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 109183484,
+              "name": "Kramatorsk",
+              "probability": 0.05,
+              "american_odds": 1900,
+              "rank": 4,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 109183483,
+              "name": "Sloviansk",
+              "probability": 0.05,
+              "american_odds": 1900,
+              "rank": 4,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 109183485,
+              "name": "Kherson",
+              "probability": 0.03,
+              "american_odds": 3233,
+              "rank": 6,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 109183481,
+              "name": "Dopropillia",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            }
+          ]
+        },
+        {
+          "id": 22979764,
+          "name": "Will OpenAI's valuation hit __ by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "tech",
+          "llm_sport_category": "economics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-05T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:30:33.329540+00:00",
+          "prices_updated_at": "2026-11-09T12:30:33.329540+00:00",
+          "top_outcomes": [
+            {
+              "id": 252690576,
+              "name": "\u2191$1.3T",
+              "probability": 0.71,
+              "american_odds": -245,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 252690577,
+              "name": "\u2191$1.35T",
+              "probability": 0.41,
+              "american_odds": 144,
+              "rank": 6,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 116713728,
+              "name": "\u2191$1.0T",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 116713724,
+              "name": "\u2191$1.25T",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 116713725,
+              "name": "\u2191$900B",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            }
+          ]
+        },
+        {
+          "id": 30635272,
+          "name": "Which countries will recognize Israel by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T13:34:48.087546+00:00",
+          "prices_updated_at": "2026-11-09T13:34:48.087546+00:00",
+          "top_outcomes": [
+            {
+              "id": 141077474,
+              "name": "Venezuela",
+              "probability": 0.055,
+              "american_odds": 1718,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 141077478,
+              "name": "Lebanon",
+              "probability": 0.045,
+              "american_odds": 2122,
+              "rank": 3,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 141077477,
+              "name": "Saudi Arabia",
+              "probability": 0.0375,
+              "american_odds": 2567,
+              "rank": 4,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 141077484,
+              "name": "Pakistan",
+              "probability": 0.032,
+              "american_odds": 3025,
+              "rank": 5,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 141077485,
+              "name": "Kuwait",
+              "probability": 0.032,
+              "american_odds": 3025,
+              "rank": 5,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 57566477,
+          "name": "Who will visit Ukraine by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T13:35:12.568556+00:00",
+          "prices_updated_at": "2026-11-09T13:35:12.568556+00:00",
+          "top_outcomes": [
+            {
+              "id": 213582780,
+              "name": "Mark Rutte",
+              "probability": 0.45,
+              "american_odds": 122,
+              "rank": 10,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 213582787,
+              "name": "Andy Burnham",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 213582781,
+              "name": "Ant\u00f3nio Costa",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 213582782,
+              "name": "Donald Tusk",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 213582790,
+              "name": "Friedrich Merz",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            }
+          ]
+        },
+        {
+          "id": 8648794,
+          "name": "Will a Chinese company have a top ___ AI model by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "tech",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:36:33.421189+00:00",
+          "prices_updated_at": "2026-11-09T12:30:16.293972+00:00",
+          "top_outcomes": [
+            {
+              "id": 201870941,
+              "name": "#3",
+              "probability": 0.165,
+              "american_odds": 506,
+              "rank": 3,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 46899480,
+              "name": "#1",
+              "probability": 0.07,
+              "american_odds": 1329,
+              "rank": 4,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 201870943,
+              "name": "#10",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            },
+            {
+              "id": 201870942,
+              "name": "#5",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            }
+          ]
+        },
+        {
+          "id": 27594137,
+          "name": "Trump meets with Putin by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T13:34:44.923309+00:00",
+          "prices_updated_at": "2026-11-09T13:35:30.516078+00:00",
+          "price_observed_at": "2026-11-09T13:35:30.516078+00:00",
+          "top_outcomes": [
+            {
+              "id": 131153306,
+              "name": "Yes",
+              "probability": 0.89,
+              "rendered_percent": 89,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 131153307,
+              "name": "No",
+              "probability": 0.11,
+              "rendered_percent": 11,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 62162058,
+          "name": "Next Claude Opus (5.6+) released by December 31, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "tech",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-31T23:59:00+00:00",
+          "updated_at": "2026-11-09T06:39:10.392677+00:00",
+          "prices_updated_at": "2026-11-09T13:19:33.973300+00:00",
+          "price_observed_at": "2026-11-09T13:19:33.973300+00:00",
+          "top_outcomes": [
+            {
+              "id": 234855307,
+              "name": "Yes",
+              "probability": 0.88,
+              "rendered_percent": 88,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 234855308,
+              "name": "No",
+              "probability": 0.12,
+              "rendered_percent": 12,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 7578123,
+          "name": "Will France pass a national budget by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "politics",
+          "llm_sport_category": "economics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2026-12-31T22:59:00+00:00",
+          "updated_at": "2026-11-09T12:30:13.348705+00:00",
+          "prices_updated_at": "2026-11-09T12:30:13.348705+00:00",
+          "price_observed_at": "2026-11-09T12:30:13.348705+00:00",
+          "top_outcomes": [
+            {
+              "id": 40239396,
+              "name": "Yes",
+              "probability": 0.52,
+              "rendered_percent": 52,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 40239397,
+              "name": "No",
+              "probability": 0.48,
+              "rendered_percent": 48,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 30587891,
+          "name": "Will Banksy create a new mural or street artwork by December 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "entertainment",
+          "llm_sport_category": "entertainment",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T13:34:47.999257+00:00",
+          "prices_updated_at": "2026-11-07T23:51:20.329678+00:00",
+          "price_observed_at": "2026-11-07T23:51:20.329678+00:00",
+          "top_outcomes": [
+            {
+              "id": 140936454,
+              "name": "Yes",
+              "probability": 0.42,
+              "rendered_percent": 42,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 140936455,
+              "name": "No",
+              "probability": 0.5800000000000001,
+              "rendered_percent": 58,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 13791228,
+          "name": "SCOTUS accepts sports event contract case by December 31, 2026?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "yes_no",
+          "category": "legal",
+          "llm_sport_category": "legal",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 5,
+          "resolution_date": "2027-01-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T11:34:18.727083+00:00",
+          "prices_updated_at": "2026-11-09T13:35:54.524273+00:00",
+          "price_observed_at": "2026-11-09T13:35:54.524273+00:00",
+          "top_outcomes": [
+            {
+              "id": 125638954,
+              "name": "Yes",
+              "probability": 0.095,
+              "rendered_percent": 10,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            },
+            {
+              "id": 125638955,
+              "name": "No",
+              "probability": 0.905,
+              "rendered_percent": 90,
+              "american_odds": null,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "deadline": "2027-01-01",
+      "title": "By January 1",
+      "deadline_phrase": "by January 1",
+      "candidate_markets": []
+    },
+    {
+      "deadline": "2027-01-15",
+      "title": "By January 15",
+      "deadline_phrase": "by January 15",
+      "candidate_markets": []
+    },
+    {
+      "deadline": "2027-01-20",
+      "title": "By January 20",
+      "deadline_phrase": "by January 20",
+      "candidate_markets": []
+    },
+    {
+      "deadline": "2027-01-31",
+      "title": "By January 31",
+      "deadline_phrase": "by January 31",
+      "candidate_markets": [
+        {
+          "id": 68513406,
+          "name": "Mary Peltola charged by January 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-02-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T09:27:50.121895+00:00",
+          "prices_updated_at": "2026-11-09T09:27:50.121895+00:00",
+          "top_outcomes": [
+            {
+              "id": 257098087,
+              "name": "Yes",
+              "probability": 0.0595,
+              "american_odds": 1581,
+              "rank": 1,
+              "movement": -0.0025,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 67896902,
+          "name": "Brazil declares emergency rule in Bras\u00edlia by January 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-02-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T08:37:01.173936+00:00",
+          "prices_updated_at": "2026-11-09T08:37:01.173936+00:00",
+          "top_outcomes": [
+            {
+              "id": 255114926,
+              "name": "Yes",
+              "probability": 0.065,
+              "american_odds": 1438,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 66633627,
+          "name": "Will the Knesset pass the \"Defendant Law\" by January 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-02-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T07:45:32.039742+00:00",
+          "prices_updated_at": "2026-10-25T03:32:30.072571+00:00",
+          "top_outcomes": [
+            {
+              "id": 251306309,
+              "name": "Yes",
+              "probability": 0.36,
+              "american_odds": 178,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 61340820,
+          "name": "Russia x Ukraine ceasefire agreement by January 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-02-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:30:30.518459+00:00",
+          "prices_updated_at": "2026-11-09T13:37:08.755973+00:00",
+          "top_outcomes": [
+            {
+              "id": 230902790,
+              "name": "No",
+              "probability": 0.75,
+              "american_odds": -308,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 75
+            },
+            {
+              "id": 230902789,
+              "name": "Yes",
+              "probability": 0.25,
+              "american_odds": 308,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 25
+            }
+          ]
+        },
+        {
+          "id": 61331863,
+          "name": "Tesla and SpaceX merger officially announced by January 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-02-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:29:53.827408+00:00",
+          "prices_updated_at": "2026-11-09T12:29:53.827408+00:00",
+          "top_outcomes": [
+            {
+              "id": 230869681,
+              "name": "No",
+              "probability": 0.82,
+              "american_odds": -456,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 82
+            },
+            {
+              "id": 230869680,
+              "name": "Yes",
+              "probability": 0.18,
+              "american_odds": 456,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 18
+            }
+          ]
+        },
+        {
+          "id": 69157379,
+          "name": "Will the new Senate confirm a Trump Cabinet or federal judge nominee by January 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-02-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T09:28:27.721991+00:00",
+          "prices_updated_at": "2026-11-09T09:28:27.721991+00:00",
+          "top_outcomes": [
+            {
+              "id": 259349376,
+              "name": "No",
+              "probability": 0.87,
+              "american_odds": -669,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 87
+            },
+            {
+              "id": 259349375,
+              "name": "Yes",
+              "probability": 0.13,
+              "american_odds": 669,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 13
+            }
+          ]
+        },
+        {
+          "id": 68210547,
+          "name": "Major airlines suspend Ben Gurion flights by January 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-02-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T08:37:13.676154+00:00",
+          "prices_updated_at": "2026-11-09T08:37:13.676154+00:00",
+          "top_outcomes": [
+            {
+              "id": 256012905,
+              "name": "No",
+              "probability": 0.635,
+              "american_odds": -174,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 64
+            },
+            {
+              "id": 256012904,
+              "name": "Yes",
+              "probability": 0.365,
+              "american_odds": 174,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 36
+            }
+          ]
+        },
+        {
+          "id": 65875258,
+          "name": "Next Gemini Argon released by January 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-02-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T07:45:22.771587+00:00",
+          "prices_updated_at": "2026-11-09T07:45:22.771587+00:00",
+          "top_outcomes": [
+            {
+              "id": 247634325,
+              "name": "No",
+              "probability": 0.87,
+              "american_odds": -669,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 87
+            },
+            {
+              "id": 247634324,
+              "name": "Yes",
+              "probability": 0.13,
+              "american_odds": 669,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 13
+            }
+          ]
+        },
+        {
+          "id": 65563577,
+          "name": "Next Muse Wonder (1.1+) released by January 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-02-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T07:44:55.490072+00:00",
+          "prices_updated_at": "2026-11-09T07:44:55.490072+00:00",
+          "top_outcomes": [
+            {
+              "id": 246421439,
+              "name": "Yes",
+              "probability": 0.815,
+              "american_odds": -441,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 81
+            },
+            {
+              "id": 246421440,
+              "name": "No",
+              "probability": 0.185,
+              "american_odds": 441,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 19
+            }
+          ]
+        },
+        {
+          "id": 68429654,
+          "name": "US imports Russian diesel by January 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-02-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T07:44:52.922811+00:00",
+          "prices_updated_at": "2026-11-09T07:44:52.922811+00:00",
+          "top_outcomes": [
+            {
+              "id": 256823682,
+              "name": "No",
+              "probability": 0.77,
+              "american_odds": -335,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 77
+            },
+            {
+              "id": 256823681,
+              "name": "Yes",
+              "probability": 0.23,
+              "american_odds": 335,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 23
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "deadline": "2027-02-15",
+      "title": "By February 15",
+      "deadline_phrase": "by February 15",
+      "candidate_markets": []
+    },
+    {
+      "deadline": "2027-02-28",
+      "title": "By February 28",
+      "deadline_phrase": "by February 28",
+      "candidate_markets": [
+        {
+          "id": 69435267,
+          "name": "Which parties will support the new Israeli government in the vote of confidence by February 28?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-03-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T10:32:26.425783+00:00",
+          "prices_updated_at": "2026-11-07T06:30:31.555281+00:00",
+          "top_outcomes": [
+            {
+              "id": 260452894,
+              "name": "Yesh Atid",
+              "probability": 0.495,
+              "american_odds": 102,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 261655401,
+              "name": "Bennett 2026",
+              "probability": 0.48,
+              "american_odds": 108,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 261655402,
+              "name": "Agudat Yisrael",
+              "probability": 0.42,
+              "american_odds": 138,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 261655403,
+              "name": "Ra'am",
+              "probability": 0.35,
+              "american_odds": 186,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 261655404,
+              "name": "Homat Torat Yisrael",
+              "probability": 0.32,
+              "american_odds": 212,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 61340821,
+          "name": "Russia x Ukraine ceasefire agreement by February 28, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-03-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:30:30.518459+00:00",
+          "prices_updated_at": "2026-11-09T13:37:31.719789+00:00",
+          "top_outcomes": [
+            {
+              "id": 230902792,
+              "name": "No",
+              "probability": 0.715,
+              "american_odds": -251,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 72
+            },
+            {
+              "id": 230902791,
+              "name": "Yes",
+              "probability": 0.285,
+              "american_odds": 251,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 28
+            }
+          ]
+        },
+        {
+          "id": 61331865,
+          "name": "Tesla and SpaceX merger officially announced by February 28, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-03-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T12:29:53.827408+00:00",
+          "prices_updated_at": "2026-11-09T12:29:53.827408+00:00",
+          "top_outcomes": [
+            {
+              "id": 230869685,
+              "name": "No",
+              "probability": 0.665,
+              "american_odds": -199,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 67
+            },
+            {
+              "id": 230869684,
+              "name": "Yes",
+              "probability": 0.335,
+              "american_odds": 199,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 33
+            }
+          ]
+        },
+        {
+          "id": 69442593,
+          "name": "Riksdag approves Swedish Prime Minister by February 28, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-03-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T10:32:26.723970+00:00",
+          "prices_updated_at": "2026-11-09T10:32:26.723970+00:00",
+          "top_outcomes": [
+            {
+              "id": 260352493,
+              "name": "Yes",
+              "probability": 0.815,
+              "american_odds": -441,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 81
+            },
+            {
+              "id": 260352494,
+              "name": "No",
+              "probability": 0.185,
+              "american_odds": 441,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 19
+            }
+          ]
+        },
+        {
+          "id": 67852189,
+          "name": "Next Israeli government formed by February 28, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-03-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T08:36:58.722470+00:00",
+          "prices_updated_at": "2026-11-09T08:36:58.722470+00:00",
+          "top_outcomes": [
+            {
+              "id": 254668302,
+              "name": "Yes",
+              "probability": 0.655,
+              "american_odds": -190,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 65
+            },
+            {
+              "id": 254668303,
+              "name": "No",
+              "probability": 0.345,
+              "american_odds": 190,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 35
+            }
+          ]
+        },
+        {
+          "id": 65154444,
+          "name": "Next Mistral Small (4.1+) released by February 28, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-03-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T06:40:28.084851+00:00",
+          "prices_updated_at": "2026-11-09T06:40:28.084851+00:00",
+          "top_outcomes": [
+            {
+              "id": 244987015,
+              "name": "Yes",
+              "probability": 0.805,
+              "american_odds": -413,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 80
+            },
+            {
+              "id": 244987016,
+              "name": "No",
+              "probability": 0.195,
+              "american_odds": 413,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 20
+            }
+          ]
+        },
+        {
+          "id": 61425489,
+          "name": "Base iPhone 18 released by February 28, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-03-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T05:31:34.085709+00:00",
+          "prices_updated_at": "2026-11-09T05:31:34.085709+00:00",
+          "top_outcomes": [
+            {
+              "id": 231259431,
+              "name": "No",
+              "probability": 0.86,
+              "american_odds": -614,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 86
+            },
+            {
+              "id": 231259430,
+              "name": "Yes",
+              "probability": 0.14,
+              "american_odds": 614,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 14
+            }
+          ]
+        },
+        {
+          "id": 61384574,
+          "name": "Will Michael Carrick be out as Manchester United manager by February 28, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "soccer",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 5,
+          "resolution_date": "2027-03-01T04:59:00+00:00",
+          "updated_at": "2026-11-09T05:30:41.550424+00:00",
+          "prices_updated_at": "2026-11-09T05:30:41.550424+00:00",
+          "top_outcomes": [
+            {
+              "id": 231092764,
+              "name": "Yes",
+              "probability": 0.9035,
+              "american_odds": -936,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 90
+            },
+            {
+              "id": 231092765,
+              "name": "No",
+              "probability": 0.0965,
+              "american_odds": 936,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 10
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "deadline": "2027-03-15",
+      "title": "By March 15",
+      "deadline_phrase": "by March 15",
+      "candidate_markets": []
+    },
+    {
+      "deadline": "2027-03-31",
+      "title": "By March 31",
+      "deadline_phrase": "by March 31",
+      "candidate_markets": [
+        {
+          "id": 68985546,
+          "name": "Democratic 2028 presidential odds hit __ by March 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-04-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T09:28:24.738392+00:00",
+          "prices_updated_at": "2026-11-09T09:28:24.738392+00:00",
+          "top_outcomes": [
+            {
+              "id": 260507956,
+              "name": "\u2191 70%",
+              "probability": 0.73,
+              "american_odds": -270,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 260507957,
+              "name": "\u2193 60%",
+              "probability": 0.385,
+              "american_odds": 160,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 258746338,
+              "name": "\u2191 75%",
+              "probability": 0.26,
+              "american_odds": 285,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 258709134,
+              "name": "\u2193 55%",
+              "probability": 0.125,
+              "american_odds": 700,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 258709135,
+              "name": "\u2193 50%",
+              "probability": 0.105,
+              "american_odds": 852,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 64783112,
+          "name": "Jair Bolsonaro released from custody by March 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-04-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T06:40:28.055369+00:00",
+          "prices_updated_at": "2026-11-09T13:22:29.243893+00:00",
+          "top_outcomes": [
+            {
+              "id": 243674579,
+              "name": "Yes",
+              "probability": 0.21,
+              "american_odds": 376,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 68985554,
+          "name": "Newsom flips Vance for 2028 president by March 31?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-04-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T09:28:25.712057+00:00",
+          "prices_updated_at": "2026-11-09T09:28:25.712057+00:00",
+          "top_outcomes": [
+            {
+              "id": 258746353,
+              "name": "Yes",
+              "probability": 0.365,
+              "american_odds": 174,
+              "rank": 1,
+              "movement": 0.01,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 65689552,
+          "name": "Will Netanyahu announce his retirement from politics by March 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-04-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T07:45:10.368637+00:00",
+          "prices_updated_at": "2026-11-09T07:45:10.368637+00:00",
+          "top_outcomes": [
+            {
+              "id": 247000303,
+              "name": "Yes",
+              "probability": 0.115,
+              "american_odds": 770,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 64536957,
+          "name": "Jair Bolsonaro pardoned by March 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-04-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T06:40:25.353489+00:00",
+          "prices_updated_at": "2026-11-09T06:40:25.353489+00:00",
+          "top_outcomes": [
+            {
+              "id": 242930243,
+              "name": "Yes",
+              "probability": 0.085,
+              "american_odds": 1076,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 66900715,
+          "name": "Alberta snap election called by March 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-04-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T07:45:39.701528+00:00",
+          "prices_updated_at": "2026-11-09T07:45:39.701528+00:00",
+          "top_outcomes": [
+            {
+              "id": 251278179,
+              "name": "Yes",
+              "probability": 0.165,
+              "american_odds": 506,
+              "rank": 1,
+              "movement": -0.01,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 58610626,
+          "name": "Mamdani announces reparations by March 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-04-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T01:41:59.209723+00:00",
+          "prices_updated_at": "2026-11-07T20:48:55.993530+00:00",
+          "top_outcomes": [
+            {
+              "id": 217528579,
+              "name": "Yes",
+              "probability": 0.23,
+              "american_odds": 335,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 57661984,
+          "name": "Will Bloomberg IPO by March 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-04-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T13:35:15.180101+00:00",
+          "prices_updated_at": "2026-11-09T13:37:01.252081+00:00",
+          "top_outcomes": [
+            {
+              "id": 213957986,
+              "name": "No",
+              "probability": 0.845,
+              "american_odds": -545,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null,
+              "rendered_percent": 85
+            },
+            {
+              "id": 213957985,
+              "name": "Yes",
+              "probability": 0.155,
+              "american_odds": 545,
+              "rank": 2,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null,
+              "rendered_percent": 15
+            }
+          ]
+        },
+        {
+          "id": 65597046,
+          "name": "Will Russia capture Orikhiv by March 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-04-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T13:34:40.899026+00:00",
+          "prices_updated_at": "2026-11-09T13:34:40.899026+00:00",
+          "top_outcomes": [
+            {
+              "id": 246542096,
+              "name": "No",
+              "probability": 0.83,
+              "american_odds": -488,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 83
+            },
+            {
+              "id": 246542095,
+              "name": "Yes",
+              "probability": 0.17,
+              "american_odds": 488,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 17
+            }
+          ]
+        },
+        {
+          "id": 64052880,
+          "name": "Will Russia capture all of Kostyantynivka by March 31, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-04-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T12:55:04.395456+00:00",
+          "prices_updated_at": "2026-11-09T13:37:01.252081+00:00",
+          "top_outcomes": [
+            {
+              "id": 241155916,
+              "name": "No",
+              "probability": 0.675,
+              "american_odds": -208,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 68
+            },
+            {
+              "id": 241155915,
+              "name": "Yes",
+              "probability": 0.325,
+              "american_odds": 208,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 32
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "deadline": "2027-04-30",
+      "title": "By April 30",
+      "deadline_phrase": "by April 30",
+      "candidate_markets": [
+        {
+          "id": 61340812,
+          "name": "Russia x Ukraine ceasefire agreement by April 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-05-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T12:30:30.518459+00:00",
+          "prices_updated_at": "2026-11-09T13:37:01.252081+00:00",
+          "top_outcomes": [
+            {
+              "id": 230902774,
+              "name": "No",
+              "probability": 0.585,
+              "american_odds": -141,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 59
+            },
+            {
+              "id": 230902773,
+              "name": "Yes",
+              "probability": 0.415,
+              "american_odds": 141,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 41
+            }
+          ]
+        },
+        {
+          "id": 66677558,
+          "name": "Will Tesla perform another live stunt with the Roadster by April 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-05-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T07:45:33.132243+00:00",
+          "prices_updated_at": "2026-11-09T07:45:33.132243+00:00",
+          "top_outcomes": [
+            {
+              "id": 250487063,
+              "name": "No",
+              "probability": 0.785,
+              "american_odds": -365,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 79
+            },
+            {
+              "id": 250487062,
+              "name": "Yes",
+              "probability": 0.215,
+              "american_odds": 365,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 21
+            }
+          ]
+        },
+        {
+          "id": 65544834,
+          "name": "Will Jack Doherty post again on X by April 30?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "entertainment",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-05-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T07:44:54.672603+00:00",
+          "prices_updated_at": "2026-11-09T07:44:54.672603+00:00",
+          "top_outcomes": [
+            {
+              "id": 246352811,
+              "name": "Yes",
+              "probability": 0.8575,
+              "american_odds": -602,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 86
+            },
+            {
+              "id": 246352812,
+              "name": "No",
+              "probability": 0.1425,
+              "american_odds": 602,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 14
+            }
+          ]
+        },
+        {
+          "id": 61425491,
+          "name": "Base iPhone 18 released by April 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-05-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T05:31:34.085709+00:00",
+          "prices_updated_at": "2026-11-09T05:31:34.085709+00:00",
+          "top_outcomes": [
+            {
+              "id": 231259434,
+              "name": "Yes",
+              "probability": 0.885,
+              "american_odds": -770,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 88
+            },
+            {
+              "id": 231259435,
+              "name": "No",
+              "probability": 0.115,
+              "american_odds": 770,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 12
+            }
+          ]
+        },
+        {
+          "id": 61384575,
+          "name": "Will Michael Carrick be out as Manchester United manager by April 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "container_member",
+          "category": "game_prop",
+          "llm_sport_category": "soccer",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 5,
+          "resolution_date": "2027-05-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T05:30:41.550424+00:00",
+          "prices_updated_at": "2026-11-09T05:30:41.550424+00:00",
+          "top_outcomes": [
+            {
+              "id": 231092766,
+              "name": "Yes",
+              "probability": 0.935,
+              "american_odds": -1438,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 93
+            },
+            {
+              "id": 231092767,
+              "name": "No",
+              "probability": 0.065,
+              "american_odds": 1438,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null,
+              "rendered_percent": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "deadline": "2027-06-30",
+      "title": "By June 30",
+      "deadline_phrase": "by June 30",
+      "candidate_markets": [
+        {
+          "id": 8400715,
+          "name": "Will China invade Taiwan by June 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-07-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T12:30:14.773764+00:00",
+          "prices_updated_at": "2026-11-09T12:30:14.773764+00:00",
+          "top_outcomes": [
+            {
+              "id": 45343636,
+              "name": "Yes",
+              "probability": 0.055,
+              "american_odds": 1718,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 4645935,
+          "name": "Will Uber ask Travis Kalanick back by June 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "tech",
+          "llm_sport_category": "tech",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-07-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T12:30:10.611463+00:00",
+          "prices_updated_at": "2026-11-09T13:35:01.372779+00:00",
+          "top_outcomes": [
+            {
+              "id": 25669121,
+              "name": "Yes",
+              "probability": 0.084,
+              "american_odds": 1090,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 65106715,
+          "name": "Modi out by June 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-07-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T07:44:53.175347+00:00",
+          "prices_updated_at": "2026-11-09T07:44:53.175347+00:00",
+          "top_outcomes": [
+            {
+              "id": 244855784,
+              "name": "Yes",
+              "probability": 0.105,
+              "american_odds": 852,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 63688862,
+          "name": "Will the Iranian regime fall by June 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-07-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T06:40:09.243551+00:00",
+          "prices_updated_at": "2026-11-09T10:41:46.881312+00:00",
+          "top_outcomes": [
+            {
+              "id": 239957339,
+              "name": "Yes",
+              "probability": 0.135,
+              "american_odds": 641,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 58492237,
+          "name": "Alofoke forms party in DR by June 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "entertainment",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-07-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T01:41:40.991175+00:00",
+          "prices_updated_at": "2026-11-09T08:02:15.286352+00:00",
+          "top_outcomes": [
+            {
+              "id": 217003141,
+              "name": "Yes",
+              "probability": 0.685,
+              "american_odds": -217,
+              "rank": 1,
+              "movement": null,
+              "is_winner": false,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 65563504,
+          "name": "What will Trump's approval rating hit by June 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-07-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T07:44:55.846256+00:00",
+          "prices_updated_at": "2026-11-08T10:44:22.985039+00:00",
+          "top_outcomes": [
+            {
+              "id": 246468846,
+              "name": "\u2193 37%",
+              "probability": 0.808,
+              "american_odds": -421,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 247018258,
+              "name": "\u2193 36%",
+              "probability": 0.655,
+              "american_odds": -190,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 246529333,
+              "name": "\u2193 35%",
+              "probability": 0.47,
+              "american_odds": 113,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 246468847,
+              "name": "\u2191 40%",
+              "probability": 0.41,
+              "american_odds": 144,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 247018262,
+              "name": "\u2191 39%",
+              "probability": 1.0,
+              "american_odds": null,
+              "rank": 1,
+              "movement": null,
+              "is_winner": true,
+              "resolution_source": "api_settlement"
+            }
+          ]
+        },
+        {
+          "id": 64783107,
+          "name": "Zelenskyy out as Ukraine president by June 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "politics",
+          "llm_sport_category": "politics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-07-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T06:40:27.980412+00:00",
+          "prices_updated_at": "2026-11-09T12:50:42.799212+00:00",
+          "top_outcomes": [
+            {
+              "id": 243794689,
+              "name": "Yes",
+              "probability": 0.2,
+              "american_odds": 400,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 66908056,
+          "name": "Which cities will Russia enter by June 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "field",
+          "category": "geopolitics",
+          "llm_sport_category": "geopolitics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-07-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T07:45:41.792514+00:00",
+          "prices_updated_at": "2026-11-09T07:45:41.792514+00:00",
+          "top_outcomes": [
+            {
+              "id": 251336749,
+              "name": "Druzkhivka",
+              "probability": 0.665,
+              "american_odds": -199,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 251352961,
+              "name": "Sloviansk",
+              "probability": 0.265,
+              "american_odds": 277,
+              "rank": 2,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 251336750,
+              "name": "Kramatorsk",
+              "probability": 0.19,
+              "american_odds": 426,
+              "rank": 3,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 251306665,
+              "name": "Zaporizhia",
+              "probability": 0.165,
+              "american_odds": 506,
+              "rank": 4,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            },
+            {
+              "id": 251306667,
+              "name": "Sumy",
+              "probability": 0.125,
+              "american_odds": 700,
+              "rank": 5,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 65072812,
+          "name": "Will Swiss Parliament pass the UBS capital law by June 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "economics",
+          "llm_sport_category": "economics",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 2,
+          "resolution_date": "2027-07-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T07:44:52.664526+00:00",
+          "prices_updated_at": "2026-11-09T07:44:52.664526+00:00",
+          "top_outcomes": [
+            {
+              "id": 244875498,
+              "name": "Yes",
+              "probability": 0.78,
+              "american_odds": -355,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        },
+        {
+          "id": 62459597,
+          "name": "Man City to be stripped of EPL title by June 30, 2027?",
+          "source": "polymarket",
+          "status": "open",
+          "market_type": "claim",
+          "category": "championship",
+          "llm_sport_category": "soccer",
+          "sport": null,
+          "sport_name": null,
+          "market_tier": 1,
+          "resolution_date": "2027-07-01T03:59:00+00:00",
+          "updated_at": "2026-11-09T06:39:15.011863+00:00",
+          "prices_updated_at": "2026-11-09T12:50:45.817792+00:00",
+          "top_outcomes": [
+            {
+              "id": 237202950,
+              "name": "Yes",
+              "probability": 0.28,
+              "american_odds": 257,
+              "rank": 1,
+              "movement": null,
+              "is_winner": null,
+              "resolution_source": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

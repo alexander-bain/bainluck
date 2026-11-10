@@ -262,6 +262,18 @@ struct SpecialEventMarketsView: View {
         return EventAtlasStates11666.verdictDisplay(verdicts: allVerdicts, atlasEnabled: true) ?? v.label
     }
 
+    /// Returns `true` only when the resolved verdict display is an agreed win
+    /// (`"✓ Won"` under Atlas, or `.won` when Atlas is off), so a multi-venue
+    /// disagreement (`"Pending"`) never inherits the first venue's bold emerald styling.
+    func verdictIsWonHighlight(
+        for o: OutcomeEntry,
+        verdict v: OutcomeVerdict,
+        atlasEnabled: Bool = ReleaseSurfaces.isEventPageAtlasEnabled()
+    ) -> Bool {
+        guard atlasEnabled else { return v == .won }
+        return resolvedVerdictText(for: o, verdict: v, atlasEnabled: true) == EventAtlasStates11666.wonWithCheck
+    }
+
     /// Order matters and mirrors web's `OutcomeBar`: a verdict is the strongest
     /// statement, then an unpriced row (true live or settled), then a frozen
     /// quote, then a live bar.
@@ -548,9 +560,11 @@ struct SpecialEventMarketsView: View {
             }
             switch rowTreatment {
             case .verdict(let v):
-                (!ReleaseSurfaces.isEventPageAtlasEnabled() ? Text(v.label) : Text(resolvedVerdictText(for: o, verdict: v)))
-                    .font(.system(size: 11, weight: v == .won ? .bold : .regular, design: .monospaced))
-                    .foregroundStyle(v == .won ? DS.emerald : Color.secondary)
+                let atlasOn = ReleaseSurfaces.isEventPageAtlasEnabled()
+                let isWon = verdictIsWonHighlight(for: o, verdict: v, atlasEnabled: atlasOn)
+                (!atlasOn ? Text(v.label) : Text(resolvedVerdictText(for: o, verdict: v, atlasEnabled: true)))
+                    .font(.system(size: 11, weight: isWon ? .bold : .regular, design: .monospaced))
+                    .foregroundStyle(isWon ? DS.emerald : Color.secondary)
             case .noPrice:
                 EmptyView()
             case .frozenQuote:

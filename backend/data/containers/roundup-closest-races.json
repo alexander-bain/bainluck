@@ -2,12 +2,19 @@
   "slug": "roundup-closest-races",
   "membership": "computed-produced",
   "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "same_window"
+  ],
+  "level": "member",
   "kicker": "CLOSEST RACES",
   "name": "The closest races still open",
   "category": "politics",
   "tag": "POLITICS",
   "section_title": "Open races",
   "footer": "Combined probability · both sources where paired",
+  "parent_slug": "midterms-2026",
+  "parent_name": "Midterms 2026",
   "rule": {
     "producer": "register_closest",
     "register": "midterms-2026",

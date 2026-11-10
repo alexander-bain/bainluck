@@ -2127,7 +2127,42 @@ def free_background_slots(
 #: `kalshi-cliff-drain` covers its cohort hourly). The census RUN over the tree
 #: merged with `ce54f96e3c` (W-1 on master) printed `explicit 102 implicit 39
 #: total 141`.
-BACKGROUND_BEAT_COUNT = 141
+#: 🔴 RE-DERIVED at Builder E (2026-11-07, #12231 over C-1): 141 → 142, explicit
+#: 102 → 103, fall-through UNMOVED at 39. `grouping-sentinel-weekly`
+#: (`crontab(minute=0, hour=16, day_of_week=4)`) names `background` explicitly.
+#: Fable's answer on #12231 said 144 against a base of 143; C-1 retired two beats
+#: before this landed, so the census was re-run, not offset. Cost: one fire a
+#: week. It pages the 59,249 open markets by primary key (12 pages of 5,000
+#: rows, ~4–5 s each, measured 2026-11-07), reads the graph twice, evaluates the 18
+#: round-up definitions live (each bounded at 60 s, all at 600 s), then one
+#: GitHub read and one comment, one Redis ZADD NX and one claim key. It holds a
+#: background slot for minutes once a week, inside an 840 s soft limit. The
+#: census RUN over the tree rebased onto `f3798ba3b0` (C-1 on master) printed
+#: `explicit 103 implicit 39 total 142`.
+#: 🔴 RE-DERIVED at speed (2026-11-08, #4437 Decide 89-A): 142 → 143, explicit
+#: 103 → 104, fall-through UNMOVED at 39. `refresh-open-futures-outcomes`
+#: (`crontab(minute="2-59/5")`) names `background` explicitly. Cost: twelve fires
+#: an hour, each ~5 s of database time (one 1/12 slice of open markets' outcomes,
+#: ~22 k rows in 2.4 s measured 2026-11-08; a delta by primary-key range; one
+#: anti-join over the ~262 k-row copy), about 60 s of a slot an hour. Its
+#: lateness is safe by construction: readers stop using the copy 15 minutes
+#: after its last pass. The census RUN over the tree branched from `dfb64a5dd5`
+#: printed `explicit 104 implicit 39 total 143`.
+#: #11935, 2026-11-08. The assembled configuration on the owned branch based
+#: on 46851401d3 reads explicit 105, implicit 39, total 144. The hourly
+#: refresh-awards-occasions fire names background. Disabled ceremony definitions
+#: return before Redis or database access. Enabled passes have a 90-second source
+#: budget, a 1 MiB evidence limit, the existing bounded durable read/CAS writer
+#: and a Redis publication. Model cost is $0. Task soft/hard limits are 120/150 s.
+#: 🔴 RE-DERIVED at Atlas (2026-11-08, #12372): 143 → 142, explicit UNMOVED at
+#: 104, fall-through 39 → 38. `generate-discover-comparison-candidates` (a
+#: default-queue fall-through beat) was taken off its timer per #12372 / #12221
+#: Part 1 §2. The census RUN over the tree rebased onto `ec6b8b3f04` printed
+#: `explicit 104 implicit 38 total 142`.
+#: #11935 composed with master `a68d05abe1`: the assembled configuration reads
+#: explicit 105, implicit 38, total 143. The ceremony refresh remains explicit
+#: background and #12372's retired comparison timer remains absent.
+BACKGROUND_BEAT_COUNT = 143
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

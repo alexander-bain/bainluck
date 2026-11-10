@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -13,10 +14,23 @@ from app.utils.prediction_market_matching import (
 )
 from app.utils.sport_keys import get_sport_key_from_ticker, is_kalshi_game_level_ticker
 
+# #12252: the game is dated from the clock. With the literal 26OCT08 the rescue stopped
+# finding it once the game aged out of its window (timebomb_confirm: red at +60 d on
+# 2026-11-07). Offset first, then truncate.
+GAME_AT = (datetime.now(timezone.utc) + timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
+
+
+def _kalshi_day(at: datetime) -> str:
+    return at.strftime("%y%b%d").upper()
+
+
+def _iso(at: datetime) -> str:
+    return at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 @pytest.mark.asyncio
 async def test_euroleague_winner_rescue_backfills_both_legs_despite_existing_game(monkeypatch):
-    ticker = "KXEUROLEAGUEGAME-26OCT081200CZVDUB"
+    ticker = f"KXEUROLEAGUEGAME-{_kalshi_day(GAME_AT)}1200CZVDUB"
     title = "KK Crvena zvezda Belgrade vs Dubai Basketball"
     calls = []
     # Quotes are synthetic; labels and ticker are Root's exact provider contract.
@@ -30,8 +44,8 @@ async def test_euroleague_winner_rescue_backfills_both_legs_despite_existing_gam
             "yes_bid_dollars": "0.4900",
             "yes_ask_dollars": "0.5100",
             "last_price_dollars": "0.5000",
-            "close_time": "2026-10-10T16:00:00Z",
-            "expected_expiration_time": "2026-10-08T19:00:00Z",
+            "close_time": _iso(GAME_AT + timedelta(days=2, hours=4)),
+            "expected_expiration_time": _iso(GAME_AT + timedelta(hours=7)),
         }
         for code, name in [("DUB", "Dubai Basketball"),
                            ("CZV", "KK Crvena zvezda Belgrade")]
@@ -42,7 +56,7 @@ async def test_euroleague_winner_rescue_backfills_both_legs_despite_existing_gam
         calls.append(kw)
         if kw.get("series_ticker") is None:
             # An existing game must not seal the current slate out of rescue.
-            return [{"event_ticker": "KXEUROLEAGUEGAME-26OCT071200CZVDUB",
+            return [{"event_ticker": f"KXEUROLEAGUEGAME-{_kalshi_day(GAME_AT - timedelta(days=1))}1200CZVDUB",
                      "title": title, "category": "Sports", "markets": legs}], None
         if kw["series_ticker"] == "KXEUROLEAGUEGAME":
             assert kw["with_nested_markets"] is False

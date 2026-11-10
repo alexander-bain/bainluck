@@ -24,6 +24,11 @@ and ``ranking_grades``; the writes go only there.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
+import math
+from pathlib import Path
+import re
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -230,6 +235,12 @@ def latest_grades(rows) -> list[dict]:
     """One grade per (slate, grader, card): the most recent wins."""
     latest: dict[tuple, dict] = {}
     for r in sorted(rows, key=lambda r: (r.graded_at, r.id or 0)):
+        raw_grade = str(r.grade or "")
+        grade_out = (
+            _DB_TO_GROUPING_GRADE.get(raw_grade, raw_grade)
+            if r.surface == SURFACE_GROUPING
+            else raw_grade
+        )
         latest[(r.slate_id, r.grader, r.item_key)] = {
             "slate_id": r.slate_id,
             "surface": r.surface,
@@ -237,7 +248,7 @@ def latest_grades(rows) -> list[dict]:
             "expert": r.expert,
             "position": r.position,
             "item_key": r.item_key,
-            "grade": r.grade,
+            "grade": grade_out,
             "note": r.note or "",
             "graded_at": r.graded_at.isoformat() if r.graded_at else None,
         }
@@ -270,5 +281,688 @@ async def get_grades(
     stmt = select(RankingGrade).where(RankingGrade.graded_at >= now - timedelta(days=days))
     if slate_id:
         stmt = stmt.where(RankingGrade.slate_id == slate_id)
+    else:
+        stmt = stmt.where(RankingGrade.surface != SURFACE_GROUPING)
     grades = latest_grades((await db.execute(stmt)).scalars().all())
     return {"grades": grades, "tally": family_tally(grades, now)}
+
+
+# ---------------------------------------------------------------------------
+# #12373 (Epic #12288, Plan #12221 row 6): private grading page for proposed
+# grouping cards shown beside their best single member.
+# ---------------------------------------------------------------------------
+
+SURFACE_GROUPING = "grouping"
+DEFAULT_GROUPING_SLATE_ID = "grouping-candidates-2026-11"
+EXAM_TEST_GROUPING_SLATE_ID = "sibling-family-exam-test-2026-11"
+GROUPING_GRADES = ("amazing", "fine", "no")
+# Lossless 1-to-1 bijection scoped to RankingGrade.surface == "grouping" so
+# writes satisfy Postgres ck_ranking_grades_grade ("grade IN ('shareable',
+# 'interesting', 'neither')") from ranking_slates_12095.py without adding a
+# MIGRATION-CLASS schema migration (Epic #12288 guardrail: schema migrations
+# wait for Alex's word).
+_GROUPING_TO_DB_GRADE: dict[str, str] = {
+    "amazing": "shareable",
+    "fine": "interesting",
+    "no": "neither",
+}
+_DB_TO_GROUPING_GRADE: dict[str, str] = {
+    "shareable": "amazing",
+    "interesting": "fine",
+    "neither": "no",
+    "amazing": "amazing",
+    "fine": "fine",
+    "no": "no",
+}
+_KID_PSEUDONYM_RE = re.compile(r"^kid[1-4]$", re.IGNORECASE)
+
+_GROUPING_CANDIDATES_PATHS: tuple[Path, ...] = (
+    Path(__file__).resolve().parents[2] / "data" / "discover" / "grouping-candidates-2026-11.json",
+    Path(__file__).resolve().parents[3] / "docs" / "discover" / "grouping-candidates-2026-11.json",
+)
+
+
+def normalize_grouping_grader(raw_grader: str, *, kid: bool = False) -> str:
+    """Normalize a grader identifier; enforce pseudonyms (`kid1`..`kid4`) for kids (#12373)."""
+    cleaned = " ".join(str(raw_grader or "").split())[:40]
+    if not cleaned:
+        return "kid1" if kid else ""
+    if not kid:
+        return cleaned
+    if _KID_PSEUDONYM_RE.match(cleaned):
+        return cleaned.lower()
+    return ""
+
+
+def select_best_single_member(family: Mapping[str, Any]) -> dict[str, Any]:
+    """Select the strongest single member market from a proposed family (#12373, #10355).
+
+    Prefers a priced binary member in ``[0.05, 0.95]`` closest to 50% (highest
+    tension as a standalone single card), falling back to any priced member,
+    then the first member in the family.
+    """
+    members = list(family.get("members") or [])
+    quotes = family.get("quotes") if isinstance(family.get("quotes"), Mapping) else {}
+    quote_by_id: dict[int, str] = {}
+    if isinstance(quotes, Mapping):
+        for id_key, q_key in (("market_a_id", "market_a_quote"), ("market_b_id", "market_b_quote")):
+            mid = quotes.get(id_key)
+            q = quotes.get(q_key)
+            if isinstance(mid, int) and isinstance(q, str) and q.strip():
+                quote_by_id[mid] = q.strip()
+
+    if not members:
+        return {
+            "id": 0,
+            "name": str(family.get("name") or ""),
+            "subject": "",
+            "source": str(family.get("source") or ""),
+            "category": str(family.get("category") or "other"),
+            "yes_probability": None,
+            "rendered_percent": None,
+            "resolution_date": None,
+            "rule_quote": "",
+        }
+
+    def _member_rank(m: Mapping[str, Any]) -> tuple[int, float, float, int]:
+        p, _lbl = _extract_member_preview_price(m)
+        mid = int(m.get("id") or 0)
+        if p is not None:
+            if 0.05 <= p <= 0.95:
+                return (0, abs(p - 0.50), -p, mid)
+            if 0.0 < p < 1.0:
+                return (1, abs(p - 0.50), -p, mid)
+        return (2, 1.0, 0.0, mid)
+
+    best = min(members, key=_member_rank)
+    prob, _best_lbl = _extract_member_preview_price(best)
+    pct = int(math.floor(prob * 100.0 + 0.5)) if prob is not None else None
+    mid = int(best.get("id") or 0)
+    return {
+        "id": mid,
+        "name": str(best.get("name") or ""),
+        "subject": str(best.get("subject") or ""),
+        "source": str(family.get("source") or ""),
+        "category": str(family.get("category") or "other"),
+        "yes_probability": prob,
+        "rendered_percent": pct,
+        "resolution_date": best.get("resolution_date"),
+        "rule_quote": quote_by_id.get(mid) or str(quotes.get("market_a_quote") or best.get("name") or ""),
+    }
+
+
+def _extract_member_preview_price(m: Mapping[str, Any]) -> tuple[float | None, str | None]:
+    """Return ``(probability, outcome_label)`` from ``yes_probability`` or multi-outcome ``outcomes`` (#12500)."""
+    raw_p = m.get("yes_probability")
+    raw_lbl = str(m.get("outcome_label") or "").strip() or None
+    if isinstance(raw_p, (int, float)) and not isinstance(raw_p, bool) and math.isfinite(float(raw_p)):
+        return float(raw_p), raw_lbl
+    outs = m.get("outcomes") or m.get("top_outcomes") or ()
+    best_p: float | None = None
+    best_lbl: str | None = None
+    for o in outs:
+        if not isinstance(o, Mapping):
+            continue
+        oname = str(o.get("name") or o.get("label") or "").strip()
+        if oname.lower() == "no":
+            continue
+        p = o.get("probability") if "probability" in o else o.get("current_probability")
+        if isinstance(p, (int, float)) and not isinstance(p, bool) and math.isfinite(float(p)):
+            fp = float(p)
+            if best_p is None or fp > best_p:
+                best_p = fp
+                best_lbl = oname if oname.lower() != "yes" else None
+    return best_p, best_lbl
+
+
+def _clean_family_preview_title(family: Mapping[str, Any], raw_title: str) -> str:
+    """Ensure a family preview title uses grammatical family-level wording (#12500)."""
+    from app.utils.sibling_family_proposer import (
+        _build_default_heading,
+        _infer_subject_unit,
+        verify_heading_from_market_words,
+    )
+
+    members = list(family.get("members") or [])
+    t_key = str(family.get("template_key") or "")
+    cat = str(family.get("category") or "other")
+    subjects = [str(m.get("subject") or "") for m in members if m.get("subject")]
+    defn = family.get("proposed_definition") if isinstance(family.get("proposed_definition"), Mapping) else {}
+    rule = defn.get("rule") if isinstance(defn.get("rule"), Mapping) else {}
+    unit = str(rule.get("subject_unit") or _infer_subject_unit(cat, t_key, subjects))
+
+    if raw_title and verify_heading_from_market_words(raw_title, members, subject_unit=unit):
+        return raw_title
+    sample_titles = [str(m.get("name") or "") for m in members if m.get("name")]
+    if t_key and sample_titles:
+        rebuilt = _build_default_heading(t_key, sample_titles, subject_unit=unit)
+        return rebuilt.replace(" {deadline}", "").replace("{deadline}", "").strip()
+    return raw_title
+
+
+def _build_proposed_card_preview(family: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the 390px proposed card preview shown on `/grade/groupings`."""
+    from app.utils.sibling_family import _clean_subject_display
+
+    words = family.get("card_words_390px")
+    defn = family.get("proposed_definition") if isinstance(family.get("proposed_definition"), Mapping) else {}
+    relations = list(defn.get("relations") or ["same_measure", "same_window", "sibling"])
+    level = str(defn.get("level") or "member")
+
+    if isinstance(words, Mapping) and words.get("rows"):
+        raw_title = str(words.get("title") or family.get("name") or "")
+        cleaned_rows = []
+        for r in words.get("rows") or []:
+            if not isinstance(r, Mapping):
+                continue
+            r_copy = dict(r)
+            r_copy["label"] = _clean_subject_display(str(r.get("label") or ""), strip_state_suffix=False)
+            cleaned_rows.append(r_copy)
+        return {
+            "kicker": str(words.get("kicker") or defn.get("kicker") or "SIBLING FAMILY"),
+            "tag": str(words.get("tag") or defn.get("tag") or "DISCOVER"),
+            "title": _clean_family_preview_title(family, raw_title),
+            "rows": cleaned_rows,
+            "count_line": str(words.get("count_line") or ""),
+            "footer": str(words.get("footer") or defn.get("footer") or "Each row is its own market. They don't add up to 100%."),
+            "relations": relations,
+            "level": level,
+        }
+
+    # For a refused candidate family, construct the would-be rows from its priced members so
+    # the grader sees priced rows alongside its refusal reason and best single (#12500).
+    members = list(family.get("members") or [])
+    priced_pairs = [
+        (m, p, o_lbl)
+        for m in members
+        for p, o_lbl in (_extract_member_preview_price(m),)
+        if p is not None
+    ]
+    ordered = sorted(
+        priced_pairs,
+        key=lambda item: (-float(item[1]), str(item[0].get("subject") or ""), int(item[0].get("id") or 0)),
+    )
+    source_rows = ordered if ordered else [(m, None, None) for m in members[:5]]
+
+    rows = []
+    seen_labels: set[str] = set()
+    for m, p, o_lbl in source_rows:
+        raw_subj = _clean_subject_display(str(m.get("subject") or "").strip(), strip_state_suffix=False)
+        raw_name = str(m.get("name") or "").strip()
+        # If extracted subject is a bare number (e.g. "5" or "#1") that duplicates across members, disambiguate with market name.
+        is_bare_number = raw_subj.lstrip("#").isdigit()
+        label = raw_name if (not raw_subj or is_bare_number or raw_subj.lower() in seen_labels) else raw_subj
+        if o_lbl and o_lbl.lower() not in label.lower():
+            label = f"{label} ({o_lbl})"
+        seen_labels.add(label.lower())
+        val = (
+            f"{int(math.floor(float(p) * 100.0 + 0.5))}%"
+            if isinstance(p, (int, float)) and not isinstance(p, bool) and math.isfinite(float(p))
+            else "Unpriced (refused)"
+        )
+        rows.append(
+            {
+                "label": label,
+                "value": val,
+                "market_id": int(m.get("id") or 0),
+            }
+        )
+        if len(rows) >= 5:
+            break
+    cat = str(family.get("category") or "other").upper()
+    total_members = int(family.get("member_count") or len(members))
+    unpriced_count = max(0, len(members) - len(priced_pairs))
+    count_line = f"Showing {len(rows)} of {total_members} members"
+    if unpriced_count > 0:
+        count_line += f" · {unpriced_count} without a live Yes price withheld"
+    raw_title = str(defn.get("name") or family.get("name") or "")
+    return {
+        "kicker": str(defn.get("kicker") or cat),
+        "tag": str(defn.get("tag") or cat),
+        "title": _clean_family_preview_title(family, raw_title),
+        "rows": rows,
+        "count_line": count_line,
+        "footer": str(defn.get("footer") or "Each row is its own market. They don't add up to 100%."),
+        "relations": relations,
+        "level": level,
+    }
+
+
+def _build_new_kind_deck_items(
+    *,
+    start_position: int = 1,
+    proposals_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Build `/grade/groupings` deck items from committed new-kind proposals (#9937)."""
+    from app.utils.grouping_kind_proposer import load_committed_kind_proposals
+
+    loaded = load_committed_kind_proposals(path=proposals_path)
+    if loaded.get("refused_count", 0) > 0 or loaded.get("accepted_count", 0) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "reason": "committed_kind_proposals_refused",
+                "refused": loaded.get("refused", []),
+            },
+        )
+
+    deck_items: list[dict[str, Any]] = []
+    pos = start_position
+    for prop in loaded.get("proposals") or []:
+        kind_slug = str(prop.get("kind") or "")
+        relations = list(prop.get("relations") or [])
+        level = str(prop.get("level") or "member")
+        for card in prop.get("example_cards") or []:
+            c_slug = str(card.get("slug") or f"{kind_slug}-{pos}")
+            raw_rows = list(card.get("rows") or [])
+            preview_rows = [
+                {
+                    "label": str(r.get("label") or ""),
+                    "value": f"{int(r.get('rendered_percent', round(float(r['probability']) * 100)))}%",
+                    "market_id": int(r.get("market_id") or 0),
+                }
+                for r in raw_rows
+            ]
+            single = card.get("stronger_single_alternative") or {}
+            s_prob = float(single["probability"])
+            s_pct = int(round(s_prob * 100))
+            as_of_val = card.get("as_of") or loaded.get("generated_at")
+            as_of_label = str(card.get("as_of_label") or "")
+            sport_cat = str((card.get("selector") or {}).get("sport") or "sports")
+            first_source = str((raw_rows[0] if raw_rows else {}).get("source") or "polymarket")
+            deck_items.append(
+                {
+                    "position": pos,
+                    "item_key": c_slug,
+                    "title": str(card.get("title") or c_slug),
+                    "source": first_source,
+                    "category": sport_cat,
+                    "template_key": str((card.get("selector") or {}).get("title_ilike") or ""),
+                    "member_count": len(raw_rows),
+                    "kind_verdict": "refuse",
+                    "refusal_reasons": ["not_licensed"],
+                    "proposed_kind": kind_slug,
+                    "as_of": as_of_val,
+                    "as_of_label": as_of_label,
+                    "proposed_card": {
+                        "kicker": str(card.get("kicker") or kind_slug.upper()),
+                        "tag": kind_slug.upper(),
+                        "title": str(card.get("title") or c_slug),
+                        "rows": preview_rows,
+                        "count_line": f"Showing {len(preview_rows)} members · {as_of_label}" if as_of_label else f"Showing {len(preview_rows)} members",
+                        "footer": str(card.get("footer") or ""),
+                        "relations": relations,
+                        "level": level,
+                        "as_of_label": as_of_label,
+                        "proposed_kind": kind_slug,
+                    },
+                    "best_single": {
+                        "id": int(single.get("market_id") or 0),
+                        "name": str(single.get("title") or ""),
+                        "subject": str((raw_rows[0] if raw_rows else {}).get("label") or ""),
+                        "source": first_source,
+                        "category": sport_cat,
+                        "yes_probability": s_prob,
+                        "rendered_percent": s_pct,
+                        "resolution_date": None,
+                        "rule_quote": f"{single.get('title') or ''} ({as_of_label})" if as_of_label else str(single.get("title") or ""),
+                    },
+                }
+            )
+            pos += 1
+    return deck_items
+
+
+def _build_sibling_exam_test_deck_items(
+    *,
+    start_position: int = 1,
+    dataset_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Build `/grade/groupings` deck items for the 20 fixed set-aside `test` cards (#12374 / #12500)."""
+    from app.utils.roundup_containers import RoundupMembers
+    from app.utils.sibling_family import select_sibling_family
+    from app.utils.sibling_family_exam import DEFAULT_EXAM_DATASET_PATH
+
+    path = dataset_path or DEFAULT_EXAM_DATASET_PATH
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="sibling-family exam dataset not found")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    as_of_val = str(raw.get("as_of") or "2026-11-08")
+    as_of_label = f"as of {as_of_val[:10]}" if as_of_val else ""
+
+    items: list[dict[str, Any]] = []
+    pos = start_position
+    for card in raw.get("cards") or []:
+        if card.get("split") != "test":
+            continue
+        rule = card.get("rule") or {}
+        candidates = list(card.get("candidate_markets") or [])
+        res = select_sibling_family(
+            candidates,
+            template=str(rule.get("template") or ""),
+            title_template=str(rule.get("title_template") or card.get("proposed_title") or ""),
+            kicker_prefix=str(rule.get("kicker_prefix") or "SIBLING FAMILY"),
+            kicker_include_date=bool(rule.get("kicker_include_date", True)),
+            subject_unit=str(rule.get("subject_unit") or "members"),
+            outcome_name=str(rule.get("outcome_name") or "Yes"),
+            lead_rule=str(rule.get("lead_rule") or "nearest_open_deadline"),
+            min_numbered_members=int(rule.get("min_numbered_members", 3)),
+            card_rows=int(rule.get("card_rows", 5)),
+            footer=str(
+                card.get("footer")
+                or "Each row is its own market. They don't add up to 100%."
+            ),
+        )
+        if not isinstance(res, RoundupMembers):
+            continue
+        preview_rows = [
+            {
+                "label": str(r.get("label") or ""),
+                "value": f"{int(r.get('rendered_percent', round(float(r['probability']) * 100)))}%",
+                "market_id": int(r.get("market_id") or 0),
+            }
+            for r in res.rows
+        ]
+        row_label_by_id = {
+            int(r.get("market_id") or 0): str(r.get("label") or "") for r in res.rows
+        }
+        single_members = []
+        for m in candidates:
+            mid = int(m.get("id") or 0)
+            p_val, _ = _extract_member_preview_price(m)
+            single_members.append(
+                {
+                    "id": mid,
+                    "name": str(m.get("name") or ""),
+                    "subject": row_label_by_id.get(mid) or str(m.get("name") or ""),
+                    "source": str(m.get("source") or card.get("source") or "polymarket"),
+                    "category": str(m.get("category") or card.get("category") or "other"),
+                    "yes_probability": p_val,
+                    "resolution_date": m.get("resolution_date"),
+                    "rule_quote": str(m.get("rule_quote") or m.get("description") or ""),
+                }
+            )
+        family_for_single = {
+            "name": str(res.title or card.get("proposed_title") or ""),
+            "source": str(card.get("source") or "polymarket"),
+            "category": str(card.get("category") or "other"),
+            "members": single_members,
+            "quotes": {},
+        }
+        cat_upper = str(card.get("category") or "other").upper()
+        slug = str(card.get("family_slug") or card.get("card_id"))
+        items.append(
+            {
+                "position": pos,
+                "item_key": slug,
+                "title": str(res.title or card.get("proposed_title") or slug),
+                "source": str(card.get("source") or "polymarket"),
+                "category": str(card.get("category") or "other"),
+                "template_key": f"{card.get('source')}:{rule.get('template')}",
+                "member_count": len(res.members),
+                "kind_verdict": "serve",
+                "refusal_reasons": [],
+                "trust_pass": True,
+                "proposed_kind": "sibling_family",
+                "as_of": as_of_val,
+                "as_of_label": as_of_label,
+                "proposed_card": {
+                    "kicker": str(res.kicker or rule.get("kicker_prefix") or cat_upper),
+                    "tag": cat_upper,
+                    "title": str(res.title or card.get("proposed_title") or slug),
+                    "rows": preview_rows,
+                    "count_line": str(
+                        res.count_line
+                        or f"Showing {len(preview_rows)} of {len(res.members)} members"
+                    ),
+                    "footer": str(
+                        res.footer
+                        or card.get("footer")
+                        or "Each row is its own market. They don't add up to 100%."
+                    ),
+                    "relations": ["sibling_of"],
+                    "level": "member",
+                    "as_of_label": as_of_label,
+                },
+                "best_single": select_best_single_member(family_for_single),
+            }
+        )
+        pos += 1
+    return items
+
+
+def load_grouping_grade_deck(
+    *,
+    candidates_path: Path | None = None,
+    slate_id: str = DEFAULT_GROUPING_SLATE_ID,
+) -> dict[str, Any]:
+    """Load the proposed grouping deck (sibling-family + new-kind proposals) for `/grade/groupings`."""
+    if slate_id == "new-kind-proposals-2026-11":
+        from app.utils.grouping_kind_proposer import DEFAULT_KIND_PROPOSER_MODEL
+
+        nk_items = _build_new_kind_deck_items(start_position=1)
+        return {
+            "slate_id": slate_id,
+            "surface": SURFACE_GROUPING,
+            "generated_at": nk_items[0].get("as_of") if nk_items else None,
+            "model": DEFAULT_KIND_PROPOSER_MODEL,
+            "question": "Is the grouping card worth more than its best single member?",
+            "items": nk_items,
+        }
+    if slate_id == EXAM_TEST_GROUPING_SLATE_ID:
+        from app.utils.sibling_family_exam import DEFAULT_PROPOSER_MODEL
+
+        test_items = _build_sibling_exam_test_deck_items(start_position=1)
+        return {
+            "slate_id": slate_id,
+            "surface": SURFACE_GROUPING,
+            "generated_at": test_items[0].get("as_of") if test_items else None,
+            "model": DEFAULT_PROPOSER_MODEL,
+            "question": "Is the grouping card worth more than its best single member?",
+            "items": test_items,
+        }
+
+    target_path = candidates_path
+    if target_path is None:
+        for p in _GROUPING_CANDIDATES_PATHS:
+            if p.exists():
+                target_path = p
+                break
+    if target_path is None or not target_path.exists():
+        raise HTTPException(status_code=404, detail="grouping candidates file not found")
+
+    raw = json.loads(target_path.read_text(encoding="utf-8"))
+    generated_at = str(raw.get("generated_at") or "")
+    families = list(raw.get("families") or [])
+    items: list[dict[str, Any]] = []
+    for idx, fam in enumerate(families, start=1):
+        if not isinstance(fam, Mapping):
+            continue
+        slug = str(fam.get("slug") or f"proposed-family-{idx}")
+        as_of_val = str(fam.get("as_of") or generated_at or "")
+        as_of_label = f"as of {as_of_val[:10]}" if as_of_val else ""
+        preview = _build_proposed_card_preview(fam)
+        preview["as_of_label"] = as_of_label
+        items.append(
+            {
+                "position": idx,
+                "item_key": slug,
+                "title": str(preview.get("title") or fam.get("name") or slug),
+                "source": str(fam.get("source") or ""),
+                "category": str(fam.get("category") or "other"),
+                "template_key": str(fam.get("template_key") or ""),
+                "member_count": int(fam.get("member_count") or len(fam.get("members") or [])),
+                "kind_verdict": str(fam.get("kind_verdict") or "refuse"),
+                "refusal_reasons": list(fam.get("refusal_reasons") or []),
+                "trust_pass": bool(fam.get("trust_pass")),
+                "proposed_kind": "sibling_family",
+                "as_of": as_of_val or None,
+                "as_of_label": as_of_label or None,
+                "proposed_card": preview,
+                "best_single": select_best_single_member(fam),
+            }
+        )
+
+    if candidates_path is None:
+        items.extend(_build_new_kind_deck_items(start_position=len(items) + 1))
+
+    return {
+        "slate_id": slate_id,
+        "surface": SURFACE_GROUPING,
+        "generated_at": raw.get("generated_at"),
+        "model": raw.get("model"),
+        "question": "Is the grouping card worth more than its best single member?",
+        "items": items,
+    }
+
+
+class GroupingGradeIn(BaseModel):
+    slate_id: str = Field(DEFAULT_GROUPING_SLATE_ID, min_length=1, max_length=64)
+    grader: str = Field(..., min_length=1, max_length=40)
+    kid: bool = False
+    position: int = Field(..., ge=1, le=100)
+    item_key: str = Field(..., min_length=1, max_length=120)
+    grade: str
+    note: str | None = Field(None, max_length=300)
+
+
+def summarize_grouping_grades(grades: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute summary counts for #12373 exit check (total grades, distinct graders, per-grade and per-grader counts)."""
+    by_grade: dict[str, int] = {g: 0 for g in GROUPING_GRADES}
+    by_grader: dict[str, dict[str, Any]] = {}
+    cards_graded: set[str] = set()
+
+    for g in grades:
+        grade_val = str(g.get("grade") or "")
+        if grade_val in by_grade:
+            by_grade[grade_val] += 1
+        grader_id = str(g.get("grader") or "")
+        item_key = str(g.get("item_key") or "")
+        if item_key:
+            cards_graded.add(item_key)
+        entry = by_grader.setdefault(
+            grader_id,
+            {
+                "grader": grader_id,
+                "kid": not bool(g.get("expert", True)),
+                "count": 0,
+                "amazing": 0,
+                "fine": 0,
+                "no": 0,
+            },
+        )
+        entry["count"] += 1
+        if grade_val in ("amazing", "fine", "no"):
+            entry[grade_val] += 1
+
+    graders_list = sorted(by_grader.values(), key=lambda e: (-int(e["count"]), str(e["grader"])))
+    return {
+        "total_grades": len(grades),
+        "distinct_graders": len(graders_list),
+        "distinct_cards_graded": len(cards_graded),
+        "by_grade": by_grade,
+        "by_grader": graders_list,
+    }
+
+
+@router.get("/grouping-deck")
+async def get_grouping_deck(
+    request: Request,
+    slate_id: str = Query(DEFAULT_GROUPING_SLATE_ID, max_length=64),
+    secret: str = Query(None),
+) -> dict:
+    _check_admin_secret(secret, request=request)
+    return load_grouping_grade_deck(slate_id=slate_id)
+
+
+@router.post("/grouping-grades")
+async def post_grouping_grade(
+    body: GroupingGradeIn,
+    request: Request,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db_rw),
+) -> dict:
+    _check_admin_secret(secret, request=request)
+    if body.grade not in GROUPING_GRADES:
+        raise HTTPException(status_code=422, detail=f"grade must be one of {GROUPING_GRADES}")
+    stored_grader = normalize_grouping_grader(body.grader, kid=body.kid)
+    if not stored_grader:
+        raise HTTPException(status_code=422, detail="grader needs a name or kid pseudonym")
+
+    deck = load_grouping_grade_deck(slate_id=body.slate_id)
+    items = deck["items"]
+    if body.position > len(items) or items[body.position - 1]["item_key"] != body.item_key:
+        raise HTTPException(status_code=422, detail="that proposed card is not at that position in the deck")
+
+    db.add(
+        RankingGrade(
+            slate_id=body.slate_id,
+            surface=SURFACE_GROUPING,
+            grader=stored_grader,
+            expert=not body.kid,
+            position=body.position,
+            item_key=body.item_key,
+            grade=_GROUPING_TO_DB_GRADE[body.grade],
+            note=(body.note or "").strip() or None,
+        )
+    )
+    await db.commit()
+    return {"status": "ok", "grader": stored_grader}
+
+
+@router.get("/grouping-grades")
+async def get_grouping_grades(
+    request: Request,
+    slate_id: str = Query(DEFAULT_GROUPING_SLATE_ID, max_length=64),
+    days: int = Query(30, ge=1, le=90),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    _check_admin_secret(secret, request=request)
+    now = datetime.now(timezone.utc)
+    stmt = select(RankingGrade).where(
+        RankingGrade.surface == SURFACE_GROUPING,
+        RankingGrade.slate_id == slate_id,
+        RankingGrade.graded_at >= now - timedelta(days=days),
+    )
+    grades = latest_grades((await db.execute(stmt)).scalars().all())
+    return {
+        "slate_id": slate_id,
+        "surface": SURFACE_GROUPING,
+        "grades": grades,
+        "tally": family_tally(grades, now),
+        "summary": summarize_grouping_grades(grades),
+    }
+
+
+@router.get("/grouping-kind-proposals")
+async def get_grouping_kind_proposals(
+    request: Request,
+    secret: str = Query(None),
+) -> dict:
+    """Return Alex-only proposed new grouping kinds with five example cards each (#9937)."""
+    from app.utils.grouping_kind_proposer import load_committed_kind_proposals
+
+    _check_admin_secret(secret, request=request)
+    try:
+        data = load_committed_kind_proposals()
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail="new-kind proposals file not found"
+        ) from exc
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=500, detail="invalid new-kind proposals payload"
+        ) from exc
+
+    if data.get("refused_count", 0) > 0 or data.get("accepted_count", 0) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "reason": "committed_kind_proposals_refused",
+                "refused": data.get("refused", []),
+            },
+        )
+    return data
+
+

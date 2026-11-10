@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from typing import Any, Optional
@@ -140,7 +141,9 @@ def card_win_map(tournament_entry: Any) -> dict[str, float]:
     published: dict[str, float] = {}
     if not isinstance(tournament_entry, dict):
         return published
-    for golfer in tournament_entry.get("golfers") or []:
+    for golfer in (
+        tournament_entry.get("_all_golfers", tournament_entry.get("golfers")) or []
+    ):
         if not isinstance(golfer, dict):
             continue
         prob = golfer.get("probability")
@@ -151,16 +154,53 @@ def card_win_map(tournament_entry: Any) -> dict[str, float]:
     return published
 
 
-def card_win_receipt(win_map: dict[str, float]) -> str:
+def card_win_display_map(tournament_entry: Any) -> dict[str, dict]:
+    """Carry the card's server allocation and like-basis move into its table."""
+    if not isinstance(tournament_entry, dict):
+        return {}
+    display = {}
+    for golfer in (
+        tournament_entry.get("_all_golfers", tournament_entry.get("golfers")) or []
+    ):
+        if not isinstance(golfer, dict) or not golfer.get("name"):
+            continue
+        rendered = golfer.get("rendered_percent")
+        if type(rendered) is not int or not 0 <= rendered <= 100:
+            continue
+        movement = golfer.get("movement_24h")
+        if (
+            golfer.get("movement_is_dated") is not True
+            or isinstance(movement, bool)
+            or not isinstance(movement, (int, float))
+            or not math.isfinite(movement)
+            or not -1 <= movement <= 1
+        ):
+            movement = None
+        display[progression_name_key(golfer["name"])] = {
+            "rendered_percent": rendered,
+            "change_24h": movement,
+        }
+    wins = card_win_map(tournament_entry)
+    return {key: value for key, value in display.items() if key in wins}
+
+
+def card_win_receipt(
+    win_map: dict[str, float], display_map: Optional[dict[str, dict]] = None
+) -> str:
     """A stable content address for one tournament's published win numbers.
+
+    Allocated cards also pin their server integers and dated comparisons. A
+    changed displayed integer must not reuse a probability-only receipt; older
+    unallocated cards retain their original address and payload shape.
 
     Canonical (sorted keys, fixed separators, `repr`-free float encoding) so that
     the same numbers always produce the same receipt regardless of dict ordering,
     and so two processes — the worker that registers a snapshot and the web dyno
     that resolves one — cannot disagree about what a payload is called.
     """
+    numbers = {k: float(v) for k, v in sorted(win_map.items())}
     canonical = json.dumps(
-        {k: float(v) for k, v in sorted(win_map.items())},
+        {"wins": numbers, "display": display_map} if display_map else numbers,
         separators=(",", ":"),
         sort_keys=True,
     )
@@ -172,7 +212,11 @@ def snapshot_key(receipt: str) -> str:
     return f"{SNAPSHOT_KEY_PREFIX}{receipt}"
 
 
-def snapshot_body(tournament_name: Optional[str], win_map: dict[str, float]) -> str:
+def snapshot_body(
+    tournament_name: Optional[str],
+    win_map: dict[str, float],
+    display_map: Optional[dict[str, dict]] = None,
+) -> str:
     """The registered value: the win map plus the tournament it belongs to.
 
     The tournament name is stored so that resolving a receipt can refuse a
@@ -181,7 +225,11 @@ def snapshot_body(tournament_name: Optional[str], win_map: dict[str, float]) -> 
     another tournament's numbers appear in its table.
     """
     return json.dumps(
-        {"tournament": tournament_name or "", "wins": win_map},
+        {
+            "tournament": tournament_name or "",
+            "wins": win_map,
+            **({"display": display_map} if display_map else {}),
+        },
         separators=(",", ":"),
         sort_keys=True,
     )
@@ -210,16 +258,30 @@ def stamp_card_payload(payload: Any) -> list[tuple[str, str]]:
         if not win_map:
             entry[CARD_RECEIPT_FIELD] = None
             continue
-        receipt = card_win_receipt(win_map)
+        display_map = card_win_display_map(entry)
+        receipt = card_win_receipt(win_map, display_map)
         entry[CARD_RECEIPT_FIELD] = receipt
-        writes.append((snapshot_key(receipt), snapshot_body(entry.get("name"), win_map)))
+        writes.append(
+            (
+                snapshot_key(receipt),
+                snapshot_body(entry.get("name"), win_map, display_map),
+            )
+        )
     return writes
 
 
 def resolve_snapshot(
     raw: Any, receipt: str, tournament_name: Optional[str]
 ) -> Optional[dict[str, float]]:
-    """The win map a registered snapshot holds, or None if it cannot be trusted.
+    """Compatibility reader for callers needing only the pinned probabilities."""
+    snapshot = resolve_card_snapshot(raw, receipt, tournament_name)
+    return snapshot[0] if snapshot is not None else None
+
+
+def resolve_card_snapshot(
+    raw: Any, receipt: str, tournament_name: Optional[str]
+) -> Optional[tuple[dict[str, float], dict[str, dict]]]:
+    """The pinned probabilities and display, or None if they cannot be trusted.
 
     Refuses — rather than guesses — when the stored bytes are unparseable, belong
     to a different tournament, or do not actually hash to the receipt they were
@@ -249,6 +311,24 @@ def resolve_snapshot(
         }
     except (TypeError, ValueError):
         return None
-    if not win_map or card_win_receipt(win_map) != receipt:
+    display = body.get("display", {})
+    if not isinstance(display, dict):
         return None
-    return win_map
+    for key, value in display.items():
+        if key not in win_map or not isinstance(value, dict):
+            return None
+        if set(value) != {"rendered_percent", "change_24h"}:
+            return None
+        rendered, change = value.get("rendered_percent"), value.get("change_24h")
+        if type(rendered) is not int or not 0 <= rendered <= 100:
+            return None
+        if change is not None and (
+            isinstance(change, bool)
+            or not isinstance(change, (int, float))
+            or not math.isfinite(change)
+            or not -1 <= change <= 1
+        ):
+            return None
+    if not win_map or card_win_receipt(win_map, display) != receipt:
+        return None
+    return win_map, display

@@ -86,8 +86,8 @@ nonisolated enum EventAtlasMlbCards11666 {
             if extra.outcomes.contains(where: { $0.pregameChance != nil }) {
                 items.append(Item(glyph: .hollowCircle, label: "Pregame"))
             }
-            if extra.outcomes.contains(where: { $0.venueResult == .won || $0.venueResult == .lost }) {
-                items.append(Item(glyph: .hitMissVerdict, label: "✓ Won / ✗ Lost"))
+            if extra.outcomes.contains(where: { $0.venueResult == .won }) {
+                items.append(Item(glyph: .wonCheck, label: EventAtlasStates11666.wonWithCheck))
             }
         case .series(let series):
             let hasSettled = series.questions.contains { q in
@@ -114,7 +114,7 @@ nonisolated enum EventAtlasMlbCards11666 {
         let officialFinal = fieldValue("Official final")
         let savedPregame = fieldValue("Saved pregame chance")
             ?? fieldValue("Pregame chance")
-            ?? fieldValue("Pregame mark")
+            ?? fieldValuePrefix("Pregame mark")
 
         let primaryLabel: String
         let primaryValue: String
@@ -130,21 +130,40 @@ nonisolated enum EventAtlasMlbCards11666 {
             }
         } else if let officialFinal, officialFinal != "Unavailable" && officialFinal != "Pending" {
             primaryLabel = "Official final"
-            primaryValue = officialFinal
+            if let venueSettlement, !venueSettlement.isEmpty {
+                primaryValue = "\(officialFinal) · \(venueSettlement)"
+            } else {
+                primaryValue = officialFinal
+            }
+        } else if let venueSettlement, !venueSettlement.isEmpty {
+            primaryLabel = "Venue result"
+            primaryValue = venueSettlement
         } else if let savedPregame, savedPregame != "Unavailable" {
             primaryLabel = "Pregame chance"
             primaryValue = savedPregame
         } else {
             primaryLabel = "Venue result"
-            primaryValue = venueSettlement ?? EventAtlasStates11666.noRecentPrice
+            primaryValue = EventAtlasStates11666.noRecentPrice
         }
 
         let observedText = fieldValue("Saved")
         let rawVenue = fieldValue("Venue")
-        let sourceLabel = EventAtlasHeadline11666.sourceAttribution(
-            source: rawVenue,
-            sourceCount: 1
-        )
+        let sourceLabel: String?
+        if original.rawSource == nil && rawVenue == nil && original.sourceCount > 1 {
+            sourceLabel = "\(original.sourceCount) sources, not blended"
+        } else if let rawVenue {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: rawVenue,
+                sourceCount: original.sourceCount
+            )
+        } else if original.rawSource == "blended" || original.rawSource == "blend" {
+            sourceLabel = EventAtlasHeadline11666.sourceAttribution(
+                source: original.rawSource,
+                sourceCount: original.sourceCount
+            )
+        } else {
+            sourceLabel = nil
+        }
         let outcomeSide = fieldValue("Original side") ?? original.title
 
         return EventAtlasDetailsSheetModel11666(
@@ -156,17 +175,34 @@ nonisolated enum EventAtlasMlbCards11666 {
             pregameBaseline: savedPregame != "Unavailable" ? savedPregame : nil,
             observedAtText: observedText != "time unavailable" ? observedText : nil,
             statusSummary: fieldValuePrefix("Against "),
-            sourceLabel: sourceLabel
+            statusLabel: "Comparison",
+            sourceLabel: sourceLabel,
+            originalSections: original.sections
         )
+    }
+
+    /// Canonicalizes extra-innings Yes/No outcome labels case-insensitively.
+    static func canonicalExtraInningsLabel(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch trimmed.lowercased() {
+        case "yes":
+            return "Yes"
+        case "no":
+            return "No"
+        default:
+            return trimmed
+        }
     }
 
     /// Builds Atlas extra-innings entries from `GameMarketOther` rows, matching
     /// web `#11974` Step E6a:
     /// - Uses a blended row (`source == "blended"` or `"blend"`) when served,
-    ///   or a single venue's `pregameMark` when only one source is present.
+    ///   or a single venue's `pregameMark` when only one source is present
+    ///   (emitted on `other` rows by `GET /api/events/{id}/game-markets` via
+    ///   `_resolve_pregame_mark`).
     /// - Withholds `pregameChance` when multiple unblended venues exist for an
     ///   outcome (never averages on the client).
-    /// - Grades settled outcomes via `OutcomeVerdict.verdict` (`marketResolved: finished`),
+    /// - Grades settled outcomes via `MLBVenueResult11284.venue` (`#11284`'s rule),
     ///   falling back to `.pending` when venues disagree.
     static func buildExtraInningsEntries(
         rows: [GameMarketOther],
@@ -180,12 +216,23 @@ nonisolated enum EventAtlasMlbCards11666 {
         var byLabel: [String: [GameMarketOther]] = [:]
         var labelOrder: [String] = []
         for row in extraRows {
-            let trimmed = row.outcomeName.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            if byLabel[trimmed] == nil {
-                labelOrder.append(trimmed)
+            let canonical = canonicalExtraInningsLabel(row.outcomeName)
+            guard !canonical.isEmpty else { continue }
+            if byLabel[canonical] == nil {
+                labelOrder.append(canonical)
             }
-            byLabel[trimmed, default: []].append(row)
+            byLabel[canonical, default: []].append(row)
+        }
+        labelOrder.sort { a, b in
+            func rank(_ s: String) -> Int {
+                switch s {
+                case "Yes": return 0
+                case "No": return 1
+                default: return 2
+                }
+            }
+            let (ra, rb) = (rank(a), rank(b))
+            return ra != rb ? ra < rb : a < b
         }
 
         var entries: [ExtraInningsEntry] = []

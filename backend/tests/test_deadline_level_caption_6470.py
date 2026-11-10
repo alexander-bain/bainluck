@@ -294,18 +294,34 @@ class TestALeaderThatIsNotADateDoesNotGetTheClause:
 
 
 class TestAProvenCumulativeLadderIsStillRefused:
-    """#4640 wins where it applies: nesting is not a contest, with or without a
-    preposition in front of it. Nothing on production reaches BOTH gates today —
-    a date leg parses as no cumulative threshold — so this control pins the
-    intersection before some later grammar creates it."""
+    """#4640 wins where it applies: nesting is not a contest. This control was
+    written to pin the intersection "before some later grammar creates it", and
+    #7667 did: it reads the venue's "by" as a date ladder's direction, so every
+    multi-rung "by...?" board is now a proven ladder.
 
-    def test_silent(self):
-        assert _live("Anthropic IPO by __?", "December 31, 2026", 0.6, 60,
-                     leader_is_ladder_rung=True) == ""
+    #12428 moved the line. A LEVEL claims no contest, so the two caption slots
+    print it on a ladder rung; the HEADLINE, the one slot the ranking reads,
+    keeps the refusal so no card's order moves. The full specimens are in
+    `test_a_date_ladder_card_keeps_its_deadline_caption_12428.py`."""
+
+    def _slots(self, ladder):
+        raw = "Anthropic IPO by __?"
+        return _copy(raw, "December 31, 2026", 0.6, 60,
+                     preposition=elided_trailing_preposition(raw),
+                     leader_is_ladder_rung=ladder)
+
+    def test_the_headline_stays_silent(self):
+        assert self._slots(ladder=True)["headline"] == ""
 
     def test_and_only_the_ladder_flag_is_stopping_it(self):
-        assert _live("Anthropic IPO by __?", "December 31, 2026", 0.6, 60,
-                     leader_is_ladder_rung=False) == "60% chance by December 31, 2026"
+        assert self._slots(ladder=False)["headline"] == (
+            "60% chance by December 31, 2026"
+        )
+
+    def test_the_captions_print_the_level(self):
+        slots = self._slots(ladder=True)
+        assert slots["reason"] == "60% chance by December 31, 2026"
+        assert slots["context_summary"] == "60% chance by December 31, 2026"
 
 
 class TestTheDefaultIsTheStatusQuo:

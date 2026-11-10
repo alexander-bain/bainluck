@@ -868,7 +868,8 @@ function parseISODate(value: string | null | undefined): Date | null {
 }
 
 /**
- * "April 8–11, 2027" · "April 8, 2027" · "December 30, 2026 – January 2, 2027".
+ * "April 8–11, 2027" · "April 8, 2027" · "December 30, 2026 – January 2, 2027";
+ * approximate (#12201): "September 2027" · "August – September 2027".
  *
  * ⚠️ THE YEAR IS ALWAYS PRINTED, and that is exactly why a declared edition
  * window goes through this and never through `eventDateRange`. An edition window
@@ -881,12 +882,24 @@ function parseISODate(value: string | null | undefined): Date | null {
 export function formatEditionWindow(
   startISO: string | null | undefined,
   endISO: string | null | undefined,
+  approximate = false,
 ): string | null {
   const start = parseISODate(startISO);
   if (!start) return null;
   const end = parseISODate(endISO) ?? start;
   const month = (d: Date) => d.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
   const day = (d: Date) => d.getUTCDate();
+  if (approximate) {
+    // #12201: a conventional window (the calendar's `date_confidence:
+    // approximate`) states the month and the year it falls in, and no day.
+    if (start.getUTCFullYear() !== end.getUTCFullYear()) {
+      return `${month(start)} ${start.getUTCFullYear()} – ${month(end)} ${end.getUTCFullYear()}`;
+    }
+    if (start.getUTCMonth() !== end.getUTCMonth()) {
+      return `${month(start)} – ${month(end)} ${end.getUTCFullYear()}`;
+    }
+    return `${month(start)} ${start.getUTCFullYear()}`;
+  }
   if (start.getTime() === end.getTime()) {
     return `${month(start)} ${day(start)}, ${start.getUTCFullYear()}`;
   }
@@ -968,7 +981,10 @@ export function conceptHeaderDate(
   status: string,
   start: string | null | undefined,
   end: string | null | undefined,
-  nextEdition: { start?: string | null; end?: string | null } | null | undefined,
+  nextEdition:
+    | { start?: string | null; end?: string | null; date_confidence?: string | null }
+    | null
+    | undefined,
   now: Date = new Date(),
 ): string | null {
   const own = eventDateRange(start, end);
@@ -985,7 +1001,11 @@ export function conceptHeaderDate(
     return outOfYear ? (formatEditionWindow(start, end) ?? own) : own;
   }
   if (status === "live" || status === "settled") return null;
-  return formatEditionWindow(nextEdition?.start, nextEdition?.end);
+  return formatEditionWindow(
+    nextEdition?.start,
+    nextEdition?.end,
+    nextEdition?.date_confidence === "approximate",
+  );
 }
 
 // ---------------------------------------------------------------------------

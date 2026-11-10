@@ -1,20 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CollectionWeekNavigation } from "./CollectionWeekNavigation";
 import { CollectionMemberCard } from "./CollectionMemberCard";
 import PartyControlRow from "@/components/politics/PartyControlRow";
 import { MidtermsAtlasChamberControl, MidtermsAtlasMemberCard } from "./MidtermsAtlasSection";
 import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
-import type { FeedFuturesData } from "@/lib/types";
+import type { FeedFuturesData, FeedItem } from "@/lib/types";
+import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
+import { usePriceVisibility } from "@/hooks/usePriceVisibility";
+import { priceKey } from "@/lib/discover/priceRefresh";
 import {
   acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
-  relatedMarketLinks, settleCollectionPage, settleCollectionRead,
+  isNflWeekCollectionSlug, pricedCollectionMember, relatedMarketLinks, servedSettledMember, settleCollectionPage, settleCollectionRead,
   type CollectionHub as Hub, type CollectionMember, type CollectionPageRequest, type CollectionReadingContext,
 } from "@/lib/collections";
 
 const storageKey = (slug: string) => `collection-reading:${slug}`;
+
+/**
+ * #10090: tells the price stream this member is on screen, so it is re-read
+ * and streamed like a Discover card (the same `usePriceVisibility` rule).
+ */
+function PricedMemberShell({ owner, item, report, children }: {
+  owner: string;
+  item: FeedItem;
+  report: (owner: string, keys: string[], visible: boolean) => void;
+  children: ReactNode;
+}) {
+  const items = useMemo(() => [item], [item]);
+  const ref = usePriceVisibility(owner, items, report);
+  return <div ref={ref}>{children}</div>;
+}
 
 export default function CollectionHub({ slug }: { slug: string }) {
   const atlasEnabled = useAtlasPageOptIn();
@@ -78,6 +96,31 @@ export default function CollectionHub({ slug }: { slug: string }) {
   // Never draw another slug's hub, even for the frame before the reset effect.
   const shown = hub?.slug === slug ? hub : null;
   latest.current = shown;
+
+  // #10090: the same price stream Discover and Sports run. On-screen members
+  // get a fresh price read, then live pushes (event frames, market
+  // invalidations) re-read them within seconds. A futures-only collection had
+  // no refresh at all (`collectionRefreshInterval` is 0 without games).
+  // A collection reads the same for every reader, so the book is keyed on the
+  // slug rather than the signed-in user: a new slug starts from its own prices.
+  // A member already settled by the official result keeps its winner, so it
+  // is never read (`servedSettledMember`).
+  const priceGroups = useMemo(
+    () => (shown?.members ?? [])
+      .filter((member) => !servedSettledMember(member))
+      .map((member) => ({ type: "single" as const, item: member.item })),
+    [shown],
+  );
+  const streamed = useDiscoverPriceStream(priceGroups, `collection:${slug}`);
+  const reportPriceVisibility = streamed.setPriceVisibility;
+  const pricedByKey = useMemo(
+    () => new Map(streamed.items.flatMap((group) => {
+      const key = group.item ? priceKey(group.item) : null;
+      return group.item && key ? [[key, group.item] as const] : [];
+    })),
+    [streamed.items],
+  );
+  const priced = (member: CollectionMember) => pricedCollectionMember(member, pricedByKey);
 
   // #9925: one more page of a theme collection, only when the reader asks.
   const loadMore = async () => {
@@ -166,11 +209,14 @@ export default function CollectionHub({ slug }: { slug: string }) {
   const card = (member: CollectionMember, presentation?: string) => <div id={collectionMemberDomId(member.key)} key={member.key} data-collection-member={member.key} onClickCapture={(event) => {
     const anchor = (event.target as Element).closest("a");
     if (anchor?.getAttribute("href") === member.href) remember(member.key);
-  }}><CollectionMemberCard member={member} presentation={presentation} /></div>;
+  }}><PricedMemberShell owner={member.key} item={member.item} report={reportPriceVisibility}>
+    <CollectionMemberCard member={priced(member)} presentation={presentation} />
+  </PricedMemberShell></div>;
 
   const control = (id: number) => {
-    const member = shown?.members.find(m => m.id === id);
-    if (!member) return null;
+    const served = shown?.members.find(m => m.id === id);
+    if (!served) return null;
+    const member = priced(served);
     const data = member.item.data as FeedFuturesData & { settled_winner?: string };
     const gop = data.top_outcomes.find(o => /^republican(?:s| party)?$|^gop$/i.test(o.name))?.probability;
     const dem = data.top_outcomes.find(o => /^democrat(?:s|ic(?: party)?)?$/i.test(o.name))?.probability;
@@ -181,16 +227,32 @@ export default function CollectionHub({ slug }: { slug: string }) {
   // Back from a market returns to its game, the drawn row it was listed under.
   const relatedLinks = (game: CollectionMember) => {
     const links = shown ? relatedMarketLinks(shown, game.key) : [];
-    return links.length > 0 && <ul data-related-markets={game.key} className="divide-y divide-surface-border/60 rounded-card border border-surface-border bg-surface-card text-sm">
-      {links.map((market) => <li key={market.key}><Link href={market.href} data-related-market={market.key} onClick={() => remember(game.key)} className="flex justify-between gap-4 px-4 py-2.5 text-text-secondary hover:bg-surface-elevated hover:text-text-primary">
+    const secondary = shown ? relatedMarketLinks(shown, game.key, "secondary") : [];
+    const list = (markets: CollectionMember[]) => <ul data-related-markets={game.key} className="divide-y divide-surface-border/60 rounded-card border border-surface-border bg-surface-card text-sm">
+      {markets.map((market) => <li key={market.key}><Link href={market.href} data-related-market={market.key} onClick={() => remember(game.key)} className="flex justify-between gap-4 px-4 py-2.5 text-text-secondary hover:bg-surface-elevated hover:text-text-primary">
         <span className="min-w-0">{(market.item.data as FeedFuturesData).name}</span><span aria-hidden>›</span>
       </Link></li>)}
     </ul>;
+    return <>
+      {links.length > 0 && list(links)}
+      {secondary.length > 0 && <details data-secondary-markets={game.key} className="rounded-card border border-surface-border bg-surface-card text-sm text-text-secondary">
+        <summary className="cursor-pointer px-4 py-2.5">More linked markets</summary>
+        {list(secondary)}
+      </details>}
+    </>;
   };
 
   return <div className="mx-auto w-full max-w-4xl space-y-6" data-collection-hub={slug}>
     <div className="flex items-center justify-between gap-4">
-      <Link href="/discover" className="text-sm text-text-secondary hover:text-text-primary">Back to Discover</Link>
+      <div className="flex items-center gap-3">
+        {shown?.parent && (
+          <>
+            <Link href={shown.parent.href} data-collection-parent={shown.parent.slug} className="text-sm font-medium text-text-primary hover:underline">Back to {shown.parent.name}</Link>
+            <span aria-hidden className="text-text-muted">·</span>
+          </>
+        )}
+        <Link href="/discover" className="text-sm text-text-secondary hover:text-text-primary">Back to Discover</Link>
+      </div>
       <button type="button" disabled={fetching} onClick={() => void load()} className="text-sm text-accent-brand hover:underline disabled:text-text-muted">{fetching && shown ? "Updating…" : "Refresh"}</button>
     </div>
     <header className="space-y-2">
@@ -199,6 +261,30 @@ export default function CollectionHub({ slug }: { slug: string }) {
       {(shown?.subtitle ?? shown?.edition) && <p className="text-sm text-text-secondary">{shown?.subtitle ?? shown?.edition}</p>}
       {/* #11040: the family's one-line page note. */}
       {shown?.dek && <p data-collection-dek className="text-sm text-text-secondary">{shown.dek}</p>}
+      {/* #12233: zero-number model commentary with set-read figures labelled with when true and linked to source */}
+      {shown?.caption && (
+        <div data-collection-caption className="rounded-card border border-surface-border bg-surface-card p-3.5 space-y-2">
+          <p data-collection-caption-commentary className="text-sm text-text-primary">
+            {shown.caption.commentary}
+          </p>
+          {shown.caption.figures.length > 0 && (
+            <div data-collection-caption-figures className="flex flex-wrap gap-2 pt-0.5">
+              {shown.caption.figures.map((fig, idx) => (
+                <Link
+                  key={`${fig.sourceHref}-${idx}`}
+                  href={fig.sourceHref}
+                  data-collection-caption-figure={fig.memberId || String(idx)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-surface-border bg-surface-elevated px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary"
+                >
+                  <span className="font-medium text-text-primary">{fig.label}</span>
+                  <span className="font-semibold text-accent-brand">{fig.value}</span>
+                  <span className="text-text-muted">({fig.source} · {fig.asOfLabel})</span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </header>
     {fetching && !shown && !error && <p role="status" className="py-8 text-text-secondary">Loading collection…</p>}
     {error && shown && <div role="status" className="sticky top-16 z-40 flex items-center justify-between gap-3 rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm shadow-sm">
@@ -209,13 +295,13 @@ export default function CollectionHub({ slug }: { slug: string }) {
       <p className="text-text-secondary">{error}</p>
       <button type="button" onClick={() => void load()} className="text-accent-brand hover:underline">Try again</button>
     </div>}
-    {shown?.state === "published" && /^nfl-\d{4}-(?:preseason-|postseason-)?week-[1-9]\d?$/.test(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onSettle={settleWeekNavigation} onNavigate={() => {
+    {shown?.state === "published" && isNflWeekCollectionSlug(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onSettle={settleWeekNavigation} onNavigate={() => {
       const member = shown.members.find((member) => (document.getElementById(collectionMemberDomId(member.key))?.getBoundingClientRect().bottom ?? 0) > 0);
       if (member) remember(member.key);
     }} />}
     {shown?.note && <p role="status" className="text-sm text-text-secondary">{shown.note}</p>}
     {shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every market yet.</p>}
-    {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
+    {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} data-collection-child={child.key.replace(/^container:/, "")} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
     {/* #10985: a hub served as one unclassified list (every provider event) has no
         section to name, so "More" would follow nothing; the page title names it. */}
     {shown?.sections.map((section) => {
@@ -238,7 +324,9 @@ export default function CollectionHub({ slug }: { slug: string }) {
           {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
             {midterms && atlasEnabled && member.item.type === "futures" ? (
               <div id={collectionMemberDomId(member.key)} data-collection-member={member.key}>
-                <MidtermsAtlasMemberCard member={member} sectionTitle={section.title} />
+                <PricedMemberShell owner={member.key} item={member.item} report={reportPriceVisibility}>
+                  <MidtermsAtlasMemberCard member={priced(member)} sectionTitle={section.title} />
+                </PricedMemberShell>
               </div>
             ) : (
               card(member, midterms ? section.layout ?? "auto" : undefined)
@@ -246,12 +334,16 @@ export default function CollectionHub({ slug }: { slug: string }) {
             {/* #5342: a short list of the game's attached markets, each to its own page. */}
             {relatedLinks(member)}
             {/* #10146: a game's questions open deliberately on its own page, never as hundreds of contracts inline. */}
-            {!!shown.related[member.key]?.length && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
+            {!!(shown.related[member.key]?.length || member.relatedMarketCount) && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
           </div>)}
         </div>
       )}
     </section>;
     })}
+    {shown?.relatedSummary && shown.relatedSummary.count > 0 && <p data-related-market-summary className="text-sm text-text-secondary">
+      {shown.relatedSummary.count.toLocaleString()} more linked markets
+      {shown.relatedSummary.unclassifiedCount > 0 && <> · {shown.relatedSummary.unclassifiedCount.toLocaleString()} uncategorized</>}
+    </p>}
     {shown?.theme && shown.members.length > 0 && <div className="flex flex-col items-center gap-2 pb-6" data-collection-pager={shown.revision ?? ""}>
       <p className="text-sm text-text-secondary">{shown.members.length} of {Math.max(shown.theme.totalCount, shown.members.length)} markets</p>
       {shown.theme.nextCursor && <button type="button" disabled={paging} onClick={() => void loadMore()} className="rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm font-semibold text-text-primary hover:bg-surface-elevated disabled:text-text-muted">{paging ? "Loading…" : "Load more"}</button>}

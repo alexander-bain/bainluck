@@ -30,9 +30,11 @@ red; if the predicate starts selecting linked markets too, it also goes red.
 
 import asyncio
 import inspect
+import json
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.dialects import sqlite as sqlite_dialect
@@ -2071,3 +2073,276 @@ class TestTheCoverageBlockPublishesTheScopedCountBesideTheRawOne:
         cov, _ = self._coverage(scalar=0)
         assert "created_at" in cov["denominator"]
         assert "never_attempted_floor" in cov["denominator"]
+
+
+# #12072: execute Pass 2's actual selection SQL, including the receipt join
+# and native type, before exercising its normal per-market receipt path.
+def _pass2_retry_row(market_id, **overrides):
+    row = dict(
+        id=market_id,
+        source="polymarket",
+        status="open",
+        event_id=None,
+        external_id=str(market_id),
+        name="South Alabama Jaguars vs. UCF Knights",
+        updated_at=NOW,
+        resolution_date=NOW + timedelta(hours=24),
+        market_metadata={"content_understanding_v1": {"venue_type": "moneyline"}},
+        last_attempted_at=None,
+    )
+    row.update(overrides)
+    return row
+
+
+def _run_pass2_retry_rows(monkeypatch, rows, *, limit=5, time_remaining=None):
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE futures_markets (id INTEGER PRIMARY KEY, source TEXT, "
+        "status TEXT, event_id INTEGER, external_id TEXT, name TEXT, "
+        "updated_at TEXT, resolution_date TEXT, market_metadata TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE market_match_receipts "
+        "(market_id INTEGER PRIMARY KEY, last_attempted_at TEXT)"
+    )
+    columns = (
+        "id",
+        "source",
+        "status",
+        "event_id",
+        "external_id",
+        "name",
+        "updated_at",
+        "resolution_date",
+        "market_metadata",
+    )
+    for row in rows:
+        values = dict(row)
+        values["market_metadata"] = json.dumps(values["market_metadata"])
+        for key in ("updated_at", "resolution_date", "last_attempted_at"):
+            value = values[key]
+            if isinstance(value, datetime):
+                values[key] = value.strftime("%Y-%m-%d %H:%M:%S.%f")
+        conn.execute(
+            "INSERT INTO futures_markets VALUES (?,?,?,?,?,?,?,?,?)",
+            tuple(values[key] for key in columns),
+        )
+        if row["last_attempted_at"] is not None:
+            conn.execute(
+                "INSERT INTO market_match_receipts VALUES (?,?)",
+                (row["id"], values["last_attempted_at"]),
+            )
+
+    class Session:
+        async def execute(self, statement):
+            sql = statement.compile(
+                dialect=sqlite_dialect.dialect(),
+                compile_kwargs={"literal_binds": True},
+            ).string
+            return _IdResult([row[0] for row in conn.execute(sql)])
+
+    markets = {row["id"]: SimpleNamespace(**row) for row in rows}
+    attempted = []
+    flushed = []
+
+    async def load_market(session, market_id):
+        return markets[market_id]
+
+    async def attempt(session, market, receipt, *args):
+        attempted.append(market.id)
+        receipt.reject(mr.REJECT_NO_CANDIDATE)
+
+    async def flush(session, receipts, stats, phase):
+        flushed.extend(receipts)
+
+    monkeypatch.setattr(pmm, "_load_market_row", load_market)
+    monkeypatch.setattr(pmm, "_run_one_attempt", attempt)
+    monkeypatch.setattr(pmm, "_flush_pass_receipts", flush)
+    stats = _fresh_stats()
+    clock = time_remaining or (lambda attempted: 700.0)
+    try:
+        asyncio.run(
+            pmm._phase1_pass2_general_scan(
+                Session(),
+                stats,
+                NOW,
+                limit,
+                set(),
+                [],
+                lambda: clock(attempted),
+            )
+        )
+    finally:
+        conn.close()
+    return attempted, flushed, stats
+
+
+class TestDatedWinnerRetries12072:
+    def test_ucf_retry_selects_the_mens_fixture_and_refuses_the_womens_game(self):
+        fixture = NOW + timedelta(hours=24)
+        market = _Market(
+            external_id="1310803",
+            llm_sport_category="basketball",
+            name="South Alabama Jaguars vs. UCF Knights",
+        )
+        market.id = 68985452
+        market.market_metadata = {"venue_game_start": fixture.isoformat()}
+        candidates = [
+            _Event(
+                15341654,
+                "South Alabama Jaguars",
+                "UCF Knights (W)",
+                fixture - timedelta(hours=24, minutes=30),
+                sport_key="basketball_other",
+            ),
+            _Event(
+                15345366,
+                "UCF Knights",
+                "South Alabama Jaguars",
+                fixture,
+                sport_key="basketball_ncaab",
+            ),
+        ]
+        receipt = pmm._new_receipt(market, mr.PHASE_PASS2_GENERAL, NOW)
+        result = pmm._score_candidates(
+            candidates,
+            _Matchup("South Alabama Jaguars", "UCF Knights"),
+            market,
+            NOW,
+            fixture,
+            receipt=receipt,
+        )
+        assert result["event_id"] == 15345366
+        verdicts = {
+            candidate.event_id: candidate.verdict for candidate in receipt.candidates
+        }
+        assert verdicts[15341654] == mr.REJECT_OUTSIDE_TIME_WINDOW
+        assert verdicts[15345366] == "chosen"
+
+    def test_old_winner_is_revisited_ahead_of_the_fresh_ingest_flood(self, monkeypatch):
+        old = _pass2_retry_row(
+            1,
+            updated_at=NOW - timedelta(days=5),
+            last_attempted_at=NOW - timedelta(hours=4),
+        )
+        fresh = [_pass2_retry_row(mid) for mid in range(10, 1010)]
+        attempted, receipts, stats = _run_pass2_retry_rows(monkeypatch, [old] + fresh)
+        assert attempted[0] == 1
+        assert len(attempted) == 5
+        assert len(set(attempted)) == 5
+        assert len([mid for mid in attempted if mid >= 10]) == 4
+        assert {r.market_id for r in receipts} == set(attempted)
+        assert all(r.phase == mr.PHASE_PASS2_GENERAL for r in receipts)
+        assert stats["funnel"]["matchup_scan_count"] == 5
+
+    def test_retries_take_the_oldest_receipt_with_id_as_tie_breaker(self, monkeypatch):
+        rows = [
+            _pass2_retry_row(
+                2,
+                updated_at=NOW - timedelta(days=5),
+                last_attempted_at=NOW - timedelta(hours=4),
+            ),
+            _pass2_retry_row(
+                1,
+                updated_at=NOW - timedelta(days=5),
+                last_attempted_at=NOW - timedelta(hours=4),
+            ),
+            _pass2_retry_row(
+                3,
+                updated_at=NOW - timedelta(days=5),
+                last_attempted_at=NOW - timedelta(hours=1),
+            ),
+        ]
+        rows.extend(_pass2_retry_row(mid) for mid in range(10, 30))
+        attempted, _, stats = _run_pass2_retry_rows(monkeypatch, rows, limit=10)
+        assert attempted[0] == 1
+        assert stats["funnel"].get("winner_retry_scan_count", 0) == 2
+        assert attempted[5] == 2
+        assert 3 not in attempted
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"source": "kalshi"},
+            {"status": "resolved"},
+            {"event_id": 15345366},
+            {"name": "UCF wins the championship"},
+            {"market_metadata": None},
+            {"market_metadata": {}},
+            {
+                "market_metadata": {
+                    "content_understanding_v1": {"venue_type": "child_moneyline"}
+                }
+            },
+            {"market_metadata": {"content_understanding_v1": {"venue_type": "totals"}}},
+            {"resolution_date": None},
+            {"resolution_date": NOW - timedelta(hours=6, microseconds=1)},
+            {"resolution_date": NOW + timedelta(hours=48, microseconds=1)},
+            {"last_attempted_at": NOW - timedelta(minutes=14)},
+            {"last_attempted_at": None},
+        ],
+    )
+    def test_only_dated_native_winners_get_reserved_slots(self, monkeypatch, overrides):
+        row = _pass2_retry_row(1, last_attempted_at=NOW - timedelta(hours=4))
+        row.update(overrides)
+        _, _, stats = _run_pass2_retry_rows(monkeypatch, [row])
+        assert stats["funnel"].get("winner_retry_scan_count", 0) == 0
+
+    @pytest.mark.parametrize("hours", [-6, 48])
+    def test_priority_window_includes_its_boundaries(self, monkeypatch, hours):
+        row = _pass2_retry_row(
+            1,
+            resolution_date=NOW + timedelta(hours=hours),
+            last_attempted_at=NOW - timedelta(minutes=15),
+        )
+        attempted, _, stats = _run_pass2_retry_rows(monkeypatch, [row])
+        assert attempted == [1]
+        assert stats["funnel"].get("winner_retry_scan_count", 0) == 1
+
+    def test_small_limits_leave_legacy_rows_on_the_existing_path(self, monkeypatch):
+        rows = [_pass2_retry_row(mid, market_metadata=None) for mid in range(1, 8)]
+        attempted, receipts, stats = _run_pass2_retry_rows(monkeypatch, rows, limit=4)
+        assert len(attempted) == 4
+        assert len(receipts) == 4
+        assert stats["funnel"].get("winner_retry_scan_count", 0) == 0
+
+    def test_retry_cap_and_total_admission_cap_both_hold(self, monkeypatch):
+        retries = [
+            _pass2_retry_row(mid, last_attempted_at=NOW - timedelta(hours=4))
+            for mid in range(1, 151)
+        ]
+        fresh = [_pass2_retry_row(mid) for mid in range(200, 1400)]
+        other = [
+            _pass2_retry_row(mid, name="UCF wins the championship")
+            for mid in range(2000, 2300)
+        ]
+        attempted, receipts, stats = _run_pass2_retry_rows(
+            monkeypatch,
+            retries + fresh + other,
+            limit=1000,
+        )
+        assert len(attempted) == len(set(attempted)) == len(receipts) == 1200
+        assert stats["funnel"].get("winner_retry_scan_count", 0) == 100
+        assert stats["funnel"]["matchup_scan_count"] == 1000
+        assert stats["funnel"]["remaining_scan_count"] == 200
+
+    def test_deadline_keeps_a_fresh_ingest_share_and_flushes_receipts(
+        self, monkeypatch
+    ):
+        retries = [
+            _pass2_retry_row(mid, last_attempted_at=NOW - timedelta(hours=4))
+            for mid in range(1, 101)
+        ]
+        fresh = [_pass2_retry_row(mid) for mid in range(200, 800)]
+        attempted, receipts, stats = _run_pass2_retry_rows(
+            monkeypatch,
+            retries + fresh,
+            limit=500,
+            time_remaining=lambda attempted: (
+                pmm._PASS2_YIELD_AT_SECONDS_REMAINING + 4 - len(attempted)
+            ),
+        )
+        assert len(attempted) == len(receipts) == 5
+        assert attempted[0] == 1
+        assert all(mid >= 200 for mid in attempted[1:])
+        assert stats["funnel"]["pass2_yielded_to_backlog"] is True

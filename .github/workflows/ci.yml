@@ -6,8 +6,20 @@ on:
   # Deploy remains restricted to master pushes by its own job condition.
   # Compose pushes serve Integrator; they do not replace lane PR validation.
   # Guard: frontend/e2e/contract/ciTriggerCoverage.contract.test.js.
+  #
+  # #12252 (79-B part A): a run tests a COMMIT, so only events that change the
+  # commit run CI. `labeled`, `unlabeled` and `edited` are not triggers: they
+  # created runs on an unchanged commit (169 of 360 PR runs on Nov 6), and a
+  # label or a description edit cancelled the run in flight. They create no run
+  # object at all, so no skipped check run can ever land on a commit after a
+  # real result (a skipped job is a passing required check). Two costs, chosen
+  # (Fable, Nov 7): a RETARGETED PR gets no run until its next commit or a
+  # close+reopen (#1943; docs/github-workflow.md says so), and an `eval-candidate` label added
+  # after `opened` no longer cancels that first run (#12235's skip still holds
+  # for every later event; the Tier-B policy still blocks the merge).
+  # Guarded by backend/tests/test_ci_triggers_12252.py.
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+    types: [opened, synchronize, reopened]
   push:
     branches: [master, 'integrator/compose-**']
 
@@ -41,10 +53,12 @@ jobs:
       checks: read
       pull-requests: read
       deployments: read
+      issues: read
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
       scope: ${{ steps.decide.outputs.scope }}
+      quarantine: ${{ steps.quarantine.outputs.ids }}
       native_tests: ${{ steps.decide.outputs.native_tests }}
       reuse: ${{ steps.prior.outputs.reuse }}
       reuse_run: ${{ steps.prior.outputs.reuse_run }}
@@ -66,6 +80,24 @@ jobs:
             backend
             tools/release
             tools/speed
+
+      # #12252 item 2: tests with an open `Flaky: <test id>` issue (label
+      # flaky-quarantine, filed by backend/scripts/flake_sentinel.py). The required
+      # jobs stop failing on them (backend/tests/conftest.py) and the non-required
+      # flaky-canary job runs them for real. Unreadable means [] — every test blocks.
+      - name: Flaky quarantine (#12252)
+        id: quarantine
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          ids="$(gh api "repos/${GITHUB_REPOSITORY}/issues?state=open&labels=flaky-quarantine&per_page=100" \
+            --jq '[.[] | select(.pull_request == null) | .title | select(startswith("Flaky: ")) | ltrimstr("Flaky: ")
+                   | select(test("^tests/[A-Za-z0-9_/.-]+[.]py::[^ ]+$"))] | unique' 2>/dev/null)" \
+            || { echo "::warning title=Flaky quarantine unread (#12252)::every test stays required"; ids='[]'; }
+          [ -n "$ids" ] || ids='[]'
+          echo "flaky quarantine: $ids"
+          echo "ids=$ids" >> "$GITHUB_OUTPUT"
 
       - name: Classify the complete candidate
         id: decide
@@ -188,6 +220,9 @@ jobs:
   fast-gate:
     needs: change-scope
     runs-on: ubuntu-latest
+    env:
+      # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
+      CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
     timeout-minutes: 2
     steps:
       - name: Require this run's change-scope attempt
@@ -255,6 +290,9 @@ jobs:
     needs: [change-scope, fast-gate, native-backend-readers]
     if: ${{ !cancelled() && needs.fast-gate.result == 'success' }}
     runs-on: ubuntu-latest
+    env:
+      # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
+      CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
     strategy:
       # Every shard runs even when one fails. With fail-fast the first red
       # cancels its siblings, so a run that broke three shards reports one and
@@ -382,6 +420,9 @@ jobs:
     needs: [change-scope, fast-gate]
     if: needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'
     runs-on: ubuntu-latest
+    env:
+      # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
+      CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
     defaults:
       run:
         working-directory: backend
@@ -415,6 +456,22 @@ jobs:
           python -m pytest $NATIVE_TESTS -q -rs 2>&1 | tee /tmp/native-readers.txt
           COUNT="$(grep -oE '[0-9]+ passed' /tmp/native-readers.txt | tail -1)"
           echo "native-backend-readers: ${COUNT:-0 passed}"
+
+      # Fable, Nov 9: frontend-build is skipped on native, and it was the only
+      # job running the jest suites that read Swift sources (frontend/__tests__/ios,
+      # the single-source guards). #12436, #12441 and #12443 skipped them.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Run the iOS guard suites (frontend/__tests__/ios)
+        working-directory: frontend
+        run: |
+          set -o pipefail
+          npm ci
+          npx jest --ci __tests__/ios/
 
   shard-completeness:
     # #5007 — this proves the SHARD PARTITION is complete, so it is meaningful
@@ -561,6 +618,10 @@ jobs:
       # `RERUN` line (-rR) and a ::warning:: annotation (backend/tests/conftest.py),
       # so the flake stays visible. Every other group runs exactly as before.
       PYTEST_ADDOPTS: ${{ matrix.group == 'shared-tail' && '--reruns 1 -rR' || '' }}
+      # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
+      CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
+      # #12252 item 2: each 55-A retry's nodeid, uploaded as flaky-retries-<attempt>.
+      FLAKY_RETRIES_FILE: /tmp/flaky-retries.txt
 
     steps:
       - name: Reused exact-commit test evidence
@@ -760,7 +821,7 @@ jobs:
       - name: "#9550 the search dropdown says 'Settled · Pereira wins' (real Postgres)"
         id: db_029_9550_the_search_dropdown_says_settled_pe
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "set -o pipefail\npython -m pytest tests/integration/test_typeahead_venue_settled_pg_9550.py \\\n  -v -rs 2>&1 | tee /tmp/ta9550.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\nif grep -qiE \"no tests ran|collected 0 items\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate collected NOTHING\"\n  exit 1\nfi\nif ! grep -qE \"^=+ 6 passed\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate did not report exactly 6 passed\"\n  exit 1\nfi\n"
+        run: "set -o pipefail\npython -m pytest tests/integration/test_typeahead_venue_settled_pg_9550.py \\\n  -v -rs 2>&1 | tee /tmp/ta9550.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\nif grep -qiE \"no tests ran|collected 0 items\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate collected NOTHING\"\n  exit 1\nfi\nif ! grep -qE \"^=+ 7 passed\" /tmp/ta9550.txt; then\n  echo \"::error::#9550 dropdown venue-settled gate did not report exactly 7 passed\"\n  exit 1\nfi\n"
       - name: "#9527/#9522 'red sox vs yankees' finds the game; a tennis row reads 'v' (real Postgres)"
         id: db_030_9527_9522_red_sox_vs_yankees_finds_the_g
         # PILLAR: DISCOVER. SHIP: typing "red sox vs yankees" finds the game on
@@ -3680,7 +3741,7 @@ jobs:
         # and no error — the reachable absence whose mishandling got the first
         # candidate for this issue rejected.
         if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "set -o pipefail\npython -m pytest tests/integration/test_vacuum_block_signals_2006_real_postgres.py \\\n  -v -rs 2>&1 | tee /tmp/vacuum2006.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/vacuum2006.txt; then\n  echo \"::error::#2006 vacuum-signal gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n# A skip check cannot see a DESELECTION, and most arms here are\n# satisfied by a rail that reports everything: losing the cross-role\n# xid arm specifically would leave this step green and meaningless.\n# `[= ]12 passed`, not `^12 passed` (the summary sits inside an `=====`\n# banner) and not a bare `12 passed` (which `112 passed` satisfies).\nif ! grep -qE \"[= ]12 passed\" /tmp/vacuum2006.txt; then\n  echo \"::error::#2006 vacuum-signal gate did not run all 12 arms \u2014 tests were deselected or removed\"\n  exit 1\nfi\n"
+        run: "set -o pipefail\npython -m pytest tests/integration/test_vacuum_block_signals_2006_real_postgres.py \\\n  -v -rs 2>&1 | tee /tmp/vacuum2006.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/vacuum2006.txt; then\n  echo \"::error::#2006 vacuum-signal gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n# A skip check cannot see a DESELECTION, and most arms here are\n# satisfied by a rail that reports everything: losing the cross-role\n# xid arm specifically would leave this step green and meaningless.\n# `[= ]12 passed`, not `^12 passed` (the summary sits inside an `=====`\n# banner) and not a bare `12 passed` (which `112 passed` satisfies).\nif ! grep -qE \"[= ]13 passed\" /tmp/vacuum2006.txt; then\n  echo \"::error::#2006 vacuum-signal gate did not run all 13 arms \u2014 tests were deselected or removed\"\n  exit 1\nfi\n"
       - name: "#6977 diacritic search fold, three rails (real Postgres)"
         id: db_213_6977_diacritic_search_fold_three_rails_r
         # A plain-keyboard reader reached NONE of an accented club's rows.
@@ -4847,10 +4908,24 @@ jobs:
         # Real row locks vs a second connection; an e892 arm must let it in.
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
         run: "python -m pytest tests/integration/test_repair_11315_roster_lock_pg.py -v -rs > /tmp/roster11315.txt 2>&1 || {\n  cat /tmp/roster11315.txt\n  exit 1\n}\ncat /tmp/roster11315.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/roster11315.txt; then\n  echo \"::error::#11315 roster lock gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]19 passed([,[:space:]]|$)\" /tmp/roster11315.txt || {\n  echo \"::error::#11315 roster lock gate did not run all nineteen cases\"\n  exit 1\n}\n"
+      - name: "#4437 open markets' outcome copy: maintainer and both routes (real Postgres)"
+        id: db_307_4437_open_markets_outcome_copy_maintainer
+        # Full schema reset; the route answers with the copy must equal those without.
+        if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+        run: "python -m pytest tests/integration/test_open_futures_outcomes_pg_4437.py -v -rs > /tmp/openoutcomes4437.txt 2>&1 || {\n  cat /tmp/openoutcomes4437.txt\n  exit 1\n}\ncat /tmp/openoutcomes4437.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/openoutcomes4437.txt; then\n  echo \"::error::#4437 open-outcomes gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]9 passed([,[:space:]]|$)\" /tmp/openoutcomes4437.txt || {\n  echo \"::error::#4437 open-outcomes gate did not run all nine cases\"\n  exit 1\n}\n"
   # The existing required context stays non-matrix. A failed, cancelled or
   # unexpectedly skipped worker must never satisfy branch protection as green.
   # Frontend-only candidates retain the original intentional job-level skip.
 
+      - name: "#12252 shared tail — upload this attempt's 55-A retries for the flake sentinel"
+        id: db_flaky_retries_upload
+        if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaky-retries-${{ github.run_attempt }}
+          path: /tmp/flaky-retries.txt
+          if-no-files-found: ignore
+          retention-days: 8
       - name: Summarize database integration failures
         id: database_integration_summary
         if: ${{ !cancelled() }}
@@ -4859,6 +4934,56 @@ jobs:
           STEP_RESULTS: ${{ toJSON(steps) }}
           INTEGRATION_GROUP: ${{ matrix.group }}
         run: "python - <<'SUMMARY'\nimport json\nimport os\nresults = json.loads(os.environ['STEP_RESULTS'])\nfailed = [name for name, result in results.items() if result.get('outcome') == 'failure']\nlines = ['## Database integration \u2014 ' + os.environ['INTEGRATION_GROUP'], '']\nif failed:\n    lines += ['Failed steps:', ''] + ['- `' + name + '`' for name in failed]\nelse:\n    lines += ['No failed steps.']\nwith open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:\n    output.write('\\n'.join(lines) + '\\n')\nSUMMARY\n"
+  # #12252 item 2: the quarantined tests (open `Flaky: <test id>` issues), run for real.
+  # NOT a required context and continue-on-error, so it reports and never blocks a merge
+  # or turns a run red. Skipped when nothing is quarantined.
+  flaky-canary:
+    needs: change-scope
+    if: ${{ !cancelled() && needs.change-scope.result == 'success' && needs.change-scope.outputs.quarantine != '[]' && needs.change-scope.outputs.quarantine != '' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true' }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bl_searchtest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 56379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SEARCH_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
+      CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run the quarantined tests (reports, never blocks)
+        run: bash ../.github/scripts/flaky-canary.sh
   search-recall:
     needs: [change-scope, database-integration]
     if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}

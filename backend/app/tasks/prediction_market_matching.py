@@ -562,6 +562,66 @@ class _LinkedMarketRef:
         return feeds_win_prob_blend(self.external_id)
 
 
+def _phase2_linked_select(now: datetime):
+    """Phase 2's load: every venue market linked to a live-or-recent event.
+
+    #12042: only the columns `_LinkedMarketRef` copies. Whole FuturesMarket +
+    Event ORM rows (22,328 of them on Nov 9) took the matcher from 212 to 612 MB
+    at this load. The decoded `market_metadata` dicts are ~108 MB of that (#9348
+    needs them); the rest was ORM state for columns Phase 2 never reads.
+    """
+    from app.models.models import Event, FuturesMarket
+
+    return (
+        select(
+            FuturesMarket.id.label("market_id"),
+            FuturesMarket.source,
+            FuturesMarket.external_id,
+            FuturesMarket.name,
+            FuturesMarket.status,
+            FuturesMarket.market_metadata,
+            Event.id.label("event_id"),
+            Event.commence_time.label("event_commence_time"),
+            Event.home_team_name,
+            Event.away_team_name,
+            Event.completed_at.label("event_completed_at"),
+        )
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.isnot(None),
+            or_(
+                Event.status.in_(["scheduled", "live"]),
+                and_(
+                    Event.status.in_(["completed", "closed"]),
+                    Event.commence_time >= now - timedelta(hours=24),
+                ),
+            ),
+        )
+    )
+
+
+def _linked_ref_from_row(row) -> _LinkedMarketRef:
+    """One `_phase2_linked_select` row as the scalar copy Phase 2 loops over."""
+    return _LinkedMarketRef(
+        market_id=row.market_id,
+        source=row.source,
+        external_id=row.external_id,
+        name=row.name,
+        event_id=row.event_id,
+        event_commence_time=row.event_commence_time,
+        home_team_name=row.home_team_name,
+        away_team_name=row.away_team_name,
+        status=row.status,
+        market_metadata=row.market_metadata,  # #9348
+        # #5820. Measured from the row that is already joined here, so the
+        # clause costs no query. False is the armed state and it is the honest
+        # reading of this join: a scheduled or live event with no
+        # `completed_at` is one we have no result for.
+        event_has_result=row.event_completed_at is not None,
+    )
+
+
 def _derive_sport_category(external_id: str | None) -> str | None:
     """Derive llm_sport_category from a Kalshi ticker's sport key.
 
@@ -4240,7 +4300,9 @@ async def _phase1_pass2_general_scan(
     _time_remaining,
 ) -> None:
     """Phase 1 Pass 2: scan non-ticker game markets (Polymarket + edge cases)."""
-    from app.models.models import FuturesMarket
+    from app.models.models import FuturesMarket, MarketMatchReceipt
+    from app.services.polymarket_api import GAMMA_FULL_CONTEST_WINNER_TYPES
+    from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
 
     _matchup_base_where = [
         FuturesMarket.source.in_(["kalshi", "polymarket"]),
@@ -4253,11 +4315,49 @@ async def _phase1_pass2_general_scan(
         FuturesMarket.name.ilike("% – %"),
     )
 
+    # #12072: a fixture can arrive after a winner market's last refusal. The
+    # recency prefix may never revisit that market, and Pass 3's never-attempted
+    # prefix can fill its budget first. Reserve at most a fifth of these same
+    # slots for dated, venue-labelled winners, oldest receipt first. The date
+    # only prioritises an attempt; the ordinary fixture and identity gates
+    # still decide every link. Legacy rows retain the recency/backlog paths.
+    retry_budget = min(100, max(0, limit // 5))
+    retry_ids: list[int] = []
+    if retry_budget > 0:
+        retry_result = await session.execute(
+            select(FuturesMarket.id)
+            .join(
+                MarketMatchReceipt,
+                MarketMatchReceipt.market_id == FuturesMarket.id,
+            )
+            .where(
+                *_matchup_base_where,
+                _matchup_name_filter,
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.market_metadata[CONTENT_UNDERSTANDING_KEY][
+                    "venue_type"
+                ].astext.in_(GAMMA_FULL_CONTEST_WINNER_TYPES),
+                FuturesMarket.resolution_date >= now - timedelta(hours=6),
+                FuturesMarket.resolution_date <= now + timedelta(hours=48),
+                MarketMatchReceipt.last_attempted_at <= now - timedelta(minutes=15),
+            )
+            .order_by(
+                MarketMatchReceipt.last_attempted_at.asc(),
+                FuturesMarket.id.asc(),
+            )
+            .limit(retry_budget)
+        )
+        retry_ids = [int(mid) for mid in retry_result.scalars().all()]
+
     matchup_result = await session.execute(
         select(FuturesMarket.id)
-        .where(*_matchup_base_where, _matchup_name_filter)
+        .where(
+            *_matchup_base_where,
+            _matchup_name_filter,
+            FuturesMarket.id.notin_(retry_ids),
+        )
         .order_by(FuturesMarket.updated_at.desc())
-        .limit(limit)
+        .limit(max(0, limit - len(retry_ids)))
     )
     matchup_ids = [int(mid) for mid in matchup_result.scalars().all()]
 
@@ -4272,11 +4372,17 @@ async def _phase1_pass2_general_scan(
         )
         remaining_ids = [int(mid) for mid in remaining_result.scalars().all()]
 
-    unlinked_ids = matchup_ids + remaining_ids
+    # One retry followed by four fresh matchups also preserves fresh-ingest
+    # headroom when the time reserve stops the pass before its row cap.
+    unlinked_ids = list(matchup_ids)
+    for index, market_id in enumerate(retry_ids):
+        unlinked_ids.insert(index * 5, market_id)
+    unlinked_ids.extend(remaining_ids)
     stats["funnel"]["general_scan_count"] = len(unlinked_ids)
     stats["funnel"]["pass2_yielded_to_backlog"] = False
-    stats["funnel"]["matchup_scan_count"] = len(matchup_ids)
+    stats["funnel"]["matchup_scan_count"] = len(matchup_ids) + len(retry_ids)
     stats["funnel"]["remaining_scan_count"] = len(remaining_ids)
+    stats["funnel"]["winner_retry_scan_count"] = len(retry_ids)
 
     receipts: list[MatchReceipt] = []
     try:
@@ -8418,6 +8524,9 @@ async def _match_prediction_markets(limit: int = 500):
     }
 
     import time as _time
+
+    # #12042: which phase grows the pass to ~1 GB (see `mark_memory`).
+    from app.tasks.heavy_memory_turns import mark_memory as _mem
     _task_start = _time.monotonic()
 
     def _time_remaining() -> float:
@@ -8435,13 +8544,16 @@ async def _match_prediction_markets(limit: int = 500):
         # visiting, and a record of an exclusion that only gets written when
         # there is budget left over is a record that reliably goes missing on
         # exactly the busy nights it is wanted for.
+        _mem(stats, "start")
         await _settled_sweep(session, stats, now, _time_remaining)
+        _mem(stats, "settled_sweep")
 
         # Phase 1, Pass 1: Kalshi ticker scan
         logger.info("Phase 1 starting — %.0fs budget remaining", _time_remaining())
         processed_ids = await _phase1_pass1_ticker_scan(
             session, stats, now, polymarket_backfill_queue, _time_remaining,
         )
+        _mem(stats, "pass1_ticker_scan")
 
         # Phase 1, Pass 2: General scan
         stats["funnel"]["total_unlinked"] = (
@@ -8452,6 +8564,7 @@ async def _match_prediction_markets(limit: int = 500):
             polymarket_backfill_queue, _time_remaining,
         )
         stats["funnel"]["total_unlinked"] += stats["funnel"].get("general_scan_count", 0)
+        _mem(stats, "pass2_general_scan")
 
         # Phase 1, Pass 3: the backlog sweep (#2705). Passes 1 and 2 are
         # recency-ordered and capped, so the tail of the unlinked population is
@@ -8464,6 +8577,7 @@ async def _match_prediction_markets(limit: int = 500):
             session, stats, now, processed_ids,
             polymarket_backfill_queue, _time_remaining,
         )
+        _mem(stats, "pass3_backlog_scan")
 
         # Phase 1.5: Re-validate linked markets
         logger.info("Phase 1 done (%d scanned, %d linked) — %.0fs remaining",
@@ -8482,6 +8596,7 @@ async def _match_prediction_markets(limit: int = 500):
         await _flush_pass_receipts(
             session, link_changes, stats, _receipts.PHASE_PHASE15_REVALIDATE,
         )
+        _mem(stats, "phase15_revalidate")
 
         # #944: correct Kalshi game markets that collapsed onto the last game's
         # event (commence_time = resolution date). Idempotent + write-on-change,
@@ -8494,6 +8609,7 @@ async def _match_prediction_markets(limit: int = 500):
         stats["funnel"]["kalshi_segment_reconcile"] = (
             await _reconcile_kalshi_match_segments(session)
         )
+        _mem(stats, "relink_and_reconcile")
 
         # ── Phase 2: Write win_prob_snapshots for active linked markets ────
         #
@@ -8513,22 +8629,11 @@ async def _match_prediction_markets(limit: int = 500):
             logger.info("Skipping Phase 2 — only %.0fs remaining", _time_remaining())
             stats["funnel"]["phase2_skipped_budget"] = True
         else:
-            linked_result = await session.execute(
-                select(FuturesMarket, Event)
-                .join(Event, FuturesMarket.event_id == Event.id)
-                .where(
-                    FuturesMarket.source.in_(["kalshi", "polymarket"]),
-                    FuturesMarket.event_id.isnot(None),
-                    or_(
-                        Event.status.in_(["scheduled", "live"]),
-                        and_(
-                            Event.status.in_(["completed", "closed"]),
-                            Event.commence_time >= now - timedelta(hours=24),
-                        ),
-                    ),
-                )
-            )
+            linked_result = await session.execute(_phase2_linked_select(now))
             linked_rows = linked_result.all()
+            # #12042: this load was the whole climb (212 -> 612 MB, Nov 9 22:13Z,
+            # loop +3 MB). The mark stays so the narrowed load stays measured.
+            _mem(stats, "phase2_load")
 
         # DEDUP: Kalshi creates separate binary markets per team outcome
         # (e.g., "Celtics win?" and "76ers win?" for the same game). If both
@@ -8536,26 +8641,7 @@ async def _match_prediction_markets(limit: int = 500):
         # home probabilities to cancel out vig. Pick a primary market for
         # processing (matchup extraction, ticker validation), and store all
         # sibling markets for probability averaging.
-        linked_refs = [
-            _LinkedMarketRef(
-                market_id=market.id,
-                source=market.source,
-                external_id=market.external_id,
-                name=market.name,
-                event_id=event.id,
-                event_commence_time=event.commence_time,
-                home_team_name=event.home_team_name,
-                away_team_name=event.away_team_name,
-                status=market.status,
-                market_metadata=getattr(market, "market_metadata", None),  # #9348
-                # #5820. Measured from the row that is already joined here, so
-                # the clause costs no query. False is the armed state and it is
-                # the honest reading of this join: a scheduled or live event
-                # with no `completed_at` is one we have no result for.
-                event_has_result=event.completed_at is not None,
-            )
-            for market, event in linked_rows
-        ]
+        linked_refs = [_linked_ref_from_row(row) for row in linked_rows]
 
         all_per_event_source: dict[tuple[int, str], list[_LinkedMarketRef]] = {}
         for market_ref in linked_refs:
@@ -8811,6 +8897,7 @@ async def _match_prediction_markets(limit: int = 500):
                     stats["errors"].append(f"market {market.market_id}: {err_str[:100]}")
                 continue
 
+        _mem(stats, "phase2")
         # ── Phase 2b: the completed cohort Phase 2's 24-hour window aged past ─
         # Blend key only, holes only, bounded at both ends — see the helper.
         try:
@@ -8832,6 +8919,7 @@ async def _match_prediction_markets(limit: int = 500):
         except Exception as e:
             await session.rollback()
             stats["errors"].append(f"phase2c: {str(e)[:100]}")
+        _mem(stats, "phase2b_2c")
 
     # Published after the matcher's session is closed, on the receipts' own
     # session. Phase 2 commits each unlink inline, so by here every claim in the
@@ -8868,6 +8956,8 @@ async def _match_prediction_markets(limit: int = 500):
                 except Exception as e:
                     stats["errors"].append(f"backfill_{market_id}: {str(e)[:100]}")
 
+    _mem(stats, "phase3_backfill")
+
     # ── #1163: self-heal phantom blend sources ─────────────────────────────
     # Sweep events whose win_probability_sources carries a kalshi/polymarket key
     # with no linked market of that source (orphans left by pre-guard unlinks).
@@ -8884,6 +8974,7 @@ async def _match_prediction_markets(limit: int = 500):
         except Exception as e:
             stats["errors"].append(f"phantom_cleanup: {str(e)[:100]}")
 
+    _mem(stats, "phantom_cleanup")
     logger.info(
         "Prediction market matching: scanned=%d, linked=%d, "
         "snapshots_written=%d, deduped=%d, stale_refused=%d, errors=%d, "

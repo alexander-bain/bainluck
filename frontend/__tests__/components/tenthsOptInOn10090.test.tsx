@@ -200,7 +200,9 @@ describe("#10090 tenths on — the hero", () => {
 
   it("a two-sided pair takes the fit size; one named number keeps 48px", () => {
     const two = hero({ tenths: true });
-    expect(two).toContain("min-[390px]:text-[35px]");
+    expect(two).toContain("min-[390px]:text-[28px]");
+    expect(two).toContain("min-[390px]:text-[18px]");
+    expect(two).not.toContain("min-[390px]:text-[35px]");
     expect(two).not.toContain("min-[390px]:text-[48px]");
     const one = hero({ homeProb: 0.4175, awayProb: 0.5825, awayWithheld: true, tenths: true });
     expect(heroSides(one)).toEqual(["41.8%"]);
