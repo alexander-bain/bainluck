@@ -55,6 +55,7 @@ struct SectionTitle: View {
     var body: some View {
         HStack(alignment: .lastTextBaseline) {
             Text(title)
+                .accessibilityAddTraits(.isHeader)
                 .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(DS.textPrimary)
                 .tracking(-0.3)

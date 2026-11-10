@@ -461,6 +461,7 @@ struct MyStuffView: View {
         if hasPins {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Pinned", systemImage: "bookmark.fill")
+                    .accessibilityAddTraits(.isHeader)
                     .foregroundStyle(.orange)
                     .font(.subheadline.weight(.semibold))
                 ForEach(pinned.items) { item in

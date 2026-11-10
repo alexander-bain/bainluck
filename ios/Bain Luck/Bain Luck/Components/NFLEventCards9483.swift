@@ -923,6 +923,7 @@ struct GameStoriesHeader9483: View {
 
     private var title: some View {
         Text("Game stories")
+            .accessibilityAddTraits(.isHeader)
             .font(.headline)
     }
 

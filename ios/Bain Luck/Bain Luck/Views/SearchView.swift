@@ -443,6 +443,7 @@ struct SearchView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text("Recent")
+                                .accessibilityAddTraits(.isHeader)
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(.secondary)
@@ -502,6 +503,7 @@ struct SearchView: View {
                 if !featuredTournaments.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Tournaments")
+                            .accessibilityAddTraits(.isHeader)
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundStyle(.secondary)
@@ -520,6 +522,7 @@ struct SearchView: View {
                 // Quick Search by Sport
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Browse by Sport")
+                        .accessibilityAddTraits(.isHeader)
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
@@ -538,6 +541,7 @@ struct SearchView: View {
                 // Categories (navigate to dedicated views)
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Categories")
+                        .accessibilityAddTraits(.isHeader)
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
@@ -555,6 +559,7 @@ struct SearchView: View {
                 // Trending / Explore
                 VStack(alignment: .leading, spacing: 10) {
                     Text(viewModel.trendingSearches.isEmpty ? "Explore" : "Trending")
+                        .accessibilityAddTraits(.isHeader)
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)

@@ -69,6 +69,7 @@ struct ProjectedFinalPointsChartView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 Text("Projected final points").font(.headline).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 if !expanded {
                     // #10549 — the glyph keeps its place in the header while the

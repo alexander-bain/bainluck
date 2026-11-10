@@ -1287,6 +1287,7 @@ struct EventDetailView: View {
     private func chartHeaderBar(_ event: EventDetail) -> some View {
         HStack {
             Text("Win Probability")
+                .accessibilityAddTraits(.isHeader)
                 .font(.subheadline)
                 .fontWeight(.semibold)
             if isLive {
@@ -3572,6 +3573,7 @@ struct EventDetailView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                     Text("Game Info")
+                        .accessibilityAddTraits(.isHeader)
                         .font(.subheadline)
                         .fontWeight(.semibold)
                 }
@@ -4540,6 +4542,7 @@ private struct GameSegmentsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("Game Segments")
+                        .accessibilityAddTraits(.isHeader)
                         .font(.subheadline)
                         .fontWeight(.semibold)
                     Spacer()

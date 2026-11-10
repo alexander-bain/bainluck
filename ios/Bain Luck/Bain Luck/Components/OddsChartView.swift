@@ -1539,6 +1539,7 @@ struct OddsChartView: View {
     @ViewBuilder
     private var chartTitleAndStatus: some View {
         Text("Win Probability")
+            .accessibilityAddTraits(.isHeader)
             .font(.subheadline)
             .fontWeight(.semibold)
             .foregroundStyle(.primary)
