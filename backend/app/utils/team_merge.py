@@ -37,6 +37,27 @@ from types import SimpleNamespace
 
 from sqlalchemy import text
 
+#: #12519: the scoped mapping dedup run after a merge, by this rail AND by the
+#: admin route (``admin_team_clusters``), which imports it. One statement, so the
+#: two cannot drift apart.
+#:
+#: A row with a source id is a duplicate only of an older row with the SAME id.
+#: A row with NO source id is a duplicate only of an older exact repeat: same
+#: source, same name, same sport key. A distinct name is never deleted. The old
+#: form compared ``source_id IS NOT DISTINCT FROM``, under which two NULL ids are
+#: equal, so every NULL-id name one source held for the team collapsed into the
+#: oldest: merging Montreal would have kept Polymarket's "Lightning" and deleted
+#: "Canadiens" (112 names across 30 of #1511's clusters).
+MAPPING_DEDUP_SQL = (
+    "DELETE FROM team_identity_mapping a USING team_identity_mapping b "
+    "WHERE a.id > b.id AND a.team_id = b.team_id AND a.source = b.source "
+    "AND a.team_id = :tid "
+    "AND ((a.source_id IS NOT NULL AND a.source_id = b.source_id) "
+    "OR (a.source_id IS NULL AND b.source_id IS NULL "
+    "AND a.source_name IS NOT DISTINCT FROM b.source_name "
+    "AND a.sport_key IS NOT DISTINCT FROM b.sport_key))"
+)
+
 # Default "current events" window — a team with an event inside this window is
 # live/in-season and must win the canonical tiebreak.
 _RECENT_DAYS = 60
@@ -400,12 +421,7 @@ async def run_team_identity_merge(
                     )
                 # Dedup mapping rows for THIS canonical only (scoped + cheap), then
                 # commit this cluster before moving on (per-cluster durability).
-                await s.execute(text(
-                    "DELETE FROM team_identity_mapping a USING team_identity_mapping b "
-                    "WHERE a.id > b.id AND a.team_id = b.team_id AND a.source = b.source "
-                    "AND a.source_id IS NOT DISTINCT FROM b.source_id "
-                    "AND a.team_id = :tid"
-                ), {"tid": canonical.id})
+                await s.execute(text(MAPPING_DEDUP_SQL), {"tid": canonical.id})
                 await s.commit()
                 pairs_merged += len(pair_evidence)
                 clusters_merged += 1

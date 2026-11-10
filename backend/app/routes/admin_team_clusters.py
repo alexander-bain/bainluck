@@ -34,7 +34,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import MatchingOverride
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 from app.services import get_db, get_db_rw
-from app.utils.team_merge import _apply_merge, _normalize, run_team_identity_merge
+from app.utils.team_merge import (
+    MAPPING_DEDUP_SQL,
+    _apply_merge,
+    _normalize,
+    run_team_identity_merge,
+)
 
 router = APIRouter()
 
@@ -278,15 +283,9 @@ async def team_clusters_verdict(
         try:
             for fid in body.fold_ids:
                 merge_evidence.append(await _apply_merge(db, canonical, rows[fid], sport_key))
-            # Scoped mapping dedup for this canonical (mirrors the rail).
-            await db.execute(
-                text(
-                    "DELETE FROM team_identity_mapping a USING team_identity_mapping b "
-                    "WHERE a.id > b.id AND a.team_id = b.team_id AND a.source = b.source "
-                    "AND a.source_id IS NOT DISTINCT FROM b.source_id AND a.team_id = :tid"
-                ),
-                {"tid": canonical.id},
-            )
+            # Scoped mapping dedup for this canonical: the rail's own statement
+            # (#12519: it keeps every distinct name).
+            await db.execute(text(MAPPING_DEDUP_SQL), {"tid": canonical.id})
             context["merged"] = merge_evidence
             await _upsert_override(db, body, decision, canonical.name, context)
             await db.commit()
