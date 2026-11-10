@@ -46,6 +46,12 @@ struct EventDetailView: View {
     @ScaledMetric(relativeTo: .largeTitle) private var eventHeadlineChanceSize9483: CGFloat = 44
     /// v476 — actual score and projected final share one scaled figure style.
     @ScaledMetric(relativeTo: .title2) private var eventHeadlineScoreSize9483: CGFloat = 24
+    /// #12312 — the page's small fixed sizes grow with the reader's text size;
+    /// at the default size each is exactly the point size it was.
+    @ScaledMetric(relativeTo: .caption2) private var glyph8Size12312: CGFloat = 8
+    @ScaledMetric(relativeTo: .caption2) private var text10Size12312: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption) private var text12Size12312: CGFloat = 12
+    @ScaledMetric(relativeTo: .title3) private var score20Size12312: CGFloat = 20
     /// #9483 — the NFL cards' open card and selections, owned by the page so
     /// they survive the deck → full size → deck round trip.
     @StateObject private var nflCards = NFLCardDeckState9483()
@@ -1717,7 +1723,7 @@ struct EventDetailView: View {
                     status: event.status, commenceTime: event.commenceTime?.asDate) {
                     HStack(spacing: 3) {
                         Image(systemName: "tv")
-                            .font(.system(size: 8))
+                            .font(.system(size: glyph8Size12312))
                         Text(broadcast)
                             .font(.caption2)
                             .fontWeight(.medium)
@@ -1781,7 +1787,7 @@ struct EventDetailView: View {
                         .foregroundStyle(.primary)
                     if hasScore {
                         Text("\(event.awayScore ?? 0)")
-                            .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
+                            .font(.system(size: score20Size12312, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(winnerColor(isAway: true, event: event))
                     }
                     if carriesContext, let record = event.awayTeamData?.record {
@@ -2127,7 +2133,7 @@ struct EventDetailView: View {
                        // #9470 — an opening line has no "since open".
                        !shown.isOpeningLine {
                         Text(caption.text)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: text10Size12312, weight: .medium))
                             .foregroundStyle(caption.isHome ? colors.home : colors.away)
                     }
                     // #490: hero confidence signal (1-3 bars), computed
@@ -2251,7 +2257,7 @@ struct EventDetailView: View {
                         .foregroundStyle(.primary)
                     if hasScore {
                         Text("\(event.homeScore ?? 0)")
-                            .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
+                            .font(.system(size: score20Size12312, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(winnerColor(isAway: false, event: event))
                     }
                     if carriesContext, let record = event.homeTeamData?.record {
@@ -3569,7 +3575,7 @@ struct EventDetailView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 12))
+                        .font(.system(size: text12Size12312))
                         .foregroundStyle(.secondary)
                     Text("Game Info")
                         .font(.subheadline)
@@ -3579,7 +3585,7 @@ struct EventDetailView: View {
                     if let broadcast = event.espn?.broadcast, showsBroadcast {
                         HStack(spacing: 5) {
                             Image(systemName: "tv")
-                                .font(.system(size: 10))
+                                .font(.system(size: text10Size12312))
                             Text(broadcast)
                                 .font(.caption)
                                 .fontWeight(.medium)
@@ -3593,7 +3599,7 @@ struct EventDetailView: View {
                     if let commenceTime = event.commenceTime, let date = commenceTime.asDate {
                         HStack(spacing: 5) {
                             Image(systemName: "clock")
-                                .font(.system(size: 10))
+                                .font(.system(size: text10Size12312))
                             if isFinished {
                                 Text("Final · \(date, format: .dateTime.month(.abbreviated).day().hour().minute())")
                                     .font(.caption)
@@ -3638,7 +3644,7 @@ struct EventDetailView: View {
                 ForEach(handedOver, id: \.text) { item in
                     HStack(spacing: 5) {
                         Image(systemName: item.icon)
-                            .font(.system(size: 10))
+                            .font(.system(size: text10Size12312))
                         Text(item.text)
                             .font(.caption)
                             .fontWeight(.medium)
@@ -3723,7 +3729,7 @@ struct EventDetailView: View {
                                 .fontWeight(.medium)
                                 .foregroundStyle(.secondary)
                             Image(systemName: "chevron.down")
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: glyph8Size12312, weight: .bold))
                                 .foregroundStyle(.secondary)
                                 .rotationEffect(.degrees(showSources ? 180 : 0))
                         }
@@ -3744,7 +3750,7 @@ struct EventDetailView: View {
                         // ones included and marked with their age, so its count
                         // is not the "Based on N sportsbooks" count above it.
                         Text(Self.bookmakerTableHeading(rowCount: bookmakers.count))
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: text10Size12312, weight: .semibold))
                             .foregroundStyle(.tertiary)
                             .textCase(.uppercase)
                             .frame(maxWidth: .infinity, alignment: .leading)

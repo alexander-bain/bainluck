@@ -492,6 +492,9 @@ final class OddsChartViewModel: ObservableObject {
 
 struct OddsChartView: View {
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFontSize: CGFloat = 12
+    /// #12312 — the expand glyph and the key's chevrons grow with the reader's text size.
+    @ScaledMetric(relativeTo: .caption) private var expandGlyphSize12312: CGFloat = 12
+    @ScaledMetric(relativeTo: .caption2) private var chevronSize12312: CGFloat = 8
     /// #9483 R4 V2 — the full-size key's names rail is never chosen narrower
     /// than one readable source key, scaled with the key's text.
     @ScaledMetric(relativeTo: .caption2) private var railReadableWidth9483: CGFloat = OddsChartView.railReadableKeyWidth9483
@@ -1564,7 +1567,7 @@ struct OddsChartView: View {
             isFullscreen = true
         } label: {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 12))
+                .font(.system(size: expandGlyphSize12312))
                 .foregroundStyle(.secondary)
                 // #9483 R4 — the whole 44pt square is the target (it was the
                 // 12pt glyph plus 6pt padding, 26×25), inside the header row.
@@ -2819,7 +2822,7 @@ struct OddsChartView: View {
                 Text("+ \(count) source\(count == 1 ? "" : "s")")
                     .font(.caption2)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: chevronSize12312, weight: .bold))
             }
             .foregroundStyle(.secondary)
             // The tap target is the 44pt frame, not the caption-sized text: the
@@ -2842,7 +2845,7 @@ struct OddsChartView: View {
                 Text("Hide")
                     .font(.caption2)
                 Image(systemName: "chevron.up")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: chevronSize12312, weight: .bold))
             }
             .foregroundStyle(.secondary)
             .frame(minWidth: 44, minHeight: 44, alignment: .leading)

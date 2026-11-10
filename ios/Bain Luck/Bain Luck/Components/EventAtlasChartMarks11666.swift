@@ -429,6 +429,8 @@ struct EventAtlasChartHeaderView11666: View {
 
 /// Fixed-height readout slot that observes `selection` without shifting the chart plot vertically.
 private struct EventAtlasSelectedReadingSlot11666: View {
+    /// #12312 — the reading's badge grows with the reader's text size.
+    @ScaledMetric(relativeTo: .caption2) private var badgeSize12312: CGFloat = 9
     @ObservedObject var selection: OddsChartSelection
     let baseRows: [EventAtlasObservationRow11666]
     let outcomeName: String
@@ -495,7 +497,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: true, vertical: false)
             Text(selectedModel.badgeText.uppercased())
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: badgeSize12312, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1.5)
@@ -531,7 +533,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.primary)
                 Text(selectedModel.badgeText.uppercased())
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: badgeSize12312, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1.5)
