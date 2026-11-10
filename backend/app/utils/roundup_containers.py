@@ -1101,6 +1101,14 @@ async def evaluate_roundup_producer(
     return feed_item, container_payload
 
 
+def _strip_parent_from_payload(out: dict[str, Any]) -> None:
+    out.pop("parent", None)
+    if isinstance(out.get("container"), dict):
+        out["container"]["parent_container_id"] = None
+        out["container"].pop("parent_slug", None)
+        out["container"].pop("parent_name", None)
+
+
 async def serve_roundup(
     slug: str,
     db: Any,
@@ -1110,7 +1118,11 @@ async def serve_roundup(
     """Serve a registered round-up container, or raise 404 ``{state: unavailable, slug}``."""
     from fastapi import HTTPException
 
-    from app.utils.container_corrections import READ_UNAVAILABLE
+    from app.utils.container_corrections import (
+        READ_PUBLISHED,
+        READ_UNAVAILABLE,
+        read_published,
+    )
 
     producer = ROUNDUP_PRODUCERS.get(slug)
     if producer is None:
@@ -1145,7 +1157,14 @@ async def serve_roundup(
                     ch_copy["name"] = ch_name
                 verified_children.append(ch_copy)
             else:
-                verified_children.append(dict(ch))
+                try:
+                    ch_pub = await read_published(db, ch_slug)
+                except Exception:  # noqa: BLE001
+                    ch_pub = None
+                if getattr(ch_pub, "state", None) == READ_PUBLISHED:
+                    ch_copy = dict(ch)
+                    ch_copy["publication_state"] = "published"
+                    verified_children.append(ch_copy)
         out["children"] = verified_children
 
     parent_obj = out.get("parent")
@@ -1155,11 +1174,16 @@ async def serve_roundup(
         if p_prod is not None:
             _p_fi, p_payload = await evaluate_roundup_producer(p_prod, db)
             if p_payload is None or p_payload.get("state") != "published":
-                out.pop("parent", None)
-                if isinstance(out.get("container"), dict):
-                    out["container"]["parent_container_id"] = None
-                    out["container"].pop("parent_slug", None)
-                    out["container"].pop("parent_name", None)
+                _strip_parent_from_payload(out)
+        elif p_slug:
+            try:
+                p_pub = await read_published(db, p_slug)
+            except Exception:  # noqa: BLE001
+                p_pub = None
+            if getattr(p_pub, "state", None) != READ_PUBLISHED:
+                _strip_parent_from_payload(out)
+        else:
+            _strip_parent_from_payload(out)
     return out
 
 

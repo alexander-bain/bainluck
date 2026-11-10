@@ -525,13 +525,26 @@ async def get_container(
             db, published, edition, revision=revision, cursor=cursor, limit=limit
         )
     if slug == MIDTERMS_SLUG:
+        from app.utils.roundup_containers import evaluate_roundup_producer
+
         ids = {m["id"] for m in published.members if m.get("type") == MEMBER_MARKET} & set(MARKET_IDS)
         cards, twins, twin_report = await load_midterms_cards(db, ids)
         sections, withheld = present_midterms_sections(published.members, cards, twins)
+        children = midterms_children(sections, include_children=include_children)
+        if children:
+            verified_children = []
+            for ch in children:
+                ch_prod = ROUNDUP_PRODUCERS.get(ch.get("slug") or "")
+                if ch_prod is None:
+                    continue
+                _ch_fi, ch_payload = await evaluate_roundup_producer(ch_prod, db)
+                if ch_payload is not None and ch_payload.get("state") == "published":
+                    verified_children.append(ch)
+            children = verified_children
         result = {**payload, **base_empty,
                   "container": {"id": published.container_id, "slug": slug, "name": MANIFEST["title"]},
                   "subtitle": MANIFEST["subtitle"], "sections": sections,
-                  "children": midterms_children(sections, include_children=include_children),
+                  "children": children,
                   "member_count": sum(s["count"] for s in sections), "withheld": withheld,
                   "withheld_count": len(withheld), "assembled": bool(published.members),
                   "twin_report": twin_report}

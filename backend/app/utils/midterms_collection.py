@@ -462,8 +462,9 @@ def midterms_children(
     """
     if not include_children:
         return []
+    import zlib
+
     from app.utils.container_presentation import container_destination
-    from app.utils.roundup_containers import roundup_container_id
 
     excluded = {109918, 108629}
     open_races = 0
@@ -486,9 +487,12 @@ def midterms_children(
     if open_races < 3:
         return []
 
+    child_id = (
+        zlib.crc32(MIDTERMS_CLOSEST_RACES_CHILD_SLUG.encode("utf-8")) & 0xFFFFFFFF
+    ) or 1
     return [
         {
-            "id": roundup_container_id(MIDTERMS_CLOSEST_RACES_CHILD_SLUG),
+            "id": child_id,
             "kind": "roundup",
             "name": MIDTERMS_CLOSEST_RACES_CHILD_NAME,
             "slug": MIDTERMS_CLOSEST_RACES_CHILD_SLUG,

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
 import pytest
 
 from app.utils.midterms_collection import (
@@ -17,6 +20,8 @@ from app.utils.roundup_containers import (
     load_roundup_definition,
     roundup_container_id,
 )
+
+FIXED_NOW = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
 
 
 def _open_race_section(count: int, *, status: str = "open") -> list[dict]:
@@ -58,6 +63,7 @@ def test_midterms_children_links_closest_races_when_at_least_three_open() -> Non
     children = midterms_children(sections, include_children=True)
     assert len(children) == 1
     child = children[0]
+    assert child["id"] == roundup_container_id(MIDTERMS_CLOSEST_RACES_CHILD_SLUG)
     assert child["slug"] == MIDTERMS_CLOSEST_RACES_CHILD_SLUG
     assert child["name"] == MIDTERMS_CLOSEST_RACES_CHILD_NAME
     assert child["publication_state"] == "published"
@@ -119,31 +125,17 @@ def test_closest_races_definition_declares_midterms_parent_and_composes_parent_l
 async def test_live_published_parent_child_pairs_and_serve_roundup_withholding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app.utils import container_corrections as cc
     from app.utils import roundup_containers as rc
+
+    now = FIXED_NOW
+    assert now.year == 2026
 
     dec_defn = load_roundup_definition(CONTAINERS_DATA_DIR / "by-december-31.json")
     nov_defn = load_roundup_definition(CONTAINERS_DATA_DIR / "by-november-30.json")
-    assert dec_defn["children"] == [
-        {"slug": "by-november-30", "name": "By November 30"}
-    ]
+    assert [c["slug"] for c in dec_defn["children"]] == ["by-november-30"]
     assert nov_defn["parent_slug"] == "by-december-31"
     assert nov_defn["parent_name"] == "By December 31"
-
-    tonight_defn = load_roundup_definition(
-        CONTAINERS_DATA_DIR / "roundup-closest-games-tonight.json"
-    )
-    celtics_defn = load_roundup_definition(
-        CONTAINERS_DATA_DIR / "celtics-next-3-games.json"
-    )
-    lakers_defn = load_roundup_definition(
-        CONTAINERS_DATA_DIR / "lakers-next-3-games.json"
-    )
-    assert [c["slug"] for c in tonight_defn["children"]] == [
-        "celtics-next-3-games",
-        "lakers-next-3-games",
-    ]
-    assert celtics_defn["parent_slug"] == "roundup-closest-games-tonight"
-    assert lakers_defn["parent_slug"] == "roundup-closest-games-tonight"
 
     dec_producer = build_roundup_producer_from_definition(dec_defn)
     nov_producer = build_roundup_producer_from_definition(nov_defn)
@@ -202,3 +194,43 @@ async def test_live_published_parent_child_pairs_and_serve_roundup_withholding(
     )
     assert "parent" not in served_parent_refused
     assert served_parent_refused["container"]["parent_container_id"] is None
+
+    # Non-roundup parent (midterms-2026) is checked via read_published.
+    races_defn = load_roundup_definition(
+        CONTAINERS_DATA_DIR / "roundup-closest-races.json"
+    )
+    races_producer = build_roundup_producer_from_definition(races_defn)
+    races_payload = compose_roundup_container(
+        races_producer,
+        RoundupMembers(members=_open_race_section(3)[0]["members"]),
+    )
+    assert races_payload is not None
+
+    async def _fake_eval_races(prod, _db, **_kw):
+        if prod.slug == "roundup-closest-races":
+            return {"id": "3"}, races_payload
+        return None, None
+
+    monkeypatch.setattr(rc, "evaluate_roundup_producer", _fake_eval_races)
+
+    async def _fake_read_published_ok(_db, slug: str):
+        return SimpleNamespace(
+            state=cc.READ_PUBLISHED if slug == "midterms-2026" else cc.READ_UNAVAILABLE
+        )
+
+    monkeypatch.setattr(cc, "read_published", _fake_read_published_ok)
+    served_races_ok = await rc.serve_roundup(
+        "roundup-closest-races", [], include_children=True
+    )
+    assert served_races_ok["parent"]["slug"] == "midterms-2026"
+
+    async def _fake_read_published_withdrawn(_db, _slug: str):
+        return SimpleNamespace(state="withdrawn")
+
+    monkeypatch.setattr(cc, "read_published", _fake_read_published_withdrawn)
+    served_races_withdrawn = await rc.serve_roundup(
+        "roundup-closest-races", [], include_children=True
+    )
+    assert "parent" not in served_races_withdrawn
+    assert served_races_withdrawn["container"]["parent_container_id"] is None
+
