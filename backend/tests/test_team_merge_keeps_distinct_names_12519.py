@@ -49,8 +49,18 @@ class TestOneStatementForBothPaths:
     def test_the_rail_owns_the_statement(self):
         assert hasattr(team_merge, "MAPPING_DEDUP_SQL")
 
-    def test_the_route_uses_the_rails_statement(self):
-        assert clusters.MAPPING_DEDUP_SQL is team_merge.MAPPING_DEDUP_SQL
+    def test_the_route_runs_the_rails_statement_character_for_character(self):
+        # The route writes the statement out (the destructive-handler census
+        # reads handler text), so pin its literal to the rail's constant.
+        import ast
+
+        tree = ast.parse(open(clusters.__file__).read())
+        literals = [
+            n.value for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and n.value.startswith("DELETE FROM team_identity_mapping")
+        ]
+        assert literals == [team_merge.MAPPING_DEDUP_SQL]
 
     @pytest.mark.parametrize("module", [team_merge, clusters], ids=["rail", "route"])
     def test_neither_file_keeps_the_null_collapsing_comparison(self, module):

@@ -38,8 +38,9 @@ from types import SimpleNamespace
 from sqlalchemy import text
 
 #: #12519: the scoped mapping dedup run after a merge, by this rail AND by the
-#: admin route (``admin_team_clusters``), which imports it. One statement, so the
-#: two cannot drift apart.
+#: admin route (``admin_team_clusters``). The route writes the same text out in
+#: its handler so the destructive-handler census can see it delete; a test pins
+#: the two equal, so they cannot drift apart.
 #:
 #: A row with a source id is a duplicate only of an older row with the SAME id.
 #: A row with NO source id is a duplicate only of an older exact repeat: same

@@ -34,12 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import MatchingOverride
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 from app.services import get_db, get_db_rw
-from app.utils.team_merge import (
-    MAPPING_DEDUP_SQL,
-    _apply_merge,
-    _normalize,
-    run_team_identity_merge,
-)
+from app.utils.team_merge import _apply_merge, _normalize, run_team_identity_merge
 
 router = APIRouter()
 
@@ -283,9 +278,23 @@ async def team_clusters_verdict(
         try:
             for fid in body.fold_ids:
                 merge_evidence.append(await _apply_merge(db, canonical, rows[fid], sport_key))
-            # Scoped mapping dedup for this canonical: the rail's own statement
-            # (#12519: it keeps every distinct name).
-            await db.execute(text(MAPPING_DEDUP_SQL), {"tid": canonical.id})
+            # Scoped mapping dedup for this canonical. #12519: the same statement
+            # as the rail's `team_merge.MAPPING_DEDUP_SQL`, character for
+            # character (a test pins it), and written out here rather than
+            # imported so the destructive-handler census still sees this
+            # handler delete. It keeps every distinct name a source holds.
+            await db.execute(
+                text(
+                    "DELETE FROM team_identity_mapping a USING team_identity_mapping b "
+                    "WHERE a.id > b.id AND a.team_id = b.team_id AND a.source = b.source "
+                    "AND a.team_id = :tid "
+                    "AND ((a.source_id IS NOT NULL AND a.source_id = b.source_id) "
+                    "OR (a.source_id IS NULL AND b.source_id IS NULL "
+                    "AND a.source_name IS NOT DISTINCT FROM b.source_name "
+                    "AND a.sport_key IS NOT DISTINCT FROM b.sport_key))"
+                ),
+                {"tid": canonical.id},
+            )
             context["merged"] = merge_evidence
             await _upsert_override(db, body, decision, canonical.name, context)
             await db.commit()
