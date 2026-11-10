@@ -36,7 +36,7 @@ final class TheEventPageGivesTheChartTheRoom10830Tests: XCTestCase {
 
     func testTheLiveActivityControlFollowsTheChartCard() throws {
         let content = try span(code("Views", "EventDetailView.swift"),
-                               from: "privatevarcontentView:someView{",
+                               from: "privatevarcontentView:AnyView{",
                                to: "staticfuncgameMarketsHaveContent(")
         let hero = try XCTUnwrap(content.range(of: "heroSection(vm.headline(event))"))
         let chart = try XCTUnwrap(content.range(of: "OddsChartView(eventId:"))

@@ -112,7 +112,7 @@ final class CatalogAvailabilityReasons10877Tests: XCTestCase {
         let outcome = try XCTUnwrap(q2.outcomes.first)
         XCTAssertNil(outcome.probability, "the old 44% is not shown as current")
         XCTAssertEqual(outcome.absence, .stale)
-        XCTAssertEqual(text(outcome, "live"), "No recent probability update")
+        XCTAssertEqual(text(outcome, "live"), "No recent probability")
         XCTAssertNil(AllMarketsCatalogView9483.seenStamp(q2), "a withheld price offers no seen time")
 
         // Control: pregame, the same stamp is the pregame number.
