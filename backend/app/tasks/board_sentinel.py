@@ -510,17 +510,25 @@ def check_evals_gap_targets(
     gap_targets: dict,
     issues: list[dict],
     launch_board_targets: dict[int, str | None],
+    *,
+    today: str | None = None,
+    population_complete: bool = True,
 ) -> list[dict]:
     """#12467 — keep the printed dates on /evals ('What we have not tested yet')
     honest against the launch board ('Nov 2026 launch').
 
-    Compares each entry in ``frontend/lib/evals/data/gap-targets.json`` with the
-    open-issue set and the issue's ``Target`` date on the launch board:
-      * If the gap's issue is closed (or missing from open issues), flag REAL so
-        a lane updates or retires the gap row.
+    Compares each entry in ``gap-targets.json`` with the open-issue set and the
+    issue's ``Target`` date on the launch board:
+      * If the gap's issue is closed (or missing from open issues when
+        ``population_complete`` is True), flag REAL so a lane updates or retires
+        the gap row. When ``population_complete`` is False, skip the closed-issue
+        accusation so a truncated read never raises a false REAL.
       * If the gap's printed ``target`` ('YYYY-MM-DD' or None) does not match
         the issue's ``Target`` on the launch board, flag REAL so a lane syncs
         ``gap-targets.json``.
+      * If ``today`` ('YYYY-MM-DD') is provided and an open gap's ``Target`` is
+        before ``today``, flag REAL (``evals_gap_target_past_due``) so a past-due
+        month does not keep printing on /evals.
     """
     open_by_num = {
         i.get("number"): i for i in issues if i.get("number") is not None
@@ -543,16 +551,17 @@ def check_evals_gap_targets(
 
         printed_target = gap.get("target")
         if issue_num not in open_by_num:
-            out.append({
-                "check": "evals_gap_target_drift",
-                "gap_id": gap_id,
-                "issue": issue_num,
-                "printed_target": printed_target,
-                "board_target": launch_board_targets.get(issue_num),
-                "detail": f"/evals gap '{gap_id}' points at #{issue_num}, which is "
-                          f"closed or not in open issues — update /evals gaps.ts "
-                          f"and gap-targets.json",
-            })
+            if population_complete:
+                out.append({
+                    "check": "evals_gap_target_drift",
+                    "gap_id": gap_id,
+                    "issue": issue_num,
+                    "printed_target": printed_target,
+                    "board_target": launch_board_targets.get(issue_num),
+                    "detail": f"/evals gap '{gap_id}' points at #{issue_num}, which is "
+                              f"closed or not in open issues — update /evals gaps.ts "
+                              f"and gap-targets.json",
+                })
             continue
 
         board_target = launch_board_targets.get(issue_num)
@@ -565,7 +574,22 @@ def check_evals_gap_targets(
                 "board_target": board_target,
                 "detail": f"/evals gap '{gap_id}' (#{issue_num}) prints target "
                           f"{printed_target!r} on /evals, but the launch board Target "
-                          f"is {board_target!r} — sync frontend/lib/evals/data/gap-targets.json",
+                          f"is {board_target!r} — sync gap-targets.json",
+            })
+        effective_target = board_target if isinstance(board_target, str) else (
+            printed_target if isinstance(printed_target, str) else None
+        )
+        if today and effective_target and effective_target < today:
+            out.append({
+                "check": "evals_gap_target_past_due",
+                "gap_id": gap_id,
+                "issue": issue_num,
+                "printed_target": printed_target,
+                "board_target": board_target,
+                "today": today,
+                "detail": f"/evals gap '{gap_id}' (#{issue_num}) has a past-due "
+                          f"Target {effective_target!r} (before {today}) — update or "
+                          f"retire the gap",
             })
     return out
 
@@ -672,8 +696,17 @@ def classify_board(
 
     if evals_gap_check_enabled:
         if evals_gap_targets is not None and launch_board_targets is not None:
+            today_iso = (
+                now.strftime("%Y-%m-%d")
+                if hasattr(now, "strftime")
+                else None
+            )
             real += check_evals_gap_targets(
-                evals_gap_targets, issues, launch_board_targets
+                evals_gap_targets,
+                issues,
+                launch_board_targets,
+                today=today_iso,
+                population_complete=population_complete,
             )
         else:
             unknown.append({
@@ -945,21 +978,44 @@ def _fetch_project_columns() -> dict[int, str] | None:
     return None if proj is None else proj["columns"]
 
 
-def _load_evals_gap_targets() -> dict | None:
-    """Load ``frontend/lib/evals/data/gap-targets.json`` from the repo checkout (#12467)."""
+def _load_evals_gap_targets(path: Any = None) -> dict | None:
+    """Load ``gap-targets.json`` from ``backend/data/evals/gap-targets.json``
+    (packaged in the Heroku backend slug) or ``frontend/lib/evals/data/gap-targets.json``
+    in the repo checkout (#12467). Returns ``None`` when missing or unreadable so
+    ``classify_board`` reports UNKNOWN rather than skipping the check."""
     import json as _json
     from pathlib import Path
 
-    repo_root = Path(__file__).resolve().parents[3]
-    path = repo_root / "frontend" / "lib" / "evals" / "data" / "gap-targets.json"
-    if not path.exists():
-        return None
-    try:
-        data = _json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else None
-    except Exception as exc:
-        logger.warning("Board sentinel: could not read gap-targets.json: %s", exc)
-        return None
+    if path is not None:
+        candidates = [Path(path)]
+    else:
+        backend_dir = Path(__file__).resolve().parents[2]
+        repo_root = Path(__file__).resolve().parents[3]
+        candidates = [
+            backend_dir / "data" / "evals" / "gap-targets.json",
+            repo_root / "frontend" / "lib" / "evals" / "data" / "gap-targets.json",
+        ]
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            data = _json.loads(candidate.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("gaps") is not None:
+                return data
+            logger.warning(
+                "Board sentinel: gap-targets.json at %s is missing 'gaps'",
+                candidate,
+            )
+            return None
+        except Exception as exc:
+            logger.warning(
+                "Board sentinel: could not read gap-targets.json at %s: %s",
+                candidate,
+                exc,
+            )
+            return None
+    logger.warning("Board sentinel: gap-targets.json not found in %s", candidates)
+    return None
 
 
 def _fetch_launch_board_targets(
@@ -1132,7 +1188,7 @@ def _fetch_board_state(deadline: float | None = None) -> tuple[list[dict], dict,
         })
     evals_gap_targets = _load_evals_gap_targets()
     launch_board_targets: dict[int, str | None] | None = None
-    evals_gap_check_enabled = evals_gap_targets is not None
+    evals_gap_check_enabled = True
     if evals_gap_targets is not None:
         launch_project_id = str(evals_gap_targets.get("project_id") or "")
         launch_board_targets = _fetch_launch_board_targets(

@@ -111,16 +111,25 @@ def main() -> int:
         if str(g.get("issue") or "").lstrip("#").isdigit()
     ]
     states = _fetch_issue_states(token, issue_nums)
-    if states is None:
-        print("UNKNOWN: failed to read issue states via GraphQL", file=sys.stderr)
+    if states is None or len(states) < len(set(issue_nums)):
+        print("UNKNOWN: failed to read complete issue states via GraphQL", file=sys.stderr)
         return 2
 
+    from datetime import datetime, timezone
+
+    today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     open_issues = [
         {"number": num, "state": st}
         for num, st in states.items()
         if st.upper() == "OPEN"
     ]
-    findings = check_evals_gap_targets(gap_targets, open_issues, launch_targets)
+    findings = check_evals_gap_targets(
+        gap_targets,
+        open_issues,
+        launch_targets,
+        today=today_iso,
+        population_complete=True,
+    )
     rows = []
     for g in entries:
         num = int(str(g.get("issue") or "").lstrip("#"))

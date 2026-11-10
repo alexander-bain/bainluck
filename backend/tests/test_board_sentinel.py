@@ -956,9 +956,111 @@ def test_classify_board_evals_gap_targets_unknown_when_launch_board_unavailable(
     assert bs.board_verdict(c) == "unknown"
 
 
-def test_repo_gap_targets_json_loads_cleanly():
+def test_fetch_board_state_missing_or_unreadable_gap_targets_reports_unknown(
+    monkeypatch, tmp_path
+):
+    raw = [
+        {
+            "number": 10,
+            "title": "a",
+            "labels": ["alert-intake", "area:infra", "needs-agent", "priority:p2"],
+            "assignees": ["alice"],
+            "created_at": NOW.isoformat(),
+        }
+    ]
+    monkeypatch.setattr(bs, "_fetch_open_issues", lambda *a, **k: (raw, True, None))
+    monkeypatch.setattr(
+        bs,
+        "_fetch_project_items",
+        lambda *a, **k: {
+            "columns": {10: "In Progress"},
+            "project_numbers": {10},
+            "duplicate_cards": [],
+            "status_missing": [],
+            "open_project_items": 1,
+        },
+    )
+    # 1. Missing gap-targets.json -> _load_evals_gap_targets returns None,
+    #    _fetch_board_state still sets evals_gap_check_enabled=True, and
+    #    classify_board reports UNKNOWN (never GREEN).
+    orig_load = bs._load_evals_gap_targets
+    missing_path = tmp_path / "does-not-exist.json"
+    monkeypatch.setattr(
+        bs, "_load_evals_gap_targets", lambda: orig_load(missing_path)
+    )
+    issues, board, errors = bs._fetch_board_state()
+    assert board["evals_gap_check_enabled"] is True
+    assert board["evals_gap_targets"] is None
+    c = bs.classify_board(
+        issues,
+        NOW,
+        columns_available=board["columns_available"],
+        project_numbers=board["project_numbers"],
+        open_project_items=board["open_project_items"],
+        fetch_errors=errors,
+        population_complete=board["population_complete"],
+        status_missing=board["status_missing"],
+        evals_gap_targets=board["evals_gap_targets"],
+        launch_board_targets=board["launch_board_targets"],
+        evals_gap_check_enabled=board["evals_gap_check_enabled"],
+    )
+    assert c["real"] == []
+    assert any(u["check"] == "evals_gap_targets" for u in c["unknown"])
+    assert bs.board_verdict(c) == "unknown"
+
+    # 2. Unreadable / invalid JSON gap-targets.json -> also returns None -> UNKNOWN.
+    corrupt_path = tmp_path / "corrupt.json"
+    corrupt_path.write_text("{not valid json", encoding="utf-8")
+    assert orig_load(corrupt_path) is None
+
+
+def test_check_evals_gap_targets_past_due_and_incomplete_population():
+    gap_targets = {
+        "project_id": "PVT_launch",
+        "gaps": {
+            "combined-probability": {"issue": 11850, "target": "2026-11-20"},
+            "rare-pair-kinds": {"issue": 12514, "target": "2026-12-23"},
+        },
+    }
+    issues = [_iss(11850), _iss(12514)]
+    launch_targets = {11850: "2026-11-20", 12514: "2026-12-23"}
+
+    # On 2026-12-01, #11850's 2026-11-20 target is past due while #12514's 2026-12-23 is not.
+    findings = bs.check_evals_gap_targets(
+        gap_targets, issues, launch_targets, today="2026-12-01"
+    )
+    assert len(findings) == 1
+    assert findings[0]["check"] == "evals_gap_target_past_due"
+    assert findings[0]["gap_id"] == "combined-probability"
+    assert findings[0]["issue"] == 11850
+
+    # When population_complete=False, an issue absent from open_issues must not be
+    # falsely accused of being closed.
+    incomplete_findings = bs.check_evals_gap_targets(
+        gap_targets,
+        [_iss(12514)],
+        launch_targets,
+        today="2026-11-10",
+        population_complete=False,
+    )
+    assert incomplete_findings == []
+
+
+def test_repo_gap_targets_json_loads_cleanly_and_backend_mirror_matches():
+    from pathlib import Path
+
     loaded = bs._load_evals_gap_targets()
     assert isinstance(loaded, dict)
     assert loaded.get("project_id") == "PVT_kwHOC0ai9c4Bp5gq"
     entries = bs._iter_gap_target_entries(loaded)
     assert len(entries) == 8
+
+    backend_dir = Path(bs.__file__).resolve().parents[2]
+    repo_root = Path(bs.__file__).resolve().parents[3]
+    backend_copy = backend_dir / "data" / "evals" / "gap-targets.json"
+    frontend_copy = repo_root / "frontend" / "lib" / "evals" / "data" / "gap-targets.json"
+    assert backend_copy.exists(), f"Missing Heroku slug copy at {backend_copy}"
+    if frontend_copy.exists():
+        assert backend_copy.read_text(encoding="utf-8") == frontend_copy.read_text(
+            encoding="utf-8"
+        )
