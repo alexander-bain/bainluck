@@ -693,6 +693,24 @@ jobs:
         id: db_009_10305_d2_participant_fill_fences_rollbac
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
         run: "set -o pipefail\npython -m pytest tests/integration/test_espn_participant_fill_pg.py \\\n  -v -rs -p no:cacheprovider 2>&1 | tee /tmp/fill10305.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/fill10305.txt; then\n  echo \"::error::#10305 D2 participant-fill gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\nif ! grep -qE \"\\b94 passed\\b\" /tmp/fill10305.txt; then\n  echo \"::error::#10305 D2 participant-fill gate did not pass exactly 94 tests\"\n  exit 1\nfi\n"
+      - name: "#12534 wrong-club venue identities are refused (real Postgres)"
+        id: db_12534_wrong_club_venue_identity
+        if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
+        run: |
+          python -m pytest tests/integration/test_team_identity_wrong_name_12534_pg.py \
+            -v -rs > /tmp/identity12534.txt 2>&1 || {
+            cat /tmp/identity12534.txt
+            exit 1
+          }
+          cat /tmp/identity12534.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/identity12534.txt; then
+            echo "::error::#12534 identity gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9]5 passed([,[:space:]]|$)" /tmp/identity12534.txt || {
+            echo "::error::#12534 identity gate did not run all five cases"
+            exit 1
+          }
       - name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
         id: db_010_typeahead_next_fixture_contracts_or_next
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}

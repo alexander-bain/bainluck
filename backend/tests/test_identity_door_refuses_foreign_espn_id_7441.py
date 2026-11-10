@@ -78,7 +78,7 @@ class TestTheDoorRefusesAForeignEspnId:
         assert session.executed == [], (
             "a mapping claiming ESPN id 388 IS Manchester City (382) was written"
         )
-        assert result is None
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_a_pair_sharing_no_token_is_refused_too(self):
@@ -187,13 +187,12 @@ class TestTheDoorStillAdmits:
     @pytest.mark.asyncio
     async def test_a_non_espn_source_is_out_of_scope(self):
         """Kalshi's `source_id` is not an ESPN id, so it cannot contradict one."""
-        session, _ = await _register(
-            _team(188, "Manchester City", "382"),
-            source="kalshi",
-            source_id="388",
-            source_name="Coventry City",
+        session = _RecordingSession(_team(188, "Manchester City", "382"))
+        refused = await TeamIdentityService()._espn_mapping_names_another_club(
+            session, 188, "kalshi", "388", "Coventry City",
         )
-        assert len(session.executed) == 1
+        assert refused is False
+        assert session.executed == []
 
     @pytest.mark.asyncio
     async def test_a_registration_with_neither_id_nor_name_is_still_a_noop(self):
