@@ -457,12 +457,110 @@ def _build_proposed_card_preview(family: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_new_kind_deck_items(
+    *,
+    start_position: int = 1,
+    proposals_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Build `/grade/groupings` deck items from committed new-kind proposals (#9937)."""
+    from app.utils.grouping_kind_proposer import load_committed_kind_proposals
+
+    loaded = load_committed_kind_proposals(path=proposals_path)
+    if loaded.get("refused_count", 0) > 0 or loaded.get("accepted_count", 0) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "reason": "committed_kind_proposals_refused",
+                "refused": loaded.get("refused", []),
+            },
+        )
+
+    deck_items: list[dict[str, Any]] = []
+    pos = start_position
+    for prop in loaded.get("proposals") or []:
+        kind_slug = str(prop.get("kind") or "")
+        relations = list(prop.get("relations") or [])
+        level = str(prop.get("level") or "member")
+        for card in prop.get("example_cards") or []:
+            c_slug = str(card.get("slug") or f"{kind_slug}-{pos}")
+            raw_rows = list(card.get("rows") or [])
+            preview_rows = [
+                {
+                    "label": str(r.get("label") or ""),
+                    "value": f"{int(r.get('rendered_percent', round(float(r['probability']) * 100)))}%",
+                    "market_id": int(r.get("market_id") or 0),
+                }
+                for r in raw_rows
+            ]
+            single = card.get("stronger_single_alternative") or {}
+            s_prob = float(single["probability"])
+            s_pct = int(round(s_prob * 100))
+            as_of_val = card.get("as_of") or loaded.get("generated_at")
+            as_of_label = str(card.get("as_of_label") or "")
+            sport_cat = str((card.get("selector") or {}).get("sport") or "sports")
+            first_source = str((raw_rows[0] if raw_rows else {}).get("source") or "polymarket")
+            deck_items.append(
+                {
+                    "position": pos,
+                    "item_key": c_slug,
+                    "title": str(card.get("title") or c_slug),
+                    "source": first_source,
+                    "category": sport_cat,
+                    "template_key": str((card.get("selector") or {}).get("title_ilike") or ""),
+                    "member_count": len(raw_rows),
+                    "kind_verdict": "refuse",
+                    "refusal_reasons": ["not_licensed"],
+                    "proposed_kind": kind_slug,
+                    "as_of": as_of_val,
+                    "as_of_label": as_of_label,
+                    "proposed_card": {
+                        "kicker": str(card.get("kicker") or kind_slug.upper()),
+                        "tag": kind_slug.upper(),
+                        "title": str(card.get("title") or c_slug),
+                        "rows": preview_rows,
+                        "count_line": f"Showing {len(preview_rows)} members · {as_of_label}" if as_of_label else f"Showing {len(preview_rows)} members",
+                        "footer": str(card.get("footer") or ""),
+                        "relations": relations,
+                        "level": level,
+                        "as_of_label": as_of_label,
+                        "proposed_kind": kind_slug,
+                    },
+                    "best_single": {
+                        "id": int(single.get("market_id") or 0),
+                        "name": str(single.get("title") or ""),
+                        "subject": str((raw_rows[0] if raw_rows else {}).get("label") or ""),
+                        "source": first_source,
+                        "category": sport_cat,
+                        "yes_probability": s_prob,
+                        "rendered_percent": s_pct,
+                        "resolution_date": None,
+                        "rule_quote": f"{single.get('title') or ''} ({as_of_label})" if as_of_label else str(single.get("title") or ""),
+                    },
+                }
+            )
+            pos += 1
+    return deck_items
+
+
 def load_grouping_grade_deck(
     *,
     candidates_path: Path | None = None,
     slate_id: str = DEFAULT_GROUPING_SLATE_ID,
 ) -> dict[str, Any]:
-    """Load the proposed grouping deck (20+ cards) for `/grade/groupings`."""
+    """Load the proposed grouping deck (sibling-family + new-kind proposals) for `/grade/groupings`."""
+    if slate_id == "new-kind-proposals-2026-11":
+        from app.utils.grouping_kind_proposer import DEFAULT_KIND_PROPOSER_MODEL
+
+        nk_items = _build_new_kind_deck_items(start_position=1)
+        return {
+            "slate_id": slate_id,
+            "surface": SURFACE_GROUPING,
+            "generated_at": nk_items[0].get("as_of") if nk_items else None,
+            "model": DEFAULT_KIND_PROPOSER_MODEL,
+            "question": "Is the grouping card worth more than its best single member?",
+            "items": nk_items,
+        }
+
     target_path = candidates_path
     if target_path is None:
         for p in _GROUPING_CANDIDATES_PATHS:
@@ -473,12 +571,17 @@ def load_grouping_grade_deck(
         raise HTTPException(status_code=404, detail="grouping candidates file not found")
 
     raw = json.loads(target_path.read_text(encoding="utf-8"))
+    generated_at = str(raw.get("generated_at") or "")
     families = list(raw.get("families") or [])
     items: list[dict[str, Any]] = []
     for idx, fam in enumerate(families, start=1):
         if not isinstance(fam, Mapping):
             continue
         slug = str(fam.get("slug") or f"proposed-family-{idx}")
+        as_of_val = str(fam.get("as_of") or generated_at or "")
+        as_of_label = f"as of {as_of_val[:10]}" if as_of_val else ""
+        preview = _build_proposed_card_preview(fam)
+        preview["as_of_label"] = as_of_label
         items.append(
             {
                 "position": idx,
@@ -491,10 +594,16 @@ def load_grouping_grade_deck(
                 "kind_verdict": str(fam.get("kind_verdict") or "refuse"),
                 "refusal_reasons": list(fam.get("refusal_reasons") or []),
                 "trust_pass": bool(fam.get("trust_pass")),
-                "proposed_card": _build_proposed_card_preview(fam),
+                "proposed_kind": "sibling_family",
+                "as_of": as_of_val or None,
+                "as_of_label": as_of_label or None,
+                "proposed_card": preview,
                 "best_single": select_best_single_member(fam),
             }
         )
+
+    if candidates_path is None:
+        items.extend(_build_new_kind_deck_items(start_position=len(items) + 1))
 
     return {
         "slate_id": slate_id,
@@ -623,4 +732,36 @@ async def get_grouping_grades(
         "tally": family_tally(grades, now),
         "summary": summarize_grouping_grades(grades),
     }
+
+
+@router.get("/grouping-kind-proposals")
+async def get_grouping_kind_proposals(
+    request: Request,
+    secret: str = Query(None),
+) -> dict:
+    """Return Alex-only proposed new grouping kinds with five example cards each (#9937)."""
+    from app.utils.grouping_kind_proposer import load_committed_kind_proposals
+
+    _check_admin_secret(secret, request=request)
+    try:
+        data = load_committed_kind_proposals()
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail="new-kind proposals file not found"
+        ) from exc
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=500, detail="invalid new-kind proposals payload"
+        ) from exc
+
+    if data.get("refused_count", 0) > 0 or data.get("accepted_count", 0) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "reason": "committed_kind_proposals_refused",
+                "refused": data.get("refused", []),
+            },
+        )
+    return data
+
 
