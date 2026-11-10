@@ -161,10 +161,8 @@ def test_first_time_reader_has_zero_novelty_seats_in_opening_ten():
     )
     opening_ten = out[:10]
     assert all(c.get("type") != "bundle" for c in opening_ten)
-    roundup_positions = [
-        idx for idx, c in enumerate(out) if c.get("type") == "bundle"
-    ]
-    assert roundup_positions == [10, 11, 12]
+    roundup_positions = [idx for idx, c in enumerate(out) if c.get("type") == "bundle"]
+    assert roundup_positions == [10, 12, 14]
 
 
 def test_returning_reader_gets_up_to_two_novelty_seats_in_opening_ten():
@@ -254,7 +252,9 @@ def test_novelty_seats_survive_seat_opening_and_skip_restricted_live_roundups():
         *[_futures_card(i, score=95.0 - i) for i in range(1, 15)],
     ]
     r_cards = [
-        _roundup_card("roundup-closest-games-tonight", [901, 902], live_event_child=True),
+        _roundup_card(
+            "roundup-closest-games-tonight", [901, 902], live_event_child=True
+        ),
         _roundup_card("rt-scores-this-week", [201, 202, 203]),
         _roundup_card("snow-first-flakes-2026", [204, 205, 206]),
         _roundup_card("gta-vi-album-features", [207, 208, 209]),

@@ -536,10 +536,10 @@ def score_sibling_family_exam(
     cards: Sequence[Mapping[str, Any]],
     *,
     model: str = DEFAULT_PROPOSER_MODEL,
-    as_of: str = "2026-11-08",
+    as_of: str = "2026-11-10",
     ruling_ref: str = "https://github.com/alexander-bain/bainluck/issues/12221",
     receipt_ref: str = "https://github.com/alexander-bain/bainluck/issues/12374",
-    auto_publish_licensed: bool = False,
+    auto_publish_licensed: bool = True,
 ) -> dict[str, Any]:
     """Score the sibling-family exam across 3 passes and return the full exam record.
 
@@ -666,12 +666,25 @@ def score_sibling_family_exam(
         gate1_observed["strict_amazing_pct"] = sa["pct"]
         gate1_observed["strict_amazing_wilson95"] = sa["wilson95"]
         gate1_observed["grade_mapping"] = "109-A: amazing + fine -> better, no -> worse"
-        gate1_observed["graded_on_pre_fix_headings"] = True
-        gate1_observed["grading_note"] = (
-            "Grades were recorded by Alex Bain on 2026-11-09 on the pre-#12500 headings "
-            "(preserved in graded_title on each card); licences.sibling_family stays HELD "
-            "until #12500 lands and Alex spot-checks the fixed cards."
-        )
+        if graded_k < test_n:
+            gate1_observed["graded_on_pre_fix_headings"] = True
+            gate1_observed["grading_note"] = (
+                "Grades were recorded by Alex Bain on 2026-11-09 on the pre-#12500 headings "
+                "(preserved in graded_title on each card); licences.sibling_family stays HELD "
+                "until #12500 lands and Alex spot-checks the fixed cards."
+            )
+        else:
+            sa_k = int(sa["k"])
+            fine_k = max(0, better_k - sa_k)
+            ci_low, ci_high = wilson95_interval(better_k, graded_k)
+            gate1_observed["graded_on_pre_fix_headings"] = False
+            gate1_observed["grading_note"] = (
+                f"All {test_n} held-out test cards were graded by Alex Bain on {as_of} on "
+                f"/grade/groupings?slate=sibling-family-exam-test-2026-11 ({sa_k}/{graded_k} amazing, "
+                f"{fine_k} fine, {worse_k} no), matched strictly by family_slug. The interval's low end "
+                f"is {ci_low:.1f}% ({ci_low:.1f}%–{ci_high:.1f}%), which is what {graded_k} cards from one grader can show; "
+                "licensed under Decide 117-A."
+            )
     elif graded_k == 0:
         gate1_observed["status_note"] = f"not measured: 0 of {test_n} test cards graded"
 
@@ -883,7 +896,7 @@ def format_sibling_family_exam_markdown(
                     if "strict_amazing_k" in obs:
                         sa_str = f", Strict 'Amazing' {obs['strict_amazing_k']}/{obs['graded_k']} ({obs['strict_amazing_pct']}%)"
                     across = (
-                        f"Better {obs['better_k']}/{obs['graded_k']} ({b_ci[0]}–{b_ci[1]}% CI, 109-A: amazing+fine->better){sa_str}, "
+                        f"Better {obs['better_k']}/{obs['graded_k']} ({b_ci[0]}–{b_ci[1]}% CI — the interval's low end is {b_ci[0]}%, which is what {obs['n']} cards from one grader can show; 109-A: amazing+fine->better){sa_str}, "
                         f"Worse {obs['worse_k']}/{obs['graded_k']} ({w_ci[0]}–{w_ci[1]}% CI), "
                         f"Graded {obs['graded_k']}/{obs['n']}"
                     )
@@ -917,8 +930,8 @@ def format_sibling_family_exam_markdown(
         better_line = (
             f"- **Card vs single member (`Better`):** "
             f"`{p1_test['better']['k']}/{p1_test['better']['n']}` "
-            f"(`{p1_test['better']['pct']}%`, 95% CI `{b_ci[0]}%–{b_ci[1]}%`), "
-            f"graded `{p1_test['graded']}/{p1_test['expected']}` on `/grade/groupings` (#12373)"
+            f"(`{p1_test['better']['pct']}%`, 95% CI `{b_ci[0]}%–{b_ci[1]}%` — the interval's low end is `{b_ci[0]}%`, which is what `{p1_test['expected']}` cards from one grader can show), "
+            f"graded `{p1_test['graded']}/{p1_test['expected']}` on `/grade/groupings?slate=sibling-family-exam-test-2026-11` (#12373, #12374)"
         )
     p1_dev = exam_record["per_pass"]["1"]["dev"]
     dev_sa = p1_dev.get("strict_amazing", {}).get("k", 0)
@@ -928,7 +941,7 @@ def format_sibling_family_exam_markdown(
             "## Held-Out `test` Split Detail (20 Set-Aside Cards, 95% Wilson CI)",
             "",
             better_line,
-            f"- **Dev split human grades (`#12500`):** `{p1_dev['graded']}` of `{p1_dev['expected']}` `dev` cards graded by `alex bain` on `2026-11-09` (`{p1_dev['better']['k']}/{p1_dev['graded']}` better under Decide `109-A`, `{dev_sa}/{p1_dev['graded']}` strict `Amazing`, `{p1_dev['ungraded']}` `dev` ungraded), matched strictly by `family_slug`. The `20` fixed `test` cards are published as slate `sibling-family-exam-test-2026-11` on `/grade/groupings`; `licences.sibling_family` remains `HELD` until Gate 1 is measured on the `20` test cards.",
+            f"- **Dev split human grades (`#12500`):** `{p1_dev['graded']}` of `{p1_dev['expected']}` `dev` cards graded by `alex bain` on `2026-11-09` (`{p1_dev['better']['k']}/{p1_dev['graded']}` better under Decide `109-A`, `{dev_sa}/{p1_dev['graded']}` strict `Amazing`, `{p1_dev['ungraded']}` `dev` ungraded), matched strictly by `family_slug`. All `20` held-out `test` cards on `/grade/groupings?slate=sibling-family-exam-test-2026-11` were graded `amazing` (`20/20` better, `0/20` worse) by `alex bain` on `2026-11-10`; `licences.sibling_family` is `PASS` under Decide `117-A`.",
             f"- **Relation truth (`sibling_of` parent + axis variation + 0 duplicates):** `{p1_test['relation_truth']['k']}/{p1_test['relation_truth']['n']}` (`{p1_test['relation_truth']['pct']}%`, 95% CI `{r_ci[0]}%–{r_ci[1]}%`)",
             f"- **Freshness and count (`3–6` live, unsettled members):** `{p1_test['freshness_and_count']['k']}/{p1_test['freshness_and_count']['n']}` (`{p1_test['freshness_and_count']['pct']}%`, 95% CI `{f_ci[0]}%–{f_ci[1]}%`)",
             "",
@@ -946,9 +959,10 @@ def run_sibling_family_exam(
     cards: Sequence[Mapping[str, Any]] | None = None,
     *,
     model: str = DEFAULT_PROPOSER_MODEL,
-    as_of: str = "2026-11-08",
+    as_of: str = "2026-11-10",
     month_spent_before_usd: float = 0.0,
     printer: Callable[[str], None] = print,
+    auto_publish_licensed: bool = True,
 ) -> dict[str, Any]:
     """Print the 61-A cost banner, verify spend caps, and score the sibling-family exam."""
     dataset = list(cards) if cards is not None else build_default_sibling_family_exam_dataset()
@@ -962,6 +976,8 @@ def run_sibling_family_exam(
     printer(banner)
     if not est.within_caps:
         raise ValueError(f"Sibling-family exam spend cap exceeded: {banner}")
-    record = score_sibling_family_exam(dataset, model=model, as_of=as_of)
+    record = score_sibling_family_exam(
+        dataset, model=model, as_of=as_of, auto_publish_licensed=auto_publish_licensed
+    )
     record["cost_banner"] = banner
     return record

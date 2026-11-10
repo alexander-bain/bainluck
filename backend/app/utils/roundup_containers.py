@@ -17,6 +17,7 @@ import copy
 import inspect
 import json
 import logging
+import re
 import time
 import zlib
 from dataclasses import dataclass
@@ -1481,6 +1482,282 @@ def apply_novelty_seats(
     return result
 
 
+_SIBLING_TITLE_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "who",
+        "which",
+        "what",
+        "whose",
+        "will",
+        "the",
+        "a",
+        "an",
+        "to",
+        "with",
+        "in",
+        "of",
+        "for",
+        "on",
+        "at",
+        "by",
+        "be",
+        "from",
+        "into",
+        "team",
+        "teams",
+        "candidate",
+        "candidates",
+        "player",
+        "players",
+        "contender",
+        "contenders",
+        "city",
+        "cities",
+        "movie",
+        "movies",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    }
+)
+
+
+def _is_sibling_family_bundle(item: Mapping[str, Any]) -> bool:
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return False
+    roundup = data.get("roundup")
+    if not isinstance(roundup, Mapping):
+        return False
+    rels = roundup.get("relations") or ()
+    return "sibling" in rels or "sibling_of" in rels
+
+
+def _sibling_family_row_labels(item: Mapping[str, Any]) -> set[str]:
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return set()
+    roundup = data.get("roundup")
+    if not isinstance(roundup, Mapping):
+        return set()
+    labels: set[str] = set()
+    for r in roundup.get("rows") or ():
+        if not isinstance(r, Mapping):
+            continue
+        lbl = str(r.get("label") or r.get("subject") or "").strip().lower()
+        if lbl:
+            labels.add(lbl)
+    return labels
+
+
+def _sibling_family_title_tokens(item: Mapping[str, Any]) -> set[str]:
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return set()
+    title = str(data.get("title") or item.get("headline") or "").strip().lower()
+    # Strip trailing deadline clause ('by December 31, 2026', 'in 2026', etc.)
+    title = re.sub(
+        r"\b(?:by|before|on)\s+[a-z]+\s+\d{1,2}(?:,\s*\d{4})?\b",
+        " ",
+        title,
+    )
+    title = re.sub(r"\b20\d{2}(?:[-–/]\d{2,4})?\b", " ", title)
+    tokens = {
+        tok
+        for tok in re.findall(r"[a-z0-9]+", title)
+        if tok not in _SIBLING_TITLE_STOPWORDS
+    }
+    return tokens
+
+
+def _is_near_identical_sibling_family(
+    candidate_item: Mapping[str, Any],
+    seated_item: Mapping[str, Any],
+) -> bool:
+    """Return True when two ``sibling_family`` cards are near-identical (#12374).
+
+    Prevents near-identical families (such as ``"Who will Trump meet with by December 31, 2026?"``
+    and ``"Who will Trump speak to by November 30, 2026?"``, or ``"Which team will finish top 8 in UECL league phase?"``
+    and ``"Which team will finish 9th–24th in UECL league phase?"``) from both taking
+    seats on the same Discover screen:
+    - Sharing ``>= 2`` row labels and ``>= 50%`` of the smaller card's shown rows, or
+    - In the same category/tag, sharing ``>= 2`` content title tokens and ``>= 50%``
+      of the smaller title's content tokens.
+    """
+    if not (_is_sibling_family_bundle(candidate_item) and _is_sibling_family_bundle(seated_item)):
+        return False
+
+    labels_a = _sibling_family_row_labels(candidate_item)
+    labels_b = _sibling_family_row_labels(seated_item)
+    if labels_a and labels_b:
+        shared_labels = labels_a & labels_b
+        min_rows = min(len(labels_a), len(labels_b))
+        if len(shared_labels) >= 2 and (len(shared_labels) / min_rows) >= 0.5:
+            return True
+
+    tag_a = str(
+        ((candidate_item.get("data") or {}).get("roundup") or {}).get("tag") or ""
+    ).strip().upper()
+    tag_b = str(
+        ((seated_item.get("data") or {}).get("roundup") or {}).get("tag") or ""
+    ).strip().upper()
+    if not tag_a or not tag_b or tag_a == tag_b:
+        toks_a = _sibling_family_title_tokens(candidate_item)
+        toks_b = _sibling_family_title_tokens(seated_item)
+        if toks_a and toks_b:
+            shared_toks = toks_a & toks_b
+            min_toks = min(len(toks_a), len(toks_b))
+            if len(shared_toks) >= 2 and (len(shared_toks) / min_toks) >= 0.5:
+                return True
+
+    return False
+
+
+MAX_SIBLING_FAMILY_IN_TOP_20 = 2
+
+_CLIENT_SPORT_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "basketball",
+        "football",
+        "baseball",
+        "hockey",
+        "soccer",
+        "golf",
+        "mma",
+        "boxing",
+        "tennis",
+        "cricket",
+        "motorsports",
+        "americanfootball",
+        "icehockey",
+        "cycling",
+    }
+)
+
+
+def _is_grouped_feed_card(item: Any) -> bool:
+    """Return True when ``item`` is any grouped feed card (bundle, collection, or round-up)."""
+    if not isinstance(item, Mapping):
+        return False
+    if item.get("type") in ("bundle", "collection"):
+        return True
+    return _is_roundup_bundle_card(item)
+
+
+def _client_sport_category(item: Any) -> str:
+    if not isinstance(item, Mapping):
+        return "other"
+    item_type = item.get("type")
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return "other"
+    if item_type == "event":
+        sport = str(data.get("sport") or "")
+        return (sport.split("_")[0] if sport else "") or "sports"
+    if item_type == "futures":
+        return str(data.get("llm_sport_category") or "other")
+    if item_type == "bundle":
+        members = data.get("items")
+        if isinstance(members, Sequence) and members:
+            return _client_sport_category(members[0])
+        return "other"
+    return "golf"
+
+
+def _client_space_by_sport(
+    items: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    if len(items) <= 2:
+        return list(items)
+    non_sports_count = sum(
+        1 for it in items if _client_sport_category(it) not in _CLIENT_SPORT_CATEGORIES
+    )
+    max_sports_run = 2 if non_sports_count >= 4 else 3
+    remaining = list(items)
+    result: list[Mapping[str, Any]] = []
+    last_sport = ""
+    sports_since_non_sport = 0
+    while remaining:
+        pick = -1
+        for idx, it in enumerate(remaining):
+            cat = _client_sport_category(it)
+            if cat not in _CLIENT_SPORT_CATEGORIES or (
+                sports_since_non_sport < max_sports_run and cat != last_sport
+            ):
+                pick = idx
+                break
+        if pick == -1:
+            for idx, it in enumerate(remaining):
+                if _client_sport_category(it) != last_sport:
+                    pick = idx
+                    break
+        if pick == -1:
+            pick = 0
+        chosen = remaining.pop(pick)
+        cat = _client_sport_category(chosen)
+        result.append(chosen)
+        if cat in _CLIENT_SPORT_CATEGORIES:
+            last_sport = cat
+            sports_since_non_sport += 1
+        else:
+            last_sport = ""
+            sports_since_non_sport = 0
+    return result
+
+
+def _spaced_has_adjacent_roundup(
+    items: Sequence[Mapping[str, Any]],
+) -> bool:
+    spaced = _client_space_by_sport(_client_space_by_sport(items))
+    for i in range(len(spaced) - 1):
+        a, b = spaced[i], spaced[i + 1]
+        if (
+            _is_grouped_feed_card(a)
+            and _is_grouped_feed_card(b)
+            and (_is_roundup_bundle_card(a) or _is_roundup_bundle_card(b))
+        ):
+            return True
+    return False
+
+
+def _find_non_adjacent_roundup_seat(
+    items: Sequence[Mapping[str, Any]],
+    start_idx: int,
+    *,
+    floor_idx: int,
+    candidate_item: Optional[Mapping[str, Any]] = None,
+    page_window: int = 20,
+) -> Optional[int]:
+    """Find the earliest insertion index ``pos >= max(floor_idx, start_idx)`` where neither neighbour is a grouped card (Decision 123-A)."""
+    start_pos = max(int(floor_idx), int(start_idx))
+    n = len(items)
+    first_raw_non_adjacent: Optional[int] = None
+    pos = start_pos
+    while pos <= n:
+        prev_is_grouped = pos > 0 and _is_grouped_feed_card(items[pos - 1])
+        next_is_grouped = pos < n and _is_grouped_feed_card(items[pos])
+        if not prev_is_grouped and not next_is_grouped:
+            if first_raw_non_adjacent is None:
+                first_raw_non_adjacent = pos
+            if candidate_item is None:
+                return pos
+            trial = [*items[:pos], candidate_item, *items[pos:]]
+            window_slice = trial[: max(int(page_window), pos + 2)]
+            if not _spaced_has_adjacent_roundup(window_slice):
+                return pos
+        pos += 1
+    return first_raw_non_adjacent
+
+
 def insert_roundup_feed_items(
     items: list[dict[str, Any]],
     roundup_items: Sequence[dict[str, Any]],
@@ -1508,6 +1785,9 @@ def insert_roundup_feed_items(
     * Under Decide 32-C (#12091 / #12376), when ``returning_reader=True``, up to
       ``novelty_seat_cap`` (2) unseen, opening-eligible round-up cards take the
       novelty seats at the back of the opening ten; first-time readers get zero.
+    * Under Decision 123-A (#12374), at most ``MAX_SIBLING_FAMILY_IN_TOP_20`` (2)
+      sibling-family round-up cards seat in Discover's first ``page_window`` (20)
+      seats, and no two round-up cards sit in adjacent seats.
     """
     if not items or not roundup_items:
         return items
@@ -1522,7 +1802,20 @@ def insert_roundup_feed_items(
     if not valid_roundups:
         return items
 
-    result = list(items)
+    raw_items = list(items)
+    initial_floor_idx = _opening_eligible_floor_index(raw_items, seat_floor, now=now)
+    preexisting_post_opening_roundups: list[Mapping[str, Any]] = []
+    preexisting_target_by_id: dict[Any, int] = {}
+    result: list[dict[str, Any]] = []
+    changed = False
+    for idx, it in enumerate(raw_items):
+        if idx >= initial_floor_idx and _is_roundup_bundle_card(it):
+            preexisting_post_opening_roundups.append(it)
+            preexisting_target_by_id[it.get("data", {}).get("id")] = idx
+            changed = True
+        else:
+            result.append(it)
+
     existing_bundle_ids = {
         it.get("data", {}).get("id")
         for it in result
@@ -1530,14 +1823,82 @@ def insert_roundup_feed_items(
         and it.get("type") == "bundle"
         and isinstance(it.get("data"), Mapping)
     }
+    seated_sibling_roundups: list[Mapping[str, Any]] = [
+        it
+        for it in result[:page_window]
+        if isinstance(it, Mapping)
+        and it.get("type") == "bundle"
+        and _is_sibling_family_bundle(it)
+    ]
 
-    inserted_count = 0
-    changed = False
-    for r_item in valid_roundups:
+    if preexisting_post_opening_roundups:
+        reg_order = {slug: i for i, slug in enumerate(ROUNDUP_PRODUCERS.keys())}
+
+        def _reg_sort_key(pair: tuple[int, Mapping[str, Any]]) -> tuple[int, int]:
+            idx_in_combined, item = pair
+            cref = item.get("data", {}).get("collection_ref")
+            slug = (
+                str(cref.get("slug") or "").strip() if isinstance(cref, Mapping) else ""
+            )
+            if not slug:
+                raw_id = str(item.get("data", {}).get("id") or "").strip()
+                slug = raw_id.removeprefix("roundup:")
+            return (reg_order.get(slug, 10_000 + idx_in_combined), idx_in_combined)
+
+        combined_raw = [*preexisting_post_opening_roundups, *valid_roundups]
+        sorted_combined = [
+            it for _, it in sorted(enumerate(combined_raw), key=_reg_sort_key)
+        ]
+    else:
+        sorted_combined = list(valid_roundups)
+
+    non_sibs = [it for it in sorted_combined if not _is_sibling_family_bundle(it)]
+    sibs = [it for it in sorted_combined if _is_sibling_family_bundle(it)]
+    if non_sibs and sibs:
+        candidate_queue: list[Mapping[str, Any]] = []
+        ns_idx = 0
+        s_idx = 0
+        while ns_idx < len(non_sibs) or s_idx < len(sibs):
+            if ns_idx < len(non_sibs):
+                candidate_queue.append(non_sibs[ns_idx])
+                ns_idx += 1
+            if ns_idx == 2 and s_idx < len(sibs):
+                candidate_queue.append(sibs[s_idx])
+                s_idx += 1
+            elif ns_idx >= 3 and s_idx < len(sibs):
+                candidate_queue.append(sibs[s_idx])
+                s_idx += 1
+    else:
+        candidate_queue = sorted_combined
+    accepted_roundups: list[Mapping[str, Any]] = []
+    accepted_sibling_roundups: list[Mapping[str, Any]] = list(seated_sibling_roundups)
+    for r_item in candidate_queue:
         r_id = r_item["data"].get("id")
         if r_id in existing_bundle_ids:
             continue
+        if _is_sibling_family_bundle(r_item):
+            r_score = float(r_item.get("score") or 0.0)
+            if any(
+                _is_near_identical_sibling_family(r_item, prev)
+                for prev in accepted_sibling_roundups
+            ) or any(
+                other is not r_item
+                and _is_sibling_family_bundle(other)
+                and _is_near_identical_sibling_family(r_item, other)
+                and float(other.get("score") or 0.0) > r_score
+                for other in candidate_queue
+            ):
+                continue
+            accepted_sibling_roundups.append(r_item)
+        existing_bundle_ids.add(r_id)
+        accepted_roundups.append(r_item)
 
+    if not accepted_roundups and not changed:
+        return items
+
+    earliest_seat_by_id: dict[Any, Optional[int]] = {}
+    for r_item in accepted_roundups:
+        r_id = r_item["data"].get("id")
         covered_ids = _roundup_covered_market_ids(r_item)
         earliest_post_opening_seat: Optional[int] = None
         if covered_ids:
@@ -1558,15 +1919,49 @@ def insert_roundup_feed_items(
                     continue
                 filtered.append(existing)
             result = filtered
+        earliest_seat_by_id[r_id] = (
+            earliest_post_opening_seat
+            if earliest_post_opening_seat is not None
+            else preexisting_target_by_id.get(r_id)
+        )
 
+    inserted_count = 0
+    for r_item in accepted_roundups:
+        r_id = r_item["data"].get("id")
+        is_sibling_card = _is_sibling_family_bundle(r_item)
         floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
         default_seat = floor_idx + inserted_count
+        earliest_post_opening_seat = earliest_seat_by_id.get(r_id)
         target_seat = (
             earliest_post_opening_seat
             if earliest_post_opening_seat is not None
             else default_seat
         )
-        target_idx = min(max(floor_idx, target_seat), len(result))
+        if is_sibling_card and len(seated_sibling_roundups) >= MAX_SIBLING_FAMILY_IN_TOP_20:
+            target_seat = max(target_seat, page_window)
+
+        desired_idx = min(max(floor_idx, target_seat), len(result))
+        non_adj_idx = _find_non_adjacent_roundup_seat(
+            result,
+            desired_idx,
+            floor_idx=max(
+                floor_idx,
+                page_window
+                if (is_sibling_card and len(seated_sibling_roundups) >= MAX_SIBLING_FAMILY_IN_TOP_20)
+                else floor_idx,
+            ),
+            candidate_item=r_item,
+            page_window=page_window,
+        )
+        if non_adj_idx is None:
+            continue
+        target_idx = non_adj_idx
+        if (
+            is_sibling_card
+            and len(seated_sibling_roundups) >= MAX_SIBLING_FAMILY_IN_TOP_20
+            and target_idx < page_window
+        ):
+            continue
 
         card = copy.deepcopy(dict(r_item))
         if result:
@@ -1582,7 +1977,8 @@ def insert_roundup_feed_items(
                     child["score"] = card["score"]
 
         result.insert(target_idx, card)
-        existing_bundle_ids.add(r_id)
+        if is_sibling_card and target_idx < page_window:
+            seated_sibling_roundups.append(card)
         inserted_count += 1
         changed = True
 
@@ -1959,9 +2355,17 @@ def build_roundup_producer_from_definition(
 
 
 _BUILTIN_SLUG_TO_MODULE_ATTR: dict[str, tuple[str, str]] = {
-    "roundup-nfl-divisions": (
-        "app.utils.discover_bundles",
-        "NFL_DIVISION_ROUNDUP_PRODUCER",
+    "roundup-cfp-picture": (
+        "app.utils.field_band",
+        "CFP_PICTURE_PRODUCER",
+    ),
+    "by-november-30": (
+        "app.utils.same_deadline_board",
+        "BY_NOVEMBER_30_PRODUCER",
+    ),
+    "by-december-31": (
+        "app.utils.same_deadline_board",
+        "BY_DECEMBER_31_PRODUCER",
     ),
     "roundup-closest-games-tonight": (
         "app.utils.window_events_closest",
@@ -1974,18 +2378,6 @@ _BUILTIN_SLUG_TO_MODULE_ATTR: dict[str, tuple[str, str]] = {
     "roundup-golden-globes-best-picture": (
         "app.utils.awards_category_roundup",
         "GOLDEN_GLOBES_BEST_PICTURE_PRODUCER",
-    ),
-    "roundup-cfp-picture": (
-        "app.utils.field_band",
-        "CFP_PICTURE_PRODUCER",
-    ),
-    "by-november-30": (
-        "app.utils.same_deadline_board",
-        "BY_NOVEMBER_30_PRODUCER",
-    ),
-    "by-december-31": (
-        "app.utils.same_deadline_board",
-        "BY_DECEMBER_31_PRODUCER",
     ),
     "gta-vi-album-features": (
         "app.utils.sibling_family",
@@ -2006,6 +2398,10 @@ _BUILTIN_SLUG_TO_MODULE_ATTR: dict[str, tuple[str, str]] = {
     "alcaraz-sinner-two-majors-2027": (
         "app.utils.sibling_family",
         "ALCARAZ_SINNER_TWO_MAJORS_2027_PRODUCER",
+    ),
+    "roundup-nfl-divisions": (
+        "app.utils.discover_bundles",
+        "NFL_DIVISION_ROUNDUP_PRODUCER",
     ),
     "golf-this-week": (
         "app.utils.week_events",

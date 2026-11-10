@@ -32,7 +32,6 @@ from app.utils.grouping_licences import (
     promote_licensed_proposal_to_definition,
     run_licensed_promotion_pass,
     score_same_deadline_board_exam,
-    suspend_grouping_kind,
 )
 from app.utils.roundup_containers import (
     ROUNDUP_PRODUCERS,
@@ -108,9 +107,9 @@ def _licensed_subject_sequence_registry() -> dict:
     reg = copy.deepcopy(default_grouping_licences_registry())
     reg["kinds"]["subject_sequence"]["status"] = "PASS"
     reg["kinds"]["subject_sequence"]["exam_as_of"] = "2026-11-08"
-    reg["kinds"]["subject_sequence"]["exam_receipt"] = (
-        "docs/discover/subject-sequence-exam-2026-11.md"
-    )
+    reg["kinds"]["subject_sequence"][
+        "exam_receipt"
+    ] = "docs/discover/subject-sequence-exam-2026-11.md"
     return reg
 
 
@@ -123,8 +122,8 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
         assert get_kind_licence_status(reg, "subject_sequence") == "HELD"
         assert reg["kinds"]["subject_sequence"]["exam_receipt"] is None
         assert is_kind_licensed_for_promotion(reg, "subject_sequence") is False
-        assert get_kind_licence_status(reg, "sibling_family") == "HELD"
-        assert is_kind_licensed_for_promotion(reg, "sibling_family") is False
+        assert get_kind_licence_status(reg, "sibling_family") == "PASS"
+        assert is_kind_licensed_for_promotion(reg, "sibling_family") is True
         assert get_kind_licence_status(reg, "same_deadline_board") == "FAIL"
         assert is_kind_licensed_for_promotion(reg, "same_deadline_board") is False
 
@@ -173,7 +172,9 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
         assert outcome.promoted is True
         assert outcome.slug == "lakers-next-3-games"
         assert outcome.definition is not None
-        assert outcome.definition["membership"] == defn["membership"] == "subject_sequence"
+        assert (
+            outcome.definition["membership"] == defn["membership"] == "subject_sequence"
+        )
         assert outcome.definition["authored_by"] == {
             "kind": "proposer",
             "proposer_kind": "subject_sequence",
@@ -193,12 +194,48 @@ class TestExit1LicensedProposalBecomesLiveCardThroughReviewedPath:
         assert subj_outcome.promoted is False
         assert subj_outcome.reason == "kind_not_licensed:held"
 
+        held_sib_reg = copy.deepcopy(reg)
+        held_sib_reg["kinds"]["sibling_family"]["status"] = "HELD"
         sib_outcome = promote_licensed_proposal_to_definition(
             {"kind": "sibling_family", "slug": "sibling-fed-cuts"},
-            registry=reg,
+            registry=held_sib_reg,
         )
         assert sib_outcome.promoted is False
         assert sib_outcome.reason == "kind_not_licensed:held"
+
+        # Under Decide 117-A and Rules 1-3 (#12374), sibling_family is PASS and the 2 clean
+        # verified families (liga-profesional-relegation-2026 and nhl-playoffs-2026-27) are
+        # promoted into backend/data/containers/, while the 3 families with stale quotes or
+        # unnumbered top-K contenders (nhl-players-100-points-2026-27, uecl-top-8-2026-27,
+        # uecl-playoff-places-2026-27) and the thin off-season mlb-world-series-pennant-2027
+        # family remain held out.
+        for held_slug in (
+            "mlb-world-series-pennant-2027",
+            "nhl-players-100-points-2026-27",
+            "uecl-top-8-2026-27",
+            "uecl-playoff-places-2026-27",
+        ):
+            assert not (DEFAULT_CONTAINERS_DIR / f"{held_slug}.json").exists()
+        for promoted_slug, expected_proposal_id in (
+            (
+                "liga-profesional-relegation-2026",
+                "proposed-polymarket-will-contenders-be-relegated-from-the-2026-liga",
+            ),
+            (
+                "nhl-playoffs-2026-27",
+                "proposed-polymarket-will-the-contenders-make-the-2026-27-nhl-playoff",
+            ),
+        ):
+            assert not promoted_slug.startswith("proposed-")
+            p_path = DEFAULT_CONTAINERS_DIR / f"{promoted_slug}.json"
+            assert p_path.exists()
+            p_defn = load_roundup_definition(p_path)
+            assert p_defn["proposal_id"] == expected_proposal_id
+            assert p_defn["destination_href"] == f"/collections/{promoted_slug}"
+            assert p_defn["authored_by"]["proposer_kind"] == "sibling_family"
+            assert p_defn["authored_by"]["licence_status"] == "PASS"
+            assert p_defn["authored_by"]["review_path"] == "tier-b-pr"
+            assert promoted_slug in ROUNDUP_PRODUCERS
 
         board_outcome = promote_licensed_proposal_to_definition(
             {"kind": "same_deadline_board", "slug": "by-january-31"},
@@ -304,7 +341,9 @@ class TestExit3SecondKindExamVerdict:
         self,
     ) -> None:
         assert DEFAULT_SAME_DEADLINE_DATASET_PATH.exists()
-        raw_ds = json.loads(DEFAULT_SAME_DEADLINE_DATASET_PATH.read_text(encoding="utf-8"))
+        raw_ds = json.loads(
+            DEFAULT_SAME_DEADLINE_DATASET_PATH.read_text(encoding="utf-8")
+        )
         assert raw_ds["schema"] == "same-deadline-board-exam-dataset/1"
         assert len(raw_ds["deadlines"]) == 20
         total_candidates = sum(len(d["candidate_markets"]) for d in raw_ds["deadlines"])
@@ -324,7 +363,10 @@ class TestExit3SecondKindExamVerdict:
         ]
         for c in passing:
             assert 4 <= len(c["selected_market_ids"]) <= 6
-            assert all(isinstance(mid, int) and mid > 1_000_000 for mid in c["selected_market_ids"])
+            assert all(
+                isinstance(mid, int) and mid > 1_000_000
+                for mid in c["selected_market_ids"]
+            )
             assert c["distinct_categories"] >= 3
             assert c["all_same_calendar_day"] is True
             assert c["no_excluded_classes"] is True
@@ -378,7 +420,9 @@ class TestExit3SecondKindExamVerdict:
 
         # Parity check with committed docs receipt and grouping_licences.json
         repo_root = DEFAULT_LICENCES_PATH.parents[2]
-        receipt_path = repo_root / "docs" / "discover" / "same-deadline-board-exam-2026-11.md"
+        receipt_path = (
+            repo_root / "docs" / "discover" / "same-deadline-board-exam-2026-11.md"
+        )
         assert receipt_path.read_text(encoding="utf-8").strip() == md.strip()
         assert load_grouping_licences() == default_grouping_licences_registry()
 
@@ -509,13 +553,36 @@ class TestExit3SecondKindExamVerdict:
             rule={"producer": "subject_sequence", "cache": "none"},
             produce=lambda _db: RoundupMembers(
                 members=[
-                    {"id": 1, "event_id": 1, "status": "completed", "card": {"id": 1, "status": "completed"}},
-                    {"id": 2, "event_id": 2, "status": "scheduled", "card": {"id": 2, "status": "scheduled"}},
-                    {"id": 3, "event_id": 3, "status": "scheduled", "card": {"id": 3, "status": "scheduled"}},
+                    {
+                        "id": 1,
+                        "event_id": 1,
+                        "status": "completed",
+                        "card": {"id": 1, "status": "completed"},
+                    },
+                    {
+                        "id": 2,
+                        "event_id": 2,
+                        "status": "scheduled",
+                        "card": {"id": 2, "status": "scheduled"},
+                    },
+                    {
+                        "id": 3,
+                        "event_id": 3,
+                        "status": "scheduled",
+                        "card": {"id": 3, "status": "scheduled"},
+                    },
                 ],
                 rows=[
-                    {"event_id": 1, "label": "vs Grizzlies · Nov 10", "probability": 0.64},
-                    {"event_id": 2, "label": "@ Pelicans · Nov 13", "probability": 0.58},
+                    {
+                        "event_id": 1,
+                        "label": "vs Grizzlies · Nov 10",
+                        "probability": 0.64,
+                    },
+                    {
+                        "event_id": 2,
+                        "label": "@ Pelicans · Nov 13",
+                        "probability": 0.58,
+                    },
                     {"event_id": 3, "label": "vs Spurs · Nov 15", "probability": 0.53},
                 ],
                 footer="Combined win probability · next 3 games in schedule order",

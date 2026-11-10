@@ -47,7 +47,7 @@ import json
 import math
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
@@ -406,6 +406,8 @@ class _SiblingMember:
     outcome_id: int
     observed_at: Optional[str]
     raw_market: Mapping[str, Any]
+    raw_probability: Optional[float] = None
+    stale_quote: bool = False
 
 
 def sibling_family_enabled() -> bool:
@@ -432,7 +434,9 @@ def _iso_utc(val: Any) -> Optional[str]:
 def _parse_market_ref_id(spec: str) -> tuple[str, int]:
     text = str(spec or "").strip()
     if ":" not in text:
-        raise ValueError(f"Expected '<source>:<market_id>' market reference, got {spec!r}")
+        raise ValueError(
+            f"Expected '<source>:<market_id>' market reference, got {spec!r}"
+        )
     source_raw, id_raw = text.split(":", 1)
     source = source_raw.strip().lower()
     if source not in {"kalshi", "polymarket"}:
@@ -511,6 +515,12 @@ def detect_sibling_template_pair(
     mid_b = toks_b[pre : len(toks_b) - suf]
     if not mid_a or not mid_b:
         return None, "empty_subject_run"
+    if (
+        pre == 1
+        and folded_a[0] == "will"
+        and (mid_a[0][0] == "the") != (mid_b[0][0] == "the")
+    ):
+        return None, "article_mismatch"
 
     shared = pre + suf
     if shared > 0 and (
@@ -666,12 +676,17 @@ def _match_declared_template(
     folded_toks = [f for _, f in toks]
     if prefix_words and folded_toks[: len(prefix_words)] != prefix_words:
         return None
-    if suffix_words and folded_toks[len(folded_toks) - len(suffix_words) :] != suffix_words:
+    if (
+        suffix_words
+        and folded_toks[len(folded_toks) - len(suffix_words) :] != suffix_words
+    ):
         return None
 
     subj_end = len(toks) - len(suffix_words) if suffix_words else len(toks)
     subj_slice = toks[len(prefix_words) : subj_end]
     if not subj_slice:
+        return None
+    if prefix_words == ["will"] and subj_slice[0][0] == "the":
         return None
     raw_subject = " ".join(raw for raw, _ in subj_slice).strip()
     if not raw_subject:
@@ -712,7 +727,9 @@ def _check_member_coherence(
         oid_raw = o.get("id")
         oid = (
             int(oid_raw)
-            if isinstance(oid_raw, int) and not isinstance(oid_raw, bool) and oid_raw > 0
+            if isinstance(oid_raw, int)
+            and not isinstance(oid_raw, bool)
+            and oid_raw > 0
             else market_id * 10 + idx + 1
         )
         if oid in withheld:
@@ -720,9 +737,7 @@ def _check_member_coherence(
         oname = str(o.get("name") or o.get("label") or "").strip()
         outcome_names.append(oname.lower())
         p_raw = (
-            o.get("probability")
-            if "probability" in o
-            else o.get("current_probability")
+            o.get("probability") if "probability" in o else o.get("current_probability")
         )
         if p_raw is None or isinstance(p_raw, bool):
             continue
@@ -830,7 +845,9 @@ def _subjects_overlap(members: Sequence[_SiblingMember]) -> bool:
             for _, tok in _tokenize_title(cleaned_for_compound)
             if tok not in _GENERIC_SUBJECT_TOKENS and tok not in {"+", "&", "/"}
         )
-        state_tokens = frozenset(t.upper() for t in tokens if t.upper() in _US_STATE_CODES)
+        state_tokens = frozenset(
+            t.upper() for t in tokens if t.upper() in _US_STATE_CODES
+        )
         is_compound = (
             bool(_COMPOUND_SUBJECT_RE.search(cleaned_for_compound))
             or len(state_tokens) >= 2
@@ -979,6 +996,11 @@ def _build_member_card(member: _SiblingMember) -> dict[str, Any]:
     return card
 
 
+MAX_INLINE_UNNUMBERED_NAMES = 4
+MAX_TOP_K_UNNUMBERED_MEMBERS = MAX_INLINE_UNNUMBERED_NAMES
+MAX_SIBLING_QUOTE_AGE_DAYS: float = 7.0
+
+
 def _format_count_line(
     shown_count: int,
     total_count: int,
@@ -994,7 +1016,15 @@ def _format_count_line(
         else:
             parts.append(f"Showing {shown_count} of {total_count}")
     if unnumbered_subjects:
-        parts.append(f"No number yet: {', '.join(unnumbered_subjects)}")
+        if len(unnumbered_subjects) > MAX_INLINE_UNNUMBERED_NAMES:
+            target = (
+                f"{len(unnumbered_subjects)} {unit}"
+                if unit
+                else f"{len(unnumbered_subjects)}"
+            )
+            parts.append(f"No number yet for {target}")
+        else:
+            parts.append(f"No number yet: {', '.join(unnumbered_subjects)}")
     return " · ".join(parts) if parts else None
 
 
@@ -1020,6 +1050,8 @@ def select_sibling_family(
     footer: str = "Each row is its own market. They don't add up to 100%.",
     exclude_combined_market: bool = True,
     release_window_days: Optional[int] = None,
+    max_quote_age_days: Optional[float] = MAX_SIBLING_QUOTE_AGE_DAYS,
+    max_unnumbered_members: Optional[int] = None,
     now: Optional[datetime] = None,
     withheld_by_market: Optional[Mapping[int, set[int]]] = None,
 ) -> Any:
@@ -1047,9 +1079,7 @@ def select_sibling_family(
     RoundupRefusal = rc.RoundupRefusal
 
     effective_max_members = (
-        int(max_members)
-        if max_members is not None
-        else (2 if closed_world else None)
+        int(max_members) if max_members is not None else (2 if closed_world else None)
     )
     effective_min_numbered = (
         int(min_numbered_members)
@@ -1120,7 +1150,11 @@ def select_sibling_family(
             cohort_d = (
                 stated_dl.deadline_date
                 if stated_dl.deadline_date is not None
-                else (res_dt.astimezone(timezone.utc).date() if res_dt is not None else None)
+                else (
+                    res_dt.astimezone(timezone.utc).date()
+                    if res_dt is not None
+                    else None
+                )
             )
             if cohort_d is not None and today_et <= cohort_d <= window_end_et:
                 windowed_candidates.append(m)
@@ -1242,7 +1276,11 @@ def select_sibling_family(
     target_outcome_folded = str(outcome_name or "Yes").strip().casefold()
 
     if strict_rungs_only or target_outcome_folded == "auto_shared_rung":
-        from app.utils.ladder_monotonicity import DEC, parse_plus_bracket, parse_threshold
+        from app.utils.ladder_monotonicity import (
+            DEC,
+            parse_plus_bracket,
+            parse_threshold,
+        )
 
         _NON_STRICT_RUNG_RE = re.compile(
             r"(?:\bat\s+least\b|\bat\s+most\b|\bor\s+more\b|\bor\s+less\b|\bor\s+fewer\b|\bor\s+higher\b|\bor\s+lower\b|>=|<=|≥|≤)",
@@ -1334,9 +1372,7 @@ def select_sibling_family(
             cohort_groups_to_try: list[list[dict[str, tuple[float, float]]]] = []
             for d in dated_cohorts:
                 c_rungs = [
-                    rungs_by_mid[mid]
-                    for mid in cohort_mids[d]
-                    if mid in rungs_by_mid
+                    rungs_by_mid[mid] for mid in cohort_mids[d] if mid in rungs_by_mid
                 ]
                 if len(c_rungs) >= min_numbered_members:
                     cohort_groups_to_try.append(c_rungs)
@@ -1376,7 +1412,9 @@ def select_sibling_family(
                     if all(
                         any(
                             isinstance(o, Mapping)
-                            and str(o.get("name") or o.get("label") or "").strip().casefold()
+                            and str(o.get("name") or o.get("label") or "")
+                            .strip()
+                            .casefold()
                             == target_outcome_folded
                             for o in (
                                 by_id[m_id].get("outcomes")
@@ -1512,9 +1550,29 @@ def select_sibling_family(
             _iso_utc(
                 target_outcome.get("observed_at")
                 or target_outcome.get("last_updated")
+                or target_outcome.get("updated_at")
             )
             or market_observed
         )
+
+        prior_prob: Optional[float] = prob
+        if prior_prob is None and is_open:
+            raw_prior = (
+                target_outcome.get("opening_probability")
+                if "opening_probability" in target_outcome
+                else (
+                    target_outcome.get("prior_probability")
+                    if "prior_probability" in target_outcome
+                    else m.get("opening_probability")
+                )
+            )
+            if raw_prior is not None and not isinstance(raw_prior, bool):
+                try:
+                    rp_val = float(raw_prior)
+                    if math.isfinite(rp_val) and 0.0 < rp_val < 1.0:
+                        prior_prob = rp_val
+                except (TypeError, ValueError):
+                    prior_prob = None
 
         subject_display = _clean_subject_display(
             raw_subj, strip_state_suffix=strip_state_suffix
@@ -1546,6 +1604,8 @@ def select_sibling_family(
                 outcome_id=target_oid,
                 observed_at=obs,
                 raw_market=m,
+                raw_probability=prior_prob,
+                stale_quote=False,
             )
         )
 
@@ -1569,6 +1629,43 @@ def select_sibling_family(
 
     if lead_rule == "single_deadline" and len(open_cohort_dates) > 1:
         return RoundupRefusal((("family", "multiple_open_deadlines"),))
+
+    # Rule 1 (#12374): enforce cohort-level quote freshness so weeks-old quotes
+    # never sit in the five shown rows alongside current odds.
+    if max_quote_age_days is not None and float(max_quote_age_days) > 0:
+        from app.utils.market_staleness import stale_observation_keys
+
+        cutoff_sec = float(max_quote_age_days) * 86400.0
+        for d in open_cohort_dates:
+            cohort = cohorts_by_date[d]
+            open_priced = [
+                pm for pm in cohort if pm.is_open and pm.probability is not None
+            ]
+            cohort_stale_ids = set(
+                stale_observation_keys(
+                    [(pm.market_id, pm.observed_at) for pm in open_priced],
+                    max_lag_days=float(max_quote_age_days),
+                )
+            )
+            updated_cohort: list[_SiblingMember] = []
+            for pm in cohort:
+                if pm.is_open and pm.probability is not None:
+                    is_stale = pm.market_id in cohort_stale_ids
+                    obs_dt = _parse_dt(pm.observed_at)
+                    if obs_dt is None:
+                        is_stale = True
+                    elif (effective_now - obs_dt).total_seconds() > cutoff_sec:
+                        is_stale = True
+                    if is_stale:
+                        pm = replace(
+                            pm,
+                            probability=None,
+                            no_probability=None,
+                            raw_probability=pm.probability,
+                            stale_quote=True,
+                        )
+                updated_cohort.append(pm)
+            cohorts_by_date[d] = updated_cohort
 
     if closed_world:
         for d in open_cohort_dates:
@@ -1595,17 +1692,106 @@ def select_sibling_family(
                     )
                 )
 
-    # Decision A: select the nearest open deadline with at least effective_min_numbered members that have a number.
+    effective_max_unnumbered = (
+        int(max_unnumbered_members)
+        if max_unnumbered_members is not None
+        else MAX_TOP_K_UNNUMBERED_MEMBERS
+    )
+
+    def _cohort_top_k_refusal(
+        cohort: Sequence[_SiblingMember],
+    ) -> Optional[tuple[tuple[str, Any], ...]]:
+        numbered_c = sorted(
+            [pm for pm in cohort if pm.is_open and pm.probability is not None],
+            key=lambda pm: (
+                -(pm.probability or 0.0),
+                pm.subject.casefold(),
+                pm.market_id,
+            ),
+        )
+        unnumbered_c = sorted(
+            [pm for pm in cohort if pm.is_open and pm.probability is None],
+            key=lambda pm: (pm.subject.casefold(), pm.market_id),
+        )
+        settled_c = [pm for pm in cohort if not pm.is_open]
+        ordered_c = numbered_c + unnumbered_c + settled_c
+        raw_numbered_count = sum(
+            1
+            for pm in cohort
+            if pm.is_open and (pm.probability is not None or pm.stale_quote)
+        )
+        stale_subjects = tuple(
+            sorted(pm.subject for pm in unnumbered_c if pm.stale_quote)
+        )
+        if len(numbered_c) < effective_min_numbered:
+            if raw_numbered_count >= effective_min_numbered and stale_subjects:
+                return (
+                    ("family", "unnumbered_members_could_change_top_rows"),
+                    ("stale_quotes_withheld", stale_subjects),
+                )
+            return (("family", "too_few_numbered_members"),)
+
+        if closed_world:
+            return None
+
+        # Rule 2 (#12374): refuse a top-K card when unnumbered or stale members
+        # could plausibly change the shown rows.
+        cutoff_prob = (
+            numbered_c[effective_card_rows - 1].probability
+            if len(numbered_c) >= effective_card_rows
+            else 0.0
+        )
+        displacing_unnumbered = tuple(
+            sorted(
+                pm.subject
+                for pm in unnumbered_c
+                if pm.raw_probability is not None
+                and pm.raw_probability >= (cutoff_prob or 0.0)
+            )
+        )
+        if displacing_unnumbered or (
+            stale_subjects and len(numbered_c) < effective_card_rows
+        ):
+            reasons_list: list[tuple[str, Any]] = [
+                ("family", "unnumbered_members_could_change_top_rows"),
+            ]
+            if stale_subjects:
+                reasons_list.append(("stale_quotes_withheld", stale_subjects))
+            return tuple(reasons_list)
+
+        if (
+            len(ordered_c) > effective_card_rows
+            and len(unnumbered_c) > effective_max_unnumbered
+        ):
+            reasons_list = [
+                ("family", "unnumbered_members_could_change_top_rows"),
+                ("unnumbered_count", len(unnumbered_c)),
+            ]
+            if stale_subjects:
+                reasons_list.append(("stale_quotes_withheld", stale_subjects))
+            return tuple(reasons_list)
+
+        return None
+
+    # Decision A: select the nearest open deadline with at least effective_min_numbered
+    # fresh members that also passes the top-K unnumbered/stale contender bar.
     leading_date: Optional[date] = None
+    first_top_k_refusal: Optional[tuple[tuple[str, Any], ...]] = None
     for d in open_cohort_dates:
-        numbered_at_d = [
-            pm for pm in cohorts_by_date[d] if pm.is_open and pm.probability is not None
-        ]
-        if len(numbered_at_d) >= effective_min_numbered:
+        refusal_reasons = _cohort_top_k_refusal(cohorts_by_date[d])
+        if refusal_reasons is None:
             leading_date = d
             break
+        if (
+            first_top_k_refusal is None
+            and dict(refusal_reasons).get("family")
+            == "unnumbered_members_could_change_top_rows"
+        ):
+            first_top_k_refusal = refusal_reasons
 
     if leading_date is None:
+        if first_top_k_refusal is not None:
+            return RoundupRefusal(first_top_k_refusal)
         return RoundupRefusal((("family", "too_few_numbered_members"),))
 
     # Build ordered sections starting from leading_date, followed by any subsequent open cohorts.
@@ -1649,12 +1835,19 @@ def select_sibling_family(
         )
         configured_sec_title = (
             str(section_titles[sec_idx]).strip()
-            if section_titles and sec_idx < len(section_titles) and str(section_titles[sec_idx]).strip()
+            if section_titles
+            and sec_idx < len(section_titles)
+            and str(section_titles[sec_idx]).strip()
             else default_sec_title
         )
         # If Leading deadline shifted (e.g. Nov 15 -> Nov 30), prefer the cohort's own stated date title
         # unless closed_world has an explicit section_title configured.
-        if closed_world and section_titles and sec_idx < len(section_titles) and str(section_titles[sec_idx]).strip():
+        if (
+            closed_world
+            and section_titles
+            and sec_idx < len(section_titles)
+            and str(section_titles[sec_idx]).strip()
+        ):
             sec_title = configured_sec_title
         elif sample_stated.section_title:
             sec_title = sample_stated.section_title
@@ -1763,7 +1956,9 @@ async def _load_markets_from_db(
 
     clean_group_id = str(group_id).strip() if group_id else None
     clean_title_ilike = str(title_ilike).strip() if title_ilike else None
-    clean_expected_source = str(expected_source).strip().lower() if expected_source else None
+    clean_expected_source = (
+        str(expected_source).strip().lower() if expected_source else None
+    )
     clean_candidate_ids = [
         int(x)
         for x in candidate_ids
@@ -1776,7 +1971,7 @@ async def _load_markets_from_db(
         filters.append(FuturesMarket.group_id == clean_group_id)
     if clean_candidate_ids:
         filters.append(FuturesMarket.id.in_(clean_candidate_ids))
-    if clean_title_ilike:
+    if clean_title_ilike and not clean_group_id:
         if clean_expected_source:
             filters.append(
                 and_(
@@ -1833,8 +2028,7 @@ async def _load_markets_from_db(
             mid = int(raw_id)
             row_gid = str(m.get("group_id") or "").strip() or None
             if (
-                not clean_title_ilike
-                and (clean_group_id or candidate_id_set)
+                (clean_group_id or (not clean_title_ilike and candidate_id_set))
                 and row_gid != clean_group_id
                 and mid not in candidate_id_set
             ):
@@ -1850,8 +2044,7 @@ async def _load_markets_from_db(
         mid = int(raw_mid)
         row_gid = str(getattr(m, "group_id", None) or "").strip() or None
         if (
-            not clean_title_ilike
-            and (clean_group_id or candidate_id_set)
+            (clean_group_id or (not clean_title_ilike and candidate_id_set))
             and row_gid != clean_group_id
             and mid not in candidate_id_set
         ):
@@ -1941,9 +2134,11 @@ def normalize_registered_family_market(
         canon_dt = datetime(year, 12, 31, 0, 0, 0, tzinfo=timezone.utc)
         return (
             name,
-            canon_dt.isoformat().replace("+00:00", "Z")
-            if isinstance(resolution_date, str)
-            else canon_dt,
+            (
+                canon_dt.isoformat().replace("+00:00", "Z")
+                if isinstance(resolution_date, str)
+                else canon_dt
+            ),
         )
     m_run = _ANNOUNCE_PRESIDENTIAL_RUN_RE.match(name)
     if m_run is not None:
@@ -1953,9 +2148,11 @@ def normalize_registered_family_market(
         canon_dt = datetime(year - 1, 12, 31, 23, 59, 0, tzinfo=timezone.utc)
         return (
             canon_name,
-            canon_dt.isoformat().replace("+00:00", "Z")
-            if isinstance(resolution_date, str)
-            else canon_dt,
+            (
+                canon_dt.isoformat().replace("+00:00", "Z")
+                if isinstance(resolution_date, str)
+                else canon_dt
+            ),
         )
     return name, resolution_date
 
@@ -2017,6 +2214,19 @@ async def produce_sibling_family(
         if isinstance(raw_window_days, int) and not isinstance(raw_window_days, bool)
         else None
     )
+    raw_max_quote_age = rule.get("max_quote_age_days")
+    max_quote_age_days: Optional[float] = (
+        float(raw_max_quote_age)
+        if isinstance(raw_max_quote_age, (int, float))
+        and not isinstance(raw_max_quote_age, bool)
+        else MAX_SIBLING_QUOTE_AGE_DAYS
+    )
+    raw_max_unnum = rule.get("max_unnumbered_members")
+    max_unnumbered_members: Optional[int] = (
+        int(raw_max_unnum)
+        if isinstance(raw_max_unnum, int) and not isinstance(raw_max_unnum, bool)
+        else None
+    )
     footer = str(
         definition.get("footer")
         or "Each row is its own market. They don't add up to 100%."
@@ -2039,10 +2249,19 @@ async def produce_sibling_family(
             _, mid = _parse_market_ref_id(str(spec))
             candidate_ids.append(mid)
 
+    candidate_id_set = set(candidate_ids)
     withheld_by_market: dict[int, set[int]] = {}
     if isinstance(db, Mapping):
         by_id = {
-            int(k): v for k, v in db.items() if isinstance(v, Mapping)
+            int(k): v
+            for k, v in db.items()
+            if isinstance(v, Mapping)
+            and (
+                not group_id
+                or not str(v.get("group_id") or "").strip()
+                or str(v.get("group_id") or "").strip() == group_id
+                or int(k) in candidate_id_set
+            )
         }
     elif isinstance(db, (list, tuple)):
         by_id = {
@@ -2051,6 +2270,12 @@ async def produce_sibling_family(
             if isinstance(m, Mapping)
             and isinstance(m.get("id"), int)
             and not isinstance(m.get("id"), bool)
+            and (
+                not group_id
+                or not str(m.get("group_id") or "").strip()
+                or str(m.get("group_id") or "").strip() == group_id
+                or int(m["id"]) in candidate_id_set
+            )
         }
     else:
         by_id, withheld_by_market = await _load_markets_from_db(
@@ -2081,6 +2306,8 @@ async def produce_sibling_family(
         section_titles=section_titles,
         footer=footer,
         release_window_days=release_window_days,
+        max_quote_age_days=max_quote_age_days,
+        max_unnumbered_members=max_unnumbered_members,
         now=now,
         withheld_by_market=withheld_by_market,
     )
@@ -2100,7 +2327,10 @@ def load_sibling_family_definition(
     if data.get("kind") != "roundup":
         raise ValueError(f"Container definition {path} must have kind='roundup'")
     rule = data.get("rule")
-    if not isinstance(rule, Mapping) or rule.get("producer") != PRODUCER_KIND_SIBLING_FAMILY:
+    if (
+        not isinstance(rule, Mapping)
+        or rule.get("producer") != PRODUCER_KIND_SIBLING_FAMILY
+    ):
         raise ValueError(
             f"Container definition {path} must declare rule.producer={PRODUCER_KIND_SIBLING_FAMILY!r}"
         )
@@ -2108,9 +2338,7 @@ def load_sibling_family_definition(
         data.get("relations") or rule.get("relations") or DEFAULT_SIBLING_RELATIONS
     )
     data["relations"] = [str(r) for r in relations_raw]
-    data["level"] = str(
-        data.get("level") or rule.get("level") or DEFAULT_SIBLING_LEVEL
-    )
+    data["level"] = str(data.get("level") or rule.get("level") or DEFAULT_SIBLING_LEVEL)
     raw_sec = data.get("section_title") or ""
     sec_texts = (
         tuple(str(x) for x in raw_sec)
@@ -2141,8 +2369,22 @@ def load_sibling_family_definitions_from_dir(
         if not isinstance(raw, Mapping):
             continue
         rule = raw.get("rule")
-        if isinstance(rule, Mapping) and rule.get("producer") == PRODUCER_KIND_SIBLING_FAMILY:
+        if (
+            isinstance(rule, Mapping)
+            and rule.get("producer") == PRODUCER_KIND_SIBLING_FAMILY
+        ):
             definitions.append(load_sibling_family_definition(path))
+    definitions.sort(
+        key=lambda d: (
+            (
+                0
+                if isinstance(d.get("authored_by"), Mapping)
+                and d["authored_by"].get("kind") == "proposer"
+                else 1
+            ),
+            str(d.get("slug") or ""),
+        )
+    )
     return definitions
 
 
@@ -2223,7 +2465,11 @@ def find_sibling_family_candidates(
         effective_outcome = outcome_name
         if not effective_outcome:
             # Check if member markets are binary Yes/No or share a non-Yes/No rung
-            first_outs = member_list[0].get("outcomes") or member_list[0].get("top_outcomes") or ()
+            first_outs = (
+                member_list[0].get("outcomes")
+                or member_list[0].get("top_outcomes")
+                or ()
+            )
             out_names = [
                 str(o.get("name") or o.get("label") or "").strip()
                 for o in first_outs
@@ -2386,36 +2632,22 @@ ALCARAZ_SINNER_TWO_MAJORS_2027_DEFINITION: dict[str, Any] = (
 )
 
 
-async def snow_first_flakes_2026(
-    db: Any, *, now: Optional[datetime] = None
-) -> Any:
+async def snow_first_flakes_2026(db: Any, *, now: Optional[datetime] = None) -> Any:
     """Produce ``RoundupMembers`` (or ``RoundupRefusal``) for ``snow-first-flakes-2026``."""
-    return await produce_sibling_family(
-        db, SNOW_FIRST_FLAKES_2026_DEFINITION, now=now
-    )
+    return await produce_sibling_family(db, SNOW_FIRST_FLAKES_2026_DEFINITION, now=now)
 
 
-async def gta_vi_album_features(
-    db: Any, *, now: Optional[datetime] = None
-) -> Any:
+async def gta_vi_album_features(db: Any, *, now: Optional[datetime] = None) -> Any:
     """Produce ``RoundupMembers`` (or ``RoundupRefusal``) for ``gta-vi-album-features``."""
-    return await produce_sibling_family(
-        db, GTA_VI_ALBUM_FEATURES_DEFINITION, now=now
-    )
+    return await produce_sibling_family(db, GTA_VI_ALBUM_FEATURES_DEFINITION, now=now)
 
 
-async def rt_scores_this_week(
-    db: Any, *, now: Optional[datetime] = None
-) -> Any:
+async def rt_scores_this_week(db: Any, *, now: Optional[datetime] = None) -> Any:
     """Produce ``RoundupMembers`` (or ``RoundupRefusal``) for ``rt-scores-this-week``."""
-    return await produce_sibling_family(
-        db, RT_SCORES_THIS_WEEK_DEFINITION, now=now
-    )
+    return await produce_sibling_family(db, RT_SCORES_THIS_WEEK_DEFINITION, now=now)
 
 
-async def who_announces_before_2027(
-    db: Any, *, now: Optional[datetime] = None
-) -> Any:
+async def who_announces_before_2027(db: Any, *, now: Optional[datetime] = None) -> Any:
     """Produce ``RoundupMembers`` (or ``RoundupRefusal``) for ``who-announces-before-2027``."""
     return await produce_sibling_family(
         db, WHO_ANNOUNCES_BEFORE_2027_DEFINITION, now=now
@@ -2461,6 +2693,5 @@ _NAMED_SIBLING_PRODUCERS = {
 for _sf_def in load_sibling_family_definitions_from_dir():
     _sf_slug = _sf_def["slug"]
     _rc().register_roundup_producer(
-        _NAMED_SIBLING_PRODUCERS.get(_sf_slug)
-        or build_sibling_family_producer(_sf_def)
+        _NAMED_SIBLING_PRODUCERS.get(_sf_slug) or build_sibling_family_producer(_sf_def)
     )

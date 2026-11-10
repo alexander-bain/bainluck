@@ -11884,6 +11884,8 @@ async def get_group(
                 "american_odds": probability_to_american(o.current_probability) if o.current_probability and 0 < o.current_probability < 1 else None,
                 "market_id": m.id,
                 "source": m.source,
+                "last_updated": o.last_updated.isoformat() if getattr(o, "last_updated", None) else None,
+                "observed_at": o.last_updated.isoformat() if getattr(o, "last_updated", None) else None,
             }
             if o.id in withheld:
                 # Keyed on presence so the refusal covers any price field this
@@ -11926,6 +11928,7 @@ async def get_group(
             "market_metadata": m.market_metadata,
             "commence_time": m.commence_time.isoformat() if m.commence_time else None,
             "resolution_date": m.resolution_date.isoformat() if m.resolution_date else None,
+            "updated_at": m.updated_at.isoformat() if getattr(m, "updated_at", None) else None,
             "outcomes": outcomes,
             "outcome_count": len(outcomes),
         })
