@@ -871,6 +871,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
         "outcomes_processed": 0,
         "outcomes_linked": 0,
         "outcomes_linked_by_name": 0,
+        "outcomes_refused_outside_event_teams": 0,
         "outcomes_linked_by_league": 0,
         "outcomes_linked_by_roster": 0,
         "outcomes_linked_by_llm": 0,
@@ -970,8 +971,13 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             team_sport_keys = await _load_team_sport_keys(session) if outcomes else {}
             # #8072: and outside the conference its ticker names (NL MVP, AFC East).
             team_names = await _load_team_names(session) if outcomes else {}
+            event_team_ids: dict[int, set[int]] = {}
 
             def _admit(outcome, team_id) -> bool:
+                fixture_ids = event_team_ids.get(outcome.market.event_id)
+                if team_id and fixture_ids is not None and team_id not in fixture_ids:
+                    stats["outcomes_refused_outside_event_teams"] += 1
+                    return False
                 if team_id and _crosses_market_league(outcome, team_id, team_sport_keys):
                     stats["outcomes_refused_outside_market_league"] += 1
                     return False
@@ -984,12 +990,13 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
 
             # --- Phase 2a: Fast path for event-linked markets ---
             # Game props (Kalshi/Polymarket) have FuturesMarket.event_id set,
-            # which gives us the exact two teams. Match against only those
-            # rosters — eliminates cross-team false positives entirely.
+            # which gives us the exact teams. Their names and rosters outrank
+            # a category guessed from a nickname such as Cardinals (#12555).
             from app.models import Event, Sport, Team as TeamModel
-            from app.utils.team_linking import match_outcome_to_roster
+            from app.utils.team_linking import match_outcome_to_roster, match_outcome_to_team
             remaining_outcomes = []
             event_cache: dict[int, dict] = {}  # event_id → {team_id: [player_names]}
+            event_teams: dict[int, list[dict]] = {}
 
             def _extract_rosters(team_rows) -> dict[int, list[str]]:
                 rosters: dict[int, list[str]] = {}
@@ -1018,14 +1025,22 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                     if market.event_id not in event_cache:
                         ev = await session.get(Event, market.event_id)
                         event_rosters: dict[int, list[str]] = {}
+                        team_rows = []
                         if ev:
                             if ev.home_team_id or ev.away_team_id:
                                 # Fast path: FK team IDs exist
                                 team_ids = [t for t in [ev.home_team_id, ev.away_team_id] if t]
+                                team_filters = [TeamModel.id.in_(team_ids)]
+                                if ev.sport_id:
+                                    team_filters.append(TeamModel.sport_id == ev.sport_id)
                                 team_rows = (await session.execute(
-                                    select(TeamModel.id, TeamModel.name, TeamModel.roster_players)
-                                    .where(TeamModel.id.in_(team_ids))
+                                    select(TeamModel.id, TeamModel.name, TeamModel.alternate_names, TeamModel.roster_players)
+                                    .where(*team_filters)
                                 )).all()
+                                # Even an empty set is authoritative here: known
+                                # fixture IDs which do not belong to its sport
+                                # cannot authorize a category fallback.
+                                event_team_ids[market.event_id] = {row.id for row in team_rows}
                                 event_rosters = _extract_rosters(team_rows)
                             elif ev.home_team_name and ev.away_team_name:
                                 # Fallback: team IDs not set, look up by name + sport
@@ -1038,17 +1053,30 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                                 if ev.sport_id:
                                     name_filters.append(TeamModel.sport_id == ev.sport_id)
                                 team_rows = (await session.execute(
-                                    select(TeamModel.id, TeamModel.name, TeamModel.roster_players)
+                                    select(TeamModel.id, TeamModel.name, TeamModel.alternate_names, TeamModel.roster_players)
                                     .where(*name_filters)
                                 )).all()
                                 event_rosters = _extract_rosters(team_rows)
+                                if team_rows:
+                                    event_team_ids[market.event_id] = {row.id for row in team_rows}
                         event_cache[market.event_id] = event_rosters
+                        event_teams[market.event_id] = [
+                            {"id": row.id, "name": row.name, "alternate_names": row.alternate_names}
+                            for row in team_rows
+                        ]
                         if not event_rosters and ev:
                             logger.info(
                                 "Event %s (%s vs %s): no rosters found (team_ids=%s/%s, sport_id=%s)",
                                 market.event_id, ev.home_team_name, ev.away_team_name,
                                 ev.home_team_id, ev.away_team_id, ev.sport_id,
                             )
+
+                    team_id = match_outcome_to_team(outcome.name, event_teams[market.event_id])
+                    if _admit(outcome, team_id):
+                        outcome.team_id = team_id
+                        stats["outcomes_linked"] += 1
+                        stats["outcomes_linked_by_name"] += 1
+                        continue
 
                     event_rosters = event_cache[market.event_id]
                     if event_rosters:
@@ -1059,7 +1087,8 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                             stats["outcomes_linked_by_roster"] += 1
                             continue
 
-                    # Event-linked but no roster match — fall through to category matching
+                    # A fallback still cannot leave known fixture teams: _admit
+                    # checks every name, roster, league and LLM candidate below.
                     remaining_outcomes.append(outcome)
 
             # --- Phase 2b: Category-based matching for non-event-linked markets ---
