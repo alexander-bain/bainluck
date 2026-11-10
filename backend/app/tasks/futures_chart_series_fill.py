@@ -663,12 +663,15 @@ async def build_market_series(
     now = now or datetime.now(timezone.utc)
     stats: dict = {"legs": [], "outcomes_built": 0, "outcomes_empty": 0}
     owned: list[Any] = []
+    stages: list[str] = []
 
     try:
         legs = await find_venue_legs(session, market, stats=stats)
         stats["legs"] = [{"id": m.id, "source": m.source} for m in legs]
+        _stamp_memory(stages, "legs")
 
         captures = await capture_series_by_name(session, [m.id for m in legs])
+        _stamp_memory(stages, "captures")
 
         # Every outcome the chart could draw, keyed by normalised name, from
         # whichever leg names it. The evolution market leads so its field
@@ -736,6 +739,7 @@ async def build_market_series(
                 stats.setdefault("errors", []).append(
                     f"{leg.source}: {type(exc).__name__}: {str(exc)[:120]}"
                 )
+            _stamp_memory(stages, f"{leg.source}:{len(wanted_outcomes)}")
 
         series: dict[str, list[list]] = {}
         for key in chart_field:
@@ -756,6 +760,7 @@ async def build_market_series(
             series[key] = [[ts.isoformat(), round(p, 6)] for ts, p in final]
             stats["outcomes_built"] += 1
 
+        _stamp_memory(stages, "series")
         payload = {
             "market_id": market.id,
             "built_at": now.isoformat(),
@@ -780,6 +785,30 @@ async def build_market_series(
                 await service.close()
             except Exception:  # noqa: BLE001 — closing never masks the run
                 pass
+        if stages:
+            logger.info(
+                "futures_chart_series_memory market=%s %s",
+                getattr(market, "id", None), " ".join(stages),
+            )
+
+
+def _stamp_memory(stages: list[str], stage: str) -> None:
+    """#12042: ``stage=rss/peak`` (MB) after one step of a build. Never raises.
+
+    This task peaked at 465 MB on worker-background (512 MB) for ONE golf market
+    on Nov 10 (+306 MB over its start; `task_memory`), while the same market's
+    37k sampled snapshots are ~10 MB and its candidate legs 33 markets. The
+    stamps name the step that grew. The peak is the child's high-water mark
+    for this task (`task_memory` resets it at the task's start), so the first
+    stage whose peak jumps is the culprit. Log-only: nothing here reaches the
+    cached payload. A venue stage is labelled ``source:outcomes_fetched``.
+    """
+    try:
+        from app.tasks.heavy_memory_turns import peak_rss_mb, rss_mb
+
+        stages.append(f"{stage}={rss_mb()}/{peak_rss_mb()}")
+    except Exception:  # noqa: BLE001 — instrumentation never fails a build
+        pass
 
 
 async def fill_market_series(
