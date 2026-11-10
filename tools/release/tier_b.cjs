@@ -1,6 +1,54 @@
 'use strict';
 
-function verdict(pr, reviews) {
+// 119-A (Alex, Nov 10, #12538/#12539): Fable's ACCEPT is needed only when a PR
+// (a) changes what a reader sees, or a number a reader sees, on web, phone or
+// Watch; (b) deletes or rewrites stored data or is migration-class; or (c)
+// changes an eval, a gate, an exam, a licence or grades. Every other tier-b PR
+// merges on claude[bot]'s approval at its head and green CI.
+//
+// The PR's first line declares which: `Fable: needed (reader-visible |
+// destructive | eval)` or `Fable: not needed`. A PR with no such line is read as
+// needing Fable. A `not needed` PR that touches any path below is blocked, with
+// the paths named. The list is deliberately broad: a false match only asks for
+// Fable's review, while a miss would let a reader-visible change skip it. Argue
+// with it here, in one place.
+const FABLE_PATHS = [
+  // Reader-facing pages, components and client code (web), minus their tests.
+  {why: 'reader-visible (web page or component)', re: /^frontend\/(app|components|lib|hooks|public|styles|src)\/(?!.*(__tests__\/|\.test\.|\.spec\.))/},
+  // The phone and the Watch app.
+  {why: 'reader-visible (iOS / Watch)', re: /^ios\//},
+  // API responses a page reads, and every admin handler (some are destructive).
+  {why: 'reader-visible or destructive (API route)', re: /^backend\/app\/routes\//},
+  // Blending, matching, ranking and formatting code.
+  {why: 'reader-visible (blend, match, rank or format code)', re: /^backend\/app\/(utils|services|tasks)\/[^/]*(blend|aggregat|probab|price|feed|rank|display|format|caption|label|match|registry|copy|headline|hero|ladder|settle|winner)[^/]*\.py$/},
+  // Container and licence data.
+  {why: 'reader-visible (container or licence data)', re: /^backend\/data\/containers\/|licen[cs]e/i},
+  // Evals, gates, exams, grades and the release machinery itself.
+  {why: 'eval or gate', re: /^(evals\/|backend\/data\/evals\/|backend\/scripts\/evals\/|backend\/tests\/evals\/|tools\/release\/|docs\/release-loop\/|\.github\/workflows\/|\.github\/PULL_REQUEST_TEMPLATE)/},
+  // Migrations, models and data repairs.
+  {why: 'destructive (migration, model or data repair)', re: /^backend\/(alembic\/|app\/models\/|app\/tasks\/repair_[^/]*\.py$|scripts\/[^/]*(repair|restore|backfill|apply|fold|merge|delete|purge)[^/]*$)/},
+];
+
+// The first non-empty line of the PR body, read as the 119-A declaration.
+function fableLine(body) {
+  const first = String(body || '').split(/\r?\n/).map(line => line.trim()).find(line => line) || '';
+  const m = first.match(/^\**\s*Fable:\s*(not needed|needed)\b/i);
+  if (!m) return 'missing';
+  return m[1].toLowerCase() === 'not needed' ? 'not needed' : 'needed';
+}
+
+// Files a `Fable: not needed` PR touches that the list says need Fable.
+function fableHits(files) {
+  const hits = [];
+  for (const file of files || []) {
+    const name = file.filename || file;
+    const rule = FABLE_PATHS.find(rule => rule.re.test(name));
+    if (rule) hits.push(`${name} (${rule.why})`);
+  }
+  return hits;
+}
+
+function verdict(pr, reviews, files) {
   if (pr.labels.some(label => label.name === 'eval-candidate')) {
     return {conclusion:'failure',summary:'Never-merge reviewer eval candidate. Its bot verdict is study evidence; this label cannot authorize a merge.'};
   }
@@ -13,12 +61,24 @@ function verdict(pr, reviews) {
       latest.set(review.user.login,review);
     }
   }
+  const declared = fableLine(pr.body);
+  if (declared === 'not needed') {
+    const hits = fableHits(files);
+    if (hits.length) {
+      return {conclusion:'failure',summary:`The first line says \`Fable: not needed\`, but this PR touches paths that need Fable's ACCEPT under 119-A: ${hits.slice(0,10).join('; ')}${hits.length>10?` (+${hits.length-10} more)`:''}. Change the first line to \`Fable: needed (reader-visible | destructive | eval)\`, or take those files out.`};
+    }
+  }
   const approval = [...latest.values()].find(review =>
     review.user.login === 'claude[bot]' && review.user.login !== pr.user.login &&
     review.state === 'APPROVED' &&
     review.commit_id === pr.head.sha);
-  return approval ? {conclusion:'success',summary:`Approved at this head by ${approval.user.login}. The author window merges after green CI and Fable ACCEPT at this head.`} :
-    {conclusion:'failure',summary:'tier-b requires claude[bot] approval at the current head. The author window merges only after green CI and Fable ACCEPT at that head; labels and human reviews cannot replace the bot approval.'};
+  const fable = declared === 'not needed'
+    ? 'The first line says `Fable: not needed` and no file is on the 119-A list, so the author window merges after green CI.'
+    : declared === 'needed'
+      ? 'The first line says `Fable: needed`, so the author window merges after green CI and Fable ACCEPT at this head.'
+      : 'There is no `Fable:` first line, so Fable ACCEPT at this head is needed (119-A); the author window merges after green CI and that ACCEPT.';
+  return approval ? {conclusion:'success',summary:`Approved at this head by ${approval.user.login}. ${fable}`} :
+    {conclusion:'failure',summary:`tier-b requires claude[bot] approval at the current head; labels and human reviews cannot replace it. ${fable}`};
 }
 
 async function currentOpen(github, repo, eventNumber) {
@@ -91,7 +151,11 @@ async function evaluate(github, context) {
           continue;
         }
         const reviews=await github.paginate(github.rest.pulls.listReviews,{...repo,pull_number:pr.number,per_page:100});
-        results.push(verdict(pr,reviews));
+        // File scope is read only to test a `Fable: not needed` claim; it never
+        // grants approval and is never read for any other PR.
+        const files=fableLine(pr.body)==='not needed'
+          ? await github.paginate(github.rest.pulls.listFiles,{...repo,pull_number:pr.number,per_page:100}) : [];
+        results.push(verdict(pr,reviews,files));
       }
       const failed=results.filter(result=>result.conclusion!=='success');
       verdicts.set(sha,{conclusion:failed.length?'failure':'success',
@@ -108,4 +172,4 @@ async function evaluate(github, context) {
     summary:'PR membership, head or labels changed during both evaluation attempts; re-evaluation required.'});
 }
 
-module.exports = {verdict,evaluate};
+module.exports = {verdict,evaluate,fableLine,fableHits,FABLE_PATHS};
