@@ -369,14 +369,16 @@ function GroupingGradeSession() {
             </div>
           )}
           {canRenderRoundupCard ? (
-            <RoundupCard
-              title={card.title}
-              contract={roundupContract}
-              collectionRef={null}
-              items={[]}
-              bundleId={`grade:${item.item_key}`}
-              previewOnly
-            />
+            <div className="pointer-events-none">
+              <RoundupCard
+                title={card.title}
+                contract={roundupContract}
+                collectionRef={null}
+                items={[]}
+                bundleId={`grade:${item.item_key}`}
+                previewOnly
+              />
+            </div>
           ) : (
             <div className="rounded-xl border border-surface-border bg-surface-card p-4">
               <h2 className="mt-1.5 text-lg font-semibold text-text-primary">{card.title}</h2>
