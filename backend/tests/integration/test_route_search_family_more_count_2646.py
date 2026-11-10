@@ -253,6 +253,76 @@ async def _search(client, q="Alcaraz"):
     return resp.json()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["super bowl winner", "chiefs"])
+async def test_verified_title_aliases_reach_one_card_without_a_duplicate_family(
+    query, monkeypatch
+):
+    """#12530: two venue rows are one reader destination, in both buckets.
+
+    The resolver's arithmetic and identity have their own real-board tests.
+    This exercises the route after that boundary: aliases must not become a
+    two-member family or leave two copies of the same destination on the page.
+    """
+    from app.routes import events
+    from app.utils.futures_verified_title import Composition, OutcomeOverlay
+
+    window = [
+        _market(mid=86832, name="NFL Super Bowl Winner", volume=100_000),
+        _market(mid=129037, name="NFL: 2027 Champion", volume=90_000),
+    ]
+    values = [("Buffalo Bills", 0.55), ("Kansas City Chiefs", 0.45)]
+    verdicts = {}
+    for market, source in zip(window, ("odds_api", "polymarket")):
+        market.source = source
+        market.category = "sports"
+        market.llm_sport_category = "football"
+        market.market_tier = 1
+        market.market_type = "field"
+        market.mutually_exclusive = True
+        market.market_metadata = {}
+        market.outcomes = [
+            _outcome(name, probability, market.id * 10 + i)
+            for i, (name, probability) in enumerate(values)
+        ]
+        for row in market.outcomes:
+            row.resolution_source = None
+            row.last_updated = datetime.now(timezone.utc)
+        verdicts[market.id] = Composition(
+            question_identity={"competition": "NFL", "edition": "2027"},
+            overlay={
+                row.id: OutcomeOverlay(
+                    row.current_probability, ["odds_api", "polymarket"],
+                    datetime.now(timezone.utc).isoformat(), "blend", True,
+                )
+                for row in market.outcomes
+            },
+            contributing_sources=["odds_api", "polymarket"],
+            display_overlay={
+                row.id: {"probability": row.current_probability}
+                for row in market.outcomes
+            },
+            canonical_market_id=86832,
+            canonical_market_name="NFL Super Bowl Winner",
+            canonical_source="odds_api",
+        )
+
+    async def resolve(_db, markets, _deadline, *, missed):
+        return {market.id: verdicts[market.id] for market in markets if market.id in verdicts}
+
+    async def title_window(*args, **kwargs):
+        return window, "absent"
+
+    monkeypatch.setattr(events, "_search_verified_titles", resolve)
+    monkeypatch.setattr(events, "_fetch_futures_window", title_window)
+    async for client in _client(window, monkeypatch):
+        body = await _search(client, query)
+    assert [card["id"] for card in body["futures"]] == [86832], body
+    assert body["futures"][0]["name"] == "NFL Super Bowl Winner"
+    assert {row["name"]: row["probability"] for row in body["futures"][0]["top_outcomes"]} == dict(values)
+    assert body["futures_families"] == []
+
+
 def _families(body):
     return body.get("futures_families") or []
 

@@ -13503,6 +13503,8 @@ async def search_events(
         # short shed life (`SEARCH_CACHEABLE_SHED_STAGES`), not 180 s: the next
         # build finds the finished verdict and prints the page's blend.
         degraded.append("verified_title")
+    deduped_futures = _dedup_verified_title_markets(deduped_futures, _verified_by_id)
+    futures_markets = _dedup_verified_title_markets(futures_markets, _verified_by_id)
     _formatted_by_id = {
         m.id: _format_futures_for_search(
             m, _withheld_by_market.get(m.id), query_terms=expanded,  # #8842
@@ -13562,6 +13564,10 @@ async def search_events(
     _stale_game_ids = await _search_stale_game_market_ids(
         db, _formatted_facts, datetime.now(timezone.utc)
     )
+    # A verified title may use a different venue row in the wide family pool
+    # and the flat page. Count the destination actually serialized, then map
+    # back to the family composer's row ids so its "more below" stays payable.
+    _serialized_futures_ids = {card["id"] for card in formatted_futures}
     futures_families = _compose_futures_families(
         [
             m
@@ -13573,7 +13579,10 @@ async def search_events(
         ],
         expanded,
         lambda m: _formatted_by_id[m.id],
-        {m.id for m in futures_markets},
+        {
+            m.id for m in deduped_futures
+            if _formatted_by_id[m.id]["id"] in _serialized_futures_ids
+        },
         stale_game_ids=_stale_game_ids,
         team_sport_categories=_team_sport_categories,  # #7355 r3
     )
@@ -39263,10 +39272,14 @@ def _build_search_top_outcomes(
         for row in out:
             if "movement" in row:
                 row["movement"] = None
-    changed = _normalize_search_outcome_probs(
-        full_display, mutually_exclusive=getattr(market, "mutually_exclusive", True),
-        field_complete=not _withheld_ids, question=getattr(market, "name", None),
-    )
+    from app.utils.futures_verified_title import apply_title_display
+
+    changed = apply_title_display(full_display, verified) if verified is not None else None
+    if changed is None:
+        changed = _normalize_search_outcome_probs(
+            full_display, mutually_exclusive=getattr(market, "mutually_exclusive", True),
+            field_complete=not _withheld_ids, question=getattr(market, "name", None),
+        )
     by_id = {o["id"]: o for o in full_display}
     selected_ids = {name: o.id for o, name in named}
     for row in out:
@@ -40682,6 +40695,12 @@ async def _search_verified_titles(
         deadline - _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S if deadline is not None else None
     )
     for m in pending:
+        # An earlier member can have filled every alias from one snapshot.
+        # Re-read before starting another composition of the same field.
+        held = _held_verified_title(m.id)
+        if isinstance(held, Composition):
+            out[m.id] = held
+            continue
         now = time.monotonic()
         if floor_ends is not None and floor_ends <= now:
             # A request this close to its deadline is on a slow database: it
@@ -40709,6 +40728,20 @@ async def _search_verified_titles(
         if isinstance(verdict, Composition):
             out[m.id] = verdict
     return out
+
+
+def _dedup_verified_title_markets(markets, verified_by_id: dict) -> list:
+    """One card for an identity the resolver has proved, preserving rank order."""
+    seen = set()
+    kept = []
+    for market in markets:
+        verdict = verified_by_id.get(market.id)
+        canonical = getattr(verdict, "canonical_market_id", None)
+        key = ("title", canonical) if canonical is not None else ("market", market.id)
+        if key not in seen:
+            kept.append(market)
+            seen.add(key)
+    return kept
 
 
 def _format_futures_for_search(
@@ -40772,7 +40805,7 @@ def _format_futures_for_search(
 
     _TIER_LABELS_SEARCH = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
     return {
-        "id": market.id,
+        "id": getattr(verified, "canonical_market_id", None) or market.id,
         # #7397: the venue's league word, translated to ours, and nothing else.
         # `/search?q=chiefs` drew the chip `NFL (18)` and eighteen cards reading
         # NFL above five market rows reading `Pro Football: 2027 Champion`.
@@ -40795,7 +40828,9 @@ def _format_futures_for_search(
         # cleaner's four blank-template rules have never reached this card and
         # still do not. Applied to THIS output only: the dedup, family and
         # eligibility steps upstream read `market.name`.
-        "name": rewrite_question_colon_display(rewrite_venue_league_vocabulary(market.name)),
+        "name": rewrite_question_colon_display(rewrite_venue_league_vocabulary(
+            getattr(verified, "canonical_market_name", None) or market.name
+        )),
         "sport": market.sport.key if market.sport else None,
         # #6444: the FUTURES arm of the same search response Alex photographed.
         # #5657 fixed the facet chips and the events arm; `GET /api/events/
@@ -40822,7 +40857,7 @@ def _format_futures_for_search(
         # #10089 keys on this. Null stays null — never inferred from the name.
         "market_type": market.market_type,
         "status": market.status,
-        "source": market.source,
+        "source": getattr(verified, "canonical_source", None) or market.source,
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         "top_outcomes": top_outcomes,
         "outcome_count": real_count,
@@ -40836,6 +40871,7 @@ def _format_futures_for_search(
             {
                 "representation": "verified_title",
                 "contributing_sources": list(verified.contributing_sources),
+                **verified.canonical_card_fields,
             }
             if verified is not None
             else {}
