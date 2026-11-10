@@ -138,6 +138,31 @@ each waiter takes over in turn, until its own deadline.
 What this does NOT fix: the FIRST reader of each slot still pays the whole
 scan. Only an index on the tier 1-4 rows removes that, and an index is a
 migration (P144-1 above).
+
+SERVE THE LAST ANSWER WHILE ONE REBUILD RUNS (#12529, 2026-11-10).
+
+"No warmer" above was chosen when a miss cost ~1 s. The slow-event ring now
+names this scan per request (#12546), and in the hour after that went live it
+was the slowest statement of six Bigger Picture reads: 12 s, 18.5 s, 21.6 s,
+23.0 s, 29.5 s and 67.5 s, each one a reader waiting for the scan. A slot
+expires every `TTL_FOUND` seconds, so whoever reads it next pays the scan again.
+
+So a non-empty answer is now also kept under a second key for `STALE_TTL`.
+When the fresh slot has expired and that copy exists, the reader is served the
+copy at once, and it tries, without waiting, to take the slot's build lease.
+The lease holder rebuilds on its own session after the response, through the
+same function the request path calls, and republishes. The fresh slot, its TTLs
+and the single-flight lease are unchanged. A reader waits on the scan only when
+no copy exists: the slot's first build, or a slot unread for `STALE_TTL`.
+
+The staleness this adds is bounded and stated. A served copy is at most
+`STALE_TTL` old, and only while its refresh is failing; normally it is one
+rebuild old. That is for tier 1-4 markets (titles, conferences, awards,
+divisions), which open and close on a season's timescale. An EMPTY answer
+keeps no copy and DELETES any earlier one: a sport whose markets have just been
+ingested keeps the one-minute recovery `TTL_EMPTY` exists for, and a sport whose
+markets are gone reads as empty rather than alternating between "none" and the
+old list. A refresh runs under `REFRESH_STATEMENT_TIMEOUT_MS`, inside its lease.
 """
 
 from __future__ import annotations
@@ -164,6 +189,23 @@ TTL_FOUND = 300
 #: minute rather than five.
 TTL_EMPTY = 60
 
+#: #12529: how long the last NON-EMPTY answer stays servable after its fresh
+#: slot expires, while a background rebuild replaces it. See the module docstring.
+STALE_TTL = 6 * 60 * 60
+
+#: #12529: the lease a refresh behind a stale answer holds, and the statement
+#: timeout it runs under. The timeout is below the lease, so a refresh is always
+#: over (finished or cancelled by Postgres) before its lease can lapse and let a
+#: second one start. The slowest scan measured is 67.5 s (Nov 10); the resting
+#: 30-minute timeout (`services/database.py`) would let a hung one hold a web
+#: pool connection far longer than any reader would wait.
+REFRESH_STATEMENT_TIMEOUT_MS = 120_000
+REFRESH_LEASE_TTL_SECONDS = 150
+
+#: The stale copy's namespace. Separate from `CACHE_PREFIX` so a fresh-slot
+#: read can never return a stale copy by accident.
+STALE_PREFIX = "bainluck:season_markets:stale:v1:"
+
 
 def cache_key(sport_key: str, event_is_finished: bool) -> str:
     """The Redis key for one `(sport, finishedness)` pair.
@@ -174,6 +216,12 @@ def cache_key(sport_key: str, event_is_finished: bool) -> str:
     """
     shape = "final" if event_is_finished else "live"
     return f"{CACHE_PREFIX}{sport_key}:{shape}"
+
+
+def stale_key(sport_key: str, event_is_finished: bool) -> str:
+    """The stale copy's key for the slot `cache_key` names."""
+    shape = "final" if event_is_finished else "live"
+    return f"{STALE_PREFIX}{sport_key}:{shape}"
 
 
 def _client():
@@ -261,18 +309,43 @@ def write(
     client = rc if rc is not None else _client()
     if client is None:
         return False
+    encoded = json.dumps(list(market_ids))
     try:
         client.setex(
             cache_key(sport_key, event_is_finished),
             ttl_for(market_ids),
-            json.dumps(list(market_ids)),
+            encoded,
         )
+        if market_ids:
+            # #12529: the copy a reader is served once the slot above expires.
+            client.setex(stale_key(sport_key, event_is_finished), STALE_TTL, encoded)
+        else:
+            # A sport whose season markets are gone must read as empty, not
+            # alternate between "none" and the old list for six hours.
+            client.delete(stale_key(sport_key, event_is_finished))
     except Exception:
         logger.warning(
             "season-market discovery: write failed for %s", sport_key
         )
         return False
     return True
+
+
+def read_stale(sport_key: str, event_is_finished: bool, rc=None) -> list[int] | None:
+    """The slot's last non-empty answer, or None. Never raises.
+
+    Only ever non-empty: `write` keeps no copy of an empty answer, and a stored
+    empty list (written by hand, or by an older shape) reads as None here, so
+    the stale path can never hold a sport at "no markets".
+    """
+    client = rc if rc is not None else _client()
+    if client is None:
+        return None
+    try:
+        raw = client.get(stale_key(sport_key, event_is_finished))
+    except Exception:
+        return None
+    return decode(raw) or None
 
 
 # ---------------------------------------------------------------------------
@@ -399,3 +472,25 @@ def release_build(lease, rc=None) -> bool:
         return False
     client = rc if rc is not None else _client()
     return client is not None and _single_flight.release(lease, rc=client)
+
+
+def try_claim(sport_key: str, event_is_finished: bool, rc=None):
+    """#12529: the slot's build lease if it is free right now, else None. Never waits.
+
+    For the refresh behind a stale answer. The reader already has ids to serve,
+    so when a peer holds the lease (its rebuild is running) or Redis is unwell,
+    the right move is to do nothing: the peer's answer, or the next reader's
+    claim, refreshes the slot.
+    """
+    client = rc if rc is not None else _client()
+    if client is None:
+        return None
+    try:
+        lease = _single_flight.acquire(
+            build_task_name(sport_key, event_is_finished), REFRESH_LEASE_TTL_SECONDS, rc=client
+        )
+    except Exception:
+        return None
+    if not lease.acquired or lease.token is None:
+        return None
+    return lease
