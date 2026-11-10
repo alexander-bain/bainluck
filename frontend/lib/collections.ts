@@ -30,6 +30,11 @@ export interface CollectionCaption {
   noNumberVerified: boolean;
   figures: CollectionCaptionFigure[];
 }
+export interface CollectionParent {
+  slug: string;
+  name: string;
+  href: string;
+}
 export interface CollectionHub {
   slug: string;
   revision: number | null;
@@ -38,6 +43,7 @@ export interface CollectionHub {
   edition: string | null;
   sections: CollectionSection[];
   children: { key: string; name: string; href: string }[];
+  parent?: CollectionParent | null;
   members: CollectionMember[];
   related: Record<string, CollectionMember[]>;
   note: string | null;
@@ -254,7 +260,7 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
     const parsedFigs: CollectionCaptionFigure[] = [];
     for (const f of rawFigs) {
       const fig = object(f);
-      if (fig && text(fig.label) && text(fig.value) && text(fig.observed_at) && text(fig.as_of_label) && text(fig.source) && text(fig.source_href) && fig.source_href.startsWith("/")) {
+      if (fig && text(fig.label) && text(fig.value) && text(fig.observed_at) && text(fig.as_of_label) && text(fig.source) && text(fig.source_href) && fig.source_href.startsWith("/") && !fig.source_href.startsWith("//")) {
         parsedFigs.push({
           memberId: text(fig.member_id) ? fig.member_id : "",
           label: fig.label.trim(),
@@ -272,7 +278,27 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
       figures: parsedFigs,
     };
   }
-  return { ...base, members, related, children, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
+  const rawParent = object(row.parent);
+  let admittedParent: CollectionParent | null = null;
+  if (rawParent && safeCollectionSlug(rawParent.slug) && text(rawParent.name)) {
+    const pDest = object(rawParent.destination);
+    const pHref = collectionPath(rawParent.slug);
+    if (
+      pHref &&
+      (!pDest ||
+        (pDest.kind === "container" &&
+          pDest.slug === rawParent.slug &&
+          pDest.api === `/api/containers/${rawParent.slug}` &&
+          (pDest.web == null || pDest.web === pHref)))
+    ) {
+      admittedParent = {
+        slug: rawParent.slug,
+        name: rawParent.name.trim(),
+        href: pHref,
+      };
+    }
+  }
+  return { ...base, members, related, children, parent: admittedParent, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
     subtitle: text(row.subtitle) ? row.subtitle : null, caption: admittedCaption, pin: admittedPin,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
     note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or questions aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };

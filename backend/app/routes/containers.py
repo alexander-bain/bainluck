@@ -78,7 +78,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import get_db
 from app.services.midterms_collection import load_midterms_cards
-from app.utils.midterms_collection import MANIFEST, MARKET_IDS, SECTION_CLASSES, SLUG as MIDTERMS_SLUG, midterms_pin, present_midterms_sections
+from app.utils.midterms_collection import MANIFEST, MARKET_IDS, SECTION_CLASSES, SLUG as MIDTERMS_SLUG, midterms_children, midterms_pin, present_midterms_sections
 from app.utils.container_corrections import (
     READ_EMPTY,
     READ_PUBLISHED,
@@ -503,7 +503,7 @@ async def get_container(
     from app.utils.roundup_containers import ROUNDUP_PRODUCERS, serve_roundup
 
     if slug in ROUNDUP_PRODUCERS:
-        return await serve_roundup(slug, db)
+        return await serve_roundup(slug, db, include_children=include_children)
 
     published = await read_published(db, slug)
     if published.state == READ_UNAVAILABLE:
@@ -525,12 +525,24 @@ async def get_container(
             db, published, edition, revision=revision, cursor=cursor, limit=limit
         )
     if slug == MIDTERMS_SLUG:
+        from app.utils.register_closest import (
+            register_closest_enabled,
+            select_register_closest,
+        )
+
         ids = {m["id"] for m in published.members if m.get("type") == MEMBER_MARKET} & set(MARKET_IDS)
         cards, twins, twin_report = await load_midterms_cards(db, ids)
         sections, withheld = present_midterms_sections(published.members, cards, twins)
+        children = (
+            midterms_children(sections, include_children=include_children)
+            if register_closest_enabled()
+            and getattr(select_register_closest(cards), "members", None)
+            else []
+        )
         result = {**payload, **base_empty,
                   "container": {"id": published.container_id, "slug": slug, "name": MANIFEST["title"]},
                   "subtitle": MANIFEST["subtitle"], "sections": sections,
+                  "children": children,
                   "member_count": sum(s["count"] for s in sections), "withheld": withheld,
                   "withheld_count": len(withheld), "assembled": bool(published.members),
                   "twin_report": twin_report}

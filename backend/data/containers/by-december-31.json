@@ -13,6 +13,12 @@
   "tag": "",
   "section_title": "Markets settling by December 31",
   "footer": "Separate markets that settle by the same day.",
+  "children": [
+    {
+      "slug": "by-november-30",
+      "name": "By November 30"
+    }
+  ],
   "rule": {
     "producer": "same_deadline_board",
     "deadline": "2026-12-31",
