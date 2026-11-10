@@ -10,7 +10,7 @@ Kalshi golf market whose ticker's first segment names a round
 (``R{n}LEAD`` / ``R{n}TOP{n}``): Kalshi gives such a market only the round's
 close as its start time, so no stored price can be placed before the round. All
 56 resolved markets in the two series are category golf and match. The served
-``/api/calibration`` (generated 2026-11-10 01:47Z) reported
+``/api/calibration`` (generated 01:47Z on Nov 10) reported
 ``golf_round_timing_filter.excluded = 19,066`` outcomes in 227 markets. The 231
 losing legs priced at 90% or more that drive the "hook" are empty-book asks
 promoted by the pre-#6126 candle rule, plus a few real 0.99 trades.
