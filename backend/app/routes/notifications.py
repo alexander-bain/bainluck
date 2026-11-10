@@ -9,7 +9,8 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import DeviceToken
+from app.dependencies.auth import get_optional_user
+from app.models.models import DeviceToken, User
 from app.routes.admin_utils import _check_admin_secret
 from app.services.database import get_db, get_db_rw
 
@@ -22,6 +23,8 @@ class DeviceTokenRegistration(BaseModel):
     device_token: str
     platform: str  # "ios" or "macos"
     session_id: Optional[str] = None
+    # #2118: IGNORED. Still accepted, so app builds that send it keep working,
+    # but the account comes only from the request's sign-in.
     user_id: Optional[str] = None
     # "apns" (raw APNS hex — UNSENDABLE via FCM) or "fcm" (Firebase registration
     # token — the only kind the digest can actually send to). Optional and
@@ -53,21 +56,22 @@ async def register_device_token(
     request: Request,
     body: DeviceTokenRegistration,
     db: AsyncSession = Depends(get_db_rw),
+    user: Optional[User] = Depends(get_optional_user),
 ):
     """Register a device token for push notifications.
 
-    Upserts the token: if the same device_token already exists, updates
-    the user/session/platform and marks it active.
+    Upserts the token: if the same device_token already exists, updates its
+    session/platform/kind and marks it active.
+
+    #2118 (131-A): the ACCOUNT comes only from the request's valid sign-in (the
+    Bearer session the app already sends). The body's ``user_id`` is ignored, so
+    a stranger can't attach their phone to someone's account. A signed-out
+    registration is stored anonymous and keeps working, and it never rewrites
+    the owner of a phone that is already registered, so a stranger can't move
+    or detach someone's phone either.
     """
     session_id = body.session_id or request.headers.get("x-session-id")
-
-    # Parse user_id to int if provided
-    user_id_int: Optional[int] = None
-    if body.user_id:
-        try:
-            user_id_int = int(body.user_id)
-        except (ValueError, TypeError):
-            pass
+    user_id_int: Optional[int] = user.id if user is not None else None
 
     # Unknown/absent kinds resolve to "apns" — the conservative reading, since
     # an APNS row is merely excluded from the broadcast while a wrongly-labelled
@@ -75,11 +79,14 @@ async def register_device_token(
     token_kind = body.token_kind if body.token_kind in ("apns", "fcm") else "apns"
 
     logger.info(
-        "Device token registration: platform=%s kind=%s session=%s user=%s token=%s...%s",
+        "Device token registration: platform=%s kind=%s session=%s user=%s "
+        "user_from=%s body_user_ignored=%s token=%s...%s",
         body.platform,
         token_kind,
         session_id,
-        body.user_id,
+        user_id_int,
+        "sign_in" if user is not None else "anonymous",
+        bool(body.user_id),
         body.device_token[:8] if len(body.device_token) >= 8 else body.device_token,
         body.device_token[-4:] if len(body.device_token) >= 4 else "",
     )
@@ -93,17 +100,17 @@ async def register_device_token(
         is_active=True,
         token_kind=token_kind,
     )
-    stmt = stmt.on_conflict_do_update(
-        constraint="uq_device_tokens_token",
-        set_={
-            "platform": body.platform,
-            "user_id": user_id_int,
-            "session_id": session_id,
-            "is_active": True,
-            "token_kind": token_kind,
-            "updated_at": func.now(),
-        },
-    )
+    set_ = {
+        "platform": body.platform,
+        "session_id": session_id,
+        "is_active": True,
+        "token_kind": token_kind,
+        "updated_at": func.now(),
+    }
+    if user is not None:
+        # Only a signed-in call may set (or move) a phone's account.
+        set_["user_id"] = user_id_int
+    stmt = stmt.on_conflict_do_update(constraint="uq_device_tokens_token", set_=set_)
     await db.execute(stmt)
     await db.commit()
 
