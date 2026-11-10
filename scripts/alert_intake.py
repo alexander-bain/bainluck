@@ -200,6 +200,20 @@ def _search_existing_issue(
     return items[0] if items else None
 
 
+def _birth_labels(labels: list[str]) -> list[str]:
+    """121-A (#12539): a new issue is never born at P1; it files needs-triage at P2.
+
+    Uses the canonical ``triage_at_birth`` when the taxonomy module loaded, and
+    the same rule inline when it did not, so a load failure can't let P1 through.
+    """
+    if _ISSUE_LABELS is not None:
+        return _ISSUE_LABELS.ensure_taxonomy(_ISSUE_LABELS.triage_at_birth(labels))
+    out = [label for label in labels if label != "priority:p1"]
+    if len(out) != len(labels):
+        out += [label for label in ("needs-triage", _FALLBACK_PRIORITY) if label not in out]
+    return out
+
+
 def upsert_issue(alert: AlertIssue, *, dry_run: bool = False) -> str:
     if dry_run:
         return f"dry-run issue: {alert.title}"
@@ -213,7 +227,8 @@ def upsert_issue(alert: AlertIssue, *, dry_run: bool = False) -> str:
     marker = f"<!-- alert-intake:key:{alert.key} -->"
     body = f"{marker}\n\n{alert.body.strip()}\n"
 
-    _ensure_labels(repo, alert.labels, token=token, api_url=api_url)
+    birth_labels = _birth_labels(list(alert.labels))
+    _ensure_labels(repo, birth_labels, token=token, api_url=api_url)
     existing = _search_existing_issue(repo, alert.key, token=token, api_url=api_url)
     if existing:
         issue_number = existing["number"]
@@ -250,7 +265,7 @@ def upsert_issue(alert: AlertIssue, *, dry_run: bool = False) -> str:
     created = _github_request(
         "POST",
         f"/repos/{repo}/issues",
-        data={"title": alert.title[:240], "body": body, "labels": alert.labels},
+        data={"title": alert.title[:240], "body": body, "labels": birth_labels},
         token=token,
         api_url=api_url,
     )

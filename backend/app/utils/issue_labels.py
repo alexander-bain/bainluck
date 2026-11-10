@@ -140,6 +140,36 @@ def priority_label(severity: object = None, *, family: str | None = None) -> str
     return DEFAULT_PRIORITY
 
 
+#: 121-A (Alex, Nov 10 2026, #12538/#12539): P1 means "this week", a short list the
+#: morning triage sets. A rail may still MEASURE P1, but a new issue is never BORN
+#: at P1: it is filed ``needs-triage`` at the ratified P2 birth priority, and the
+#: triage promotes it or closes it. P0 is untouched.
+TRIAGE_LABEL = "needs-triage"
+_BIRTH_REFUSED = "priority:p1"
+
+
+def triage_at_birth(labels: "list[str] | tuple[str, ...] | None") -> list[str]:
+    """A new issue's labels with ``priority:p1`` replaced by ``needs-triage``.
+
+    Applied where an issue is CREATED (``bug_report_github.create_github_issue``
+    and ``scripts/alert_intake.py``), never on re-observation, so a P1 a human set
+    at triage is never touched. Run it before :func:`ensure_taxonomy`, which then
+    supplies the P2 floor. Order is preserved and ``needs-triage`` is never doubled.
+    """
+    out: list[str] = []
+    refused = False
+    for label in labels or ():
+        text = str(label).strip()
+        if text == _BIRTH_REFUSED:
+            refused = True
+            continue
+        if text and text not in out:
+            out.append(text)
+    if refused and TRIAGE_LABEL not in out:
+        out.append(TRIAGE_LABEL)
+    return out
+
+
 def ensure_taxonomy(
     labels: "list[str] | tuple[str, ...] | None" = None,
     *,
