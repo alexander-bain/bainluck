@@ -795,10 +795,12 @@ async def link_outcome_to_team(
     if team_id:
         # Register for future instant lookups
         if identity_sport_key:
-            await team_identity_service.register_team_identity(
+            admitted = await team_identity_service.register_team_identity(
                 session, team_id, "futures", identity_sport_key,
                 source_name=outcome_name,
             )
+            if not admitted:
+                return None
         return team_id
 
     # Step 3: LLM player-team classification

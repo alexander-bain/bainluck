@@ -28,11 +28,11 @@ import logging
 import re
 from typing import Optional
 
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.models.models import Team, TeamIdentityMapping
+from app.models.models import Sport, Team, TeamIdentityMapping
 from app.utils.name_normalization import (
     names_a_different_club,
     normalize_name,
@@ -68,6 +68,11 @@ _SCORE_LAST_WORD = 40
 
 # Below this a match is not trusted enough to resolve, let alone to register.
 _MATCH_FLOOR = 40
+
+# Name-only venue identities have no provider team ID to corroborate a fuzzy
+# hit. The futures caller is another entrance for the same venue names.
+_VENUE_NAME_SOURCES = frozenset({"kalshi", "polymarket", "futures"})
+_NAME_WITNESS_LIMIT = 2048
 
 
 def _fuzzy_score(candidate: str, target: str) -> int:
@@ -248,25 +253,25 @@ class TeamIdentityService:
         if name_to_match:
             team = await self._fuzzy_match_mappings(session, name_to_match, sport_key)
             if team:
-                await self.register_team_identity(
+                admitted = await self.register_team_identity(
                     session, team.id, source, sport_key,
                     source_id=source_id,
                     source_name=source_name,
                     source_abbreviation=source_abbreviation,
                 )
-                return team
+                return team if admitted else None
 
         # Step 4: Fuzzy match on teams table
         if name_to_match:
             team = await self._fuzzy_match_teams(session, name_to_match, sport_key)
             if team:
-                await self.register_team_identity(
+                admitted = await self.register_team_identity(
                     session, team.id, source, sport_key,
                     source_id=source_id,
                     source_name=source_name,
                     source_abbreviation=source_abbreviation,
                 )
-                return team
+                return team if admitted else None
 
         return None
 
@@ -280,15 +285,24 @@ class TeamIdentityService:
         source_id: Optional[str] = None,
         source_name: Optional[str] = None,
         source_abbreviation: Optional[str] = None,
-    ) -> None:
-        """Register a team identity mapping. Upserts — safe to call repeatedly."""
+    ) -> bool:
+        """Admit and upsert an identity; False preserves a refused team binding.
+
+        An abbreviation-only lookup has no mapping to write, but is still an
+        admitted lookup. Callers must not return or cache a refused candidate.
+        """
         if not source_id and not source_name:
-            return  # Nothing to register
+            return True  # Nothing to register, and no identity was refused.
 
         if await self._espn_mapping_names_another_club(
             session, team_id, source, source_id, source_name
         ):
-            return
+            return False
+
+        if await self._venue_mapping_names_another_club(
+            session, team_id, source, sport_key, source_name
+        ):
+            return False
 
         # Build the values dict
         values = {
@@ -329,6 +343,101 @@ class TeamIdentityService:
                 },
             )
             await session.execute(stmt)
+
+        return True
+
+    async def _venue_mapping_names_another_club(
+        self,
+        session: AsyncSession,
+        team_id: int,
+        source: str,
+        sport_key: str,
+        source_name: Optional[str],
+    ) -> bool:
+        """Refuse a venue name independently witnessed on another league team.
+
+        #12534: a name mismatch alone cannot disprove an alias. Require both a
+        contradiction with the target and an exact strict-normalized name/alias
+        on a different club in the requested league. Existing mapping rows are
+        never witnesses: those are the potentially poisoned cache being guarded.
+
+        Ordinary names/aliases need only a target PK lookup (usually already in
+        the session). Only unexplained names read a bounded, narrow league pool;
+        never scan the whole sport family for each registration. "Hawks" in the
+        NFL must not be contradicted by Monmouth's college-football nickname.
+        Multiple witnesses refuse without choosing or reassigning a team.
+        """
+        if source not in _VENUE_NAME_SOURCES or not source_name or not sport_key:
+            return False
+
+        team = await session.get(Team, team_id)
+        if team is None:
+            logger.warning(
+                "Team identity registration refused: missing team_id=%s", team_id
+            )
+            return True
+
+        wanted = _strict_name(source_name)
+        own_names = [team.name, *(team.alternate_names or [])]
+        if not wanted or any(
+            _fuzzy_score(wanted, _strict_name(name)) >= _SCORE_CANDIDATE_WITHIN_TARGET
+            for name in own_names
+        ):
+            return False
+        if not names_a_different_club(source_name, team.name):
+            return False
+
+        rows = (
+            await session.execute(
+                select(Team.id, Team.name, Team.alternate_names, Team.espn_id)
+                .join(Sport, Sport.id == Team.sport_id)
+                .where(Sport.key == sport_key)
+                .order_by(Team.id)
+                .limit(_NAME_WITNESS_LIMIT + 1)
+            )
+        ).all()
+        if len(rows) > _NAME_WITNESS_LIMIT:
+            logger.warning(
+                "Team identity registration refused (#12534): witness limit "
+                "exceeded for source=%r name=%r team_id=%s sport=%r",
+                source,
+                source_name,
+                team_id,
+                sport_key,
+            )
+            return True
+
+        witnesses = []
+        own_strict = {_strict_name(name) for name in own_names}
+        for other_id, other_name, other_aliases, other_espn_id in rows:
+            if other_id == team_id:
+                continue
+            other_names = [other_name, *(other_aliases or [])]
+            if wanted not in {_strict_name(name) for name in other_names}:
+                continue
+            # A duplicate row for this club is not an independent contradiction.
+            if team.espn_id and other_espn_id and team.espn_id == other_espn_id:
+                continue
+            if _strict_name(other_name) in own_strict or _strict_name(team.name) in {
+                _strict_name(name) for name in other_names
+            }:
+                continue
+            if names_a_different_club(team.name, other_name):
+                witnesses.append(other_id)
+
+        if not witnesses:
+            return False
+        logger.warning(
+            "Team identity registration refused (#12534): source=%r name=%r "
+            "does not name team_id=%s (%r); exact witnesses in sport=%r are %s",
+            source,
+            source_name,
+            team_id,
+            team.name,
+            sport_key,
+            witnesses,
+        )
+        return True
 
     async def _espn_mapping_names_another_club(
         self,
@@ -379,10 +488,8 @@ class TeamIdentityService:
         Bulldogs``/``Mississippi State``, ``St. John's Red Storm``/``St.
         John's`` and ``Richmond Spiders``/``Richmond Spiders``.
 
-        A refusal writes nothing and returns nothing to the caller: the only
-        caller that reads a value from this method is this one. The resolver
-        still returns whatever team it resolved — the wrong bind of the moment
-        is a different defect — but it is no longer cached as an identity.
+        A refusal writes nothing. The registration result also prevents the
+        fuzzy resolver from returning the refused candidate (#12534).
         """
         if source != "espn" or not source_id:
             return False
