@@ -2,6 +2,9 @@
  * #12577 / #12523 — Visual Forms Look Sheet (Sheet 1 + Sheet 2) & Oscars Container Diversity Tests.
  */
 
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as visualFormsModule from "@/lib/discover/visualForms";
@@ -65,7 +68,7 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     expect(bpSet.stage_1_market.companion_polymarket_id).toBe(27988771);
     expect(bpSet.blend_authority).toBe(SERVER_BLEND_AUTHORITY);
     expect(bpSet.subtitle).toContain(
-      "blended on server via futures_source_merge.blend_with_verdict",
+      "averaged across venues on server via futures_source_merge.blend_with_verdict",
     );
 
     // The Black Ball pairs with "La Bola Negra" on Polymarket #27988771 (0.94 + 0.95 -> 0.945 -> 95%)
@@ -297,8 +300,22 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     expect(html).toContain('data-testid="tmdb-attribution-link"');
     expect(html).toContain('data-testid="tmdb-official-logo"');
     expect(html).toContain(`src="${TMDB_OFFICIAL_LOGO_PATH}"`);
+    expect(html).toContain('height="11"');
     expect(html).toContain(`href="${TMDB_ATTRIBUTION_URL}"`);
     expect(html).toContain(TMDB_ATTRIBUTION_LINE);
+
+    // Official TMDB blue_short.svg asset exists unmodified (SHA-256 matches TMDB's asset digest)
+    const tmdbSvgPath = path.resolve(
+      __dirname,
+      "../../public/tmdb-blue-short.svg",
+    );
+    const digest = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(tmdbSvgPath))
+      .digest("hex");
+    expect(digest).toBe(
+      "8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c",
+    );
 
     // Podium tier heading and code agree on 70% (<70% to be nominated)
     expect(html).toContain("Likely Nominees (70%+ to be nominated");

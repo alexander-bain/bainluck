@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -72,9 +71,15 @@ def test_paired_metric_register_is_valid_and_never_blends():
     debut = next(e for e in bp["entries"] if e["subject"] == "The Debut")
     assert debut["detail"] == "Jesse Eisenberg · Topic Studios"
     assert debut["credit_source"] == "tmdb:movie:1391239"
+    # Stored single-venue number with no per-venue prices serves blend_rule=None
+    assert debut["stage_2_probability"] == 0.01
+    assert debut["stage_2_blend_rule"] is None
+    assert debut["stage_2_blend_authority"] == "single_venue"
 
     dir_set = sets["oscars-2027-best-director"]
     fielder = next(e for e in dir_set["entries"] if e["subject"] == "Nathan Fielder")
+    assert fielder["stage_1_blend_rule"] is None
+    assert fielder["stage_2_blend_rule"] is None
     assert fielder["art"]["tmdb_id"] == 1212667
     assert (
         fielder["art"]["url"]
@@ -157,17 +162,6 @@ def test_load_visual_forms_look_sheet_deck():
     )
     assert items[10]["paired_metric_set"]["set_id"] == "nhl-2026-27-playoffs-and-cup"
     assert items[12]["paired_metric_set"] is None
-
-    # Official TMDB blue_short.svg asset exists unmodified (SHA-256 matches TMDB's asset digest)
-    tmdb_svg_path = (
-        Path(__file__).resolve().parents[2]
-        / "frontend"
-        / "public"
-        / "tmdb-blue-short.svg"
-    )
-    assert tmdb_svg_path.exists()
-    digest = hashlib.sha256(tmdb_svg_path.read_bytes()).hexdigest()
-    assert digest == "8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c"
 
 
 def test_server_venue_blend_delegates_to_futures_source_merge_blend_with_verdict():

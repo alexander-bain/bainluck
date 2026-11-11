@@ -97,7 +97,7 @@ def hydrate_paired_metric_entry(raw_entry: Mapping[str, Any]) -> dict[str, Any]:
         entry["stage_1_divergence"] = div_s1
         entry["stage_1_blend_authority"] = auth_s1
     elif _valid_prob(entry.get("stage_1_probability")) is not None:
-        entry["stage_1_blend_rule"] = "weighted_median"
+        entry["stage_1_blend_rule"] = None
         entry["stage_1_divergence"] = None
         entry["stage_1_blend_authority"] = SINGLE_VENUE_AUTHORITY
     else:
@@ -119,7 +119,7 @@ def hydrate_paired_metric_entry(raw_entry: Mapping[str, Any]) -> dict[str, Any]:
         entry["stage_2_divergence"] = div_s2
         entry["stage_2_blend_authority"] = auth_s2
     elif _valid_prob(entry.get("stage_2_probability")) is not None:
-        entry["stage_2_blend_rule"] = "weighted_median"
+        entry["stage_2_blend_rule"] = None
         entry["stage_2_divergence"] = None
         entry["stage_2_blend_authority"] = SINGLE_VENUE_AUTHORITY
     else:

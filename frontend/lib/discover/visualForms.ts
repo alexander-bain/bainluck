@@ -477,7 +477,7 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
     kicker: "OSCARS 2027 · BEST PICTURE",
     title: "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
     subtitle:
-      "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %) · Nominee % (blended on server via futures_source_merge.blend_with_verdict: #5165726 + #27988771) paired beside Winner % (#6173044)",
+      "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %) · Nominee % (averaged across venues on server via futures_source_merge.blend_with_verdict: #5165726 + #27988771) paired beside Winner % (#6173044)",
     selection_rule: "top_10_by_stage_1_probability",
     stage_1_label: "Nominated",
     stage_2_label: "Wins",
@@ -486,7 +486,7 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
     stage_1_market: {
       id: 5165726,
       source: "kalshi+polymarket",
-      name: "Oscar nominees: Best Picture (blended on server via futures_source_merge.blend_with_verdict: #5165726 + #27988771)",
+      name: "Oscar nominees: Best Picture (averaged across venues on server via futures_source_merge.blend_with_verdict: #5165726 + #27988771)",
       companion_polymarket_id: 27988771,
     },
     stage_2_market: {

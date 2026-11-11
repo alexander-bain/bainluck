@@ -22,7 +22,7 @@
       "category": "entertainment",
       "kicker": "OSCARS 2027 · BEST PICTURE",
       "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
-      "subtitle": "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %) · Nominee % (blended on server via compute_aggregate_probability: #5165726 + #27988771) paired beside Winner % (#6173044)",
+      "subtitle": "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %) · Nominee % (averaged across venues on server: #5165726 + #27988771) paired beside Winner % (#6173044)",
       "selection_rule": "top_10_by_stage_1_probability",
       "stage_1_label": "Nominated",
       "stage_2_label": "Wins",
@@ -31,7 +31,7 @@
       "stage_1_market": {
         "id": 5165726,
         "source": "kalshi+polymarket",
-        "name": "Oscar nominees: Best Picture (blended on server via compute_aggregate_probability: #5165726 + #27988771)",
+        "name": "Oscar nominees: Best Picture (averaged across venues on server: #5165726 + #27988771)",
         "companion_polymarket_id": 27988771
       },
       "stage_2_market": {
@@ -76,7 +76,7 @@
           "stage_2_blend_authority": "single_venue",
           "stage_1_blend_rule": "equal_weight_midpoint",
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -110,7 +110,7 @@
           "stage_2_blend_authority": "single_venue",
           "stage_1_blend_rule": "equal_weight_midpoint",
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -145,7 +145,7 @@
           "stage_2_blend_authority": "single_venue",
           "stage_1_blend_rule": "equal_weight_midpoint",
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -180,7 +180,7 @@
           "stage_2_blend_authority": "single_venue",
           "stage_1_blend_rule": "equal_weight_midpoint",
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -216,7 +216,7 @@
           "stage_2_blend_authority": "single_venue",
           "stage_1_blend_rule": "equal_weight_midpoint",
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -252,7 +252,7 @@
           "stage_2_blend_authority": "single_venue",
           "stage_1_blend_rule": "weighted_median",
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -287,7 +287,7 @@
           "stage_2_blend_authority": "single_venue",
           "stage_1_blend_rule": "equal_weight_midpoint",
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -323,7 +323,7 @@
           "stage_2_blend_authority": "single_venue",
           "stage_1_blend_rule": "equal_weight_midpoint",
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -359,7 +359,7 @@
           "stage_2_blend_authority": "single_venue",
           "stage_1_blend_rule": "equal_weight_midpoint",
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -448,9 +448,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -475,9 +475,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -502,9 +502,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -529,9 +529,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -556,9 +556,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -583,9 +583,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         }
       ],
@@ -638,9 +638,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -665,9 +665,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -692,9 +692,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -719,9 +719,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -746,9 +746,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -773,9 +773,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         }
       ],
@@ -828,9 +828,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -855,9 +855,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -882,9 +882,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -909,9 +909,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         }
       ],
@@ -969,9 +969,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1002,9 +1002,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1035,9 +1035,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1068,9 +1068,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         }
       ],
@@ -1120,9 +1120,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1144,9 +1144,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1168,9 +1168,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1192,9 +1192,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1216,9 +1216,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1240,9 +1240,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1264,9 +1264,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1288,9 +1288,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         },
         {
@@ -1312,9 +1312,9 @@
           },
           "stage_1_blend_authority": "single_venue",
           "stage_2_blend_authority": "single_venue",
-          "stage_1_blend_rule": "weighted_median",
+          "stage_1_blend_rule": null,
           "stage_1_divergence": null,
-          "stage_2_blend_rule": "weighted_median",
+          "stage_2_blend_rule": null,
           "stage_2_divergence": null
         }
       ],

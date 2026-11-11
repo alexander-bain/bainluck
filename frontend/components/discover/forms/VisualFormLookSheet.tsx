@@ -156,10 +156,10 @@ function TMDBAttributionNote({ set }: { set: PairedMetricSet }) {
         <img
           src={TMDB_OFFICIAL_LOGO_PATH}
           alt="The Movie Database (TMDB)"
-          width={46}
-          height={6}
+          width={85}
+          height={11}
           data-testid="tmdb-official-logo"
-          className="inline-block h-1.5 w-auto shrink-0"
+          className="inline-block h-[11px] w-auto shrink-0"
         />
       </a>
       <span>{TMDB_ATTRIBUTION_LINE}</span>
@@ -2266,8 +2266,8 @@ export function VisualFormLookSheetGallery({
 
         <ul className="mt-2.5 space-y-1 text-xs text-text-secondary">
           <li>
-            • <span className="font-semibold text-text-primary">Two distinct numbers per film (server-blended venue average):</span>{" "}
-            Best Picture Nominee % blends #5165726 and #27988771 on the server via <code className="font-mono">compute_aggregate_probability</code> (<code className="font-mono">backend/app/services/paired_metric_register.py</code>); Nominee % and Winner % (#6173044) are paired in <code className="font-mono">paired_metric_register.json</code> as two separate propositions.
+            • <span className="font-semibold text-text-primary">Two distinct numbers per film (server-computed venue average):</span>{" "}
+            Best Picture Nominee % averages #5165726 and #27988771 across venues on the server via <code className="font-mono">futures_source_merge.blend_with_verdict</code> (<code className="font-mono">backend/app/services/paired_metric_register.py</code>); Nominee % and Winner % (#6173044) are paired in <code className="font-mono">paired_metric_register.json</code> as two separate propositions.
           </li>
           <li>
             • <span className="font-semibold text-text-primary">One rounding rule &amp; selection-carrying titles:</span>{" "}
