@@ -38,10 +38,12 @@ export interface AtlasSelectedReading {
 export function AtlasChartMarkKey({
   settled = false,
   showOpening = true,
+  showRecordedReading = true,
   openingLabel = "Opening",
 }: {
   settled?: boolean;
   showOpening?: boolean;
+  showRecordedReading?: boolean;
   openingLabel?: string;
 }) {
   return (
@@ -59,13 +61,15 @@ export function AtlasChartMarkKey({
           <span>{openingLabel}</span>
         </span>
       )}
-      <span className="inline-flex items-center gap-1.5">
-        <span
-          aria-hidden="true"
-          className="inline-block h-2.5 w-2.5 rounded-full bg-text-primary"
-        />
-        <span>Recorded reading</span>
-      </span>
+      {showRecordedReading && (
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            className="inline-block h-2.5 w-2.5 rounded-full bg-text-primary"
+          />
+          <span>Recorded reading</span>
+        </span>
+      )}
       <span className="inline-flex items-center gap-1.5">
         <span
           aria-hidden="true"
@@ -111,6 +115,8 @@ export function AtlasSeriesReadingMarks({
   color,
   opacity = 1,
   includesOpening = true,
+  solidMarkMode = "thinned",
+  solidMarkRadius = 3,
   selectedReading,
   onSelectReading,
 }: {
@@ -120,13 +126,19 @@ export function AtlasSeriesReadingMarks({
   color: string;
   opacity?: number;
   includesOpening?: boolean;
+  solidMarkMode?: "thinned" | "all" | "none";
+  solidMarkRadius?: number;
   selectedReading?: AtlasSelectedReading | null;
   onSelectReading?: (reading: AtlasSelectedReading) => void;
 }) {
   if (points.length === 0) return null;
 
   const stride =
-    points.length <= 36 ? 1 : Math.max(1, Math.ceil(points.length / 28));
+    solidMarkMode === "all"
+      ? 1
+      : points.length <= 36
+        ? 1
+        : Math.max(1, Math.ceil(points.length / 28));
 
   return (
     <g
@@ -140,7 +152,10 @@ export function AtlasSeriesReadingMarks({
           selectedReading?.outcomeId === outcomeId &&
           selectedReading?.timestamp === pt.timestamp;
         const showVisibleSolid =
-          !isOpening && (isLast || isSelected || index % stride === 0);
+          !isOpening &&
+          (solidMarkMode === "none"
+            ? isSelected
+            : isLast || isSelected || index % stride === 0);
 
         const exactPt =
           formatAtlasTimestampPT(pt.timestamp, { includeSeconds: true }) ??
@@ -187,7 +202,7 @@ export function AtlasSeriesReadingMarks({
                   data-timestamp={pt.timestamp}
                   cx={pt.x}
                   cy={pt.y}
-                  r={isSelected ? 4.5 : 3}
+                  r={isSelected ? Math.max(4.5, solidMarkRadius + 1.5) : solidMarkRadius}
                   fill={color}
                   fillOpacity={opacity}
                   className={isSelected ? "stroke-surface-card" : undefined}

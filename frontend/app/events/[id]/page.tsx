@@ -272,6 +272,9 @@ export default function EventPage({ params }: EventPageProps) {
   const ekgOptIn = useEkgOptIn();
   // #11974 — the event-page atlas adoption, behind `?atlas=1` while Alex reviews it.
   const atlasOptIn = resolveAtlasOptIn(searchParams);
+  // #12615 — the win probability chart shows reading marks by default (unless `?atlas=0` / `?atlas=false`).
+  const atlasChartOptIn =
+    searchParams?.get("atlas") !== "0" && searchParams?.get("atlas") !== "false";
   const [atlasHeadlineSheetOpen, setAtlasHeadlineSheetOpen] = useState(false);
   useEffect(() => {
     setAtlasHeadlineSheetOpen(false);
@@ -3237,7 +3240,7 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
               awayWithheld={awaySlotWithheld}
               tenths={liveTenthsActive}
-              atlasMode={atlasOptIn}
+              atlasMode={atlasChartOptIn}
               settledWinnerSide={atlasSettledWinnerSide}
               /* #9483 — NFL and NBA: both teams' lines (design freeze v328). */
               pairedAwayLine={storyCardsOn}
@@ -3910,7 +3913,7 @@ export default function EventPage({ params }: EventPageProps) {
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
               tenths={liveTenthsActive}
-              atlasMode={atlasOptIn}
+              atlasMode={atlasChartOptIn}
               settledWinnerSide={atlasSettledWinnerSide}
               pairedAwayLine={storyCardsOn}
               /* #10362 — and it opens on the range the card shows. Without these the
