@@ -298,6 +298,24 @@ jobs:
           echo "::error::#12534 identity gate did not run all five cases"
           exit 1
         }
+    - name: "#12519 team-merge dedup keeps distinct names (real Postgres)"
+      id: db_12519_team_merge_dedup
+      if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
+      run: |
+        python -m pytest tests/test_team_merge_keeps_distinct_names_12519.py \
+          -v -rs > /tmp/dedup12519.txt 2>&1 || {
+          cat /tmp/dedup12519.txt
+          exit 1
+        }
+        cat /tmp/dedup12519.txt
+        if grep -qiE "[0-9]+ skipped" /tmp/dedup12519.txt; then
+          echo "::error::#12519 dedup gate skipped"
+          exit 1
+        fi
+        grep -qE "[^0-9]15 passed([,[:space:]]|$)" /tmp/dedup12519.txt || {
+          echo "::error::#12519 dedup gate did not run all fifteen cases"
+          exit 1
+        }
     - id: db_010_typeahead_next_fixture_contracts_or_next
       name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
       if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
