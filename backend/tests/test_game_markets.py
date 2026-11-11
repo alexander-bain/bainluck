@@ -498,6 +498,10 @@ class TestGetGameMarketsFormatting:
                 "is_winner": None,
                 "resolution_source": None,
                 "contributor_outcome_ids": [201],
+                "source_mark": {"state": "blend", "sources": [{
+                    "key": "kalshi", "name": "Kalshi", "probability": 0.52,
+                    "observed_at": None, "reason": "observation_unknown",
+                }]},
                 "_market_id": 101,
                 "_external_id": "KXNBA2HTOTAL-26MAY17BOSNYK",
             }
@@ -556,6 +560,10 @@ class TestGetGameMarketsFormatting:
                 "is_winner": None,
                 "resolution_source": None,
                 "contributor_outcome_ids": [202],
+                "source_mark": {"state": "blend", "sources": [{
+                    "key": "kalshi", "name": "Kalshi", "probability": 0.54,
+                    "observed_at": None, "reason": "observation_unknown",
+                }]},
                 # #4189 — row-level provenance, so the container-parent
                 # suppression can be decided against the payload instead of a
                 # bucket. `totals` has carried `_market_id`/`_external_id` since
@@ -742,6 +750,10 @@ class TestGetGameMarketsFormatting:
                 "is_winner": None,
                 "resolution_source": None,
                 "contributor_outcome_ids": [203],
+                "source_mark": {"state": "blend", "sources": [{
+                    "key": "kalshi", "name": "Kalshi", "probability": 0.49,
+                    "observed_at": None, "reason": "observation_unknown",
+                }]},
                 # #4189 — see the note on the sibling assertion above.
                 "_market_id": market.id,
             }

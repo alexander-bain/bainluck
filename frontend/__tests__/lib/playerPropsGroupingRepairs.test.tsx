@@ -54,6 +54,50 @@ function rowThrowingOn(field: keyof PlayerPropRow): PlayerPropRow {
   return row;
 }
 
+describe("#12581 source marks on installed web readers", () => {
+  const mark = (key: string): NonNullable<PlayerPropRow["source_mark"]> => ({
+    state: "blend", sources: [{ key, name: key === "kalshi" ? "Kalshi" : "Polymarket",
+      probability: .55, observed_at: null }],
+  });
+
+  it("counts the two venues on a mixed ladder, never the compatibility key", () => {
+    const props = [
+      healthyRow({ source: "bainluck", source_mark: mark("polymarket"), threshold: 1 }),
+      healthyRow({ source: "kalshi", source_mark: mark("kalshi"), threshold: 2 }),
+      healthyRow({ source: "bainluck", source_mark: mark("kalshi"), threshold: 3 }),
+      healthyRow({ source: "polymarket", source_mark: mark("polymarket"), threshold: 4 }),
+    ];
+    const { players, dropped } = groupPlayerProps({ playerProps: props });
+    expect(dropped).toEqual([]);
+    expect(players).toHaveLength(1);
+    expect(players[0].stats[0].sources).toBe(2);
+    expect(players[0].stats[0].rungs?.map((r) => r.threshold)).toEqual([1, 2, 3, 4]);
+    const html = renderToStaticMarkup(<PlayerPropsDashboard data={{ player_props: props, other: [] } as never} />);
+    expect(html).toContain('title="2 sources"');
+    expect(html).not.toContain("bainluck");
+  });
+
+  it("retains one venue for a Kalshi-only ladder and legacy payload", () => {
+    for (const source_mark of [undefined, mark("kalshi")]) {
+      const { players } = groupPlayerProps({ playerProps: [healthyRow({ source_mark })] });
+      expect(players[0].stats[0].sources).toBe(1);
+      expect(players[0].stats[0].overProb).toBe(.55);
+    }
+  });
+
+  it("keeps a protected family separate from the standard stat", () => {
+    const { players, dropped } = groupPlayerProps({ playerProps: [
+      healthyRow({ market_name: "New England vs Detroit: Receiving yards", outcome_name: "Sam LaPorta: 15+", threshold: 15, over_probability: .86 }),
+      healthyRow({ market_name: "New England vs Detroit: Receiving yards (protected)", outcome_name: "Sam LaPorta: 15+", threshold: 15, over_probability: .845 }),
+    ] });
+    expect(dropped).toEqual([]);
+    expect(players).toHaveLength(1);
+    expect(players[0].stats.map((s) => [s.type, s.overProb])).toEqual([
+      ["Receiving Yards", .86], ["Receiving Yards (Protected)", .845],
+    ]);
+  });
+});
+
 describe("1. atomic row commit — a late throw contributes NOTHING", () => {
   // Each of these fields is read AFTER the point where the pre-repair code had
   // already written the player and the stat into the map.

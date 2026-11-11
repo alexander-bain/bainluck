@@ -198,6 +198,17 @@ def test_a_young_live_mirror_is_servable():
     assert servable and reason == "fresh_enough"
 
 
+def test_source_mark_release_does_not_rewarm_from_old_primary_or_mirror():
+    redis = _FakeRedis()
+    old_keys = concept_cache.cache_keys("7", prefix="bainluck:game_markets:")
+    old_body = _stamped("live")
+    old_body["player_props"] = [{"over_probability": 0.6, "source": "kalshi"}]
+    for key in (old_keys.primary, old_keys.stale):
+        redis.setex(key, 300, json.dumps(old_body))
+    with patch.object(gmc, "get_client", return_value=redis):
+        assert gmc.read(7) == (None, "miss")
+
+
 def test_a_live_mirror_past_the_ceiling_is_refused():
     """A 24h mirror of a LIVE game shows prop windows that closed hours ago.
 

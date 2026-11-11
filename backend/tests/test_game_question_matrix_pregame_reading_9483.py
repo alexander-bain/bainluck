@@ -311,7 +311,7 @@ class TestOnlyAdmittedOptionsCarryAReading:
 
 
 class TestLegacyConsumers:
-    def test_every_game_option_gains_exactly_one_key(self):
+    def test_every_game_option_carries_reading_and_source_mark(self):
         legs = [_leg(OVER_ID, MID, "Over 206.5", 0.62), _leg(1, 10, "Yes", 0.5), _leg(2, 11, "Yes", 0.6)]
         multi = _other(10, 1, "Yes", 0.55)
         multi["contributor_outcome_ids"], multi["_market_ids"] = [1, 2], [10, 11]
@@ -321,7 +321,7 @@ class TestLegacyConsumers:
         options = [o for q in m["questions"] for o in q["options"]]
         assert len(options) == 2
         for opt in options:
-            assert set(opt) == V1_OPTION_KEYS | {"pregame_reading"}
+            assert set(opt) == V1_OPTION_KEYS | {"pregame_reading", "source_mark"}
             assert set(opt["pregame_reading"]) == {
                 "state", "reason", "probability", "observed_at", "basis", "outcome_id"}
         assert m["contract"] == "10238.v1"
@@ -351,7 +351,7 @@ class TestGameMarketsRoute:
         assert under["pregame_reading"]["reason"] == "leg_is_complement"
         for q in matrix["questions"]:
             for opt in q["options"]:
-                assert set(opt) == V1_OPTION_KEYS | {"pregame_reading"}
+                assert set(opt) == V1_OPTION_KEYS | {"pregame_reading", "source_mark"}
 
     def test_no_legacy_served_row_gains_a_pregame_field(self):
         response, _ = _build_page()

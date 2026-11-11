@@ -104,7 +104,9 @@ logger = logging.getLogger(__name__)
 #: This tier's own Redis namespace. `cache_keys` takes a prefix precisely so a
 #: second customer does not have to move its keys or re-derive the four-key
 #: layout (its docstring names #1651 as the first such case; this is the second).
-CACHE_PREFIX = "bainluck:game_markets:"
+# #12581 changes the row contract. Old primary AND mirror payloads must not
+# re-warm the new reader without source marks, even on an unknown local build.
+CACHE_PREFIX = "bainluck:game_markets:source_mark_v1:"
 
 #: Fresh TTL for a game that has not finished. **Unchanged at 30 s** — it is
 #: `_GAME_MARKETS_LIVE_TTL`, the number the in-memory dict already used. This
