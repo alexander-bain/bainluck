@@ -193,11 +193,12 @@ def test_the_category_matcher_cannot_link_an_unlinked_outcome_outside_its_league
 
     assert links[9] is None
     assert links[10] is None   # Notre Dame's roster answered; NFL award
-    assert links[11] is None   # wrong-sport fixture IDs cannot authorize a link
-    # 9 by name and 10 by the category roster. #12555 excludes the college
-    # fixture rows before roster matching; its later fallback is refused too.
-    assert stats["outcomes_refused_outside_market_league"] == 2
-    assert stats["outcomes_refused_outside_event_teams"] == 1
+    assert links[11] is None   # the venue's NFL identity still refuses college clubs
+    # 9 by name, 10 by the category roster, and 11 by both fixture and category
+    # rosters. The explicit fixture IDs share the sport, so the existing venue
+    # league guard owns both refusals for 11.
+    assert stats["outcomes_refused_outside_market_league"] == 4
+    assert stats["outcomes_refused_outside_event_teams"] == 0
 
 
 def test_a_second_run_undoes_nothing_the_first_decided():
@@ -211,8 +212,8 @@ def test_a_second_run_undoes_nothing_the_first_decided():
 
     assert links == EXPECTED
     # The first run wrapped its cursor, so this one re-reads 4, 9, 10 and 11.
-    assert stats["outcomes_refused_outside_market_league"] == 3
-    assert stats["outcomes_refused_outside_event_teams"] == 1
+    assert stats["outcomes_refused_outside_market_league"] == 5
+    assert stats["outcomes_refused_outside_event_teams"] == 0
     assert stats["links_outside_market_league"] == 0
     assert stats["outcomes_relinked_into_market_league"] == 0
     assert stats["outcomes_unlinked_outside_market_league"] == 0

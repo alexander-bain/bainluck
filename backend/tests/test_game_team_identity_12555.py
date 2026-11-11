@@ -132,6 +132,50 @@ def test_wrong_sport_fixture_ids_cannot_authorize_category_fallback():
     assert stats["outcomes_refused_outside_event_teams"] > 0
 
 
+def test_cup_fixture_keeps_its_domestic_league_clubs_and_rosters():
+    with Session(_make_engine()) as session:
+        session.add_all([
+            Sport(id=1, key="soccer_epl", name="Premier League", active=True),
+            Sport(id=2, key="soccer_uefa_champs_league", name="Champions League", active=True),
+            Team(id=1, sport_id=1, name="Arsenal", alternate_names=[],
+                 roster_players=[{"name": "Bukayo Saka"}]),
+            Team(id=2, sport_id=1, name="Liverpool", alternate_names=[]),
+            Team(id=3, sport_id=1, name="Chelsea", alternate_names=[]),
+            Event(id=1, sport_id=2, home_team_id=1, away_team_id=2,
+                  home_team_name="Arsenal", away_team_name="Liverpool",
+                  commence_time=datetime(2026, 11, 15, 21, tzinfo=timezone.utc)),
+            # A stale US-sport category reaches this task's existing selector,
+            # just as the stale baseball category does on Rams-Cardinals.
+            # Correctly classified event-linked soccer is outside that selector.
+            FuturesMarket(id=1, source="polymarket", external_id="cup-game",
+                          name="Arsenal vs. Liverpool", category="championship",
+                          llm_sport_category="football", status="open", market_tier=1,
+                          event_id=1, market_metadata={}),
+        ])
+        session.flush()
+        for oid, name in enumerate(["Arsenal", "Liverpool", "Bukayo Saka", "Chelsea"], 1):
+            session.add(FuturesOutcome(id=oid, market_id=1, external_id=str(oid), name=name))
+        session.commit()
+        links, stats = _run(session)
+    assert links == {1: 1, 2: 2, 3: 1, 4: None}
+    assert stats["outcomes_linked_by_name"] == 2
+    assert stats["outcomes_linked_by_roster"] == 1
+    assert stats["outcomes_refused_outside_event_teams"] > 0
+
+
+def test_opposite_gender_fixture_ids_do_not_authorize_a_club():
+    with Session(_make_engine()) as session:
+        _seed(session, sport_id=1, home_id=10740, away_id=10741)
+        session.get(Sport, 1).key = "basketball_wncaab"
+        session.get(Sport, 2).key = "basketball_ncaab"
+        session.get(FuturesMarket, 67649495).market_metadata = {}
+        session.commit()
+        links, stats = _run(session)
+    assert all(links[oid] is None for oid in range(1, 8))
+    assert links[8] == 10740
+    assert stats["outcomes_refused_outside_event_teams"] > 0
+
+
 def test_same_sport_names_resolve_fixture_without_team_foreign_keys():
     with Session(_make_engine()) as session:
         _seed(session, home_id=None, away_id=None)

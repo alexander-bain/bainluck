@@ -993,10 +993,12 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             # which gives us the exact teams. Their names and rosters outrank
             # a category guessed from a nickname such as Cardinals (#12555).
             from app.models import Event, Sport, Team as TeamModel
+            from app.utils.sport_keys import same_sport_same_gender
             from app.utils.team_linking import match_outcome_to_roster, match_outcome_to_team
             remaining_outcomes = []
             event_cache: dict[int, dict] = {}  # event_id → {team_id: [player_names]}
             event_teams: dict[int, list[dict]] = {}
+            event_sport_keys: dict[int, Optional[str]] = {}
 
             def _extract_rosters(team_rows) -> dict[int, list[str]]:
                 rosters: dict[int, list[str]] = {}
@@ -1028,18 +1030,27 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                         team_rows = []
                         if ev:
                             if ev.home_team_id or ev.away_team_id:
-                                # Fast path: FK team IDs exist
+                                # An FK names the club, not its competition:
+                                # an EPL club can play a Champions League game.
                                 team_ids = [t for t in [ev.home_team_id, ev.away_team_id] if t]
-                                team_filters = [TeamModel.id.in_(team_ids)]
-                                if ev.sport_id:
-                                    team_filters.append(TeamModel.sport_id == ev.sport_id)
                                 team_rows = (await session.execute(
                                     select(TeamModel.id, TeamModel.name, TeamModel.alternate_names, TeamModel.roster_players)
-                                    .where(*team_filters)
+                                    .where(TeamModel.id.in_(team_ids))
                                 )).all()
+                                if ev.sport_id:
+                                    if ev.sport_id not in event_sport_keys:
+                                        fixture_sport = await session.get(Sport, ev.sport_id)
+                                        event_sport_keys[ev.sport_id] = fixture_sport.key if fixture_sport else None
+                                    team_rows = [
+                                        row for row in team_rows
+                                        if same_sport_same_gender(
+                                            team_sport_keys.get(row.id), event_sport_keys[ev.sport_id]
+                                        )
+                                    ]
                                 # Even an empty set is authoritative here: known
-                                # fixture IDs which do not belong to its sport
-                                # cannot authorize a category fallback.
+                                # IDs from a different sport or gender cannot
+                                # authorize a category fallback. Unknown keys
+                                # leave explicit IDs intact under the shared rule.
                                 event_team_ids[market.event_id] = {row.id for row in team_rows}
                                 event_rosters = _extract_rosters(team_rows)
                             elif ev.home_team_name and ev.away_team_name:
