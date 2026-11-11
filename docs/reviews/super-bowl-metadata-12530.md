@@ -31,8 +31,17 @@ Regression proof:
   rounding and verified-page checks pass. Build and typecheck pass (65 baseline,
   no new errors).
 
-Pending: owned PR after #12597's CI completes, fresh CI, actual bot approval,
-Fable ACCEPT, the serialized merge/deploy slot and served verification. The
+Hosted CI 43083309094 at 38a69e794632 found one stale exact-URL expectation in
+the game-container redirect test; 24,427 other web checks passed and seven
+skipped. The corrected assertion retains the exact market path and explicitly
+requires `representation=verified_title`. No production code changed. All 167
+checks across ten affected web files, build, typecheck (65 baseline, no new
+errors) and the four startup checks pass after the correction. The first failed
+CI log and the subsequent local logs are retained in the Nov 11 receipts.
+
+PR #12607 has Fable ACCEPT at 38a69e794632; the assertion correction needs fresh
+CI, actual bot approval and Fable's carry-forward to its new head. It takes B's
+turn after #12594 and does not wait on #12597. The
 served check must compare the three current boards, browser titles, share images
 and 390 px body headlines. Source histories retain their own samples and keys;
 this does not claim blended historical curves or resolve #12540's cold read.
