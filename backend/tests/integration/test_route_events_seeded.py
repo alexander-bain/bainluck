@@ -849,6 +849,16 @@ class TestGameMarketsPopulatedShape:
             "resolution_source": None,
             "_market_id": 202,
             "contributor_outcome_ids": [302],
+            "source_mark": {
+                "state": "blend",
+                "sources": [{
+                    "key": "kalshi",
+                    "name": "Kalshi",
+                    "probability": 0.54,
+                    "observed_at": None,
+                    "reason": "observation_unknown",
+                }],
+            },
         }
         period = body["period_markets"][0]
         assert period["market_type"] == "half_total"

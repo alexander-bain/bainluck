@@ -3665,3 +3665,17 @@ export interface EventTournamentResponse {
   broadcasts?: { region: string; channels: string[]; note: string | null }[];
   generated_at?: string;
 }
+/** #12581: the server's selected contributors; clients do not reconstruct them. */
+export interface SourceMark {
+  state: "blend" | "settled" | "none";
+  sources: {
+    key: string;
+    name: string;
+    probability: number;
+    observed_at: string | null;
+    count?: number;
+    reason?: string;
+  }[];
+  settled?: { source: string | null; result: string; at: string | null };
+  reason?: string;
+}

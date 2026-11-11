@@ -8,6 +8,7 @@ import type { TournamentPayload } from "@/lib/tournament";
 import type { ClosedPeriodRow } from "@/lib/marketMapUtils";
 import type { HistoryRangeRequest } from "@/lib/historyRange";
 import type {
+  SourceMark,
   EventsResponse,
   EventDetailResponse,
   EventHistoryResponse,
@@ -1258,6 +1259,7 @@ export interface GameMarketsResponse {
     bookmaker_count?: number;
   }[];
   player_props: {
+    source_mark?: SourceMark;
     market_name: string;
     outcome_name: string;
     threshold: number | null;

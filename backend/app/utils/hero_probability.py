@@ -88,7 +88,9 @@ class HeroReading:
     settled_result: Optional[str] = None
 
 
-def resolve_hero(event: Any) -> Optional[HeroReading]:
+def resolve_hero(
+    event: Any, *, source_inputs: Optional[list[tuple[str, float]]] = None,
+) -> Optional[HeroReading]:
     """The hero cascade, once: settled -> blend -> opening, or ``None``.
 
     ``event`` is anything carrying ``status``, ``home_score``, ``away_score``,
@@ -157,7 +159,9 @@ def resolve_hero(event: Any) -> Optional[HeroReading]:
     # `final_unresolved` says "this game is over and we cannot name a winner",
     # which is a strictly more urgent thing for a reader to know than where the
     # line opened, so on a finished status it keeps the arm it has today.
-    blend, blend_tier = compute_aggregate_probability_tiered(event)
+    blend, blend_tier = compute_aggregate_probability_tiered(
+        event, source_inputs=source_inputs
+    )
     _finished = is_finished_status(getattr(event, "status", None))
     if blend is not None and not (blend_tier == TIER_OPENING and not _finished):
         return HeroReading(

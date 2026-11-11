@@ -321,8 +321,9 @@ class TestTheAgeIsTheObservationAndNothingElse:
         legs = _priced_legs(payload)
         assert legs, "no priced legs to check"
         for path, leg in legs:
-            assert leg["observed_at"] == stale.isoformat(), path
-            assert leg["observed_at"] != NOW.isoformat(), (
+            stamp = datetime.fromisoformat(leg["observed_at"].replace("Z", "+00:00"))
+            assert stamp == stale, path
+            assert stamp != NOW, (
                 f"{path} served the row's last write, not its observation"
             )
 

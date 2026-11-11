@@ -97,6 +97,8 @@ RUSH_NAME = "Buffalo vs Houston: Rushing Yards"
 RUSH_TICKER = "KXNFLRSHYDS-26SEP13BUFHOU"
 PASS_NAME = "Buffalo vs Houston: Passing Yards"
 PASS_TICKER = "KXNFLPASSYDS-26SEP13BUFHOU"
+RUSH_SERVED_NAME = "Buffalo Bills vs Houston Texans: Rushing Yards"
+PASS_SERVED_NAME = "Buffalo Bills vs Houston Texans: Passing Yards"
 RECOGNISED_LEG = "Josh Allen: 40+"          # two plain tokens — served today
 INITIALLED_IN_BAND_WON = "C.J. Stroud: 10+"   # threshold inside 5–65
 INITIALLED_IN_BAND_LOST = "C.J. Stroud: 20+"
@@ -303,7 +305,7 @@ def _where(payload: dict, market_name: str, outcome_name: str) -> dict:
 
 
 async def test_the_controls_that_are_healthy_today_are_served(finished):
-    assert set(_where(finished, RUSH_NAME, RECOGNISED_LEG)) == {"player_props"}
+    assert set(_where(finished, RUSH_SERVED_NAME, RECOGNISED_LEG)) == {"player_props"}
     assert set(_where(finished, TEAM_TOTAL_NAME, TEAM_TOTAL_LEG)) == {"team_totals"}
     assert set(_where(finished, GAME_TOTAL_NAME, GAME_TOTAL_LEG)) == {"totals"}
 
@@ -321,7 +323,7 @@ async def test_an_initialled_players_leg_is_not_served_as_a_teams_points_total(
     """THE MISFILING. On base this row is in `team_totals[]` tagged
     `team_name: "Houston Texans"` — a quarterback's rushing ladder printed as
     the Texans' points ladder."""
-    served = _where(finished, RUSH_NAME, leg)
+    served = _where(finished, RUSH_SERVED_NAME, leg)
     assert "team_totals" not in served, served.get("team_totals")
     assert set(served) == {"player_props"}
     row = served["player_props"]
@@ -342,7 +344,7 @@ async def test_an_initialled_players_out_of_band_leg_is_not_deleted(
 ):
     """THE SILENT LOSS. Same market as nine served Josh Allen rungs; on base the
     range guard deletes these because 225 is not a football team's points."""
-    served = _where(finished, PASS_NAME, leg)
+    served = _where(finished, PASS_SERVED_NAME, leg)
     assert set(served) == {"player_props"}
     row = served["player_props"]
     assert row["_market_id"] == 702
@@ -372,7 +374,7 @@ async def test_a_one_word_team_subject_is_served_beside_its_two_word_sibling(
 async def test_an_ungraded_extreme_leg_is_still_dropped(finished):
     """#921, unchanged: routing a leg to the prop rail does not exempt it from
     step 9. No grade in hand and a dead price is still not a card."""
-    assert _where(finished, PASS_NAME, UNGRADED_EXTREME_LEG) == {}
+    assert _where(finished, PASS_SERVED_NAME, UNGRADED_EXTREME_LEG) == {}
 
 
 # ═══ game_total: a graded rung the range guard removes is served in other[] ═══
@@ -442,9 +444,13 @@ async def test_the_other_class_keeps_its_existing_destination(finished):
 
 
 async def test_a_live_initialled_leg_is_a_prop_with_its_live_price(live):
-    for market_name, leg in ((RUSH_NAME, INITIALLED_IN_BAND_WON),
-                             (PASS_NAME, INITIALLED_OUT_OF_BAND_WON),
-                             (TTY_NAME, TEAM_SUBJECT_WON)):
+    # Typed NFL props use one fixture family name before AND after grading.
+    # The untyped team subject below stays unchanged.
+    for market_name, leg in (
+        (RUSH_SERVED_NAME, INITIALLED_IN_BAND_WON),
+        (PASS_SERVED_NAME, INITIALLED_OUT_OF_BAND_WON),
+        (TTY_NAME, TEAM_SUBJECT_WON),
+    ):
         served = _where(live, market_name, leg)
         assert set(served) == {"player_props"}, (market_name, leg, served)
         row = served["player_props"]

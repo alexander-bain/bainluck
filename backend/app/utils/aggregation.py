@@ -1580,7 +1580,8 @@ def _gate_population(
 
 
 def _live_average_inputs(
-    event, event_status: Optional[str] = None
+    event, event_status: Optional[str] = None, *,
+    source_keys: Optional[list[str]] = None,
 ) -> Optional[tuple[list[float], list[float]]]:
     """The readings the LIVE weighted average may use, or ``None`` (#1829).
 
@@ -1628,6 +1629,8 @@ def _live_average_inputs(
     weights = cap_weight_shares(
         weights, exempt=[src in _UNCAPPED_SOURCES for src in keys]
     )
+    if source_keys is not None:
+        source_keys.extend(keys)
     return values, weights
 
 
@@ -1716,7 +1719,8 @@ def compute_aggregate_probability(
 
 
 def compute_aggregate_probability_tiered(
-    event, event_status: Optional[str] = None
+    event, event_status: Optional[str] = None, *,
+    source_inputs: Optional[list[tuple[str, float]]] = None,
 ) -> tuple[Optional[float], Optional[str]]:
     """``(probability, tier)`` — the number AND which tier answered.
 
@@ -1750,6 +1754,11 @@ def compute_aggregate_probability_tiered(
 
     Works on any object with win_probability_sources, espn_win_prob_home,
     and opening_home_probability attributes (typically an Event model).
+
+    ``source_inputs`` records the inputs selected by THIS calculation for
+    #12581. It contains no weights or inferred clocks. In particular a
+    divergence refusal records only its primary, and a zero-weight live arm
+    is absent. Callers must not reconstruct this set from the JSONB bag.
     """
     # Tier 1: win_probability_sources JSONB (live games — multiple sources).
     # Readings, decay and cap all live in `effective_source_weights` so the
@@ -1774,22 +1783,42 @@ def compute_aggregate_probability_tiered(
             )
         )
         if divergence is not None:
+            if source_inputs is not None:
+                source_inputs.append(
+                    (divergence.primary_source, divergence.primary_value)
+                )
             return round(divergence.primary_value, 6), TIER_SOURCES
 
         if any(w > 0 for w in weights):
+            live_keys: list[str] = []
             live_inputs = (
-                _live_average_inputs(event, event_status) if live else None
+                _live_average_inputs(event, event_status, source_keys=live_keys)
+                if live else None
             )
             blend = (
                 _weighted_average(*live_inputs)
                 if live_inputs is not None
                 else _weighted_median(values, weights)
             )
+            if source_inputs is not None:
+                used_keys = live_keys if live_inputs is not None else keys
+                used_values, used_weights = (
+                    live_inputs if live_inputs is not None else (values, weights)
+                )
+                source_inputs.extend(
+                    (key, value)
+                    for key, value, weight in zip(
+                        used_keys, used_values, used_weights
+                    )
+                    if weight > 0
+                )
             return round(blend, 6), TIER_SOURCES
 
     # Tier 2: ESPN win probability (live games, single source)
     espn_prob = getattr(event, "espn_win_prob_home", None)
     if espn_prob is not None:
+        if source_inputs is not None:
+            source_inputs.append(("espn", float(espn_prob)))
         return round(float(espn_prob), 6), TIER_ESPN
 
     # Tier 3: Opening probability (Odds API sportsbook consensus)

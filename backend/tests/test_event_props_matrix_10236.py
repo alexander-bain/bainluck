@@ -839,6 +839,10 @@ class TestTheRoutesOwnDecisions:
         ))
         legacy = {p["contributor_outcome_ids"][0]: p for p in response["player_props"]}
         assert legacy[7013]["over_probability"] == 0.30, "control: 9c capped the 3+ rung"
+        assert legacy[7013]["source_mark"] == {
+            "state": "none", "sources": [], "reason": "monotonic_conflict",
+        }
+        assert legacy[7013]["source_evidence"][0]["probability"] == 0.45
         dpp = response["during_player_props"]
         keys = {r["question_key"] for r in dpp["rows"]}
         assert "s:gleyber torres|hits|full_game|ge:3|over" not in keys
@@ -881,7 +885,10 @@ class TestTheRoutesOwnDecisions:
         # 9b merged 801+802 IN PLACE on the old card (its representative now
         # carries the 0.42 average). The matrix read its own deep copy, so each
         # contributor still says what it quoted and the mean is taken once.
-        assert any(p.get("source_count") == 2 for p in response["player_props"]), "control: 9b merged"
+        folded = next(p for p in response["player_props"] if set(p.get("_market_ids", [])) == {801, 802})
+        assert folded["over_probability"] == 0.42, "control: 9b merged both markets"
+        assert folded["source_count"] == 1, "two markets on one venue are one source"
+        assert [s["key"] for s in folded["source_mark"]["sources"]] == ["polymarket"]
         assert [c["probability"] for c in judge["contributors"]] == [0.40, 0.44] or \
             [c["probability"] for c in judge["contributors"]] == [0.44, 0.40]
         assert judge["current"]["probability"] == blend_mean([0.44, 0.40]) == 0.42

@@ -20866,7 +20866,8 @@ async def get_event(
     # "lightweight row wrapper" that module's docstring says it accepts. The
     # settled and opening arms are unaffected: the view changes only
     # `win_probability_sources`.
-    _hero = resolve_hero(blend_view)
+    _hero_source_inputs: list[tuple[str, float]] = []
+    _hero = resolve_hero(blend_view, source_inputs=_hero_source_inputs)
     # #8749: cache the observation clock WITH the value it dates. History can
     # serve this cached probability while reading a newer event row; borrowing
     # that row's clock would falsely promote an older cached price to new truth.
@@ -20917,6 +20918,13 @@ async def get_event(
             from app.utils.hero_probability import hero_sportsbook_count
 
             response["hero_sportsbook_count"] = hero_sportsbook_count(blend_view)
+
+    from app.utils.source_mark import headline_source_marks
+
+    response["source_mark"], response["away_source_mark"] = headline_source_marks(
+        blend_view, _hero, _hero_source_inputs,
+        away_available=response.get("hero_probability_away") is not None,
+    )
 
     # #5077: this page says LIVE, ticks a 20s refresh, shows no score, and its
     # number has not moved in hours — while the venue settled every market on the
@@ -25710,6 +25718,8 @@ def _build_props_script(player_props):
     inverted — a row whose number was already true of its own label is
     byte-identical.
     """
+    from app.utils.source_mark import settled_source_mark, source_mark_on_axis
+
     script: list[dict] = []
     for pp in player_props:
         label = pp.get("outcome_name") or pp.get("market_name") or ""
@@ -25747,6 +25757,10 @@ def _build_props_script(player_props):
             "label": label,
             "pregame_mark": _own_axis(pp.get("pregame_mark"), inverted),
             "current": _own_axis(pp.get("over_probability"), inverted),
+            "source_mark": (
+                settled_source_mark(pp.get("resolution_source"), "Won" if hit else "Lost")
+                if hit is not None else source_mark_on_axis(pp.get("source_mark"), inverted=inverted)
+            ),
             "graded_result": graded_result,
             "graded_label": graded_label,
             # #5088 — THE ROW SAYS WHETHER IT IS SETTLED; THE SECTION SAYS WHAT
@@ -27722,6 +27736,56 @@ async def _build_game_markets(
                     "_market_id": market.id,
                 })
 
+    # #12581: preserve the actual admitted quote before any row is averaged,
+    # capped or selected. Poll touches are never used as quote observations.
+    from app.utils.source_mark import (
+        cap_source_mark, no_source_mark, quote_source_mark, settled_source_mark,
+    )
+
+    _source_legs = {o.id: o for o in outcomes}
+
+    from app.utils.game_prop_sources import annotate_prop_fields
+
+    annotate_prop_fields(player_props, markets=market_map,
+                         player_and_stat=_prop_player_and_stat,
+                         home_team=event.home_team_name, away_team=event.away_team_name)
+
+    def _initial_source_mark(row: dict) -> dict:
+        hit = row.get("hit")
+        if hit is not None:
+            won = not hit if row.get("_inverted") else hit
+            return settled_source_mark(
+                getattr(event, "score_source", None), "Won" if won else "Lost",
+            )
+        if _verdict_is_provable(row, row.get("_market_id") in markets_with_a_winner):
+            return settled_source_mark(
+                row.get("resolution_source"),
+                "Won" if row.get("is_winner") else "Lost",
+            )
+        price_key = "over_probability" if "over_probability" in row else "probability"
+        if row.get(price_key) is None:
+            return no_source_mark("no_probability")
+        inputs = []
+        for oid in row.get("contributor_outcome_ids", []):
+            leg = _source_legs.get(oid)
+            market = market_map.get(leg.market_id) if leg is not None else None
+            if leg is None or market is None or leg.current_probability is None:
+                return no_source_mark("source_evidence_incomplete")
+            probability = float(leg.current_probability)
+            if price_key == "over_probability" and _prop_side(leg.name) == "under":
+                probability = 1 - probability
+            inputs.append({"key": market.source, "probability": probability,
+                           "observed_at": _observed(leg)})
+        return quote_source_mark(inputs)
+
+    for _source_rows in (totals_thresholds, player_props, spreads, period_markets,
+                         other_markets, _deep_otm_spreads):
+        for _source_row in _source_rows:
+            _source_row["source_mark"] = _initial_source_mark(_source_row)
+    for _source_matchup in matchups:
+        for _source_row in _source_matchup["outcomes"]:
+            _source_row["source_mark"] = _initial_source_mark(_source_row)
+
     # 6. Sort totals and spreads by threshold value
     totals_thresholds.sort(key=lambda t: t["threshold"])
     spreads.sort(key=lambda s: s.get("threshold") or 0)
@@ -27969,6 +28033,7 @@ async def _build_game_markets(
                 # indistinguishable from one that was independently observed at
                 # the donor's time, and the two are not the same claim.
                 capped["observed_at_basis"] = "capped_to_sibling"
+                cap_source_mark(capped)
                 result.append(capped)
             else:
                 result.append(item)
@@ -28443,12 +28508,32 @@ async def _build_game_markets(
         if _window_is_closed(_otm_row):
             _window_closed_items.append(_otm_row)
 
+    # #12581: the known NFL participation-rule holds select one venue's book;
+    # protected contracts remain separate. Preserve the matrix's raw inputs.
+    from app.utils.game_prop_sources import shape_nfl_prop_rows
+
+    player_props, _prop_source_holds = shape_nfl_prop_rows(
+        player_props, markets=market_map, legs=_source_legs,
+        player_and_stat=_prop_player_and_stat,
+        home_team=event.home_team_name, away_team=event.away_team_name,
+        sport_key=sport_key,
+        orient_under_verdict=lambda row: _settled_over_verdict(
+            row, True, row.get("_market_id") in markets_with_a_winner,
+        ),
+    )
+
     # 9b. Cross-source dedup: when Kalshi and Polymarket both have the same
     # player+stat+threshold, merge into one entry with averaged probability
     # and a sources list, instead of showing duplicate rows.
     if len(player_props) > 1:
         dedup_map: dict[tuple, list[dict]] = {}
+        merged_props = []
         for p in player_props:
+            if sport_key == "americanfootball_nfl" and p.get("player") and p.get("stat"):
+                # Typed NFL books were handled above. In particular, do not
+                # average away a graded book or merge different contract rules.
+                merged_props.append(p)
+                continue
             # WHO and WHICH STAT, read provider-appropriately (#3594). The key also
             # carries the side, so this stays a CROSS-SOURCE dedup and never folds a
             # market's own Over row into its Under row.
@@ -28458,7 +28543,6 @@ async def _build_game_markets(
             key = (player_part, stat_part, p.get("threshold"), _prop_side(p.get("outcome_name")))
             dedup_map.setdefault(key, []).append(p)
 
-        merged_props = []
         for entries in dedup_map.values():
             if len(entries) == 1:
                 merged_props.append(entries[0])
@@ -28470,7 +28554,12 @@ async def _build_game_markets(
                 best = max(entries, key=lambda e: 1 if e.get("source") == "kalshi" else 0)
                 best["over_probability"] = avg_prob
                 best["all_sources"] = list({e.get("source") for e in entries})
-                best["source_count"] = len(entries)
+                best["source_count"] = len(best["all_sources"])
+                best["source_mark"] = quote_source_mark(
+                    source for entry in entries
+                    for source in entry.get("source_mark", {}).get("sources", [])
+                ) if all(entry.get("source_mark", {}).get("state") == "blend"
+                         for entry in entries) else no_source_mark("source_evidence_incomplete")
 
                 # 🔴 #4970 / CERT-2647: READ EVERY CONTRIBUTOR'S CLOCK BEFORE
                 # WRITING ANY OF THEM. `best` IS one of `entries` — the same
@@ -28998,6 +29087,7 @@ async def _build_game_markets(
         ),
         "totals": game_totals,
         "player_props": player_props,
+        "prop_source_holds": _prop_source_holds,
         "team_totals": team_total_items,
         "spreads": spreads,
         "period_markets": period_markets,
