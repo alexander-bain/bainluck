@@ -1292,6 +1292,30 @@ class TestOneTitleField12530:
 class TestVenueTeamCodes12530:
     """The Nov 10 JAC/WAS identities, with deliberately different fixture quotes."""
 
+    def test_all_32_real_tickers_resolve_distinct_real_roster_clubs(self):
+        import json
+        from pathlib import Path
+        from app.utils.futures_verified_title import _row_team_id, title_team_index
+
+        # Captured by bounded READ ONLY SQL on Nov 11. No invented aliases or
+        # stored outcome team IDs participate in the resolution under test.
+        specimen = json.loads(
+            (Path(__file__).parent / "fixtures/nfl_title_teams_12530.json").read_text()
+        )
+        index = title_team_index(specimen["roster"])
+        resolved = {
+            row["external_id"]: _row_team_id(
+                "kalshi", row["external_id"], row["name"], index,
+                kalshi_event_ticker=specimen["market_external_id"],
+            )
+            for row in specimen["outcomes"]
+        }
+        assert len(resolved) == 32
+        assert len(set(resolved.values())) == 32
+        assert set(resolved.values()) == {team["id"] for team in specimen["roster"]}
+        assert resolved["KXSB-27-JAC"] == 564
+        assert resolved["KXSB-27-WAS"] == 542
+
     def markets(self):
         roster = copy.deepcopy(ROSTER) + [
             {"id": 564, "name": "Jacksonville Jaguars", "abbreviation": "JAX",
