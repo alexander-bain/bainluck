@@ -232,7 +232,7 @@
           "stage_2_market_id": 6173044,
           "stage_2_outcome": null,
           "stage_2_probability": null,
-          "missing_stage_2_reason": "No recent win % on #6173044",
+          "missing_stage_2_reason": "Not listed to win",
           "art": {
             "kind": "tmdb_poster",
             "tmdb_id": 1286656,

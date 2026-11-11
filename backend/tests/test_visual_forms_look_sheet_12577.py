@@ -35,7 +35,7 @@ def test_paired_metric_register_is_valid_and_never_blends():
     rocky = next(e for e in bp["entries"] if e["subject"] == "I Play Rocky")
     assert rocky["stage_1_probability"] == 0.475
     assert rocky["stage_2_probability"] is None
-    assert "No recent win %" in rocky["missing_stage_2_reason"]
+    assert rocky["missing_stage_2_reason"] == "Not listed to win"
 
 
 def test_load_visual_forms_look_sheet_deck():

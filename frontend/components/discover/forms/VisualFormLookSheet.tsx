@@ -292,7 +292,7 @@ function PairedBarsWithArtCard({
 
       <div className="mt-3 flex items-center justify-between border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>
-          Paired by hand in register · Never blended · Sorted by {set.stage_2_label.toLowerCase()}
+          Paired by hand in register · Kept separate · Sorted by {set.stage_2_label.toLowerCase()}
         </span>
         <span>as of {set.as_of}</span>
       </div>
@@ -395,12 +395,14 @@ function PosterSpotlightTilesCard({
                 </div>
                 {s1.kind === "percent" && s1.percent !== null && (
                   <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-card">
-                    <div
-                      className="h-full rounded-full bg-accent-brand"
-                      style={{
-                        width: `${Math.max(4, s2.percent ?? 0)}%`,
-                      }}
-                    />
+                    {s2.kind === "percent" && s2.percent !== null && s2.percent > 0 && (
+                      <div
+                        className="h-full rounded-full bg-accent-brand"
+                        style={{
+                          width: `${Math.max(4, s2.percent)}%`,
+                        }}
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -410,7 +412,7 @@ function PosterSpotlightTilesCard({
       </div>
 
       <div className="mt-3 text-xs text-text-muted">
-        Showing 6 of {set.entries.length} paired contenders · {set.stage_1_label} and {set.stage_2_label} never blended.
+        Showing 6 of {set.entries.length} paired contenders · {set.stage_1_label} and {set.stage_2_label} kept separate.
       </div>
     </article>
   );
@@ -528,9 +530,9 @@ function StepConversionPathCard({
         })}
       </div>
 
-      <div className="mt-2.5 flex items-center justify-between text-xs text-text-muted">
-        <span>Light bar = {set.stage_1_label} % · Solid blue = {set.stage_2_label} %</span>
-        <span>Never blended</span>
+      <div className="mt-2.5 flex items-center justify-between gap-2 text-xs text-text-muted">
+        <span>Light bar = {set.stage_1_label} % · Green bar = {set.stage_2_label} %</span>
+        <span className="shrink-0">Kept separate</span>
       </div>
     </article>
   );
@@ -699,6 +701,13 @@ function SettledGateAfterNominationsCard({
       data-testid="visual-form-card-settled-gate"
       className="rounded-xl border border-surface-border bg-surface-card p-4 shadow-sm"
     >
+      <div
+        data-testid="settled-gate-illustration-banner"
+        className="mb-2.5 flex items-center justify-between rounded-lg border border-surface-border bg-surface-elevated px-2.5 py-1.5 text-xs font-semibold text-text-secondary"
+      >
+        <span>Illustration: nominations aren&apos;t out</span>
+        <span className="text-text-muted">Jan 2027 preview</span>
+      </div>
       <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-text-muted">
         <span>{set.kicker} · AFTER NOMINATIONS</span>
         <span>SETTLED STEP 1 (✓ / ✗)</span>
@@ -707,7 +716,7 @@ function SettledGateAfterNominationsCard({
         Best Picture: ✓ nominated vs ✗ missed
       </h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        Once nominations are announced, the first bar becomes ✓ or ✗ (&ldquo;settled means settled&rdquo;); only confirmed nominees keep a live Winner % bar.
+        Illustration: nominations aren&apos;t out. Once nominations are announced, the first bar becomes ✓ or ✗ (&ldquo;settled means settled&rdquo;); only confirmed nominees keep a live Winner % bar.
       </p>
 
       <div className="mt-3 divide-y divide-surface-border">
@@ -722,28 +731,30 @@ function SettledGateAfterNominationsCard({
             <div key={entry.subject_key} className="flex items-center gap-3 py-2">
               <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
               <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-semibold text-text-primary">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="line-clamp-2 text-sm font-semibold leading-snug text-text-primary">
                     {entry.subject}
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-1.5">
                     <span
                       data-testid="settled-stage-1-tick"
-                      className="rounded bg-surface-elevated px-1.5 py-0.5 text-xs font-semibold text-accent-positive"
+                      className="whitespace-nowrap rounded bg-surface-elevated px-1.5 py-0.5 text-xs font-semibold text-accent-positive"
                     >
                       {s1.label}
                     </span>
-                    <span className="w-10 text-right text-sm font-bold tabular-nums text-text-primary">
+                    <span className="w-9 text-right text-sm font-bold tabular-nums text-text-primary">
                       {s2.label}
                     </span>
                   </div>
                 </div>
-                <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
-                  <div
-                    className="h-full rounded-full bg-accent-brand"
-                    style={{ width: `${Math.max(4, s2.percent ?? 0)}%` }}
-                  />
-                </div>
+                {s2.kind === "percent" && s2.percent !== null && (
+                  <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
+                    <div
+                      className="h-full rounded-full bg-accent-brand"
+                      style={{ width: `${Math.max(4, s2.percent)}%` }}
+                    />
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -754,15 +765,15 @@ function SettledGateAfterNominationsCard({
           return (
             <div
               key={entry.subject_key}
-              className="flex items-center justify-between gap-3 py-2 opacity-75"
+              className="flex items-center justify-between gap-2 py-2 opacity-75"
             >
               <div className="flex min-w-0 items-center gap-2.5">
                 <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
-                <span className="truncate text-sm font-medium text-text-muted line-through">
+                <span className="line-clamp-2 text-sm font-medium leading-snug text-text-muted line-through">
                   {entry.subject}
                 </span>
               </div>
-              <div className="flex shrink-0 items-center gap-2 text-xs text-text-muted">
+              <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-text-muted">
                 <span data-testid="settled-stage-1-cross" className="font-semibold">
                   {s1.label}
                 </span>
@@ -780,10 +791,10 @@ function SettledGateAfterNominationsCard({
 // Single Look-Sheet Card Renderer (Used by both Gallery and 1-by-1 Grading)
 // ============================================================================
 
-export function renderLookSheetCardBySpec(
+export const renderLookSheetCardBySpec = (
   spec: LookSheetCardSpec,
   options?: { simulateSettled?: boolean; kidSurface?: boolean },
-) {
+) => {
   const set =
     PAIRED_METRIC_REGISTER[spec.set_id] ??
     PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
@@ -1151,10 +1162,10 @@ export function OscarsContainerLayoutPreview({
 // Single Deck-Item Renderer for `/grade/groupings`
 // ============================================================================
 
-export function renderVisualLookSheetDeckItem(
+export const renderVisualLookSheetDeckItem = (
   itemKey: string,
   options?: { simulateSettled?: boolean; kidSurface?: boolean },
-): React.ReactNode | null {
+): React.ReactNode | null => {
   const cardSpec = VISUAL_FORM_LOOK_SHEET_CARDS.find((c) => c.item_key === itemKey);
   if (cardSpec) {
     return (
@@ -1239,7 +1250,7 @@ export function VisualFormLookSheetGallery({
 
         <ul className="mt-2.5 space-y-1 text-xs text-text-secondary">
           <li>
-            • <span className="font-semibold text-text-primary">Never blended:</span>{" "}
+            • <span className="font-semibold text-text-primary">Kept separate:</span>{" "}
             Nominee (#5165726) and Winner (#6173044) are paired by film in a hand-kept register; NHL Playoffs (#63068142) and Stanley Cup (#52755659) are paired by club.
           </li>
           <li>
@@ -1248,7 +1259,7 @@ export function VisualFormLookSheetGallery({
           </li>
           <li>
             • <span className="font-semibold text-text-primary">Missing probability says so:</span>{" "}
-            Contenders without a recent price on one market explicitly print <span className="font-medium text-text-primary">&ldquo;No recent win %&rdquo;</span> (e.g. <em>I Play Rocky</em>, <em>Olivia Wilde</em>) or <span className="font-medium text-text-primary">&ldquo;No recent nom %&rdquo;</span> (<em>Alejandro G. Iñárritu</em>).
+            Contenders not in one market or without a recent probability say why (<span className="font-medium text-text-primary">&ldquo;Not listed to win&rdquo;</span> on <em>I Play Rocky</em>, <span className="font-medium text-text-primary">&ldquo;Not listed to be nominated&rdquo;</span> on <em>Alejandro G. Iñárritu</em>).
           </li>
           <li>
             • <span className="font-semibold text-text-primary">Kid-safe gate (#7461):</span>{" "}

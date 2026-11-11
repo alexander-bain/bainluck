@@ -60,7 +60,7 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
     }
   });
 
-  it("explicitly reports when a row has no recent probability instead of zero-filling or dropping", () => {
+  it("explicitly reports when a row is not listed in one market or has no recent probability", () => {
     const bpSet = PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
     const rocky = bpSet.entries.find((e) => e.subject === "I Play Rocky");
     expect(rocky).toBeDefined();
@@ -69,7 +69,7 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
     expect(s1.kind).toBe("percent");
     expect(s1.label).toBe("48%");
     expect(s2.kind).toBe("missing");
-    expect(s2.label).toBe("No recent win %");
+    expect(s2.label).toBe("Not listed to win");
 
     const dirSet = PAIRED_METRIC_REGISTER["oscars-2027-best-director"];
     const inarritu = dirSet.entries.find((e) =>
@@ -79,7 +79,16 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
     expect(formatStage1Display(inarritu!, dirSet)).toEqual({
       kind: "missing",
       percent: null,
-      label: "No recent nom %",
+      label: "Not listed to be nominated",
+    });
+
+    const actSet = PAIRED_METRIC_REGISTER["oscars-2027-best-actress"];
+    const wilde = actSet.entries.find((e) => e.subject === "Olivia Wilde");
+    expect(wilde).toBeDefined();
+    expect(formatStage2Display(wilde!, actSet)).toEqual({
+      kind: "percent",
+      percent: 1,
+      label: "1%",
     });
   });
 
@@ -183,8 +192,12 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
 
     // Missing probability notices render explicitly
     expect(html).toContain('data-testid="missing-probability-notice"');
-    expect(html).toContain("No recent win %");
-    expect(html).toContain("No recent nom %");
+    expect(html).toContain("Not listed to win");
+    expect(html).toContain("Not listed to be nominated");
+
+    // Card 6 carries "Illustration: nominations aren't out" on the card itself
+    expect(html).toContain('data-testid="settled-gate-illustration-banner"');
+    expect(html).toContain("Illustration: nominations aren&#x27;t out");
 
     // Settled ✓ / ✗ state renders on Card 6 and when simulateSettled is true
     expect(html).toContain('data-testid="settled-stage-1-tick"');

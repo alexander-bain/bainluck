@@ -119,7 +119,7 @@ export const VISUAL_FORM_LIBRARY: Record<VisualFormId, VisualFormContract> = {
     parts_vocabulary: ["pictures", "tiles", "bars", "ticks"],
     slots: ["picture", "subject", "stage_2_headline", "stage_1_badge_or_tick"],
     missing_number_rule:
-      "Tile footer prints 'No recent <metric> %' instead of a numeric headline when unpriced.",
+      "Tile footer prints 'No recent <metric> %' instead of a numeric headline when missing.",
     settled_step_rule:
       "Stage-1 corner pill flips from '<N>% nom' to '✓ Nominated' or '✗ Missed'.",
     domain_agnostic: true,
@@ -131,7 +131,7 @@ export const VISUAL_FORM_LIBRARY: Record<VisualFormId, VisualFormContract> = {
     parts_vocabulary: ["pictures", "strips", "bars", "ticks"],
     slots: ["picture", "subject", "outer_stage_1_reach", "inner_stage_2_conversion"],
     missing_number_rule:
-      "When stage 2 has no recent price, show the outer stage-1 reach bar with an explicit 'No recent <stage-2> %' callout pill.",
+      "When stage 2 has no recent probability, show the outer stage-1 reach bar with an explicit 'No recent <stage-2> %' callout pill.",
     settled_step_rule:
       "After stage 1 settles, ✓ locks the outer gate at 100% and shows live stage-2 bars; ✗ collapses eliminated rows.",
     domain_agnostic: true,
@@ -143,7 +143,7 @@ export const VISUAL_FORM_LIBRARY: Record<VisualFormId, VisualFormContract> = {
     parts_vocabulary: ["pictures", "tiles", "strips", "bars", "ticks"],
     slots: ["leader_hero_tile", "lead_margin_badge", "chaser_dual_strips"],
     missing_number_rule:
-      "Chasers without a recent stage-2 price remain visible with 'No recent <metric> %' rather than dropping out.",
+      "Chasers without a recent stage-2 probability remain visible with 'No recent <metric> %' rather than dropping out.",
     settled_step_rule:
       "Stage-1 slot in both the leader hero and chaser strips flips to ✓ or ✗ once step 1 settles.",
     domain_agnostic: true,
@@ -155,7 +155,7 @@ export const VISUAL_FORM_LIBRARY: Record<VisualFormId, VisualFormContract> = {
     parts_vocabulary: ["pictures", "ticks", "bars"],
     slots: ["picture", "subject", "settled_tick_or_cross", "live_stage_2_bar"],
     missing_number_rule:
-      "Qualified rows without a recent stage-2 price say 'No recent <metric> %'.",
+      "Qualified rows without a recent stage-2 probability say 'No recent <metric> %'.",
     settled_step_rule:
       "Step 1 is settled: ✓ rows compete in the live winner race; ✗ rows show their settled elimination state.",
     domain_agnostic: true,
@@ -348,7 +348,7 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
     category: "entertainment",
     kicker: "OSCARS 2027 · BEST PICTURE",
     title: "Best Picture: nominated % and wins %",
-    subtitle: "Ten nominees announced Jan 2027 · Paired by film (#5165726 + #6173044), never blended",
+    subtitle: "Ten nominees announced Jan 2027 · Paired by film (#5165726 + #6173044), kept separate",
     stage_1_label: "Nominated",
     stage_2_label: "Wins",
     stage_1_settled_yes_label: "Nominated",
@@ -557,7 +557,7 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
         stage_2_market_id: 6173044,
         stage_2_outcome: null,
         stage_2_probability: null,
-        missing_stage_2_reason: "No recent win %",
+        missing_stage_2_reason: "Not listed to win",
         art: {
           kind: "tmdb_poster",
           tmdb_id: 1286656,
@@ -694,7 +694,7 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
         stage_1_market_id: 5601024,
         stage_1_outcome: null,
         stage_1_probability: null,
-        missing_stage_1_reason: "No recent nom %",
+        missing_stage_1_reason: "Not listed to be nominated",
         stage_1_settled_state: null,
         stage_2_market_id: 5869747,
         stage_2_outcome: "Alejandro G. Iñárritu",
@@ -937,9 +937,8 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
         stage_1_probability: 0.715,
         stage_1_settled_state: null,
         stage_2_market_id: 5869748,
-        stage_2_outcome: null,
-        stage_2_probability: null,
-        missing_stage_2_reason: "No recent win %",
+        stage_2_outcome: "Olivia Wilde",
+        stage_2_probability: 0.01,
         art: {
           kind: "tmdb_headshot",
           tmdb_id: 59315,
