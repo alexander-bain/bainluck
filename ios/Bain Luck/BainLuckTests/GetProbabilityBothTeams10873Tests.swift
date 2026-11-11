@@ -96,7 +96,8 @@ final class GetProbabilityBothTeams10873Tests: XCTestCase {
         XCTAssertTrue(fresh.text.contains("current win chances. Starts"), fresh.text)
 
         let live = ProbabilityAnswer10873.gameBothSides(try XCTUnwrap(games["live, served percents"]), now: now)
-        XCTAssertEqual(live.text, "Boston Red Sox vs New York Yankees: Boston Red Sox 60%, New York Yankees 40%, current win chances. Live: Boston Red Sox 3, New York Yankees 2.")
+        // #11664 / #10090: the hero prints the pair in tenths, so Siri says the same.
+        XCTAssertEqual(live.text, "Boston Red Sox vs New York Yankees: Boston Red Sox 59.5%, New York Yankees 40.5%, current win chances. Live: Boston Red Sox 3, New York Yankees 2.")
 
         let stale = ProbabilityAnswer10873.gameBothSides(try XCTUnwrap(games["stale"]), now: now)
         XCTAssertTrue(stale.text.contains("last recorded win chances, recorded"), stale.text)
@@ -139,11 +140,11 @@ final class GetProbabilityBothTeams10873Tests: XCTestCase {
          "hero_probability_observed_at":"\(freshStamp)"}
         """.utf8))
         let both = ProbabilityAnswer10873.gameBothSides(e, now: now)
-        XCTAssertEqual(both.figures, ProbabilityAnswer10873.Figures(away: nil, home: "52%"))
+        XCTAssertEqual(both.figures, ProbabilityAnswer10873.Figures(away: nil, home: "52.0%"))
         XCTAssertEqual(both.kind, .current)
-        XCTAssertTrue(both.text.contains("Arsenal 52%, current win chance."), both.text)
+        XCTAssertTrue(both.text.contains("Arsenal 52.0%, current win chance."), both.text)
         XCTAssertTrue(both.text.contains("doesn't show a separate chance for Brighton & Hove Albion"), both.text)
-        XCTAssertFalse(both.text.contains("48%"), "an invented complement reached Siri: \(both.text)")
+        XCTAssertFalse(both.text.contains("48"), "an invented complement reached Siri: \(both.text)")
     }
 
     func testAGameWithNoPairSaysItHasNoChancesToShow() throws {
