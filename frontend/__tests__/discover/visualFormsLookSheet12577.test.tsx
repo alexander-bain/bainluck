@@ -1,5 +1,5 @@
 /**
- * #12577 / #12523 — Visual Forms Look Sheet & Oscars Container Diversity Tests.
+ * #12577 / #12523 — Visual Forms Look Sheet (Sheet 1 + Sheet 2) & Oscars Container Diversity Tests.
  */
 
 import React from "react";
@@ -7,25 +7,32 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   OSCARS_CONTAINER_LOOK_SHEET_OPTIONS,
   PAIRED_METRIC_REGISTER,
+  TMDB_ATTRIBUTION_LINE,
   VISUAL_FORM_LIBRARY,
   VISUAL_FORM_LOOK_SHEET_CARDS,
+  VISUAL_FORM_SHEET_2_CARDS,
+  blendVenueProbabilities,
   formatStage1Display,
   formatStage2Display,
   resolveKidSafeVisualArt,
+  sortPairedEntries,
   type PairedSubjectEntry,
 } from "@/lib/discover/visualForms";
 import {
   OscarsContainerLayoutPreview,
   VisualFormLookSheetGallery,
   renderLookSheetCardBySpec,
+  renderVisualLookSheetDeckItem,
 } from "@/components/discover/forms/VisualFormLookSheet";
+import { renderedPercent } from "@/lib/renderedPercent";
 
-describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
-  it("defines 6 look-sheet cards (including non-Oscars NHL) and 3 Oscars container options", () => {
+describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)", () => {
+  it("defines 6 Sheet 1 cards, 6 Sheet 2 cards (3 shorter Card 1 variants + 3 wilder forms), and 3 Oscars container options", () => {
     expect(VISUAL_FORM_LOOK_SHEET_CARDS).toHaveLength(6);
+    expect(VISUAL_FORM_SHEET_2_CARDS).toHaveLength(6);
     expect(OSCARS_CONTAINER_LOOK_SHEET_OPTIONS).toHaveLength(3);
 
-    for (const card of VISUAL_FORM_LOOK_SHEET_CARDS) {
+    for (const card of [...VISUAL_FORM_LOOK_SHEET_CARDS, ...VISUAL_FORM_SHEET_2_CARDS]) {
       expect(card.form.domain_agnostic).toBe(true);
       expect(card.form.data_shape.length).toBeGreaterThan(10);
       expect(card.form.parts_vocabulary.length).toBeGreaterThan(0);
@@ -36,9 +43,37 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
     );
     expect(nhlCard).toBeDefined();
     expect(nhlCard?.form.form_id).toBe("paired_bars_with_art");
+
+    // Lesson 25: revised Sheet 1 cards and containers carry distinct v2 item_keys
+    for (const card of VISUAL_FORM_LOOK_SHEET_CARDS) {
+      expect(card.item_key).toContain("-v2-");
+    }
+    for (const opt of OSCARS_CONTAINER_LOOK_SHEET_OPTIONS) {
+      expect(opt.item_key).toContain("-v2-");
+    }
   });
 
-  it("never blends nominee and winner propositions and pairs them in a hand-kept register", () => {
+  it("blends equivalent venue legs for Best Picture Nominee (#5165726 + #27988771) while never blending Nominee and Winner propositions", () => {
+    const bpSet = PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
+    expect(bpSet.stage_1_market.companion_polymarket_id).toBe(27988771);
+
+    for (const entry of bpSet.entries) {
+      const expectedBlend = blendVenueProbabilities(
+        entry.stage_1_kalshi_probability,
+        entry.stage_1_polymarket_probability,
+      );
+      expect(entry.stage_1_probability).toBeCloseTo(expectedBlend!, 6);
+    }
+
+    // The Black Ball pairs with "La Bola Negra" on Polymarket #27988771 (0.94 + 0.95 -> 0.945 -> 95%)
+    const blackBall = bpSet.entries.find((e) => e.subject === "The Black Ball")!;
+    expect(blackBall.stage_1_polymarket_outcome).toBe("La Bola Negra");
+    expect(formatStage1Display(blackBall, bpSet).label).toBe("95%");
+
+    // I Play Rocky blends 0.475 (Kalshi) and 0.50 (Polymarket) -> 0.4875 -> 49%
+    const rocky = bpSet.entries.find((e) => e.subject === "I Play Rocky")!;
+    expect(formatStage1Display(rocky, bpSet).label).toBe("49%");
+
     for (const set of Object.values(PAIRED_METRIC_REGISTER)) {
       expect(set.never_blend).toBe(true);
       expect(set.stage_1_market.id).not.toBe(set.stage_2_market.id);
@@ -49,15 +84,55 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
         ) {
           const s1 = formatStage1Display(entry, set);
           const s2 = formatStage2Display(entry, set);
-          expect(s1.percent).toBe(
-            Math.floor(entry.stage_1_probability * 100 + 0.5 + 1e-9),
-          );
-          expect(s2.percent).toBe(
-            Math.floor(entry.stage_2_probability * 100 + 0.5 + 1e-9),
-          );
+          expect(s1.percent).toBe(renderedPercent(entry.stage_1_probability));
+          expect(s2.percent).toBe(renderedPercent(entry.stage_2_probability));
         }
       }
     }
+  });
+
+  it("uses renderedPercent so half-percents (Malkovich 0.955 -> 96%, Damon 0.935 -> 94%) always round half-up", () => {
+    const actorSet = PAIRED_METRIC_REGISTER["oscars-2027-best-actor"];
+    const malkovich = actorSet.entries.find(
+      (e) => e.subject === "John Malkovich",
+    )!;
+    const damon = actorSet.entries.find((e) => e.subject === "Matt Damon")!;
+
+    expect(malkovich.stage_1_probability).toBe(0.955);
+    expect(damon.stage_1_probability).toBe(0.935);
+    expect(formatStage1Display(malkovich, actorSet).label).toBe("96%");
+    expect(formatStage1Display(damon, actorSet).label).toBe("94%");
+  });
+
+  it("sources film credits and verified TMDB person headshots (including Nathan Fielder #1212667 and Jesse Eisenberg on The Debut) and includes Dallas Stars in the NHL 5.2% tie", () => {
+    const bpSet = PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
+    const debut = bpSet.entries.find((e) => e.subject === "The Debut")!;
+    expect(debut.detail).toBe("Jesse Eisenberg · Topic Studios");
+    expect(debut.credit_source).toBe("tmdb:movie:1391239");
+
+    const dirSet = PAIRED_METRIC_REGISTER["oscars-2027-best-director"];
+    const fielder = dirSet.entries.find((e) => e.subject === "Nathan Fielder")!;
+    expect(fielder.art?.tmdb_id).toBe(1212667);
+    expect(fielder.art?.url).toBe(
+      "https://image.tmdb.org/t/p/w185/x0UOcjml8WnBfnb89QOh0iXM0w0.jpg",
+    );
+
+    const nhlSet = PAIRED_METRIC_REGISTER["nhl-2026-27-playoffs-and-cup"];
+    expect(nhlSet.entries).toHaveLength(9);
+    const stars = nhlSet.entries.find((e) => e.subject === "Dallas Stars");
+    const lightning = nhlSet.entries.find(
+      (e) => e.subject === "Tampa Bay Lightning",
+    );
+    expect(stars).toBeDefined();
+    expect(lightning).toBeDefined();
+
+    // Tie-break orders Dallas Stars (83.5% playoffs) ahead of Tampa Bay Lightning (82% playoffs) when tied at 5.2% Cup
+    const sortedNhl = sortPairedEntries(nhlSet.entries);
+    const starsIdx = sortedNhl.findIndex((e) => e.subject === "Dallas Stars");
+    const tbIdx = sortedNhl.findIndex(
+      (e) => e.subject === "Tampa Bay Lightning",
+    );
+    expect(starsIdx).toBeLessThan(tbIdx);
   });
 
   it("explicitly reports when a row is not listed in one market or has no recent probability", () => {
@@ -67,7 +142,7 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
     const s1 = formatStage1Display(rocky!, bpSet);
     const s2 = formatStage2Display(rocky!, bpSet);
     expect(s1.kind).toBe("percent");
-    expect(s1.label).toBe("48%");
+    expect(s1.label).toBe("49%");
     expect(s2.kind).toBe("missing");
     expect(s2.label).toBe("Not listed to win");
 
@@ -116,7 +191,7 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
     expect(settledRocky.kind).toBe("cross");
     expect(settledRocky.symbol).toBe("✗");
     expect(settledRocky.label).toBe("✗ Not nominated");
-    expect(settledRocky.sublabel).toBe("was 48%");
+    expect(settledRocky.sublabel).toBe("was 49%");
   });
 
   it("enforces the #7461 kid-safe gate on posters, headshots, and logos", () => {
@@ -174,13 +249,41 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
     ).toBeNull();
   });
 
-  it("renders all 6 visual forms and 3 Oscars containers with posters, logos, ✓/✗ ticks, and missing-price badges", () => {
+  it("renders all Sheet 1 + Sheet 2 visual forms, TMDB attribution, and 3 Oscars containers", () => {
     const html = renderToStaticMarkup(<VisualFormLookSheetGallery />);
 
     expect(html).toContain('data-testid="visual-forms-look-sheet-gallery"');
-    for (let pos = 1; pos <= 6; pos += 1) {
+    expect(html).toContain('data-testid="visual-forms-sheet-2-section"');
+    expect(html).toContain('data-testid="visual-forms-sheet-1-section"');
+
+    // Sheet 1 blocks (1–6) and Sheet 2 blocks (10–15)
+    for (const pos of [1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 15]) {
       expect(html).toContain(`data-testid="look-sheet-card-block-${pos}"`);
     }
+
+    // Sheet 2 testids
+    expect(html).toContain(
+      'data-testid="visual-form-card-paired-bars-top5-expandable"',
+    );
+    expect(html).toContain(
+      'data-testid="visual-form-card-paired-bars-single-line"',
+    );
+    expect(html).toContain(
+      'data-testid="visual-form-card-paired-bars-top3-plus-strip"',
+    );
+    expect(html).toContain('data-testid="visual-form-card-podium-and-tiers"');
+    expect(html).toContain('data-testid="visual-form-card-barbell-race-track"');
+    expect(html).toContain('data-testid="visual-form-card-ballot-quadrant-map"');
+
+    // TMDB attribution line is visible
+    expect(html).toContain('data-testid="tmdb-attribution-line"');
+    expect(html).toContain(TMDB_ATTRIBUTION_LINE);
+
+    // Podium tier heading and code agree on 70% (<70% to be nominated)
+    expect(html).toContain("Likely Nominees (70%+ to be nominated");
+    expect(html).toContain("On the Nomination Bubble (&lt;70% to be nominated)");
+    expect(html).not.toContain("&lt;65% to be nominated");
+
     for (const code of ["A", "B", "C"] as const) {
       expect(html).toContain(`data-testid="oscars-container-option-${code}"`);
       const containerHtml = renderToStaticMarkup(
@@ -216,7 +319,37 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
     expect(settledCard1Html).toContain("✓ Nominated");
     expect(settledCard1Html).toContain("✗ Not nominated");
 
-    // Verify form library contract keys
-    expect(Object.keys(VISUAL_FORM_LIBRARY)).toHaveLength(5);
+    // Verify all 11 visual forms in library
+    expect(Object.keys(VISUAL_FORM_LIBRARY)).toHaveLength(11);
+  });
+
+  it("deals 15 active items (positions 1..15) with no retired v1 keys and refuses to draw retired v1 keys", () => {
+    const retiredV1Keys = [
+      "form-1-paired-bars-with-art-best-picture",
+      "form-2-poster-spotlight-tiles-best-picture",
+      "form-3-step-conversion-path-best-picture",
+      "form-4-leader-and-chasers-split-best-picture",
+      "form-5-sports-playoffs-to-title-nhl",
+      "form-6-post-nominations-settled-gate",
+      "container-a-alternating-form-magazine",
+      "container-b-shape-driven-contrast",
+      "container-c-two-act-ballot",
+    ];
+    const activeItems = [
+      ...VISUAL_FORM_SHEET_2_CARDS,
+      ...VISUAL_FORM_LOOK_SHEET_CARDS,
+      ...OSCARS_CONTAINER_LOOK_SHEET_OPTIONS,
+    ];
+    expect(activeItems).toHaveLength(15);
+    expect(activeItems.map((it) => it.position)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    ]);
+    for (const it of activeItems) {
+      expect(retiredV1Keys).not.toContain(it.item_key);
+      expect(renderVisualLookSheetDeckItem(it.item_key)).not.toBeNull();
+    }
+    for (const v1Key of retiredV1Keys) {
+      expect(renderVisualLookSheetDeckItem(v1Key)).toBeNull();
+    }
   });
 });

@@ -1,9 +1,9 @@
 {
   "slate_id": "visual-forms-look-sheet-2026-11",
   "surface": "grouping",
-  "generated_at": "2026-11-11T03:50:00Z",
-  "model": "form-library-v1",
-  "question": "Which visual form and container rhythm should become the licensed pattern?",
+  "generated_at": "2026-11-11T07:10:00Z",
+  "model": "visual-forms-library-v2",
+  "question": "Which visual form (including the shorter Card 1 options and wilder Sheet 2 forms) and container rhythm should become the licensed pattern?",
   "items": [
     {
       "position": 1,
@@ -25,15 +25,47 @@
         "title": "Best Picture: nominated % and wins %",
         "subtitle": "Shape: two related numbers per subject + picture · Parts: pictures, bars, ticks",
         "rows": [
-          { "label": "The Odyssey (98% nom)", "value": "57%", "market_id": 6173044, "probability": 0.565, "rendered_percent": 57 },
-          { "label": "You Can See Everything (86% nom)", "value": "17%", "market_id": 6173044, "probability": 0.165, "rendered_percent": 17 },
-          { "label": "The Black Ball (94% nom)", "value": "15%", "market_id": 6173044, "probability": 0.145, "rendered_percent": 15 },
-          { "label": "Dune: Part Three (82% nom)", "value": "8%", "market_id": 6173044, "probability": 0.075, "rendered_percent": 8 },
-          { "label": "Wild Horse Nine (93% nom)", "value": "2%", "market_id": 6173044, "probability": 0.015, "rendered_percent": 2 }
+          {
+            "label": "The Odyssey (98% nom)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (86% nom)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (94% nom)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (82% nom)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% nom)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
         ],
         "count_line": "10 films paired in register · 1 not listed to win (I Play Rocky: 48% nom)",
         "footer": "Nominee (#5165726) and Winner (#6173044) are paired by film and kept separate.",
-        "relations": ["paired_stage_propositions"],
+        "relations": [
+          "paired_stage_propositions"
+        ],
         "level": "proposed",
         "as_of_label": "as of 2026-11-11",
         "proposed_kind": "paired_bars_with_art",
@@ -49,7 +81,9 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 2,
@@ -71,15 +105,47 @@
         "title": "Best Picture contenders in poster tiles",
         "subtitle": "Shape: two related numbers per subject + picture · Parts: pictures, tiles, bars, ticks",
         "rows": [
-          { "label": "The Odyssey (98% nom)", "value": "57%", "market_id": 6173044, "probability": 0.565, "rendered_percent": 57 },
-          { "label": "You Can See Everything (86% nom)", "value": "17%", "market_id": 6173044, "probability": 0.165, "rendered_percent": 17 },
-          { "label": "The Black Ball (94% nom)", "value": "15%", "market_id": 6173044, "probability": 0.145, "rendered_percent": 15 },
-          { "label": "Dune: Part Three (82% nom)", "value": "8%", "market_id": 6173044, "probability": 0.075, "rendered_percent": 8 },
-          { "label": "Wild Horse Nine (93% nom)", "value": "2%", "market_id": 6173044, "probability": 0.015, "rendered_percent": 2 }
+          {
+            "label": "The Odyssey (98% nom)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (86% nom)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (94% nom)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (82% nom)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% nom)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
         ],
         "count_line": "6 poster tiles shown · I Play Rocky (48% nom · Not listed to win)",
         "footer": "Poster-first grid where Wins % is the headline and Nominated % sits beside it.",
-        "relations": ["paired_stage_propositions"],
+        "relations": [
+          "paired_stage_propositions"
+        ],
         "level": "proposed",
         "as_of_label": "as of 2026-11-11",
         "proposed_kind": "poster_spotlight_tiles",
@@ -95,7 +161,9 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 3,
@@ -117,15 +185,47 @@
         "title": "From nomination lock to Best Picture winner",
         "subtitle": "Shape: a path with steps + picture · Parts: pictures, strips, bars, ticks",
         "rows": [
-          { "label": "The Odyssey (98% → 57%)", "value": "57%", "market_id": 6173044, "probability": 0.565, "rendered_percent": 57 },
-          { "label": "You Can See Everything (86% → 17%)", "value": "17%", "market_id": 6173044, "probability": 0.165, "rendered_percent": 17 },
-          { "label": "The Black Ball (94% → 15%)", "value": "15%", "market_id": 6173044, "probability": 0.145, "rendered_percent": 15 },
-          { "label": "Dune: Part Three (82% → 8%)", "value": "8%", "market_id": 6173044, "probability": 0.075, "rendered_percent": 8 },
-          { "label": "Wild Horse Nine (93% → 2%)", "value": "2%", "market_id": 6173044, "probability": 0.015, "rendered_percent": 2 }
+          {
+            "label": "The Odyssey (98% → 57%)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (86% → 17%)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (94% → 15%)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (82% → 8%)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% → 2%)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
         ],
         "count_line": "Outer bar = Nominated % · Inner fill = Wins % · Shows lock-vs-longshot gap",
         "footer": "Each film's win bar nests inside its nomination bar on one shared 0–100% scale.",
-        "relations": ["paired_stage_propositions"],
+        "relations": [
+          "paired_stage_propositions"
+        ],
         "level": "proposed",
         "as_of_label": "as of 2026-11-11",
         "proposed_kind": "step_conversion_path",
@@ -141,7 +241,9 @@
         "rendered_percent": 93,
         "resolution_date": "2027-01-23T00:00:00Z",
         "rule_quote": "Resolves Yes if Wild Horse Nine is nominated for Best Picture."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 4,
@@ -163,15 +265,47 @@
         "title": "The Odyssey leads Best Picture; five films chase",
         "subtitle": "Shape: one leader and its chasers + picture · Parts: pictures, tiles, strips, bars",
         "rows": [
-          { "label": "The Odyssey (98% nom)", "value": "57%", "market_id": 6173044, "probability": 0.565, "rendered_percent": 57 },
-          { "label": "You Can See Everything (86% nom)", "value": "17%", "market_id": 6173044, "probability": 0.165, "rendered_percent": 17 },
-          { "label": "The Black Ball (94% nom)", "value": "15%", "market_id": 6173044, "probability": 0.145, "rendered_percent": 15 },
-          { "label": "Dune: Part Three (82% nom)", "value": "8%", "market_id": 6173044, "probability": 0.075, "rendered_percent": 8 },
-          { "label": "Wild Horse Nine (93% nom)", "value": "2%", "market_id": 6173044, "probability": 0.015, "rendered_percent": 2 }
+          {
+            "label": "The Odyssey (98% nom)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (86% nom)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (94% nom)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (82% nom)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% nom)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
         ],
         "count_line": "Leader hero when #1 >= 40% to win · Compact two-number chaser strip below",
         "footer": "Selected automatically when one contender commands >= 40% of the winner market.",
-        "relations": ["paired_stage_propositions"],
+        "relations": [
+          "paired_stage_propositions"
+        ],
         "level": "proposed",
         "as_of_label": "as of 2026-11-11",
         "proposed_kind": "leader_and_chasers_split",
@@ -187,7 +321,9 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 5,
@@ -209,15 +345,47 @@
         "title": "NHL contenders: make playoffs % and win Stanley Cup %",
         "subtitle": "Shape: two related numbers per subject + picture · Same form, team crests instead of posters",
         "rows": [
-          { "label": "Carolina Hurricanes (94% playoffs)", "value": "13%", "market_id": 52755659, "probability": 0.128, "rendered_percent": 13 },
-          { "label": "Colorado Avalanche (94% playoffs)", "value": "10%", "market_id": 52755659, "probability": 0.10, "rendered_percent": 10 },
-          { "label": "Minnesota Wild (96% playoffs)", "value": "9%", "market_id": 52755659, "probability": 0.09, "rendered_percent": 9 },
-          { "label": "Edmonton Oilers (91% playoffs)", "value": "9%", "market_id": 52755659, "probability": 0.09, "rendered_percent": 9 },
-          { "label": "New Jersey Devils (83% playoffs)", "value": "7%", "market_id": 52755659, "probability": 0.071, "rendered_percent": 7 }
+          {
+            "label": "Carolina Hurricanes (94% playoffs)",
+            "value": "13%",
+            "market_id": 52755659,
+            "probability": 0.128,
+            "rendered_percent": 13
+          },
+          {
+            "label": "Colorado Avalanche (94% playoffs)",
+            "value": "10%",
+            "market_id": 52755659,
+            "probability": 0.1,
+            "rendered_percent": 10
+          },
+          {
+            "label": "Minnesota Wild (96% playoffs)",
+            "value": "9%",
+            "market_id": 52755659,
+            "probability": 0.09,
+            "rendered_percent": 9
+          },
+          {
+            "label": "Edmonton Oilers (91% playoffs)",
+            "value": "9%",
+            "market_id": 52755659,
+            "probability": 0.09,
+            "rendered_percent": 9
+          },
+          {
+            "label": "New Jersey Devils (83% playoffs)",
+            "value": "7%",
+            "market_id": 52755659,
+            "probability": 0.071,
+            "rendered_percent": 7
+          }
         ],
         "count_line": "8 NHL contenders paired (#63068142 Make Playoffs + #52755659 Win Stanley Cup)",
         "footer": "Once playoff berths clinch or eliminate, the first bar becomes ✓ or ✗ just like nominations.",
-        "relations": ["paired_stage_propositions"],
+        "relations": [
+          "paired_stage_propositions"
+        ],
         "level": "proposed",
         "as_of_label": "as of 2026-11-11",
         "proposed_kind": "paired_bars_with_art",
@@ -233,7 +401,9 @@
         "rendered_percent": 13,
         "resolution_date": "2027-06-30T00:00:00Z",
         "rule_quote": "Resolves Yes if the Carolina Hurricanes win the 2026-27 Stanley Cup."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 6,
@@ -255,17 +425,61 @@
         "title": "Best Picture after nominations: ✓ in the ten vs ✗ missed",
         "subtitle": "Illustration: nominations aren't out · Shape: two related numbers per subject, step 1 settled",
         "rows": [
-          { "label": "✓ The Odyssey (Nominated)", "value": "57%", "market_id": 6173044, "probability": 0.565, "rendered_percent": 57 },
-          { "label": "✓ You Can See Everything (Nominated)", "value": "17%", "market_id": 6173044, "probability": 0.165, "rendered_percent": 17 },
-          { "label": "✓ The Black Ball (Nominated)", "value": "15%", "market_id": 6173044, "probability": 0.145, "rendered_percent": 15 },
-          { "label": "✓ Dune: Part Three (Nominated)", "value": "8%", "market_id": 6173044, "probability": 0.075, "rendered_percent": 8 },
-          { "label": "✓ Wild Horse Nine (Nominated)", "value": "2%", "market_id": 6173044, "probability": 0.015, "rendered_percent": 2 },
-          { "label": "✗ Artificial (Not nominated · was 57%)", "value": "0%", "market_id": 6173044, "probability": 0.0, "rendered_percent": 0 },
-          { "label": "✗ I Play Rocky (Not nominated · was 48%)", "value": "0%", "market_id": 6173044, "probability": 0.0, "rendered_percent": 0 }
+          {
+            "label": "✓ The Odyssey (Nominated)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "✓ You Can See Everything (Nominated)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "✓ The Black Ball (Nominated)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "✓ Dune: Part Three (Nominated)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "✓ Wild Horse Nine (Nominated)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          },
+          {
+            "label": "✗ Artificial (Not nominated · was 57%)",
+            "value": "0%",
+            "market_id": 6173044,
+            "probability": 0.0,
+            "rendered_percent": 0
+          },
+          {
+            "label": "✗ I Play Rocky (Not nominated · was 48%)",
+            "value": "0%",
+            "market_id": 6173044,
+            "probability": 0.0,
+            "rendered_percent": 0
+          }
         ],
         "count_line": "Illustration: nominations aren't out · First bar becomes ✓ or ✗ once step 1 resolves",
         "footer": "Settled means settled: once nominations are announced, no stale nomination % bar remains.",
-        "relations": ["paired_stage_propositions"],
+        "relations": [
+          "paired_stage_propositions"
+        ],
         "level": "proposed",
         "as_of_label": "as of 2026-11-11",
         "proposed_kind": "settled_gate_after_nominations",
@@ -281,7 +495,9 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 7,
@@ -303,14 +519,40 @@
         "title": "Oscars 2027 — Magazine Rhythm (4 distinct section forms)",
         "subtitle": "Best Picture (Leader + Chasers) → Best Director (Headshot Tiles) → Best Actress (Step Funnel) → Animated (Poster Strip)",
         "rows": [
-          { "label": "Best Picture · The Odyssey (98% nom / 57% win)", "value": "57%", "market_id": 6173044, "probability": 0.565, "rendered_percent": 57 },
-          { "label": "Best Director · Christopher Nolan (99% nom / 56% win)", "value": "56%", "market_id": 5869747, "probability": 0.557, "rendered_percent": 56 },
-          { "label": "Best Actress · Julianne Moore (98% nom / 75% win)", "value": "75%", "market_id": 5869748, "probability": 0.75, "rendered_percent": 75 },
-          { "label": "Best Animated · Wildwood (97% nom / 85% win)", "value": "85%", "market_id": 58492239, "probability": 0.85, "rendered_percent": 85 }
+          {
+            "label": "Best Picture · The Odyssey (98% nom / 57% win)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "Best Director · Christopher Nolan (99% nom / 56% win)",
+            "value": "56%",
+            "market_id": 5869747,
+            "probability": 0.557,
+            "rendered_percent": 56
+          },
+          {
+            "label": "Best Actress · Julianne Moore (98% nom / 75% win)",
+            "value": "75%",
+            "market_id": 5869748,
+            "probability": 0.75,
+            "rendered_percent": 75
+          },
+          {
+            "label": "Best Animated · Wildwood (97% nom / 85% win)",
+            "value": "85%",
+            "market_id": 58492239,
+            "probability": 0.85,
+            "rendered_percent": 85
+          }
         ],
         "count_line": "4 categories · 4 visual forms chosen so no two adjacent sections look alike",
         "footer": "Films show vertical posters; directors and actors show circular headshots.",
-        "relations": ["container_form_diversity"],
+        "relations": [
+          "container_form_diversity"
+        ],
         "level": "proposed",
         "as_of_label": "as of 2026-11-11",
         "proposed_kind": "container_alternating_magazine",
@@ -326,7 +568,9 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 8,
@@ -348,14 +592,40 @@
         "title": "Oscars 2027 — Shape-Driven Contrast",
         "subtitle": "Runaway Locks (Actress 75%, Animated 85%) → Three-Way Actor Duel (42% / 22% / 17%) → 10-Film Best Picture Board",
         "rows": [
-          { "label": "Runaway Lock · Wildwood (Animated 85% win / 97% nom)", "value": "85%", "market_id": 58492239, "probability": 0.85, "rendered_percent": 85 },
-          { "label": "Runaway Lock · Julianne Moore (Actress 75% win / 98% nom)", "value": "75%", "market_id": 5869748, "probability": 0.75, "rendered_percent": 75 },
-          { "label": "Open Duel · Best Actor (Malkovich 42% vs Scott 22% vs Damon 17%)", "value": "42%", "market_id": 5869749, "probability": 0.424, "rendered_percent": 42 },
-          { "label": "10-Slot Field · Best Picture (The Odyssey 57% + 9 contenders)", "value": "57%", "market_id": 6173044, "probability": 0.565, "rendered_percent": 57 }
+          {
+            "label": "Runaway Lock · Wildwood (Animated 85% win / 97% nom)",
+            "value": "85%",
+            "market_id": 58492239,
+            "probability": 0.85,
+            "rendered_percent": 85
+          },
+          {
+            "label": "Runaway Lock · Julianne Moore (Actress 75% win / 98% nom)",
+            "value": "75%",
+            "market_id": 5869748,
+            "probability": 0.75,
+            "rendered_percent": 75
+          },
+          {
+            "label": "Open Duel · Best Actor (Malkovich 42% vs Scott 22% vs Damon 17%)",
+            "value": "42%",
+            "market_id": 5869749,
+            "probability": 0.424,
+            "rendered_percent": 42
+          },
+          {
+            "label": "10-Slot Field · Best Picture (The Odyssey 57% + 9 contenders)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          }
         ],
         "count_line": "Form picked from the distribution shape: >=70% leader gets a lock card; 3-way race gets a duel strip",
         "footer": "A reader immediately sees which awards are already decided and which are live races.",
-        "relations": ["container_form_diversity"],
+        "relations": [
+          "container_form_diversity"
+        ],
         "level": "proposed",
         "as_of_label": "as of 2026-11-11",
         "proposed_kind": "container_shape_driven_contrast",
@@ -371,7 +641,9 @@
         "rendered_percent": 42,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if John Malkovich wins Best Actor at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 9,
@@ -393,13 +665,1184 @@
         "title": "Oscars 2027 — Two-Act Ballot (Nomination Locks + Category Forms)",
         "subtitle": "Top rail: 90%+ nomination locks across categories · Below: Film posters vs Acting/Directing headshots",
         "rows": [
-          { "label": "Lock Rail · Nolan 99%, Odyssey 98%, Moore 98%, Wildwood 97%, Malkovich 95%, The Black Ball 94%", "value": "99%", "market_id": 5601024, "probability": 0.985, "rendered_percent": 99 },
-          { "label": "Best Picture (Poster Tile Grid) · The Odyssey 57% win / 98% nom", "value": "57%", "market_id": 6173044, "probability": 0.565, "rendered_percent": 57 },
-          { "label": "Best Director (Headshot Step Conversion Path) · Christopher Nolan 56% win / 99% nom", "value": "56%", "market_id": 5869747, "probability": 0.557, "rendered_percent": 56 }
+          {
+            "label": "Lock Rail · Nolan 99%, Odyssey 98%, Moore 98%, Wildwood 97%, Malkovich 95%, The Black Ball 94%",
+            "value": "99%",
+            "market_id": 5601024,
+            "probability": 0.985,
+            "rendered_percent": 99
+          },
+          {
+            "label": "Best Picture (Poster Tile Grid) · The Odyssey 57% win / 98% nom",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "Best Director (Headshot Step Conversion Path) · Christopher Nolan 56% win / 99% nom",
+            "value": "56%",
+            "market_id": 5869747,
+            "probability": 0.557,
+            "rendered_percent": 56
+          }
         ],
         "count_line": "Separates 'Who gets nominated in January?' from 'Who takes home the statue in March?'",
         "footer": "On nomination morning, the top rail flips to ✓ Confirmed Nominees and Snubs.",
-        "relations": ["container_form_diversity"],
+        "relations": [
+          "container_form_diversity"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "container_two_act_ballot",
+        "selection_type": "complete_group"
+      },
+      "best_single": {
+        "id": 5601024,
+        "name": "Oscar nominees: Best Director — Christopher Nolan",
+        "subject": "Christopher Nolan",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.985,
+        "rendered_percent": 99,
+        "resolution_date": "2027-01-23T00:00:00Z",
+        "rule_quote": "Resolves Yes if Christopher Nolan is nominated for Best Director."
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
+    },
+    {
+      "position": 1,
+      "item_key": "form-1a-paired-bars-top5-expandable-best-picture",
+      "title": "Shorter Card 1A · Top 5 Dual Bars + 'Show All 10' Expander — Best Picture 2027",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "paired_bars_top5_expandable:oscars_best_picture_2027",
+      "member_count": 10,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "paired_bars_top5_expandable",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SHEET 2 · SHORTER CARD 1A",
+        "tag": "OSCARS 2027",
+        "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
+        "subtitle": "Top 5 contenders by Wins % in full two-bar rows + one-tap 'Show all 10 contenders' expander",
+        "rows": [
+          {
+            "label": "The Odyssey (98% nom)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (85% nom)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (95% nom)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (83% nom)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% nom)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
+        ],
+        "count_line": "Default 5 rows + expander for #6–#10 (incl. I Play Rocky: 49% nom · Not listed to win)",
+        "footer": "Cuts Card 1's default height in half while keeping all 10 contenders one tap away.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "paired_bars_top5_expandable",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 2,
+      "item_key": "form-1b-paired-bars-single-line-best-picture",
+      "title": "Shorter Card 1B · Compact One-Line-Per-Film Table (All 10 Visible) — Best Picture 2027",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "paired_bars_single_line:oscars_best_picture_2027",
+      "member_count": 10,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "paired_bars_single_line",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SHEET 2 · SHORTER CARD 1B",
+        "tag": "OSCARS 2027",
+        "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
+        "subtitle": "One line per film: mini poster + title + dual micro-bars + side-by-side Nominated % & Wins %",
+        "rows": [
+          {
+            "label": "The Odyssey (98% nom)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (85% nom)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (95% nom)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (83% nom)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% nom)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
+        ],
+        "count_line": "All 10 contenders visible at once in 46% less vertical height than Card 1",
+        "footer": "Shows every contender without expanding while keeping both numbers and micro-bars aligned.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "paired_bars_single_line",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 3,
+      "item_key": "form-1c-paired-bars-top3-plus-strip-best-picture",
+      "title": "Shorter Card 1C · Top 3 Full Dual-Bar Rows + 2-Up Contender Strip (#4–#10) — Best Picture 2027",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "paired_bars_top3_plus_strip:oscars_best_picture_2027",
+      "member_count": 10,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "paired_bars_top3_plus_strip",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SHEET 2 · SHORTER CARD 1C",
+        "tag": "OSCARS 2027",
+        "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
+        "subtitle": "Top 3 trophy favorites get full dual-bar rows; contenders #4–#10 sit in a 2-column strip below",
+        "rows": [
+          {
+            "label": "The Odyssey (98% nom)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (85% nom)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (95% nom)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (83% nom)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% nom)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
+        ],
+        "count_line": "3 full rows + 7 compact 2-up contender pills (all 10 shown)",
+        "footer": "Hybrid density: full bar comparison for the top 3, compact two-number pills for the rest.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "paired_bars_top3_plus_strip",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 4,
+      "item_key": "form-7-podium-and-tiers-best-picture",
+      "title": "Wild Form A · Three-Spot Trophy Podium + Nomination Lock & Bubble Tiers — Best Picture 2027",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "podium_and_tiers:oscars_best_picture_2027",
+      "member_count": 10,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "podium_and_tiers",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SHEET 2 · WILD FORM A (PODIUM_AND_TIERS)",
+        "tag": "OSCARS 2027",
+        "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
+        "subtitle": "Top 3 stand on a visual podium (#2 left · #1 center · #3 right); #4–#10 group into Lock vs Bubble tiers",
+        "rows": [
+          {
+            "label": "#1 The Odyssey (98% nom)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "#2 You Can See Everything (85% nom)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "#3 The Black Ball (95% nom)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Lock Tier · Dune: Part Three (83% → 8%), Wild Horse Nine (93% → 2%)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Bubble Tier · Artificial (58% → 2%), I Play Rocky (49% · Not listed to win)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
+        ],
+        "count_line": "3-spot visual podium + 5 Likely Nominees (70%+ nom) + 2 Bubble contenders (<65% nom)",
+        "footer": "Replaces a flat 10-row list with an Olympic-style podium and two ballot tiers.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "podium_and_tiers",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 5,
+      "item_key": "form-8-barbell-race-track-best-picture",
+      "title": "Wild Form B · 0–100% Barbell Gap Track (Wins ●━━━━○ Nominated) — Best Picture 2027",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "barbell_race_track:oscars_best_picture_2027",
+      "member_count": 10,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "barbell_race_track",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SHEET 2 · WILD FORM B (BARBELL_RACE_TRACK)",
+        "tag": "OSCARS 2027",
+        "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
+        "subtitle": "Plots Wins % (green dot) and Nominated % (dark dot) on one 0–100% axis connected by a gap span",
+        "rows": [
+          {
+            "label": "The Odyssey (57% ●━━━○ 98%)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (17% ●━━━━━━○ 85%)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (15% ●━━━━━━━○ 95%)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (8% ●━━━━━━━○ 83%)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (2% ●━━━━━━━━○ 93%)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
+        ],
+        "count_line": "Single 0–100% axis per film · Connecting barbell span shows the nomination-to-trophy gap",
+        "footer": "When a film is not listed to win (I Play Rocky), only the nomination dot (49%) is plotted.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "barbell_race_track",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 6,
+      "item_key": "form-9-ballot-quadrant-map-best-picture",
+      "title": "Wild Form C · 2×2 Ballot Quadrant Board (Favorites, Safe Nominees, Likely & Bubble) — Best Picture 2027",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "ballot_quadrant_map:oscars_best_picture_2027",
+      "member_count": 10,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "ballot_quadrant_map",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SHEET 2 · WILD FORM C (BALLOT_QUADRANT_MAP)",
+        "tag": "OSCARS 2027",
+        "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
+        "subtitle": "2×2 spatial quadrant board classifying all 10 contenders by (Nominated %, Wins %)",
+        "rows": [
+          {
+            "label": "Trophy Favorites · The Odyssey (98%/57%), You Can See Everything (85%/17%), The Black Ball (95%/15%)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "Safe Nominees / Longshot Win · Dune: Part Three (83%/8%), Wild Horse Nine (93%/2%), Project Hail Mary (76%/1%)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Likely Nominees · The Debut (72%/1%), The Invite (71%/1%)",
+            "value": "1%",
+            "market_id": 6173044,
+            "probability": 0.01,
+            "rendered_percent": 1
+          },
+          {
+            "label": "On the Bubble · Artificial (58%/2%), I Play Rocky (49% / Not listed to win)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
+        ],
+        "count_line": "4 spatial quadrants: Trophy Favorites (3) · Safe Nominees (3) · Likely Nominees (2) · Bubble (2)",
+        "footer": "Spatial 2×2 matrix so a reader sees the shape of the entire 10-film race without scanning 20 bars.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "ballot_quadrant_map",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 7,
+      "item_key": "form-1-v2-paired-bars-with-art-best-picture",
+      "title": "Form 1 · Stacked Dual Bars with Poster (Full 10-Row Baseline) — Best Picture 2027",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "paired_bars_with_art:oscars_best_picture_2027",
+      "member_count": 10,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "paired_bars_with_art",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "FORM 1 · PAIRED_BARS_WITH_ART",
+        "tag": "OSCARS 2027",
+        "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
+        "subtitle": "Shape: two related numbers per subject + picture · Parts: pictures, bars, ticks",
+        "rows": [
+          {
+            "label": "The Odyssey (98% nom)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (85% nom)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (95% nom)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (83% nom)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% nom)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
+        ],
+        "count_line": "Top 10 films most likely to be nominated · 1 not listed to win (I Play Rocky: 49% nom)",
+        "footer": "Nominee % (average of two venues: #5165726 + #27988771); Winner #6173044 kept separate.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "paired_bars_with_art",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 8,
+      "item_key": "form-2-v2-poster-spotlight-tiles-best-picture",
+      "title": "Form 2 · Poster-Led 2-Up Spotlight Tiles — Best Picture 2027",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "poster_spotlight_tiles:oscars_best_picture_2027",
+      "member_count": 6,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "poster_spotlight_tiles",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "FORM 2 · POSTER_SPOTLIGHT_TILES",
+        "tag": "OSCARS 2027",
+        "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
+        "subtitle": "Shape: two related numbers per subject + picture · Parts: pictures, tiles, bars, ticks",
+        "rows": [
+          {
+            "label": "The Odyssey (98% nom)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (85% nom)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (95% nom)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (83% nom)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% nom)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
+        ],
+        "count_line": "6 poster tiles shown · I Play Rocky (49% nom · Not listed to win)",
+        "footer": "Poster-first grid where Wins % is the headline and Nominated % sits beside it.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "poster_spotlight_tiles",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 9,
+      "item_key": "form-3-v2-step-conversion-path-best-picture",
+      "title": "Form 3 · Path from Nominated to Wins (Nested Funnel Track) — Best Picture 2027",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "step_conversion_path:oscars_best_picture_2027",
+      "member_count": 8,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "step_conversion_path",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "FORM 3 · STEP_CONVERSION_PATH",
+        "tag": "OSCARS 2027",
+        "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
+        "subtitle": "Shape: a path with steps + picture · Parts: pictures, strips, bars, ticks",
+        "rows": [
+          {
+            "label": "The Odyssey (98% → 57%)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (85% → 17%)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (95% → 15%)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (83% → 8%)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% → 2%)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
+        ],
+        "count_line": "Light bar = Nominated % · Green bar = Wins % · Shows lock-vs-longshot gap",
+        "footer": "Each film's win bar nests inside its nomination bar on one shared 0–100% scale.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "step_conversion_path",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 5165726,
+        "name": "Oscar nominees: Best Picture — Wild Horse Nine",
+        "subject": "Wild Horse Nine",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.9275,
+        "rendered_percent": 93,
+        "resolution_date": "2027-01-23T00:00:00Z",
+        "rule_quote": "Resolves Yes if Wild Horse Nine is nominated for Best Picture."
+      }
+    },
+    {
+      "position": 10,
+      "item_key": "form-4-v2-leader-and-chasers-split-best-picture",
+      "title": "Form 4 · One Leader and Its Chasers — Best Picture 2027",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "leader_and_chasers_split:oscars_best_picture_2027",
+      "member_count": 7,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "leader_and_chasers_split",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "FORM 4 · LEADER_AND_CHASERS_SPLIT",
+        "tag": "OSCARS 2027",
+        "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
+        "subtitle": "Shape: one leader and its chasers + picture · Parts: pictures, tiles, strips, bars",
+        "rows": [
+          {
+            "label": "The Odyssey (98% nom)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "You Can See Everything (85% nom)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "The Black Ball (95% nom)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "Dune: Part Three (83% nom)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "Wild Horse Nine (93% nom)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          }
+        ],
+        "count_line": "Leader hero when #1 >= 40% to win · Compact two-number chaser strip below",
+        "footer": "Selected automatically when one contender commands >= 40% of the winner market.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "leader_and_chasers_split",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 11,
+      "item_key": "form-5-v2-sports-playoffs-to-title-nhl",
+      "title": "Form 5 · Non-Oscars Proof: NHL Make Playoffs % beside Win Stanley Cup % (All 9 Clubs >= 5%)",
+      "source": "kalshi",
+      "category": "hockey",
+      "template_key": "paired_bars_with_art:nhl_playoffs_and_cup_2027",
+      "member_count": 9,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "paired_bars_with_art",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "FORM 5 · FORM TRAVELS TO SPORTS",
+        "tag": "NHL 2026–27",
+        "title": "Carolina leads the Stanley Cup race, with all 9 clubs at 5%+ to win",
+        "subtitle": "Shape: two related numbers per subject + picture · All 9 clubs at 5%+ (ties broken by playoff %)",
+        "rows": [
+          {
+            "label": "Carolina Hurricanes (94% playoffs)",
+            "value": "13%",
+            "market_id": 52755659,
+            "probability": 0.128,
+            "rendered_percent": 13
+          },
+          {
+            "label": "Colorado Avalanche (93% playoffs)",
+            "value": "10%",
+            "market_id": 52755659,
+            "probability": 0.1,
+            "rendered_percent": 10
+          },
+          {
+            "label": "Minnesota Wild (96% playoffs)",
+            "value": "9%",
+            "market_id": 52755659,
+            "probability": 0.09,
+            "rendered_percent": 9
+          },
+          {
+            "label": "Edmonton Oilers (91% playoffs)",
+            "value": "9%",
+            "market_id": 52755659,
+            "probability": 0.09,
+            "rendered_percent": 9
+          },
+          {
+            "label": "New Jersey Devils (83% playoffs)",
+            "value": "7%",
+            "market_id": 52755659,
+            "probability": 0.071,
+            "rendered_percent": 7
+          }
+        ],
+        "count_line": "9 NHL contenders at 5%+ paired (#63068142 Make Playoffs + #52755659 Win Cup · incl. Dallas Stars 84%/5% & Lightning 82%/5%)",
+        "footer": "Once playoff berths clinch or eliminate, the first bar becomes ✓ or ✗ just like nominations.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "paired_bars_with_art",
+        "selection_type": "threshold_n"
+      },
+      "best_single": {
+        "id": 52755659,
+        "name": "2026-27 Stanley Cup® Final Winner — Carolina Hurricanes",
+        "subject": "Carolina Hurricanes",
+        "source": "kalshi",
+        "category": "hockey",
+        "yes_probability": 0.128,
+        "rendered_percent": 13,
+        "resolution_date": "2027-06-30T00:00:00Z",
+        "rule_quote": "Resolves Yes if the Carolina Hurricanes win the 2026-27 Stanley Cup."
+      }
+    },
+    {
+      "position": 12,
+      "item_key": "form-6-v2-post-nominations-settled-gate",
+      "title": "Form 6 · Post-Nominations State: ✓ / ✗ Replaces the First Bar ('Settled Means Settled')",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "settled_gate_after_nominations:oscars_best_picture_2027",
+      "member_count": 7,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "settled_gate_after_nominations",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "FORM 6 · SETTLED_GATE_AFTER_NOMINATIONS",
+        "tag": "ILLUSTRATION: NOMINATIONS AREN'T OUT",
+        "title": "Best Picture after nominations: ✓ in the ten vs ✗ missed",
+        "subtitle": "Illustration: nominations aren't out · Shape: two related numbers per subject, step 1 settled",
+        "rows": [
+          {
+            "label": "✓ The Odyssey (Nominated)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "✓ You Can See Everything (Nominated)",
+            "value": "17%",
+            "market_id": 6173044,
+            "probability": 0.165,
+            "rendered_percent": 17
+          },
+          {
+            "label": "✓ The Black Ball (Nominated)",
+            "value": "15%",
+            "market_id": 6173044,
+            "probability": 0.145,
+            "rendered_percent": 15
+          },
+          {
+            "label": "✓ Dune: Part Three (Nominated)",
+            "value": "8%",
+            "market_id": 6173044,
+            "probability": 0.075,
+            "rendered_percent": 8
+          },
+          {
+            "label": "✓ Wild Horse Nine (Nominated)",
+            "value": "2%",
+            "market_id": 6173044,
+            "probability": 0.015,
+            "rendered_percent": 2
+          },
+          {
+            "label": "✗ Artificial (Not nominated · was 58%)",
+            "value": "0%",
+            "market_id": 6173044,
+            "probability": 0.0,
+            "rendered_percent": 0
+          },
+          {
+            "label": "✗ I Play Rocky (Not nominated · was 49%)",
+            "value": "0%",
+            "market_id": 6173044,
+            "probability": 0.0,
+            "rendered_percent": 0
+          }
+        ],
+        "count_line": "Illustration: nominations aren't out · First bar becomes ✓ or ✗ once step 1 resolves",
+        "footer": "Settled means settled: once nominations are announced, no stale nomination % bar remains.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "settled_gate_after_nominations",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 13,
+      "item_key": "container-a-v2-alternating-form-magazine",
+      "title": "Oscars Container A · Magazine Rhythm (Adjacent Sections Never Repeat a Form)",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "container:oscars_alternating_magazine",
+      "member_count": 4,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "container_alternating_magazine",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "CONTAINER OPTION A · #12523",
+        "tag": "OSCARS 2027 HUB",
+        "title": "Oscars 2027 — Magazine Rhythm (4 distinct section forms)",
+        "subtitle": "Best Picture (Leader + Chasers) → Best Director (Headshot Tiles) → Best Actress (Step Funnel) → Animated (Poster Strip)",
+        "rows": [
+          {
+            "label": "Best Picture · The Odyssey (98% nom / 57% win)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "Best Director · Christopher Nolan (99% nom / 56% win)",
+            "value": "56%",
+            "market_id": 5869747,
+            "probability": 0.563,
+            "rendered_percent": 56
+          },
+          {
+            "label": "Best Actress · Julianne Moore (98% nom / 75% win)",
+            "value": "75%",
+            "market_id": 5869748,
+            "probability": 0.745,
+            "rendered_percent": 75
+          },
+          {
+            "label": "Best Animated · Wildwood (97% nom / 86% win)",
+            "value": "86%",
+            "market_id": 58492239,
+            "probability": 0.859,
+            "rendered_percent": 86
+          }
+        ],
+        "count_line": "4 categories · 4 visual forms chosen so no two adjacent sections look alike",
+        "footer": "Films show vertical posters; directors and actors show verified TMDB circular headshots.",
+        "relations": [
+          "container_form_diversity"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "container_alternating_magazine",
+        "selection_type": "complete_group"
+      },
+      "best_single": {
+        "id": 6173044,
+        "name": "Oscar Winner: Best Picture — The Odyssey",
+        "subject": "The Odyssey",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.565,
+        "rendered_percent": 57,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 14,
+      "item_key": "container-b-v2-shape-driven-contrast",
+      "title": "Oscars Container B · Shape-Driven Contrast (Runaway Favorites vs Open Duels vs Top-5 Expandable Board)",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "container:oscars_shape_driven_contrast",
+      "member_count": 4,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "container_shape_driven_contrast",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "CONTAINER OPTION B · #12523",
+        "tag": "OSCARS 2027 HUB",
+        "title": "Oscars 2027 — Shape-Driven Contrast",
+        "subtitle": "Runaway Locks (Actress 75%, Animated 86%) → Three-Way Actor Duel (42% / 22% / 17%) → Top-5 Expandable Best Picture Board",
+        "rows": [
+          {
+            "label": "Runaway Lock · Wildwood (Animated 86% win / 97% nom)",
+            "value": "86%",
+            "market_id": 58492239,
+            "probability": 0.859,
+            "rendered_percent": 86
+          },
+          {
+            "label": "Runaway Lock · Julianne Moore (Actress 75% win / 98% nom)",
+            "value": "75%",
+            "market_id": 5869748,
+            "probability": 0.745,
+            "rendered_percent": 75
+          },
+          {
+            "label": "Open Duel · Best Actor (Malkovich 42% vs Scott 22% vs Damon 17%)",
+            "value": "42%",
+            "market_id": 5869749,
+            "probability": 0.424,
+            "rendered_percent": 42
+          },
+          {
+            "label": "10-Slot Field · Best Picture (The Odyssey 57% + top 5 with expander)",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          }
+        ],
+        "count_line": "Form picked from the distribution shape: >=70% leader gets a lock card; 3-way race gets a duel strip",
+        "footer": "A reader immediately sees which awards are already decided and which are live races.",
+        "relations": [
+          "container_form_diversity"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "container_shape_driven_contrast",
+        "selection_type": "complete_group"
+      },
+      "best_single": {
+        "id": 5869749,
+        "name": "Oscar Winner: Best Actor — John Malkovich",
+        "subject": "John Malkovich",
+        "source": "kalshi",
+        "category": "entertainment",
+        "yes_probability": 0.424,
+        "rendered_percent": 42,
+        "resolution_date": "2027-03-15T00:00:00Z",
+        "rule_quote": "Resolves Yes if John Malkovich wins Best Actor at the 99th Academy Awards."
+      }
+    },
+    {
+      "position": 15,
+      "item_key": "container-c-v2-two-act-ballot",
+      "title": "Oscars Container C · Two-Act Ballot (90%+ Nomination Locks Strip + Film vs Acting Category Forms)",
+      "source": "kalshi",
+      "category": "entertainment",
+      "template_key": "container:oscars_two_act_ballot",
+      "member_count": 5,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "container_two_act_ballot",
+      "as_of": "2026-11-11T06:15:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "CONTAINER OPTION C · #12523",
+        "tag": "OSCARS 2027 HUB",
+        "title": "Oscars 2027 — Two-Act Ballot (Nomination Locks + Category Forms)",
+        "subtitle": "Top rail: 90%+ nomination locks across categories · Below: Film posters vs Acting/Directing headshots",
+        "rows": [
+          {
+            "label": "Lock Rail · Nolan 99%, Odyssey 98%, Moore 98%, Wildwood 97%, Malkovich 96%, The Black Ball 95%",
+            "value": "99%",
+            "market_id": 5601024,
+            "probability": 0.985,
+            "rendered_percent": 99
+          },
+          {
+            "label": "Best Picture (Poster Tile Grid) · The Odyssey 57% win / 98% nom",
+            "value": "57%",
+            "market_id": 6173044,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "Best Director (Headshot Step Conversion Path) · Christopher Nolan 56% win / 99% nom",
+            "value": "56%",
+            "market_id": 5869747,
+            "probability": 0.563,
+            "rendered_percent": 56
+          }
+        ],
+        "count_line": "Separates 'Who gets nominated in January?' from 'Who takes home the statue in March?'",
+        "footer": "On nomination morning, the top rail flips to ✓ Confirmed Nominees and Snubs.",
+        "relations": [
+          "container_form_diversity"
+        ],
         "level": "proposed",
         "as_of_label": "as of 2026-11-11",
         "proposed_kind": "container_two_act_ballot",
