@@ -85,10 +85,15 @@ nonisolated struct GameOrMarketQuery10873: EntityStringQuery {
         try await GameOrMarketCatalog10873.search(string)
     }
 
-    /// No suggestions. Saved pins belong to whoever is signed in, and a list
-    /// built from them could outlive a sign-out, so nothing private is offered
-    /// here. The reader names what they want.
-    func suggestedEntities() async throws -> [GameOrMarketEntity10873] { [] }
+    /// #10873 — what Search offers before the reader types: the top answer to
+    /// each of today's trending searches (`TrendingSuggestions10873`). Public
+    /// rows only; saved pins belong to whoever is signed in and a list built from
+    /// them could outlive a sign-out, so nothing private is offered here. Without
+    /// these, "Which game or market?" started from a tile in Spotlight or the
+    /// Shortcuts app offered only Cancel (Nov 9).
+    func suggestedEntities() async throws -> [GameOrMarketEntity10873] {
+        await TrendingSuggestions10873.entities()
+    }
 }
 
 /// Builds entities from the app's existing search and detail reads.
