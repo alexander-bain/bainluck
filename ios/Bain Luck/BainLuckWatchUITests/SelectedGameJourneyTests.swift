@@ -30,6 +30,7 @@ final class SelectedGameJourneyTests: XCTestCase {
         XCTAssertTrue(probability.waitForExistence(timeout: 15), "Selection did not open a game")
         XCTAssertTrue(probability.label.contains("San Francisco Giants"))
         XCTAssertTrue(probability.label.contains("64%"))
+        try assertQualifierKeepsWholeWords(probability)
         let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
         XCTAssertTrue(state.waitForExistence(timeout: 15))
         let receivedSize = try XCTUnwrap(state.value as? String)
@@ -89,6 +90,24 @@ final class SelectedGameJourneyTests: XCTestCase {
         XCTAssertTrue(app.frame.contains(probability.frame), "The whole named probability group must fit in the visible screen")
         capture(app, name: "Changed selection")
         app.terminate()
+    }
+
+    /// #12420: "Win chance" must break only between its words, never "Win / chan / ce".
+    /// The fixture build reports the qualifier's laid-out width and its widest word's;
+    /// a qualifier narrower than its widest word has broken that word across lines.
+    @MainActor
+    private func assertQualifierKeepsWholeWords(_ probability: XCUIElement) throws {
+        let measured = NSPredicate(format: "value MATCHES %@",
+                                   "qualifier [1-9][0-9]*\\.[0-9], widest word [1-9][0-9]*\\.[0-9]")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: measured, object: probability)],
+                                      timeout: 10), .completed,
+                       "No measured qualifier receipt: \(String(describing: probability.value))")
+        let receipt = try XCTUnwrap(probability.value as? String)
+        let widths = receipt.split(whereSeparator: { !"0123456789.".contains($0) }).compactMap { Double($0) }
+        XCTAssertEqual(widths.count, 2, receipt)
+        guard widths.count == 2 else { return }
+        XCTAssertGreaterThanOrEqual(widths[0] + 0.5, widths[1], "\"Win chance\" broke inside a word: \(receipt)")
+        print("WATCH_UI_QUALIFIER_WHOLE_WORDS=\(receipt)")
     }
 
     @MainActor
