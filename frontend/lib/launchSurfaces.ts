@@ -44,11 +44,13 @@
 // So the claim is no longer load-bearing on its own. It is true because
 // `predictionDoorsAreGated8187.test.ts` SCANS `app/` and `components/` for any
 // navigation into the predictions route family and fails on one that does not
-// read this constant, and `webQuizSwitchedOff12601.test.tsx` (#12601) verifies
-// that `/daily` itself redirects to `/discover` and renders no quiz when this
-// constant is `false`, alongside every Discover quiz surface (`DailyChallengeCard`,
-// `GuessCard`, `ResolutionGroup`, `ResolutionCard`, `ChallengeModal`, and the
-// `/discover/stats` header link).
+// read this constant, and `webQuizSwitchedOff12601.test.tsx` (#12601) scans
+// every route page and component across `app/` and `components/` to ensure
+// `/daily`, `/challenge/[id]`, `/discover/scorecard`, `/discover/stats`, and
+// every Discover quiz surface (`DailyChallengeCard`, `GuessCard`,
+// `ResolutionGroup`, `ResolutionCard`, `ChallengeModal`, and the
+// `/discover/stats` header link) are gated on this constant (while `/play`, the
+// unlisted kids' rating game, stays on by design).
 //
 // Restoring: flip this to `true`. The scans above are what make that enough.
 export const CHALLENGE_SURFACES_ENABLED = false;
