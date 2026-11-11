@@ -162,6 +162,27 @@ function SiblingCell({
               )}
             </span>
           )}
+          {cell.wilson95 && cell.gradedK !== undefined && cell.gradedK === cell.n && (
+            <span className="mt-0.5 block text-text-tertiary" data-sibling-wilson-ceiling="">
+              {"The interval's low end is "}
+              <Figure
+                truth={truth}
+                value={`${cell.wilson95[0]}%`}
+                className="text-text-secondary"
+              >
+                {`${cell.wilson95[0].toFixed(1)}%`}
+              </Figure>
+              {", which is what "}
+              <Figure
+                truth={truth}
+                value={String(cell.n)}
+                className="text-text-secondary"
+              >
+                {cell.n.toLocaleString("en-US")}
+              </Figure>
+              {" cards from one grader can show."}
+            </span>
+          )}
         </>
       )}
     </td>
@@ -247,8 +268,9 @@ export default function SiblingFamilyExamSection({
       >
         <p className="flex flex-wrap items-center gap-2 text-caption-strong text-text-primary">
           <ResultChip result={exam.result} />
-          {exam.licences.sibling_family !== "pass" &&
-            "It may not publish grouped sibling-market cards on its own yet, so every candidate waits for human grading."}
+          {exam.licences.sibling_family === "pass" && exam.result === "pass"
+            ? "All four tests passed; verified grouped sibling-market cards publish on Discover."
+            : "It may not publish grouped sibling-market cards on its own yet, so every candidate waits for human grading."}
         </p>
         {passed.length > 0 && (
           <p

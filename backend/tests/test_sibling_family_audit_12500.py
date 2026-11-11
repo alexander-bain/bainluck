@@ -306,3 +306,115 @@ def test_all_twenty_two_deck_sibling_family_cards_pass_caption_and_row_audit() -
             f"Position {item['position']} ({item['item_key']}) rendered 'No number yet': {rows}"
         )
 
+
+def test_near_identical_sibling_families_never_sit_together_in_discover_feed() -> None:
+    from app.utils.roundup_containers import (
+        _is_near_identical_sibling_family,
+        insert_roundup_feed_items,
+    )
+
+    base_items = [
+        {
+            "type": "futures",
+            "score": float(90 - i),
+            "headline": f"Market {i}",
+            "data": {"id": 1000 + i, "name": f"Market {i}", "status": "open"},
+        }
+        for i in range(18)
+    ]
+
+    trump_meet = {
+        "type": "bundle",
+        "score": 82.0,
+        "headline": "Who will Trump meet with by December 31, 2026?",
+        "data": {
+            "id": "proposed-polymarket-will-trump-meet-with-candidates",
+            "title": "Who will Trump meet with by December 31, 2026?",
+            "collection_ref": {
+                "slug": "proposed-polymarket-will-trump-meet-with-candidates",
+                "href": "/collections/proposed-polymarket-will-trump-meet-with-candidates",
+                "name": "Who will Trump meet with by December 31, 2026?",
+            },
+            "roundup": {
+                "kicker": "POLITICS · DEC 31",
+                "tag": "POLITICS",
+                "relations": ["same_measure", "same_window", "sibling"],
+                "rows": [
+                    {"label": "Xi Jinping", "value": "66%"},
+                    {"label": "Kim Jong Un", "value": "37%"},
+                    {"label": "Benjamin Netanyahu", "value": "35%"},
+                    {"label": "Nicolás Maduro", "value": "29%"},
+                ],
+            },
+        },
+    }
+    trump_speak = {
+        "type": "bundle",
+        "score": 80.0,
+        "headline": "Who will Trump speak to by November 30, 2026?",
+        "data": {
+            "id": "proposed-polymarket-will-trump-speak-to-candidates",
+            "title": "Who will Trump speak to by November 30, 2026?",
+            "collection_ref": {
+                "slug": "proposed-polymarket-will-trump-speak-to-candidates",
+                "href": "/collections/proposed-polymarket-will-trump-speak-to-candidates",
+                "name": "Who will Trump speak to by November 30, 2026?",
+            },
+            "roundup": {
+                "kicker": "POLITICS · NOV 30",
+                "tag": "POLITICS",
+                "relations": ["same_measure", "same_window", "sibling"],
+                "rows": [
+                    {"label": "Xi Jinping", "value": "48%"},
+                    {"label": "Vladimir Putin", "value": "41%"},
+                    {"label": "Nicolás Maduro", "value": "31%"},
+                    {"label": "Benjamin Netanyahu", "value": "27%"},
+                ],
+            },
+        },
+    }
+    nhl_points = {
+        "type": "bundle",
+        "score": 79.0,
+        "headline": "Who will record 100+ points?",
+        "data": {
+            "id": "proposed-polymarket-will-contenders-record-100-points",
+            "title": "Who will record 100+ points?",
+            "collection_ref": {
+                "slug": "proposed-polymarket-will-contenders-record-100-points",
+                "href": "/collections/proposed-polymarket-will-contenders-record-100-points",
+                "name": "Who will record 100+ points?",
+            },
+            "roundup": {
+                "kicker": "NHL · APR 30",
+                "tag": "NHL",
+                "relations": ["same_measure", "same_window", "sibling"],
+                "rows": [
+                    {"label": "Nathan MacKinnon", "value": "88%"},
+                    {"label": "Connor McDavid", "value": "85%"},
+                    {"label": "Nikita Kucherov", "value": "79%"},
+                ],
+            },
+        },
+    }
+
+    assert _is_near_identical_sibling_family(trump_meet, trump_speak) is True
+    assert _is_near_identical_sibling_family(trump_meet, nhl_points) is False
+
+    out = insert_roundup_feed_items(
+        base_items,
+        [trump_speak, trump_meet, nhl_points],
+        seat_floor=10,
+        page_window=20,
+    )
+    bundle_ids = [
+        it["data"]["id"] for it in out if it.get("type") == "bundle"
+    ]
+    # Higher-scored trump_meet takes the seat while near-identical trump_speak is suppressed;
+    # unrelated nhl_points also takes a seat.
+    assert bundle_ids == [
+        "proposed-polymarket-will-trump-meet-with-candidates",
+        "proposed-polymarket-will-contenders-record-100-points",
+    ]
+
+

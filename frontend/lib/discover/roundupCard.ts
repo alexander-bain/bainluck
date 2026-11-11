@@ -54,6 +54,7 @@ export interface RoundupRowModel {
 export interface RoundupCardModel {
   kicker: string;
   title: string;
+  subtitle?: string | null;
   tag: string | null;
   footer: string;
   countLine: string | null;
@@ -101,8 +102,9 @@ export function buildRoundupCardModel(
     isYardstickPair || upperKicker.startsWith("HEAD TO HEAD");
   const isWeekEvents =
     upperKicker.endsWith("THIS WEEK") || upperKicker.endsWith("THIS WEEKEND");
+  const isCompleteGroup = Boolean(contract.complete_group);
   const minRows = isTwoRowPair || isWeekEvents ? 2 : ROUNDUP_MIN_ROWS;
-  const maxRows = isTwoRowPair ? 2 : isWeekEvents ? 4 : ROUNDUP_MAX_ROWS;
+  const maxRows = isTwoRowPair ? 2 : isWeekEvents ? 4 : isCompleteGroup ? 8 : ROUNDUP_MAX_ROWS;
   if (served.length < minRows || served.length > maxRows) {
     return { model: null, refusal: "row_count" };
   }
@@ -214,6 +216,7 @@ export function buildRoundupCardModel(
     model: {
       kicker,
       title: headline,
+      subtitle: text(contract.subtitle) || null,
       tag: text(contract.tag) || null,
       footer,
       countLine: text(contract.count_line) || null,

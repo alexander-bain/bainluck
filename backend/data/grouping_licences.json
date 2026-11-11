@@ -1,6 +1,6 @@
 {
   "schema": "grouping-licences/1",
-  "updated_at": "2026-11-08",
+  "updated_at": "2026-11-10",
   "ruling": "https://github.com/alexander-bain/bainluck/issues/12221",
   "kinds": {
     "subject_sequence": {
@@ -21,14 +21,14 @@
     },
     "sibling_family": {
       "kind": "sibling_family",
-      "status": "HELD",
+      "status": "PASS",
       "mode": "model_proposer",
       "relations": [
         "sibling_of",
         "same_measure"
       ],
       "level": "member",
-      "exam_as_of": "2026-11-08",
+      "exam_as_of": "2026-11-10",
       "exam_receipt": "docs/discover/sibling-family-exam-2026-11.md",
       "suspended_at": null,
       "suspended_by_card_slug": null,

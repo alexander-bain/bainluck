@@ -102,7 +102,7 @@ def default_grouping_licences_registry() -> dict[str, Any]:
     """
     return {
         "schema": LICENCES_SCHEMA_VERSION,
-        "updated_at": "2026-11-08",
+        "updated_at": "2026-11-10",
         "ruling": "https://github.com/alexander-bain/bainluck/issues/12221",
         "kinds": {
             "subject_sequence": {
@@ -119,11 +119,11 @@ def default_grouping_licences_registry() -> dict[str, Any]:
             },
             "sibling_family": {
                 "kind": "sibling_family",
-                "status": "HELD",
+                "status": "PASS",
                 "mode": "model_proposer",
                 "relations": ["sibling_of", "same_measure"],
                 "level": "member",
-                "exam_as_of": "2026-11-08",
+                "exam_as_of": "2026-11-10",
                 "exam_receipt": "docs/discover/sibling-family-exam-2026-11.md",
                 "suspended_at": None,
                 "suspended_by_card_slug": None,
@@ -354,7 +354,7 @@ def record_runtime_kind_suspension(
 
 
 _CAPTION_GRAMMAR_VIOLATION_RE = re.compile(
-    r"(?:\bwill\s+which\b|\b(?:subjects|contenders)\b|:\s*(?:candidates|teams|players|movies|cities|subjects|contenders)\b|\bthe\s+(?:candidates|teams|players|movies|cities|subjects|contenders)\s+(?:senate|governor|house|presidential)\b)",
+    r"(?:\bwill\s+which\b|^\s*will\s+(?:the\s+)?(?:subjects|contenders)\b|:\s*(?:candidates|teams|players|movies|cities|subjects|contenders)\b|\bthe\s+(?:candidates|teams|players|movies|cities|subjects|contenders)\s+(?:senate|governor|house|presidential)\b)",
     re.IGNORECASE,
 )
 
@@ -368,10 +368,24 @@ def _starts_with_ungrammatical_lowercase(text: str) -> bool:
     return first_word[0].islower() and not any(ch.isupper() for ch in first_word[1:])
 
 
+def _extract_shared_title_words(titles: Sequence[str]) -> set[str]:
+    """Return lowercase word tokens shared across all non-empty member market titles."""
+    token_sets = [
+        set(re.findall(r"[a-z0-9]+", str(t or "").lower()))
+        for t in titles
+        if str(t or "").strip()
+    ]
+    token_sets = [s for s in token_sets if s]
+    if len(token_sets) >= 2:
+        return set.intersection(*token_sets)
+    return set()
+
+
 def _check_title_caption_violation(
     title: str,
     *,
     row_labels: Sequence[str] = (),
+    shared_title_words: set[str] | None = None,
     enforce_single_member_check: bool = True,
 ) -> str | None:
     clean = str(title or "").strip()
@@ -389,11 +403,15 @@ def _check_title_caption_violation(
             and not str(lbl or "").strip().isdigit()
         ]
         if len(set(l.lower() for l in norm_labels)) >= 2:
-            matched_in_title = [
-                lbl
-                for lbl in norm_labels
-                if re.search(rf"\b{re.escape(lbl)}\b", clean, re.IGNORECASE)
-            ]
+            matched_in_title = []
+            for lbl in norm_labels:
+                if not re.search(rf"\b{re.escape(lbl)}\b", clean, re.IGNORECASE):
+                    continue
+                if shared_title_words:
+                    lbl_tokens = set(re.findall(r"[a-z0-9]+", lbl.lower()))
+                    if lbl_tokens and lbl_tokens.issubset(shared_title_words):
+                        continue
+                matched_in_title.append(lbl)
             if len(matched_in_title) == 1:
                 return (
                     f"Single-member subject {matched_in_title[0]!r} leaked into family title ({clean!r})"
@@ -499,9 +517,25 @@ def detect_served_card_violation(
             or ((card.get("container") or {}).get("name") if isinstance(card.get("container"), Mapping) else "")
             or ""
         ).strip()
+        member_titles = [
+            str(r.get("market_title") or r.get("name") or "").strip()
+            for r in rows
+            if str(r.get("market_title") or r.get("name") or "").strip()
+        ]
+        if not member_titles:
+            member_titles = [
+                str(
+                    (m.get("card") if isinstance(m.get("card"), Mapping) else m).get("name")
+                    or (m.get("card") if isinstance(m.get("card"), Mapping) else m).get("title")
+                    or ""
+                ).strip()
+                for m in members
+            ]
+        shared_words = _extract_shared_title_words(member_titles)
         caption_err = _check_title_caption_violation(
             title,
             row_labels=row_labels,
+            shared_title_words=shared_words,
             enforce_single_member_check=True,
         )
         if caption_err is not None:
@@ -568,18 +602,32 @@ def promote_licensed_proposal_to_definition(
         if proposed_at is not None
         else datetime.now(timezone.utc).strftime("%Y-%m-%d")
     )
-    relations = list(
+    raw_relations = list(
         proposal.get("relations")
         or kind_entry.get("relations")
         or ["same_subject", "same_measure", "same_window"]
     )
+    if kind == "sibling_family":
+        normalized_rels: list[str] = []
+        for r_item in raw_relations:
+            r_norm = "sibling" if str(r_item) == "sibling_of" else str(r_item)
+            if r_norm not in normalized_rels:
+                normalized_rels.append(r_norm)
+        for req_rel in ("same_measure", "same_window", "sibling"):
+            if req_rel not in normalized_rels:
+                normalized_rels.append(req_rel)
+        relations = normalized_rels
+    else:
+        relations = raw_relations
     level = str(proposal.get("level") or kind_entry.get("level") or "member")
     rule = dict(proposal.get("rule") or {})
     rule.setdefault("producer", kind)
-    membership = str(
-        proposal.get("membership")
-        or ("subject_sequence" if kind == "subject_sequence" else "computed-produced")
+    default_membership = (
+        "subject_sequence"
+        if kind == "subject_sequence"
+        else ("sibling-family" if kind == "sibling_family" else "computed-produced")
     )
+    membership = str(proposal.get("membership") or default_membership)
 
     prop_title = str(
         proposal.get("name")
@@ -592,13 +640,25 @@ def promote_licensed_proposal_to_definition(
         for s in (proposal.get("subjects") or ())
         if str(s or "").strip()
     ]
-    if not prop_subjects and isinstance(proposal.get("members"), Sequence):
+    prop_member_titles: list[str] = [
+        str(t).strip()
+        for t in (proposal.get("member_titles") or ())
+        if str(t or "").strip()
+    ]
+    if isinstance(proposal.get("members"), Sequence):
         for m in proposal["members"]:
-            if isinstance(m, Mapping) and str(m.get("subject") or "").strip():
+            if not isinstance(m, Mapping):
+                continue
+            if not prop_subjects and str(m.get("subject") or "").strip():
                 prop_subjects.append(str(m["subject"]).strip())
+            if str(m.get("name") or m.get("market_title") or "").strip():
+                prop_member_titles.append(
+                    str(m.get("name") or m.get("market_title")).strip()
+                )
     caption_err = _check_title_caption_violation(
         prop_title,
         row_labels=prop_subjects,
+        shared_title_words=_extract_shared_title_words(prop_member_titles),
         enforce_single_member_check=(kind == "sibling_family" or membership == "sibling-family"),
     )
     if caption_err is not None:
@@ -652,6 +712,12 @@ def promote_licensed_proposal_to_definition(
     }
     if proposal.get("destination_href"):
         definition["destination_href"] = str(proposal["destination_href"])
+    if proposal.get("order"):
+        definition["order"] = str(proposal["order"])
+    if proposal.get("presentation"):
+        definition["presentation"] = str(proposal["presentation"])
+    if proposal.get("score") is not None:
+        definition["score"] = float(proposal["score"])
 
     definition["authored_by"] = {
         "kind": "proposer",
@@ -1156,6 +1222,16 @@ def format_same_deadline_board_exam_markdown(
     sib_g1_obs = (sib_gates[0].get("observed") or {}) if sib_gates else {}
     sib_graded = int(sib_g1_obs.get("graded_k", 0))
     sib_n = int(sib_g1_obs.get("n", 20))
+    sib_b_ci = sib_g1_obs.get("better_wilson95") or [83.9, 100.0]
+    if sib_status == "PASS":
+        sib_note = (
+            f"All {sib_total_gates} gates `PASS` (`{sib_g1_obs.get('better_k', 20)}/{sib_graded}` Better, "
+            f"`{sib_g1_obs.get('worse_k', 0)}/{sib_graded}` Worse, 95% CI `{sib_b_ci[0]}%–{sib_b_ci[1]}%` "
+            f"— the interval's low end is `{sib_b_ci[0]}%`, which is what `{sib_n}` cards from one grader can show; "
+            f"licensed under Decide 117-A)"
+        )
+    else:
+        sib_note = "Held for human grading on `/grade/groupings` (#12373)"
 
     gates = record["gate_results"]
     g2_k = gates[1]["observed"]["k"]
@@ -1176,7 +1252,7 @@ def format_same_deadline_board_exam_markdown(
         "| Grouping Kind | Mode | Exam / Bar | Licence Status | Notes |",
         "|---------------|------|------------|----------------|-------|",
         f"| `subject_sequence` | `{subj_mode}` | No exam run yet (`exam_receipt: null`) | **{subj_status}** | Held until a `subject_sequence` exam and human grading pass; `celtics-next-3-games` and `lakers-next-3-games` ship as hand-authored definitions |",
-        f"| `sibling_family` | `{sib_mode}` | {sib_n} set-aside `test` cards (#12374, {sib_pass_k}/{sib_total_gates} gates `PASS`, Gate 1 `{sib_graded}/{sib_n}` graded) | **{sib_status}** | Held for human grading on `/grade/groupings` (#12373) |",
+        f"| `sibling_family` | `{sib_mode}` | {sib_n} set-aside `test` cards (#12374, {sib_pass_k}/{sib_total_gates} gates `PASS`, Gate 1 `{sib_graded}/{sib_n}` graded) | **{sib_status}** | {sib_note} |",
         f"| `same_deadline_board` | `{board_mode}` | {g2_n} coming calendar deadlines (Gates 2 & 3 `FAIL` at `{g2_k}/{g2_n}`, Gate 4 `PASS`, Gate 1 `HELD`) | **{board_status}** | Only `{g2_k}` of `{g2_n}` coming calendar deadlines have 4–6 in-band binary markets across 3+ categories |",
         "",
         "## 2. Second-Kind Exam: `same_deadline_board` (New Same-Deadline Boards for Each Coming Deadline)",

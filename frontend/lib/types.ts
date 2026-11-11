@@ -2308,6 +2308,8 @@ export type FeedRoundupRow = {
 export interface FeedRoundupContract {
   kicker: string;
   tag?: string | null;
+  subtitle?: string | null;
+  complete_group?: boolean;
   footer: string;
   count_line?: string | null;
   relations?: string[];
