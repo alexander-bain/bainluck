@@ -71,6 +71,21 @@ _FRESH_MARKET_HISTORY_INT_PARAMS = ("outcome_id", "hours", "top_n")
 FRESH_GAME_MARKET_RATE_LIMIT = "60/minute"
 _FRESH_GAME_MARKET_MAX = 60
 _FRESH_GAME_MARKET_PATH = r"/api/events/[1-9][0-9]*/game-markets"
+# #11937: the grading pages (/grade, /grade/groupings) sign in with the admin's
+# Firebase ID token, which the limiter cannot verify locally, so a grade save
+# keyed by address into the anonymous bucket that every reader page and lane
+# check from that address spends. Alex was stopped at card 27 that way. A
+# grading request with a bearer gets its own bounded bucket per caller key; the
+# route's own auth still decides whether it is allowed at all.
+GRADING_RATE_LIMIT = "120/minute"
+_GRADING_MAX = 120
+_GRADING_PATH_PREFIX = "/api/admin/ranking/"
+# #11937: the liveness probe (Speed's restart guard reads it every minute) has
+# its own bounded bucket, so reader traffic from the same address can't 429 it.
+# Bounded, not exempt: it opens a database connection on every call.
+HEALTH_RATE_LIMIT = "120/minute"
+_HEALTH_MAX = 120
+_HEALTH_PATH = "/api/health"
 
 # Queue 315 Item 1: /api/admin is rate limited, not exempt. This is ONE SHARED
 # BUCKET per token value (P3) — Alex's browser, every agent lane, `/health`, the
@@ -269,6 +284,8 @@ _fresh_event_limit = None
 _fresh_feed_price_limit = None
 _fresh_market_limit = None
 _fresh_game_market_limit = None
+_grading_limit = None
+_health_limit = None
 
 
 def _is_fresh_event_read(request: Request) -> bool:
@@ -367,6 +384,22 @@ def _get_fresh_game_market_limit():
         from limits import parse as parse_limit
         _fresh_game_market_limit = parse_limit(FRESH_GAME_MARKET_RATE_LIMIT)
     return _fresh_game_market_limit
+
+
+def _get_grading_limit():
+    global _grading_limit
+    if _grading_limit is None:
+        from limits import parse as parse_limit
+        _grading_limit = parse_limit(GRADING_RATE_LIMIT)
+    return _grading_limit
+
+
+def _get_health_limit():
+    global _health_limit
+    if _health_limit is None:
+        from limits import parse as parse_limit
+        _health_limit = parse_limit(HEALTH_RATE_LIMIT)
+    return _health_limit
 
 
 def _get_limits():
@@ -719,6 +752,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     - Fresh event detail/history GETs: separate shared 180/minute caller bucket
     - Fresh feed price-card GETs: separate shared 60/minute caller bucket
     - Admin paths with the admin token: 300/minute keyed by a hash of that token
+    - Grading paths (/api/admin/ranking/) with any other bearer: 120/minute in
+      their own bucket per caller key (#11937)
+    - /api/health: 120/minute in its own bucket per caller key (#11937)
     - Addresses in ``RATE_LIMIT_TRUSTED_IPS``: 600/minute, keyed separately (D70)
     - Docs / health paths: exempt
 
@@ -799,6 +835,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             key = _get_client_ip(request)
             max_requests = _ANON_MAX
 
+        # #11937: grading saves and the health probe never spend the reader
+        # bucket of their address. Admin-token calls keep the admin bucket.
+        grading = not admin_key and bool(bearer) and path.startswith(_GRADING_PATH_PREFIX)
+        if grading:
+            key = f"grading:{key}"
+            max_requests = _GRADING_MAX
+        health_probe = not admin_key and path == _HEALTH_PATH
+        if health_probe:
+            key = f"health:{key}"
+            max_requests = _HEALTH_MAX
+
         fresh_event_read = not admin_key and not trusted_peer and _is_fresh_event_read(request)
         if fresh_event_read:
             # Preserve verified-user/IP provenance. Never include the event ID,
@@ -864,6 +911,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         anon_limit, auth_limit = _get_limits()
         if admin_key:
             limit = _get_admin_limit()
+        elif grading:
+            limit = _get_grading_limit()
+        elif health_probe:
+            limit = _get_health_limit()
         elif fresh_game_market_read:
             limit = _get_fresh_game_market_limit()
         elif fresh_market_read:
