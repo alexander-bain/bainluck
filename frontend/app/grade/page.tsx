@@ -31,6 +31,7 @@ import {
   handleGradeDeckReadError,
   leftOutLine,
   normalizeGraderName,
+  saveWithOneRetry,
   slateFromSearch,
   type Grade,
   type GradeDeck,
@@ -154,20 +155,27 @@ function GradeSession() {
     setSaving(true);
     setError(null);
     try {
-      const res = await adminFetch("/api/admin/ranking/grades", secret, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slate_id: deck.slate_id,
-          surface: deck.surface,
-          grader,
-          kid,
-          position: item.position,
-          item_key: item.item_key,
-          grade,
-          note: note.trim() || null,
-        }),
+      const body = JSON.stringify({
+        slate_id: deck.slate_id,
+        surface: deck.surface,
+        grader,
+        kid,
+        position: item.position,
+        item_key: item.item_key,
+        grade,
+        note: note.trim() || null,
       });
+      // #11937: a rate-limited save waits what the server asks and goes again once.
+      const res = await saveWithOneRetry(
+        () => adminFetch("/api/admin/ranking/grades", secret, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        }),
+        (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        (ms) => setError(`Busy for a moment; saving again in ${Math.ceil(ms / 1000)} s…`),
+      );
+      setError(null);
       if (!res.ok) {
         setError(`Not saved (${res.status}): ${(await res.text()).slice(0, 200)}`);
         return;

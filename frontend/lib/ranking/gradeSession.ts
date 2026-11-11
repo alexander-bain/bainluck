@@ -91,6 +91,55 @@ export function deckHeadline(deck: GradeDeck): string {
   return `${deck.items.length} cards from the Discover slate of ${day}: its top cards, then a spread down the rest of its ${deck.candidates ?? "?"} candidates${skipped}.`;
 }
 
+/** #11937: the longest a save waits for the server before its one retry
+ * (the limiter's window is one minute, so a longer wait is never needed). */
+export const MAX_RETRY_WAIT_MS = 60000;
+
+type Answer = {
+  status: number;
+  headers: { get(name: string): string | null };
+  clone(): { json(): Promise<unknown> };
+};
+
+/**
+ * #11937: how long a rate-limited save should wait before trying again, or
+ * null when the answer isn't a 429. The seconds come from `Retry-After`, else
+ * the body's `retry_after`: the API is on another origin and doesn't expose
+ * `Retry-After` to the page, so the body is what the browser can actually read.
+ * 1 s when neither is readable; capped at `MAX_RETRY_WAIT_MS`.
+ */
+export async function retryWaitMs(res: Answer): Promise<number | null> {
+  if (res.status !== 429) return null;
+  let seconds = Number(res.headers.get("Retry-After"));
+  if (!(Number.isFinite(seconds) && seconds > 0)) {
+    try {
+      seconds = Number(((await res.clone().json()) as { retry_after?: unknown })?.retry_after);
+    } catch {
+      seconds = NaN;
+    }
+  }
+  const ms = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 1000;
+  return Math.min(ms, MAX_RETRY_WAIT_MS);
+}
+
+/**
+ * #11937: send a grade, and if the server says "too many requests", wait what
+ * it asks and send it once more, so a grader never has to press twice or
+ * wonder whether it saved. `onWait` gets the wait so the page can say so.
+ */
+export async function saveWithOneRetry<R extends Answer>(
+  send: () => Promise<R>,
+  sleep: (ms: number) => Promise<void>,
+  onWait?: (ms: number) => void,
+): Promise<R> {
+  const first = await send();
+  const wait = await retryWaitMs(first);
+  if (wait == null) return first;
+  onWait?.(wait);
+  await sleep(wait);
+  return send();
+}
+
 export interface TallyEntry {
   grader: string;
   kid: boolean;
