@@ -184,6 +184,7 @@ tests/test_grid_withdrawn_price_midpoint_10839.py  clock-invariant at +1/+31/+60
 tests/test_group_merge_writes_nothing_8609.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_grouped_feed_finished_match_10064.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_grouping_families.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
+tests/test_grouping_kind_proposer_9937.py  clock-invariant: _validate_example_card compares observed_at against the card's own as_of, never the wall clock
 tests/test_handover_carried_order_10090.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_handover_fresh_10090.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data
 tests/test_headline_clock_settled_10090.py  clock-invariant at +1/+31/+60 d (timebomb_confirm 2026-11-07); the dates are fixture data

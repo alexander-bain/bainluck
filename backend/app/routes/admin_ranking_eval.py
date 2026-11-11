@@ -577,11 +577,21 @@ def _build_proposed_card_preview(family: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(words, Mapping) and words.get("rows"):
         raw_title = str(words.get("title") or family.get("name") or "")
         cleaned_rows = []
-        for r in words.get("rows") or []:
+        for idx_r, r in enumerate(words.get("rows") or [], start=1):
             if not isinstance(r, Mapping):
                 continue
             r_copy = dict(r)
             r_copy["label"] = _clean_subject_display(str(r.get("label") or ""), strip_state_suffix=False)
+            if not isinstance(r_copy.get("market_id"), int) or int(r_copy.get("market_id") or 0) <= 0:
+                r_copy["market_id"] = idx_r
+            val_str = str(r_copy.get("value") or "").strip()
+            if r_copy.get("probability") is None and val_str.endswith("%"):
+                try:
+                    pct_int = int(val_str[:-1].lstrip("<>").strip())
+                    r_copy["probability"] = round(pct_int / 100.0, 4)
+                    r_copy["rendered_percent"] = pct_int
+                except ValueError:
+                    pass
             cleaned_rows.append(r_copy)
         return {
             "kicker": str(words.get("kicker") or defn.get("kicker") or "SIBLING FAMILY"),
@@ -611,7 +621,7 @@ def _build_proposed_card_preview(family: Mapping[str, Any]) -> dict[str, Any]:
 
     rows = []
     seen_labels: set[str] = set()
-    for m, p, o_lbl in source_rows:
+    for idx_m, (m, p, o_lbl) in enumerate(source_rows, start=1):
         raw_subj = _clean_subject_display(str(m.get("subject") or "").strip(), strip_state_suffix=False)
         raw_name = str(m.get("name") or "").strip()
         # If extracted subject is a bare number (e.g. "5" or "#1") that duplicates across members, disambiguate with market name.
@@ -620,16 +630,17 @@ def _build_proposed_card_preview(family: Mapping[str, Any]) -> dict[str, Any]:
         if o_lbl and o_lbl.lower() not in label.lower():
             label = f"{label} ({o_lbl})"
         seen_labels.add(label.lower())
-        val = (
-            f"{int(math.floor(float(p) * 100.0 + 0.5))}%"
-            if isinstance(p, (int, float)) and not isinstance(p, bool) and math.isfinite(float(p))
-            else "Unpriced (refused)"
-        )
+        is_valid_prob = isinstance(p, (int, float)) and not isinstance(p, bool) and math.isfinite(float(p))
+        pct_val = int(math.floor(float(p) * 100.0 + 0.5)) if is_valid_prob else None
+        val = f"{pct_val}%" if pct_val is not None else "Unpriced (refused)"
+        mid = int(m.get("id") or 0) or idx_m
         rows.append(
             {
                 "label": label,
                 "value": val,
-                "market_id": int(m.get("id") or 0),
+                "market_id": mid,
+                "probability": round(float(p), 4) if is_valid_prob else None,
+                "rendered_percent": pct_val,
             }
         )
         if len(rows) >= 5:
@@ -650,6 +661,99 @@ def _build_proposed_card_preview(family: Mapping[str, Any]) -> dict[str, Any]:
         "footer": str(defn.get("footer") or "Each row is its own market. They don't add up to 100%."),
         "relations": relations,
         "level": level,
+    }
+
+
+def _card_entry_to_deck_item(
+    card: Mapping[str, Any],
+    *,
+    pos: int,
+    kind_slug: str,
+    relations: list[str],
+    level: str,
+    default_as_of: str | None = None,
+) -> dict[str, Any]:
+    c_slug = str(card.get("slug") or f"{kind_slug}-{pos}")
+    raw_rows = list(card.get("rows") or [])
+    preview_rows = [
+        {
+            "label": str(r.get("label") or ""),
+            "value": f"{int(r.get('rendered_percent', math.floor(float(r['probability']) * 100.0 + 0.5)))}%",
+            "market_id": int(r.get("market_id") or 0),
+            "probability": round(float(r["probability"]), 4),
+            "rendered_percent": int(r.get("rendered_percent", math.floor(float(r["probability"]) * 100.0 + 0.5))),
+            **(
+                {"observed_at": str(r["observed_at"])}
+                if r.get("observed_at")
+                else {}
+            ),
+        }
+        for r in raw_rows
+    ]
+    single = card.get("stronger_single_alternative") or {}
+    s_prob = float(single["probability"])
+    s_pct = int(math.floor(s_prob * 100.0 + 0.5))
+    as_of_val = card.get("as_of") or default_as_of
+    as_of_label = str(card.get("as_of_label") or "")
+    sport_cat = str((card.get("selector") or {}).get("sport") or "sports")
+    first_source = str((raw_rows[0] if raw_rows else {}).get("source") or "polymarket")
+    unit = str(card.get("subject_unit") or "teams")
+    total_members = int(card.get("member_count") or len(preview_rows))
+    default_count_line = f"Showing {len(preview_rows)} of {total_members} {unit}"
+    count_line_val = str(card.get("count_line") or default_count_line)
+    subtitle_val = card.get("subtitle")
+    selection_type_val = str(card.get("selection_type") or "top_5")
+    graded_title_val = str(card.get("graded_title") or "").strip() or None
+    tag_val = "BUBBLE · 50%" if selection_type_val == "bubble_50" else sport_cat.split("_")[-1].upper()
+    return {
+        "position": pos,
+        "item_key": c_slug,
+        "title": str(card.get("title") or c_slug),
+        **(
+            {"graded_title": graded_title_val}
+            if graded_title_val is not None
+            else {}
+        ),
+        "source": first_source,
+        "category": sport_cat,
+        "template_key": str((card.get("selector") or {}).get("title_ilike") or ""),
+        "member_count": total_members,
+        "kind_verdict": "refuse",
+        "refusal_reasons": ["not_licensed"],
+        "proposed_kind": kind_slug,
+        "selection_type": selection_type_val,
+        "as_of": as_of_val,
+        "as_of_label": as_of_label,
+        "proposed_card": {
+            "kicker": str(card.get("kicker") or kind_slug.upper()),
+            "tag": tag_val,
+            "title": str(card.get("title") or c_slug),
+            **(
+                {"graded_title": graded_title_val}
+                if graded_title_val is not None
+                else {}
+            ),
+            "subtitle": str(subtitle_val) if subtitle_val else None,
+            "rows": preview_rows,
+            "count_line": count_line_val,
+            "footer": str(card.get("footer") or ""),
+            "relations": relations,
+            "level": level,
+            "as_of_label": as_of_label,
+            "proposed_kind": kind_slug,
+            "selection_type": selection_type_val,
+        },
+        "best_single": {
+            "id": int(single.get("market_id") or 0),
+            "name": str(single.get("title") or ""),
+            "subject": str((raw_rows[0] if raw_rows else {}).get("label") or ""),
+            "source": first_source,
+            "category": sport_cat,
+            "yes_probability": s_prob,
+            "rendered_percent": s_pct,
+            "resolution_date": None,
+            "rule_quote": f"{single.get('title') or ''} ({as_of_label})" if as_of_label else str(single.get("title") or ""),
+        },
     }
 
 
@@ -678,63 +782,57 @@ def _build_new_kind_deck_items(
         relations = list(prop.get("relations") or [])
         level = str(prop.get("level") or "member")
         for card in prop.get("example_cards") or []:
-            c_slug = str(card.get("slug") or f"{kind_slug}-{pos}")
-            raw_rows = list(card.get("rows") or [])
-            preview_rows = [
-                {
-                    "label": str(r.get("label") or ""),
-                    "value": f"{int(r.get('rendered_percent', round(float(r['probability']) * 100)))}%",
-                    "market_id": int(r.get("market_id") or 0),
-                }
-                for r in raw_rows
-            ]
-            single = card.get("stronger_single_alternative") or {}
-            s_prob = float(single["probability"])
-            s_pct = int(round(s_prob * 100))
-            as_of_val = card.get("as_of") or loaded.get("generated_at")
-            as_of_label = str(card.get("as_of_label") or "")
-            sport_cat = str((card.get("selector") or {}).get("sport") or "sports")
-            first_source = str((raw_rows[0] if raw_rows else {}).get("source") or "polymarket")
             deck_items.append(
-                {
-                    "position": pos,
-                    "item_key": c_slug,
-                    "title": str(card.get("title") or c_slug),
-                    "source": first_source,
-                    "category": sport_cat,
-                    "template_key": str((card.get("selector") or {}).get("title_ilike") or ""),
-                    "member_count": len(raw_rows),
-                    "kind_verdict": "refuse",
-                    "refusal_reasons": ["not_licensed"],
-                    "proposed_kind": kind_slug,
-                    "as_of": as_of_val,
-                    "as_of_label": as_of_label,
-                    "proposed_card": {
-                        "kicker": str(card.get("kicker") or kind_slug.upper()),
-                        "tag": kind_slug.upper(),
-                        "title": str(card.get("title") or c_slug),
-                        "rows": preview_rows,
-                        "count_line": f"Showing {len(preview_rows)} members · {as_of_label}" if as_of_label else f"Showing {len(preview_rows)} members",
-                        "footer": str(card.get("footer") or ""),
-                        "relations": relations,
-                        "level": level,
-                        "as_of_label": as_of_label,
-                        "proposed_kind": kind_slug,
-                    },
-                    "best_single": {
-                        "id": int(single.get("market_id") or 0),
-                        "name": str(single.get("title") or ""),
-                        "subject": str((raw_rows[0] if raw_rows else {}).get("label") or ""),
-                        "source": first_source,
-                        "category": sport_cat,
-                        "yes_probability": s_prob,
-                        "rendered_percent": s_pct,
-                        "resolution_date": None,
-                        "rule_quote": f"{single.get('title') or ''} ({as_of_label})" if as_of_label else str(single.get("title") or ""),
-                    },
-                }
+                _card_entry_to_deck_item(
+                    card,
+                    pos=pos,
+                    kind_slug=kind_slug,
+                    relations=relations,
+                    level=level,
+                    default_as_of=loaded.get("generated_at"),
+                )
             )
             pos += 1
+    return deck_items
+
+
+def _build_new_kinds_exam_deck_items(
+    *,
+    start_position: int = 1,
+    exam_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Build `/grade/groupings` deck items for the 20-card held-out new-kinds exam (#9937)."""
+    from app.utils.grouping_kind_proposer import load_new_kinds_exam_cards
+
+    loaded = load_new_kinds_exam_cards(path=exam_path)
+    if loaded.get("refused_count", 0) > 0 or loaded.get("accepted_count", 0) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "reason": "new_kinds_exam_refused",
+                "refused": loaded.get("refused", []),
+            },
+        )
+
+    relations_by_kind = {
+        "season_stat_leaders": ["same_measure", "same_window", "sibling"],
+        "qualification_stage_board": ["same_event", "same_measure", "path"],
+    }
+    deck_items: list[dict[str, Any]] = []
+    pos = start_position
+    for card in loaded.get("cards") or []:
+        kind_slug = str(card.get("kind") or "season_stat_leaders")
+        deck_items.append(
+            _card_entry_to_deck_item(
+                card,
+                pos=pos,
+                kind_slug=kind_slug,
+                relations=relations_by_kind.get(kind_slug, ["same_measure", "sibling"]),
+                level="member",
+                default_as_of=loaded.get("generated_at"),
+            )
+        )
+        pos += 1
     return deck_items
 
 
@@ -789,6 +887,8 @@ def _build_sibling_exam_test_deck_items(
                 "label": str(r.get("label") or ""),
                 "value": f"{int(r.get('rendered_percent', round(float(r['probability']) * 100)))}%",
                 "market_id": int(r.get("market_id") or 0),
+                "probability": round(float(r["probability"]), 4),
+                "rendered_percent": int(r.get("rendered_percent", round(float(r["probability"]) * 100))),
             }
             for r in res.rows
         ]
@@ -866,9 +966,12 @@ def load_grouping_grade_deck(
     slate_id: str = DEFAULT_GROUPING_SLATE_ID,
 ) -> dict[str, Any]:
     """Load the proposed grouping deck (sibling-family + new-kind proposals) for `/grade/groupings`."""
-    if slate_id == "new-kind-proposals-2026-11":
-        from app.utils.grouping_kind_proposer import DEFAULT_KIND_PROPOSER_MODEL
+    from app.utils.grouping_kind_proposer import (
+        DEFAULT_KIND_PROPOSER_MODEL,
+        NEW_KINDS_EXAM_SLATE_ID,
+    )
 
+    if slate_id == "new-kind-proposals-2026-11":
         nk_items = _build_new_kind_deck_items(start_position=1)
         return {
             "slate_id": slate_id,
@@ -877,6 +980,16 @@ def load_grouping_grade_deck(
             "model": DEFAULT_KIND_PROPOSER_MODEL,
             "question": "Is the grouping card worth more than its best single member?",
             "items": nk_items,
+        }
+    if slate_id == NEW_KINDS_EXAM_SLATE_ID:
+        exam_items = _build_new_kinds_exam_deck_items(start_position=1)
+        return {
+            "slate_id": slate_id,
+            "surface": SURFACE_GROUPING,
+            "generated_at": exam_items[0].get("as_of") if exam_items else None,
+            "model": DEFAULT_KIND_PROPOSER_MODEL,
+            "question": "Is the grouping card worth more than its best single member?",
+            "items": exam_items,
         }
     if slate_id == EXAM_TEST_GROUPING_SLATE_ID:
         from app.utils.sibling_family_exam import DEFAULT_PROPOSER_MODEL

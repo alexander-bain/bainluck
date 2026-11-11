@@ -436,8 +436,12 @@ describe("every writer call site sits under the page that registers the gate", (
     expect(importers(/from "[^"]*\/DiscoverCard"/)).toEqual(["app/discover/page.tsx", "app/grade/page.tsx"]);
     expect(importers(/from "[^"]*\/(GroupCard|ThemeBundleCard)"/)).toEqual(["components/DiscoverCard.tsx"]);
     // #10357 — the round-up card carries the bundle actions too; it mounts only
-    // under DiscoverCard, so the gate above still covers every write it makes.
-    expect(importers(/from "[^"]*\/RoundupCard"/)).toEqual(["components/DiscoverCard.tsx"]);
+    // under DiscoverCard and /grade/groupings (whose gate is closed below), so
+    // the gate above still covers every write it makes.
+    expect(importers(/from "[^"]*\/RoundupCard"/)).toEqual([
+      "app/grade/groupings/page.tsx",
+      "components/DiscoverCard.tsx",
+    ]);
     expect(importers(/from "[^"]*\/DeadlineFamilyCard"/)).toEqual(["components/discover/ThemeBundleCard.tsx"]);
     expect(importers(/from "[^"]*\/BundleActionBar"/)).toEqual([
       "components/discover/DeadlineFamilyCard.tsx",
@@ -448,10 +452,12 @@ describe("every writer call site sits under the page that registers the gate", (
   });
 
   it("the grading page closes the writers' gate while it is mounted", () => {
-    const page = strip(readFileSync(join(root, "app/grade/page.tsx"), "utf8"));
-    expect(page).toContain("setDiscoverLearningGate(() => false);");
-    expect(page).toContain("return () => setDiscoverLearningGate(null);");
-    expect(page).toContain("pointer-events-none");
+    for (const rel of ["app/grade/page.tsx", "app/grade/groupings/page.tsx"]) {
+      const page = strip(readFileSync(join(root, rel), "utf8"));
+      expect(page).toContain("setDiscoverLearningGate(() => false);");
+      expect(page).toContain("return () => setDiscoverLearningGate(null);");
+      expect(page).toContain("pointer-events-none");
+    }
   });
 
   it("the page registers the writers' gate from the current auth state and provides the attempt handler", () => {
