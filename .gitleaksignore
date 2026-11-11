@@ -146,3 +146,10 @@ d54c97d3403d8973d11dd640a39ee7105c74e638:frontend/lib/evals/data/twin-exam-2026-
 # Exact historical findings from gitleaks run 42978644637 (removed in subsequent commit).
 75b2aea66f2a1a8404068a0475c06625cd2eb9ce:frontend/components/discover/forms/VisualFormLookSheet.tsx:generic-api-key:2078
 75b2aea66f2a1a8404068a0475c06625cd2eb9ce:frontend/components/discover/forms/VisualFormLookSheet.tsx:generic-api-key:2089
+
+# #9937: grouping-exam item keys (public slugs such as
+# "nfl-qbs-3500-passing-yards-2026-27"), not credentials. Exact findings from
+# gitleaks run 43056326115 on PR #12590.
+d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:32
+d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:67
+d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-grouping-new-kinds-exam-test-2026-11-alex-bain.json:generic-api-key:123
