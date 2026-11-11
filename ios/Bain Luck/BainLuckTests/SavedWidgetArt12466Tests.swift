@@ -300,4 +300,23 @@ final class SavedWidgetArt12466Tests: XCTestCase {
         XCTAssertTrue(widget.contains("if look != .today, case .detail(.game(let event), _) = content {"),
                       "today's look no longer skips the crest fetch")
     }
+
+    /// #12466 — Alex picked A, Matchup (Tue Nov 10). It is the one look kept:
+    /// every build draws it over a reading, and no look choice reaches the widget's settings.
+    func testMatchupIsTheOneLookAndEveryBuildDrawsIt() throws {
+        // The look type lives in the widget extension, which this target cannot
+        // import, so the rule is read from the source.
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let intent = try String(contentsOf: root.appendingPathComponent("BainLuckWidget/SavedItemWidgetIntent10875.swift"),
+                                encoding: .utf8)
+        XCTAssertFalse(intent.contains("Look (preview)"), "the four-look preview parameter is gone")
+        XCTAssertTrue(intent.contains("var look12466: SavedWidgetLook12466 { .shipping }"))
+        let looks = try String(contentsOf: root.appendingPathComponent("BainLuckWidget/SavedWidgetLooks12466.swift"),
+                               encoding: .utf8)
+        XCTAssertTrue(looks.contains("case today, matchup\n"), "today (messages) and Matchup only")
+        XCTAssertTrue(looks.contains("static let shipping: SavedWidgetLook12466 = .matchup"))
+        for gone in ["SavedCleanLook12466", "SavedScoreboardLook12466", "SavedSpotlightLook12466"] {
+            XCTAssertFalse(looks.contains(gone), gone)
+        }
+    }
 }

@@ -1,25 +1,24 @@
 import SwiftUI
 import WidgetKit
 
-// #12466 — the saved widget's new looks, offered to Alex side by side on the
-// Home Screen (he picks one; the others are deleted before this merges):
-//
-//   A · Matchup     both teams' colours, crests on white discs, two big chances
-//   B · Clean       the app's own card: crests, names, chances, the team bar
-//   C · Scoreboard  a dark tile, one line per team with its colour stripe
-//   D · Favorite    the leading (or chosen) side's colours, its chance large
+// #12466 — the saved widget's look, Matchup (look A; Alex, Tue Nov 10: "A is
+// the best today"): both teams' colours meeting on a diagonal, crests on white
+// discs, both chances large, a white bar. The other three looks offered beside it
+// (Clean, Scoreboard, Favorite) are not kept; a reader's own choice of look is a
+// later item.
 //
 // Every look draws only what the reading says (`SavedWidgetReading10875`):
 // its figures, verdicts, status and clock. The bar draws `reading.shares`,
 // which exists only where figures are printed, so a result never gets a bar.
 // The "As of" clock stays on every price.
 
-/// Which look one widget draws. `today` is the shipped text layout.
+/// Which look one widget draws. `today` is the text layout every message
+/// (nothing saved, offline, removed…) keeps; a reading draws `matchup`.
 nonisolated enum SavedWidgetLook12466: String, CaseIterable, Sendable {
-    case today, matchup, clean, scoreboard, spotlight
+    case today, matchup
 
-    /// What a Release build draws until Alex picks.
-    static let shipping: SavedWidgetLook12466 = .today
+    /// What every build draws over a reading.
+    static let shipping: SavedWidgetLook12466 = .matchup
 }
 
 // MARK: - What every look reads
@@ -101,8 +100,6 @@ enum SavedLookInk12466 {
     static let emerald = Color(hex: "#10B981")
     static let emeraldHex = "#10B981"
     static let track = Color.primary.opacity(0.12)
-    static let scoreboardTop = Color(hex: "#1C2230")
-    static let scoreboardBottom = Color(hex: "#0B0E14")
 }
 
 // MARK: - Pieces
@@ -268,9 +265,6 @@ struct SavedLookView12466: View {
     var body: some View {
         switch look {
         case .matchup: SavedMatchupLook12466(model: model, family: family)
-        case .clean: SavedCleanLook12466(model: model, family: family)
-        case .scoreboard: SavedScoreboardLook12466(model: model, family: family)
-        case .spotlight: SavedSpotlightLook12466(model: model, family: family)
         case .today: EmptyView()
         }
     }
@@ -279,13 +273,8 @@ struct SavedLookView12466: View {
     /// background.
     static func ink(_ look: SavedWidgetLook12466, model: SavedLookModel12466?) -> Color? {
         switch look {
-        case .today, .clean: return nil
-        case .scoreboard: return .white
-        case .matchup:
-            return .white
-        case .spotlight:
-            guard let model else { return .white }
-            return Color(hex: SavedWidgetArt12466.ink(on: SavedSpotlightLook12466.fillHex(model)))
+        case .today: return nil
+        case .matchup: return .white
         }
     }
 }
@@ -297,11 +286,8 @@ struct SavedLookBackground12466: View {
 
     var body: some View {
         switch look {
-        case .today, .clean:
+        case .today:
             Rectangle().fill(.fill.tertiary)
-        case .scoreboard:
-            LinearGradient(colors: [SavedLookInk12466.scoreboardTop, SavedLookInk12466.scoreboardBottom],
-                           startPoint: .top, endPoint: .bottom)
         case .matchup:
             if let model, let art = model.art {
                 let fills = art.fillHexes()
@@ -314,24 +300,6 @@ struct SavedLookBackground12466: View {
             } else {
                 LinearGradient(colors: [SavedLookInk12466.emerald, Color(hex: SavedWidgetArt12466.shaded(SavedLookInk12466.emeraldHex, by: 0.45))],
                                startPoint: .topLeading, endPoint: .bottomTrailing)
-            }
-        case .spotlight:
-            if let model {
-                let fill = SavedSpotlightLook12466.fillHex(model)
-                ZStack(alignment: .bottomTrailing) {
-                    LinearGradient(colors: [Color(hex: fill), Color(hex: SavedWidgetArt12466.shaded(fill, by: 0.45))],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                    if model.isGame, let image = SavedWidgetLogos12466.image(model.logo(isHome: model.headlineIsHome)) {
-                        Image(decorative: image, scale: 1)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 120, height: 120)
-                            .opacity(0.16)
-                            .offset(x: 28, y: 26)
-                    }
-                }
-            } else {
-                Color(hex: SavedLookInk12466.emeraldHex)
             }
         }
     }
@@ -461,366 +429,6 @@ struct SavedMatchupLook12466: View {
         }
         .foregroundStyle(ink(isHome))
         .frame(maxWidth: .infinity, alignment: isHome ? .trailing : .leading)
-    }
-}
-
-// MARK: - B · Clean
-
-struct SavedCleanLook12466: View {
-    let model: SavedLookModel12466
-    let family: WidgetFamily
-    @Environment(\.colorScheme) private var scheme
-
-    private var surface: Double {
-        scheme == .dark ? SavedWidgetArt12466.darkSurfaceLuminance : SavedWidgetArt12466.lightSurfaceLuminance
-    }
-
-    var body: some View {
-        if !model.drawsFull {
-            SavedLookPlain12466(model: model)
-        } else if model.isGame {
-            if family == .systemMedium { medium } else { small }
-        } else {
-            SavedMarketLook12466(model: model, family: family, inkOnFill: false,
-                                 barTrack: SavedLookInk12466.track, barFill: SavedLookInk12466.emerald)
-        }
-    }
-
-    private func chip(_ isHome: Bool, size: CGFloat) -> some View {
-        let colors = model.art?.barHexes(surfaceLuminance: surface)
-        return SavedLogoChip12466(png: model.logo(isHome: isHome), short: model.side(isHome: isHome)?.short ?? "",
-                                  colorHex: (isHome ? colors?.home : colors?.away) ?? SavedLookInk12466.emeraldHex,
-                                  size: size)
-            .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
-    }
-
-    @ViewBuilder private var bar: some View {
-        if let shares = model.reading.shares {
-            let colors = model.barColors(surfaceLuminance: surface)
-            SavedChanceBar12466(shares: shares, awayColor: colors.away, homeColor: colors.home,
-                                height: family == .systemMedium ? 10 : 8, leadsHome: model.headlineIsHome)
-        }
-    }
-
-    private var small: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 5) {
-                chip(false, size: 24)
-                Text(model.away.shortLabel)
-                Spacer(minLength: 2)
-                Text(model.home.shortLabel)
-                chip(true, size: 24)
-            }
-            .font(.caption.weight(.bold))
-            .lineLimit(1)
-            Spacer(minLength: 2)
-            HStack(alignment: .lastTextBaseline) {
-                SavedSideValue12466(row: model.away, size: 26)
-                Spacer(minLength: 2)
-                SavedSideValue12466(row: model.home, size: 26, alignment: .trailing)
-            }
-            bar.padding(.top, 5)
-            Spacer(minLength: 4)
-            if let status = model.statusLine {
-                Text(status)
-                    .font(.caption2.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            Text(model.footer)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .padding(.trailing, model.entry.isRefreshable12305 ? 24 : 0)
-        }
-    }
-
-    private var medium: some View {
-        VStack(spacing: 8) {
-            HStack(alignment: .top) {
-                side(false)
-                Spacer(minLength: 8)
-                side(true)
-            }
-            bar
-            HStack(spacing: 4) {
-                if let status = model.statusLine {
-                    Text(status).fontWeight(.semibold)
-                    Text("·").foregroundStyle(.secondary)
-                }
-                Text(model.footer)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-            }
-            .font(.caption2)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .padding(.trailing, model.entry.isRefreshable12305 ? 24 : 0)
-        }
-    }
-
-    private func side(_ isHome: Bool) -> some View {
-        let align: HorizontalAlignment = isHome ? .trailing : .leading
-        return VStack(alignment: align, spacing: 4) {
-            HStack(spacing: 6) {
-                if isHome {
-                    Text(model.home.label).lineLimit(1).minimumScaleFactor(0.65)
-                    chip(true, size: 30)
-                } else {
-                    chip(false, size: 30)
-                    Text(model.away.label).lineLimit(1).minimumScaleFactor(0.65)
-                }
-            }
-            .font(.footnote.weight(.semibold))
-            SavedSideValue12466(row: model.row(isHome: isHome), size: 32, alignment: align)
-        }
-        .frame(maxWidth: .infinity, alignment: isHome ? .trailing : .leading)
-    }
-}
-
-// MARK: - C · Scoreboard
-
-struct SavedScoreboardLook12466: View {
-    let model: SavedLookModel12466
-    let family: WidgetFamily
-
-    private var colors: (away: Color, home: Color) {
-        model.barColors(surfaceLuminance: SavedWidgetArt12466.darkSurfaceLuminance)
-    }
-
-    var body: some View {
-        Group {
-            if !model.drawsFull {
-                SavedLookPlain12466(model: model)
-            } else if model.isGame {
-                VStack(alignment: .leading, spacing: family == .systemMedium ? 9 : 5) {
-                    statusTag
-                    line(false)
-                    line(true)
-                    Spacer(minLength: 0)
-                    if let shares = model.reading.shares {
-                        SavedChanceBar12466(shares: shares, awayColor: colors.away, homeColor: colors.home,
-                                            height: 5, track: .white.opacity(0.14), leadsHome: model.headlineIsHome)
-                    }
-                    if let clock = model.clock {
-                        Text(model.reading.priceCaption.map { family == .systemMedium ? "\($0) · \(clock)" : clock } ?? clock)
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.6))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                            .padding(.trailing, model.entry.isRefreshable12305 ? 24 : 0)
-                    }
-                }
-            } else {
-                SavedMarketLook12466(model: model, family: family, inkOnFill: true,
-                                     barTrack: .white.opacity(0.14), barFill: SavedLookInk12466.emerald)
-            }
-        }
-        .foregroundStyle(.white)
-    }
-
-    /// "LIVE" with a red dot (each line carries its score), "FINAL · 24–17",
-    /// or the start.
-    private var statusTag: some View {
-        HStack(spacing: 4) {
-            if model.reading.status.hasPrefix("Live") {
-                Circle().fill(Color.red).frame(width: 6, height: 6)
-            }
-            Text(tagText)
-                .font(.system(size: 10, weight: .heavy, design: .rounded))
-                .textCase(.uppercase)
-                .tracking(0.4)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .foregroundStyle(.white.opacity(0.75))
-        }
-    }
-
-    /// Each line carries its own score live and final, so the tag says only
-    /// which: "Live", "Final". Otherwise the status as the reading words it.
-    private var tagText: String {
-        let status = model.reading.status
-        if model.art?.scores != nil, status.hasPrefix("Live") { return "Live" }
-        if model.reading.phase == .result, model.reading.rows.allSatisfy({ $0.figure != nil }), status.hasPrefix("Final") {
-            return "Final"
-        }
-        return status
-    }
-
-    private func line(_ isHome: Bool) -> some View {
-        let row = model.row(isHome: isHome)
-        let leads = row.emphasized
-        return HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(isHome ? colors.home : colors.away)
-                .frame(width: 3, height: family == .systemMedium ? 28 : 20)
-            SavedLogoChip12466(png: model.logo(isHome: isHome), short: model.side(isHome: isHome)?.short ?? "",
-                               colorHex: (isHome ? model.art?.home.primaryHex : model.art?.away.primaryHex)
-                                   ?? (isHome ? ProbabilityBarPalette.homeDefault : ProbabilityBarPalette.awayDefault),
-                               size: family == .systemMedium ? 28 : 20)
-            Text(family == .systemMedium ? row.label : row.shortLabel)
-                .font(.system(size: family == .systemMedium ? 17 : 14, weight: leads ? .heavy : .semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Spacer(minLength: 2)
-            if let verdict = row.verdict {
-                // A three-digit score ("121") and its verdict stay on one line,
-                // shrinking together before either wraps.
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    if let figure = row.figure {
-                        Text(figure).font(.system(size: 17, weight: .heavy, design: .rounded).monospacedDigit())
-                    }
-                    Text(verdict)
-                        .font(.system(size: 10, weight: .heavy, design: .rounded))
-                        .textCase(.uppercase)
-                        .opacity(leads ? 1 : 0.55)
-                }
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .layoutPriority(1)
-            } else if let scores = model.art?.scores {
-                // Live: the score leads, the chance beside it; a three-digit
-                // score shrinks with its chance before either wraps.
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(String(isHome ? scores.home : scores.away))
-                        .font(.system(size: family == .systemMedium ? 22 : 18, weight: .heavy, design: .rounded).monospacedDigit())
-                    Text(row.figure ?? "—")
-                        .font(.system(size: family == .systemMedium ? 14 : 12, weight: .semibold, design: .rounded).monospacedDigit())
-                        .opacity(row.figure == nil ? 0.45 : 0.7)
-                        .frame(minWidth: family == .systemMedium ? 40 : 34, alignment: .trailing)
-                }
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .layoutPriority(1)
-            } else {
-                Text(row.figure ?? "—")
-                    .font(.system(size: family == .systemMedium ? 21 : 16, weight: .bold, design: .rounded).monospacedDigit())
-                    .opacity(row.figure == nil ? 0.45 : 1)
-            }
-        }
-        .opacity(leads || model.reading.phase != .result ? 1 : 0.7)
-    }
-}
-
-// MARK: - D · Favorite
-
-struct SavedSpotlightLook12466: View {
-    let model: SavedLookModel12466
-    let family: WidgetFamily
-
-    /// The fill: the headline side's own colour, or the app's emerald for a
-    /// market.
-    static func fillHex(_ model: SavedLookModel12466) -> String {
-        guard model.isGame, let art = model.art else { return SavedLookInk12466.emeraldHex }
-        let fills = art.fillHexes()
-        return model.headlineIsHome ? fills.home : fills.away
-    }
-
-    private var ink: Color { Color(hex: SavedWidgetArt12466.ink(on: Self.fillHex(model))) }
-
-    var body: some View {
-        Group {
-            if !model.drawsFull {
-                SavedLookPlain12466(model: model)
-            } else if model.isGame {
-                if family == .systemMedium {
-                    HStack(spacing: 14) {
-                        spotlight
-                        other
-                    }
-                } else {
-                    spotlight
-                }
-            } else {
-                SavedMarketLook12466(model: model, family: family, inkOnFill: true,
-                                     barTrack: ink.opacity(0.25), barFill: ink)
-            }
-        }
-        .foregroundStyle(ink)
-    }
-
-    private var spot: Bool { model.headlineIsHome }
-
-    private var spotlight: some View {
-        let row = model.row(isHome: spot)
-        let other = model.row(isHome: !spot)
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                SavedLogoChip12466(png: model.logo(isHome: spot), short: model.side(isHome: spot)?.short ?? "",
-                                   colorHex: Self.fillHex(model), size: 26)
-                Text(row.shortLabel).font(.caption.weight(.heavy)).lineLimit(1)
-            }
-            Spacer(minLength: 2)
-            if let verdict = row.verdict {
-                Text(verdict)
-                    .font(.system(size: 34, weight: .heavy, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Text(model.reading.status)
-                    .font(.caption.weight(.semibold))
-                    .opacity(0.85)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            } else {
-                Text(row.figure ?? "—")
-                    .font(.system(size: 44, weight: .heavy, design: .rounded).monospacedDigit())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                Text("win chance vs \(other.shortLabel)")
-                    .font(.caption.weight(.semibold))
-                    .opacity(0.85)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            Spacer(minLength: 4)
-            // A verdict already has its status beneath it; only a clock is left to say.
-            if let bottom = row.verdict == nil ? (family == .systemMedium ? (model.clock ?? model.reading.status) : model.footer)
-                                               : model.clock {
-                Text(bottom)
-                    .font(.caption2.weight(.medium))
-                    .opacity(0.85)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .padding(.trailing, family == .systemMedium ? 0 : (model.entry.isRefreshable12305 ? 24 : 0))
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var other: some View {
-        let row = model.row(isHome: !spot)
-        return VStack(alignment: .leading, spacing: 8) {
-            Spacer(minLength: 0)
-            HStack(spacing: 6) {
-                SavedLogoChip12466(png: model.logo(isHome: !spot), short: model.side(isHome: !spot)?.short ?? "",
-                                   colorHex: (spot ? model.art?.fillHexes().away : model.art?.fillHexes().home)
-                                       ?? SavedLookInk12466.emeraldHex,
-                                   size: 24)
-                // The full name where it fits whole, else the short one.
-                ViewThatFits(in: .horizontal) {
-                    Text(row.label).lineLimit(1)
-                    Text(row.shortLabel).lineLimit(1)
-                }
-                .font(.footnote.weight(.semibold))
-                Spacer(minLength: 2)
-                if let verdict = row.verdict {
-                    Text(verdict).font(.caption.weight(.heavy)).textCase(.uppercase).opacity(0.75)
-                } else {
-                    Text(row.figure ?? "—").font(.headline.monospacedDigit())
-                }
-            }
-            if let shares = model.reading.shares {
-                SavedChanceBar12466(shares: shares, awayColor: ink.opacity(spot ? 0.45 : 1),
-                                    homeColor: ink.opacity(spot ? 1 : 0.45), height: 7, track: ink.opacity(0.2),
-                                    leadsHome: spot)
-            }
-            if let status = model.statusLine {
-                Text(status).font(.caption2.weight(.semibold)).opacity(0.85).lineLimit(1).minimumScaleFactor(0.7)
-            }
-        }
-        .padding(.trailing, model.entry.isRefreshable12305 ? 28 : 0)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
