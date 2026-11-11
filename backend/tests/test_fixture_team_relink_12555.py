@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -57,6 +58,7 @@ def _snapshot(session, model):
 def _repair(session, store=None, limit=200):
     stats = {
         "outcomes_relinked_into_fixture": 0, "outcomes_unlinked_outside_fixture": 0,
+        "outcomes_fixture_clears_held": 0,
         "fixture_relink_identity_changed": 0, "fixture_refusals": {},
         "fixture_refusal_samples": [], "errors": [], "units_rolled_back": [],
     }
@@ -69,7 +71,8 @@ def _repair(session, store=None, limit=200):
 
 
 @pytest.mark.parametrize("status", ["open", "resolved", "closed"])
-def test_captured_42_targets_change_only_club_and_all_78_controls_stay_identical(status):
+def test_captured_42_targets_change_only_club_and_all_78_controls_stay_identical(status, caplog):
+    caplog.set_level(logging.INFO, logger=team_linking.__name__)
     with Session(_make_engine()) as session:
         _captured_seed(session, status)
         before = _snapshot(session, FuturesOutcome)
@@ -95,6 +98,13 @@ def test_captured_42_targets_change_only_club_and_all_78_controls_stay_identical
         assert _snapshot(session, FuturesMarket) == markets
         assert _snapshot(session, Event) == events
         assert _snapshot(session, Team) == teams
+        receipts = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Fixture relink relinked:")]
+        assert len(receipts) == 42
+        for oid in targets:
+            receipt = next(line for line in receipts if f"outcome={oid} " in line)
+            assert f"market={before[oid]['market_id']} fixture={CAPTURE['event']['id']}" in receipt
+            assert "old_club=10740 new_club=541 matched_by=name" in receipt
+            assert f"sport=americanfootball_nfl status={status}" in receipt
         again = _repair(session, store)
         assert again["outcomes_relinked_into_fixture"] == 0
         assert _snapshot(session, FuturesOutcome) == after
@@ -137,16 +147,49 @@ def test_duplicate_exact_fixture_name_is_not_arbitrarily_picked():
         assert stats["fixture_refusals"]["home_club_ambiguous"] >= 7
 
 
-def test_verified_fixture_with_no_unique_replacement_clears_only_the_wrong_club():
+@pytest.mark.parametrize("status", ["open", "resolved", "closed"])
+def test_verified_fixture_with_no_unique_replacement_holds_the_clear(status, caplog):
+    caplog.set_level(logging.INFO, logger=team_linking.__name__)
+    with Session(_make_engine()) as session:
+        _seed(session)
+        session.get(FuturesOutcome, 8).name = "Unknown Player"
+        session.get(FuturesMarket, 67649495).status = status
+        session.commit()
+        before = _snapshot(session, FuturesOutcome)
+        stats = _repair(session)
+        assert stats["outcomes_unlinked_outside_fixture"] == 0
+        assert stats["outcomes_fixture_clears_held"] == 1
+        assert _snapshot(session, FuturesOutcome) == before
+        assert ("Fixture relink clear_held: outcome=8 market=67649495 fixture=14781145 "
+                "old_club=10740 new_club=none matched_by=none sport=americanfootball_nfl "
+                f"status={status} reason=no_fixture_match") in caplog.text
+
+
+def test_future_clear_enablement_records_the_committed_clear(caplog):
+    caplog.set_level(logging.INFO, logger=team_linking.__name__)
     with Session(_make_engine()) as session:
         _seed(session)
         session.get(FuturesOutcome, 8).name = "Unknown Player"
         session.commit()
         before = _snapshot(session, FuturesOutcome)
-        stats = _repair(session)
+        with patch.object(team_linking, "_FIXTURE_CLEARS_ENABLED", True):
+            stats = _repair(session)
         assert stats["outcomes_unlinked_outside_fixture"] == 1
-        after = _snapshot(session, FuturesOutcome)
-        assert after == {oid: {**row, "team_id": None} if oid == 8 else row for oid, row in before.items()}
+        assert _snapshot(session, FuturesOutcome) == {
+            oid: {**row, "team_id": None} if oid == 8 else row for oid, row in before.items()
+        }
+        assert "old_club=10740 new_club=cleared matched_by=none" in caplog.text
+
+
+def test_roster_replacement_records_its_matching_method(caplog):
+    caplog.set_level(logging.INFO, logger=team_linking.__name__)
+    with Session(_make_engine()) as session:
+        _seed(session)
+        session.get(FuturesOutcome, 8).name = "Kyler Murray"
+        session.commit()
+        stats = _repair(session)
+        assert stats["outcomes_relinked_into_fixture"] == 1
+        assert "old_club=10740 new_club=541 matched_by=roster" in caplog.text
 
 
 def test_cursor_moves_past_refusals_and_reserves_space_for_settled_games():
@@ -172,6 +215,7 @@ def test_cursor_moves_past_refusals_and_reserves_space_for_settled_games():
         assert first["fixture_selected_open"] == 3
         assert first["fixture_selected_resolved"] == 1
         assert first["outcomes_relinked_into_fixture"] == 1
+        assert first["fixture_refused_open_markets"] == {"away_club_unknown": 1}
         assert int(store.data[team_linking._FIXTURE_CURSOR_OPEN]) == 3
         assert _snapshot(session, FuturesOutcome)[6]["team_id"] == 541
         second = _repair(session, store, limit=4)
@@ -256,7 +300,8 @@ def test_identity_changes_refuse_but_a_new_price_is_preserved(changed):
             assert float(row["current_probability"]) == 0.6789
 
 
-def test_fixture_failure_rolls_back_repairs_and_the_success_counter():
+def test_fixture_failure_rolls_back_repairs_and_the_success_counter(caplog):
+    caplog.set_level(logging.INFO, logger=team_linking.__name__)
     with Session(_make_engine()) as session:
         _seed(session)
         session.add(FuturesOutcome(id=9, name="Cardinals", external_id="second", market_id=67649495, team_id=10740))
@@ -278,3 +323,5 @@ def test_fixture_failure_rolls_back_repairs_and_the_success_counter():
         assert stats["outcomes_relinked_into_fixture"] == 0
         assert stats["units_rolled_back"] == ["Fixture relink open"]
         assert _snapshot(session, FuturesOutcome) == before
+        assert "Fixture relink relinked:" not in caplog.text
+        assert "Fixture relink cleared:" not in caplog.text

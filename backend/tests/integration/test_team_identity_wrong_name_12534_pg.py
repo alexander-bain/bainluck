@@ -222,6 +222,7 @@ async def fixture_relink_rig():
 def _fixture_relink_stats():
     return {
         "outcomes_relinked_into_fixture": 0, "outcomes_unlinked_outside_fixture": 0,
+        "outcomes_fixture_clears_held": 0,
         "fixture_relink_identity_changed": 0, "fixture_refusals": {},
         "fixture_refusal_samples": [], "errors": [], "units_rolled_back": [],
     }
@@ -237,7 +238,8 @@ async def _drain_captured_fixture(session, stats):
         await team_linking._relink_outside_fixture(session, stats, 200, store, writes)
         await session.commit()
         team_linking._apply_cursor_writes(store, writes)
-        if stats["outcomes_relinked_into_fixture"] + stats["fixture_relink_identity_changed"] == 42:
+        if (stats["outcomes_relinked_into_fixture"] + stats["fixture_relink_identity_changed"]
+                + stats["outcomes_fixture_clears_held"]) == 42:
             return
     pytest.fail("the bounded fixture cursor never reached all 42 captured targets")
 
@@ -264,6 +266,29 @@ async def test_fixture_repair_preserves_all_78_controls_and_every_nonclub_field(
         assert after == {oid: {**row, "team_id": 541} if oid in targets else row for oid, row in before.items()}
         assert await session.run_sync(_snapshot, FuturesMarket) == markets
         assert await session.run_sync(_snapshot, Event) == events
+
+
+@pytest.mark.parametrize("status", ["open", "resolved", "closed"])
+async def test_fixture_clears_stay_unwritten_for_the_captured_cohort(fixture_relink_rig, status):
+    from sqlalchemy import update
+    from app.models import FuturesOutcome
+    from tests.test_fixture_team_relink_12555 import CAPTURE, _captured_seed, _snapshot
+
+    async with fixture_relink_rig() as session:
+        await session.run_sync(_captured_seed, status)
+        targets = {row["id"] for row in CAPTURE["targets"]}
+        await session.execute(update(FuturesOutcome).where(
+            FuturesOutcome.id.in_(targets),
+        ).values(name="Unmatched fixture participant"))
+        await session.commit()
+        before = await session.run_sync(_snapshot, FuturesOutcome)
+        stats = _fixture_relink_stats()
+        await _drain_captured_fixture(session, stats)
+        assert stats["errors"] == stats["units_rolled_back"] == []
+        assert stats["outcomes_fixture_clears_held"] == 42
+        assert stats["outcomes_relinked_into_fixture"] == 0
+        assert stats["outcomes_unlinked_outside_fixture"] == 0
+        assert await session.run_sync(_snapshot, FuturesOutcome) == before
 
 
 @pytest.mark.parametrize("change", ["price", "identity"])

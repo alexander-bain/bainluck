@@ -5,7 +5,8 @@ page and reach the fixture's football clubs through the normal hourly linker.
 Decision 146-A retires the hand-SQL repairs; no manual writer dispatch is part
 of this change. Publication follows #12581's first slice.
 
-This is a locally validated change; publication follows #12581 and its own review gates.
+PR #12622 follows the now-served #12581 slice. Fable's 2:00 PM review requires
+committed-change receipts and a hold on clears. No merge before the Mac returns.
 
 The same resolver now constrains new NULL links (#12589) and stored-link repair.
 Both fixture sides need unique, known clubs of the right sport and gender, with
@@ -24,11 +25,29 @@ There is no date cutoff. The real cohort therefore heals across resumed runs,
 not an assumed single invocation; the guards retain all 42 targets and controls
 through that progression.
 Valid club IDs and NULL controls stay outside this repair. A verified fixture
-permits a name/roster match to its own clubs; otherwise the wrong stored club is
-cleared. Only team_id changes. Identity predicates refuse concurrent outcome,
+permits a name/roster match to its own clubs. Otherwise the proposed clear is
+counted and logged, but the stored link is unchanged: `_FIXTURE_CLEARS_ENABLED`
+is false. Enabling it requires a separate reviewed PR after the first two natural
+runs are classified by sport and market status, including 20 proposed clears
+read by eye. Only team_id changes. Identity predicates refuse concurrent outcome,
 market, event or club changes while permitting fresh prices. Older league,
 conference and name repair passes exclude event-linked markets so they cannot
 undo the fixture's decision or touch an unresolved fixture.
+
+Each committed change logs outcome, market, fixture, old/new club, name/roster
+match, sport and market status. Logs follow the unit's commit; a rolled-back unit
+emits no committed-change claim. Held clears and fixture refusals have distinct
+receipts, at most one per selected candidate (200 per invocation). Refusing open
+markets are counted by reason within the selected run; this is not a whole-table
+count, and repeated market IDs across runs must be deduplicated for the report.
+
+Run forecast: the saved production scan head is 263,305,107 and the oldest of the
+42 targets is 258,819,607. The scan can cross at most one million ID positions
+per invocation, so reaching all 42 takes **at least five hourly runs** from that
+head. Dense 10,000-row pages and the 150-open-candidate budget can make it longer;
+refusals and already-correct candidates consume that budget too. The first two
+natural runs' cursor progress will refine the forecast. No one-run claim or
+fixed completion hour is supported by the current evidence.
 
 Rejected outside-fixture candidate attempts log the outcome, market, fixture,
 proposed club and allowed fixture clubs. The counter counts attempts, including
@@ -82,6 +101,12 @@ Local validation on Nov 11:
 - After adding the per-attempt refusal log, all 39 focused matching and startup
   checks pass, including assertions for the recorded outcome, market, fixture,
   proposed club and permitted club IDs.
+- Fable's held-clear/committed-log revision passes 119 matching/startup/wiring
+  checks, all 25 fixture controls at twelve clock points, and 13 real PostgreSQL
+  cases. The added PG cases preserve every captured outcome when no replacement
+  matches, for open/resolved/closed markets. Log assertions cover all 42 committed
+  replacements, both matching methods, and no committed log after rollback.
+  Frontend build and typecheck pass again (65-error existing baseline).
 
 Still required for delivery:
 
@@ -93,3 +118,6 @@ Still required for delivery:
 - Re-read the same narrow count: 42 to zero, with fresh control comparisons and
   served game, Bigger Picture and team pages at 390 px. No manual task dispatch,
   retired SQL execution, new column or index has occurred.
+- Classify the first two natural runs' held clears by sport/status, read 20
+  proposed clears, and report distinct selected open markets on refusing fixtures
+  by reason. Clears stay disabled until a separate reviewed PR enables them.

@@ -99,6 +99,9 @@ _CURSOR_KEY_RESOLVED = "bainluck:team_link_cursor:resolved"
 _FIXTURE_CURSOR_OPEN = "bainluck:fixture_relink_cursor:open"
 _FIXTURE_CURSOR_RESOLVED = "bainluck:fixture_relink_cursor:resolved"
 _FIXTURE_RELINK_LIMIT = 200
+# #12622: classify two natural runs before a separate reviewed PR enables clears.
+# Verified replacements can heal now; an unmatched stored link stays untouched.
+_FIXTURE_CLEARS_ENABLED = False
 _FIXTURE_SCAN_LIMIT = 10000
 _FIXTURE_ID_SPAN = 100000
 _FIXTURE_SCAN_WINDOWS = 10
@@ -302,6 +305,7 @@ def fixture_relink_query(*, open_markets: bool, cursor: int, batch: int):
             scan.c.id, scan.c.market_id, scan.c.team_id,
             FuturesMarket.event_id, FuturesMarket.source,
             FuturesMarket.external_id.label("market_external_id"),
+            FuturesMarket.status.label("market_status"),
         )
         .join(FuturesMarket, FuturesMarket.id == scan.c.market_id)
         .outerjoin(Event, Event.id == FuturesMarket.event_id)
@@ -322,6 +326,7 @@ def fixture_relink_query(*, open_markets: bool, cursor: int, batch: int):
             candidates.c.id, candidates.c.market_id, FuturesOutcome.name,
             FuturesOutcome.external_id, candidates.c.team_id,
             candidates.c.event_id, candidates.c.source, candidates.c.market_external_id,
+            candidates.c.market_status,
             tail.c.scan_end, tail.c.scan_count, tail.c.scan_floor,
         )
         .select_from(tail.outerjoin(candidates, true()))
@@ -367,6 +372,7 @@ async def _relink_outside_fixture(session, stats: dict, limit: int, rc, cursor_w
 
     budget = min(max(0, limit), _FIXTURE_RELINK_LIMIT)
     selected = 0
+    refused_open_markets = {}
     for label, key, is_open, allowance in (
         ("open", _FIXTURE_CURSOR_OPEN, True, budget - _resolved_floor(budget)),
         ("resolved", _FIXTURE_CURSOR_RESOLVED, False, None),
@@ -403,6 +409,8 @@ async def _relink_outside_fixture(session, stats: dict, limit: int, rc, cursor_w
         stats[f"fixture_selected_{label}"] = len(rows)
         stats[f"fixture_scanned_{label}"] = scanned
         stats[f"fixture_scan_windows_{label}"] = window + 1
+        receipts = []
+        rollbacks_before = len(stats["units_rolled_back"])
         async with _unit(session, stats, f"Fixture relink {label}"):
             fixtures = await load_fixture_clubs(session, {row.event_id for row in rows})
             decisions = []
@@ -410,12 +418,17 @@ async def _relink_outside_fixture(session, stats: dict, limit: int, rc, cursor_w
                 fixture = fixtures[row.event_id]
                 if fixture.refusal:
                     _record_fixture_refusal(stats, row.event_id, fixture.refusal)
+                    receipts.append((row, fixture, None, None, "fixture_refused", fixture.refusal))
                     continue
                 if row.team_id in fixture.ids:
                     continue
-                team_id, _ = fixture.match(row.name)
-                decisions.append((row, fixture, team_id))
-            for row, fixture, team_id in decisions:
+                team_id, matched_by = fixture.match(row.name)
+                if team_id is None and not _FIXTURE_CLEARS_ENABLED:
+                    stats["outcomes_fixture_clears_held"] += 1
+                    receipts.append((row, fixture, None, None, "clear_held", "no_fixture_match"))
+                    continue
+                decisions.append((row, fixture, team_id, matched_by))
+            for row, fixture, team_id, matched_by in decisions:
                 market_unchanged = select(FuturesMarket.id).where(
                     FuturesMarket.id == row.market_id,
                     FuturesMarket.event_id == row.event_id,
@@ -433,14 +446,36 @@ async def _relink_outside_fixture(session, stats: dict, limit: int, rc, cursor_w
                 )).scalar_one_or_none()
                 if changed is None:
                     stats["fixture_relink_identity_changed"] += 1
+                    receipts.append((row, fixture, team_id, matched_by, "identity_changed", "identity_changed"))
                     continue
                 counter = "outcomes_relinked_into_fixture" if team_id is not None else "outcomes_unlinked_outside_fixture"
                 stats[counter] += 1
+                receipts.append((row, fixture, team_id, matched_by,
+                                 "relinked" if team_id is not None else "cleared", "none"))
+        # _unit commits before returning. A rolled-back unit must never claim
+        # that its tentative changes landed. At most one receipt per candidate.
+        if len(stats["units_rolled_back"]) == rollbacks_before:
+            for row, fixture, team_id, matched_by, action, reason in receipts:
+                sport = fixture.event_identity[-1] if fixture.event_identity else "unknown"
+                logger.info(
+                    "Fixture relink %s: outcome=%s market=%s fixture=%s "
+                    "old_club=%s new_club=%s matched_by=%s sport=%s status=%s reason=%s",
+                    action, row.id, row.market_id, row.event_id, row.team_id,
+                    team_id if team_id is not None else "cleared" if action == "cleared" else "none",
+                    matched_by or "none", sport, row.market_status, reason,
+                )
+                if action == "fixture_refused" and row.market_status == "open":
+                    refused_open_markets.setdefault(reason, set()).add(row.market_id)
         # As with the existing NULL drain, failures leave through their unit's
         # rollback and return at the next wrap, rather than starving the tail.
         stats[f"fixture_wrapped_{label}"] = wrapped
         # Empty ranges advance too. Redis is updated only after the task commit.
         cursor_writes.append((key, None if wrapped else cursor))
+    # These are distinct selected markets in this run, not a table-wide census.
+    # Per-candidate receipts permit deduplication across the two natural runs.
+    stats["fixture_refused_open_markets"] = {
+        reason: len(markets) for reason, markets in refused_open_markets.items()
+    }
 
 
 # Venues whose market names its league for Step 0 and Phase 3: a Kalshi ticker,
@@ -1072,6 +1107,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
         "fixture_refusal_samples": [],
         "outcomes_relinked_into_fixture": 0,
         "outcomes_unlinked_outside_fixture": 0,
+        "outcomes_fixture_clears_held": 0,
         "fixture_relink_identity_changed": 0,
         "outcomes_linked_by_league": 0,
         "outcomes_linked_by_roster": 0,
