@@ -7,7 +7,7 @@ import XCTest
 /// ask ("Will Sinner actually play?") stays as served.
 final class HubOtherMarkets11547Tests: XCTestCase {
 
-    // MARK: - Collection Hub
+    // MARK: - Collection Hub & Game-Page Related Markets Tab (Decision 148-A)
 
     func testTheSideMarketSectionIsOtherMarkets() {
         XCTAssertEqual(ContainerHubPresentation.sectionTitle("side_question"), "Other markets")
@@ -16,6 +16,14 @@ final class HubOtherMarkets11547Tests: XCTestCase {
     func testNoHubSectionIsCalledAQuestion() {
         for sectionClass in ["match_winner", "prop", "title", "advancement", "side_question", "doubles", "unknown"] {
             XCTAssertFalse(ContainerHubPresentation.sectionTitle(sectionClass).lowercased().contains("question"), sectionClass)
+        }
+    }
+
+    func testGamePageRelatedMarketsFallbackTabIsOtherMarkets() {
+        XCTAssertEqual(RelatedMarketsCatalog.fallbackFamily, "Other markets")
+        XCTAssertEqual(RelatedMarketsCatalog.familyNames["novelty"], "Other markets")
+        for family in Array(RelatedMarketsCatalog.familyNames.values) + RelatedMarketsCatalog.familyOrder {
+            XCTAssertFalse(family.lowercased().contains("question"), family)
         }
     }
 
@@ -115,6 +123,18 @@ final class HubOtherMarkets11547Tests: XCTestCase {
                        "We have no number for Carlos Alcaraz, so this comparison is not complete and the market has closed.")
     }
 
+    // MARK: - Calibration Corrections Log (Decision 148-A)
+
+    func testEsportsCalibrationCorrectionNamesMarketsNotQuestions() {
+        XCTAssertEqual(
+            CalibrationCorrections.title("Esports match-bundle exclusion"),
+            "Esports markets that bundle a whole match together are no longer scored"
+        )
+        for sentence in CalibrationCorrections.titleOverrides.values {
+            XCTAssertFalse(sentence.lowercased().contains("question"), sentence)
+        }
+    }
+
     // MARK: - Internal Discover Labeling
 
     func testLabelingDriftRefusalNamesMarketsNotQuestions() {
@@ -132,11 +152,13 @@ final class HubOtherMarkets11547Tests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("Bain Luck")
         let guardedFiles = [
+            "Components/RelatedMarketsCatalogView.swift",
             "Utilities/ContainerHubPresentation.swift",
             "Models/ContainerDiscoveryModels.swift",
             "Models/SearchModels.swift",
             "Utilities/PropExpectationActualDisplay.swift",
             "Utilities/TournamentHubPresentation.swift",
+            "Utilities/CalibrationCorrections.swift",
             "ViewModels/DiscoverLabelingViewModel.swift",
         ]
         let wireKeysAllowed: Set<String> = ["side_question"]
