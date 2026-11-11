@@ -10,9 +10,15 @@
 * ``POST /api/admin/ranking/slates/capture`` — take one slate now (the nightly
   job's own function). Refused while ``RANKING_SNAPSHOTS`` is off.
 * ``GET  /api/admin/ranking/grade-deck`` — Phase 2: the latest slate's opening
-  ten with each card's served payload, for the ``/grade`` page.
-* ``POST /api/admin/ranking/grades`` — Phase 2: one grader's grade for one of
-  those cards. Refused while ``RANKING_SNAPSHOTS`` is off.
+  ten with each card's served payload, for the ``/grade`` page. With
+  ``?slate=<YYYY-MM-DD (Pacific) | slate id | row id>`` (#11937): that saved
+  slate's deck, its top 20 then 10 spread down the rest of its candidate list,
+  the same cards each time, minus those the grader (``X-Grader-Name`` header,
+  never the URL) already graded there. Either deck leaves out any card with no
+  stored drawing and counts them in ``left_out_no_drawing``.
+* ``POST /api/admin/ranking/grades`` — Phase 2: one grader's grade for one card
+  of a slate's candidate list, at its list position (served cards keep their
+  served position). Refused while ``RANKING_SNAPSHOTS`` is off.
 * ``GET  /api/admin/ranking/grades`` — grades (latest per grader and card) and
   today's family tally; ``tools/ranking/grades.py export`` writes them to
   ``evals/ranking/grades/``.
@@ -28,6 +34,7 @@ import json
 import math
 from pathlib import Path
 import re
+import urllib.parse
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
@@ -51,9 +58,33 @@ from app.utils.ranking_slate_capture import snapshot_ranking_slate
 router = APIRouter(prefix="/admin/ranking", tags=["admin-ranking-eval"])
 
 
+_DATE_REF = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def slate_date_bounds(ref: str) -> tuple[datetime, datetime] | None:
+    """#11937: a ``YYYY-MM-DD`` ref names that Pacific day, as UTC bounds; else None.
+
+    The nightly slate is captured at 7:15 AM Pacific, so "the Nov 9 slate" is
+    the one captured on Nov 9 Pacific time.
+    """
+    if not _DATE_REF.match(ref or ""):
+        return None
+    try:
+        day = datetime.strptime(ref, "%Y-%m-%d").replace(tzinfo=TALLY_TZ)
+    except ValueError:
+        return None
+    return day.astimezone(timezone.utc), (day + timedelta(days=1)).astimezone(timezone.utc)
+
+
 async def _slate_row(db: AsyncSession, ref: str, surface: str):
     stmt = select(RankingSlateSnapshot).where(RankingSlateSnapshot.surface == surface)
-    if ref != "latest":
+    bounds = slate_date_bounds(ref)
+    if bounds is not None:
+        stmt = stmt.where(
+            RankingSlateSnapshot.captured_at >= bounds[0],
+            RankingSlateSnapshot.captured_at < bounds[1],
+        )
+    elif ref != "latest":
         stmt = stmt.where(
             or_(RankingSlateSnapshot.id == ref, RankingSlateSnapshot.slate_id == ref)
         )
@@ -146,6 +177,20 @@ GRADES = ("shareable", "interesting", "neither")
 TALLY_TZ = ZoneInfo("America/Los_Angeles")
 
 
+def has_drawing(card: Any) -> bool:
+    """#11937: whether the slate stored a card ``/grade`` can draw. Slates
+    captured before every card was kept hold the opening ten only; the rest
+    fell back to a title and a bare percent, and a grade on that isn't a grade
+    (Fable, Nov 10)."""
+    return isinstance(card, Mapping) and bool(card.get("type"))
+
+
+def drawn_only(items: list[dict]) -> tuple[list[dict], int]:
+    """The deck's cards that can be drawn, and how many were left out."""
+    kept = [i for i in items if has_drawing(i.get("card"))]
+    return kept, len(items) - len(kept)
+
+
 def opening_cards(slate: dict) -> list[dict]:
     """The slate's opening ten as the grading page shows them."""
     by_key = {c.get("item_key"): c for c in slate.get("candidates") or ()}
@@ -164,22 +209,118 @@ def opening_cards(slate: dict) -> list[dict]:
     return out
 
 
+def candidate_order(slate: Mapping[str, Any]) -> list[dict]:
+    """#11937: a slate's whole candidate list in one fixed order, with positions.
+
+    Served cards first, in served order, so a served card's position is its
+    served position (the opening ten graded before this change keep theirs);
+    then every candidate that was not served, best score first, ties by key.
+    """
+    by_key = {c.get("item_key"): c for c in slate.get("candidates") or () if c.get("item_key")}
+    keys = [k for k in (slate.get("served_order") or []) if k]
+    served = set(keys)
+    rest = sorted(
+        (c for k, c in by_key.items() if k not in served),
+        key=lambda c: (-(c.get("score") if isinstance(c.get("score"), (int, float)) else float("-inf")),
+                       str(c.get("item_key"))),
+    )
+    keys += [c["item_key"] for c in rest]
+    out = []
+    for position, key in enumerate(keys, start=1):
+        cand = by_key.get(key) or {}
+        out.append({
+            "position": position,
+            "item_key": key,
+            "title": cand.get("title"),
+            "probability": cand.get("probability"),
+            "card": cand.get("card"),
+        })
+    return out
+
+
+#: About the cards Alex can grade in one sitting on a phone (Fable, #11937).
+SPREAD_DECK_SIZE = 30
+#: The top of the slate is dealt whole: the scorer reads a top ten with more
+#: than 3 ungraded cards as UNKNOWN, so the served order itself must be graded
+#: before any change can be compared with it (Fable's review of #12564; the
+#: Nov 8 sheet, positions 1-30 then a spread, is the shape that scored replays).
+SPREAD_DECK_HEAD = 20
+
+
+def spread_deck(
+    order: list[dict], *, size: int = SPREAD_DECK_SIZE, head: int = SPREAD_DECK_HEAD, skip=()
+) -> list[dict]:
+    """#11937: the first ``head`` cards of ``order`` whole, then ``size - head``
+    spread evenly over the rest down to the last card; the same cards every
+    time for the same list. ``skip`` (item keys already graded) is removed
+    afterwards, so the rest of the deck never moves."""
+    n = len(order)
+    head = min(head, size)
+    if n <= size:
+        picks = list(range(n))
+    else:
+        tail = size - head
+        rest = n - head
+        spread = (
+            {head + round(i * (rest - 1) / (tail - 1)) for i in range(tail)} if tail > 1
+            else ({n - 1} if tail == 1 else set())
+        )
+        picks = sorted(set(range(head)) | spread)
+    skip = set(skip)
+    return [order[i] for i in picks if order[i]["item_key"] not in skip]
+
+
+#: Carries the grader's name (URL-encoded) on ``GET /grade-deck``.
+GRADER_HEADER = "x-grader-name"
+
+
 @router.get("/grade-deck")
 async def get_grade_deck(
     request: Request,
     surface: str = Query(SURFACE_DISCOVER, max_length=32),
+    slate: str | None = Query(None, max_length=64),
+    size: int = Query(SPREAD_DECK_SIZE, ge=5, le=60),
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     _check_admin_secret(secret, request=request)
-    slate = slate_row_dict(await _slate_row(db, "latest", surface))
-    return {
+    # Called directly (tests, other handlers), unset params arrive as Query objects.
+    slate = slate if isinstance(slate, str) and slate.strip() else None
+    size = size if isinstance(size, int) else SPREAD_DECK_SIZE
+    # The grader's name comes in a header, never the URL: query strings land in
+    # request logs, and the family's kids type their names on this page.
+    grader = urllib.parse.unquote(request.headers.get(GRADER_HEADER) or "")[:40]
+    row = slate_row_dict(await _slate_row(db, slate or "latest", surface))
+    out = {
         "switch_on": ranking_snapshots_enabled(),
-        "slate_id": slate["slate_id"],
-        "surface": slate["surface"],
-        "captured_at": slate["captured_at"],
-        "ranker_version": slate["ranker_version"],
-        "items": opening_cards(slate),
+        "slate_id": row["slate_id"],
+        "surface": row["surface"],
+        "captured_at": row["captured_at"],
+        "ranker_version": row["ranker_version"],
+    }
+    if not slate:
+        items, left_out = drawn_only(opening_cards(row))
+        return {**out, "mode": "opening", "items": items, "left_out_no_drawing": left_out}
+    order = candidate_order(row)
+    name = " ".join((grader or "").split())
+    graded: set[str] = set()
+    if name:
+        rows = (await db.execute(
+            select(RankingGrade).where(
+                RankingGrade.slate_id == row["slate_id"],
+                RankingGrade.surface == row["surface"],
+                RankingGrade.grader == name,
+            )
+        )).scalars().all()
+        graded = {r.item_key for r in rows}
+    items, left_out = drawn_only(spread_deck(order, size=size, skip=graded))
+    return {
+        **out,
+        "mode": "spread",
+        "candidates": len(order),
+        "already_graded": len(graded & {c["item_key"] for c in spread_deck(order, size=size)}),
+        "left_out_no_drawing": left_out,
+        "items": items,
     }
 
 
@@ -188,7 +329,8 @@ class GradeIn(BaseModel):
     surface: str = Field(SURFACE_DISCOVER, max_length=32)
     grader: str = Field(..., min_length=1, max_length=40)
     kid: bool = False
-    position: int = Field(..., ge=1, le=OPENING_CARDS)
+    # #11937: any card of the slate's candidate list (captures keep up to 500).
+    position: int = Field(..., ge=1, le=500)
     item_key: str = Field(..., min_length=1, max_length=120)
     grade: str
     note: str | None = Field(None, max_length=300)
@@ -212,9 +354,11 @@ async def post_grade(
     slate = slate_row_dict(await _slate_row(db, body.slate_id, body.surface))
     if slate["slate_id"] != body.slate_id:
         raise HTTPException(status_code=404, detail="no such slate")
-    order = slate["served_order"][:OPENING_CARDS]
-    if body.position > len(order) or order[body.position - 1] != body.item_key:
+    order = candidate_order(slate)
+    if body.position > len(order) or order[body.position - 1]["item_key"] != body.item_key:
         raise HTTPException(status_code=422, detail="that card is not at that position in the slate")
+    if not has_drawing(order[body.position - 1]["card"]):
+        raise HTTPException(status_code=422, detail="that card has no stored drawing, so it can't be graded")
     db.add(
         RankingGrade(
             slate_id=body.slate_id,
@@ -295,6 +439,7 @@ async def get_grades(
 SURFACE_GROUPING = "grouping"
 DEFAULT_GROUPING_SLATE_ID = "grouping-candidates-2026-11"
 EXAM_TEST_GROUPING_SLATE_ID = "sibling-family-exam-test-2026-11"
+VISUAL_FORMS_LOOK_SHEET_SLATE_ID = "visual-forms-look-sheet-2026-11"
 GROUPING_GRADES = ("amazing", "fine", "no")
 # Lossless 1-to-1 bijection scoped to RankingGrade.surface == "grouping" so
 # writes satisfy Postgres ck_ranking_grades_grade ("grade IN ('shareable',
@@ -452,11 +597,21 @@ def _build_proposed_card_preview(family: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(words, Mapping) and words.get("rows"):
         raw_title = str(words.get("title") or family.get("name") or "")
         cleaned_rows = []
-        for r in words.get("rows") or []:
+        for idx_r, r in enumerate(words.get("rows") or [], start=1):
             if not isinstance(r, Mapping):
                 continue
             r_copy = dict(r)
             r_copy["label"] = _clean_subject_display(str(r.get("label") or ""), strip_state_suffix=False)
+            if not isinstance(r_copy.get("market_id"), int) or int(r_copy.get("market_id") or 0) <= 0:
+                r_copy["market_id"] = idx_r
+            val_str = str(r_copy.get("value") or "").strip()
+            if r_copy.get("probability") is None and val_str.endswith("%"):
+                try:
+                    pct_int = int(val_str[:-1].lstrip("<>").strip())
+                    r_copy["probability"] = round(pct_int / 100.0, 4)
+                    r_copy["rendered_percent"] = pct_int
+                except ValueError:
+                    pass
             cleaned_rows.append(r_copy)
         return {
             "kicker": str(words.get("kicker") or defn.get("kicker") or "SIBLING FAMILY"),
@@ -486,7 +641,7 @@ def _build_proposed_card_preview(family: Mapping[str, Any]) -> dict[str, Any]:
 
     rows = []
     seen_labels: set[str] = set()
-    for m, p, o_lbl in source_rows:
+    for idx_m, (m, p, o_lbl) in enumerate(source_rows, start=1):
         raw_subj = _clean_subject_display(str(m.get("subject") or "").strip(), strip_state_suffix=False)
         raw_name = str(m.get("name") or "").strip()
         # If extracted subject is a bare number (e.g. "5" or "#1") that duplicates across members, disambiguate with market name.
@@ -495,16 +650,17 @@ def _build_proposed_card_preview(family: Mapping[str, Any]) -> dict[str, Any]:
         if o_lbl and o_lbl.lower() not in label.lower():
             label = f"{label} ({o_lbl})"
         seen_labels.add(label.lower())
-        val = (
-            f"{int(math.floor(float(p) * 100.0 + 0.5))}%"
-            if isinstance(p, (int, float)) and not isinstance(p, bool) and math.isfinite(float(p))
-            else "Unpriced (refused)"
-        )
+        is_valid_prob = isinstance(p, (int, float)) and not isinstance(p, bool) and math.isfinite(float(p))
+        pct_val = int(math.floor(float(p) * 100.0 + 0.5)) if is_valid_prob else None
+        val = f"{pct_val}%" if pct_val is not None else "Unpriced (refused)"
+        mid = int(m.get("id") or 0) or idx_m
         rows.append(
             {
                 "label": label,
                 "value": val,
-                "market_id": int(m.get("id") or 0),
+                "market_id": mid,
+                "probability": round(float(p), 4) if is_valid_prob else None,
+                "rendered_percent": pct_val,
             }
         )
         if len(rows) >= 5:
@@ -525,6 +681,99 @@ def _build_proposed_card_preview(family: Mapping[str, Any]) -> dict[str, Any]:
         "footer": str(defn.get("footer") or "Each row is its own market. They don't add up to 100%."),
         "relations": relations,
         "level": level,
+    }
+
+
+def _card_entry_to_deck_item(
+    card: Mapping[str, Any],
+    *,
+    pos: int,
+    kind_slug: str,
+    relations: list[str],
+    level: str,
+    default_as_of: str | None = None,
+) -> dict[str, Any]:
+    c_slug = str(card.get("slug") or f"{kind_slug}-{pos}")
+    raw_rows = list(card.get("rows") or [])
+    preview_rows = [
+        {
+            "label": str(r.get("label") or ""),
+            "value": f"{int(r.get('rendered_percent', math.floor(float(r['probability']) * 100.0 + 0.5)))}%",
+            "market_id": int(r.get("market_id") or 0),
+            "probability": round(float(r["probability"]), 4),
+            "rendered_percent": int(r.get("rendered_percent", math.floor(float(r["probability"]) * 100.0 + 0.5))),
+            **(
+                {"observed_at": str(r["observed_at"])}
+                if r.get("observed_at")
+                else {}
+            ),
+        }
+        for r in raw_rows
+    ]
+    single = card.get("stronger_single_alternative") or {}
+    s_prob = float(single["probability"])
+    s_pct = int(math.floor(s_prob * 100.0 + 0.5))
+    as_of_val = card.get("as_of") or default_as_of
+    as_of_label = str(card.get("as_of_label") or "")
+    sport_cat = str((card.get("selector") or {}).get("sport") or "sports")
+    first_source = str((raw_rows[0] if raw_rows else {}).get("source") or "polymarket")
+    unit = str(card.get("subject_unit") or "teams")
+    total_members = int(card.get("member_count") or len(preview_rows))
+    default_count_line = f"Showing {len(preview_rows)} of {total_members} {unit}"
+    count_line_val = str(card.get("count_line") or default_count_line)
+    subtitle_val = card.get("subtitle")
+    selection_type_val = str(card.get("selection_type") or "top_5")
+    graded_title_val = str(card.get("graded_title") or "").strip() or None
+    tag_val = "BUBBLE · 50%" if selection_type_val == "bubble_50" else sport_cat.split("_")[-1].upper()
+    return {
+        "position": pos,
+        "item_key": c_slug,
+        "title": str(card.get("title") or c_slug),
+        **(
+            {"graded_title": graded_title_val}
+            if graded_title_val is not None
+            else {}
+        ),
+        "source": first_source,
+        "category": sport_cat,
+        "template_key": str((card.get("selector") or {}).get("title_ilike") or ""),
+        "member_count": total_members,
+        "kind_verdict": "refuse",
+        "refusal_reasons": ["not_licensed"],
+        "proposed_kind": kind_slug,
+        "selection_type": selection_type_val,
+        "as_of": as_of_val,
+        "as_of_label": as_of_label,
+        "proposed_card": {
+            "kicker": str(card.get("kicker") or kind_slug.upper()),
+            "tag": tag_val,
+            "title": str(card.get("title") or c_slug),
+            **(
+                {"graded_title": graded_title_val}
+                if graded_title_val is not None
+                else {}
+            ),
+            "subtitle": str(subtitle_val) if subtitle_val else None,
+            "rows": preview_rows,
+            "count_line": count_line_val,
+            "footer": str(card.get("footer") or ""),
+            "relations": relations,
+            "level": level,
+            "as_of_label": as_of_label,
+            "proposed_kind": kind_slug,
+            "selection_type": selection_type_val,
+        },
+        "best_single": {
+            "id": int(single.get("market_id") or 0),
+            "name": str(single.get("title") or ""),
+            "subject": str((raw_rows[0] if raw_rows else {}).get("label") or ""),
+            "source": first_source,
+            "category": sport_cat,
+            "yes_probability": s_prob,
+            "rendered_percent": s_pct,
+            "resolution_date": None,
+            "rule_quote": f"{single.get('title') or ''} ({as_of_label})" if as_of_label else str(single.get("title") or ""),
+        },
     }
 
 
@@ -553,63 +802,57 @@ def _build_new_kind_deck_items(
         relations = list(prop.get("relations") or [])
         level = str(prop.get("level") or "member")
         for card in prop.get("example_cards") or []:
-            c_slug = str(card.get("slug") or f"{kind_slug}-{pos}")
-            raw_rows = list(card.get("rows") or [])
-            preview_rows = [
-                {
-                    "label": str(r.get("label") or ""),
-                    "value": f"{int(r.get('rendered_percent', round(float(r['probability']) * 100)))}%",
-                    "market_id": int(r.get("market_id") or 0),
-                }
-                for r in raw_rows
-            ]
-            single = card.get("stronger_single_alternative") or {}
-            s_prob = float(single["probability"])
-            s_pct = int(round(s_prob * 100))
-            as_of_val = card.get("as_of") or loaded.get("generated_at")
-            as_of_label = str(card.get("as_of_label") or "")
-            sport_cat = str((card.get("selector") or {}).get("sport") or "sports")
-            first_source = str((raw_rows[0] if raw_rows else {}).get("source") or "polymarket")
             deck_items.append(
-                {
-                    "position": pos,
-                    "item_key": c_slug,
-                    "title": str(card.get("title") or c_slug),
-                    "source": first_source,
-                    "category": sport_cat,
-                    "template_key": str((card.get("selector") or {}).get("title_ilike") or ""),
-                    "member_count": len(raw_rows),
-                    "kind_verdict": "refuse",
-                    "refusal_reasons": ["not_licensed"],
-                    "proposed_kind": kind_slug,
-                    "as_of": as_of_val,
-                    "as_of_label": as_of_label,
-                    "proposed_card": {
-                        "kicker": str(card.get("kicker") or kind_slug.upper()),
-                        "tag": kind_slug.upper(),
-                        "title": str(card.get("title") or c_slug),
-                        "rows": preview_rows,
-                        "count_line": f"Showing {len(preview_rows)} members · {as_of_label}" if as_of_label else f"Showing {len(preview_rows)} members",
-                        "footer": str(card.get("footer") or ""),
-                        "relations": relations,
-                        "level": level,
-                        "as_of_label": as_of_label,
-                        "proposed_kind": kind_slug,
-                    },
-                    "best_single": {
-                        "id": int(single.get("market_id") or 0),
-                        "name": str(single.get("title") or ""),
-                        "subject": str((raw_rows[0] if raw_rows else {}).get("label") or ""),
-                        "source": first_source,
-                        "category": sport_cat,
-                        "yes_probability": s_prob,
-                        "rendered_percent": s_pct,
-                        "resolution_date": None,
-                        "rule_quote": f"{single.get('title') or ''} ({as_of_label})" if as_of_label else str(single.get("title") or ""),
-                    },
-                }
+                _card_entry_to_deck_item(
+                    card,
+                    pos=pos,
+                    kind_slug=kind_slug,
+                    relations=relations,
+                    level=level,
+                    default_as_of=loaded.get("generated_at"),
+                )
             )
             pos += 1
+    return deck_items
+
+
+def _build_new_kinds_exam_deck_items(
+    *,
+    start_position: int = 1,
+    exam_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Build `/grade/groupings` deck items for the 20-card held-out new-kinds exam (#9937)."""
+    from app.utils.grouping_kind_proposer import load_new_kinds_exam_cards
+
+    loaded = load_new_kinds_exam_cards(path=exam_path)
+    if loaded.get("refused_count", 0) > 0 or loaded.get("accepted_count", 0) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "reason": "new_kinds_exam_refused",
+                "refused": loaded.get("refused", []),
+            },
+        )
+
+    relations_by_kind = {
+        "season_stat_leaders": ["same_measure", "same_window", "sibling"],
+        "qualification_stage_board": ["same_event", "same_measure", "path"],
+    }
+    deck_items: list[dict[str, Any]] = []
+    pos = start_position
+    for card in loaded.get("cards") or []:
+        kind_slug = str(card.get("kind") or "season_stat_leaders")
+        deck_items.append(
+            _card_entry_to_deck_item(
+                card,
+                pos=pos,
+                kind_slug=kind_slug,
+                relations=relations_by_kind.get(kind_slug, ["same_measure", "sibling"]),
+                level="member",
+                default_as_of=loaded.get("generated_at"),
+            )
+        )
+        pos += 1
     return deck_items
 
 
@@ -664,6 +907,8 @@ def _build_sibling_exam_test_deck_items(
                 "label": str(r.get("label") or ""),
                 "value": f"{int(r.get('rendered_percent', round(float(r['probability']) * 100)))}%",
                 "market_id": int(r.get("market_id") or 0),
+                "probability": round(float(r["probability"]), 4),
+                "rendered_percent": int(r.get("rendered_percent", round(float(r["probability"]) * 100))),
             }
             for r in res.rows
         ]
@@ -741,9 +986,12 @@ def load_grouping_grade_deck(
     slate_id: str = DEFAULT_GROUPING_SLATE_ID,
 ) -> dict[str, Any]:
     """Load the proposed grouping deck (sibling-family + new-kind proposals) for `/grade/groupings`."""
-    if slate_id == "new-kind-proposals-2026-11":
-        from app.utils.grouping_kind_proposer import DEFAULT_KIND_PROPOSER_MODEL
+    from app.utils.grouping_kind_proposer import (
+        DEFAULT_KIND_PROPOSER_MODEL,
+        NEW_KINDS_EXAM_SLATE_ID,
+    )
 
+    if slate_id == "new-kind-proposals-2026-11":
         nk_items = _build_new_kind_deck_items(start_position=1)
         return {
             "slate_id": slate_id,
@@ -752,6 +1000,16 @@ def load_grouping_grade_deck(
             "model": DEFAULT_KIND_PROPOSER_MODEL,
             "question": "Is the grouping card worth more than its best single member?",
             "items": nk_items,
+        }
+    if slate_id == NEW_KINDS_EXAM_SLATE_ID:
+        exam_items = _build_new_kinds_exam_deck_items(start_position=1)
+        return {
+            "slate_id": slate_id,
+            "surface": SURFACE_GROUPING,
+            "generated_at": exam_items[0].get("as_of") if exam_items else None,
+            "model": DEFAULT_KIND_PROPOSER_MODEL,
+            "question": "Is the grouping card worth more than its best single member?",
+            "items": exam_items,
         }
     if slate_id == EXAM_TEST_GROUPING_SLATE_ID:
         from app.utils.sibling_family_exam import DEFAULT_PROPOSER_MODEL
@@ -765,6 +1023,18 @@ def load_grouping_grade_deck(
             "question": "Is the grouping card worth more than its best single member?",
             "items": test_items,
         }
+    if slate_id == VISUAL_FORMS_LOOK_SHEET_SLATE_ID:
+        look_sheet_path = (
+            Path(__file__).resolve().parents[2]
+            / "data"
+            / "groupings"
+            / "visual-forms-look-sheet.json"
+        )
+        if not look_sheet_path.exists():
+            raise HTTPException(
+                status_code=404, detail="visual forms look sheet file not found"
+            )
+        return json.loads(look_sheet_path.read_text(encoding="utf-8"))
 
     target_path = candidates_path
     if target_path is None:

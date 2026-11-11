@@ -37,14 +37,19 @@ from app.utils.grouping_kind_proposer import (
     DEFAULT_KIND_PROPOSALS_JSON_PATH,
     DEFAULT_KIND_PROPOSALS_MD_PATH,
     DEFAULT_KIND_PROPOSER_MODEL,
+    DEFAULT_NEW_KINDS_EXAM_JSON_PATH,
     DOCS_KIND_PROPOSALS_JSON_PATH,
+    DOCS_NEW_KINDS_EXAM_JSON_PATH,
     KIND_PROPOSER_MONTHLY_CAP_USD,
     KIND_PROPOSER_RUN_CAP_USD,
     MIN_GRADED_CARDS_FOR_CATALOG,
+    NEW_KINDS_EXAM_SLATE_ID,
     REQUIRED_EXAMPLE_CARDS_PER_KIND,
     KindProposalSpendCapExceededError,
+    compute_selection_carrying_title,
     evaluate_kind_catalog_admission,
     load_committed_kind_proposals,
+    load_new_kinds_exam_cards,
     propose_new_grouping_kinds,
     validate_proposed_grouping_kind,
 )
@@ -326,3 +331,244 @@ class TestKindProposerSpendAndCatalogAdmission:
         verdict_page = evaluate_kind_catalog_admission("season_stat_leaders", page_rows)
         assert verdict_page["yes_count"] == 2
         assert verdict_page["no_count"] == 0
+
+        # Pre-fix calibration grades (from grouping-candidates-2026-11 or graded_on_pre_fix_headings=True)
+        # are recorded in pre_fix_yes_count and do NOT count as a pass on the new selection-carrying titles
+        pre_fix_rows = [
+            {
+                "slate_id": "grouping-candidates-2026-11",
+                "item_key": "nhl-2026-teams-100-points-benchmark",
+                "grader": "Alex",
+                "grade": "amazing",
+            }
+            for _ in range(6)
+        ]
+        verdict_pre_fix = evaluate_kind_catalog_admission(
+            "season_stat_leaders", pre_fix_rows
+        )
+        assert verdict_pre_fix["pre_fix_yes_count"] == 6
+        assert verdict_pre_fix["yes_count"] == 0
+        assert verdict_pre_fix["joins_catalog"] is False
+
+    def test_selection_carrying_titles_and_twenty_card_held_out_exam_deck(
+        self,
+    ) -> None:
+        # 1. Complete division (N <= 8)
+        complete_meta = compute_selection_carrying_title(
+            [
+                {"label": "Cincinnati Bengals", "probability": 0.935, "rendered_percent": 94},
+                {"label": "Pittsburgh Steelers", "probability": 0.715, "rendered_percent": 72},
+                {"label": "Cleveland Browns", "probability": 0.2365, "rendered_percent": 24},
+                {"label": "Baltimore Ravens", "probability": 0.16, "rendered_percent": 16},
+            ],
+            total_member_count=4,
+            subject_unit="teams",
+            question_subtitle="Which AFC North teams will make the 2027 NFL playoffs?",
+            selection_type="complete_group",
+        )
+        assert complete_meta["title"] == "Which AFC North teams will make the 2027 NFL playoffs?"
+        assert complete_meta["subtitle"] is None
+        assert complete_meta["count_line"] == "Showing 4 of 4 teams"
+
+        # 2. Clear leader (> 1 point)
+        leader_meta = compute_selection_carrying_title(
+            [
+                {"label": "Minnesota Wild", "probability": 0.955, "rendered_percent": 96},
+                {"label": "Carolina Hurricanes", "probability": 0.94, "rendered_percent": 94},
+            ],
+            total_member_count=32,
+            subject_unit="teams",
+            race_name="NHL playoff race",
+            question_subtitle="Which NHL team will make the 2026–27 playoffs?",
+            selection_type="top_5",
+        )
+        assert leader_meta["title"] == "Minnesota Wild lead the NHL playoff race at 96%"
+        assert leader_meta["subtitle"] == "Which NHL team will make the 2026–27 playoffs?"
+        assert leader_meta["count_line"] == "Showing 2 of 32 teams"
+
+        # 3. Close race (within 1 point)
+        tie_meta = compute_selection_carrying_title(
+            [
+                {"label": "Connor McDavid", "probability": 0.962, "rendered_percent": 96},
+                {"label": "Nathan MacKinnon", "probability": 0.9595, "rendered_percent": 96},
+            ],
+            total_member_count=101,
+            subject_unit="players",
+            race_name="NHL 80-point race",
+            question_subtitle="Which NHL players will reach 80+ points in 2026–27?",
+            selection_type="top_5",
+            unnumbered_count=9,
+        )
+        assert (
+            tie_meta["title"]
+            == "Connor McDavid and Nathan MacKinnon top the NHL 80-point race at 96%"
+        )
+        assert tie_meta["subtitle"] == "Which NHL players will reach 80+ points in 2026–27?"
+        assert (
+            tie_meta["count_line"]
+            == "Showing 2 of 101 players · No number yet for 9 players"
+        )
+
+        # 4. Bubble slice (closest to 50%)
+        bubble_meta = compute_selection_carrying_title(
+            [
+                {"label": "Anaheim Ducks", "probability": 0.505, "rendered_percent": 50},
+                {"label": "Buffalo Sabres", "probability": 0.445, "rendered_percent": 44},
+            ],
+            total_member_count=32,
+            subject_unit="teams",
+            selection_type="bubble_50",
+            bubble_title="Five NHL teams on the 2026–27 playoff bubble",
+        )
+        assert bubble_meta["title"] == "Five NHL teams on the 2026–27 playoff bubble"
+        assert bubble_meta["subtitle"] == "Closest to 50% · 32 teams"
+        assert bubble_meta["count_line"] == "Showing 2 of 32 teams"
+
+        # 5. Fallback when no natural title for S
+        fallback_meta = compute_selection_carrying_title(
+            [{"label": "Team A", "probability": 0.5, "rendered_percent": 50}],
+            total_member_count=20,
+            subject_unit="teams",
+            question_subtitle="Which team qualifies?",
+            selection_type="fallback",
+        )
+        assert fallback_meta["count_line"] == "Top 1 by chance · 20 teams"
+
+        # 6. Verify 20-card held-out exam slate
+        assert DEFAULT_NEW_KINDS_EXAM_JSON_PATH.exists()
+        assert DOCS_NEW_KINDS_EXAM_JSON_PATH.exists()
+        assert DEFAULT_NEW_KINDS_EXAM_JSON_PATH.read_text(
+            encoding="utf-8"
+        ) == DOCS_NEW_KINDS_EXAM_JSON_PATH.read_text(encoding="utf-8")
+
+        exam = load_new_kinds_exam_cards()
+        assert exam["slate_id"] == NEW_KINDS_EXAM_SLATE_ID
+        assert exam["accepted_count"] == 20
+        assert exam["refused_count"] == 0
+        stat_cards = [c for c in exam["cards"] if c["kind"] == "season_stat_leaders"]
+        qual_cards = [c for c in exam["cards"] if c["kind"] == "qualification_stage_board"]
+        bubble_cards = [c for c in exam["cards"] if c["selection_type"] == "bubble_50"]
+        assert len(stat_cards) == 10
+        assert len(qual_cards) == 10
+        assert len(bubble_cards) == 3
+
+        # Disjoint from the 10 calibration cards by slug, selector, and row market_ids
+        calib = load_committed_kind_proposals()
+        calib_cards = [
+            c
+            for p in calib["proposals"]
+            for c in p["example_cards"]
+        ]
+        calib_slugs = {c["slug"] for c in calib_cards}
+        exam_slugs = {c["slug"] for c in exam["cards"]}
+        assert calib_slugs.isdisjoint(exam_slugs)
+
+        def _selector_tuple(card: dict[str, Any]) -> tuple[str, str, str]:
+            sel = card["selector"]
+            assert sel.get("sport"), f"missing sport in selector on {card['slug']}"
+            assert sel.get("title_ilike"), f"missing title_ilike in selector on {card['slug']}"
+            assert sel.get("window"), f"missing window in selector on {card['slug']}"
+            assert sel.get("selector"), f"missing selector rule in selector on {card['slug']}"
+            return (
+                str(sel["sport"]),
+                str(sel["title_ilike"]),
+                str(sel["selector"]),
+            )
+
+        calib_selectors = {_selector_tuple(c) for c in calib_cards}
+        exam_selectors = {_selector_tuple(c) for c in exam["cards"]}
+        assert len(calib_selectors) == 10
+        assert len(exam_selectors) == 20
+        assert calib_selectors.isdisjoint(exam_selectors)
+
+        # Row market_id sets are distinct and share at most 1 market_id across any (exam, calibration) pair
+        calib_id_sets = {
+            frozenset(int(r["market_id"]) for r in c["rows"]) for c in calib_cards
+        }
+        exam_id_sets = {
+            frozenset(int(r["market_id"]) for r in c["rows"]) for c in exam["cards"]
+        }
+        assert calib_id_sets.isdisjoint(exam_id_sets)
+        for ec in exam["cards"]:
+            e_ids = {int(r["market_id"]) for r in ec["rows"]}
+            for cc in calib_cards:
+                c_ids = {int(r["market_id"]) for r in cc["rows"]}
+                assert len(e_ids & c_ids) <= 1, (
+                    f"{ec['slug']} shares >1 market_ids with calibration card {cc['slug']}: {e_ids & c_ids}"
+                )
+
+        # All 10 calibration cards preserve graded_title (the pre-fix headings Alex graded)
+        # and calibration_summary marks graded_on_pre_fix_headings=True
+        for cc in calib_cards:
+            assert cc.get("graded_title")
+            assert cc["graded_title"] != cc["title"]
+        cal_sum = exam["calibration_summary"]
+        assert cal_sum["graded_on_pre_fix_headings"] is True
+        assert cal_sum["counts_as_pass_on_new_titles"] is False
+        assert cal_sum["season_stat_leaders"]["graded_on_pre_fix_headings"] is True
+        assert cal_sum["season_stat_leaders"]["counts_as_pass_on_new_titles"] is False
+        assert cal_sum["qualification_stage_board"]["graded_on_pre_fix_headings"] is True
+        assert cal_sum["qualification_stage_board"]["counts_as_pass_on_new_titles"] is False
+
+        # All 30 cards (10 calibration + 20 exam) reproduce title, subtitle, count_line, and selection_type
+        # directly from compute_selection_carrying_title using the card's stored inputs
+        for card in [*calib_cards, *exam["cards"]]:
+            recomputed = compute_selection_carrying_title(
+                card["rows"],
+                total_member_count=card["member_count"],
+                subject_unit=card["subject_unit"],
+                race_name=card.get("race_name"),
+                question_subtitle=card.get("question_subtitle") or "",
+                selection_type=card["selection_type"],
+                bubble_title=card.get("bubble_title"),
+                unnumbered_count=int(card.get("unnumbered_count") or 0),
+            )
+            assert card["title"] == recomputed["title"], f"title mismatch on {card['slug']}"
+            assert card["subtitle"] == recomputed["subtitle"], f"subtitle mismatch on {card['slug']}"
+            assert card["count_line"] == recomputed["count_line"], f"count_line mismatch on {card['slug']}"
+            assert card["selection_type"] == recomputed["selection_type"], f"selection_type mismatch on {card['slug']}"
+
+        # Validator refuses a card whose title does not match compute_selection_carrying_title
+        tampered_prop = copy.deepcopy(calib["proposals"][0])
+        tampered_prop["example_cards"][0]["title"] = "Tampered non-reproducible headline"
+        tampered_res = validate_proposed_grouping_kind(tampered_prop)
+        assert tampered_res["ok"] is False
+        assert str(tampered_res["reason"]).startswith("non_reproducible_selection_title:")
+
+        # Served via load_grouping_grade_deck(slate_id="new-kinds-exam-test-2026-11")
+        deck = load_grouping_grade_deck(slate_id=NEW_KINDS_EXAM_SLATE_ID)
+        assert deck["slate_id"] == NEW_KINDS_EXAM_SLATE_ID
+        assert len(deck["items"]) == 20
+        for item in deck["items"]:
+            for r in item["proposed_card"]["rows"]:
+                assert 0 < r["probability"] < 1
+                assert 0 <= r["rendered_percent"] <= 100
+                assert r.get("observed_at")
+
+        # Every row stamped at one time 8 days before as_of, or missing observed_at, is refused.
+        raw_exam = json.loads(DEFAULT_NEW_KINDS_EXAM_JSON_PATH.read_text(encoding="utf-8"))
+        stale_card = copy.deepcopy(raw_exam["cards"][0])
+        for r in stale_card["rows"]:
+            r["observed_at"] = "2026-11-01T12:00:00Z"
+        missing_obs_card = copy.deepcopy(raw_exam["cards"][1])
+        missing_obs_card["rows"][0].pop("observed_at", None)
+        refused_exam_path = Path(__file__).resolve().parent / "_tmp_refused_exam_9937.json"
+        try:
+            refused_exam_path.write_text(
+                json.dumps(
+                    {
+                        "slate_id": NEW_KINDS_EXAM_SLATE_ID,
+                        "generated_at": "2026-11-10T16:50:00Z",
+                        "cards": [stale_card, missing_obs_card],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            refused_exam = load_new_kinds_exam_cards(path=refused_exam_path)
+            assert refused_exam["accepted_count"] == 0
+            assert refused_exam["refused_count"] == 2
+            reasons = [entry["reason"] for entry in refused_exam["refused"]]
+            assert any(str(r).startswith("stale_quote:") for r in reasons)
+            assert any(str(r).startswith("missing_observed_at:") for r in reasons)
+        finally:
+            refused_exam_path.unlink(missing_ok=True)

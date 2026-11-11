@@ -32,6 +32,63 @@ export interface GradeDeck {
   captured_at: string | null;
   ranker_version: string;
   items: GradeDeckItem[];
+  /** #11937: "opening" (today's ten) or "spread" (a named slate, top to bottom). */
+  mode?: "opening" | "spread";
+  /** Spread deck only: the slate's whole candidate list length. */
+  candidates?: number;
+  /** Spread deck only: cards of this deck the grader graded before (skipped). */
+  already_graded?: number;
+  /** #11937: cards of this deck left out because the slate stored no drawing. */
+  left_out_no_drawing?: number;
+}
+
+/**
+ * #11937: the page never deals a card it can't draw. A title with no number
+ * isn't a card, and a grade on it isn't a grade (Fable, Nov 10). The server
+ * already leaves these out; this also covers a deck from an older server.
+ */
+export function drawnOnly(deck: GradeDeck): GradeDeck {
+  const items = deck.items.filter((i) => i.card != null);
+  const dropped = deck.items.length - items.length;
+  return { ...deck, items, left_out_no_drawing: (deck.left_out_no_drawing ?? 0) + dropped };
+}
+
+/** "12 cards left out: no stored drawing"; empty when none were. */
+export function leftOutLine(deck: GradeDeck): string {
+  const n = deck.left_out_no_drawing ?? 0;
+  if (n <= 0) return "";
+  return `${n} ${n === 1 ? "card" : "cards"} left out: no stored drawing`;
+}
+
+const SLATE_REF = /^[A-Za-z0-9-]{1,64}$/;
+
+/** #11937: the `?slate=` a link names (a Pacific date or a slate id), or null. */
+export function slateFromSearch(search: string): string | null {
+  const raw = new URLSearchParams(search).get("slate");
+  return raw && SLATE_REF.test(raw) ? raw : null;
+}
+
+/** The deck request: today's opening ten, or a named slate's deck. */
+export function gradeDeckPath(slate: string | null): string {
+  if (!slate) return "/api/admin/ranking/grade-deck";
+  return `/api/admin/ranking/grade-deck?${new URLSearchParams({ slate }).toString()}`;
+}
+
+/** The grader's name rides in a header, never the URL (request logs), so the
+ * named slate's deck can skip what they already graded there. */
+export function gradeDeckInit(grader: string | null): RequestInit | undefined {
+  return grader ? { headers: { "X-Grader-Name": encodeURIComponent(grader) } } : undefined;
+}
+
+/** The line under "Who's grading?". */
+export function deckHeadline(deck: GradeDeck): string {
+  const when = deck.captured_at ? new Date(deck.captured_at).toLocaleString() : "the latest capture";
+  if (deck.mode !== "spread") return `The top ${deck.items.length} Discover cards from ${when}.`;
+  const day = deck.captured_at
+    ? new Date(deck.captured_at).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "America/Los_Angeles" })
+    : "that day";
+  const skipped = deck.already_graded ? ` (${deck.already_graded} you've already graded are skipped)` : "";
+  return `${deck.items.length} cards from the Discover slate of ${day}: its top cards, then a spread down the rest of its ${deck.candidates ?? "?"} candidates${skipped}.`;
 }
 
 export interface TallyEntry {

@@ -247,7 +247,10 @@ enum PeriodLabel {
         // `game_clock: null` on MLB (measured on 15308638), and ESPN has also
         // sent the literal `"0:00"`, which is what the guard this replaces was
         // written against. Both paths are live, so both are handled here.
-        if clock == "0:00" || clock == "0" { clock = "" }
+        // #11220: basketball's sub-minute clock runs out as `"0.0"`, so a
+        // finished NBA game read "Final 0.0". Any clock that is only zeros and
+        // separators ("0", "0:00", "0.0", "0:00.0") says nothing.
+        if Self.isSpentClock(clock) { clock = "" }
 
         // THE DEFECT. Drop the LABEL, never the clock: `game_clock` is the field
         // that is always a clock, where `period` is whatever ESPN chose to send.
@@ -257,6 +260,13 @@ enum PeriodLabel {
 
         let text = parts.filter { !$0.isEmpty }.joined(separator: " ")
         return text.isEmpty ? nil : text
+    }
+
+    /// #11220 — a clock that has run out: only zeros, colons and points.
+    static func isSpentClock(_ clock: String) -> Bool {
+        !clock.isEmpty
+            && clock.contains("0")
+            && clock.allSatisfy { $0 == "0" || $0 == ":" || $0 == "." }
     }
 
     // MARK: - A bare period number (#4888)

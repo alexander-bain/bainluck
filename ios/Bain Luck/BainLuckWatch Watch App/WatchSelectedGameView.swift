@@ -17,6 +17,8 @@ struct WatchSelectedGameView: View {
     @State private var showingHandoffHelp = false
     #if DEBUG
     @State private var launcherOpenCount = 0
+    /// Fixture-only receipt (#12420): the live qualifier's laid-out width and its widest word's.
+    @State private var qualifierFit = WatchQualifierFit()
     #endif
     @State private var refreshGeneration = 0
     @State private var gamesRefreshGeneration = 0
@@ -531,26 +533,51 @@ struct WatchSelectedGameView: View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Win chance").font(.footnote).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    sharedLiveQualifier
                     Text(probability).font(.title2.bold()).monospacedDigit()
                         .foregroundStyle(.cyan)
                 }
             } else {
                 // Preserve the unscaled34pt value. Centering the complete wrapped
                 // qualifier avoids extra height from aligning its first baseline.
-                HStack(alignment: .center, spacing: 2) {
-                    Text(probability)
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .monospacedDigit().foregroundStyle(.cyan).fixedSize()
-                    Text("Win chance").font(.footnote).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                // The qualifier stays beside the value only where each of its words
+                // fits whole; otherwise it takes its own line above the value (#12420).
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 2) {
+                        sharedLiveValue(probability)
+                        WatchWholeWordsLayout {
+                            sharedLiveQualifier
+                            Text("Win").font(.footnote).hidden()
+                            Text("chance").font(.footnote).hidden()
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 0) {
+                        sharedLiveQualifier
+                        sharedLiveValue(probability)
+                    }
                 }
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("watch.home-probability")
         .accessibilityLabel("\(team) win probability, \(probability)")
+        #if DEBUG
+        .accessibilityValue(WatchUIFixture.current == nil ? "" : qualifierFit.receipt)
+        #endif
+    }
+
+    private func sharedLiveValue(_ probability: String) -> some View {
+        Text(probability)
+            .font(.system(size: 34, weight: .bold, design: .rounded))
+            .monospacedDigit().foregroundStyle(.cyan).fixedSize()
+    }
+
+    private var sharedLiveQualifier: some View {
+        Text("Win chance").font(.footnote).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            #if DEBUG
+            .modifier(WatchQualifierFitReceipt(words: ["Win", "chance"], fit: $qualifierFit))
+            #endif
     }
 
     private func sharedLiveHomeScore(team: String, score: Int) -> some View {
@@ -1103,6 +1130,56 @@ private struct WatchPickerHeading: View {
             #endif
     }
 }
+
+/// The first subview is wrapping native text; the rest are its words, hidden. Given a width,
+/// this is exactly that text. Asked for its ideal width, it answers with the widest word, so a
+/// `ViewThatFits` keeps the text beside a value only where no word breaks across lines (#12420).
+private struct WatchWholeWordsLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let text = subviews.first else { return .zero }
+        guard proposal.width == nil else { return text.sizeThatFits(proposal) }
+        let widestWord = subviews.dropFirst().map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
+        return text.sizeThatFits(ProposedViewSize(width: widestWord, height: proposal.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+        for word in subviews.dropFirst() { word.place(at: bounds.origin, proposal: .zero) }
+    }
+}
+
+#if DEBUG
+struct WatchQualifierFit: Equatable {
+    var line: CGFloat = 0
+    var widestWord: CGFloat = 0
+
+    var receipt: String {
+        String(format: "qualifier %.1f, widest word %.1f", Double(line), Double(widestWord))
+    }
+}
+
+/// Fixture-only: reports the qualifier's laid-out width beside its widest word's. A qualifier
+/// narrower than its widest word has broken that word across lines ("Win / chan / ce").
+private struct WatchQualifierFitReceipt: ViewModifier {
+    let words: [String]
+    @Binding var fit: WatchQualifierFit
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { fit.line = $0 }
+            .background {
+                ZStack {
+                    ForEach(words, id: \.self) { word in
+                        Text(word).font(.footnote).fixedSize().hidden()
+                            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) {
+                                fit.widestWord = max(fit.widestWord, $0)
+                            }
+                    }
+                }
+            }
+    }
+}
+#endif
 
 /// Measure the complete native text before choosing a side-by-side metric.
 /// A subject needing more than two lines gets the full width; no text is clipped.

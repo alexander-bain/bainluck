@@ -23,9 +23,15 @@ import { setDiscoverLearningGate } from "@/lib/discoverInteractions";
 import {
   GRADES,
   GRADE_LABELS,
+  deckHeadline,
+  drawnOnly,
   formatTally,
+  gradeDeckInit,
+  gradeDeckPath,
   handleGradeDeckReadError,
+  leftOutLine,
   normalizeGraderName,
+  slateFromSearch,
   type Grade,
   type GradeDeck,
   type TallyEntry,
@@ -64,6 +70,16 @@ function GradeSession() {
   const [graded, setGraded] = useState(0);
   const [saving, setSaving] = useState(false);
   const [tally, setTally] = useState<TallyEntry[]>([]);
+  // #11937: `/grade?slate=<date or id>` grades that saved slate's spread deck.
+  // undefined until the URL is read, so the deck isn't fetched twice.
+  const [slateRef, setSlateRef] = useState<string | null | undefined>(undefined);
+  // While a named slate re-deals for the grader, the grade buttons wait, so a
+  // quick tap can't grade a card the new deck is about to skip.
+  const [dealing, setDealing] = useState(false);
+
+  useEffect(() => {
+    setSlateRef(slateFromSearch(window.location.search));
+  }, []);
 
   useEffect(() => {
     try {
@@ -90,11 +106,12 @@ function GradeSession() {
   );
 
   useEffect(() => {
+    if (slateRef === undefined) return;
     let cancelled = false;
-    adminFetchJSON<GradeDeck>("/api/admin/ranking/grade-deck", secret)
+    adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret)
       .then((d) => {
         if (cancelled) return;
-        setDeck(d);
+        setDeck(drawnOnly(d));
         void loadTally(d.slate_id);
       })
       .catch((e: unknown) => {
@@ -107,7 +124,7 @@ function GradeSession() {
     return () => {
       cancelled = true;
     };
-  }, [secret, loadTally, clearSecret]);
+  }, [secret, loadTally, clearSecret, slateRef]);
 
   const start = () => {
     const name = normalizeGraderName(nameInput);
@@ -121,10 +138,18 @@ function GradeSession() {
     setGrader(name);
     setIndex(0);
     setGraded(0);
+    // A named slate re-deals for this grader, skipping cards they already graded.
+    if (slateRef) {
+      setDealing(true);
+      adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret, gradeDeckInit(name))
+        .then((d) => setDeck(drawnOnly(d)))
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not load the cards"))
+        .finally(() => setDealing(false));
+    }
   };
 
   const submit = async (grade: Grade) => {
-    if (!deck || !grader || saving) return;
+    if (!deck || !grader || saving || dealing) return;
     const item = deck.items[index];
     setSaving(true);
     setError(null);
@@ -159,6 +184,7 @@ function GradeSession() {
   };
 
   const tallyLine = formatTally(tally);
+  const leftOut = deck ? leftOutLine(deck) : "";
 
   if (error && !deck) {
     return <Shell><p className="text-sm text-text-secondary">{error}</p></Shell>;
@@ -171,9 +197,8 @@ function GradeSession() {
     return (
       <Shell tally={tallyLine}>
         <h1 className="text-xl font-semibold text-text-primary">Who&apos;s grading?</h1>
-        <p className="mt-1 text-sm text-text-secondary">
-          The top {deck.items.length} Discover cards from {deck.captured_at ? new Date(deck.captured_at).toLocaleString() : "the latest capture"}.
-        </p>
+        <p className="mt-1 text-sm text-text-secondary">{deckHeadline(deck)}</p>
+        {leftOut && <p className="mt-1 text-sm text-text-secondary">{leftOut}.</p>}
         <input
           className="mt-4 w-full rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-text-primary"
           placeholder="Your name"
@@ -202,7 +227,10 @@ function GradeSession() {
   if (index >= deck.items.length) {
     return (
       <Shell tally={tallyLine}>
-        <h1 className="text-xl font-semibold text-text-primary">All {deck.items.length} graded. Thanks, {grader}!</h1>
+        <h1 className="text-xl font-semibold text-text-primary">
+          {deck.items.length ? `All ${deck.items.length} graded. Thanks, ${grader}!` : `Nothing left to grade on this slate, ${grader}.`}
+        </h1>
+        {leftOut && <p className="mt-1 text-sm text-text-secondary">{leftOut}.</p>}
         <button className="mt-4 text-sm font-semibold text-accent-brand hover:underline" onClick={() => setGrader(null)}>
           Next grader
         </button>
@@ -221,15 +249,8 @@ function GradeSession() {
         <span>{graded} graded</span>
       </div>
       <div className="mt-3 pointer-events-none select-none" aria-label={`Card ${item.position}`}>
-        {item.card ? (
+        {item.card && (
           <DiscoverCard groupedItem={{ type: "single", item: item.card }} positionIndex={item.position - 1} />
-        ) : (
-          <div className="rounded-xl border border-surface-border bg-surface-card p-4">
-            <div className="font-semibold text-text-primary">{item.title || item.item_key}</div>
-            {item.probability != null && (
-              <div className="mt-1 text-2xl font-bold text-text-primary">{Math.round(item.probability * 100)}%</div>
-            )}
-          </div>
         )}
       </div>
       <input
@@ -244,7 +265,7 @@ function GradeSession() {
           <button
             key={g}
             className="rounded-lg border border-surface-border bg-surface-elevated px-2 py-3 font-semibold text-text-primary disabled:opacity-50"
-            disabled={saving}
+            disabled={saving || dealing}
             onClick={() => void submit(g)}
           >
             {GRADE_LABELS[g]}

@@ -1,0 +1,416 @@
+{
+  "schema_version": 1,
+  "issue": 12577,
+  "updated_at": "2026-11-11T03:50:00Z",
+  "rules": {
+    "never_blend_propositions": true,
+    "pairing_authority": "hand_kept_register",
+    "settled_stage_1_rendering": "tick_or_cross",
+    "missing_probability_rendering": "explicit_unpriced_notice",
+    "kid_safe_gate_issue": 7461
+  },
+  "sets": {
+    "oscars-2027-best-picture": {
+      "set_id": "oscars-2027-best-picture",
+      "category": "entertainment",
+      "kicker": "OSCARS 2027 · BEST PICTURE",
+      "title": "Best Picture: nominated % and wins %",
+      "subtitle": "99th Academy Awards · Ten nominees announced Jan 2027 · Paired by film, never blended",
+      "stage_1_label": "Nominated",
+      "stage_2_label": "Wins",
+      "stage_1_market": {
+        "id": 5165726,
+        "source": "kalshi",
+        "name": "Oscar nominees: Best Picture",
+        "companion_polymarket_id": 27988771
+      },
+      "stage_2_market": {
+        "id": 6173044,
+        "source": "kalshi",
+        "name": "Oscar Winner: Best Picture"
+      },
+      "stage_1_settled": false,
+      "as_of": "2026-11-11T03:40:53Z",
+      "entries": [
+        {
+          "subject_key": "film:the-odyssey-2026",
+          "subject": "The Odyssey",
+          "detail": "Christopher Nolan · Universal",
+          "stage_1_market_id": 5165726,
+          "stage_1_outcome": "The Odyssey",
+          "stage_1_probability": 0.98,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 6173044,
+          "stage_2_outcome": "The Odyssey",
+          "stage_2_probability": 0.565,
+          "art": {
+            "kind": "tmdb_poster",
+            "tmdb_id": 1368337,
+            "poster_path": "/krVa7rKCQb4OBfsr2LTJv4rTz5q.jpg",
+            "url": "https://image.tmdb.org/t/p/w342/krVa7rKCQb4OBfsr2LTJv4rTz5q.jpg",
+            "genre_ids": [12, 28, 14],
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "film:you-can-see-everything-2026",
+          "subject": "You Can See Everything",
+          "detail": "Nathan Fielder · A24",
+          "stage_1_market_id": 5165726,
+          "stage_1_outcome": "You Can See Everything",
+          "stage_1_probability": 0.855,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 6173044,
+          "stage_2_outcome": "You Can See Everything",
+          "stage_2_probability": 0.165,
+          "art": {
+            "kind": "tmdb_poster",
+            "tmdb_id": 1765072,
+            "poster_path": "/Ap8QwmKfSjYbWC4XIP8w9pdn72O.jpg",
+            "url": "https://image.tmdb.org/t/p/w342/Ap8QwmKfSjYbWC4XIP8w9pdn72O.jpg",
+            "genre_ids": [99],
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "film:the-black-ball-2026",
+          "subject": "The Black Ball",
+          "detail": "Javier Calvo & Javier Ambrossi · (La Bola Negra)",
+          "stage_1_market_id": 5165726,
+          "stage_1_outcome": "The Black Ball",
+          "stage_1_probability": 0.94,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 6173044,
+          "stage_2_outcome": "The Black Ball",
+          "stage_2_probability": 0.145,
+          "art": {
+            "kind": "tmdb_poster",
+            "tmdb_id": 1422041,
+            "poster_path": "/7HwFQTMghL6HOvzEnXYUvyuZXeh.jpg",
+            "url": "https://image.tmdb.org/t/p/w342/7HwFQTMghL6HOvzEnXYUvyuZXeh.jpg",
+            "genre_ids": [18, 10752],
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "film:dune-part-three-2026",
+          "subject": "Dune: Part Three",
+          "detail": "Denis Villeneuve · Warner Bros.",
+          "stage_1_market_id": 5165726,
+          "stage_1_outcome": "Dune: Part Three",
+          "stage_1_probability": 0.82,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 6173044,
+          "stage_2_outcome": "Dune: Part Three",
+          "stage_2_probability": 0.075,
+          "art": {
+            "kind": "tmdb_poster",
+            "tmdb_id": 1170608,
+            "poster_path": "/glt0v4I89rMWstDNCaFXc5SNyO1.jpg",
+            "url": "https://image.tmdb.org/t/p/w342/glt0v4I89rMWstDNCaFXc5SNyO1.jpg",
+            "genre_ids": [878, 12],
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "film:wild-horse-nine-2026",
+          "subject": "Wild Horse Nine",
+          "detail": "Martin McDonagh · Searchlight",
+          "stage_1_market_id": 5165726,
+          "stage_1_outcome": "Wild Horse Nine",
+          "stage_1_probability": 0.93,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 6173044,
+          "stage_2_outcome": "Wild Horse Nine",
+          "stage_2_probability": 0.015,
+          "art": {
+            "kind": "tmdb_poster",
+            "tmdb_id": 891621,
+            "poster_path": "/dNJFRtVg3xLQ7dbNIQ55cmmIniD.jpg",
+            "url": "https://image.tmdb.org/t/p/w342/dNJFRtVg3xLQ7dbNIQ55cmmIniD.jpg",
+            "genre_ids": [35, 80, 53],
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "film:artificial-2026",
+          "subject": "Artificial",
+          "detail": "Luca Guadagnino · Amazon MGM",
+          "stage_1_market_id": 5165726,
+          "stage_1_outcome": "Artificial",
+          "stage_1_probability": 0.57,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 6173044,
+          "stage_2_outcome": "Artificial",
+          "stage_2_probability": 0.015,
+          "art": {
+            "kind": "tmdb_poster",
+            "tmdb_id": 1492198,
+            "poster_path": "/2bz0HPE8OFOqnyvl8sCdVDIg1KX.jpg",
+            "url": "https://image.tmdb.org/t/p/w342/2bz0HPE8OFOqnyvl8sCdVDIg1KX.jpg",
+            "genre_ids": [35, 18, 36],
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "film:project-hail-mary-2026",
+          "subject": "Project Hail Mary",
+          "detail": "Phil Lord & Christopher Miller · Amazon MGM",
+          "stage_1_market_id": 5165726,
+          "stage_1_outcome": "Project Hail Mary",
+          "stage_1_probability": 0.775,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 6173044,
+          "stage_2_outcome": "Project Hail Mary",
+          "stage_2_probability": 0.01,
+          "art": {
+            "kind": "tmdb_poster",
+            "tmdb_id": 687163,
+            "poster_path": "/iOb2fjXLbpJgyQXe46n1WtGCnaa.jpg",
+            "url": "https://image.tmdb.org/t/p/w342/iOb2fjXLbpJgyQXe46n1WtGCnaa.jpg",
+            "genre_ids": [878, 12],
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "film:the-debut-2026",
+          "subject": "The Debut",
+          "detail": "Musical Drama · 2026",
+          "stage_1_market_id": 5165726,
+          "stage_1_outcome": "The Debut",
+          "stage_1_probability": 0.725,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 6173044,
+          "stage_2_outcome": "The Debut",
+          "stage_2_probability": 0.01,
+          "art": {
+            "kind": "tmdb_poster",
+            "tmdb_id": 1391239,
+            "poster_path": "/qk8qWJxM9hZSbSjSoEz0LAzcoPb.jpg",
+            "url": "https://image.tmdb.org/t/p/w342/qk8qWJxM9hZSbSjSoEz0LAzcoPb.jpg",
+            "genre_ids": [10402, 35, 18],
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "film:the-invite-2026",
+          "subject": "The Invite",
+          "detail": "Olivia Wilde · A24",
+          "stage_1_market_id": 5165726,
+          "stage_1_outcome": "The Invite",
+          "stage_1_probability": 0.715,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 6173044,
+          "stage_2_outcome": "The Invite",
+          "stage_2_probability": 0.01,
+          "art": {
+            "kind": "tmdb_poster",
+            "tmdb_id": 950028,
+            "poster_path": "/b7Dr8Chzse8VagexAporUu2RtLx.jpg",
+            "url": "https://image.tmdb.org/t/p/w342/b7Dr8Chzse8VagexAporUu2RtLx.jpg",
+            "genre_ids": [35, 18, 10749],
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "film:i-play-rocky-2026",
+          "subject": "I Play Rocky",
+          "detail": "Peter Farrelly · Amazon MGM",
+          "stage_1_market_id": 5165726,
+          "stage_1_outcome": "I Play Rocky",
+          "stage_1_probability": 0.475,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 6173044,
+          "stage_2_outcome": null,
+          "stage_2_probability": null,
+          "missing_stage_2_reason": "Not listed to win",
+          "art": {
+            "kind": "tmdb_poster",
+            "tmdb_id": 1286656,
+            "poster_path": "/xE5tY3lppZUyG7WKKThsuYHuAHr.jpg",
+            "url": "https://image.tmdb.org/t/p/w342/xE5tY3lppZUyG7WKKThsuYHuAHr.jpg",
+            "genre_ids": [18, 36],
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        }
+      ]
+    },
+    "nhl-2026-27-playoffs-and-cup": {
+      "set_id": "nhl-2026-27-playoffs-and-cup",
+      "category": "hockey",
+      "kicker": "NHL 2026–27 · PLAYOFFS TO STANLEY CUP",
+      "title": "NHL contenders: make playoffs % and win Stanley Cup %",
+      "subtitle": "Same two-number form on live NHL markets · Paired by club, never blended",
+      "stage_1_label": "Make Playoffs",
+      "stage_2_label": "Win Cup",
+      "stage_1_market": {
+        "id": 63068142,
+        "source": "polymarket",
+        "name": "Which teams will make the NHL Playoffs?"
+      },
+      "stage_2_market": {
+        "id": 52755659,
+        "source": "kalshi",
+        "name": "2026-27 Stanley Cup® Final Winner"
+      },
+      "stage_1_settled": false,
+      "as_of": "2026-11-11T03:40:53Z",
+      "entries": [
+        {
+          "subject_key": "team:nhl:carolina-hurricanes",
+          "subject": "Carolina Hurricanes",
+          "detail": "Metropolitan · Eastern Conference",
+          "stage_1_market_id": 63068142,
+          "stage_1_outcome": "Carolina Hurricanes",
+          "stage_1_probability": 0.94,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 52755659,
+          "stage_2_outcome": "Carolina Hurricanes",
+          "stage_2_probability": 0.128,
+          "art": {
+            "kind": "espn_team_logo",
+            "url": "https://a.espncdn.com/i/teamlogos/nhl/500/car.png",
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "team:nhl:colorado-avalanche",
+          "subject": "Colorado Avalanche",
+          "detail": "Central · Western Conference",
+          "stage_1_market_id": 63068142,
+          "stage_1_outcome": "Colorado Avalanche",
+          "stage_1_probability": 0.935,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 52755659,
+          "stage_2_outcome": "Colorado Avalanche",
+          "stage_2_probability": 0.10,
+          "art": {
+            "kind": "espn_team_logo",
+            "url": "https://a.espncdn.com/i/teamlogos/nhl/500/col.png",
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "team:nhl:minnesota-wild",
+          "subject": "Minnesota Wild",
+          "detail": "Central · Western Conference",
+          "stage_1_market_id": 63068142,
+          "stage_1_outcome": "Minnesota Wild",
+          "stage_1_probability": 0.955,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 52755659,
+          "stage_2_outcome": "Minnesota Wild",
+          "stage_2_probability": 0.09,
+          "art": {
+            "kind": "espn_team_logo",
+            "url": "https://a.espncdn.com/i/teamlogos/nhl/500/min.png",
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "team:nhl:edmonton-oilers",
+          "subject": "Edmonton Oilers",
+          "detail": "Pacific · Western Conference",
+          "stage_1_market_id": 63068142,
+          "stage_1_outcome": "Edmonton Oilers",
+          "stage_1_probability": 0.91,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 52755659,
+          "stage_2_outcome": "Edmonton Oilers",
+          "stage_2_probability": 0.09,
+          "art": {
+            "kind": "espn_team_logo",
+            "url": "https://a.espncdn.com/i/teamlogos/nhl/500/edm.png",
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "team:nhl:new-jersey-devils",
+          "subject": "New Jersey Devils",
+          "detail": "Metropolitan · Eastern Conference",
+          "stage_1_market_id": 63068142,
+          "stage_1_outcome": "New Jersey Devils",
+          "stage_1_probability": 0.825,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 52755659,
+          "stage_2_outcome": "New Jersey Devils",
+          "stage_2_probability": 0.071,
+          "art": {
+            "kind": "espn_team_logo",
+            "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nj.png",
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "team:nhl:florida-panthers",
+          "subject": "Florida Panthers",
+          "detail": "Atlantic · Eastern Conference",
+          "stage_1_market_id": 63068142,
+          "stage_1_outcome": "Florida Panthers",
+          "stage_1_probability": 0.68,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 52755659,
+          "stage_2_outcome": "Florida Panthers",
+          "stage_2_probability": 0.071,
+          "art": {
+            "kind": "espn_team_logo",
+            "url": "https://a.espncdn.com/i/teamlogos/nhl/500/fla.png",
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "team:nhl:vegas-golden-knights",
+          "subject": "Vegas Golden Knights",
+          "detail": "Pacific · Western Conference",
+          "stage_1_market_id": 63068142,
+          "stage_1_outcome": "Vegas Golden Knights",
+          "stage_1_probability": 0.89,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 52755659,
+          "stage_2_outcome": "Vegas Golden Knights",
+          "stage_2_probability": 0.062,
+          "art": {
+            "kind": "espn_team_logo",
+            "url": "https://a.espncdn.com/i/teamlogos/nhl/500/vgk.png",
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        },
+        {
+          "subject_key": "team:nhl:tampa-bay-lightning",
+          "subject": "Tampa Bay Lightning",
+          "detail": "Atlantic · Eastern Conference",
+          "stage_1_market_id": 63068142,
+          "stage_1_outcome": "Tampa Bay Lightning",
+          "stage_1_probability": 0.82,
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 52755659,
+          "stage_2_outcome": "Tampa Bay Lightning",
+          "stage_2_probability": 0.052,
+          "art": {
+            "kind": "espn_team_logo",
+            "url": "https://a.espncdn.com/i/teamlogos/nhl/500/tb.png",
+            "adult": false,
+            "kid_safe_vetted": true
+          }
+        }
+      ]
+    }
+  }
+}

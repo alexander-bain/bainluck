@@ -588,7 +588,20 @@ class TestLiveDefinitionsAndDecisionA:
         )
 
     @pytest.mark.asyncio
-    async def test_registered_in_roundup_producers_and_folds_covered_feed_cards(self) -> None:
+    async def test_registered_in_roundup_producers_and_folds_covered_feed_cards(self, monkeypatch) -> None:
+        # The pool's prices were observed Nov 3 (OBS). The producer reads the
+        # clock itself (``select_sibling_family`` defaults ``now`` to the real
+        # time), so on the real clock its freshness gate withholds every row a
+        # week later: this test went red on master at Nov 10, 22:00 UTC. Pin
+        # the producer's clock to NOW_NOV_3.
+        import app.utils.sibling_family as sibling_family_module
+
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return NOW_NOV_3 if tz is None else NOW_NOV_3.astimezone(tz)
+
+        monkeypatch.setattr(sibling_family_module, "datetime", _FrozenDatetime)
         reset_roundup_cache_for_tests()
         assert SNOW_FIRST_FLAKES_2026_SLUG in ROUNDUP_PRODUCERS
         assert GTA_VI_ALBUM_FEATURES_SLUG in ROUNDUP_PRODUCERS
@@ -600,7 +613,7 @@ class TestLiveDefinitionsAndDecisionA:
         )
 
         snow_feed, snow_container = await evaluate_roundup_producer(
-            SNOW_FIRST_FLAKES_2026_PRODUCER, _live_snow_pool()
+            SNOW_FIRST_FLAKES_2026_PRODUCER, _live_snow_pool(), now=NOW_NOV_3.timestamp()
         )
         assert snow_feed is not None
         assert snow_container is not None

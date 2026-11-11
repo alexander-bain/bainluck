@@ -569,8 +569,8 @@ async def find_venue_legs(session, market, *, stats: Optional[dict] = None) -> l
 # ---------------------------------------------------------------------------
 
 
-async def capture_series_by_name(session, market_ids: Sequence[int]) -> dict[str, list[Point]]:
-    """Our `futures_odds_snapshots` readings, keyed by normalised outcome name.
+async def capture_series_by_name(session, outcome_ids: Sequence[int]) -> dict[str, list[Point]]:
+    """Our `futures_odds_snapshots` readings for the chart's outcomes, keyed by normalised name.
 
     These are the tier of LAST resort in the layering, and that is a demotion,
     not a dismissal: they are the only source that survives a venue purge, and
@@ -581,12 +581,21 @@ async def capture_series_by_name(session, market_ids: Sequence[int]) -> dict[str
     is what `attach_competitor_history` already does — this is that reduction,
     moved next to the layering so both halves of the series agree on what one
     point means.
+
+    #12042: ONLY the outcomes the chart draws, and ONE row per outcome per
+    instant. This read loaded every bookmaker row of every outcome of every leg:
+    an Odds API golf leg ("The Open Winner", 208 outcomes) holds 501,254 rows,
+    and the step took worker-background from 178 to 419 MB (peak 470 MB, 512 MB
+    dyno) to draw 12 lines (`futures_chart_series_memory`, Nov 11). Postgres now
+    returns a sum and a count per (outcome, instant), and they are merged here
+    per (normalised name, instant), so each point is the same mean of every
+    reading at that instant as before, across bookmakers and legs alike.
     """
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
     from app.models.models import FuturesOddsSnapshot, FuturesOutcome
 
-    if not market_ids:
+    if not outcome_ids:
         return {}
 
     rows = (
@@ -594,26 +603,33 @@ async def capture_series_by_name(session, market_ids: Sequence[int]) -> dict[str
             select(
                 FuturesOutcome.name,
                 FuturesOddsSnapshot.captured_at,
-                FuturesOddsSnapshot.probability,
+                func.sum(FuturesOddsSnapshot.probability),
+                func.count(FuturesOddsSnapshot.probability),
             )
             .join(FuturesOutcome, FuturesOutcome.id == FuturesOddsSnapshot.outcome_id)
-            .where(FuturesOutcome.market_id.in_(list(market_ids)))
-            .order_by(FuturesOutcome.name, FuturesOddsSnapshot.captured_at)
+            .where(
+                FuturesOddsSnapshot.outcome_id.in_(list(outcome_ids)),
+                FuturesOddsSnapshot.probability.isnot(None),
+                FuturesOddsSnapshot.captured_at.isnot(None),
+            )
+            .group_by(FuturesOutcome.id, FuturesOutcome.name, FuturesOddsSnapshot.captured_at)
         )
     ).all()
 
     buckets: dict[str, dict[datetime, list[float]]] = {}
-    for name, captured_at, probability in rows:
-        if probability is None or captured_at is None:
+    for name, captured_at, total, count in rows:
+        if total is None or not count or captured_at is None:
             continue
         key = _norm(name)
         if not key:
             continue
-        buckets.setdefault(key, {}).setdefault(captured_at, []).append(float(probability))
+        acc = buckets.setdefault(key, {}).setdefault(captured_at, [0.0, 0])
+        acc[0] += float(total)
+        acc[1] += int(count)
 
     return {
         key: normalize_points(
-            (ts, sum(vals) / len(vals)) for ts, vals in sorted(per_ts.items())
+            (ts, total / count) for ts, (total, count) in sorted(per_ts.items())
         )
         for key, per_ts in buckets.items()
     }
@@ -663,12 +679,12 @@ async def build_market_series(
     now = now or datetime.now(timezone.utc)
     stats: dict = {"legs": [], "outcomes_built": 0, "outcomes_empty": 0}
     owned: list[Any] = []
+    stages: list[str] = []
 
     try:
         legs = await find_venue_legs(session, market, stats=stats)
         stats["legs"] = [{"id": m.id, "source": m.source} for m in legs]
-
-        captures = await capture_series_by_name(session, [m.id for m in legs])
+        _stamp_memory(stages, "legs")
 
         # Every outcome the chart could draw, keyed by normalised name, from
         # whichever leg names it. The evolution market leads so its field
@@ -686,6 +702,17 @@ async def build_market_series(
                 )
                 if key in chart_field
             }
+
+        # #12042: our captures for the chart's outcomes only (every leg's outcome
+        # whose name is on the chart, duplicates included, as before).
+        captures = await capture_series_by_name(
+            session,
+            [
+                o.id for leg in legs for o in (leg.outcomes or [])
+                if o.name and _norm(o.name) in chart_field
+            ],
+        )
+        _stamp_memory(stages, "captures")
 
         # Venue fetch, ONE LEG AT A TIME so a venue's batch stays a batch.
         venue_points: dict[str, dict[str, list[Point]]] = {}
@@ -736,6 +763,7 @@ async def build_market_series(
                 stats.setdefault("errors", []).append(
                     f"{leg.source}: {type(exc).__name__}: {str(exc)[:120]}"
                 )
+            _stamp_memory(stages, f"{leg.source}:{len(wanted_outcomes)}")
 
         series: dict[str, list[list]] = {}
         for key in chart_field:
@@ -756,6 +784,7 @@ async def build_market_series(
             series[key] = [[ts.isoformat(), round(p, 6)] for ts, p in final]
             stats["outcomes_built"] += 1
 
+        _stamp_memory(stages, "series")
         payload = {
             "market_id": market.id,
             "built_at": now.isoformat(),
@@ -780,6 +809,30 @@ async def build_market_series(
                 await service.close()
             except Exception:  # noqa: BLE001 — closing never masks the run
                 pass
+        if stages:
+            logger.info(
+                "futures_chart_series_memory market=%s %s",
+                getattr(market, "id", None), " ".join(stages),
+            )
+
+
+def _stamp_memory(stages: list[str], stage: str) -> None:
+    """#12042: ``stage=rss/peak`` (MB) after one step of a build. Never raises.
+
+    This task peaked at 465 MB on worker-background (512 MB) for ONE golf market
+    on Nov 10 (+306 MB over its start; `task_memory`), while the same market's
+    37k sampled snapshots are ~10 MB and its candidate legs 33 markets. The
+    stamps name the step that grew. The peak is the child's high-water mark
+    for this task (`task_memory` resets it at the task's start), so the first
+    stage whose peak jumps is the culprit. Log-only: nothing here reaches the
+    cached payload. A venue stage is labelled ``source:outcomes_fetched``.
+    """
+    try:
+        from app.tasks.heavy_memory_turns import peak_rss_mb, rss_mb
+
+        stages.append(f"{stage}={rss_mb()}/{peak_rss_mb()}")
+    except Exception:  # noqa: BLE001 — instrumentation never fails a build
+        pass
 
 
 async def fill_market_series(

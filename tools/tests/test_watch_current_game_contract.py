@@ -518,3 +518,88 @@ def test_composition_normalizer_rejects_altered_missing_or_duplicate_blocks():
             else:
                 with pytest.raises(AssertionError):
                     normalize_composed_fixture(altered)
+
+
+# #12420: at 41 mm the qualifier beside the live value broke inside a word
+# ("Win / chan / ce"). It may sit beside the value only through the whole-word
+# layout (ideal width = its widest word), with a stacked fallback after it.
+QUALIFIER_STACKED_FALLBACK = (
+    "                    VStack(alignment: .leading, spacing: 0) {\n"
+    "                        sharedLiveQualifier\n"
+    "                        sharedLiveValue(probability)\n"
+    "                    }\n"
+)
+
+
+def check_whole_word_qualifier(text):
+    shared = scope(
+        text, "private func sharedLiveProbability(", "private func sharedLiveValue("
+    )
+    standard = shared.split("} else {", 1)[1]
+    assert standard.count("ViewThatFits(in: .horizontal) {") == 1
+    choices = standard.split("ViewThatFits(in: .horizontal) {", 1)[1]
+    assert choices.count(QUALIFIER_STACKED_FALLBACK) == 1
+    beside, stacked = choices.split(QUALIFIER_STACKED_FALLBACK, 1)
+    assert "HStack(alignment: .center, spacing: 2) {" in beside
+    assert beside.count("WatchWholeWordsLayout {") == 1
+    assert beside.index("sharedLiveValue(probability)") < beside.index(
+        "WatchWholeWordsLayout {"
+    )
+    measured = beside.split("WatchWholeWordsLayout {", 1)[1]
+    assert measured.lstrip().startswith("sharedLiveQualifier\n")
+    words = [
+        line.strip()[len('Text("') : -len('").font(.footnote).hidden()')]
+        for line in measured.splitlines()
+        if line.strip().endswith('").font(.footnote).hidden()')
+    ]
+    qualifier = scope(
+        text, "private var sharedLiveQualifier: some View {", "private func sharedLiveHomeScore("
+    )
+    assert qualifier.count('Text("Win chance").font(.footnote)') == 1
+    # The hidden words measured for the ideal width are exactly the qualifier's words.
+    assert " ".join(words) == "Win chance"
+    assert stacked.strip().startswith("}"), "The stacked reading is the last choice"
+    layout = scope(
+        text, "private struct WatchWholeWordsLayout: Layout {", "struct WatchQualifierFit:"
+    )
+    for required in (
+        "guard proposal.width == nil else { return text.sizeThatFits(proposal) }",
+        "let widestWord = subviews.dropFirst().map { $0.sizeThatFits(.unspecified).width }.max() ?? 0",
+        "return text.sizeThatFits(ProposedViewSize(width: widestWord, height: proposal.height))",
+        "subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))",
+    ):
+        assert layout.count(required) == 1
+
+
+def test_live_qualifier_breaks_only_between_whole_words():
+    check_whole_word_qualifier(VIEW.read_text())
+
+
+@pytest.mark.parametrize(
+    "before, after",
+    [
+        # No stacked fallback: a narrow screen keeps the qualifier beside the value.
+        (QUALIFIER_STACKED_FALLBACK, ""),
+        # Beside the value as plain wrapping text: "Win / chan / ce" again.
+        (
+            "WatchWholeWordsLayout {\n"
+            "                            sharedLiveQualifier\n"
+            '                            Text("Win").font(.footnote).hidden()\n'
+            '                            Text("chance").font(.footnote).hidden()\n'
+            "                        }",
+            "sharedLiveQualifier",
+        ),
+        # Ideal width of the whole single-line text instead of its widest word.
+        (
+            "return text.sizeThatFits(ProposedViewSize(width: widestWord, height: proposal.height))",
+            "return text.sizeThatFits(.unspecified)",
+        ),
+        # Measuring a word the qualifier no longer has, or missing its widest word.
+        ('                            Text("chance").font(.footnote).hidden()\n', ""),
+    ],
+)
+def test_whole_word_qualifier_mutations_are_rejected(before, after):
+    text = VIEW.read_text()
+    assert text.count(before) == 1
+    with pytest.raises(AssertionError):
+        check_whole_word_qualifier(text.replace(before, after, 1))

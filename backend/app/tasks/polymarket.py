@@ -149,6 +149,7 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "ncaab": "basketball",
     "wnba": "basketball",
     "nfl": "football",
+    "nfl (all)": "football",  # Gamma's NFL game tag (#12555).
     "football": "football",
     "ncaaf": "football",
     "college football": "football",
