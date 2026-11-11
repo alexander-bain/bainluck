@@ -34,7 +34,7 @@
       "player_team_entity_key": "espn:team:americanfootball_nfl:34"
     },
     {
-      "market_name": "Buffalo vs Houston: Receiving Yards",
+      "market_name": "Buffalo Bills vs Houston Texans: Receiving Yards",
       "outcome_name": "Jackson Hawes: 25+",
       "threshold": 25.0,
       "over_probability": 0.55,

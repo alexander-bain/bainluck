@@ -442,9 +442,13 @@ async def test_the_other_class_keeps_its_existing_destination(finished):
 
 
 async def test_a_live_initialled_leg_is_a_prop_with_its_live_price(live):
-    for market_name, leg in ((RUSH_NAME, INITIALLED_IN_BAND_WON),
-                             (PASS_NAME, INITIALLED_OUT_OF_BAND_WON),
-                             (TTY_NAME, TEAM_SUBJECT_WON)):
+    # Typed live NFL props use the fixture's full club names (#12581).
+    # Settled names above and the untyped team subject below stay unchanged.
+    for market_name, leg in (
+        ("Buffalo Bills vs Houston Texans: Rushing Yards", INITIALLED_IN_BAND_WON),
+        ("Buffalo Bills vs Houston Texans: Passing Yards", INITIALLED_OUT_OF_BAND_WON),
+        (TTY_NAME, TEAM_SUBJECT_WON),
+    ):
         served = _where(live, market_name, leg)
         assert set(served) == {"player_props"}, (market_name, leg, served)
         row = served["player_props"]

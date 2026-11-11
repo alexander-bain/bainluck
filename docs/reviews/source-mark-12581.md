@@ -103,3 +103,23 @@ lane captures a mixed NFL props card on build 5704. Follow-up records remain on
 cross-venue capped rungs, the settled row/script source mismatch, scheduled
 opening-only headlines, and the repeated mark's payload cost. These are not
 claimed fixed by this first slice.
+
+The first hosted run, 43064862556, failed 12 tests across six shards. The
+correction changes tests and the cache mutation target only; production code
+remains at d8cff5b139. The 317-check affected band, startup, frontend build and
+typecheck pass. The original failures are retained in the run record.
+
+- NFL routing tests now assert the approved full fixture labels and integer
+  predicates, with the original probabilities, destinations and identities.
+- The whole spread dictionary includes the additive source mark, including its
+  explicitly unknown observation clock.
+- The two-input Polymarket merge asserts both market IDs and both outcome IDs;
+  its distinct-venue count is one. The merged probability stays 0.50.
+- Stream bindings still cover every rendered market row. Nested source quotes
+  are evidence, not subscribable outcomes; their genuine observation age is
+  asserted separately.
+- The raw-event hero mutant forwards the new optional trace argument while
+  preserving its wrong-input behavior. The cache-collision mutant targets the
+  new source-mark namespace; it still substitutes the concept namespace. Its
+  targeted run passes the unmutated baseline and kills M13 (1/1, no harness
+  failures); source files are restored afterward.

@@ -310,11 +310,28 @@ async def test_the_points_ladder_is_built_from_the_game_only():
 @pytest.mark.asyncio
 async def test_every_prop_line_reaches_the_props_section():
     payload = await _payload_for(GAME_RUNGS + PROPS)
-    served = {(p["market_name"], p["threshold"]) for p in payload["player_props"]}
+    # #12581 shapes supported integer props for installed readers: Over 27.5
+    # is 28+, with the same player's own probability. Unsupported stats retain
+    # their original text. Every input must still reach the props section.
+    props = payload["player_props"]
+    assert len(props) == 4
+    served = {
+        (p["market_name"], p["outcome_name"], p["threshold"], p["over_probability"])
+        for p in props
+    }
     assert served == {
-        ("Jalen Hurts: Passing Attempts O/U 27.5", 27.5),
-        ("Jalen Hurts: Passing Completions O/U 19.5", 19.5),
-        ("DeVonta Smith: Longest Reception O/U 19.5", 19.5),
-        ("D'Andre Swift: Receptions O/U 3.5", 3.5),
+        (
+            "Philadelphia Eagles vs Chicago Bears: Pass Attempts",
+            "Jalen Hurts: 28+", 28, 0.52,
+        ),
+        (
+            "Philadelphia Eagles vs Chicago Bears: Completions",
+            "Jalen Hurts: 20+", 20, 0.5,
+        ),
+        ("DeVonta Smith: Longest Reception O/U 19.5", "Over", 19.5, 0.48),
+        (
+            "Philadelphia Eagles vs Chicago Bears: Receptions",
+            "D'Andre Swift: 4+", 4, 0.45,
+        ),
     }
     assert not any("O/U" in o["market_name"] for o in payload["other"])

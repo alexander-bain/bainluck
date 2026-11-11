@@ -676,9 +676,9 @@ class TestTheRealRoute:
         """
         real = compute_aggregate_probability_tiered
 
-        def _tiered_ignores_the_fold(event, event_status=None):
+        def _tiered_ignores_the_fold(event, event_status=None, *, source_inputs=None):
             raw = getattr(event, "_event", event)
-            return real(raw, event_status)
+            return real(raw, event_status, source_inputs=source_inputs)
 
         def _ignores_the_fold(event, event_status=None):
             return _tiered_ignores_the_fold(event, event_status)[0]
