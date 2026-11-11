@@ -20,6 +20,7 @@ import {
   OSCARS_CONTAINER_LOOK_SHEET_OPTIONS,
   PAIRED_METRIC_REGISTER,
   TMDB_ATTRIBUTION_LINE,
+  TMDB_ATTRIBUTION_URL,
   VISUAL_FORM_LOOK_SHEET_CARDS,
   VISUAL_FORM_SHEET_2_CARDS,
   formatStage1Display,
@@ -141,11 +142,29 @@ function TMDBAttributionNote({ set }: { set: PairedMetricSet }) {
   return (
     <span
       data-testid="tmdb-attribution-line"
-      className="inline-flex items-center gap-1.5 text-xs text-text-muted"
+      className="inline-flex flex-wrap items-center gap-2 text-xs text-text-muted"
     >
-      <span className="rounded border border-surface-border bg-surface-elevated px-1 py-0.5 font-bold tracking-wider text-accent-brand">
-        TMDB
-      </span>
+      <a
+        href={TMDB_ATTRIBUTION_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-testid="tmdb-attribution-link"
+        aria-label="The Movie Database (TMDB)"
+        className="inline-flex shrink-0 items-center rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5 text-accent-brand"
+      >
+        <svg
+          role="img"
+          aria-label="The Movie Database (TMDB)"
+          data-testid="tmdb-official-logo"
+          viewBox="0 0 190 28"
+          className="h-3.5 w-auto text-accent-brand"
+          fill="currentColor"
+        >
+          <title>The Movie Database (TMDB)</title>
+          <path d="M0 4h22v5h-8v15H8V9H0V4zm27 0h7l6 11 6-11h7v20h-6V13l-5 9h-4l-5-9v11h-6V4zm39 0h10c6.6 0 11 4 11 10s-4.4 10-11 10H66V4zm6 5v10h4c3.3 0 5-2 5-5s-1.7-5-5-5h-4zm27-5h11c4.5 0 7.5 2 7.5 5.2 0 2.2-1.2 3.8-3.2 4.4 2.4.6 3.8 2.3 3.8 4.8 0 3.6-3.1 5.6-8 5.6H99V4zm6 4.5v3.5h4.2c1.6 0 2.5-.7 2.5-1.8 0-1-.9-1.7-2.5-1.7H105zm0 8v3.8h4.6c1.8 0 2.8-.7 2.8-1.9 0-1.2-1-1.9-2.8-1.9H105z" />
+          <rect x="132" y="6" width="54" height="16" rx="8" />
+        </svg>
+      </a>
       <span>{TMDB_ATTRIBUTION_LINE}</span>
     </span>
   );
@@ -1643,9 +1662,16 @@ function SettledGateAfterNominationsCard({
 
 export const renderLookSheetCardBySpec = (
   spec: LookSheetCardSpec,
-  options?: { simulateSettled?: boolean; kidSurface?: boolean },
+  options?: {
+    simulateSettled?: boolean;
+    kidSurface?: boolean;
+    pairedMetricSet?: PairedMetricSet | null;
+    pairedMetricSets?: Record<string, PairedMetricSet> | null;
+  },
 ) => {
   const set =
+    options?.pairedMetricSet ??
+    options?.pairedMetricSets?.[spec.set_id] ??
     PAIRED_METRIC_REGISTER[spec.set_id] ??
     PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
   const settled = Boolean(spec.force_settled_stage_1 || options?.simulateSettled);
@@ -1746,16 +1772,28 @@ export function OscarsContainerLayoutPreview({
   spec,
   simulateSettled = false,
   kidSurface = false,
+  pairedMetricSets = null,
 }: {
   spec: ContainerLookSheetSpec;
   simulateSettled?: boolean;
   kidSurface?: boolean;
+  pairedMetricSets?: Record<string, PairedMetricSet> | null;
 }) {
-  const picSet = PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
-  const dirSet = PAIRED_METRIC_REGISTER["oscars-2027-best-director"];
-  const actSet = PAIRED_METRIC_REGISTER["oscars-2027-best-actor"];
-  const actressSet = PAIRED_METRIC_REGISTER["oscars-2027-best-actress"];
-  const animSet = PAIRED_METRIC_REGISTER["oscars-2027-best-animated"];
+  const picSet =
+    pairedMetricSets?.["oscars-2027-best-picture"] ??
+    PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
+  const dirSet =
+    pairedMetricSets?.["oscars-2027-best-director"] ??
+    PAIRED_METRIC_REGISTER["oscars-2027-best-director"];
+  const actSet =
+    pairedMetricSets?.["oscars-2027-best-actor"] ??
+    PAIRED_METRIC_REGISTER["oscars-2027-best-actor"];
+  const actressSet =
+    pairedMetricSets?.["oscars-2027-best-actress"] ??
+    PAIRED_METRIC_REGISTER["oscars-2027-best-actress"];
+  const animSet =
+    pairedMetricSets?.["oscars-2027-best-animated"] ??
+    PAIRED_METRIC_REGISTER["oscars-2027-best-animated"];
 
   if (spec.option_code === "A") {
     return (
@@ -2071,7 +2109,12 @@ export function OscarsContainerLayoutPreview({
 
 export const renderVisualLookSheetDeckItem = (
   itemKey: string,
-  options?: { simulateSettled?: boolean; kidSurface?: boolean },
+  options?: {
+    simulateSettled?: boolean;
+    kidSurface?: boolean;
+    pairedMetricSet?: PairedMetricSet | null;
+    pairedMetricSets?: Record<string, PairedMetricSet> | null;
+  },
 ): React.ReactNode | null => {
   const allCards = [...VISUAL_FORM_LOOK_SHEET_CARDS, ...VISUAL_FORM_SHEET_2_CARDS];
   const cardSpec = allCards.find((c) => c.item_key === itemKey);
@@ -2093,6 +2136,7 @@ export const renderVisualLookSheetDeckItem = (
           spec={containerSpec}
           simulateSettled={options?.simulateSettled}
           kidSurface={options?.kidSurface}
+          pairedMetricSets={options?.pairedMetricSets ?? null}
         />
       </div>
     );
@@ -2108,6 +2152,7 @@ export interface VisualFormLookSheetGalleryProps {
   kidSurface?: boolean;
   grader?: string | null;
   existingGradesByItemKey?: Record<string, GroupingGrade>;
+  pairedMetricSets?: Record<string, PairedMetricSet> | null;
   onGradeItem?: (
     position: number,
     itemKey: string,
@@ -2121,6 +2166,7 @@ export function VisualFormLookSheetGallery({
   kidSurface = false,
   grader = null,
   existingGradesByItemKey = {},
+  pairedMetricSets = null,
   onGradeItem,
   savingItemKey = null,
 }: VisualFormLookSheetGalleryProps) {
@@ -2147,6 +2193,7 @@ export function VisualFormLookSheetGallery({
         {renderLookSheetCardBySpec(spec, {
           simulateSettled,
           kidSurface,
+          pairedMetricSets,
         })}
 
         {grader && onGradeItem && (
@@ -2222,16 +2269,16 @@ export function VisualFormLookSheetGallery({
 
         <ul className="mt-2.5 space-y-1 text-xs text-text-secondary">
           <li>
-            • <span className="font-semibold text-text-primary">Two distinct numbers per film:</span>{" "}
-            Best Picture Nominee % combines #5165726 and #27988771 where both exist; Nominee % and Winner % (#6173044) are paired in <code className="font-mono">paired_metric_register.json</code> as two separate propositions.
+            • <span className="font-semibold text-text-primary">Two distinct numbers per film (server-blended venue average):</span>{" "}
+            Best Picture Nominee % blends #5165726 and #27988771 on the server via <code className="font-mono">compute_aggregate_probability</code> (<code className="font-mono">backend/app/services/paired_metric_register.py</code>); Nominee % and Winner % (#6173044) are paired in <code className="font-mono">paired_metric_register.json</code> as two separate propositions.
           </li>
           <li>
             • <span className="font-semibold text-text-primary">One rounding rule &amp; selection-carrying titles:</span>{" "}
             Uses <code className="font-mono">renderedPercent</code> (#1933 / #3867) so half-percents (<span className="font-medium text-text-primary">0.955 → 96%</span>, <span className="font-medium text-text-primary">0.935 → 94%</span>) always round half-up; NHL includes all 9 clubs at 5%+ (<span className="font-medium text-text-primary">Dallas Stars 84%/5%</span> alongside <span className="font-medium text-text-primary">Tampa Bay Lightning 82%/5%</span>).
           </li>
           <li>
-            • <span className="font-semibold text-text-primary">Sourced TMDB credits &amp; verified headshots:</span>{" "}
-            Film credits and person headshots are verified against TMDB (<span className="font-medium text-text-primary">Jesse Eisenberg</span> on <em>The Debut</em>, <span className="font-medium text-text-primary">Nathan Fielder #1212667</span> on <em>You Can See Everything</em>) with explicit TMDB attribution.
+            • <span className="font-semibold text-text-primary">Sourced TMDB credits, verified headshots &amp; official TMDB notice + logo:</span>{" "}
+            Film credits and person headshots are verified against TMDB (<span className="font-medium text-text-primary">Jesse Eisenberg</span> on <em>The Debut</em>, <span className="font-medium text-text-primary">Nathan Fielder #1212667</span> on <em>You Can See Everything</em>) and carry the required TMDB attribution notice and official TMDB logo mark linked to <code className="font-mono">themoviedb.org</code>.
           </li>
         </ul>
       </div>
@@ -2270,6 +2317,7 @@ export function VisualFormLookSheetGallery({
                 spec={spec}
                 simulateSettled={simulateSettled}
                 kidSurface={kidSurface}
+                pairedMetricSets={pairedMetricSets}
               />
               {grader && onGradeItem && (
                 <div className="rounded-lg border border-surface-border bg-surface-card p-2.5">

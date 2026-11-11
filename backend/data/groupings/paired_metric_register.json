@@ -11,7 +11,10 @@
     "rounding_helper": "renderedPercent",
     "tie_breaking_rule": "stage_2_probability_desc_then_stage_1_probability_desc_then_subject_asc",
     "tmdb_attribution": "This product uses the TMDB API but is not endorsed or certified by TMDB.",
-    "kid_safe_gate_issue": 7461
+    "kid_safe_gate_issue": 7461,
+    "blend_authority": "server:compute_aggregate_probability",
+    "tmdb_logo_required": true,
+    "tmdb_attribution_url": "https://www.themoviedb.org/"
   },
   "sets": {
     "oscars-2027-best-picture": {
@@ -19,7 +22,7 @@
       "category": "entertainment",
       "kicker": "OSCARS 2027 · BEST PICTURE",
       "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
-      "subtitle": "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %) · Nominee % (average of two venues: #5165726 + #27988771) paired beside Winner % (#6173044)",
+      "subtitle": "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %) · Nominee % (blended on server via compute_aggregate_probability: #5165726 + #27988771) paired beside Winner % (#6173044)",
       "selection_rule": "top_10_by_stage_1_probability",
       "stage_1_label": "Nominated",
       "stage_2_label": "Wins",
@@ -28,7 +31,7 @@
       "stage_1_market": {
         "id": 5165726,
         "source": "kalshi+polymarket",
-        "name": "Oscar nominees: Best Picture (average of two venues: #5165726 + #27988771)",
+        "name": "Oscar nominees: Best Picture (blended on server via compute_aggregate_probability: #5165726 + #27988771)",
         "companion_polymarket_id": 27988771
       },
       "stage_2_market": {
@@ -61,10 +64,16 @@
             "tmdb_id": 1368337,
             "poster_path": "/krVa7rKCQb4OBfsr2LTJv4rTz5q.jpg",
             "url": "https://image.tmdb.org/t/p/w342/krVa7rKCQb4OBfsr2LTJv4rTz5q.jpg",
-            "genre_ids": [12, 28, 14],
+            "genre_ids": [
+              12,
+              28,
+              14
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "server:compute_aggregate_probability",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:you-can-see-everything-2026",
@@ -87,10 +96,14 @@
             "tmdb_id": 1765072,
             "poster_path": "/Ap8QwmKfSjYbWC4XIP8w9pdn72O.jpg",
             "url": "https://image.tmdb.org/t/p/w342/Ap8QwmKfSjYbWC4XIP8w9pdn72O.jpg",
-            "genre_ids": [99],
+            "genre_ids": [
+              99
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "server:compute_aggregate_probability",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:the-black-ball-2026",
@@ -113,10 +126,15 @@
             "tmdb_id": 1422041,
             "poster_path": "/7HwFQTMghL6HOvzEnXYUvyuZXeh.jpg",
             "url": "https://image.tmdb.org/t/p/w342/7HwFQTMghL6HOvzEnXYUvyuZXeh.jpg",
-            "genre_ids": [18, 10752],
+            "genre_ids": [
+              18,
+              10752
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "server:compute_aggregate_probability",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:dune-part-three-2026",
@@ -139,10 +157,15 @@
             "tmdb_id": 1170608,
             "poster_path": "/glt0v4I89rMWstDNCaFXc5SNyO1.jpg",
             "url": "https://image.tmdb.org/t/p/w342/glt0v4I89rMWstDNCaFXc5SNyO1.jpg",
-            "genre_ids": [878, 12],
+            "genre_ids": [
+              878,
+              12
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "server:compute_aggregate_probability",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:wild-horse-nine-2026",
@@ -165,10 +188,16 @@
             "tmdb_id": 891621,
             "poster_path": "/dNJFRtVg3xLQ7dbNIQ55cmmIniD.jpg",
             "url": "https://image.tmdb.org/t/p/w342/dNJFRtVg3xLQ7dbNIQ55cmmIniD.jpg",
-            "genre_ids": [35, 80, 53],
+            "genre_ids": [
+              35,
+              80,
+              53
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "server:compute_aggregate_probability",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:artificial-2026",
@@ -191,10 +220,16 @@
             "tmdb_id": 1492198,
             "poster_path": "/2bz0HPE8OFOqnyvl8sCdVDIg1KX.jpg",
             "url": "https://image.tmdb.org/t/p/w342/2bz0HPE8OFOqnyvl8sCdVDIg1KX.jpg",
-            "genre_ids": [35, 18, 36],
+            "genre_ids": [
+              35,
+              18,
+              36
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:project-hail-mary-2026",
@@ -217,10 +252,15 @@
             "tmdb_id": 687163,
             "poster_path": "/iOb2fjXLbpJgyQXe46n1WtGCnaa.jpg",
             "url": "https://image.tmdb.org/t/p/w342/iOb2fjXLbpJgyQXe46n1WtGCnaa.jpg",
-            "genre_ids": [878, 12],
+            "genre_ids": [
+              878,
+              12
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "server:compute_aggregate_probability",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:the-debut-2026",
@@ -243,10 +283,16 @@
             "tmdb_id": 1391239,
             "poster_path": "/qk8qWJxM9hZSbSjSoEz0LAzcoPb.jpg",
             "url": "https://image.tmdb.org/t/p/w342/qk8qWJxM9hZSbSjSoEz0LAzcoPb.jpg",
-            "genre_ids": [10402, 35, 18],
+            "genre_ids": [
+              10402,
+              35,
+              18
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "server:compute_aggregate_probability",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:the-invite-2026",
@@ -269,10 +315,16 @@
             "tmdb_id": 950028,
             "poster_path": "/b7Dr8Chzse8VagexAporUu2RtLx.jpg",
             "url": "https://image.tmdb.org/t/p/w342/b7Dr8Chzse8VagexAporUu2RtLx.jpg",
-            "genre_ids": [35, 18, 10749],
+            "genre_ids": [
+              35,
+              18,
+              10749
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "server:compute_aggregate_probability",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:i-play-rocky-2026",
@@ -296,12 +348,18 @@
             "tmdb_id": 1286656,
             "poster_path": "/xE5tY3lppZUyG7WKKThsuYHuAHr.jpg",
             "url": "https://image.tmdb.org/t/p/w342/xE5tY3lppZUyG7WKKThsuYHuAHr.jpg",
-            "genre_ids": [18, 36],
+            "genre_ids": [
+              18,
+              36
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "server:compute_aggregate_probability",
+          "stage_2_blend_authority": null
         }
-      ]
+      ],
+      "blend_authority": "server:compute_aggregate_probability"
     },
     "oscars-2027-best-director": {
       "set_id": "oscars-2027-best-director",
@@ -347,7 +405,9 @@
             "url": "https://image.tmdb.org/t/p/w185/xuAIuYSmsUzKlUMBFGVZaWsY3DZ.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:denis-villeneuve",
@@ -368,7 +428,9 @@
             "url": "https://image.tmdb.org/t/p/w185/xzQYqb4nR8xT7Zdw5itbEL9K3fd.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:nathan-fielder",
@@ -389,7 +451,9 @@
             "url": "https://image.tmdb.org/t/p/w185/x0UOcjml8WnBfnb89QOh0iXM0w0.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:javier-calvo-ambrossi",
@@ -410,7 +474,9 @@
             "url": "https://image.tmdb.org/t/p/w185/4XfEHAholH6DI1flBpQDHYGSC1l.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:martin-mcdonagh",
@@ -431,7 +497,9 @@
             "url": "https://image.tmdb.org/t/p/w185/s44uliUJ8ksUKNpP0822cM2NBkI.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:alejandro-inarritu",
@@ -452,9 +520,12 @@
             "url": "https://image.tmdb.org/t/p/w185/opRQx3XlOoXH5EFlm0v8Q3O1ccn.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         }
-      ]
+      ],
+      "blend_authority": "server:compute_aggregate_probability"
     },
     "oscars-2027-best-actor": {
       "set_id": "oscars-2027-best-actor",
@@ -500,7 +571,9 @@
             "url": "https://image.tmdb.org/t/p/w185/7GoOdGNc4ra1L0F5nJTkmIB37iu.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:andrew-scott",
@@ -521,7 +594,9 @@
             "url": "https://image.tmdb.org/t/p/w185/4F8XpjyQCvtuu21WFm5d8RF5Rl.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:matt-damon",
@@ -542,7 +617,9 @@
             "url": "https://image.tmdb.org/t/p/w185/aCvBXTAR9B1qRjIRzMBYhhbm1fR.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:anthony-ippolito",
@@ -563,7 +640,9 @@
             "url": "https://image.tmdb.org/t/p/w185/a5wHhLA0HwOHnoajmFGpMRtY6OT.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:tom-cruise",
@@ -584,7 +663,9 @@
             "url": "https://image.tmdb.org/t/p/w185/maf8PhSvDCdEwjEMbYfGpojR5RP.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:ryan-gosling",
@@ -605,9 +686,12 @@
             "url": "https://image.tmdb.org/t/p/w185/lyUyVARQKhGxaxy0FbPJCQRpiaW.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         }
-      ]
+      ],
+      "blend_authority": "server:compute_aggregate_probability"
     },
     "oscars-2027-best-actress": {
       "set_id": "oscars-2027-best-actress",
@@ -653,7 +737,9 @@
             "url": "https://image.tmdb.org/t/p/w185/3YF19rWusxWfEI59ZM33dFhasRq.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:inde-navarrette",
@@ -674,7 +760,9 @@
             "url": "https://image.tmdb.org/t/p/w185/qlNBUGON8FebgzcqVhhRSVFYSa5.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:sandra-huller",
@@ -695,7 +783,9 @@
             "url": "https://image.tmdb.org/t/p/w185/jQfKXVCPTH9KEnzHHU4QemCnlMe.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "person:olivia-wilde",
@@ -716,9 +806,12 @@
             "url": "https://image.tmdb.org/t/p/w185/eODi1QKamyVa41eSK2SjU20VAZS.jpg",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         }
-      ]
+      ],
+      "blend_authority": "server:compute_aggregate_probability"
     },
     "oscars-2027-best-animated": {
       "set_id": "oscars-2027-best-animated",
@@ -762,10 +855,16 @@
             "tmdb_id": 791523,
             "poster_path": "/snFM00mpNAfUzUtkdEW0uDEvXA0.jpg",
             "url": "https://image.tmdb.org/t/p/w342/snFM00mpNAfUzUtkdEW0uDEvXA0.jpg",
-            "genre_ids": [16, 12, 14],
+            "genre_ids": [
+              16,
+              12,
+              14
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:toy-story-5-2026",
@@ -784,10 +883,17 @@
             "tmdb_id": 1084244,
             "poster_path": "/sfQtVlIHljToOwYjhe21KPGzZWK.jpg",
             "url": "https://image.tmdb.org/t/p/w342/sfQtVlIHljToOwYjhe21KPGzZWK.jpg",
-            "genre_ids": [16, 10751, 35, 12],
+            "genre_ids": [
+              16,
+              10751,
+              35,
+              12
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:tangles-2026",
@@ -806,10 +912,17 @@
             "tmdb_id": 1316999,
             "poster_path": "/agQGw5Cux2CYaxI8UHlLbta2bgw.jpg",
             "url": "https://image.tmdb.org/t/p/w342/agQGw5Cux2CYaxI8UHlLbta2bgw.jpg",
-            "genre_ids": [16, 18, 35, 36],
+            "genre_ids": [
+              16,
+              18,
+              35,
+              36
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "film:ray-gunn-2026",
@@ -828,12 +941,20 @@
             "tmdb_id": 940009,
             "poster_path": "/rpP29aOKpHy1FhX8OZQdUICEs2j.jpg",
             "url": "https://image.tmdb.org/t/p/w342/rpP29aOKpHy1FhX8OZQdUICEs2j.jpg",
-            "genre_ids": [16, 878, 80, 9648],
+            "genre_ids": [
+              16,
+              878,
+              80,
+              9648
+            ],
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         }
-      ]
+      ],
+      "blend_authority": "server:compute_aggregate_probability"
     },
     "nhl-2026-27-playoffs-and-cup": {
       "set_id": "nhl-2026-27-playoffs-and-cup",
@@ -876,7 +997,9 @@
             "url": "https://a.espncdn.com/i/teamlogos/nhl/500/car.png",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "team:nhl:colorado-avalanche",
@@ -888,13 +1011,15 @@
           "stage_1_settled_state": null,
           "stage_2_market_id": 52755659,
           "stage_2_outcome": "Colorado Avalanche",
-          "stage_2_probability": 0.10,
+          "stage_2_probability": 0.1,
           "art": {
             "kind": "espn_team_logo",
             "url": "https://a.espncdn.com/i/teamlogos/nhl/500/col.png",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "team:nhl:minnesota-wild",
@@ -912,7 +1037,9 @@
             "url": "https://a.espncdn.com/i/teamlogos/nhl/500/min.png",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "team:nhl:edmonton-oilers",
@@ -930,7 +1057,9 @@
             "url": "https://a.espncdn.com/i/teamlogos/nhl/500/edm.png",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "team:nhl:new-jersey-devils",
@@ -948,7 +1077,9 @@
             "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nj.png",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "team:nhl:florida-panthers",
@@ -966,7 +1097,9 @@
             "url": "https://a.espncdn.com/i/teamlogos/nhl/500/fla.png",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "team:nhl:vegas-golden-knights",
@@ -984,7 +1117,9 @@
             "url": "https://a.espncdn.com/i/teamlogos/nhl/500/vgk.png",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "team:nhl:dallas-stars",
@@ -1002,7 +1137,9 @@
             "url": "https://a.espncdn.com/i/teamlogos/nhl/500/dal.png",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         },
         {
           "subject_key": "team:nhl:tampa-bay-lightning",
@@ -1020,9 +1157,12 @@
             "url": "https://a.espncdn.com/i/teamlogos/nhl/500/tb.png",
             "adult": false,
             "kid_safe_vetted": true
-          }
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue"
         }
-      ]
+      ],
+      "blend_authority": "server:compute_aggregate_probability"
     }
   }
 }

@@ -9,6 +9,12 @@ from app.routes.admin_ranking_eval import (
     VISUAL_FORMS_LOOK_SHEET_SLATE_ID,
     load_grouping_grade_deck,
 )
+from app.services.paired_metric_register import (
+    SERVER_BLEND_AUTHORITY,
+    compute_server_venue_blend,
+    load_paired_metric_register,
+)
+from app.utils import aggregation
 
 
 def test_paired_metric_register_is_valid_and_never_blends():
@@ -19,12 +25,15 @@ def test_paired_metric_register_is_valid_and_never_blends():
         / "paired_metric_register.json"
     )
     assert reg_path.exists()
-    data = json.loads(reg_path.read_text(encoding="utf-8"))
+    data = load_paired_metric_register(reg_path)
     assert data["rules"]["never_blend_propositions"] is True
     assert data["rules"]["blend_equivalent_venue_legs"] is True
+    assert data["rules"]["blend_authority"] == SERVER_BLEND_AUTHORITY
     assert data["rules"]["pairing_authority"] == "hand_kept_register"
     assert data["rules"]["rounding_helper"] == "renderedPercent"
     assert data["rules"]["kid_safe_gate_issue"] == 7461
+    assert data["rules"]["tmdb_logo_required"] is True
+    assert data["rules"]["tmdb_attribution_url"] == "https://www.themoviedb.org/"
 
     sets = data["sets"]
     for expected_set_id in (
@@ -123,3 +132,46 @@ def test_load_visual_forms_look_sheet_deck():
     assert items[12]["item_key"] == "container-a-v2-alternating-form-magazine"
     assert items[13]["item_key"] == "container-b-v2-shape-driven-contrast"
     assert items[14]["item_key"] == "container-c-v2-two-act-ballot"
+
+    # Server-hydrated paired_metric_sets are attached to the look-sheet deck
+    assert deck["blend_authority"] == SERVER_BLEND_AUTHORITY
+    assert "oscars-2027-best-picture" in deck["paired_metric_sets"]
+    assert items[0]["paired_metric_set"]["set_id"] == "oscars-2027-best-picture"
+    assert (
+        items[0]["paired_metric_set"]["blend_authority"] == SERVER_BLEND_AUTHORITY
+    )
+    assert items[10]["paired_metric_set"]["set_id"] == "nhl-2026-27-playoffs-and-cup"
+    assert items[12]["paired_metric_set"] is None
+
+
+def test_server_venue_blend_delegates_to_compute_aggregate_probability(monkeypatch):
+    # With default weights (kalshi=0.8, polymarket=0.8), 0.475 and 0.500 blend to 0.4875
+    assert compute_server_venue_blend(0.475, 0.500) == (
+        0.4875,
+        SERVER_BLEND_AUTHORITY,
+    )
+    assert compute_server_venue_blend(0.575, None) == (0.575, "single_venue")
+    assert compute_server_venue_blend(None, 0.72) == (0.72, "single_venue")
+    assert compute_server_venue_blend(None, None) == (None, None)
+
+    # Changing SOURCE_WEIGHTS in app.utils.aggregation shifts the blended result,
+    # proving compute_server_venue_blend delegates to compute_aggregate_probability
+    # (including cap_weight_shares and assess_divergence) rather than computing
+    # a hardcoded (a + b) / 2.
+    patched_weights = dict(aggregation.SOURCE_WEIGHTS)
+    patched_weights["kalshi"] = 3.0
+    patched_weights["polymarket"] = 1.0
+    monkeypatch.setattr(aggregation, "SOURCE_WEIGHTS", patched_weights)
+
+    # Normal spread (0.50 vs 0.60): with equal default weights (0.8/0.8), compute_server_venue_blend is 0.55;
+    # with kalshi=3.0, polymarket=1.0, compute_aggregate_probability's weighted median selects 0.50 (not 0.55)
+    blended_normal, auth_normal = compute_server_venue_blend(0.50, 0.60)
+    assert auth_normal == SERVER_BLEND_AUTHORITY
+    assert blended_normal == 0.50
+
+    # Wide divergence (0.40 vs 0.80): assess_divergence triggers _weighted_median -> 0.40 (not 0.60)
+    assert compute_server_venue_blend(0.40, 0.80) == (
+        0.4,
+        SERVER_BLEND_AUTHORITY,
+    )
+

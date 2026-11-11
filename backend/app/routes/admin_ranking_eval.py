@@ -1024,6 +1024,11 @@ def load_grouping_grade_deck(
             "items": test_items,
         }
     if slate_id == VISUAL_FORMS_LOOK_SHEET_SLATE_ID:
+        from app.services.paired_metric_register import (
+            SERVER_BLEND_AUTHORITY,
+            load_paired_metric_register,
+        )
+
         look_sheet_path = (
             Path(__file__).resolve().parents[2]
             / "data"
@@ -1035,13 +1040,28 @@ def load_grouping_grade_deck(
                 status_code=404, detail="visual forms look sheet file not found"
             )
         raw_sheet = json.loads(look_sheet_path.read_text(encoding="utf-8"))
-        active_items = [
-            item
-            for item in raw_sheet.get("items", [])
-            if not item.get("retired")
-        ]
+        paired_register = load_paired_metric_register()
+        paired_sets = paired_register.get("sets", {})
+        active_items = []
+        for item in raw_sheet.get("items", []):
+            if item.get("retired"):
+                continue
+            item_copy = dict(item)
+            item_key = str(item_copy.get("item_key") or "")
+            if item_key.startswith("container-"):
+                item_copy["paired_metric_set"] = None
+            else:
+                set_id = item_copy.get("set_id") or (
+                    "nhl-2026-27-playoffs-and-cup"
+                    if item_copy.get("category") == "hockey"
+                    else "oscars-2027-best-picture"
+                )
+                item_copy["paired_metric_set"] = paired_sets.get(set_id)
+            active_items.append(item_copy)
         return {
             **raw_sheet,
+            "blend_authority": SERVER_BLEND_AUTHORITY,
+            "paired_metric_sets": paired_sets,
             "items": active_items,
         }
 

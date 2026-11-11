@@ -4,14 +4,16 @@
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import * as visualFormsModule from "@/lib/discover/visualForms";
 import {
   OSCARS_CONTAINER_LOOK_SHEET_OPTIONS,
   PAIRED_METRIC_REGISTER,
+  SERVER_BLEND_AUTHORITY,
   TMDB_ATTRIBUTION_LINE,
+  TMDB_ATTRIBUTION_URL,
   VISUAL_FORM_LIBRARY,
   VISUAL_FORM_LOOK_SHEET_CARDS,
   VISUAL_FORM_SHEET_2_CARDS,
-  blendVenueProbabilities,
   formatStage1Display,
   formatStage2Display,
   resolveKidSafeVisualArt,
@@ -53,26 +55,38 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     }
   });
 
-  it("blends equivalent venue legs for Best Picture Nominee (#5165726 + #27988771) while never blending Nominee and Winner propositions", () => {
+  it("uses server-blended venue probabilities (no client-side blendVenueProbabilities) while never blending Nominee and Winner propositions", () => {
+    expect(
+      (visualFormsModule as Record<string, unknown>).blendVenueProbabilities,
+    ).toBeUndefined();
+
     const bpSet = PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
     expect(bpSet.stage_1_market.companion_polymarket_id).toBe(27988771);
-
-    for (const entry of bpSet.entries) {
-      const expectedBlend = blendVenueProbabilities(
-        entry.stage_1_kalshi_probability,
-        entry.stage_1_polymarket_probability,
-      );
-      expect(entry.stage_1_probability).toBeCloseTo(expectedBlend!, 6);
-    }
+    expect(bpSet.blend_authority).toBe(SERVER_BLEND_AUTHORITY);
+    expect(bpSet.subtitle).toContain("blended on server via compute_aggregate_probability");
 
     // The Black Ball pairs with "La Bola Negra" on Polymarket #27988771 (0.94 + 0.95 -> 0.945 -> 95%)
     const blackBall = bpSet.entries.find((e) => e.subject === "The Black Ball")!;
     expect(blackBall.stage_1_polymarket_outcome).toBe("La Bola Negra");
     expect(formatStage1Display(blackBall, bpSet).label).toBe("95%");
 
-    // I Play Rocky blends 0.475 (Kalshi) and 0.50 (Polymarket) -> 0.4875 -> 49%
+    // I Play Rocky blends 0.475 (Kalshi) and 0.50 (Polymarket) on server -> 0.4875 -> 49%
     const rocky = bpSet.entries.find((e) => e.subject === "I Play Rocky")!;
     expect(formatStage1Display(rocky, bpSet).label).toBe("49%");
+
+    // Server-hydrated pairedMetricSet override takes precedence over static fallback
+    const customServerSet = {
+      ...bpSet,
+      entries: bpSet.entries.map((e) =>
+        e.subject === "I Play Rocky" ? { ...e, stage_1_probability: 0.61 } : e,
+      ),
+    };
+    const overriddenHtml = renderToStaticMarkup(
+      renderLookSheetCardBySpec(VISUAL_FORM_LOOK_SHEET_CARDS[0], {
+        pairedMetricSet: customServerSet,
+      }),
+    );
+    expect(overriddenHtml).toContain("61%");
 
     for (const set of Object.values(PAIRED_METRIC_REGISTER)) {
       expect(set.never_blend).toBe(true);
@@ -275,8 +289,11 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     expect(html).toContain('data-testid="visual-form-card-barbell-race-track"');
     expect(html).toContain('data-testid="visual-form-card-ballot-quadrant-map"');
 
-    // TMDB attribution line is visible
+    // TMDB attribution line + official TMDB SVG logo mark linked to themoviedb.org are visible
     expect(html).toContain('data-testid="tmdb-attribution-line"');
+    expect(html).toContain('data-testid="tmdb-attribution-link"');
+    expect(html).toContain('data-testid="tmdb-official-logo"');
+    expect(html).toContain(`href="${TMDB_ATTRIBUTION_URL}"`);
     expect(html).toContain(TMDB_ATTRIBUTION_LINE);
 
     // Podium tier heading and code agree on 70% (<70% to be nominated)
