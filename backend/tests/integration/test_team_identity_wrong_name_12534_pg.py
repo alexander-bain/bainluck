@@ -196,6 +196,115 @@ async def test_known_alias_registration_has_no_added_pool_read(rig):
     assert await mappings(maker) == [("kalshi", "PSG", 2)]
 
 
+@pytest.fixture
+async def fixture_relink_rig():
+    """146-A uses the existing mandatory identity PG gate, not a skipped file."""
+    from app.models import Event, FuturesMarket, FuturesOutcome, Venue
+
+    schema = "test_fixture_relink_12555_" + uuid.uuid4().hex
+    engine = create_async_engine(
+        DB_URL,
+        execution_options={"schema_translate_map": {None: schema}},
+        connect_args={"server_settings": {"search_path": f"{schema},public"}},
+    )
+    tables = [m.__table__ for m in (Sport, Team, Venue, Event, FuturesMarket, FuturesOutcome)]
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+            await conn.run_sync(Base.metadata.create_all, tables=tables)
+        yield async_sessionmaker(engine, expire_on_commit=False)
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await engine.dispose()
+
+
+def _fixture_relink_stats():
+    return {
+        "outcomes_relinked_into_fixture": 0, "outcomes_unlinked_outside_fixture": 0,
+        "fixture_relink_identity_changed": 0, "fixture_refusals": {},
+        "fixture_refusal_samples": [], "errors": [], "units_rolled_back": [],
+    }
+
+
+async def _drain_captured_fixture(session, stats):
+    from app.tasks import team_linking
+    from tests.test_team_link_drain_advances_7307 import _FakeCursorStore
+
+    store = _FakeCursorStore()
+    for _ in range(10):
+        writes = []
+        await team_linking._relink_outside_fixture(session, stats, 200, store, writes)
+        await session.commit()
+        team_linking._apply_cursor_writes(store, writes)
+        if stats["outcomes_relinked_into_fixture"] + stats["fixture_relink_identity_changed"] == 42:
+            return
+    pytest.fail("the bounded fixture cursor never reached all 42 captured targets")
+
+
+@pytest.mark.parametrize("status", ["open", "resolved", "closed"])
+async def test_fixture_repair_preserves_all_78_controls_and_every_nonclub_field(fixture_relink_rig, status):
+    from app.models import Event, FuturesMarket, FuturesOutcome
+    from app.tasks import team_linking
+    from tests.test_fixture_team_relink_12555 import CAPTURE, _captured_seed, _snapshot
+
+    maker = fixture_relink_rig
+    async with maker() as session:
+        await session.run_sync(_captured_seed, status)
+        before = await session.run_sync(_snapshot, FuturesOutcome)
+        markets = await session.run_sync(_snapshot, FuturesMarket)
+        events = await session.run_sync(_snapshot, Event)
+        stats = _fixture_relink_stats()
+        await _drain_captured_fixture(session, stats)
+        after = await session.run_sync(_snapshot, FuturesOutcome)
+        targets = {row["id"] for row in CAPTURE["targets"]}
+        assert len(targets) == 42 and len(CAPTURE["controls"]) == 78
+        assert stats["errors"] == stats["units_rolled_back"] == []
+        assert stats["outcomes_relinked_into_fixture"] == 42
+        assert after == {oid: {**row, "team_id": 541} if oid in targets else row for oid, row in before.items()}
+        assert await session.run_sync(_snapshot, FuturesMarket) == markets
+        assert await session.run_sync(_snapshot, Event) == events
+
+
+@pytest.mark.parametrize("change", ["price", "identity"])
+async def test_fixture_repair_preserves_a_concurrent_writer(fixture_relink_rig, monkeypatch, change):
+    from sqlalchemy import update
+    from app.models import FuturesOutcome
+    from app.tasks import team_linking
+    from app.utils import fixture_clubs
+    from tests.test_fixture_team_relink_12555 import CAPTURE, _captured_seed, _snapshot
+
+    maker = fixture_relink_rig
+    target_id = max(row["id"] for row in CAPTURE["targets"])
+    original = fixture_clubs.load_fixture_clubs
+    written = False
+
+    async def concurrent_writer(session, ids):
+        nonlocal written
+        result = await original(session, ids)
+        if ids and not written:
+            async with maker() as writer:
+                await writer.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                values = {"current_probability": 0.6789} if change == "price" else {"team_id": 544}
+                await writer.execute(update(FuturesOutcome).where(FuturesOutcome.id == target_id).values(**values))
+                await writer.commit()
+                written = True
+        return result
+
+    monkeypatch.setattr(fixture_clubs, "load_fixture_clubs", concurrent_writer)
+    async with maker() as session:
+        await session.run_sync(_captured_seed, "open")
+        stats = _fixture_relink_stats()
+        await _drain_captured_fixture(session, stats)
+        after = await session.run_sync(_snapshot, FuturesOutcome)
+        assert stats["errors"] == stats["units_rolled_back"] == []
+        assert stats["fixture_relink_identity_changed"] == int(change == "identity")
+        assert stats["outcomes_relinked_into_fixture"] == (41 if change == "identity" else 42)
+        assert after[target_id]["team_id"] == (544 if change == "identity" else 541)
+        if change == "price":
+            assert float(after[target_id]["current_probability"]) == 0.6789
+
+
 async def test_witness_pool_cap_cannot_turn_a_truncated_read_into_admission(rig):
     maker, statements = rig
     await seed(maker)

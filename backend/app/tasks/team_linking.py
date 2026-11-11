@@ -9,7 +9,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from sqlalchemy import select, func, or_, and_
+from sqlalchemy import select, func, or_, and_, update
 from sqlalchemy.exc import DBAPIError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -96,6 +96,12 @@ _NOT_A_LEAGUE = frozenset({"soccer_other"})
 # a reserved floor of the batch so it can never be starved to zero.
 _CURSOR_KEY_OPEN = "bainluck:team_link_cursor:open"
 _CURSOR_KEY_RESOLVED = "bainluck:team_link_cursor:resolved"
+_FIXTURE_CURSOR_OPEN = "bainluck:fixture_relink_cursor:open"
+_FIXTURE_CURSOR_RESOLVED = "bainluck:fixture_relink_cursor:resolved"
+_FIXTURE_RELINK_LIMIT = 200
+_FIXTURE_SCAN_LIMIT = 10000
+_FIXTURE_ID_SPAN = 100000
+_FIXTURE_SCAN_WINDOWS = 10
 _CURSOR_TTL = 86400 * 14
 _RESOLVED_FLOOR_DIVISOR = 4
 
@@ -249,6 +255,192 @@ async def _load_teams_by_sport(
         }
         for row in result.all()
     ]
+
+
+def _record_fixture_refusal(stats: dict, event_id: int, reason: str) -> None:
+    counts = stats["fixture_refusals"]
+    counts[reason] = counts.get(reason, 0) + 1
+    sample = {"event_id": event_id, "reason": reason}
+    samples = stats["fixture_refusal_samples"]
+    if len(samples) < 20 and sample not in samples:
+        samples.append(sample)
+        logger.info("Fixture team linking refused: event=%s reason=%s", event_id, reason)
+
+
+def fixture_relink_query(*, open_markets: bool, cursor: int, batch: int):
+    """Bound the primary-key read before checking game/club eligibility.
+
+    Scan newest first and resume below the last examined id, including a page
+    with no candidates. Separate open/resolved cursors cover the entire table;
+    there is no date cutoff. The scan tail is returned even for an empty page.
+    """
+    from sqlalchemy import literal, true
+    from app.models import Event, FuturesMarket, FuturesOutcome
+
+    # The caller reads the current maximum once when a new sweep starts. Plain
+    # bounds let PostgreSQL plan this range from its actual IDs instead of
+    # estimating the selectivity of values hidden behind a repeated CTE.
+    floor = max(0, cursor - _FIXTURE_ID_SPAN)
+    scan = (
+        select(
+            FuturesOutcome.id, FuturesOutcome.market_id, FuturesOutcome.team_id,
+        )
+        .where(
+            FuturesOutcome.id < literal(cursor, literal_execute=True),
+            FuturesOutcome.id >= literal(floor, literal_execute=True),
+        )
+        .order_by(FuturesOutcome.id.desc())
+        .limit(_FIXTURE_SCAN_LIMIT)
+        .cte("fixture_scan").prefix_with("MATERIALIZED")
+    )
+    tail = select(
+        func.min(scan.c.id).label("scan_end"), func.count(scan.c.id).label("scan_count"),
+        literal(floor).label("scan_floor"),
+    ).select_from(scan).cte("fixture_scan_tail")
+    candidates = (
+        select(
+            scan.c.id, scan.c.market_id, scan.c.team_id,
+            FuturesMarket.event_id, FuturesMarket.source,
+            FuturesMarket.external_id.label("market_external_id"),
+        )
+        .join(FuturesMarket, FuturesMarket.id == scan.c.market_id)
+        .outerjoin(Event, Event.id == FuturesMarket.event_id)
+        .where(
+            scan.c.team_id.is_not(None),
+            FuturesMarket.event_id.is_not(None),
+            FuturesMarket.status == "open" if open_markets else FuturesMarket.status != "open",
+            or_(
+                Event.home_team_id.is_(None), Event.away_team_id.is_(None),
+                and_(scan.c.team_id != Event.home_team_id, scan.c.team_id != Event.away_team_id),
+            ),
+        )
+        .order_by(scan.c.id.desc()).limit(batch)
+        .cte("fixture_candidates").prefix_with("MATERIALIZED")
+    )
+    return (
+        select(
+            candidates.c.id, candidates.c.market_id, FuturesOutcome.name,
+            FuturesOutcome.external_id, candidates.c.team_id,
+            candidates.c.event_id, candidates.c.source, candidates.c.market_external_id,
+            tail.c.scan_end, tail.c.scan_count, tail.c.scan_floor,
+        )
+        .select_from(tail.outerjoin(candidates, true()))
+        .outerjoin(FuturesOutcome, FuturesOutcome.id == candidates.c.id)
+        .order_by(candidates.c.id.desc())
+    )
+
+
+def _fixture_identity_unchanged(fixture):
+    """Identity predicates only; a price, score or timestamp refresh is harmless."""
+    from sqlalchemy import JSON
+    from app.models import Event, Sport, Team
+
+    fields = (Event.id, Event.sport_id, Event.home_team_id, Event.away_team_id,
+              Event.home_team_name, Event.away_team_name, Sport.key)
+    guards = [select(Event.id).join(Sport, Sport.id == Event.sport_id).where(
+        *(column.is_not_distinct_from(value) for column, value in zip(fields, fixture.event_identity))
+    ).exists()]
+    for team in fixture.teams:
+        clauses = [
+            Team.id == team["id"], Team.sport_id == team["sport_id"],
+            Team.name == team["name"], Sport.key == team["sport_key"],
+            Team.alternate_names.is_not_distinct_from(team["alternate_names"]),
+        ]
+        roster = team["roster_players"]
+        clauses.append(
+            or_(Team.roster_players.is_(None), Team.roster_players == JSON.NULL)
+            if roster is None else Team.roster_players == roster
+        )
+        guards.append(select(Team.id).join(Sport, Sport.id == Team.sport_id).where(*clauses).exists())
+    return and_(*guards)
+
+
+async def _relink_outside_fixture(session, stats: dict, limit: int, rc, cursor_writes) -> None:
+    """Repair only a stored club excluded by a fully verified game fixture.
+
+    One bounded open pass and a reserved settled pass run on the normal hourly
+    task. Decide before writing; change only team_id; refuse changed identities.
+    No LLM, task dispatch, schema change or special production repair is needed.
+    """
+    from app.models import FuturesMarket, FuturesOutcome
+    from app.utils.fixture_clubs import load_fixture_clubs
+
+    budget = min(max(0, limit), _FIXTURE_RELINK_LIMIT)
+    selected = 0
+    for label, key, is_open, allowance in (
+        ("open", _FIXTURE_CURSOR_OPEN, True, budget - _resolved_floor(budget)),
+        ("resolved", _FIXTURE_CURSOR_RESOLVED, False, None),
+    ):
+        allowance = budget - selected if allowance is None else allowance
+        if allowance <= 0:
+            continue
+        cursor = _read_cursor(rc, key)
+        if cursor <= 0:
+            cursor = (await session.execute(select(
+                func.coalesce(func.max(FuturesOutcome.id), 0) + 1,
+            ))).scalar_one()
+        stats[f"fixture_cursor_{label}_start"] = cursor
+        rows = []
+        scanned = 0
+        wrapped = False
+        for window in range(_FIXTURE_SCAN_WINDOWS):
+            page = (await session.execute(fixture_relink_query(
+                open_markets=is_open, cursor=cursor, batch=allowance - len(rows),
+            ))).all()
+            candidates = [row for row in page if row.id is not None]
+            rows.extend(candidates)
+            scan_end, scan_count = page[0].scan_end, page[0].scan_count
+            scanned += scan_count
+            if len(rows) == allowance:
+                # Keep unprocessed candidates reachable in this same ID range.
+                cursor = rows[-1].id
+                break
+            cursor = scan_end if scan_count == _FIXTURE_SCAN_LIMIT else page[0].scan_floor
+            if cursor == 0:
+                wrapped = True
+                break
+        selected += len(rows)
+        stats[f"fixture_selected_{label}"] = len(rows)
+        stats[f"fixture_scanned_{label}"] = scanned
+        stats[f"fixture_scan_windows_{label}"] = window + 1
+        async with _unit(session, stats, f"Fixture relink {label}"):
+            fixtures = await load_fixture_clubs(session, {row.event_id for row in rows})
+            decisions = []
+            for row in rows:
+                fixture = fixtures[row.event_id]
+                if fixture.refusal:
+                    _record_fixture_refusal(stats, row.event_id, fixture.refusal)
+                    continue
+                if row.team_id in fixture.ids:
+                    continue
+                team_id, _ = fixture.match(row.name)
+                decisions.append((row, fixture, team_id))
+            for row, fixture, team_id in decisions:
+                market_unchanged = select(FuturesMarket.id).where(
+                    FuturesMarket.id == row.market_id,
+                    FuturesMarket.event_id == row.event_id,
+                    FuturesMarket.source == row.source,
+                    FuturesMarket.external_id == row.market_external_id,
+                ).exists()
+                changed = (await session.execute(
+                    update(FuturesOutcome).where(
+                        FuturesOutcome.id == row.id, FuturesOutcome.market_id == row.market_id,
+                        FuturesOutcome.external_id == row.external_id,
+                        FuturesOutcome.name == row.name, FuturesOutcome.team_id == row.team_id,
+                        market_unchanged, _fixture_identity_unchanged(fixture),
+                    ).values(team_id=team_id).returning(FuturesOutcome.id)
+                    .execution_options(synchronize_session=False)
+                )).scalar_one_or_none()
+                if changed is None:
+                    stats["fixture_relink_identity_changed"] += 1
+                    continue
+                counter = "outcomes_relinked_into_fixture" if team_id is not None else "outcomes_unlinked_outside_fixture"
+                stats[counter] += 1
+        # As with the existing NULL drain, failures leave through their unit's
+        # rollback and return at the next wrap, rather than starving the tail.
+        stats[f"fixture_wrapped_{label}"] = wrapped
+        # Empty ranges advance too. Redis is updated only after the task commit.
+        cursor_writes.append((key, None if wrapped else cursor))
 
 
 # Venues whose market names its league for Step 0 and Phase 3: a Kalshi ticker,
@@ -442,6 +634,7 @@ async def _relink_outside_market_league(
                     ),
                 ),
                 FuturesMarket.status == "open",
+                FuturesMarket.event_id.is_(None),
             )
             .order_by(FuturesOutcome.id)
         )
@@ -529,6 +722,7 @@ async def _unlink_given_name_city_alias(
             .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
             .where(
                 FuturesMarket.status == "open",
+                FuturesMarket.event_id.is_(None),
                 FuturesOutcome.team_id.is_not(None),
                 FuturesOutcome.name.op("~*")(_GIVEN_NAME_SHAPE),
             )
@@ -615,7 +809,7 @@ async def _relink_outside_market_conference(
             .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
             .join(Team, Team.id == FuturesOutcome.team_id)
             .join(Sport, Sport.id == Team.sport_id)
-            .where(FuturesMarket.source == "kalshi", FuturesMarket.status == "open")
+            .where(FuturesMarket.source == "kalshi", FuturesMarket.status == "open", FuturesMarket.event_id.is_(None))
             .order_by(FuturesOutcome.id)
         )
     ).all()
@@ -709,6 +903,7 @@ async def _relink_contradicted_in_league(
             .where(
                 FuturesMarket.source.in_(("kalshi", "polymarket")),
                 FuturesMarket.status == "open",
+                FuturesMarket.event_id.is_(None),
             )
             .order_by(FuturesOutcome.id)
         )
@@ -872,6 +1067,12 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
         "outcomes_linked": 0,
         "outcomes_linked_by_name": 0,
         "outcomes_refused_outside_event_teams": 0,
+        "outcomes_refused_unknown_fixture": 0,
+        "fixture_refusals": {},
+        "fixture_refusal_samples": [],
+        "outcomes_relinked_into_fixture": 0,
+        "outcomes_unlinked_outside_fixture": 0,
+        "fixture_relink_identity_changed": 0,
         "outcomes_linked_by_league": 0,
         "outcomes_linked_by_roster": 0,
         "outcomes_linked_by_llm": 0,
@@ -977,6 +1178,12 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 fixture_ids = event_team_ids.get(outcome.market.event_id)
                 if team_id and fixture_ids is not None and team_id not in fixture_ids:
                     stats["outcomes_refused_outside_event_teams"] += 1
+                    logger.info(
+                        "Outcome club link refused: outcome=%s market=%s fixture=%s "
+                        "candidate_club=%s fixture_clubs=%s reason=outside_fixture",
+                        outcome.id, outcome.market_id, outcome.market.event_id,
+                        team_id, sorted(fixture_ids),
+                    )
                     return False
                 if team_id and _crosses_market_league(outcome, team_id, team_sport_keys):
                     stats["outcomes_refused_outside_market_league"] += 1
@@ -992,115 +1199,39 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             # Game props (Kalshi/Polymarket) have FuturesMarket.event_id set,
             # which gives us the exact teams. Their names and rosters outrank
             # a category guessed from a nickname such as Cardinals (#12555).
-            from app.models import Event, Sport, Team as TeamModel
-            from app.utils.sport_keys import same_sport_same_gender
-            from app.utils.team_linking import match_outcome_to_roster, match_outcome_to_team
+            from app.utils.fixture_clubs import load_fixture_clubs
             remaining_outcomes = []
-            event_cache: dict[int, dict] = {}  # event_id → {team_id: [player_names]}
-            event_teams: dict[int, list[dict]] = {}
-            event_sport_keys: dict[int, Optional[str]] = {}
-
-            def _extract_rosters(team_rows) -> dict[int, list[str]]:
-                rosters: dict[int, list[str]] = {}
-                for tr in team_rows:
-                    roster = tr.roster_players
-                    if roster and isinstance(roster, list):
-                        players = []
-                        for item in roster:
-                            name = item.get("name") if isinstance(item, dict) else item if isinstance(item, str) else None
-                            if isinstance(name, str) and len(name) >= 4:
-                                players.append(name)
-                        if players:
-                            rosters[tr.id] = players
-                return rosters
 
             async with _unit(session, stats, "Event rosters"):
+                fixtures = await load_fixture_clubs(
+                    session, {outcome.market.event_id for outcome in outcomes if outcome.market.event_id}
+                )
+                event_team_ids.update({event_id: fixture.ids for event_id, fixture in fixtures.items()})
+                links = []
                 for outcome in outcomes:
                     market = outcome.market
                     if not market.event_id:
                         remaining_outcomes.append(outcome)
                         continue
-
                     stats["outcomes_processed"] += 1
-
-                    # Load event teams (cached per event_id)
-                    if market.event_id not in event_cache:
-                        ev = await session.get(Event, market.event_id)
-                        event_rosters: dict[int, list[str]] = {}
-                        team_rows = []
-                        if ev:
-                            if ev.home_team_id or ev.away_team_id:
-                                # An FK names the club, not its competition:
-                                # an EPL club can play a Champions League game.
-                                team_ids = [t for t in [ev.home_team_id, ev.away_team_id] if t]
-                                team_rows = (await session.execute(
-                                    select(TeamModel.id, TeamModel.name, TeamModel.alternate_names, TeamModel.roster_players)
-                                    .where(TeamModel.id.in_(team_ids))
-                                )).all()
-                                if ev.sport_id:
-                                    if ev.sport_id not in event_sport_keys:
-                                        fixture_sport = await session.get(Sport, ev.sport_id)
-                                        event_sport_keys[ev.sport_id] = fixture_sport.key if fixture_sport else None
-                                    team_rows = [
-                                        row for row in team_rows
-                                        if same_sport_same_gender(
-                                            team_sport_keys.get(row.id), event_sport_keys[ev.sport_id]
-                                        )
-                                    ]
-                                # Even an empty set is authoritative here: known
-                                # IDs from a different sport or gender cannot
-                                # authorize a category fallback. Unknown keys
-                                # leave explicit IDs intact under the shared rule.
-                                event_team_ids[market.event_id] = {row.id for row in team_rows}
-                                event_rosters = _extract_rosters(team_rows)
-                            elif ev.home_team_name and ev.away_team_name:
-                                # Fallback: team IDs not set, look up by name + sport
-                                name_filters = [
-                                    or_(
-                                        TeamModel.name == ev.home_team_name,
-                                        TeamModel.name == ev.away_team_name,
-                                    )
-                                ]
-                                if ev.sport_id:
-                                    name_filters.append(TeamModel.sport_id == ev.sport_id)
-                                team_rows = (await session.execute(
-                                    select(TeamModel.id, TeamModel.name, TeamModel.alternate_names, TeamModel.roster_players)
-                                    .where(*name_filters)
-                                )).all()
-                                event_rosters = _extract_rosters(team_rows)
-                                if team_rows:
-                                    event_team_ids[market.event_id] = {row.id for row in team_rows}
-                        event_cache[market.event_id] = event_rosters
-                        event_teams[market.event_id] = [
-                            {"id": row.id, "name": row.name, "alternate_names": row.alternate_names}
-                            for row in team_rows
-                        ]
-                        if not event_rosters and ev:
-                            logger.info(
-                                "Event %s (%s vs %s): no rosters found (team_ids=%s/%s, sport_id=%s)",
-                                market.event_id, ev.home_team_name, ev.away_team_name,
-                                ev.home_team_id, ev.away_team_id, ev.sport_id,
-                            )
-
-                    team_id = match_outcome_to_team(outcome.name, event_teams[market.event_id])
-                    if _admit(outcome, team_id):
-                        outcome.team_id = team_id
-                        stats["outcomes_linked"] += 1
-                        stats["outcomes_linked_by_name"] += 1
+                    fixture = fixtures[market.event_id]
+                    if fixture.refusal:
+                        stats["outcomes_refused_unknown_fixture"] += 1
+                        _record_fixture_refusal(stats, market.event_id, fixture.refusal)
+                        # A missing or partial fixture is still a restriction.
+                        # No league/category/roster/LLM fallback may reopen it.
                         continue
-
-                    event_rosters = event_cache[market.event_id]
-                    if event_rosters:
-                        team_id = match_outcome_to_roster(outcome.name, event_rosters)
-                        if _admit(outcome, team_id):
-                            outcome.team_id = team_id
-                            stats["outcomes_linked"] += 1
-                            stats["outcomes_linked_by_roster"] += 1
-                            continue
-
-                    # A fallback still cannot leave known fixture teams: _admit
-                    # checks every name, roster, league and LLM candidate below.
-                    remaining_outcomes.append(outcome)
+                    team_id, method = fixture.match(outcome.name)
+                    if _admit(outcome, team_id):
+                        links.append((outcome, team_id))
+                        stats["outcomes_linked"] += 1
+                        stats[f"outcomes_linked_by_{method}"] += 1
+                    else:
+                        # The verified set still gates any later candidate.
+                        remaining_outcomes.append(outcome)
+                # Decide the batch before acquiring venue-writer row locks.
+                for outcome, team_id in links:
+                    outcome.team_id = team_id
 
             # --- Phase 2b: Category-based matching for non-event-linked markets ---
             # Group outcomes by sport category to batch team loading
@@ -1224,6 +1355,10 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
 
                     for outcome, team_id in links:
                         outcome.team_id = team_id
+
+            # Stored game links have one authority, including settled markets.
+            # The older league/conference/name repairs below exclude event links.
+            await _relink_outside_fixture(session, stats, limit, rc, cursor_writes)
 
             # --- Phase 3: stored links outside their market's league (#5119) ---
             async with _unit(session, stats, "Market-league relink"):
