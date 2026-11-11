@@ -14,6 +14,12 @@ their source marks keep the actual venue. This key makes the installed iOS venue
 pill absent. The web dashboard counts mark venues, so the key cannot become an
 extra source. No raw compatibility label is printed.
 
+Once either venue grades a shared prop, the row uses the existing Kalshi-first
+preference instead of a book-width comparison. It preserves that venue's exact
+verdict and settled mark, while both venues' represented IDs and over-axis
+verdicts remain in `prop_source_holds`. Agreement and disagreement both produce
+one rung; protected contracts stay in their separate families.
+
 The captured Patriots–Lions cohort (event 14639206, Nov 11, 8:20 AM PT) was read in
 one READ ONLY transaction with 2-second statements, 250 ms locks and a 90-second
 outer bound. It returned 151 markets and 836 outcomes/observations, rolled back,
@@ -170,3 +176,26 @@ settlement/price/identity guards and startup; 76 web grouping checks; all 43
 source tests at all twelve clock points; fresh build and typecheck (65 baseline,
 no new errors). Hosted CI, bot approval and Fable's review are still required.
 Alex's no-merge hold remains in force.
+
+### Finished shared props: one rung
+
+Fable's 10:15 AM PT review found that the previous graded-book separation served
+two indistinguishable rungs when both venues listed the same prop. Eight
+finished-pair cases reproduce that duplicate at `51e3d65aed`: agreeing and
+disagreeing verdicts, each with both Polymarket legs or only Under. They now
+select Kalshi when present, otherwise Polymarket, without averaging either the
+number or result. The live book-width selection is unchanged. A partially
+graded pair also keeps one rung; an unknown verdict remains unknown.
+
+The selected row retains all represented outcome IDs. Each graded hold records
+the source and market, represented IDs, hit, winner flag, resolution source and
+settled mark for each candidate. This keeps the 145-A disagreement available
+without drawing two identical rungs. The actual route fixtures feed twelve web
+grouping cases: four Polymarket-only cases plus eight shared-prop cases. Every
+case yields one player card, one stat and the selected source's HIT/MISS.
+
+The saved live Patriots–Lions response is still parsed-JSON identical: 270 rows,
+336 represented IDs, 24 holds and no new caps. All 51 source tests pass all
+twelve clock points; 546 backend checks including startup, 84 web checks, build
+and typecheck pass. Fresh hosted CI and review remain required before shipping.
+Alex's explicit no-merge hold and all deployment conditions remain in force.

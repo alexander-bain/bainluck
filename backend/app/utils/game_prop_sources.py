@@ -184,7 +184,8 @@ def shape_nfl_prop_rows(
 
     The hold records name every discarded contributor. A source-only prop
     remains present, including Polymarket rows older apps couldn't parse.
-    Untyped rows are left intact. Graded books never enter venue selection.
+    Untyped rows are left intact. A graded pair uses the existing Kalshi-first
+    preference, never a price or verdict average. Both verdicts stay in holds.
     A graded Polymarket book uses its Over leg (or reorients its lone Under),
     retaining both leg identities and the existing grade without re-grading.
     """
@@ -192,7 +193,6 @@ def shape_nfl_prop_rows(
         return rows, []
     team_forms = _team_forms(home_team, away_team)
     groups: dict[tuple, list[tuple[dict, dict, bool]]] = {}
-    graded_books: dict[tuple, list[tuple[dict, dict, bool]]] = {}
     untouched = []
     for row in rows:
         market = markets.get(row.get("_market_id"))
@@ -210,72 +210,73 @@ def shape_nfl_prop_rows(
         count = typed["count"] + (typed["kind"] == "count_at_most")
         key = (typed["subject_key"], typed["stat_key"], count, bool(protected_stat))
         entry = (row, typed, bool(protected_stat))
-        if row.get("resolution_source") is not None or row.get("hit") is not None:
-            if row.get("source") == "polymarket":
-                graded_books.setdefault((*key, row.get("_market_id")), []).append(entry)
-            else:
-                untouched.append(row)
-            continue
         groups.setdefault(key, []).append(entry)
-
-    for (*predicate, market_id), entries in graded_books.items():
-        key = tuple(predicate)
-        # A partially resolved book still contributes its own Over leg. It
-        # must not be sent to live venue selection while its Under is graded.
-        siblings = groups.get(key, [])
-        entries.extend(e for e in siblings if e[0].get("_market_id") == market_id)
-        groups[key] = [e for e in siblings if e[0].get("_market_id") != market_id]
-        row, typed, protected = min(entries, key=lambda e: e[1]["side"] != "over")
-        result = _shape_entry(row, typed, protected, entries, home_team, away_team)
-        if typed["side"] == "under":
-            # The route's existing verdict gate retains void/retraction
-            # refusals. Typed hit is already a verdict, never inferred here.
-            result.update(orient_under_verdict(row))
-            if row.get("hit") is not None:
-                result["hit"] = not row["hit"]
-            elif row.get("source_mark", {}).get("state") == "settled":
-                won = result.get("is_winner")
-                result["source_mark"] = (
-                    {
-                        **row["source_mark"],
-                        "settled": {
-                            **row["source_mark"]["settled"],
-                            "result": "Won" if won else "Lost",
-                        },
-                    }
-                    if won is not None
-                    else no_source_mark("settled_verdict_unproved")
-                )
-        untouched.append(result)
 
     selected = []
     held = []
     for (player, stat, count, protected), entries in groups.items():
-        if not entries:
-            continue
         # First choose one own-side leg per venue/market. A genuine over/yes
         # leg outranks the complemented under leg of that SAME book.
         books: dict[tuple, tuple[dict, dict, bool]] = {}
+        book_entries: dict[tuple, list[tuple[dict, dict, bool]]] = {}
         for entry in entries:
             row, typed, _ = entry
             key = (row.get("source"), row.get("_market_id"))
+            book_entries.setdefault(key, []).append(entry)
             previous = books.get(key)
             if previous is None or (
                 typed["side"] == "over" and previous[1]["side"] != "over"
             ):
                 books[key] = entry
-        # Known book beats unknown, then narrower book, then the existing
-        # Kalshi preference. Unknown widths are reported, never called tight.
+        has_grade = any(
+            e[0].get("resolution_source") is not None or e[0].get("hit") is not None
+            for e in entries
+        )
+        shaped_books = {}
+        for key, (row, typed, _) in books.items():
+            own_entries = book_entries[key]
+            result = _shape_entry(
+                row, typed, protected, own_entries, home_team, away_team
+            )
+            if typed["side"] == "under" and any(
+                e[0].get("resolution_source") is not None or e[0].get("hit") is not None
+                for e in own_entries
+            ):
+                # Reorient this book's verdict once. The existing route gate
+                # preserves void/retraction refusals; no result is inferred.
+                result.update(orient_under_verdict(row))
+                if row.get("hit") is not None:
+                    result["hit"] = not row["hit"]
+                elif row.get("source_mark", {}).get("state") == "settled":
+                    won = result.get("is_winner")
+                    result["source_mark"] = (
+                        {
+                            **row["source_mark"],
+                            "settled": {
+                                **row["source_mark"]["settled"],
+                                "result": "Won" if won else "Lost",
+                            },
+                        }
+                        if won is not None
+                        else no_source_mark("settled_verdict_unproved")
+                    )
+            shaped_books[key] = result
+        # No book width after settlement. Preserve the existing Kalshi-first
+        # tie-break even if only one venue has graded, keeping one rung in
+        # every state. The hold below retains each venue's own verdict.
         chosen = min(
             books.values(),
             key=lambda e: (
-                _book_width(e[0], legs),
+                0 if has_grade else _book_width(e[0], legs),
                 e[0].get("source") != "kalshi",
                 e[0].get("_market_id") or 0,
             ),
         )
         row, typed, _ = chosen
-        result = _shape_entry(row, typed, protected, entries, home_team, away_team)
+        result = dict(shaped_books[(row.get("source"), row.get("_market_id"))])
+        result["represented_outcome_ids"] = sorted(
+            {oid for e in entries for oid in e[0].get("contributor_outcome_ids", [])}
+        )
         selected.append(result)
 
         venues = {entry[0].get("source") for entry in entries}
@@ -287,7 +288,9 @@ def shape_nfl_prop_rows(
                 if _book_width(entry[0], legs) != float("inf")
             ]
             selection = "book_width_unknown"
-            if len(known_widths) == 1:
+            if has_grade:
+                selection = "settled_source_preference"
+            elif len(known_widths) == 1:
                 selection = "only_known_book"
             elif known_widths:
                 selection = (
@@ -319,6 +322,32 @@ def shape_nfl_prop_rows(
                     ),
                     "candidate_market_ids": sorted(
                         {e[0]["_market_id"] for e in entries}
+                    ),
+                    **(
+                        {
+                            "candidate_verdicts": [
+                                {
+                                    "source": source,
+                                    "market_id": market_id,
+                                    "represented_outcome_ids": candidate[
+                                        "represented_outcome_ids"
+                                    ],
+                                    "hit": candidate.get("hit"),
+                                    "is_winner": candidate.get("is_winner"),
+                                    "resolution_source": candidate.get(
+                                        "resolution_source"
+                                    ),
+                                    "settled": candidate.get("source_mark", {}).get(
+                                        "settled"
+                                    ),
+                                }
+                                for (source, market_id), candidate in sorted(
+                                    shaped_books.items()
+                                )
+                            ]
+                        }
+                        if has_grade
+                        else {}
                     ),
                 }
             )

@@ -2,6 +2,7 @@
   {
     "over_won": false,
     "under_only": false,
+    "kalshi_won": null,
     "player_props": [
       {
         "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
@@ -36,7 +37,82 @@
   },
   {
     "over_won": false,
+    "under_only": false,
+    "kalshi_won": false,
+    "player_props": [
+      {
+        "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
+        "outcome_name": "Josh Allen: 225+",
+        "threshold": 225,
+        "over_probability": 0.03,
+        "opening_over_probability": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "source_mark": {
+          "state": "settled",
+          "sources": [],
+          "settled": {
+            "source": null,
+            "result": "Lost",
+            "at": null
+          }
+        },
+        "hit": false,
+        "actual": null,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "contributor_outcome_ids": [
+          721
+        ],
+        "represented_outcome_ids": [
+          711,
+          712,
+          721
+        ]
+      }
+    ]
+  },
+  {
+    "over_won": false,
+    "under_only": false,
+    "kalshi_won": true,
+    "player_props": [
+      {
+        "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
+        "outcome_name": "Josh Allen: 225+",
+        "threshold": 225,
+        "over_probability": 0.97,
+        "opening_over_probability": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "source_mark": {
+          "state": "settled",
+          "sources": [],
+          "settled": {
+            "source": null,
+            "result": "Won",
+            "at": null
+          }
+        },
+        "hit": true,
+        "actual": null,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "contributor_outcome_ids": [
+          721
+        ],
+        "represented_outcome_ids": [
+          711,
+          712,
+          721
+        ]
+      }
+    ]
+  },
+  {
+    "over_won": false,
     "under_only": true,
+    "kalshi_won": null,
     "player_props": [
       {
         "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
@@ -69,8 +145,81 @@
     ]
   },
   {
+    "over_won": false,
+    "under_only": true,
+    "kalshi_won": false,
+    "player_props": [
+      {
+        "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
+        "outcome_name": "Josh Allen: 225+",
+        "threshold": 225,
+        "over_probability": 0.03,
+        "opening_over_probability": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "source_mark": {
+          "state": "settled",
+          "sources": [],
+          "settled": {
+            "source": null,
+            "result": "Lost",
+            "at": null
+          }
+        },
+        "hit": false,
+        "actual": null,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "contributor_outcome_ids": [
+          721
+        ],
+        "represented_outcome_ids": [
+          712,
+          721
+        ]
+      }
+    ]
+  },
+  {
+    "over_won": false,
+    "under_only": true,
+    "kalshi_won": true,
+    "player_props": [
+      {
+        "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
+        "outcome_name": "Josh Allen: 225+",
+        "threshold": 225,
+        "over_probability": 0.97,
+        "opening_over_probability": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "source_mark": {
+          "state": "settled",
+          "sources": [],
+          "settled": {
+            "source": null,
+            "result": "Won",
+            "at": null
+          }
+        },
+        "hit": true,
+        "actual": null,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "contributor_outcome_ids": [
+          721
+        ],
+        "represented_outcome_ids": [
+          712,
+          721
+        ]
+      }
+    ]
+  },
+  {
     "over_won": true,
     "under_only": false,
+    "kalshi_won": null,
     "player_props": [
       {
         "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
@@ -105,7 +254,82 @@
   },
   {
     "over_won": true,
+    "under_only": false,
+    "kalshi_won": false,
+    "player_props": [
+      {
+        "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
+        "outcome_name": "Josh Allen: 225+",
+        "threshold": 225,
+        "over_probability": 0.03,
+        "opening_over_probability": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "source_mark": {
+          "state": "settled",
+          "sources": [],
+          "settled": {
+            "source": null,
+            "result": "Lost",
+            "at": null
+          }
+        },
+        "hit": false,
+        "actual": null,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "contributor_outcome_ids": [
+          721
+        ],
+        "represented_outcome_ids": [
+          711,
+          712,
+          721
+        ]
+      }
+    ]
+  },
+  {
+    "over_won": true,
+    "under_only": false,
+    "kalshi_won": true,
+    "player_props": [
+      {
+        "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
+        "outcome_name": "Josh Allen: 225+",
+        "threshold": 225,
+        "over_probability": 0.97,
+        "opening_over_probability": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "source_mark": {
+          "state": "settled",
+          "sources": [],
+          "settled": {
+            "source": null,
+            "result": "Won",
+            "at": null
+          }
+        },
+        "hit": true,
+        "actual": null,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "contributor_outcome_ids": [
+          721
+        ],
+        "represented_outcome_ids": [
+          711,
+          712,
+          721
+        ]
+      }
+    ]
+  },
+  {
+    "over_won": true,
     "under_only": true,
+    "kalshi_won": null,
     "player_props": [
       {
         "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
@@ -133,6 +357,78 @@
         ],
         "represented_outcome_ids": [
           712
+        ]
+      }
+    ]
+  },
+  {
+    "over_won": true,
+    "under_only": true,
+    "kalshi_won": false,
+    "player_props": [
+      {
+        "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
+        "outcome_name": "Josh Allen: 225+",
+        "threshold": 225,
+        "over_probability": 0.03,
+        "opening_over_probability": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "source_mark": {
+          "state": "settled",
+          "sources": [],
+          "settled": {
+            "source": null,
+            "result": "Lost",
+            "at": null
+          }
+        },
+        "hit": false,
+        "actual": null,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "contributor_outcome_ids": [
+          721
+        ],
+        "represented_outcome_ids": [
+          712,
+          721
+        ]
+      }
+    ]
+  },
+  {
+    "over_won": true,
+    "under_only": true,
+    "kalshi_won": true,
+    "player_props": [
+      {
+        "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
+        "outcome_name": "Josh Allen: 225+",
+        "threshold": 225,
+        "over_probability": 0.97,
+        "opening_over_probability": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "source_mark": {
+          "state": "settled",
+          "sources": [],
+          "settled": {
+            "source": null,
+            "result": "Won",
+            "at": null
+          }
+        },
+        "hit": true,
+        "actual": null,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "contributor_outcome_ids": [
+          721
+        ],
+        "represented_outcome_ids": [
+          712,
+          721
         ]
       }
     ]

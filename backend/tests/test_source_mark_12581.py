@@ -387,6 +387,8 @@ def nfl_polymarket_finished_page(
     grade_source="api_settlement",
     void=False,
     kalshi_control=False,
+    kalshi_won=None,
+    kalshi_finished=None,
 ):
     """Synthetic venue-resolved NFL prop through the real assembly path."""
     from app.routes.events import _build_game_markets
@@ -425,6 +427,8 @@ def nfl_polymarket_finished_page(
         outcomes = outcomes[1:]
     markets = [market]
     if kalshi_control:
+        kalshi_won = not over_won if kalshi_won is None else kalshi_won
+        kalshi_finished = finished if kalshi_finished is None else kalshi_finished
         kalshi = _market(
             id=72,
             name="Buffalo vs Houston: Passing Yards",
@@ -433,9 +437,15 @@ def nfl_polymarket_finished_page(
         )
         kalshi.external_id = "KXNFLPASSYDS-26NOV12BUFHOU"
         kalshi.llm_sport_category = "americanfootball"
-        kalshi.status = "resolved"
-        leg = _outcome(id=721, market_id=72, name="Josh Allen: 225+", prob=1 - over)
-        leg.is_winner, leg.resolution_source = not over_won, "api_settlement"
+        kalshi.status = "resolved" if kalshi_finished else "open"
+        leg = _outcome(
+            id=721,
+            market_id=72,
+            name="Josh Allen: 225+",
+            prob=(0.97 if kalshi_won else 0.03) if kalshi_finished else 0.64,
+        )
+        if kalshi_finished:
+            leg.is_winner, leg.resolution_source = kalshi_won, "api_settlement"
         leg.current_yes_bid = leg.current_yes_ask = None
         outcomes.append(leg)
         markets.append(kalshi)
@@ -475,17 +485,21 @@ def finished_polymarket_reader_fixture():
         {
             "over_won": over_won,
             "under_only": under_only,
+            "kalshi_won": kalshi_won,
             "player_props": [
                 {key: row[key] for key in fields}
                 for row in nfl_polymarket_finished_page(
                     finished=True,
                     over_won=over_won,
                     under_only=under_only,
+                    kalshi_control=kalshi_won is not None,
+                    kalshi_won=kalshi_won,
                 )["player_props"]
             ],
         }
         for over_won in (False, True)
         for under_only in (False, True)
+        for kalshi_won in (None, False, True)
     ]
 
 
@@ -509,24 +523,102 @@ class TestServedPropSelection:
         assert page["props_script"][0]["graded_result"] is None
         assert page["props_script"][0]["settled"] is False
 
-    def test_graded_nfl_books_are_not_averaged_or_selected_away(self):
-        page = nfl_polymarket_finished_page(finished=True, kalshi_control=True)
-        rows = page["player_props"]
-        assert len(rows) == 2
-        assert {r["market_name"] for r in rows} == {
-            "Buffalo Bills vs Houston Texans: Passing Yards",
-        }
-        by_market = {r["_market_id"]: r for r in rows}
-        assert (
-            by_market[71]["hit"] is True and by_market[71]["over_probability"] == 0.97
+    @pytest.mark.parametrize(
+        "kalshi_won,over_won",
+        [(False, False), (True, True), (False, True), (True, False)],
+    )
+    @pytest.mark.parametrize("under_only", [False, True])
+    def test_graded_nfl_pair_serves_one_own_verdict_and_records_both(
+        self, kalshi_won, over_won, under_only
+    ):
+        before = nfl_polymarket_finished_page(finished=False, kalshi_control=True)
+        page = nfl_polymarket_finished_page(
+            finished=True,
+            kalshi_control=True,
+            kalshi_won=kalshi_won,
+            over_won=over_won,
+            under_only=under_only,
         )
-        assert (
-            by_market[72]["hit"] is False and by_market[72]["over_probability"] == 0.03
+        (row,) = page["player_props"]
+        (live,) = before["player_props"]
+        assert (row["market_name"], row["outcome_name"]) == (
+            live["market_name"],
+            live["outcome_name"],
         )
-        assert by_market[71]["represented_outcome_ids"] == [711, 712]
-        assert by_market[72]["contributor_outcome_ids"] == [721]
-        assert all(r["source_mark"]["state"] == "settled" for r in rows)
-        assert page["prop_source_holds"] == []
+        assert row["_market_id"] == 72
+        assert row["hit"] is kalshi_won
+        assert row["over_probability"] == (0.97 if kalshi_won else 0.03)
+        assert row["contributor_outcome_ids"] == [721]
+        assert row["represented_outcome_ids"] == (
+            [712, 721] if under_only else [711, 712, 721]
+        )
+        assert row["source_mark"]["state"] == "settled"
+        assert row["source_mark"]["settled"]["result"] == (
+            "Won" if kalshi_won else "Lost"
+        )
+        (hold,) = page["prop_source_holds"]
+        assert hold["selection"] == "settled_source_preference"
+        assert hold["selected_source"] == "kalshi"
+        assert hold["selected_outcome_ids"] == [721]
+        assert hold["candidate_outcome_ids"] == row["represented_outcome_ids"]
+        assert hold["candidate_market_ids"] == [71, 72]
+        verdicts = {v["source"]: v for v in hold["candidate_verdicts"]}
+        assert verdicts["kalshi"]["hit"] is kalshi_won
+        assert verdicts["polymarket"]["hit"] is over_won
+        assert verdicts["polymarket"]["represented_outcome_ids"] == (
+            [712] if under_only else [711, 712]
+        )
+        for source, won in (("kalshi", kalshi_won), ("polymarket", over_won)):
+            assert verdicts[source]["settled"]["result"] == ("Won" if won else "Lost")
+        assert len(page["props_script"]) == 1
+        assert page["props_script"][0]["graded_result"] == (
+            "hit" if kalshi_won else "miss"
+        )
+
+    def test_a_cross_venue_pair_with_only_one_grade_still_has_one_rung(self):
+        from app.routes.events import _prop_player_and_stat, _settled_over_verdict
+        from app.utils.game_prop_sources import shape_nfl_prop_rows
+
+        # At the shaping boundary: one venue has graded while the other is
+        # still trading. Keep the graded venue's exact verdict, not a mean.
+        rows, holds = shape_nfl_prop_rows(
+            [
+                {
+                    "market_name": "Buffalo vs Houston: Passing Yards",
+                    "outcome_name": "Josh Allen: 225+",
+                    "source": "kalshi",
+                    "_market_id": 72,
+                    "contributor_outcome_ids": [721],
+                    "over_probability": 0.97,
+                    "hit": True,
+                    "resolution_source": "api_settlement",
+                },
+                {
+                    "market_name": "Josh Allen: Passing Yards O/U 224.5",
+                    "outcome_name": "Over",
+                    "source": "polymarket",
+                    "_market_id": 71,
+                    "contributor_outcome_ids": [711],
+                    "over_probability": 0.62,
+                },
+            ],
+            markets={},
+            legs={},
+            player_and_stat=_prop_player_and_stat,
+            home_team="Houston Texans",
+            away_team="Buffalo Bills",
+            sport_key="americanfootball_nfl",
+            orient_under_verdict=lambda row: _settled_over_verdict(row, True, True),
+        )
+        (row,) = rows
+        assert row["hit"] is True and row["over_probability"] == 0.97
+        assert row["represented_outcome_ids"] == [711, 721]
+        (hold,) = holds
+        assert hold["selection"] == "settled_source_preference"
+        verdicts = {v["source"]: v for v in hold["candidate_verdicts"]}
+        assert verdicts["kalshi"]["hit"] is True
+        assert verdicts["polymarket"]["hit"] is None
+        assert verdicts["polymarket"]["settled"] is None
 
     @pytest.mark.parametrize("over_won", [False, True])
     @pytest.mark.parametrize("under_only", [False, True])
