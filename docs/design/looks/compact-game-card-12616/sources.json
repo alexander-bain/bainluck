@@ -1,0 +1,81 @@
+{
+  "captured_at_pt": "Nov 11, 2026 \u00b7 1:31 PM PT",
+  "nba": {
+    "url": "https://api.bainluck.com/api/events/15344730",
+    "history_url": "https://api.bainluck.com/api/events/15344730/history",
+    "final": [
+      123,
+      101
+    ],
+    "pregame": {
+      "home_probability": 0.465,
+      "away_probability": 0.535,
+      "home_rendered_percent": 46,
+      "away_rendered_percent": 54,
+      "source": "kalshi"
+    },
+    "pregame_projection": {
+      "projected_home_score": 107.8,
+      "projected_away_score": 109.5,
+      "kind": "last_before_scheduled_start",
+      "earliest_captured_at": "2026-11-10T23:24:09.066303+00:00",
+      "latest_captured_at": "2026-11-11T00:56:07.205761+00:00",
+      "boundary": "scheduled_start",
+      "boundary_at": "2026-11-11T01:00:00+00:00",
+      "source": "sportsbooks",
+      "basis": "consensus_spread_total",
+      "bookmaker_count": 20,
+      "unit": "points",
+      "period": "full_game"
+    },
+    "during": {
+      "score_history": {
+        "timestamp": "2026-11-11T03:14:48.466736+00:00",
+        "home_score": 87,
+        "away_score": 111
+      },
+      "history": {
+        "timestamp": "2026-11-11T03:15:00+00:00",
+        "home_probability": null,
+        "away_probability": null,
+        "over_under": 221.7,
+        "projected_home_score": 100.3,
+        "projected_away_score": 121.4,
+        "bookmaker_count": 0,
+        "probability_range": {
+          "min": null,
+          "max": null
+        }
+      },
+      "aggregate_line": {
+        "timestamp": "2026-11-11T03:15:00+00:00",
+        "home_probability": 0.003975
+      },
+      "espn_history": {
+        "timestamp": "2026-11-11T03:14:48.466736+00:00",
+        "home_probability": 0.001,
+        "away_probability": 0.999,
+        "home_score": 87,
+        "away_score": 111,
+        "game_clock": "5:35",
+        "period": "5:35 - 4th Quarter"
+      }
+    }
+  },
+  "nfl": {
+    "url": "https://api.bainluck.com/api/events/14639206",
+    "history_url": "https://api.bainluck.com/api/events/14639206/history",
+    "probability": [
+      0.415,
+      0.585
+    ],
+    "rendered_percent": [
+      41,
+      59
+    ],
+    "projection_unavailable": "no_recent_lines",
+    "state_read_fresh": false
+  },
+  "soccer": "All names and values are invented samples. Public EPL lists returned no events in two bounded reads; not a claim no events exist.",
+  "tennis": "All names and values are invented samples."
+}
