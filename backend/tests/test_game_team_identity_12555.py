@@ -132,7 +132,8 @@ def test_wrong_sport_fixture_ids_cannot_authorize_category_fallback():
     assert stats["outcomes_refused_outside_event_teams"] > 0
 
 
-def test_cup_fixture_keeps_its_domestic_league_clubs_and_rosters():
+@pytest.mark.parametrize("outside_fixture_outcome", [False, True])
+def test_cup_fixture_keeps_its_domestic_league_clubs_and_rosters(outside_fixture_outcome):
     with Session(_make_engine()) as session:
         session.add_all([
             Sport(id=1, key="soccer_epl", name="Premier League", active=True),
@@ -153,14 +154,20 @@ def test_cup_fixture_keeps_its_domestic_league_clubs_and_rosters():
                           event_id=1, market_metadata={}),
         ])
         session.flush()
-        for oid, name in enumerate(["Arsenal", "Liverpool", "Bukayo Saka", "Chelsea"], 1):
+        names = ["Arsenal", "Liverpool", "Bukayo Saka"]
+        if outside_fixture_outcome:
+            names.append("Chelsea")
+        for oid, name in enumerate(names, 1):
             session.add(FuturesOutcome(id=oid, market_id=1, external_id=str(oid), name=name))
         session.commit()
         links, stats = _run(session)
-    assert links == {1: 1, 2: 2, 3: 1, 4: None}
+    expected = {1: 1, 2: 2, 3: 1}
+    if outside_fixture_outcome:
+        expected[4] = None
+    assert links == expected
     assert stats["outcomes_linked_by_name"] == 2
     assert stats["outcomes_linked_by_roster"] == 1
-    assert stats["outcomes_refused_outside_event_teams"] > 0
+    assert stats["outcomes_refused_outside_event_teams"] == int(outside_fixture_outcome)
 
 
 def test_opposite_gender_fixture_ids_do_not_authorize_a_club():
