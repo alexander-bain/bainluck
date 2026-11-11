@@ -111,3 +111,6 @@ def test_the_pollers_later_tier_asks_the_helper_and_nothing_else_changed():
     # Live and starting-soon are untouched, and conservation still forces h2h first.
     assert code.count("api_markets = 'h2h,spreads,totals'") == 2
     assert code.index("if quota_conservation:") < code.index("api_markets = scheduled_markets(")
+    # Fable's review: opening lines are written only by a fetch that asked for lines,
+    # so the next moneyline-only fetch cannot write them back to NULL.
+    assert "update_opening='spreads' in api_markets" in code

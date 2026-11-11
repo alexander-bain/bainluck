@@ -1763,6 +1763,11 @@ async def _poll_all_odds():
                         total_snapshots += await _ingest_event_odds(
                             session, event, event_data, commence_time, snapshot_cache,
                             received_at=received_at,
+                            # #11286 review: opening lines only from a fetch
+                            # that asked for lines. A moneyline-only fetch would
+                            # write the opening spread and total back to NULL
+                            # (`_ingest_event_odds`, `update_opening`).
+                            update_opening="spreads" in api_markets,
                         )
                         # #10090: commit AND publish this game before the next
                         # game's registry lookup and snapshot bookkeeping. The
