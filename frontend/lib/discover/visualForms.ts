@@ -119,7 +119,7 @@ export interface PairedMetricSet {
 }
 
 export const TMDB_ATTRIBUTION_LINE =
-  "Film posters, headshots, and credits provided by TMDB";
+  "This product uses the TMDB API but is not endorsed or certified by TMDB.";
 
 /**
  * Blend equivalent prediction-market legs for the SAME proposition (e.g. Kalshi
@@ -475,8 +475,8 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
     kicker: "OSCARS 2027 · BEST PICTURE",
     title: "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
     subtitle:
-      "99th Academy Awards · Top 10 contenders by win % (ties broken by nominated %) · Nominee % (#5165726 + #27988771) paired beside Winner % (#6173044)",
-    selection_rule: "top_10_by_stage_2_then_stage_1",
+      "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %) · Nominee % (average of two venues: #5165726 + #27988771) paired beside Winner % (#6173044)",
+    selection_rule: "top_10_by_stage_1_probability",
     stage_1_label: "Nominated",
     stage_2_label: "Wins",
     stage_1_settled_yes_label: "Nominated",
@@ -484,7 +484,7 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
     stage_1_market: {
       id: 5165726,
       source: "kalshi+polymarket",
-      name: "Oscar nominees: Best Picture (#5165726 + #27988771)",
+      name: "Oscar nominees: Best Picture (average of two venues: #5165726 + #27988771)",
       companion_polymarket_id: 27988771,
     },
     stage_2_market: {
@@ -1479,7 +1479,9 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
 
 export interface LookSheetCardSpec {
   position: number;
+  block_id: number;
   item_key: string;
+  legacy_v1_item_key?: string;
   label: string;
   form: VisualFormContract;
   set_id: string;
@@ -1490,19 +1492,23 @@ export interface LookSheetCardSpec {
 
 export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
   {
-    position: 1,
-    item_key: "form-1-paired-bars-with-art-best-picture",
-    label: "Card 1 · Stacked Dual Bars with Poster (Full 10-Row Baseline)",
+    position: 16,
+    block_id: 1,
+    item_key: "form-1-v2-paired-bars-with-art-best-picture",
+    legacy_v1_item_key: "form-1-paired-bars-with-art-best-picture",
+    label: "Card 1 (v2) · Stacked Dual Bars with Poster (Full 10-Row Baseline)",
     form: VISUAL_FORM_LIBRARY.paired_bars_with_art,
     set_id: "oscars-2027-best-picture",
     sheet: 1,
     why_it_exists:
-      "Alex's baseline form: one row per film with its poster and both bars stacked together in one column (Nominated % above Wins %).",
+      "Alex's baseline form: one row per film (for the 10 films most likely to be nominated, ordered by Wins %) with its poster and both bars stacked together in one column (Nominated % above Wins %).",
   },
   {
-    position: 2,
-    item_key: "form-2-poster-spotlight-tiles-best-picture",
-    label: "Card 2 · Poster-Led 2-Up Spotlight Tiles (Best Picture 2027)",
+    position: 17,
+    block_id: 2,
+    item_key: "form-2-v2-poster-spotlight-tiles-best-picture",
+    legacy_v1_item_key: "form-2-poster-spotlight-tiles-best-picture",
+    label: "Card 2 (v2) · Poster-Led 2-Up Spotlight Tiles (Best Picture 2027)",
     form: VISUAL_FORM_LIBRARY.poster_spotlight_tiles,
     set_id: "oscars-2027-best-picture",
     sheet: 1,
@@ -1510,9 +1516,11 @@ export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
       "Cinema-first grid: the poster leads each tile while Wins % remains the headline number and Nominated % sits beside it.",
   },
   {
-    position: 3,
-    item_key: "form-3-step-conversion-path-best-picture",
-    label: "Card 3 · Path from Nominated to Wins (Best Picture 2027)",
+    position: 18,
+    block_id: 3,
+    item_key: "form-3-v2-step-conversion-path-best-picture",
+    legacy_v1_item_key: "form-3-step-conversion-path-best-picture",
+    label: "Card 3 (v2) · Path from Nominated to Wins (Best Picture 2027)",
     form: VISUAL_FORM_LIBRARY.step_conversion_path,
     set_id: "oscars-2027-best-picture",
     sheet: 1,
@@ -1520,19 +1528,23 @@ export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
       "Draws the two propositions as one funnel track (outer reach = Nominated %, inner fill = Wins %), immediately exposing nomination locks that are longshots to win (Wild Horse Nine: 93% → 2%).",
   },
   {
-    position: 4,
-    item_key: "form-4-leader-and-chasers-split-best-picture",
+    position: 19,
+    block_id: 4,
+    item_key: "form-4-v2-leader-and-chasers-split-best-picture",
+    legacy_v1_item_key: "form-4-leader-and-chasers-split-best-picture",
     form: VISUAL_FORM_LIBRARY.leader_and_chasers_split,
-    label: "Card 4 · One Leader and Its Chasers (Best Picture 2027)",
+    label: "Card 4 (v2) · One Leader and Its Chasers (Best Picture 2027)",
     set_id: "oscars-2027-best-picture",
     sheet: 1,
     why_it_exists:
       "Picked when #1 holds >= 40% to win: The Odyssey (57% win / 98% nom, +40 pts ahead of #2) gets a hero spotlight banner while the chasing pack sits in compact two-number strips.",
   },
   {
-    position: 5,
-    item_key: "form-5-sports-playoffs-to-title-nhl",
-    label: "Card 5 · Non-Oscars Proof: NHL Make Playoffs % beside Win Stanley Cup % (All 9 Clubs >= 5%)",
+    position: 20,
+    block_id: 5,
+    item_key: "form-5-v2-sports-playoffs-to-title-nhl",
+    legacy_v1_item_key: "form-5-sports-playoffs-to-title-nhl",
+    label: "Card 5 (v2) · Non-Oscars Proof: NHL Make Playoffs % beside Win Stanley Cup % (All 9 Clubs >= 5%)",
     form: VISUAL_FORM_LIBRARY.paired_bars_with_art,
     set_id: "nhl-2026-27-playoffs-and-cup",
     sheet: 1,
@@ -1540,9 +1552,11 @@ export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
       "Proves the form travels outside the Oscars without hardcoding: same 'two related numbers per subject + picture' contract with ESPN NHL crests and deterministic tie-breaking (Dallas Stars 84%/5% alongside Tampa Bay Lightning 82%/5%).",
   },
   {
-    position: 6,
-    item_key: "form-6-post-nominations-settled-gate",
-    label: "Card 6 · Post-Nominations State: ✓ / ✗ Replaces the First Bar ('Settled Means Settled')",
+    position: 21,
+    block_id: 6,
+    item_key: "form-6-v2-post-nominations-settled-gate",
+    legacy_v1_item_key: "form-6-post-nominations-settled-gate",
+    label: "Card 6 (v2) · Post-Nominations State: ✓ / ✗ Replaces the First Bar ('Settled Means Settled')",
     form: VISUAL_FORM_LIBRARY.settled_gate_after_nominations,
     set_id: "oscars-2027-best-picture",
     force_settled_stage_1: true,
@@ -1555,69 +1569,76 @@ export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
 export const VISUAL_FORM_SHEET_2_CARDS: LookSheetCardSpec[] = [
   {
     position: 10,
+    block_id: 10,
     item_key: "form-1a-paired-bars-top5-expandable-best-picture",
     label: "Shorter Card 1A · Top 5 Dual Bars + 'Show All 10' Expander (Cuts Default Height by 48%)",
     form: VISUAL_FORM_LIBRARY.paired_bars_top5_expandable,
     set_id: "oscars-2027-best-picture",
     sheet: 2,
     why_it_exists:
-      "Alex's 8:33 PM reaction: keeps the exact poster + two-bar comparison row from Card 1, but shows the top 5 by Win % by default with a one-tap 'Show all 10 contenders' expander.",
+      "Alex's 8:33 PM reaction: from the 10 films most likely to be nominated, keeps the exact poster + two-bar comparison row from Card 1 for the top 5 by Win % by default with a one-tap 'Show all 10 most likely nominees' expander.",
   },
   {
     position: 11,
+    block_id: 11,
     item_key: "form-1b-paired-bars-single-line-best-picture",
     label: "Shorter Card 1B · One Line Per Film with Mini Poster, Micro-Bars & Both Numbers (All 10 Visible)",
     form: VISUAL_FORM_LIBRARY.paired_bars_single_line,
     set_id: "oscars-2027-best-picture",
     sheet: 2,
     why_it_exists:
-      "Shows all 10 Best Picture contenders at once with zero truncation in 46% less vertical height by placing the mini poster, title, dual micro-bars, Nominated % and Wins % on one compact row.",
+      "Shows all 10 films most likely to be nominated (ordered by Win %) at once with zero truncation in 46% less vertical height by placing the mini poster, title, dual micro-bars, Nominated % and Wins % on one compact row.",
   },
   {
     position: 12,
+    block_id: 12,
     item_key: "form-1c-paired-bars-top3-plus-strip-best-picture",
-    label: "Shorter Card 1C · Top 3 Full Dual-Bar Rows + 2-Up Contender Strip for #4–#10",
+    label: "Shorter Card 1C · Top 3 Full Dual-Bar Rows + 2-Up Grid for the Other 7 Most Likely Nominees",
     form: VISUAL_FORM_LIBRARY.paired_bars_top3_plus_strip,
     set_id: "oscars-2027-best-picture",
     sheet: 2,
     why_it_exists:
-      "Gives the 3 realistic trophy contenders (The Odyssey 57%, You Can See Everything 17%, The Black Ball 15%) full poster + dual-bar rows while packing #4–#10 into a 2-column contender grid below.",
+      "From the 10 films most likely to be nominated, gives the top 3 by Win % (The Odyssey 57%, You Can See Everything 17%, The Black Ball 15%) full poster + dual-bar rows while packing the remaining 7 into a 2-column grid below.",
   },
   {
     position: 13,
+    block_id: 13,
     item_key: "form-7-podium-and-tiers-best-picture",
-    label: "Wild Form A · Three-Spot Trophy Podium + Nomination Lock & Bubble Tiers",
+    label: "Wild Form A · Three-Spot Trophy Podium + 70%+ vs <70% Nomination Tiers",
     form: VISUAL_FORM_LIBRARY.podium_and_tiers,
     set_id: "oscars-2027-best-picture",
     sheet: 2,
     why_it_exists:
-      "Breaks out of row lists: puts #1 The Odyssey (center gold), #2 You Can See Everything (left silver), and #3 The Black Ball (right bronze) on a visual podium, with the remaining 7 contenders grouped into 'Nomination Locks (70%+ nom)' vs 'On the Bubble (<65% nom)'.",
+      "Breaks out of row lists: puts #1 The Odyssey (center), #2 You Can See Everything (left), and #3 The Black Ball (right) on a visual podium, with the other 7 of the top 10 most likely nominees grouped into 'Likely Nominees (70%+ to be nominated)' vs 'On the Nomination Bubble (<70% to be nominated)'.",
   },
   {
     position: 14,
+    block_id: 14,
     item_key: "form-8-barbell-race-track-best-picture",
     label: "Wild Form B · 0–100% Barbell Gap Track (Wins ●━━━━○ Nominated on One Shared Scale)",
     form: VISUAL_FORM_LIBRARY.barbell_race_track,
     set_id: "oscars-2027-best-picture",
     sheet: 2,
     why_it_exists:
-      "Plots both numbers as a connected dumbbell/barbell on a single 0–100% horizontal track (emerald dot = Wins %, sky dot = Nominated %), turning the gap between getting nominated and winning into a physical span.",
+      "For the 10 films most likely to be nominated, plots both numbers as a connected barbell on a single 0–100% horizontal track (green dot = Wins %, dark dot = Nominated %), turning the gap between getting nominated and winning into a physical span.",
   },
   {
     position: 15,
+    block_id: 15,
     item_key: "form-9-ballot-quadrant-map-best-picture",
     label: "Wild Form C · 2×2 Ballot Quadrant Board (Favorites vs Safe Nominees vs Likely vs Bubble)",
     form: VISUAL_FORM_LIBRARY.ballot_quadrant_map,
     set_id: "oscars-2027-best-picture",
     sheet: 2,
     why_it_exists:
-      "Maps all 10 contenders into a 2×2 spatial board by their (Nominated %, Wins %) signature so a reader immediately sees who is a Trophy Favorite, who is a Safe Nominee / Longshot Winner, and who is on the Bubble.",
+      "Maps the 10 films most likely to be nominated into a 2×2 spatial board by their printed (Nominated %, Wins %) numbers so a reader immediately sees who is a Trophy Favorite, who is a Safe Nominee / Longshot Winner, and who is on the Bubble.",
   },
 ];
 
 export interface ContainerLookSheetSpec {
   position: number;
   item_key: string;
+  legacy_v1_item_key?: string;
   option_code: "A" | "B" | "C";
   title: string;
   subtitle: string;
@@ -1626,30 +1647,33 @@ export interface ContainerLookSheetSpec {
 
 export const OSCARS_CONTAINER_LOOK_SHEET_OPTIONS: ContainerLookSheetSpec[] = [
   {
-    position: 7,
-    item_key: "container-a-alternating-form-magazine",
+    position: 22,
+    item_key: "container-a-v2-alternating-form-magazine",
+    legacy_v1_item_key: "container-a-alternating-form-magazine",
     option_code: "A",
-    title: "Container A · Magazine Rhythm (Adjacent Sections Never Repeat a Form)",
+    title: "Container A (v2) · Magazine Rhythm (Adjacent Sections Never Repeat a Form)",
     subtitle:
       "Section 1: Best Picture (Leader + Chasers) → Section 2: Best Director (Circular Headshot Tiles) → Section 3: Best Actress (Step Conversion Path) → Section 4: Best Animated Feature (Poster Strip)",
     rule_summary:
       "Container rule: each section picks a form from the library subject to `form[i] !== form[i-1]`, using movie posters for film categories and circular headshots for person categories.",
   },
   {
-    position: 8,
-    item_key: "container-b-shape-driven-contrast",
+    position: 23,
+    item_key: "container-b-v2-shape-driven-contrast",
+    legacy_v1_item_key: "container-b-shape-driven-contrast",
     option_code: "B",
-    title: "Container B · Shape-Driven Contrast (Runaway Locks vs Open Duels vs Deep 10-Film Field)",
+    title: "Container B (v2) · Shape-Driven Contrast (Runaway Locks vs Open Duels vs Deep 10-Film Field)",
     subtitle:
       "Top: Runaway Favorites (>=70% to win: Wildwood 86%, Julianne Moore 75%) → Middle: Open 3-Way Actor Duel (Malkovich 42% vs Scott 22% vs Damon 17%) → Bottom: Compact Best Picture Board",
     rule_summary:
       "Container rule: the probability distribution chooses the visual form — a >=70% leader gets a compact Lock Banner, a tight top-3 gets a Headshot Duel Strip, and a 10-nominee slate gets Stacked Dual Bars.",
   },
   {
-    position: 9,
-    item_key: "container-c-two-act-ballot",
+    position: 24,
+    item_key: "container-c-v2-two-act-ballot",
+    legacy_v1_item_key: "container-c-two-act-ballot",
     option_code: "C",
-    title: "Container C · Two-Act Ballot (90%+ Nomination Locks Rail + Category Cards)",
+    title: "Container C (v2) · Two-Act Ballot (90%+ Nomination Locks Rail + Category Cards)",
     subtitle:
       "Act I: 2-up grid of 90%+ nomination locks across categories (Nolan 99%, Odyssey 98%, Moore 98%, Wildwood 97%, Malkovich 96%, The Black Ball 95%) → Act II: Best Picture Poster Tile Grid + Best Director Headshot Conversion Path",
     rule_summary:

@@ -139,8 +139,14 @@ function TMDBAttributionNote({ set }: { set: PairedMetricSet }) {
   );
   if (!usesTmdb) return null;
   return (
-    <span data-testid="tmdb-attribution-line" className="text-xs text-text-muted">
-      {TMDB_ATTRIBUTION_LINE}
+    <span
+      data-testid="tmdb-attribution-line"
+      className="inline-flex items-center gap-1.5 text-xs text-text-muted"
+    >
+      <span className="rounded border border-surface-border bg-surface-elevated px-1 py-0.5 font-bold tracking-wider text-accent-brand">
+        TMDB
+      </span>
+      <span>{TMDB_ATTRIBUTION_LINE}</span>
     </span>
   );
 }
@@ -334,7 +340,7 @@ function PairedBarsWithArtCard({
           <span className="text-text-muted">
             (
             {set.stage_1_market.companion_polymarket_id
-              ? `#${set.stage_1_market.id} + #${set.stage_1_market.companion_polymarket_id}`
+              ? `average of two venues: #${set.stage_1_market.id} + #${set.stage_1_market.companion_polymarket_id}`
               : `#${set.stage_1_market.id}`}
             )
           </span>
@@ -401,7 +407,7 @@ function PairedBarsTop5ExpandableCard({
       </div>
       <h3 className="mt-1 text-lg font-semibold text-text-primary">{set.title}</h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        Shows the top 5 contenders by {set.stage_2_label} % in full two-bar rows; the remaining {hiddenCount} contenders expand in place on tap.
+        From the {sorted.length} films most likely to be nominated, shows the top 5 by {set.stage_2_label} % in full two-bar rows; the remaining {hiddenCount} expand in place on tap.
       </p>
 
       <div className="mt-2 divide-y divide-surface-border">
@@ -427,8 +433,8 @@ function PairedBarsTop5ExpandableCard({
           >
             <span>
               {expanded
-                ? "Show top 5 contenders only"
-                : `Show all ${sorted.length} contenders (+${hiddenCount} more)`}
+                ? "Show top 5 by Wins % only"
+                : `Show all ${sorted.length} most likely nominees (+${hiddenCount} more)`}
             </span>
             {!expanded && unpricedInHidden && (
               <span
@@ -443,7 +449,7 @@ function PairedBarsTop5ExpandableCard({
       )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
-        <span>Nominee #5165726 + #27988771 · Winner #6173044</span>
+        <span>Nominee % (average of two venues: #5165726 + #27988771) · Winner #6173044</span>
         <TMDBAttributionNote set={set} />
       </div>
     </article>
@@ -475,12 +481,12 @@ function PairedBarsSingleLineCard({
       </div>
       <h3 className="mt-1 text-lg font-semibold text-text-primary">{set.title}</h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        All {rows.length} contenders visible at once on single compact rows: mini poster, film title, inline dual micro-bars, {set.stage_1_label} % and {set.stage_2_label} %.
+        All {rows.length} films most likely to be nominated visible at once on single compact rows (ordered by {set.stage_2_label} %): mini poster, film title, inline dual micro-bars, {set.stage_1_label} % and {set.stage_2_label} %.
       </p>
 
       {/* Column Headers */}
       <div className="mt-3 flex items-center justify-between border-b border-surface-border pb-1.5 text-xs font-semibold uppercase tracking-wide text-text-muted">
-        <span>Contender</span>
+        <span>Film (Top 10 by Nom %)</span>
         <div className="flex items-center gap-3">
           <span className="w-16 text-right">{set.stage_1_label}</span>
           <span className="w-24 text-right text-text-primary">{set.stage_2_label}</span>
@@ -593,7 +599,7 @@ function PairedBarsTop3PlusStripCard({
       </div>
       <h3 className="mt-1 text-lg font-semibold text-text-primary">{set.title}</h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        Top 3 trophy favorites get full poster + dual-bar rows; contenders #4–#{sorted.length} sit in a compact 2-column grid below.
+        From the {sorted.length} films most likely to be nominated, the top 3 by {set.stage_2_label} % get full poster + dual-bar rows; the other 7 sit in a compact 2-column grid below.
       </p>
 
       <div className="mt-2 divide-y divide-surface-border">
@@ -611,7 +617,7 @@ function PairedBarsTop3PlusStripCard({
 
       <div className="mt-3 border-t border-surface-border pt-2.5">
         <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-text-muted">
-          <span>Contenders #4–#{sorted.length}</span>
+          <span>Other 7 of Top {sorted.length} Most Likely Nominees</span>
           <span>
             {set.stage_1_label} · {set.stage_2_label}
           </span>
@@ -659,7 +665,7 @@ function PairedBarsTop3PlusStripCard({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
-        <span>All 10 contenders shown · Top 3 bars + 7 compact tiles</span>
+        <span>Top 10 most likely nominees · Top 3 bars + 7 compact tiles</span>
         <TMDBAttributionNote set={set} />
       </div>
     </article>
@@ -782,7 +788,7 @@ function PosterSpotlightTilesCard({
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted">
         <span>
-          Showing 6 of {set.entries.length} paired contenders · {set.stage_1_label} and {set.stage_2_label} kept separate.
+          Showing 6 of {set.entries.length} most likely nominees · {set.stage_1_label} and {set.stage_2_label} kept separate.
         </span>
         <TMDBAttributionNote set={set} />
       </div>
@@ -1074,8 +1080,12 @@ function PodiumAndTiersCard({
   const third = sorted[2];
   const remaining = sorted.slice(3);
 
-  const lockTier = remaining.filter((e) => (e.stage_1_probability ?? 0) >= 0.7);
-  const bubbleTier = remaining.filter((e) => (e.stage_1_probability ?? 0) < 0.7);
+  const lockTier = remaining.filter(
+    (e) => (renderedPercent(e.stage_1_probability) ?? 0) >= 70,
+  );
+  const bubbleTier = remaining.filter(
+    (e) => (renderedPercent(e.stage_1_probability) ?? 0) < 70,
+  );
 
   // Order podium visual columns as #2 (left) · #1 (center, elevated) · #3 (right)
   const podiumSpots = [
@@ -1095,7 +1105,7 @@ function PodiumAndTiersCard({
       </div>
       <h3 className="mt-1 text-lg font-semibold text-text-primary">{set.title}</h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        Top 3 trophy favorites stand on a visual podium; contenders #4–#{sorted.length} group into Nomination Locks vs Bubble Watch.
+        From the {sorted.length} films most likely to be nominated, the top 3 by {set.stage_2_label} % stand on a visual podium; the other 7 group into 70%+ vs &lt;70% to be nominated.
       </p>
 
       {/* 3-Column Podium */}
@@ -1187,7 +1197,7 @@ function PodiumAndTiersCard({
         {/* Tier 2: Bubble Watch (<70% Nominated) */}
         <div className="rounded-lg border border-surface-border bg-surface-elevated p-2.5">
           <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-text-muted">
-            <span>On the Nomination Bubble (&lt;65% to be nominated)</span>
+            <span>On the Nomination Bubble (&lt;70% to be nominated)</span>
             <span>NOM · WIN</span>
           </div>
           <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -1262,7 +1272,7 @@ function BarbellRaceTrackCard({
       </div>
       <h3 className="mt-1 text-lg font-semibold text-text-primary">{set.title}</h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        Each contender&apos;s {set.stage_2_label} % (green dot) and {set.stage_1_label} % (dark dot) sit on one 0–100% axis; the connecting span shows the ballot-to-trophy gap.
+        For the {rows.length} films most likely to be nominated, each film&apos;s {set.stage_2_label} % (green dot) and {set.stage_1_label} % (dark dot) sit on one 0–100% axis; the connecting span shows the ballot-to-trophy gap.
       </p>
 
       {/* Scale Header */}
@@ -1381,22 +1391,21 @@ function BallotQuadrantMapCard({
   kidSurface?: boolean;
 }) {
   const sorted = sortPairedEntries(set.entries);
+  const s1Printed = (e: PairedSubjectEntry) =>
+    renderedPercent(e.stage_1_probability) ?? 0;
+  const s2Printed = (e: PairedSubjectEntry) =>
+    renderedPercent(e.stage_2_probability) ?? 0;
+
   const favorites = sorted.filter(
-    (e) =>
-      (e.stage_1_probability ?? 0) >= 0.75 &&
-      (e.stage_2_probability ?? 0) >= 0.1,
+    (e) => s1Printed(e) >= 75 && s2Printed(e) >= 10,
   );
   const safeNominees = sorted.filter(
-    (e) =>
-      (e.stage_1_probability ?? 0) >= 0.75 &&
-      (e.stage_2_probability ?? 0) < 0.1,
+    (e) => s1Printed(e) >= 75 && s2Printed(e) < 10,
   );
   const likelyNominees = sorted.filter(
-    (e) =>
-      (e.stage_1_probability ?? 0) >= 0.65 &&
-      (e.stage_1_probability ?? 0) < 0.75,
+    (e) => s1Printed(e) >= 65 && s1Printed(e) < 75,
   );
-  const bubbleWatch = sorted.filter((e) => (e.stage_1_probability ?? 0) < 0.65);
+  const bubbleWatch = sorted.filter((e) => s1Printed(e) < 65);
 
   const quadrants = [
     {
@@ -1436,7 +1445,7 @@ function BallotQuadrantMapCard({
       </div>
       <h3 className="mt-1 text-lg font-semibold text-text-primary">{set.title}</h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        Maps all {sorted.length} contenders into four spatial zones by their ({set.stage_1_label} %, {set.stage_2_label} %) signature.
+        Maps the {sorted.length} films most likely to be nominated into four spatial zones by their printed ({set.stage_1_label} %, {set.stage_2_label} %) numbers.
       </p>
 
       <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -2065,7 +2074,9 @@ export const renderVisualLookSheetDeckItem = (
   options?: { simulateSettled?: boolean; kidSurface?: boolean },
 ): React.ReactNode | null => {
   const allCards = [...VISUAL_FORM_LOOK_SHEET_CARDS, ...VISUAL_FORM_SHEET_2_CARDS];
-  const cardSpec = allCards.find((c) => c.item_key === itemKey);
+  const cardSpec = allCards.find(
+    (c) => c.item_key === itemKey || c.legacy_v1_item_key === itemKey,
+  );
   if (cardSpec) {
     return (
       <div className="space-y-2" data-testid={`look-sheet-item-${itemKey}`}>
@@ -2075,7 +2086,7 @@ export const renderVisualLookSheetDeckItem = (
     );
   }
   const containerSpec = OSCARS_CONTAINER_LOOK_SHEET_OPTIONS.find(
-    (c) => c.item_key === itemKey,
+    (c) => c.item_key === itemKey || c.legacy_v1_item_key === itemKey,
   );
   if (containerSpec) {
     return (
@@ -2117,10 +2128,6 @@ export function VisualFormLookSheetGallery({
 }: VisualFormLookSheetGalleryProps) {
   const [simulateSettled, setSimulateSettled] = useState(false);
   const [notesByKey, setNotesByKey] = useState<Record<string, string>>({});
-  const totalItems =
-    VISUAL_FORM_LOOK_SHEET_CARDS.length +
-    OSCARS_CONTAINER_LOOK_SHEET_OPTIONS.length +
-    VISUAL_FORM_SHEET_2_CARDS.length;
 
   const renderGradableCardBlock = (spec: LookSheetCardSpec) => {
     const currentGrade = existingGradesByItemKey[spec.item_key];
@@ -2128,13 +2135,13 @@ export function VisualFormLookSheetGallery({
     return (
       <div
         key={spec.item_key}
-        data-testid={`look-sheet-card-block-${spec.position}`}
+        data-testid={`look-sheet-card-block-${spec.block_id}`}
         className="rounded-xl border border-surface-border bg-surface-elevated p-3.5"
       >
         <div className="mb-2 flex items-baseline justify-between gap-2">
           <h4 className="text-sm font-bold text-text-primary">{spec.label}</h4>
           <span className="text-xs font-medium text-text-muted">
-            Item #{spec.position} of {totalItems}
+            Deck pos #{spec.position}
           </span>
         </div>
         <p className="mb-2 text-xs text-text-secondary">{spec.why_it_exists}</p>

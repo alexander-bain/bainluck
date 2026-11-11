@@ -38,6 +38,8 @@ def test_paired_metric_register_is_valid_and_never_blends():
         assert expected_set_id in sets
 
     bp = sets["oscars-2027-best-picture"]
+    assert bp["selection_rule"] == "top_10_by_stage_1_probability"
+    assert "Top 10 most likely to be nominated" in bp["subtitle"]
     assert bp["stage_1_market"]["id"] == 5165726
     assert bp["stage_1_market"]["companion_polymarket_id"] == 27988771
     assert bp["stage_2_market"]["id"] == 6173044
@@ -73,17 +75,15 @@ def test_load_visual_forms_look_sheet_deck():
     assert deck["slate_id"] == "visual-forms-look-sheet-2026-11"
     assert deck["surface"] == "grouping"
     items = deck["items"]
-    assert len(items) == 15
+    assert len(items) == 24
 
     positions = [it["position"] for it in items]
-    assert positions == list(range(1, 16))
+    assert positions == list(range(1, 25))
 
-    # Items 1–6: Sheet 1 visual form cards (including non-Oscars NHL #5)
+    # Items 1–9: Preserved v1 Sheet 1 cards + containers (Lesson 25: tonight's grades stay bound to v1)
     assert items[0]["item_key"] == "form-1-paired-bars-with-art-best-picture"
     assert items[4]["item_key"] == "form-5-sports-playoffs-to-title-nhl"
     assert items[4]["category"] == "hockey"
-
-    # Items 7–9: 3 Oscars container options (#12523)
     assert items[6]["item_key"] == "container-a-alternating-form-magazine"
     assert items[7]["item_key"] == "container-b-shape-driven-contrast"
     assert items[8]["item_key"] == "container-c-two-act-ballot"
@@ -99,3 +99,10 @@ def test_load_visual_forms_look_sheet_deck():
     assert items[12]["item_key"] == "form-7-podium-and-tiers-best-picture"
     assert items[13]["item_key"] == "form-8-barbell-race-track-best-picture"
     assert items[14]["item_key"] == "form-9-ballot-quadrant-map-best-picture"
+
+    # Items 16–24: Revised v2 Sheet 1 cards + containers with distinct v2 item_keys
+    assert items[15]["item_key"] == "form-1-v2-paired-bars-with-art-best-picture"
+    assert items[19]["item_key"] == "form-5-v2-sports-playoffs-to-title-nhl"
+    assert items[21]["item_key"] == "container-a-v2-alternating-form-magazine"
+    assert items[22]["item_key"] == "container-b-v2-shape-driven-contrast"
+    assert items[23]["item_key"] == "container-c-v2-two-act-ballot"

@@ -42,6 +42,18 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     );
     expect(nhlCard).toBeDefined();
     expect(nhlCard?.form.form_id).toBe("paired_bars_with_art");
+
+    // Lesson 25: revised Sheet 1 cards and containers carry distinct v2 item_keys
+    for (const card of VISUAL_FORM_LOOK_SHEET_CARDS) {
+      expect(card.item_key).toContain("-v2-");
+      expect(card.legacy_v1_item_key).toBeDefined();
+      expect(card.item_key).not.toBe(card.legacy_v1_item_key);
+    }
+    for (const opt of OSCARS_CONTAINER_LOOK_SHEET_OPTIONS) {
+      expect(opt.item_key).toContain("-v2-");
+      expect(opt.legacy_v1_item_key).toBeDefined();
+      expect(opt.item_key).not.toBe(opt.legacy_v1_item_key);
+    }
   });
 
   it("blends equivalent venue legs for Best Picture Nominee (#5165726 + #27988771) while never blending Nominee and Winner propositions", () => {
@@ -269,6 +281,11 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     // TMDB attribution line is visible
     expect(html).toContain('data-testid="tmdb-attribution-line"');
     expect(html).toContain(TMDB_ATTRIBUTION_LINE);
+
+    // Podium tier heading and code agree on 70% (<70% to be nominated)
+    expect(html).toContain("Likely Nominees (70%+ to be nominated");
+    expect(html).toContain("On the Nomination Bubble (&lt;70% to be nominated)");
+    expect(html).not.toContain("&lt;65% to be nominated");
 
     for (const code of ["A", "B", "C"] as const) {
       expect(html).toContain(`data-testid="oscars-container-option-${code}"`);

@@ -10,7 +10,7 @@
     "missing_probability_rendering": "explicit_unpriced_notice",
     "rounding_helper": "renderedPercent",
     "tie_breaking_rule": "stage_2_probability_desc_then_stage_1_probability_desc_then_subject_asc",
-    "tmdb_attribution": "Film posters, headshots, and credits provided by TMDB",
+    "tmdb_attribution": "This product uses the TMDB API but is not endorsed or certified by TMDB.",
     "kid_safe_gate_issue": 7461
   },
   "sets": {
@@ -19,8 +19,8 @@
       "category": "entertainment",
       "kicker": "OSCARS 2027 · BEST PICTURE",
       "title": "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
-      "subtitle": "99th Academy Awards · Top 10 contenders by win % (ties broken by nominated %) · Nominee % (#5165726 + #27988771) paired beside Winner % (#6173044)",
-      "selection_rule": "top_10_by_stage_2_then_stage_1",
+      "subtitle": "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %) · Nominee % (average of two venues: #5165726 + #27988771) paired beside Winner % (#6173044)",
+      "selection_rule": "top_10_by_stage_1_probability",
       "stage_1_label": "Nominated",
       "stage_2_label": "Wins",
       "stage_1_settled_yes_label": "Nominated",
@@ -28,7 +28,7 @@
       "stage_1_market": {
         "id": 5165726,
         "source": "kalshi+polymarket",
-        "name": "Oscar nominees: Best Picture (#5165726 + #27988771)",
+        "name": "Oscar nominees: Best Picture (average of two venues: #5165726 + #27988771)",
         "companion_polymarket_id": 27988771
       },
       "stage_2_market": {
