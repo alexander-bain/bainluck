@@ -1655,7 +1655,11 @@ async def _poll_all_odds():
                     api_markets = "h2h,spreads,totals"
                     api_regions = "us,us2" if sport_tier == 1 else "us"
                 else:  # "later" — h2h only, primary US only (saves ~83% vs live)
-                    api_markets = "h2h"
+                    # #11286 (138: A): NFL and NBA also get spreads and totals,
+                    # once an hour per league, sharing discovery's stamp.
+                    from app.utils.scheduled_full_markets import scheduled_markets
+
+                    api_markets = scheduled_markets(sport_key, r, now.timestamp())
                     api_regions = "us"
 
                 # Per-sport region override (e.g., MLB -> us only for quota savings)
@@ -1671,6 +1675,14 @@ async def _poll_all_odds():
                         markets=api_markets,
                     )
                     received_at = datetime.now(timezone.utc).timestamp()
+                    if tier == "later" and not quota_conservation:
+                        from app.utils.scheduled_full_markets import (
+                            SCHEDULED_FULL_MARKETS,
+                            record_full_fetch,
+                        )
+
+                        if api_markets == SCHEDULED_FULL_MARKETS:
+                            record_full_fetch(sport_key, r, received_at)
                     all_events_data.extend(events_data)
                     sports_polled += 1
 
