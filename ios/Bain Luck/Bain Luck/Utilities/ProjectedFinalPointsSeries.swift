@@ -92,6 +92,10 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
     let latest: Point
     let latestActual: Actual?
     let latestIntervalUnavailable: Bool
+    /// #12578 — once a game has started, the projection it began with, at the
+    /// kickoff instant: the chart opens there and marks it. Nil before a game,
+    /// or when no drawn projection was holding at kickoff.
+    var kickoffProjection: Point? = nil
     let yMax: Double
     let tickStep: Double
     var yTicks: [Double] { Array(stride(from: 0, through: yMax, by: tickStep)) }
@@ -189,6 +193,13 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
             if !continues { closeRun() }
         }
         closeRun()
+        // #12578 — the projection the game began with: the last drawn point at or
+        // before kickoff, held to the kickoff instant (the line's own step rule).
+        var kickoffPoint: Point?
+        if started, let floor,
+           let held = segments.flatMap({ $0 }).last(where: { $0.at <= floor && $0.holdEnd >= floor || $0.at == floor }) {
+            kickoffPoint = Point(at: floor, home: held.home, away: held.away, holdEnd: held.holdEnd)
+        }
         guard let latest = segments.last?.last else { return nil }
         let unavailable = ordered.last.map { reason($0) != nil } == true || end.timeIntervalSince(latest.at) > maxCaptureGap
         let forecastHigh = segments.flatMap { $0 }.map { max($0.home, $0.away) }.max() ?? 0
@@ -198,7 +209,7 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
         return Self(sourceKey: input.sourceKey, sourceName: sourceName, phase: phase,
                     segments: segments, withheld: withheld, actualSteps: actuals,
                     start: start, end: end, latest: latest, latestActual: actual(at: end, in: actuals),
-                    latestIntervalUnavailable: unavailable, yMax: yMax, tickStep: step)
+                    latestIntervalUnavailable: unavailable, kickoffProjection: kickoffPoint, yMax: yMax, tickStep: step)
     }
 
     /// Freeze the original window and clip both quantities, so inspection never

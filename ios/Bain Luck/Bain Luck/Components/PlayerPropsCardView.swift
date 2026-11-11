@@ -297,6 +297,9 @@ struct PlayerPropsCardView: View {
         Array(Set(playerProps.compactMap(\.source))).sorted()
     }
 
+    /// #12578 — how the header credits where the props come from.
+    static func sourceCredit12578(_ source: String) -> String { "from \(source)" }
+
     var body: some View {
         let cards = filteredCards
         // #5176 — a page whose only props are fields still draws the card.
@@ -310,15 +313,12 @@ struct PlayerPropsCardView: View {
                         .font(.headline)
                         .accessibilityAddTraits(.isHeader)
 
-                    // Source badge — #4351: named, or not drawn.
+                    // Source credit — #4351: named, or not drawn. #12578: a
+                    // quiet credit, not a blue pill that read like a sponsor.
                     if let src = SourceLabels.label(for: sources.first) {
-                        Text(src)
-                            .font(.caption2.weight(.heavy))
-                            .foregroundStyle(.blue)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.blue.opacity(0.1))
-                            .clipShape(Capsule())
+                        Text(Self.sourceCredit12578(src))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
                     Spacer()

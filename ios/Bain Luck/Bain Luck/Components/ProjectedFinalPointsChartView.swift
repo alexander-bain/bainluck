@@ -87,18 +87,20 @@ struct ProjectedFinalPointsChartView: View {
                 }
             }
             readout(full)
-            if full.latestIntervalUnavailable {
-                Text("Latest interval unavailable. Last recorded projection shown.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
             // The chip strip is added on top, so it never eats the plot's height.
             plot(full, markers: markers)
                 .frame(height: height + (markers.isEmpty ? 0 : Self.markerStripHeight))
-            Text(Self.legend(for: full))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            // #12578 — the method notes live behind "How to read this", so the
+            // card itself carries one grey line.
             DisclosureGroup("How to read this", isExpanded: details) {
                 VStack(alignment: .leading, spacing: 8) {
+                    Text(Self.legend(for: full))
+                    if full.latestIntervalUnavailable {
+                        Text("Latest interval unavailable. Last recorded projection shown.")
+                    }
+                    if full.kickoffProjection != nil {
+                        Text("The open dot at kickoff is the projection when the game began.")
+                    }
                     Text(Self.sourceExplanation(for: full))
                     if !markers.isEmpty {
                         Text(Self.markerExplanation(sportKey: input.sportKey))
@@ -143,18 +145,52 @@ struct ProjectedFinalPointsChartView: View {
         VStack(alignment: .leading, spacing: 6) {
             let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 20))
             layout {
-                teamReadout(homeTeam, forecast: series.latest.home, actual: series.latestActual?.home, color: homeColor)
+                // #12578 — away first, the page title's order ("NE vs DET").
                 teamReadout(awayTeam, forecast: series.latest.away, actual: series.latestActual?.away, color: awayColor)
+                teamReadout(homeTeam, forecast: series.latest.home, actual: series.latestActual?.home, color: homeColor)
             }
-            Text("\(Self.readingLabel(for: series)) recorded \(series.latest.at.formatted(date: .abbreviated, time: .shortened))")
+            // #12578 — the one grey line: when the numbers above were recorded.
+            Text(Self.recordedLine(for: series))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let actual = series.latestActual {
-                Text("Score recorded \(actual.at.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// #12578 — where the drawn window begins: kickoff once a game has
+    /// started and a projection was holding then, else the series' own start.
+    static func windowStart(_ series: ProjectedFinalPointsSeries) -> Date {
+        guard series.phase != .before, let kickoff = series.kickoffProjection?.at,
+              kickoff >= series.start, kickoff < series.end else { return series.start }
+        return kickoff
+    }
+
+    /// #12578 — the runs the chart draws: nothing before the window's start,
+    /// and once it opens at kickoff, the run in play then begins at the kickoff
+    /// projection, so the line and its open dot start exactly at the edge.
+    static func drawnSegments(_ series: ProjectedFinalPointsSeries) -> [[ProjectedFinalPointsSeries.Point]] {
+        let start = windowStart(series)
+        guard start > series.start, let kickoff = series.kickoffProjection else { return series.segments }
+        var runs: [[ProjectedFinalPointsSeries.Point]] = []
+        var placedKickoff = false
+        for run in series.segments {
+            let kept = run.filter { $0.at > start }
+            let spansKickoff = run.contains { $0.at <= start && $0.holdEnd >= start }
+            if spansKickoff && !placedKickoff {
+                runs.append([kickoff] + kept)
+                placedKickoff = true
+            } else if !kept.isEmpty {
+                runs.append(kept)
             }
         }
+        return runs
+    }
+
+    /// #12578 — "Latest projection recorded Nov 10, 7:12 PM", with the score's
+    /// time after a dot when one is held: one line, not two.
+    static func recordedLine(for series: ProjectedFinalPointsSeries) -> String {
+        let projection = "\(readingLabel(for: series)) recorded \(series.latest.at.formatted(date: .abbreviated, time: .shortened))"
+        guard let actual = series.latestActual else { return projection }
+        return projection + " · score \(actual.at.formatted(date: .omitted, time: .shortened))"
     }
 
     /// Which projection the readout prints: the latest while it can still
@@ -229,7 +265,7 @@ struct ProjectedFinalPointsChartView: View {
                     .lineStyle(StrokeStyle(lineWidth: 0.75, dash: [4, 4]))
                     .foregroundStyle(.secondary.opacity(0.5))
             }
-            ForEach(Array(series.segments.enumerated()), id: \.offset) { segment in
+            ForEach(Array(Self.drawnSegments(series).enumerated()), id: \.offset) { segment in
                 ForEach([0, 1], id: \.self) { side in
                     ForEach(Array(segment.element.enumerated()), id: \.offset) { entry in
                         let point = entry.element
@@ -244,6 +280,21 @@ struct ProjectedFinalPointsChartView: View {
                             .symbol(side == 0 ? .circle : .diamond)
                             .symbolSize(22)
                     }
+                }
+            }
+            // #12578 — the projection the game began with, marked at kickoff:
+            // an open dot per team, on top of the line it starts.
+            if let kickoff = series.kickoffProjection {
+                ForEach([0, 1], id: \.self) { side in
+                    PointMark(x: .value("Kickoff", kickoff.at),
+                              y: .value("Projected points", side == 0 ? kickoff.home : kickoff.away))
+                        .symbol {
+                            Circle()
+                                .strokeBorder(side == 0 ? homeColor : awayColor, lineWidth: 2)
+                                .background(Circle().fill(Color.cardBackground))
+                                .frame(width: 10, height: 10)
+                        }
+                        .accessibilityLabel("Projection at kickoff")
                 }
             }
             ForEach([0, 1], id: \.self) { side in
@@ -264,7 +315,9 @@ struct ProjectedFinalPointsChartView: View {
                 }
             }
         }
-        .chartXScale(domain: series.start...max(series.end, series.start.addingTimeInterval(1)))
+        // #12578 — once a game has started the chart opens at kickoff, so
+        // in-game movement isn't squeezed by the hour before it.
+        .chartXScale(domain: Self.windowStart(series)...max(series.end, Self.windowStart(series).addingTimeInterval(1)))
         .chartYScale(domain: 0...series.yMax)
         .chartYAxis { AxisMarks(values: series.yTicks) }
         .chartLegend(.hidden)
