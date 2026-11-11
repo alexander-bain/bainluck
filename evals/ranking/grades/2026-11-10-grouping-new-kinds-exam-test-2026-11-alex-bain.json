@@ -1,0 +1,150 @@
+{
+ "slate_id": "new-kinds-exam-test-2026-11",
+ "surface": "grouping",
+ "grader": "alex bain",
+ "expert": true,
+ "source": "grade-page",
+ "date": "2026-11-10",
+ "items": [
+  {
+   "position": 1,
+   "item_key": "nhl-teams-80-points-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:12:54.463732+00:00"
+  },
+  {
+   "position": 2,
+   "item_key": "nhl-players-80-points-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:12:58.758476+00:00"
+  },
+  {
+   "position": 3,
+   "item_key": "nhl-players-50-goals-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:13:05.749993+00:00"
+  },
+  {
+   "position": 4,
+   "item_key": "nfl-qbs-22-passing-tds-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:13:12.580046+00:00"
+  },
+  {
+   "position": 5,
+   "item_key": "nhl-teams-90-points-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:13:20.084461+00:00"
+  },
+  {
+   "position": 6,
+   "item_key": "nfl-players-6-receiving-tds-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:13:32.338244+00:00"
+  },
+  {
+   "position": 7,
+   "item_key": "nfl-players-7-receiving-tds-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:13:37.316130+00:00"
+  },
+  {
+   "position": 8,
+   "item_key": "nfl-players-800-rushing-yards-2026-27",
+   "grade": "fine",
+   "note": "What's determining who's in this group? Why would there be four players with such high odds, and then one with such low odds?",
+   "graded_at": "2026-11-11T04:14:19.317994+00:00"
+  },
+  {
+   "position": 9,
+   "item_key": "nfl-qbs-3500-passing-yards-2026-27",
+   "grade": "fine",
+   "note": "Confused. Four with high odds and one with low odds?",
+   "graded_at": "2026-11-11T04:14:36.312816+00:00"
+  },
+  {
+   "position": 10,
+   "item_key": "nfl-teams-9-wins-2026",
+   "grade": "amazing",
+   "note": "Why would the card say \"Showing 5 of 21 teams\" when there's 32 NFL teams?",
+   "graded_at": "2026-11-11T04:15:15.456212+00:00"
+  },
+  {
+   "position": 11,
+   "item_key": "nfl-afc-north-playoffs-2027",
+   "grade": "amazing",
+   "note": "This is a GREAT card",
+   "graded_at": "2026-11-11T04:15:26.581822+00:00"
+  },
+  {
+   "position": 12,
+   "item_key": "nfl-nfc-north-playoffs-2027",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:15:29.534604+00:00"
+  },
+  {
+   "position": 13,
+   "item_key": "ucl-top-8-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:15:35.310277+00:00"
+  },
+  {
+   "position": 14,
+   "item_key": "uel-top-8-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:15:39.292708+00:00"
+  },
+  {
+   "position": 15,
+   "item_key": "ucl-playoff-places-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:15:40.851927+00:00"
+  },
+  {
+   "position": 16,
+   "item_key": "uel-playoff-places-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:15:42.979468+00:00"
+  },
+  {
+   "position": 17,
+   "item_key": "nfl-afc-championship-2027",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:16:40.123439+00:00"
+  },
+  {
+   "position": 18,
+   "item_key": "nhl-playoffs-bubble-2026-27",
+   "grade": "amazing",
+   "note": "Super interesting. I'd only thought about how the top 5 and bottom five might be interesting for a list, but this highlights that the \"bubble\" five might be super interesting too!",
+   "graded_at": "2026-11-11T04:17:27.091775+00:00"
+  },
+  {
+   "position": 19,
+   "item_key": "nfl-playoffs-bubble-2027",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:17:32.437833+00:00"
+  },
+  {
+   "position": 20,
+   "item_key": "ucl-playoff-places-bubble-2026-27",
+   "grade": "amazing",
+   "note": "",
+   "graded_at": "2026-11-11T04:17:35.273877+00:00"
+  }
+ ]
+}

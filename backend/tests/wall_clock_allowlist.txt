@@ -420,4 +420,5 @@ tests/test_container_search_12090.py  fixed kickoff dates test calendar formatti
 tests/test_matching_golden_set_2706.py  the near dates are adjudication history in comments (#12144, Nov 7); no clock reads them
 tests/test_matching_reconciliation_2706.py  the near dates are adjudication history in docstrings and comments (#12144, Nov 6-7); no clock reads them
 tests/test_grade_any_slate_11937.py  slate dates are fixture data and the Pacific-day bounds test; nothing reads the wall clock
+tests/test_export_grouping_grades_9937.py  graded-at stamps are fixture data for the Pacific-date filename; nothing reads the wall clock
 tests/test_grade_deals_only_drawn_cards_11937.py  slate dates are fixture data; nothing reads the wall clock
