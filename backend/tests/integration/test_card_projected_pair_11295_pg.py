@@ -255,7 +255,10 @@ async def test_feed_and_league_cards_carry_the_detail_pages_pair(
             odds["projected_home_score"],
             odds["projected_away_score"],
         ) == detail_pair
-        assert odds["projection_captured_at"] == detail["captured_at"]
+        # #12595 (Fable's (b)): the pair carries its own stamp and count; detail's
+        # `captured_at` still dates the newest row of any kind, for the headline.
+        assert odds["projection_captured_at"] == detail["projection_captured_at"]
+        assert odds["projection_bookmaker_count"] == detail["projection_bookmaker_count"]
         assert (odds["home_probability"], odds["away_probability"]) == (0.71, 0.29)
         assert "captured_at" not in odds
 

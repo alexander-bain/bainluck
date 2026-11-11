@@ -9438,6 +9438,13 @@ def _has_extractable_trigram(term: str) -> bool:
     )
 
 
+def _recent_projection_keys(aggregated) -> dict:
+    """#12595: `current_odds`' projection keys, empty unless a projection was applied."""
+    from app.utils.recent_line_readings import projection_keys
+
+    return projection_keys(aggregated)
+
+
 def latest_odds_per_bookmaker_query(event_ids: list[int]):
     """The latest snapshot per (event, bookmaker) for a page of events.
 
@@ -11846,6 +11853,10 @@ async def search_events(
                 "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
                 "captured_at": latest_time,
             }
+        # #12595: a scheduled game's pair comes from recent line readings.
+        from app.utils.recent_line_readings import apply_recent_line_projections
+
+        await apply_recent_line_projections(db, events, aggregated_odds_map)
     _mark("event_odds_aggregate")
 
     # Load GEI percentiles for formatting
@@ -19006,6 +19017,10 @@ async def list_events(
                 "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
                 "captured_at": latest_time,
             }
+        # #12595: a scheduled game's pair comes from recent line readings.
+        from app.utils.recent_line_readings import apply_recent_line_projections
+
+        await apply_recent_line_projections(db, events, aggregated_odds_map)
 
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
@@ -20550,6 +20565,23 @@ async def get_event(
         if not agg_snapshots:
             agg_snapshots = filtered_snapshots  # fallback: use all if all were flagged
         aggregated = aggregate_bookmaker_odds(agg_snapshots)
+        # #12595: a scheduled game's spread, total and projected pair come from
+        # recent line readings, with their own stamp; the probability, moneyline,
+        # `captured_at` and `bookmaker_count` above are untouched.
+        from app.utils.recent_line_readings import (
+            apply_projection as _apply_projection,
+            in_scope as _projection_in_scope,
+            recent_line_projections as _recent_line_projections,
+        )
+
+        if _projection_in_scope(event):
+            # Never raises: a failed read withholds the pair (`read_failed`).
+            aggregated = _apply_projection(
+                aggregated,
+                (await _recent_line_projections(
+                    db, [event], {event.id: list(latest_snapshots)}
+                )).get(event.id),
+            )
 
         # Hero probability: use multi-source aggregate (matching feed),
         # fall back to bookmaker-only consensus if aggregate unavailable.
@@ -20621,6 +20653,8 @@ async def get_event(
             "projected_home_score": aggregated["projected_home_score"],
             "projected_away_score": aggregated["projected_away_score"],
             "bookmaker_count": aggregated["bookmaker_count"],
+            # #12595: the pair's own stamp, count and reason (scheduled, in scope).
+            **_recent_projection_keys(aggregated),
             # #1854 (UX-P077, Alex ruling 2026-08-14): `probability_range` USED to
             # sit here — the sportsbook min/max, served beside a hero that is the
             # multi-source BLEND since #1829. Measured on production 2026-08-13:
@@ -37458,6 +37492,8 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             "projected_home_score": aggregated["projected_home_score"],
             "projected_away_score": aggregated["projected_away_score"],
             "bookmaker_count": aggregated["bookmaker_count"],
+            # #12595: the pair's own stamp, count and reason (scheduled, in scope).
+            **_recent_projection_keys(aggregated),
             # #1854 (UX-P077): the second hero site. Same removal, same reason as
             # `get_event` above - this object's `home_probability` is `_blend`.
         }

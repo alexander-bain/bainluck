@@ -737,3 +737,13 @@ def test_card_keys_are_the_detail_names_the_clients_already_read():
         "projected_away_score",
     )
     assert math.isfinite(_pair(_board())["projected_away_score"])
+
+
+@pytest.fixture(autouse=True)
+def _recent_lines_clock_at_kickoff(monkeypatch):
+    """#12595: a scheduled pair counts only line readings within 90 min of now.
+    These fixtures are dated, so the clock is pinned to their kickoff, the
+    moment the rows describe, rather than the wall clock."""
+    from app.utils import recent_line_readings
+
+    monkeypatch.setattr(recent_line_readings, "_utcnow", lambda: _KICKOFF)
