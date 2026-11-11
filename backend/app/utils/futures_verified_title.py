@@ -452,6 +452,8 @@ def apply_title_display(rows: list[dict], composition: Composition) -> bool | No
             continue
         changed |= row.get("probability") != display["probability"]
         row["probability"] = display["probability"]
+        if "name" in display:
+            row["name"] = display["name"]
         row.pop("rendered_percent", None)
         if "rendered_percent" in display:
             row["rendered_percent"] = display["rendered_percent"]
@@ -575,9 +577,8 @@ def compose_outcomes(
         multi |= len(value.contributing_sources) > 1
         display = display_by_team.get(tid)
         display_overlay[row.outcome_id] = (
-            # Search opens the canonical board, so its club labels come from
-            # that board too. apply_title_display deliberately copies only the
-            # numeric fields: direct venue pages keep their own row names.
+            # The shared display field supplies club labels for search and
+            # every opted-in detail. Refused identities keep their own names.
             {key: display[key] for key in ("name", "probability", "rendered_percent") if key in display}
             if display is not None else {"probability": value.probability}
         )

@@ -6022,9 +6022,9 @@ def _overlay_current(row: dict, overlay, prob_key: str) -> bool:
 
 
 def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
-    """Effective verified mode changes current values; nothing else moves.
+    """Effective verified mode uses the shared current values and club names.
 
-    Outcome ids, names, array order, `source` and `bookmakers` stay the
+    Outcome ids, array order, `source` and `bookmakers` stay the
     requested row's provenance. Badges are renumbered by the canonical
     `assign_display_ranks`, because the client sorts on the value it is given.
     """
