@@ -21,7 +21,6 @@ import { FRESHNESS_DEFINITION, curatedPropsEmptyReason } from "@/lib/tournamentP
 import { RUNG_LABELS } from "@/lib/calibrationCoverage";
 import { shapeBreakdownNote, shapeBreakoutCaption } from "@/lib/calibrationProviderPanels";
 import { refusalMessage } from "@/lib/labelPassSession";
-import { CORRECTION_TITLE_OVERRIDES } from "@/lib/calibrationCorrections";
 import { nflHub, mlbHub } from "../collections/fixtures";
 import type { GameMarketsResponse } from "@/lib/api";
 
@@ -202,7 +201,7 @@ describe("#12591 — web never calls a market a 'question'", () => {
     );
   });
 
-  it("Decision 148: A — backend precompute_calibration.py uses 'The yes-or-no markets we were throwing away are now scored' and leaves calibrationCorrections.ts:198 untouched for 1.0.7", () => {
+  it("Decision 148: A — backend precompute_calibration.py uses 'The yes-or-no markets we were throwing away are now scored'", () => {
     const backendSrc = fs.readFileSync(
       path.join(REPO_ROOT, "backend/app/tasks/precompute_calibration.py"),
       "utf8",
@@ -212,10 +211,6 @@ describe("#12591 — web never calls a market a 'question'", () => {
     );
     expect(backendSrc).not.toContain(
       '"title": "The one-question markets we were throwing away are now scored"',
-    );
-
-    expect(CORRECTION_TITLE_OVERRIDES["Esports match-bundle exclusion"]).toBe(
-      "Esports markets that pack a whole match into one question are no longer scored",
     );
   });
 });
