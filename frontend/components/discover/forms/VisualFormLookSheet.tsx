@@ -357,22 +357,22 @@ function PairedBarsWithArtCard({
       {/* Legend */}
       <div className="mt-3 flex flex-wrap items-center gap-4 border-b border-surface-border pb-2 text-xs text-text-secondary">
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm border border-surface-border bg-surface-hover" />
+          <span
+            data-testid="legend-swatch-stage-1"
+            className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm bg-text-muted"
+          />
           <span className="font-medium text-text-primary">
             {simulateSettled
               ? `${set.stage_1_label} (✓ / ✗ settled)`
               : `${set.stage_1_label} %`}
           </span>
-          {set.stage_1_market.companion_polymarket_id && (
-            <span className="text-text-muted">(two venues)</span>
-          )}
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm bg-accent-brand" />
+          <span
+            data-testid="legend-swatch-stage-2"
+            className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm bg-accent-brand"
+          />
           <span className="font-medium text-text-primary">{set.stage_2_label} %</span>
-          {set.stage_1_market.companion_polymarket_id && (
-            <span className="text-text-muted">(Kalshi)</span>
-          )}
         </span>
       </div>
 
@@ -391,9 +391,8 @@ function PairedBarsWithArtCard({
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>
-          {set.stage_1_market.companion_polymarket_id
-            ? "Nominated: two venues · Wins: Kalshi"
-            : `Sorted by ${set.stage_2_label.toLowerCase()} %`}
+          Sorted by {set.stage_2_label.toLowerCase()} %, ties broken by{" "}
+          {set.stage_1_label.toLowerCase()} %
         </span>
         <TMDBAttributionNote set={set} />
       </div>
@@ -421,6 +420,16 @@ function PairedBarsTop5ExpandableCard({
   const unpricedInHidden = sorted
     .slice(5)
     .find((e) => e.stage_2_probability === null);
+  const unpricedStage1 = unpricedInHidden
+    ? formatStage1Display(unpricedInHidden, set, {
+        simulateSettledStage1: simulateSettled,
+      })
+    : null;
+  const unpricedStage2 = unpricedInHidden
+    ? formatStage2Display(unpricedInHidden, set, {
+        simulateSettledStage1: simulateSettled,
+      })
+    : null;
 
   return (
     <article
@@ -462,12 +471,16 @@ function PairedBarsTop5ExpandableCard({
                 ? "Show top 5 by Wins % only"
                 : `Show all ${sorted.length} most likely nominees (+${hiddenCount} more)`}
             </span>
-            {!expanded && unpricedInHidden && (
+            {!expanded && unpricedInHidden && unpricedStage1 && unpricedStage2 && (
               <span
                 data-testid="missing-probability-notice"
                 className="w-full font-normal text-text-muted"
               >
-                incl. {unpricedInHidden.subject} (49% nom · Not listed to win)
+                incl. {unpricedInHidden.subject} (
+                {unpricedStage1.kind === "percent"
+                  ? `${unpricedStage1.label} nom`
+                  : unpricedStage1.label}{" "}
+                · {unpricedStage2.label})
               </span>
             )}
           </button>
@@ -475,7 +488,10 @@ function PairedBarsTop5ExpandableCard({
       )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
-        <span>Nominated: two venues · Wins: Kalshi</span>
+        <span>
+          Sorted by {set.stage_2_label.toLowerCase()} %, ties broken by{" "}
+          {set.stage_1_label.toLowerCase()} %
+        </span>
         <TMDBAttributionNote set={set} />
       </div>
     </article>
@@ -513,9 +529,9 @@ function PairedBarsSingleLineCard({
       {/* Column Headers */}
       <div className="mt-3 flex items-center justify-between border-b border-surface-border pb-1.5 text-xs font-semibold uppercase tracking-wide text-text-muted">
         <span>Film (Top 10 by Nom %)</span>
-        <div className="flex items-center gap-3">
-          <span className="w-16 text-right">{set.stage_1_label}</span>
-          <span className="w-24 text-right text-text-primary">{set.stage_2_label}</span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="w-12 text-right">{set.stage_1_label}</span>
+          <span className="w-16 text-right text-text-primary">{set.stage_2_label}</span>
         </div>
       </div>
 
@@ -535,7 +551,7 @@ function PairedBarsSingleLineCard({
             >
               <ArtThumb entry={entry} kidSurface={kidSurface} size="xs" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-semibold text-text-primary">
+                <div className="text-xs font-semibold leading-snug text-text-primary">
                   {entry.subject}
                 </div>
                 {/* Stacked 3px micro-bars */}
@@ -559,9 +575,9 @@ function PairedBarsSingleLineCard({
                 </div>
               </div>
 
-              <div className="flex shrink-0 items-center gap-2 tabular-nums">
+              <div className="flex shrink-0 items-center gap-1.5 tabular-nums">
                 <span
-                  className={`w-14 text-right text-xs font-semibold ${
+                  className={`w-12 text-right text-xs font-semibold ${
                     s1.kind === "tick"
                       ? "text-accent-positive"
                       : s1.kind === "cross"
@@ -572,13 +588,13 @@ function PairedBarsSingleLineCard({
                   {s1.kind === "tick" ? "✓ Nom" : s1.kind === "cross" ? "✗ Out" : s1.label}
                 </span>
                 {s2.kind === "percent" ? (
-                  <span className="w-24 text-right text-xs font-bold text-text-primary">
+                  <span className="w-16 text-right text-xs font-bold text-text-primary">
                     {s2.label}
                   </span>
                 ) : (
                   <span
                     data-testid="missing-probability-notice"
-                    className="w-24 text-right text-xs font-medium text-text-muted"
+                    className="w-16 text-right text-xs font-medium leading-tight text-text-muted"
                   >
                     {s2.label}
                   </span>
@@ -663,7 +679,7 @@ function PairedBarsTop3PlusStripCard({
               >
                 <ArtThumb entry={entry} kidSurface={kidSurface} size="xs" />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-semibold text-text-primary">
+                  <div className="text-xs font-semibold leading-snug text-text-primary">
                     {entry.subject}
                   </div>
                   <div className="mt-0.5 flex flex-wrap items-baseline justify-between gap-1 text-xs tabular-nums">
@@ -751,7 +767,7 @@ function PosterSpotlightTilesCard({
               <div className="flex items-start gap-2.5">
                 <ArtThumb entry={entry} kidSurface={kidSurface} size="md" />
                 <div className="min-w-0 flex-1">
-                  <div className="line-clamp-2 text-xs font-semibold leading-snug text-text-primary">
+                  <div className="text-xs font-semibold leading-snug text-text-primary">
                     {entry.subject}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-text-muted">
@@ -884,36 +900,34 @@ function StepConversionPathCard({
             <div key={entry.subject_key} className="flex items-center gap-3 py-2.5">
               <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
-                  <span className="text-sm font-semibold text-text-primary">
-                    {entry.subject}
+                <div className="text-sm font-semibold leading-snug text-text-primary">
+                  {entry.subject}
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-xs tabular-nums">
+                  <span
+                    className={
+                      s1.kind === "tick"
+                        ? "font-semibold text-accent-positive"
+                        : s1.kind === "cross"
+                          ? "text-text-muted line-through"
+                          : "font-medium text-text-secondary"
+                    }
+                  >
+                    {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
                   </span>
-                  <div className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums">
-                    <span
-                      className={
-                        s1.kind === "tick"
-                          ? "font-semibold text-accent-positive"
-                          : s1.kind === "cross"
-                            ? "text-text-muted line-through"
-                            : "font-medium text-text-secondary"
-                      }
-                    >
-                      {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
+                  <span className="text-text-muted">→</span>
+                  {s2.kind === "percent" ? (
+                    <span className="font-bold text-text-primary">
+                      {s2.label} win
                     </span>
-                    <span className="text-text-muted">→</span>
-                    {s2.kind === "percent" ? (
-                      <span className="font-bold text-text-primary">
-                        {s2.label} win
-                      </span>
-                    ) : (
-                      <span
-                        data-testid="missing-probability-notice"
-                        className="rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5 text-xs font-medium text-text-muted"
-                      >
-                        {s2.label}
-                      </span>
-                    )}
-                  </div>
+                  ) : (
+                    <span
+                      data-testid="missing-probability-notice"
+                      className="rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5 text-xs font-medium text-text-muted"
+                    >
+                      {s2.label}
+                    </span>
+                  )}
                 </div>
 
                 {/* Single nested funnel bar */}
@@ -1047,30 +1061,28 @@ function LeaderAndChasersSplitCard({
               >
                 <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
-                    <div className="text-sm font-medium text-text-primary">
-                      {entry.subject}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2 text-right tabular-nums">
-                      <span className="rounded bg-surface-elevated px-2 py-0.5 text-xs font-medium text-text-secondary">
-                        {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
-                      </span>
-                      {s2.kind === "percent" ? (
-                        <span className="w-10 text-sm font-bold text-text-primary">
-                          {s2.label}
-                        </span>
-                      ) : (
-                        <span
-                          data-testid="missing-probability-notice"
-                          className="rounded border border-surface-border bg-surface-elevated px-2 py-0.5 text-xs font-medium text-text-muted"
-                        >
-                          {s2.label}
-                        </span>
-                      )}
-                    </div>
+                  <div className="text-sm font-medium leading-snug text-text-primary">
+                    {entry.subject}
                   </div>
                   <div className="truncate text-xs text-text-muted">
                     {entry.detail}
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 tabular-nums">
+                    <span className="rounded bg-surface-elevated px-2 py-0.5 text-xs font-medium text-text-secondary">
+                      {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
+                    </span>
+                    {s2.kind === "percent" ? (
+                      <span className="text-sm font-bold text-text-primary">
+                        {s2.label} win
+                      </span>
+                    ) : (
+                      <span
+                        data-testid="missing-probability-notice"
+                        className="rounded border border-surface-border bg-surface-elevated px-2 py-0.5 text-xs font-medium text-text-muted"
+                      >
+                        {s2.label}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1169,7 +1181,7 @@ function PodiumAndTiersCard({
                   size={elevated ? "lg" : "md"}
                 />
               </div>
-              <div className="mt-1.5 line-clamp-2 text-xs font-bold leading-tight text-text-primary">
+              <div className="mt-1.5 text-xs font-bold leading-tight text-text-primary">
                 {entry.subject}
               </div>
               <div className="mt-1 text-base font-bold tabular-nums text-text-primary">
@@ -1846,19 +1858,19 @@ export function OscarsContainerLayoutPreview({
                 >
                   <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold text-text-primary">
+                    <div className="text-xs font-semibold leading-snug text-text-primary">
                       {entry.subject}
                     </div>
                     <div className="truncate text-xs text-text-muted">
                       {entry.detail}
                     </div>
-                    <div className="mt-1 flex items-center justify-between text-xs tabular-nums">
-                      <span className="text-text-secondary">
-                        {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
-                      </span>
-                      <span className="font-bold text-text-primary">
+                    <div className="mt-1 space-y-0.5 text-xs tabular-nums">
+                      <div className="font-bold text-text-primary">
                         {s2.label} win
-                      </span>
+                      </div>
+                      <div className="text-text-secondary">
+                        {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1896,7 +1908,7 @@ export function OscarsContainerLayoutPreview({
                 >
                   <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold text-text-primary">
+                    <div className="text-xs font-semibold leading-snug text-text-primary">
                       {entry.subject}
                     </div>
                     <div className="mt-0.5 text-xs font-bold tabular-nums text-text-primary">
@@ -1965,7 +1977,7 @@ export function OscarsContainerLayoutPreview({
                   <ArtThumb entry={entry} kidSurface={kidSurface} size="md" />
                   <div className="min-w-0 flex-1">
                     <div className="text-xs font-semibold text-text-muted">{cat}</div>
-                    <div className="truncate text-sm font-bold text-text-primary">
+                    <div className="text-sm font-bold leading-snug text-text-primary">
                       {entry.subject}
                     </div>
                     <div className="mt-1 flex items-baseline gap-2 text-xs tabular-nums">
@@ -1974,7 +1986,7 @@ export function OscarsContainerLayoutPreview({
                       </span>
                       <span className="text-text-secondary">· {s1.label} nom</span>
                     </div>
-                    <div className="mt-0.5 truncate text-xs text-text-muted">
+                    <div className="mt-0.5 text-xs text-text-muted">
                       Next: {chaser}
                     </div>
                   </div>
@@ -2006,7 +2018,7 @@ export function OscarsContainerLayoutPreview({
                   <div className="flex min-w-0 items-center gap-2.5">
                     <ArtThumb entry={entry} kidSurface={kidSurface} size="sm" />
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-text-primary">
+                      <div className="text-sm font-semibold leading-snug text-text-primary">
                         {entry.subject}
                       </div>
                       <div className="truncate text-xs text-text-muted">
@@ -2081,7 +2093,7 @@ export function OscarsContainerLayoutPreview({
             >
               <ArtThumb entry={item.entry} kidSurface={kidSurface} size="sm" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-semibold text-text-primary">
+                <div className="text-xs font-semibold leading-snug text-text-primary">
                   {item.label}
                 </div>
                 <div className="text-xs text-text-muted">{item.cat}</div>
