@@ -1,6 +1,6 @@
 "use client";
 
-import { AlarmSmoke, Bug, CircleHelp, FileCheck } from "lucide-react";
+import { AlarmSmoke, Bug, FileCheck } from "lucide-react";
 import type { ReactNode } from "react";
 
 import Figure, { Exhibit } from "@/components/evals/Figure";
@@ -22,7 +22,7 @@ import {
   wholePercent,
   type CaseMark,
 } from "@/lib/evals/topScreen";
-import type { FigureTruth } from "@/lib/evals/truth";
+import { pacificDayLabel, type FigureTruth } from "@/lib/evals/truth";
 import { watcherHealth, type WatcherList } from "@/lib/evals/watchers";
 
 /**
@@ -281,10 +281,10 @@ function ReviewerCard({ results, study }: { results: ReviewerResults; study: Rev
 export type Dot = "problems" | "fixed" | "stopped" | "unknown";
 
 export const DOT_CLASS: Record<Dot, string> = {
-  problems: "text-accent-danger",
+  problems: "text-text-secondary",
   fixed: "text-accent-brand",
-  stopped: "text-text-secondary",
-  unknown: "text-text-muted",
+  stopped: "text-accent-danger",
+  unknown: "text-text-muted opacity-50",
 };
 
 const DOT_WORDS: Record<Dot, string> = {
@@ -297,7 +297,7 @@ const DOT_WORDS: Record<Dot, string> = {
 const dotOf = (state: string | null): Dot =>
   state === "red_reporting" ? "problems" : state === "closed_fixed" ? "fixed" : state === "red_stopped" ? "stopped" : "unknown";
 
-/** One smoke alarm per watcher, or a question mark where there is no public record: the top screen's picture, and its topic's. */
+/** One smoke alarm per watcher, faint where there is no public record: the top screen's picture, and its topic's. */
 export function WatcherAlarms({ list, large = false }: { list: WatcherList; large?: boolean }) {
   const truth: FigureTruth = { kind: "reviewed", asOf: list.reviewedAt, source: list.scheduleSource };
   const size = large ? "h-9 w-9" : "h-6 w-6";
@@ -307,10 +307,13 @@ export function WatcherAlarms({ list, large = false }: { list: WatcherList; larg
       <div className={large ? "grid w-fit grid-cols-6 gap-2" : "flex gap-1"} aria-hidden="true">
         {list.watchers.map((w) => {
           const dot = dotOf(w.verdict?.state ?? null);
-          return dot === "unknown" ? (
-            <CircleHelp key={w.id} data-watcher-dot={dot} className={`${size} shrink-0 ${DOT_CLASS[dot]}`} strokeWidth={2} />
-          ) : (
-            <AlarmSmoke key={w.id} data-watcher-dot={dot} className={`${size} shrink-0 ${DOT_CLASS[dot]}`} strokeWidth={2.25} />
+          return (
+            <AlarmSmoke
+              key={w.id}
+              data-watcher-dot={dot}
+              className={`${size} shrink-0 ${DOT_CLASS[dot]}`}
+              strokeWidth={dot === "unknown" ? 1.75 : 2.25}
+            />
           );
         })}
       </div>
@@ -338,7 +341,20 @@ function WatchersCard({ list }: { list: WatcherList }) {
       </p>
       <WatcherAlarms list={list} />
       <p className="text-caption text-text-primary">
-        {COPY.watchersSentenceStart}: {present.map((k) => DOT_WORDS[k]).join("; ")}.
+        {COPY.watchersSentenceStart}:{" "}
+        {present.map((k, i) => (
+          <span key={k}>
+            {i > 0 && "; "}
+            {DOT_WORDS[k]}
+            {k === "unknown" && (
+              <>
+                {" "}
+                <time dateTime={list.sinceAt}>{pacificDayLabel(list.sinceAt)}</time>
+              </>
+            )}
+          </span>
+        ))}
+        .
       </p>
     </Card>
   );

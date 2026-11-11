@@ -5,11 +5,17 @@ import Link from "next/link";
 import CalibrationChart from "@/components/CalibrationChart";
 import EvalsSection from "@/components/evals/EvalsSection";
 import Figure, { Exhibit } from "@/components/evals/Figure";
+import RepoRefLink from "@/components/evals/RepoRefLink";
 import type { ForwardRecordState } from "@/components/evals/useForwardRecord";
 import { FORWARD_COPY } from "@/lib/evals/copy";
-import { CHART_THIN_FLOOR, DEFAULT_CURVE_COLOR, barPointsText } from "@/lib/evals/forwardRecord";
+import {
+  CHART_THIN_FLOOR,
+  DEFAULT_CURVE_COLOR,
+  UNGRADED_OUTCOMES_ISSUE,
+  barPointsText,
+} from "@/lib/evals/forwardRecord";
 import { stalenessHeadline, stalenessInputSentence, type CalibrationStalenessNotice } from "@/lib/calibrationStaleness";
-import { pacificClockLabel, pacificDayLabel } from "@/lib/evals/truth";
+import { issueRef, pacificClockLabel, pacificDayLabel } from "@/lib/evals/truth";
 
 /** A payload timestamp as "Oct 27, 1:54 PM PT", or null when it cannot be read. */
 function pacificMoment(iso: string | null): string | null {
@@ -116,6 +122,52 @@ export default function ForwardRecordSection({ state }: { state: ForwardRecordSt
                     }}
                   />
                 </div>
+              </div>
+            )}
+            {ready.view.categorySlices.some((s) => s.status !== "at_bar") && (
+              <div data-testid="evals-forward-category-slices" className="space-y-2">
+                <p className="text-caption text-text-secondary" data-testid="evals-forward-slices-note">
+                  {FORWARD_COPY.slicesNoteBefore}{" "}
+                  <RepoRefLink repoRef={issueRef(UNGRADED_OUTCOMES_ISSUE)} />
+                  {FORWARD_COPY.slicesNoteAfter}
+                </p>
+                <details className="rounded-lg border border-surface-border bg-surface-elevated px-3 py-2 text-caption text-text-secondary">
+                  <summary className="cursor-pointer font-medium text-text-primary">
+                    {FORWARD_COPY.slicesSummary}
+                  </summary>
+                  <ul className="mt-2 divide-y divide-surface-border">
+                    {ready.view.categorySlices
+                      .filter((s) => s.status !== "at_bar")
+                      .map((s) => (
+                        <li
+                          key={s.key}
+                          data-category-slice={s.key}
+                          data-slice-status={s.status}
+                          className="flex flex-wrap items-baseline justify-between gap-2 py-1.5"
+                        >
+                          <span className="font-medium text-text-primary">{s.label}</span>
+                          <span>
+                            <Figure truth={ready.truth} value={String(s.missPp)}>
+                              {s.missText}
+                            </Figure>{" "}
+                            {FORWARD_COPY.slicePlusMinus}{" "}
+                            <Figure truth={ready.truth} value={String(s.uncertaintyPp)}>
+                              {s.uncertaintyText}
+                            </Figure>{" "}
+                            {FORWARD_COPY.slicePoints}
+                            {s.status === "uncertain" && ` · ${FORWARD_COPY.sliceUncertain}`}
+                            {s.status === "partly_ungraded" && s.ungradedIssue && (
+                              <>
+                                {" · "}
+                                {FORWARD_COPY.slicePartlyUngraded} (
+                                <RepoRefLink repoRef={issueRef(s.ungradedIssue)} />)
+                              </>
+                            )}
+                          </span>
+                        </li>
+                      ))}
+                  </ul>
+                </details>
               </div>
             )}
             {ready.view.staleness && <StalenessLine notice={ready.view.staleness} />}

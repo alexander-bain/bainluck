@@ -529,6 +529,26 @@ describe("S3: the forward record", () => {
     expect(meter?.textContent).toMatch(/^24\s*of\s*53\s*kinds of market come within\s*3\s*points of what happened\.$/);
   });
 
+  it("explains the slices outside the 3-point bar: thin slices say too few to say and NFL links #12421", async () => {
+    const page = await mountPage();
+    const chapterPicture = page.querySelector('[data-evals-chapter="coming-true"] [data-chapter-picture="kinds"]');
+    expect(chapterPicture?.querySelector("[data-kinds-note]")?.textContent).toContain("#12421");
+    expect(chapterPicture?.querySelector('a[data-evals-ref]')?.getAttribute("href")).toBe(
+      "https://github.com/alexander-bain/bainluck/issues/12421"
+    );
+    const slices = page.querySelector('[data-testid="evals-forward-category-slices"]');
+    expect(slices).not.toBeNull();
+    const nfl = slices?.querySelector('[data-category-slice="americanfootball_nfl"]');
+    expect(nfl?.getAttribute("data-slice-status")).toBe("partly_ungraded");
+    expect(nfl?.textContent).toContain("outcomes partly ungraded");
+    expect(nfl?.querySelector('a[data-evals-ref]')?.getAttribute("href")).toBe(
+      "https://github.com/alexander-bain/bainluck/issues/12421"
+    );
+    const thin = slices?.querySelector('[data-category-slice="tennis_wta_canadian_open"]');
+    expect(thin?.getAttribute("data-slice-status")).toBe("uncertain");
+    expect(thin?.textContent).toContain("too few to say");
+  });
+
   it("frozen inputs show the staleness sentence with the date the data was staged", async () => {
     const page = await mountPage();
     const line = page.querySelector('[data-testid="evals-forward-staleness"]');
@@ -764,7 +784,7 @@ describe("S5: checks that run on their own", () => {
     const page = await mountPage();
     const section = page.querySelector('[data-evals-section="watchers"]');
     expect(section?.getAttribute("data-truth-scope")).toBe("reviewed");
-    expect(section?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST REVIEWED · NOV 6")).toBe(true);
+    expect(section?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST REVIEWED · NOV 10")).toBe(true);
     const ids = Array.from(section?.querySelectorAll("[data-watcher]") ?? []).map((r) => r.getAttribute("data-watcher"));
     expect(ids).toEqual(list?.watchers.map((w) => w.id));
     expect(section?.querySelectorAll('[data-watcher-group="day"] [data-watcher]')).toHaveLength(2);
@@ -821,11 +841,17 @@ describe("S5: checks that run on their own", () => {
       expect(r?.getAttribute("data-verdict-state")).toBe(v.state);
       expect(r?.querySelector("[data-verdict-chip]")?.textContent).toBe(
         {
-          red_reporting: "Found problems, reported",
+          red_reporting: "Found problems and filed them",
           red_stopped: "Found problems, not reported",
           closed_fixed: "Found its problem fixed",
         }[v.state]
       );
+      if (v.state === "red_reporting") {
+        expect(r?.querySelector("[data-verdict-chip]")?.className).not.toMatch(/red|rose/);
+        expect(r?.querySelector("summary")?.textContent?.replace(/\s+/g, " ")).toContain(
+          `${v.issues.length} ${v.issues.length === 1 ? "issue" : "issues"}`
+        );
+      }
       const day = (pacificDayLabel(v.runAt) as string).toUpperCase();
       expect(r?.querySelector("[data-truth-chip]")?.textContent?.startsWith(`LAST RUN · ${day}`)).toBe(true);
       const context = [v.earlier, v.fix].filter((n): n is number => n !== null);
@@ -869,13 +895,14 @@ describe("S5: checks that run on their own", () => {
     expect(page.querySelectorAll('[data-verdict-state="red_stopped"]')).toHaveLength(1);
   });
 
-  it("a watcher with no public record of its last result says UNKNOWN, never green", async () => {
+  it("a watcher with no public record of its last result says UNKNOWN and since when, never green", async () => {
     const page = await mountPage();
     const unknown = Array.from(page.querySelectorAll('[data-verdict-state="unknown"]'));
     expect(unknown).toHaveLength((list?.watchers ?? []).filter((w) => !w.verdict).length);
     for (const r of unknown) {
       expect(r.querySelector('[data-result="unknown"]')?.textContent).toBe("UNKNOWN");
       expect(r.querySelector("[data-verdict-chip]")).toBeNull();
+      expect(r.textContent?.replace(/\s+/g, " ")).toContain("No result on record since Nov 6");
     }
     expect(page.querySelector('[data-evals-section="watchers"] [data-result="pass"]')).toBeNull();
   });

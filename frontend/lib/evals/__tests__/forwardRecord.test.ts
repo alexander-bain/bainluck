@@ -18,7 +18,9 @@ import { calibrationFixture, calibrationFixtureBuckets } from "@/lib/evals/fixtu
 import {
   CHART_THIN_FLOOR,
   DEFAULT_CURVE_COLOR,
+  UNGRADED_OUTCOMES_ISSUE,
   barPointsText,
+  categorySliceLabel,
   forwardRecordView,
 } from "@/lib/evals/forwardRecord";
 
@@ -91,6 +93,19 @@ describe("the categories meter reads the scorecard, all three numbers", () => {
     ]) {
       expect(forwardRecordView(calibrationFixture({ scorecard })).categories).toBeNull();
     }
+  });
+
+  it("classifies outside-the-bar slices into thin (too few to say) and partly-ungraded (#12421), and spells out digits in labels", () => {
+    const slices = forwardRecordView(calibrationFixture()).categorySlices;
+    expect(slices.length).toBeGreaterThan(0);
+    const nfl = slices.find((s) => s.key === "americanfootball_nfl");
+    expect(nfl?.status).toBe("partly_ungraded");
+    expect(nfl?.ungradedIssue).toBe(UNGRADED_OUTCOMES_ISSUE);
+    const thin = slices.find((s) => s.key === "tennis_wta_canadian_open");
+    expect(thin?.status).toBe("uncertain");
+    expect(thin?.uncertaintyPp).toBeGreaterThan(3);
+    expect(categorySliceLabel("soccer_france_ligue_one")).toBe("France Ligue One");
+    expect(categorySliceLabel("soccer_france_ligue_one")).not.toMatch(/\d/);
   });
 });
 

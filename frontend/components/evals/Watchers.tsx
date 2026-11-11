@@ -2,6 +2,7 @@
 
 import { CHIP_SHAPE, RESULT_TONE } from "@/components/evals/chipStyles";
 import EvalsSection from "@/components/evals/EvalsSection";
+import Figure from "@/components/evals/Figure";
 import RepoRefLink from "@/components/evals/RepoRefLink";
 import ResultChip from "@/components/evals/ResultChip";
 import TruthChip from "@/components/evals/TruthChip";
@@ -131,8 +132,8 @@ const STATE_WORDS: Record<WatcherVerdict["state"], string> = {
 };
 
 function StateChip({ v }: { v: WatcherVerdict }) {
-  // A run that only closed issues is not green: it is neutral, and red stays red.
-  const tone = v.state === "closed_fixed" ? RESULT_TONE.not_run : RESULT_TONE.fail;
+  // Red is only for a watcher that stopped or cannot report; a watcher that found problems and filed them is neutral (#12468).
+  const tone = v.state === "red_stopped" ? RESULT_TONE.fail : RESULT_TONE.not_run;
   return (
     <span data-verdict-chip={v.state} className={`${CHIP_SHAPE} ${tone}`}>
       {STATE_WORDS[v.state]}
@@ -207,7 +208,7 @@ function VerdictDetail({ v }: { v: WatcherVerdict }) {
   );
 }
 
-function WatcherRow({ watcher, now }: { watcher: Watcher; now: Date | null }) {
+function WatcherRow({ watcher, sinceAt, now }: { watcher: Watcher; sinceAt: string; now: Date | null }) {
   const v = watcher.verdict;
   return (
     <li data-watcher={watcher.id} data-verdict-state={v?.state ?? "unknown"} className="py-3">
@@ -232,12 +233,22 @@ function WatcherRow({ watcher, now }: { watcher: Watcher; now: Date | null }) {
             {v ? (
               <>
                 <StateChip v={v} />
+                {v.state === "red_reporting" && (
+                  <span className="text-micro text-text-secondary" data-verdict-filed-count={v.issues.length}>
+                    <Figure truth={verdictTruth(v)} value={String(v.issues.length)}>
+                      {String(v.issues.length)}
+                    </Figure>{" "}
+                    {v.issues.length === 1 ? COPY.filedIssueOne : COPY.filedIssueMany}
+                  </span>
+                )}
                 <TruthChip truth={verdictTruth(v)} linked={false} />
               </>
             ) : (
               <>
                 <ResultChip result="unknown" />
-                <span className="text-micro text-text-secondary">{COPY.unknown}</span>
+                <span className="text-micro text-text-secondary" data-unknown-since={sinceAt}>
+                  {COPY.unknown} <time dateTime={sinceAt}>{pacificDayLabel(sinceAt)}</time>
+                </span>
               </>
             )}
           </span>
@@ -269,7 +280,7 @@ export default function Watchers({ list }: { list: WatcherList }) {
         <Axis />
         <ul className="divide-y divide-surface-border">
           {rows.map((w) => (
-            <WatcherRow key={w.id} watcher={w} now={now} />
+            <WatcherRow key={w.id} watcher={w} sinceAt={list.sinceAt} now={now} />
           ))}
         </ul>
       </div>
@@ -278,7 +289,9 @@ export default function Watchers({ list }: { list: WatcherList }) {
   return (
     <EvalsSection id="watchers" title={COPY.title} lead={COPY.lead} detail={COPY.detail} truth={truth}>
       <div className="space-y-5">
-        <p className="text-micro text-text-tertiary">{COPY.timesNote}</p>
+        <p className="text-micro text-text-tertiary" data-watchers-refreshed={list.reviewedAt}>
+          {COPY.recordDateBefore} <time dateTime={list.reviewedAt}>{pacificDayLabel(list.reviewedAt)}</time>. {COPY.timesNote}
+        </p>
         {group("day", COPY.dayGroup)}
         {group("night", COPY.nightGroup)}
         <a

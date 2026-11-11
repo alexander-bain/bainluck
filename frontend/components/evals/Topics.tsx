@@ -3,17 +3,18 @@
 import type { ReactNode } from "react";
 
 import Figure, { Example, Exhibit } from "@/components/evals/Figure";
+import RepoRefLink from "@/components/evals/RepoRefLink";
 import ResultChip from "@/components/evals/ResultChip";
 import TruthChip from "@/components/evals/TruthChip";
 import { DOT_CLASS, ReviewerMarks, WatcherAlarms, type Dot } from "@/components/evals/TopScreen";
 import type { ForwardRecordState } from "@/components/evals/useForwardRecord";
 import { STORY_COPY, TOPIC_COPY, TOP_COPY } from "@/lib/evals/copy";
 import { EXAMPLE_AMERICAN_ODDS, EXAMPLE_CONTRACT_CENTS, americanOddsText, americanToPercent } from "@/lib/evals/example";
-import { barPointsText } from "@/lib/evals/forwardRecord";
+import { UNGRADED_OUTCOMES_ISSUE, barPointsText } from "@/lib/evals/forwardRecord";
 import { reviewerTally, type ReviewerResults } from "@/lib/evals/reviewerResults";
 import type { ReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { biteTruth, type Scoreboard } from "@/lib/evals/scoreboard";
-import type { FigureTruth } from "@/lib/evals/truth";
+import { issueRef, pacificDayLabel, type FigureTruth } from "@/lib/evals/truth";
 import { acrossPasses, examTruth, type TwinExam } from "@/lib/evals/twinExam";
 import { watcherHealth, type WatcherList } from "@/lib/evals/watchers";
 
@@ -96,29 +97,43 @@ export function KindsPicture({ state }: { state: ForwardRecordState }) {
   if (state.status !== "ready" || !state.view.categories) return null;
   const { truth } = state;
   const { atBar, total, barPp } = state.view.categories;
+  const outsideSlices = state.view.categorySlices.filter((s) => s.status !== "at_bar");
   const C = TOPIC_COPY.probabilities;
   const n = (value: number, text = String(value), className = "") => (
     <Figure truth={truth} value={String(value)} className={className}>
       {text}
     </Figure>
   );
+  const squareState = (i: number): "inside" | "uncertain" | "partly_ungraded" | "outside" => {
+    if (i < atBar) return "inside";
+    const s = outsideSlices[i - atBar];
+    if (!s) return "uncertain";
+    if (s.status === "over_bar") return "outside";
+    if (s.status === "partly_ungraded") return "partly_ungraded";
+    return "uncertain";
+  };
+  const squareClass = (kind: "inside" | "uncertain" | "partly_ungraded" | "outside") => {
+    if (kind === "inside") return "bg-accent-brand";
+    if (kind === "outside") return "bg-accent-danger";
+    return "border border-surface-border bg-surface-elevated";
+  };
   return (
     <PictureCard name="kinds" scope={truth.kind} footer={<TruthChip truth={truth} />}>
       <p className="text-caption text-text-secondary">{C.kindsBefore}</p>
       <Exhibit truth={truth} label={C.kindsLabel}>
         <div className="flex flex-wrap gap-1.5" aria-hidden="true" data-kinds-at-bar={atBar} data-kinds-total={total}>
-          {Array.from({ length: total }, (_, i) => (
-            <span
-              key={i}
-              data-kind-square={i < atBar ? "inside" : "outside"}
-              className={`h-7 w-7 rounded-md ${i < atBar ? "bg-accent-brand" : "bg-accent-danger"}`}
-            />
-          ))}
+          {Array.from({ length: total }, (_, i) => {
+            const k = squareState(i);
+            return <span key={i} data-kind-square={k} className={`h-7 w-7 rounded-md ${squareClass(k)}`} />;
+          })}
         </div>
       </Exhibit>
       <p className="text-body text-text-primary">
         {n(atBar, String(atBar), "text-title-3")} {C.kindsOf} {n(total)} {C.kindsInsideBefore} {n(barPp, barPointsText(barPp))}{" "}
         {C.kindsInsideAfter}
+      </p>
+      <p className="text-caption text-text-secondary" data-kinds-note="">
+        {C.kindsRestBefore} <RepoRefLink repoRef={issueRef(UNGRADED_OUTCOMES_ISSUE)} />.
       </p>
     </PictureCard>
   );
@@ -259,6 +274,12 @@ export function ChecksPicture({ list }: { list: WatcherList }) {
               <span aria-hidden="true" className={`inline-block h-3 w-3 shrink-0 rounded-full bg-current ${DOT_CLASS[d]}`} />
               <span>
                 {n(counts[d])} {C.legend[d]}
+                {d === "unknown" && (
+                  <>
+                    {" "}
+                    <time dateTime={list.sinceAt}>{pacificDayLabel(list.sinceAt)}</time>
+                  </>
+                )}
               </span>
             </li>
           ))}
