@@ -81,7 +81,8 @@ final class SourceMark12581Tests: XCTestCase {
 
     func testNothingToSayDrawsNoMark() throws {
         XCTAssertNil(SourceMarkButton(nil, numberSize: 20), "an unserved mark draws nothing: the app never infers one")
-        XCTAssertNil(SourceMarkButton(try decode(fixture("none")).sourceMark, numberSize: 20))
+        XCTAssertNotNil(SourceMarkButton(try decode(fixture("none")).sourceMark, numberSize: 20),
+                        "a none mark keeps the ⓘ; its sheet says why no source stands behind the number")
         XCTAssertNil(SourceMarkButton(try decode(fixture("someday")).sourceMark, numberSize: 20), "an unknown state")
         XCTAssertNil(SourceMarkButton(SourceMark(state: .blend, sources: []), numberSize: 20), "never an empty sheet")
         XCTAssertNotNil(SourceMarkButton(try decode(fixture()).sourceMark, numberSize: 20))

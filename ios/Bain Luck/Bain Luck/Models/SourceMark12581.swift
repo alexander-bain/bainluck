@@ -40,14 +40,18 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
     let state: State
     let sources: [Source]
     let settled: Settled?
+    /// Why a `none` mark names no source, as the server says it (#12597):
+    /// `monotonic_conflict`, `source_evidence_incomplete`, `opening_only`, …
+    var reason: String? = nil
 
-    init(state: State, sources: [Source], settled: Settled? = nil) {
+    init(state: State, sources: [Source], settled: Settled? = nil, reason: String? = nil) {
         self.state = state
         self.sources = sources
         self.settled = settled
+        self.reason = reason
     }
 
-    private enum CodingKeys: String, CodingKey { case state, sources, settled }
+    private enum CodingKeys: String, CodingKey { case state, sources, settled, reason }
 
     /// Decodes `[Source]` element by element so one bad entry drops alone.
     private struct Lenient<T: Decodable>: Decodable {
@@ -70,16 +74,20 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
         sources = ((try? c.decodeIfPresent([Lenient<Source>].self, forKey: .sources)) ?? nil)?
             .compactMap(\.value) ?? []
         settled = (try? c.decodeIfPresent(Settled.self, forKey: .settled)) ?? nil
+        reason = (try? c.decodeIfPresent(String.self, forKey: .reason)) ?? nil
     }
 
-    /// Does this mark draw at all? Only when the sheet would have something to
-    /// say: a blend with at least one source, or a settled result. "none", an
-    /// unknown state and an empty blend draw nothing — never an empty sheet.
+    /// Does this mark draw at all? The ⓘ is constant on every number the server
+    /// marked (Alex, Nov 3): a blend with a source, a settled result, and a
+    /// `none` mark, whose sheet says why no source stands behind the number (a
+    /// rung capped to its sibling keeps its number, #12597). An unknown state
+    /// and an empty blend draw nothing — never an empty sheet.
     var draws: Bool {
         switch state {
         case .blend: return !sources.isEmpty
-        case .settled: return settled != nil || !sources.isEmpty
-        case .none, .unknown: return false
+        case .settled: return settled != nil
+        case .none: return true
+        case .unknown: return false
         }
     }
 }

@@ -1,0 +1,42 @@
+{
+ "blend": {
+  "state": "blend",
+  "sources": [
+   {
+    "key": "kalshi",
+    "name": "Kalshi",
+    "probability": 0.57,
+    "observed_at": "2026-11-11T19:43:05Z"
+   },
+   {
+    "key": "polymarket",
+    "name": "Polymarket",
+    "probability": 0.59,
+    "observed_at": null,
+    "reason": "observation_unknown"
+   },
+   {
+    "key": "betting",
+    "name": "Sportsbooks",
+    "probability": 0.585,
+    "observed_at": "2026-11-11T19:44:20Z",
+    "count": 6
+   }
+  ]
+ },
+ "settled": {
+  "state": "settled",
+  "sources": [],
+  "settled": {
+   "source": "espn_state",
+   "result": "Won",
+   "at": "2026-11-10T04:41:00Z"
+  }
+ },
+ "none_capped": {
+  "state": "none",
+  "sources": [],
+  "reason": "monotonic_conflict"
+ },
+ "_note": "Marks built by PR #12597's own app/utils/source_mark.py (quote_source_mark, settled_source_mark, cap_source_mark)."
+}

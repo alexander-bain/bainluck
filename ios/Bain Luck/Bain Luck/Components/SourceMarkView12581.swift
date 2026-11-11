@@ -72,9 +72,11 @@ struct SourceMarkSheet: View {
         }
     }
 
-    /// The tapped number, as a whole percent: "67%".
-    static func headline(_ number: Double?) -> String? {
-        number.map { "\(Int(($0 * 100).rounded()))%" }
+    /// The tapped number, as a whole percent: "67%". A settled number's
+    /// headline is its result ("Won"), never a percent that reads as a price.
+    static func headline(_ number: Double?, mark: SourceMark? = nil) -> String? {
+        if mark?.state == .settled, let result = mark?.settled?.result { return result }
+        return number.map { "\(Int(($0 * 100).rounded()))%" }
     }
 
     /// One line of method under the rows. "Bain Luck blend" only where the
@@ -88,8 +90,28 @@ struct SourceMarkSheet: View {
             return mark.sources.first.map { "\($0.name)'s price" }
         case .settled:
             return nil
-        case .none, .unknown:
+        case .none:
+            return noneSentence(mark.reason)
+        case .unknown:
             return nil
+        }
+    }
+
+    /// What a `none` mark says instead of sources, by the server's reason.
+    static func noneSentence(_ reason: String?) -> String {
+        switch reason {
+        case "monotonic_conflict":
+            return "This line is held to the price of the line below it, so no source's own price stands behind this number."
+        case "opening_only":
+            return "This is the opening line. No newer price has been quoted."
+        case "final_unresolved":
+            return "The game is over and no result has been recorded yet."
+        case "away_unavailable":
+            return "Bain Luck doesn't show a separate chance for this side."
+        case "no_contributing_source", "no_probability":
+            return "No source price stands behind this number right now."
+        default:
+            return "Bain Luck can't show every source behind this number right now."
         }
     }
 
@@ -103,7 +125,7 @@ struct SourceMarkSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if let headline = Self.headline(number) {
+                    if let headline = Self.headline(number, mark: mark) {
                         Text(headline)
                             .font(.system(size: 44, weight: .bold))
                             .monospacedDigit()
