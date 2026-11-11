@@ -381,7 +381,8 @@ struct ProjectedFinalPointsChartView: View {
         // Values, team names and recorded times are in the readout above; this
         // element speaks the span and the game-state markers it draws.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Projected final points chart, \(series.start.formatted(date: .omitted, time: .shortened)) to \(series.end.formatted(date: .omitted, time: .shortened))")
+        // #12578 (Builder C's review): the span spoken is the span drawn, from kickoff once started.
+        .accessibilityLabel("Projected final points chart, \(Self.windowStart(series).formatted(date: .omitted, time: .shortened)) to \(series.end.formatted(date: .omitted, time: .shortened))")
         .accessibilityValue(Self.markersSpoken(markers))
     }
 

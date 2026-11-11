@@ -129,8 +129,11 @@ final class FinishedPeriodClock12578Tests: XCTestCase {
     }
 
     func testEveryFinishedPeriodDropsItsClock() {
+        // Non-zero clocks throughout, so the spent-clock rule can't be what drops them
+        // (Builder C's review: "End of 4th Quarter" + "0:00" passed for that reason).
         for (period, clock) in [("Final/OT", "5:00"), ("FT", "90'"), ("Full Time", "45:00"), ("AET", "120'"),
-                                ("End of 4th Quarter", "0:00"), ("final", "12:00")] {
+                                ("End of 4th Quarter", "12:00"), ("End of 1st Half", "20:00"),
+                                ("final", "12:00"), ("Ended", "3:10"), ("Game Over", "1:00")] {
             let text = PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
             XCTAssertFalse(text.contains(clock), "\(period) + \(clock) printed \(text)")
         }
@@ -142,6 +145,8 @@ final class FinishedPeriodClock12578Tests: XCTestCase {
                        "a live period's 12:00 is a real clock")
         XCTAssertFalse(PeriodLabel.isFinishedPeriod("Overtime"))
         XCTAssertFalse(PeriodLabel.isFinishedPeriod("Halftime"), "halftime is its own label, not a finished game")
+        XCTAssertEqual(PeriodLabel.liveStatusText(period: "End of 4th Quarter", gameClock: "12:00"), "Q4",
+                       "the raw period says the quarter is over, though its label reads Q4")
     }
 }
 
