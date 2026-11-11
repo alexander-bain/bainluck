@@ -18,7 +18,7 @@
  * 1. Stage-1 (e.g. Nominated / Make Playoffs) and Stage-2 (e.g. Wins / Win Title)
  *    are different propositions and are NEVER blended with each other. Equivalent
  *    venue legs for the SAME proposition (e.g. Kalshi #5165726 + Polymarket #27988771
- *    for Best Picture Nominee) ARE blended on the server via `compute_aggregate_probability`
+ *    for Best Picture Nominee) ARE blended on the server via `futures_source_merge.blend_with_verdict`
  *    (`backend/app/services/paired_metric_register.py`) — never in the browser.
  * 2. After step 1 settles (e.g. nominations announced), the first number becomes
  *    `✓` or `✗` ("settled means settled").
@@ -75,7 +75,7 @@ export interface PairedArtAsset {
 }
 
 export type ServerBlendAuthority =
-  | "server:compute_aggregate_probability"
+  | "server:futures_source_merge.blend_with_verdict"
   | "single_venue"
   | null;
 
@@ -91,11 +91,15 @@ export interface PairedSubjectEntry {
   stage_1_polymarket_outcome?: string | null;
   stage_1_polymarket_probability?: number | null;
   stage_1_probability: number | null;
+  stage_1_blend_rule?: string | null;
+  stage_1_divergence?: Record<string, unknown> | null;
   stage_1_blend_authority?: ServerBlendAuthority;
   stage_1_settled_state: "yes" | "no" | null;
   stage_2_market_id: number;
   stage_2_outcome: string | null;
   stage_2_probability: number | null;
+  stage_2_blend_rule?: string | null;
+  stage_2_divergence?: Record<string, unknown> | null;
   stage_2_blend_authority?: ServerBlendAuthority;
   missing_stage_1_reason?: string;
   missing_stage_2_reason?: string;
@@ -125,7 +129,7 @@ export interface PairedMetricSet {
     name: string;
   };
   never_blend: true;
-  blend_authority?: "server:compute_aggregate_probability";
+  blend_authority?: "server:futures_source_merge.blend_with_verdict";
   as_of: string;
   entries: PairedSubjectEntry[];
 }
@@ -135,8 +139,10 @@ export const TMDB_ATTRIBUTION_LINE =
 
 export const TMDB_ATTRIBUTION_URL = "https://www.themoviedb.org/";
 
+export const TMDB_OFFICIAL_LOGO_PATH = "/tmdb-blue-short.svg";
+
 export const SERVER_BLEND_AUTHORITY =
-  "server:compute_aggregate_probability" as const;
+  "server:futures_source_merge.blend_with_verdict" as const;
 
 /**
  * Deterministic tie-breaking rule for paired entries:
@@ -471,7 +477,7 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
     kicker: "OSCARS 2027 · BEST PICTURE",
     title: "The Odyssey leads Best Picture, with 6 films at 75%+ to be nominated",
     subtitle:
-      "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %) · Nominee % (blended on server via compute_aggregate_probability: #5165726 + #27988771) paired beside Winner % (#6173044)",
+      "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %) · Nominee % (blended on server via futures_source_merge.blend_with_verdict: #5165726 + #27988771) paired beside Winner % (#6173044)",
     selection_rule: "top_10_by_stage_1_probability",
     stage_1_label: "Nominated",
     stage_2_label: "Wins",
@@ -480,7 +486,7 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
     stage_1_market: {
       id: 5165726,
       source: "kalshi+polymarket",
-      name: "Oscar nominees: Best Picture (blended on server via compute_aggregate_probability: #5165726 + #27988771)",
+      name: "Oscar nominees: Best Picture (blended on server via futures_source_merge.blend_with_verdict: #5165726 + #27988771)",
       companion_polymarket_id: 27988771,
     },
     stage_2_market: {
@@ -489,7 +495,7 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
       name: "Oscar Winner: Best Picture",
     },
     never_blend: true,
-    blend_authority: "server:compute_aggregate_probability",
+    blend_authority: "server:futures_source_merge.blend_with_verdict",
     as_of: "2026-11-11",
     entries: [
       {

@@ -12,7 +12,7 @@
     "tie_breaking_rule": "stage_2_probability_desc_then_stage_1_probability_desc_then_subject_asc",
     "tmdb_attribution": "This product uses the TMDB API but is not endorsed or certified by TMDB.",
     "kid_safe_gate_issue": 7461,
-    "blend_authority": "server:compute_aggregate_probability",
+    "blend_authority": "server:futures_source_merge.blend_with_verdict",
     "tmdb_logo_required": true,
     "tmdb_attribution_url": "https://www.themoviedb.org/"
   },
@@ -72,8 +72,12 @@
             "adult": false,
             "kid_safe_vetted": true
           },
-          "stage_1_blend_authority": "server:compute_aggregate_probability",
-          "stage_2_blend_authority": "single_venue"
+          "stage_1_blend_authority": "server:futures_source_merge.blend_with_verdict",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "equal_weight_midpoint",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:you-can-see-everything-2026",
@@ -102,8 +106,12 @@
             "adult": false,
             "kid_safe_vetted": true
           },
-          "stage_1_blend_authority": "server:compute_aggregate_probability",
-          "stage_2_blend_authority": "single_venue"
+          "stage_1_blend_authority": "server:futures_source_merge.blend_with_verdict",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "equal_weight_midpoint",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:the-black-ball-2026",
@@ -133,8 +141,12 @@
             "adult": false,
             "kid_safe_vetted": true
           },
-          "stage_1_blend_authority": "server:compute_aggregate_probability",
-          "stage_2_blend_authority": "single_venue"
+          "stage_1_blend_authority": "server:futures_source_merge.blend_with_verdict",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "equal_weight_midpoint",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:dune-part-three-2026",
@@ -164,8 +176,12 @@
             "adult": false,
             "kid_safe_vetted": true
           },
-          "stage_1_blend_authority": "server:compute_aggregate_probability",
-          "stage_2_blend_authority": "single_venue"
+          "stage_1_blend_authority": "server:futures_source_merge.blend_with_verdict",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "equal_weight_midpoint",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:wild-horse-nine-2026",
@@ -196,8 +212,12 @@
             "adult": false,
             "kid_safe_vetted": true
           },
-          "stage_1_blend_authority": "server:compute_aggregate_probability",
-          "stage_2_blend_authority": "single_venue"
+          "stage_1_blend_authority": "server:futures_source_merge.blend_with_verdict",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "equal_weight_midpoint",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:artificial-2026",
@@ -229,7 +249,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:project-hail-mary-2026",
@@ -259,8 +283,12 @@
             "adult": false,
             "kid_safe_vetted": true
           },
-          "stage_1_blend_authority": "server:compute_aggregate_probability",
-          "stage_2_blend_authority": "single_venue"
+          "stage_1_blend_authority": "server:futures_source_merge.blend_with_verdict",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "equal_weight_midpoint",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:the-debut-2026",
@@ -291,8 +319,12 @@
             "adult": false,
             "kid_safe_vetted": true
           },
-          "stage_1_blend_authority": "server:compute_aggregate_probability",
-          "stage_2_blend_authority": "single_venue"
+          "stage_1_blend_authority": "server:futures_source_merge.blend_with_verdict",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "equal_weight_midpoint",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:the-invite-2026",
@@ -323,8 +355,12 @@
             "adult": false,
             "kid_safe_vetted": true
           },
-          "stage_1_blend_authority": "server:compute_aggregate_probability",
-          "stage_2_blend_authority": "single_venue"
+          "stage_1_blend_authority": "server:futures_source_merge.blend_with_verdict",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "equal_weight_midpoint",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:i-play-rocky-2026",
@@ -355,11 +391,15 @@
             "adult": false,
             "kid_safe_vetted": true
           },
-          "stage_1_blend_authority": "server:compute_aggregate_probability",
-          "stage_2_blend_authority": null
+          "stage_1_blend_authority": "server:futures_source_merge.blend_with_verdict",
+          "stage_2_blend_authority": null,
+          "stage_1_blend_rule": "equal_weight_midpoint",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": null,
+          "stage_2_divergence": null
         }
       ],
-      "blend_authority": "server:compute_aggregate_probability"
+      "blend_authority": "server:futures_source_merge.blend_with_verdict"
     },
     "oscars-2027-best-director": {
       "set_id": "oscars-2027-best-director",
@@ -407,7 +447,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:denis-villeneuve",
@@ -430,7 +474,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:nathan-fielder",
@@ -453,7 +501,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:javier-calvo-ambrossi",
@@ -476,7 +528,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:martin-mcdonagh",
@@ -499,7 +555,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:alejandro-inarritu",
@@ -522,10 +582,14 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         }
       ],
-      "blend_authority": "server:compute_aggregate_probability"
+      "blend_authority": "server:futures_source_merge.blend_with_verdict"
     },
     "oscars-2027-best-actor": {
       "set_id": "oscars-2027-best-actor",
@@ -573,7 +637,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:andrew-scott",
@@ -596,7 +664,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:matt-damon",
@@ -619,7 +691,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:anthony-ippolito",
@@ -642,7 +718,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:tom-cruise",
@@ -665,7 +745,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:ryan-gosling",
@@ -688,10 +772,14 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         }
       ],
-      "blend_authority": "server:compute_aggregate_probability"
+      "blend_authority": "server:futures_source_merge.blend_with_verdict"
     },
     "oscars-2027-best-actress": {
       "set_id": "oscars-2027-best-actress",
@@ -739,7 +827,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:inde-navarrette",
@@ -762,7 +854,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:sandra-huller",
@@ -785,7 +881,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "person:olivia-wilde",
@@ -808,10 +908,14 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         }
       ],
-      "blend_authority": "server:compute_aggregate_probability"
+      "blend_authority": "server:futures_source_merge.blend_with_verdict"
     },
     "oscars-2027-best-animated": {
       "set_id": "oscars-2027-best-animated",
@@ -864,7 +968,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:toy-story-5-2026",
@@ -893,7 +1001,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:tangles-2026",
@@ -922,7 +1034,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "film:ray-gunn-2026",
@@ -951,10 +1067,14 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         }
       ],
-      "blend_authority": "server:compute_aggregate_probability"
+      "blend_authority": "server:futures_source_merge.blend_with_verdict"
     },
     "nhl-2026-27-playoffs-and-cup": {
       "set_id": "nhl-2026-27-playoffs-and-cup",
@@ -999,7 +1119,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "team:nhl:colorado-avalanche",
@@ -1019,7 +1143,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "team:nhl:minnesota-wild",
@@ -1039,7 +1167,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "team:nhl:edmonton-oilers",
@@ -1059,7 +1191,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "team:nhl:new-jersey-devils",
@@ -1079,7 +1215,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "team:nhl:florida-panthers",
@@ -1099,7 +1239,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "team:nhl:vegas-golden-knights",
@@ -1119,7 +1263,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "team:nhl:dallas-stars",
@@ -1139,7 +1287,11 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         },
         {
           "subject_key": "team:nhl:tampa-bay-lightning",
@@ -1159,10 +1311,14 @@
             "kid_safe_vetted": true
           },
           "stage_1_blend_authority": "single_venue",
-          "stage_2_blend_authority": "single_venue"
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null
         }
       ],
-      "blend_authority": "server:compute_aggregate_probability"
+      "blend_authority": "server:futures_source_merge.blend_with_verdict"
     }
   }
 }

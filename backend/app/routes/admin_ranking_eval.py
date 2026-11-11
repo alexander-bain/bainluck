@@ -1047,16 +1047,10 @@ def load_grouping_grade_deck(
             if item.get("retired"):
                 continue
             item_copy = dict(item)
-            item_key = str(item_copy.get("item_key") or "")
-            if item_key.startswith("container-"):
-                item_copy["paired_metric_set"] = None
-            else:
-                set_id = item_copy.get("set_id") or (
-                    "nhl-2026-27-playoffs-and-cup"
-                    if item_copy.get("category") == "hockey"
-                    else "oscars-2027-best-picture"
-                )
-                item_copy["paired_metric_set"] = paired_sets.get(set_id)
+            set_id = item_copy.get("set_id")
+            item_copy["paired_metric_set"] = (
+                paired_sets.get(str(set_id)) if set_id else None
+            )
             active_items.append(item_copy)
         return {
             **raw_sheet,

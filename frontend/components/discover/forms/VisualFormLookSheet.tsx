@@ -21,6 +21,7 @@ import {
   PAIRED_METRIC_REGISTER,
   TMDB_ATTRIBUTION_LINE,
   TMDB_ATTRIBUTION_URL,
+  TMDB_OFFICIAL_LOGO_PATH,
   VISUAL_FORM_LOOK_SHEET_CARDS,
   VISUAL_FORM_SHEET_2_CARDS,
   formatStage1Display,
@@ -150,20 +151,16 @@ function TMDBAttributionNote({ set }: { set: PairedMetricSet }) {
         rel="noopener noreferrer"
         data-testid="tmdb-attribution-link"
         aria-label="The Movie Database (TMDB)"
-        className="inline-flex shrink-0 items-center rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5 text-accent-brand"
+        className="inline-flex shrink-0 items-center rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5"
       >
-        <svg
-          role="img"
-          aria-label="The Movie Database (TMDB)"
+        <img
+          src={TMDB_OFFICIAL_LOGO_PATH}
+          alt="The Movie Database (TMDB)"
+          width={46}
+          height={6}
           data-testid="tmdb-official-logo"
-          viewBox="0 0 190 28"
-          className="h-3.5 w-auto text-accent-brand"
-          fill="currentColor"
-        >
-          <title>The Movie Database (TMDB)</title>
-          <path d="M0 4h22v5h-8v15H8V9H0V4zm27 0h7l6 11 6-11h7v20h-6V13l-5 9h-4l-5-9v11h-6V4zm39 0h10c6.6 0 11 4 11 10s-4.4 10-11 10H66V4zm6 5v10h4c3.3 0 5-2 5-5s-1.7-5-5-5h-4zm27-5h11c4.5 0 7.5 2 7.5 5.2 0 2.2-1.2 3.8-3.2 4.4 2.4.6 3.8 2.3 3.8 4.8 0 3.6-3.1 5.6-8 5.6H99V4zm6 4.5v3.5h4.2c1.6 0 2.5-.7 2.5-1.8 0-1-.9-1.7-2.5-1.7H105zm0 8v3.8h4.6c1.8 0 2.8-.7 2.8-1.9 0-1.2-1-1.9-2.8-1.9H105z" />
-          <rect x="132" y="6" width="54" height="16" rx="8" />
-        </svg>
+          className="inline-block h-1.5 w-auto shrink-0"
+        />
       </a>
       <span>{TMDB_ATTRIBUTION_LINE}</span>
     </span>

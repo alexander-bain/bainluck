@@ -11,6 +11,7 @@ import {
   SERVER_BLEND_AUTHORITY,
   TMDB_ATTRIBUTION_LINE,
   TMDB_ATTRIBUTION_URL,
+  TMDB_OFFICIAL_LOGO_PATH,
   VISUAL_FORM_LIBRARY,
   VISUAL_FORM_LOOK_SHEET_CARDS,
   VISUAL_FORM_SHEET_2_CARDS,
@@ -63,7 +64,9 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     const bpSet = PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
     expect(bpSet.stage_1_market.companion_polymarket_id).toBe(27988771);
     expect(bpSet.blend_authority).toBe(SERVER_BLEND_AUTHORITY);
-    expect(bpSet.subtitle).toContain("blended on server via compute_aggregate_probability");
+    expect(bpSet.subtitle).toContain(
+      "blended on server via futures_source_merge.blend_with_verdict",
+    );
 
     // The Black Ball pairs with "La Bola Negra" on Polymarket #27988771 (0.94 + 0.95 -> 0.945 -> 95%)
     const blackBall = bpSet.entries.find((e) => e.subject === "The Black Ball")!;
@@ -293,6 +296,7 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     expect(html).toContain('data-testid="tmdb-attribution-line"');
     expect(html).toContain('data-testid="tmdb-attribution-link"');
     expect(html).toContain('data-testid="tmdb-official-logo"');
+    expect(html).toContain(`src="${TMDB_OFFICIAL_LOGO_PATH}"`);
     expect(html).toContain(`href="${TMDB_ATTRIBUTION_URL}"`);
     expect(html).toContain(TMDB_ATTRIBUTION_LINE);
 
