@@ -54,7 +54,15 @@ struct SavedLookModel12466 {
     var clock: String? { SavedClock10875.caption(reading, entry: entry) }
 
     /// The bottom line: the clock where there is one, otherwise the status.
-    var footer: String { clock ?? reading.status }
+    var footer: String {
+        if let clock { return clock }
+        // #12466 (Fable, Nov 11): on a finished game the big numbers ARE the
+        // score, so the footer says "Final" instead of "Final · 23–6" again.
+        if isGame, reading.status.hasPrefix("Final"), reading.rows.allSatisfy({ $0.figure != nil }) {
+            return "Final"
+        }
+        return reading.status
+    }
 
     /// Whether the status needs its own line beside the clock. A result's
     /// status IS its footer.
@@ -210,12 +218,14 @@ struct SavedSideValue12466: View {
                     .accessibilityLabel("No number")
             }
             if let verdict = row.verdict {
+                // #12466 (Fable, Nov 11): "LOST" is quieter than "WON", not faint:
+                // at 0.6 it disappeared on the Vikings' purple at small size.
                 Text(verdict)
-                    .font(.system(size: max(11, size * 0.4), weight: .heavy, design: .rounded))
+                    .font(.system(size: max(11, size * 0.4), weight: row.emphasized ? .heavy : .bold, design: .rounded))
                     .textCase(.uppercase)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-                    .opacity(row.emphasized ? 1 : 0.6)
+                    .opacity(row.emphasized ? 1 : 0.85)
             }
         }
     }
@@ -392,14 +402,12 @@ struct SavedMatchupLook12466: View {
 
     private var medium: some View {
         VStack(spacing: 6) {
-            HStack(alignment: .center) {
-                side(false)
-                Spacer(minLength: 6)
-                Text("vs")
-                    .font(.caption.weight(.heavy))
-                    .opacity(0.8)
-                Spacer(minLength: 6)
-                side(true)
+            // #12466 (Fable, Nov 11): both names at one size. The full names when
+            // both fit whole; otherwise both short names, never one shrunk beside
+            // the other ("Fairleigh Dickinson Knights" beside "East Texas A&M Lions").
+            ViewThatFits(in: .horizontal) {
+                matchupRow(shortNames: false)
+                matchupRow(shortNames: true)
             }
             bar
             HStack(spacing: 4) {
@@ -417,14 +425,28 @@ struct SavedMatchupLook12466: View {
         }
     }
 
-    private func side(_ isHome: Bool) -> some View {
+    private func matchupRow(shortNames: Bool) -> some View {
+        HStack(alignment: .center) {
+            side(false, shortName: shortNames)
+            Spacer(minLength: 6)
+            Text("vs")
+                .font(.caption.weight(.heavy))
+                .opacity(0.8)
+            Spacer(minLength: 6)
+            side(true, shortName: shortNames)
+        }
+    }
+
+    private func side(_ isHome: Bool, shortName: Bool) -> some View {
         let align: HorizontalAlignment = isHome ? .trailing : .leading
+        let row = model.row(isHome: isHome)
         return VStack(alignment: align, spacing: 3) {
             chip(isHome, size: 42)
-            Text(model.row(isHome: isHome).label)
+            // No shrinking: `ViewThatFits` above picks the names that fit at this size.
+            Text(shortName ? row.shortLabel : row.label)
                 .font(.footnote.weight(.bold))
                 .lineLimit(1)
-                .minimumScaleFactor(0.65)
+                .fixedSize(horizontal: true, vertical: false)
             SavedSideValue12466(row: model.row(isHome: isHome), size: 32, alignment: align)
         }
         .foregroundStyle(ink(isHome))

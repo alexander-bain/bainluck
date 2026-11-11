@@ -319,4 +319,23 @@ final class SavedWidgetArt12466Tests: XCTestCase {
             XCTAssertFalse(looks.contains(gone), gone)
         }
     }
+
+    /// #12466 — Fable's three fixes (Nov 11, 9:13 AM PT), read from the widget's
+    /// source because this target cannot import the extension.
+    func testTheMatchupLooksNamesScoreAndVerdictFixes() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let looks = try String(contentsOf: root.appendingPathComponent("BainLuckWidget/SavedWidgetLooks12466.swift"),
+                               encoding: .utf8)
+        // 1. Both names at one size: full names if both fit, else both short names.
+        XCTAssertTrue(looks.contains("ViewThatFits(in: .horizontal) {\n                matchupRow(shortNames: false)\n                matchupRow(shortNames: true)"))
+        let side = try XCTUnwrap(looks.range(of: "private func side(_ isHome: Bool, shortName: Bool)"))
+        let sideBody = String(looks[side.upperBound...].prefix(700))
+        XCTAssertFalse(sideBody.contains("minimumScaleFactor"), "one name never shrinks on its own")
+        // 2. A finished game's footer says "Final", not the score again.
+        XCTAssertTrue(looks.contains("reading.status.hasPrefix(\"Final\"), reading.rows.allSatisfy({ $0.figure != nil })"))
+        XCTAssertTrue(looks.contains("return \"Final\""))
+        // 3. The losing verdict is quieter, not faint.
+        XCTAssertTrue(looks.contains(".opacity(row.emphasized ? 1 : 0.85)"))
+        XCTAssertFalse(looks.contains(".opacity(row.emphasized ? 1 : 0.6)"))
+    }
 }
