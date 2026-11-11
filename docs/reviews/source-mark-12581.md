@@ -35,8 +35,9 @@ executed against production.
 The extra Kalshi rows separate protected contracts that were previously averaged
 into ordinary contracts. Sam LaPorta 15+ receiving yards was 0.8525, the mean of
 0.86 standard and 0.845 protected; it is now two distinct rows at those prices.
-All 24 held pairs select Kalshi's tighter book in this snapshot. An unknown book
-width is recorded as unknown; a tie is recorded as a tie. Neither is called
+All 24 held pairs select Kalshi in this snapshot: 22 have the tighter book and
+two have the only known book width. An unknown width is recorded as unknown;
+a tie is recorded as a tie. Neither is called
 "tighter." The full rules of each held pair are retained.
 
 The 15 baseline caps arose before the shared predicates used one integer axis and
