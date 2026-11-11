@@ -14,7 +14,8 @@
   ``?slate=<YYYY-MM-DD (Pacific) | slate id | row id>`` (#11937): that saved
   slate's deck, its top 20 then 10 spread down the rest of its candidate list,
   the same cards each time, minus those the grader (``X-Grader-Name`` header,
-  never the URL) already graded there.
+  never the URL) already graded there. Either deck leaves out any card with no
+  stored drawing and counts them in ``left_out_no_drawing``.
 * ``POST /api/admin/ranking/grades`` — Phase 2: one grader's grade for one card
   of a slate's candidate list, at its list position (served cards keep their
   served position). Refused while ``RANKING_SNAPSHOTS`` is off.
@@ -176,6 +177,20 @@ GRADES = ("shareable", "interesting", "neither")
 TALLY_TZ = ZoneInfo("America/Los_Angeles")
 
 
+def has_drawing(card: Any) -> bool:
+    """#11937: whether the slate stored a card ``/grade`` can draw. Slates
+    captured before every card was kept hold the opening ten only; the rest
+    fell back to a title and a bare percent, and a grade on that isn't a grade
+    (Fable, Nov 10)."""
+    return isinstance(card, Mapping) and bool(card.get("type"))
+
+
+def drawn_only(items: list[dict]) -> tuple[list[dict], int]:
+    """The deck's cards that can be drawn, and how many were left out."""
+    kept = [i for i in items if has_drawing(i.get("card"))]
+    return kept, len(items) - len(kept)
+
+
 def opening_cards(slate: dict) -> list[dict]:
     """The slate's opening ten as the grading page shows them."""
     by_key = {c.get("item_key"): c for c in slate.get("candidates") or ()}
@@ -284,7 +299,8 @@ async def get_grade_deck(
         "ranker_version": row["ranker_version"],
     }
     if not slate:
-        return {**out, "mode": "opening", "items": opening_cards(row)}
+        items, left_out = drawn_only(opening_cards(row))
+        return {**out, "mode": "opening", "items": items, "left_out_no_drawing": left_out}
     order = candidate_order(row)
     name = " ".join((grader or "").split())
     graded: set[str] = set()
@@ -297,12 +313,13 @@ async def get_grade_deck(
             )
         )).scalars().all()
         graded = {r.item_key for r in rows}
-    items = spread_deck(order, size=size, skip=graded)
+    items, left_out = drawn_only(spread_deck(order, size=size, skip=graded))
     return {
         **out,
         "mode": "spread",
         "candidates": len(order),
         "already_graded": len(graded & {c["item_key"] for c in spread_deck(order, size=size)}),
+        "left_out_no_drawing": left_out,
         "items": items,
     }
 
@@ -337,9 +354,11 @@ async def post_grade(
     slate = slate_row_dict(await _slate_row(db, body.slate_id, body.surface))
     if slate["slate_id"] != body.slate_id:
         raise HTTPException(status_code=404, detail="no such slate")
-    order = [c["item_key"] for c in candidate_order(slate)]
-    if body.position > len(order) or order[body.position - 1] != body.item_key:
+    order = candidate_order(slate)
+    if body.position > len(order) or order[body.position - 1]["item_key"] != body.item_key:
         raise HTTPException(status_code=422, detail="that card is not at that position in the slate")
+    if not has_drawing(order[body.position - 1]["card"]):
+        raise HTTPException(status_code=422, detail="that card has no stored drawing, so it can't be graded")
     db.add(
         RankingGrade(
             slate_id=body.slate_id,

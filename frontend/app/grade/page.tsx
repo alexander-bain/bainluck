@@ -24,10 +24,12 @@ import {
   GRADES,
   GRADE_LABELS,
   deckHeadline,
+  drawnOnly,
   formatTally,
   gradeDeckInit,
   gradeDeckPath,
   handleGradeDeckReadError,
+  leftOutLine,
   normalizeGraderName,
   slateFromSearch,
   type Grade,
@@ -109,7 +111,7 @@ function GradeSession() {
     adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret)
       .then((d) => {
         if (cancelled) return;
-        setDeck(d);
+        setDeck(drawnOnly(d));
         void loadTally(d.slate_id);
       })
       .catch((e: unknown) => {
@@ -140,7 +142,7 @@ function GradeSession() {
     if (slateRef) {
       setDealing(true);
       adminFetchJSON<GradeDeck>(gradeDeckPath(slateRef), secret, gradeDeckInit(name))
-        .then(setDeck)
+        .then((d) => setDeck(drawnOnly(d)))
         .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not load the cards"))
         .finally(() => setDealing(false));
     }
@@ -182,6 +184,7 @@ function GradeSession() {
   };
 
   const tallyLine = formatTally(tally);
+  const leftOut = deck ? leftOutLine(deck) : "";
 
   if (error && !deck) {
     return <Shell><p className="text-sm text-text-secondary">{error}</p></Shell>;
@@ -195,6 +198,7 @@ function GradeSession() {
       <Shell tally={tallyLine}>
         <h1 className="text-xl font-semibold text-text-primary">Who&apos;s grading?</h1>
         <p className="mt-1 text-sm text-text-secondary">{deckHeadline(deck)}</p>
+        {leftOut && <p className="mt-1 text-sm text-text-secondary">{leftOut}.</p>}
         <input
           className="mt-4 w-full rounded-lg border border-surface-border bg-surface-card px-3 py-2 text-text-primary"
           placeholder="Your name"
@@ -226,6 +230,7 @@ function GradeSession() {
         <h1 className="text-xl font-semibold text-text-primary">
           {deck.items.length ? `All ${deck.items.length} graded. Thanks, ${grader}!` : `Nothing left to grade on this slate, ${grader}.`}
         </h1>
+        {leftOut && <p className="mt-1 text-sm text-text-secondary">{leftOut}.</p>}
         <button className="mt-4 text-sm font-semibold text-accent-brand hover:underline" onClick={() => setGrader(null)}>
           Next grader
         </button>
@@ -244,15 +249,8 @@ function GradeSession() {
         <span>{graded} graded</span>
       </div>
       <div className="mt-3 pointer-events-none select-none" aria-label={`Card ${item.position}`}>
-        {item.card ? (
+        {item.card && (
           <DiscoverCard groupedItem={{ type: "single", item: item.card }} positionIndex={item.position - 1} />
-        ) : (
-          <div className="rounded-xl border border-surface-border bg-surface-card p-4">
-            <div className="font-semibold text-text-primary">{item.title || item.item_key}</div>
-            {item.probability != null && (
-              <div className="mt-1 text-2xl font-bold text-text-primary">{Math.round(item.probability * 100)}%</div>
-            )}
-          </div>
         )}
       </div>
       <input

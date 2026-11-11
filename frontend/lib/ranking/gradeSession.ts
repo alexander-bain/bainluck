@@ -38,6 +38,26 @@ export interface GradeDeck {
   candidates?: number;
   /** Spread deck only: cards of this deck the grader graded before (skipped). */
   already_graded?: number;
+  /** #11937: cards of this deck left out because the slate stored no drawing. */
+  left_out_no_drawing?: number;
+}
+
+/**
+ * #11937: the page never deals a card it can't draw. A title with no number
+ * isn't a card, and a grade on it isn't a grade (Fable, Nov 10). The server
+ * already leaves these out; this also covers a deck from an older server.
+ */
+export function drawnOnly(deck: GradeDeck): GradeDeck {
+  const items = deck.items.filter((i) => i.card != null);
+  const dropped = deck.items.length - items.length;
+  return { ...deck, items, left_out_no_drawing: (deck.left_out_no_drawing ?? 0) + dropped };
+}
+
+/** "12 cards left out: no stored drawing"; empty when none were. */
+export function leftOutLine(deck: GradeDeck): string {
+  const n = deck.left_out_no_drawing ?? 0;
+  if (n <= 0) return "";
+  return `${n} ${n === 1 ? "card" : "cards"} left out: no stored drawing`;
 }
 
 const SLATE_REF = /^[A-Za-z0-9-]{1,64}$/;
