@@ -390,4 +390,28 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
       expect(renderVisualLookSheetDeckItem(v1Key)).toBeNull();
     }
   });
+
+  it("stacks Card 1A's expander summary full-width below the label and keeps market IDs and function names off all 15 card faces", () => {
+    const card1aHtml = renderToStaticMarkup(
+      renderLookSheetCardBySpec(VISUAL_FORM_SHEET_2_CARDS[0]),
+    );
+    expect(card1aHtml).toContain("flex-col items-start gap-0.5");
+    expect(card1aHtml).toContain("Nominated: two venues · Wins: Kalshi");
+
+    const allSpecs = [...VISUAL_FORM_SHEET_2_CARDS, ...VISUAL_FORM_LOOK_SHEET_CARDS];
+    for (const spec of allSpecs) {
+      const cardHtml = renderToStaticMarkup(renderLookSheetCardBySpec(spec));
+      expect(cardHtml).not.toMatch(/#\d{5,}/);
+      expect(cardHtml).not.toContain("blend_with_verdict");
+      expect(cardHtml).not.toContain("Paired in register");
+    }
+
+    for (const containerSpec of OSCARS_CONTAINER_LOOK_SHEET_OPTIONS) {
+      const containerHtml = renderToStaticMarkup(
+        <OscarsContainerLayoutPreview spec={containerSpec} />,
+      );
+      expect(containerHtml).not.toMatch(/#\d{5,}/);
+      expect(containerHtml).not.toContain("blend_with_verdict");
+    }
+  });
 });

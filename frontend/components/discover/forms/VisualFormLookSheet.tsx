@@ -318,6 +318,14 @@ function DualBarRow({
 // Form 1 & Form 5: Stacked Dual Bars with Art (`paired_bars_with_art`)
 // ============================================================================
 
+export function formatCardFaceSubtitle(subtitle: string): string {
+  return subtitle
+    .replace(/\s*·\s*Nominee\s*%.*$/i, "")
+    .replace(/\s*·\s*Paired by club.*$/i, "")
+    .replace(/\s*\([^)]*#\d+[^)]*\)/g, "")
+    .trim();
+}
+
 function PairedBarsWithArtCard({
   set,
   simulateSettled = false,
@@ -342,29 +350,29 @@ function PairedBarsWithArtCard({
         </span>
       </div>
       <h3 className="mt-1 text-lg font-semibold text-text-primary">{set.title}</h3>
-      <p className="mt-0.5 text-xs text-text-secondary">{set.subtitle}</p>
+      <p className="mt-0.5 text-xs text-text-secondary">
+        {formatCardFaceSubtitle(set.subtitle)}
+      </p>
 
       {/* Legend */}
       <div className="mt-3 flex flex-wrap items-center gap-4 border-b border-surface-border pb-2 text-xs text-text-secondary">
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm border border-surface-border bg-surface-hover" />
+          <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm border border-surface-border bg-surface-hover" />
           <span className="font-medium text-text-primary">
             {simulateSettled
               ? `${set.stage_1_label} (✓ / ✗ settled)`
               : `${set.stage_1_label} %`}
           </span>
-          <span className="text-text-muted">
-            (
-            {set.stage_1_market.companion_polymarket_id
-              ? `average of two venues: #${set.stage_1_market.id} + #${set.stage_1_market.companion_polymarket_id}`
-              : `#${set.stage_1_market.id}`}
-            )
-          </span>
+          {set.stage_1_market.companion_polymarket_id && (
+            <span className="text-text-muted">(two venues)</span>
+          )}
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-accent-brand" />
+          <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm bg-accent-brand" />
           <span className="font-medium text-text-primary">{set.stage_2_label} %</span>
-          <span className="text-text-muted">(#{set.stage_2_market.id})</span>
+          {set.stage_1_market.companion_polymarket_id && (
+            <span className="text-text-muted">(Kalshi)</span>
+          )}
         </span>
       </div>
 
@@ -383,7 +391,9 @@ function PairedBarsWithArtCard({
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>
-          Paired in register · Kept separate · Sorted by {set.stage_2_label.toLowerCase()}
+          {set.stage_1_market.companion_polymarket_id
+            ? "Nominated: two venues · Wins: Kalshi"
+            : `Sorted by ${set.stage_2_label.toLowerCase()} %`}
         </span>
         <TMDBAttributionNote set={set} />
       </div>
@@ -445,9 +455,9 @@ function PairedBarsTop5ExpandableCard({
             type="button"
             data-testid="toggle-expand-all-rows"
             onClick={() => setExpanded((prev) => !prev)}
-            className="flex w-full items-center justify-between rounded-lg border border-surface-border bg-surface-elevated px-3 py-2 text-xs font-semibold text-text-primary hover:bg-surface-hover"
+            className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-surface-border bg-surface-elevated px-3 py-2 text-left text-xs font-semibold text-text-primary hover:bg-surface-hover"
           >
-            <span>
+            <span className="w-full">
               {expanded
                 ? "Show top 5 by Wins % only"
                 : `Show all ${sorted.length} most likely nominees (+${hiddenCount} more)`}
@@ -455,7 +465,7 @@ function PairedBarsTop5ExpandableCard({
             {!expanded && unpricedInHidden && (
               <span
                 data-testid="missing-probability-notice"
-                className="font-normal text-text-muted"
+                className="w-full font-normal text-text-muted"
               >
                 incl. {unpricedInHidden.subject} (49% nom · Not listed to win)
               </span>
@@ -465,7 +475,7 @@ function PairedBarsTop5ExpandableCard({
       )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
-        <span>Nominee % (average of two venues: #5165726 + #27988771) · Winner #6173044</span>
+        <span>Nominated: two venues · Wins: Kalshi</span>
         <TMDBAttributionNote set={set} />
       </div>
     </article>
