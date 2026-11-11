@@ -21,6 +21,13 @@ are aggregated (reversed books out, then `aggregate_bookmaker_odds`, the same
 steps as today) over each book's newest row CARRYING both a spread and a total,
 kept only if its effective time (`valid_until` or `captured_at`,
 `odds_filtering._effective_time`) is within :data:`PROJECTION_LINES_BOUND`.
+A book's reading is dated by `valid_until` ONLY when that row is still its
+latest (re-read and confirmed). A lines row that a newer moneyline-only row has
+replaced is dated by its own `captured_at`: the writer sets the replaced row's
+`valid_until` to the moneyline pass's time, which is not a lines reading (Fable's
+review of #12599). So, per book: its latest row if that row carries lines, else
+its newest lines row captured inside the bound.
+
 The probability, the moneyline, `captured_at` and `bookmaker_count` are NOT
 touched. The installed iPhone dates its headline from `current_odds.captured_at`
 (`EventAtlasLivePath11666.resolveHeadlineObservedAt`), so the pair gets its own:
@@ -35,7 +42,13 @@ polling jitter. Every OTHER league is fetched with lines only inside the two
 hours before the start (the poller's live and soon tiers). So outside that
 window those leagues serve NO pair, with `projection_unavailable:
 "no_recent_lines"`. That is what #12595 asks for: absent, not old. Whether
-those leagues are in scope at all is decision 149 (Alex). One constant decides.
+those leagues are in scope is decision 149: A (Alex, 9:42 AM PT Nov 11), every
+league. One constant decides.
+
+A FAILED READ withholds the pair (`projection_unavailable: "read_failed"`): an
+unknown age is not a recent one. The read runs in a SAVEPOINT under a local
+statement timeout and the savepoint is rolled back, so a failure can't abort the
+request's transaction (the card path's pattern, `read_card_projected_pairs_bounded`).
 """
 from __future__ import annotations
 
@@ -53,12 +66,18 @@ PROJECTION_RECENT_LINES_SPORTS: Optional[frozenset] = None
 #: How old a book's newest line reading may be and still count toward the pair.
 PROJECTION_LINES_BOUND = timedelta(minutes=90)
 
-#: The scan floor for the recent-lines statement: no line reading older than this
-#: is looked at, so a book that rarely quotes lines can't make the read walk its
-#: whole history. Far outside the bound, so it never changes an answer.
-_SCAN_FLOOR = timedelta(days=7)
-
 NO_RECENT_LINES = "no_recent_lines"
+READ_FAILED = "read_failed"
+
+#: The recent-lines read's own statement bound, inside its savepoint.
+PROJECTION_READ_CAP_MS = 1500
+
+#: The columns the pair needs from a lines row (aggregation, reversal, dating).
+_ROW_COLUMNS = (
+    "id", "event_id", "bookmaker", "captured_at", "valid_until",
+    "home_moneyline", "away_moneyline", "home_win_probability", "away_win_probability",
+    "home_spread", "over_under", "projected_home_score", "projected_away_score",
+)
 
 
 def _utcnow() -> datetime:
@@ -104,100 +123,171 @@ def has_lines(snapshot: Any) -> bool:
     )
 
 
-def recent_lines_per_bookmaker_query(event_ids: list[int], *, now: datetime):
-    """The newest row WITH a spread and a total per (event, book), within the scan floor.
+def books_needing_lines(latest_by_event: dict) -> list[tuple[int, str]]:
+    """``[(event_id, bookmaker)]`` whose LATEST row carries no lines: the only books read.
 
-    The same recursive bookmaker walk as `latest_odds_per_bookmaker_query` and a
-    `LIMIT 1` lateral, so it reads O(books), not O(depth). The bound itself is
-    applied in Python on the effective time (`projection_from_rows`), the one
-    definition `odds_filtering` uses, so a row kept current by dedup inside the
-    two-hour window is never dropped for an old first capture.
+    A book whose latest row has lines is dated by that row (`pair_readings`), so
+    it needs nothing more from the database.
     """
-    from sqlalchemy import func, select, true
-    from sqlalchemy.orm import aliased
-
-    from app.models.models import Event, OddsSnapshot
-
-    floor = now - _SCAN_FLOOR
-    bookmakers = (
-        select(
-            Event.id.label("event_id"),
-            select(func.min(OddsSnapshot.bookmaker))
-            .where(OddsSnapshot.event_id == Event.id)
-            .scalar_subquery()
-            .label("bookmaker"),
-        )
-        .where(Event.id.in_(event_ids))
-        .cte("lines_bookmakers", recursive=True)
+    return sorted(
+        (int(eid), row.bookmaker)
+        for eid, rows in latest_by_event.items()
+        for row in rows
+        if row is not None and not has_lines(row)
     )
-    _prev = bookmakers.alias("prev_lines_bookmaker")
-    bookmakers = bookmakers.union_all(
-        select(
-            _prev.c.event_id,
-            select(func.min(OddsSnapshot.bookmaker))
-            .where(
-                OddsSnapshot.event_id == _prev.c.event_id,
-                OddsSnapshot.bookmaker > _prev.c.bookmaker,
-            )
-            .scalar_subquery(),
-        ).where(_prev.c.bookmaker.isnot(None))
-    )
-    lines_snap = (
-        select(OddsSnapshot)
+
+
+def recent_lines_query(pairs: list[tuple[int, str]], *, since: datetime):
+    """Each (event, book)'s newest row WITH a spread and a total captured since ``since``.
+
+    ``pairs`` is a ``VALUES`` list; each pair gets a ``LIMIT 1`` lateral on
+    ``ix_odds_snapshots_bookmaker_closing`` (event_id, bookmaker, captured_at
+    DESC) that walks only that book's rows inside the bound. A plain ``SELECT``
+    (no leading ``WITH``), so db-query can ``EXPLAIN ANALYZE`` it. Columns, not
+    ORM rows, so the result survives the savepoint rollback (gotcha #6).
+    """
+    from sqlalchemy import Integer, String, column, select, true, values
+
+    from app.models.models import OddsSnapshot
+
+    want = values(
+        column("event_id", Integer), column("bookmaker", String), name="want_lines"
+    ).data(list(pairs))
+    cols = [getattr(OddsSnapshot, c) for c in _ROW_COLUMNS]
+    lines = (
+        select(*cols)
         .where(
-            OddsSnapshot.event_id == bookmakers.c.event_id,
-            OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+            OddsSnapshot.event_id == want.c.event_id,
+            OddsSnapshot.bookmaker == want.c.bookmaker,
             OddsSnapshot.home_spread.isnot(None),
             OddsSnapshot.over_under.isnot(None),
-            OddsSnapshot.captured_at >= floor,
+            OddsSnapshot.captured_at >= since,
         )
         .order_by(OddsSnapshot.captured_at.desc(), OddsSnapshot.id.desc())
         .limit(1)
-        .lateral("lines_snap")
+        .lateral("recent_lines")
     )
-    snap = aliased(OddsSnapshot, lines_snap)
-    return (
-        select(snap)
-        .select_from(bookmakers)
-        .join(lines_snap, true())
-        .where(bookmakers.c.bookmaker.isnot(None))
-    )
+    return select(*[lines.c[c] for c in _ROW_COLUMNS]).select_from(want).join(lines, true())
 
 
-def projection_from_rows(rows: Iterable[Any], *, now: datetime) -> dict:
-    """The pair fields and their stamps from one event's recent line readings. Pure."""
+def pair_readings(latest_rows: Iterable[Any], recent_rows: Iterable[Any], *, now: datetime) -> list[tuple[Any, datetime]]:
+    """``[(row, read_at)]``: the lines reading each book contributes, if recent. Pure.
+
+    Per book: its LATEST row, dated by its effective time (`valid_until`, it is
+    still the confirmed reading), when that row carries lines. Otherwise its newest
+    lines row captured inside the bound, dated by `captured_at`, never by the
+    `valid_until` a later moneyline-only row stamped on it.
+    """
     from app.utils.odds_filtering import _effective_time
+
+    cutoff = now - PROJECTION_LINES_BOUND
+    recent_by_book = {}
+    for row in recent_rows:
+        prior = recent_by_book.get(row.bookmaker)
+        if prior is None or row.captured_at > prior.captured_at:
+            recent_by_book[row.bookmaker] = row
+    out = []
+    latest_by_book = {r.bookmaker: r for r in latest_rows}
+    for book in sorted(set(latest_by_book) | set(recent_by_book)):
+        latest = latest_by_book.get(book)
+        if latest is not None and has_lines(latest):
+            row, read_at = latest, _effective_time(latest)
+        else:
+            row = recent_by_book.get(book)
+            read_at = row.captured_at if row is not None else None
+        if row is not None and read_at is not None and read_at >= cutoff:
+            out.append((row, read_at))
+    return out
+
+
+def unavailable(reason: str) -> dict:
+    return {
+        **{field: None for field in _PAIR_FIELDS},
+        "projection_captured_at": None,
+        "projection_bookmaker_count": 0,
+        "projection_unavailable": reason,
+    }
+
+
+def projection_from_rows(latest_rows: Iterable[Any], recent_rows: Iterable[Any], *, now: datetime) -> dict:
+    """The pair fields and their stamps from one event's line readings. Pure."""
     from app.utils.odds_math import aggregate_bookmaker_odds, detect_reversed_bookmakers
 
-    fresh = [r for r in rows if has_lines(r) and _effective_time(r) >= now - PROJECTION_LINES_BOUND]
-    if not fresh:
-        return {
-            **{field: None for field in _PAIR_FIELDS},
-            "projection_captured_at": None,
-            "projection_bookmaker_count": 0,
-            "projection_unavailable": NO_RECENT_LINES,
-        }
-    reversed_books = detect_reversed_bookmakers(fresh)
-    agg = [r for r in fresh if r.bookmaker not in reversed_books] or fresh
-    aggregated = aggregate_bookmaker_odds(agg)
+    readings = pair_readings(latest_rows, recent_rows, now=now)
+    if not readings:
+        return unavailable(NO_RECENT_LINES)
+    rows = [r for r, _ in readings]
+    reversed_books = detect_reversed_bookmakers(rows)
+    kept = [(r, t) for r, t in readings if r.bookmaker not in reversed_books] or readings
+    aggregated = aggregate_bookmaker_odds([r for r, _ in kept])
     return {
         **{field: aggregated.get(field) for field in _PAIR_FIELDS},
-        "projection_captured_at": max(_effective_time(r) for r in agg).isoformat(),
-        "projection_bookmaker_count": len({r.bookmaker for r in agg}),
+        "projection_captured_at": max(t for _, t in kept).isoformat(),
+        "projection_bookmaker_count": len({r.bookmaker for r, _ in kept}),
         "projection_unavailable": None,
     }
 
 
-async def recent_line_projections(db: Any, events: Iterable[Any], *, now: Optional[datetime] = None) -> dict[int, dict]:
-    """``{event_id: projection}`` for the in-scope scheduled events, in ONE statement."""
+async def read_recent_lines(
+    db: Any, pairs: list[tuple[int, str]], *, now: datetime, bounded: bool = True
+) -> dict[int, list]:
+    """``{event_id: [row, …]}``, under a SAVEPOINT and a local timeout. Raises on failure.
+
+    ``bounded`` (the route call sites): SAVEPOINT → ``SET LOCAL
+    statement_timeout`` → the read → ROLLBACK TO SAVEPOINT, always. The read
+    writes nothing, and rolling back reverts the SET LOCAL, so neither the bound
+    nor a failed statement leaks into the request's transaction. The card path
+    passes ``bounded=False`` because it already runs inside its own savepoint and
+    timeout (`read_card_projected_pairs_bounded`). Rows are copied to plain
+    objects first, so nothing read here is expired by the rollback (gotcha #6).
+    """
+    from types import SimpleNamespace
+
+    from sqlalchemy import text
+
+    async def _read() -> dict[int, list]:
+        by_event: dict[int, list] = {}
+        if not pairs:
+            return by_event
+        stmt = recent_lines_query(pairs, since=now - PROJECTION_LINES_BOUND)
+        for row in (await db.execute(stmt)).all():
+            ns = SimpleNamespace(**{c: getattr(row, c, None) for c in _ROW_COLUMNS})
+            by_event.setdefault(ns.event_id, []).append(ns)
+        return by_event
+
+    if not pairs:
+        return {}
+    if not bounded:
+        return await _read()
+    async with db.begin_nested() as savepoint:
+        try:
+            await db.execute(text(f"SET LOCAL statement_timeout = '{int(PROJECTION_READ_CAP_MS)}ms'"))
+            return await _read()
+        finally:
+            await savepoint.rollback()
+
+
+async def recent_line_projections(
+    db: Any, events: Iterable[Any], latest_by_event: dict, *, now: Optional[datetime] = None
+) -> dict[int, dict]:
+    """``{event_id: projection}`` for the in-scope scheduled events, in ONE bounded read.
+
+    A failed read withholds every in-scope pair with ``read_failed``.
+    """
     now = now or _utcnow()
     ids = sorted({int(e.id) for e in events if in_scope(e)})
     if not ids:
         return {}
-    by_event: dict[int, list] = {i: [] for i in ids}
-    for row in (await db.execute(recent_lines_per_bookmaker_query(ids, now=now))).scalars().all():
-        by_event.setdefault(row.event_id, []).append(row)
-    return {eid: projection_from_rows(rows, now=now) for eid, rows in by_event.items()}
+    pairs = books_needing_lines({eid: latest_by_event.get(eid) or [] for eid in ids})
+    try:
+        recent = await read_recent_lines(db, pairs, now=now)
+    except Exception:  # noqa: BLE001 — one stage, not the page; withhold, don't guess
+        logger.exception("recent line readings failed for %d events; withholding", len(ids))
+        return {eid: unavailable(READ_FAILED) for eid in ids}
+    return {
+        eid: projection_from_rows(latest_by_event.get(eid) or [], recent.get(eid) or [], now=now)
+        for eid in ids
+    }
 
 
 def apply_projection(aggregated: dict, projection: Optional[dict]) -> dict:
@@ -219,18 +309,17 @@ def projection_keys(aggregated: Optional[dict]) -> dict:
 
 
 async def apply_recent_line_projections(db: Any, events: Iterable[Any], odds_map: dict, *, now: Optional[datetime] = None) -> None:
-    """Replace each in-scope scheduled event's pair in an `{event_id: {"aggregated": …}}` map, in place.
+    """Replace each in-scope scheduled event's pair in an `{event_id: {"aggregated", "all_snapshots"}}` map, in place.
 
-    Never raises (gotcha #42): if the recent-lines read fails, every event keeps
-    the pair it had, exactly as before this existed, and the failure is logged.
+    ``all_snapshots`` is the latest row per book (unfiltered), which the clock rule
+    needs. Never raises: a failed read withholds the pairs (`read_failed`).
     """
-    events = list(events)
-    wanted = [e for e in events if int(e.id) in odds_map]
-    try:
-        projections = await recent_line_projections(db, wanted, now=now)
-    except Exception:  # noqa: BLE001 — one stage, not the page
-        logger.exception("recent line projections failed; serving today's pair")
-        return
+    events = [e for e in events if int(e.id) in odds_map]
+    latest_by_event = {
+        int(e.id): list((odds_map[int(e.id)] or {}).get("all_snapshots") or [])
+        for e in events
+    }
+    projections = await recent_line_projections(db, events, latest_by_event, now=now)
     for event_id, projection in projections.items():
         entry = odds_map.get(event_id)
         if isinstance(entry, dict) and "aggregated" in entry:

@@ -20575,12 +20575,13 @@ async def get_event(
         )
 
         if _projection_in_scope(event):
-            try:
-                aggregated = _apply_projection(
-                    aggregated, (await _recent_line_projections(db, [event])).get(event.id)
-                )
-            except Exception:  # noqa: BLE001 — gotcha #42: keep today's pair
-                logger.exception("recent line projection failed for event %s", event.id)
+            # Never raises: a failed read withholds the pair (`read_failed`).
+            aggregated = _apply_projection(
+                aggregated,
+                (await _recent_line_projections(
+                    db, [event], {event.id: list(latest_snapshots)}
+                )).get(event.id),
+            )
 
         # Hero probability: use multi-source aggregate (matching feed),
         # fall back to bookmaker-only consensus if aggregate unavailable.

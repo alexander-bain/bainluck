@@ -411,11 +411,11 @@ def attach_card_projected_pair(
             current_odds[key] = pair[key]
 
 
-def scheduled_card_pair(recent_rows: Iterable[Any], *, now: datetime) -> Optional[dict]:
-    """#12595: a scheduled card's pair from the recent line readings, or the reason it has none."""
+def scheduled_card_pair(latest_rows: Iterable[Any], recent_rows: Iterable[Any], *, now: datetime) -> Optional[dict]:
+    """#12595: a scheduled card's pair from its line readings, or the reason it has none."""
     from app.utils.recent_line_readings import projection_from_rows
 
-    projection = projection_from_rows(recent_rows, now=now)
+    projection = projection_from_rows(latest_rows, recent_rows, now=now)
     home = _score(projection.get("projected_home_score"))
     away = _score(projection.get("projected_away_score"))
     if home is None or away is None:
@@ -463,29 +463,31 @@ async def read_card_projected_pairs(db: Any, cards: Iterable[dict]) -> dict[int,
         if eid in by_event and _rl.card_in_scope(card.get("stored_status"), card.get("sport_key"))
     )
     recent_by_event: dict[int, list] = {}
+    recent_failed = False
     _now = _rl._utcnow()
     if scheduled_ids:
         try:
-            rows = (
-                (await db.execute(_rl.recent_lines_per_bookmaker_query(scheduled_ids, now=_now)))
-                .scalars()
-                .all()
+            recent_by_event = await _rl.read_recent_lines(
+                db,
+                _rl.books_needing_lines({eid: by_event[eid] for eid in scheduled_ids}),
+                now=_now,
+                bounded=False,
             )
-        except Exception:  # noqa: BLE001 — gotcha #42: cards keep today's pair
+        except Exception:  # noqa: BLE001 — gotcha #42; withhold, don't serve an unknown age
             logger.exception("recent line readings failed for %d cards", len(scheduled_ids))
-        else:
-            recent_by_event = {eid: [] for eid in scheduled_ids}
-            for row in rows:
-                recent_by_event.setdefault(row.event_id, []).append(row)
+            recent_failed = True
 
     pairs: dict[int, dict] = {}
     for event_id, snaps in by_event.items():
         card = wanted.get(event_id)
         if card is None:
             continue
-        if event_id in recent_by_event:
+        if event_id in scheduled_ids:
+            if recent_failed:
+                pairs[event_id] = {"projection_unavailable": _rl.READ_FAILED}
+                continue
             try:
-                pair = scheduled_card_pair(recent_by_event[event_id], now=_now)
+                pair = scheduled_card_pair(snaps, recent_by_event.get(event_id) or [], now=_now)
             except Exception:  # noqa: BLE001 — gotcha #42: one event, not the page
                 logger.exception("scheduled card pair failed for event %s", event_id)
                 continue
