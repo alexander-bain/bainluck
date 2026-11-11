@@ -1815,6 +1815,7 @@ def _format_game_brief(
             sport_key,
             getattr(event, "period", None),
             getattr(event, "game_clock", None),
+            status=getattr(event, "status", None),
         )
         if display_period:
             espn["period"] = display_period
