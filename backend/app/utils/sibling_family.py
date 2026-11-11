@@ -2589,8 +2589,8 @@ def build_sibling_family_producer(
     kicker = str(definition.get("kicker") or "SIBLING FAMILY")
     story_key = f"roundup:{slug.removeprefix('roundup-')}"
 
-    async def _produce(db: Any) -> Any:
-        return await produce_sibling_family(db, definition)
+    async def _produce(db: Any, *, now: Optional[datetime] = None) -> Any:
+        return await produce_sibling_family(db, definition, now=now)
 
     return RoundupProducer(
         slug=slug,

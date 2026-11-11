@@ -929,11 +929,23 @@ async def _cache_roundup_timeout_refusal(
     )
 
 
+def _normalize_roundup_now(
+    now: Optional[float | datetime],
+) -> tuple[float, Optional[datetime]]:
+    if now is None:
+        return time.time(), None
+    if isinstance(now, datetime):
+        dt = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+        return dt.timestamp(), dt.astimezone(timezone.utc)
+    ts = float(now)
+    return ts, datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
 async def evaluate_roundup_producer(
     producer: RoundupProducer,
     db: Any,
     *,
-    now: Optional[float] = None,
+    now: Optional[float | datetime] = None,
     licences_registry: Optional[dict[str, Any]] = None,
     licences_path: Optional[Path | str] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
@@ -946,7 +958,7 @@ async def evaluate_roundup_producer(
         return None, None
 
     is_fixture_seq = isinstance(db, (list, tuple))
-    ts = time.time() if now is None else float(now)
+    ts, now_dt = _normalize_roundup_now(now)
     # Check before either cache. An old card's warm payload must not outlive
     # its definition at the instant the dated successor takes over (65-A).
     if (producer.valid_from is not None and ts < producer.valid_from) or (
@@ -1023,7 +1035,10 @@ async def evaluate_roundup_producer(
                     exc_info=True,
                 )
 
-    outcome = producer.produce(db)
+    if now_dt is not None and "now" in inspect.signature(producer.produce).parameters:
+        outcome = producer.produce(db, now=now_dt)
+    else:
+        outcome = producer.produce(db)
     if inspect.isawaitable(outcome):
         outcome = await outcome
 
@@ -1115,6 +1130,7 @@ async def serve_roundup(
     db: Any,
     *,
     include_children: bool = True,
+    now: Optional[float | datetime] = None,
 ) -> dict[str, Any]:
     """Serve a registered round-up container, or raise 404 ``{state: unavailable, slug}``."""
     from fastapi import HTTPException
@@ -1130,7 +1146,7 @@ async def serve_roundup(
         raise HTTPException(
             status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
         )
-    _feed_item, payload = await evaluate_roundup_producer(producer, db)
+    _feed_item, payload = await evaluate_roundup_producer(producer, db, now=now)
     if payload is None:
         raise HTTPException(
             status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
@@ -1148,7 +1164,7 @@ async def serve_roundup(
                 continue
             ch_prod = ROUNDUP_PRODUCERS.get(ch_slug)
             if ch_prod is not None:
-                _ch_fi, ch_payload = await evaluate_roundup_producer(ch_prod, db)
+                _ch_fi, ch_payload = await evaluate_roundup_producer(ch_prod, db, now=now)
                 if ch_payload is None or ch_payload.get("state") != "published":
                     continue
                 ch_copy = dict(ch)
@@ -1173,7 +1189,7 @@ async def serve_roundup(
         p_slug = str(parent_obj.get("slug") or "").strip()
         p_prod = ROUNDUP_PRODUCERS.get(p_slug) if p_slug else None
         if p_prod is not None:
-            _p_fi, p_payload = await evaluate_roundup_producer(p_prod, db)
+            _p_fi, p_payload = await evaluate_roundup_producer(p_prod, db, now=now)
             if p_payload is None or p_payload.get("state") != "published":
                 _strip_parent_from_payload(out)
         elif p_slug:
@@ -1188,11 +1204,17 @@ async def serve_roundup(
     return out
 
 
-async def roundup_feed_items(db: Any) -> list[dict[str, Any]]:
+async def roundup_feed_items(
+    db: Any,
+    *,
+    now: Optional[float | datetime] = None,
+) -> list[dict[str, Any]]:
     """Evaluate every registered producer and return feed cards whose containers would be served."""
     items: list[dict[str, Any]] = []
     for producer in list(ROUNDUP_PRODUCERS.values()):
-        feed_item, container_payload = await evaluate_roundup_producer(producer, db)
+        feed_item, container_payload = await evaluate_roundup_producer(
+            producer, db, now=now
+        )
         if feed_item is not None and container_payload is not None:
             items.append(feed_item)
     return items
@@ -2051,7 +2073,7 @@ async def add_roundup_feed_items(
         per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
         try:
             feed_item, container_payload = await asyncio.wait_for(
-                evaluate_roundup_producer(producer, db),
+                evaluate_roundup_producer(producer, db, now=now),
                 timeout=per_timeout,
             )
         except asyncio.TimeoutError:

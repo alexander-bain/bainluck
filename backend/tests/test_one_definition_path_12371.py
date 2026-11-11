@@ -143,7 +143,8 @@ class TestOneDefinitionPathFolderRegistration:
             },
         ]
 
-        cards = await roundup_feed_items(pool)
+        now_nov_8 = datetime(2026, 11, 8, 18, 0, tzinfo=timezone.utc)
+        cards = await roundup_feed_items(pool, now=now_nov_8)
         assert len(cards) == 1
         card = cards[0]
         assert card["type"] == "bundle"
@@ -165,7 +166,7 @@ class TestOneDefinitionPathFolderRegistration:
         ]
 
         reset_roundup_cache_for_tests()
-        container = await serve_roundup(slug, pool)
+        container = await serve_roundup(slug, pool, now=now_nov_8)
         assert container is not None
         assert container["state"] == "published"
         assert container["slug"] == slug
