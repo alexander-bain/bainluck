@@ -340,8 +340,13 @@ def build_slate(
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """(served order, candidates): every served card first, in served order,
     with ``served_position`` = served index + 1 (no card is skipped); then unserved scored futures with
-    ``served_position`` None; never more than ``cap`` candidates in total. The
-    first :data:`OPENING_CARDS` also carry their served payload as ``card``."""
+    ``served_position`` None; never more than ``cap`` candidates in total.
+
+    #11937: EVERY candidate carries ``card``, the payload a reader would be
+    shown: a served card its served payload at any position, an unserved one the
+    scored item it was ranked from (the same feed-item shape). It used to be the
+    first :data:`OPENING_CARDS` only, so /grade drew every deeper card as a bare
+    title or a nameless percent and Alex couldn't grade it."""
     served_order: list[str] = []
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -358,8 +363,7 @@ def build_slate(
         seen.add(key)
         served_order.append(key)
         if len(candidates) < cap:
-            extra = {"card": _json_safe(dict(item))} if position <= OPENING_CARDS else {}
-            candidates.append({**feats, "served_position": position, **extra})
+            candidates.append({**feats, "served_position": position, "card": _json_safe(dict(item))})
     for item in scored_futures:
         if len(candidates) >= cap:
             break
@@ -367,7 +371,7 @@ def build_slate(
         if feats is None or feats["item_key"] in seen:
             continue
         seen.add(feats["item_key"])
-        candidates.append({**feats, "served_position": None})
+        candidates.append({**feats, "served_position": None, "card": _json_safe(dict(item))})
     return served_order, candidates
 
 
