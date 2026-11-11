@@ -1064,3 +1064,186 @@ def test_repo_gap_targets_json_loads_cleanly_and_backend_mirror_matches():
         assert backend_copy.read_text(encoding="utf-8") == frontend_copy.read_text(
             encoding="utf-8"
         )
+
+
+# --------------------------------------------------------------------------
+# #1449 / #12487 — Daily Launch Board ('Nov 2026 launch') hygiene checks
+# --------------------------------------------------------------------------
+def test_parse_review_by_date_handles_weekday_month_day_and_iso():
+    assert (
+        bs._parse_review_by_date(
+            "**Parked** (backlog cleanup, #12487). Review by **Mon Dec 7**.",
+            default_year=2026,
+        )
+        == "2026-12-07"
+    )
+    assert (
+        bs._parse_review_by_date(
+            "**Parked** (backlog cleanup, #12487). Review by **Mon Jan 4, 2027**.",
+            default_year=2026,
+        )
+        == "2027-01-04"
+    )
+    assert (
+        bs._parse_review_by_date("Review by: 2026-11-30", default_year=2026)
+        == "2026-11-30"
+    )
+    assert bs._parse_review_by_date("Regular comment with no date") is None
+
+
+def test_launch_board_checks_flag_untracked_missing_fields_parked_and_taxonomy():
+    issues = [
+        # #100: clean P1 item on launch board with Owner, Status, Priority, Start, Target,
+        #       parent epic, and 1 pillar + 1 area label.
+        {
+            **_iss(
+                100,
+                title="Clean P1 item",
+                labels=("pillar:discover", "area:discover", "priority:p1"),
+            ),
+            "parent_number": 12288,
+        },
+        # #101: open issue neither on the launch board nor parked (check 1)
+        {
+            **_iss(
+                101,
+                title="Untracked open issue",
+                labels=("pillar:truth", "area:backend", "priority:p2"),
+            ),
+            "parent_number": 12292,
+        },
+        # #102: on the launch board but missing Owner & Priority, and missing parent + pillar (checks 2 & 4)
+        {
+            **_iss(
+                102,
+                title="Board item missing fields and parent",
+                labels=("area:frontend", "area:discover", "priority:p2"),
+            ),
+            "parent_number": None,
+        },
+        # #103: P1 on the launch board missing Start date (check 2)
+        {
+            **_iss(
+                103,
+                title="P1 missing Start date",
+                labels=("pillar:formatting", "area:event-details", "priority:p1"),
+            ),
+            "parent_number": 12284,
+        },
+        # #104: parked issue still on the launch board AND past its Review-by date (check 3)
+        {
+            **_iss(
+                104,
+                title="Parked issue on board and past review-by",
+                labels=("pillar:discover", "area:search", "parked", "priority:p3"),
+            ),
+            "parent_number": 12290,
+            "comments": [
+                {
+                    "body": "**Parked** (#12487). Review by **Mon Nov 2**.",
+                    "created_at": "2026-10-20T12:00:00Z",
+                }
+            ],
+        },
+        # #11852: taxonomy-exempt meta issue -> never flagged by any launch board check
+        _iss(11852, title="NOW", labels=("taxonomy-exempt",)),
+        # #12288: epic -> exempt from needing a parent epic
+        _iss(
+            12288,
+            title="Epic: Dynamic Groupings",
+            labels=("pillar:discover", "area:discover", "priority:p1"),
+        ),
+    ]
+    launch_board_items = {
+        100: {
+            "owner": "Atlas (Builder D)",
+            "status": "In Progress",
+            "priority": "P1",
+            "start": "2026-11-08",
+            "target": "2026-11-13",
+        },
+        102: {
+            "owner": None,
+            "status": "Todo",
+            "priority": None,
+            "start": None,
+            "target": None,
+        },
+        103: {
+            "owner": "Speed",
+            "status": "Todo",
+            "priority": "P1",
+            "start": None,
+            "target": "2026-11-15",
+        },
+        104: {
+            "owner": "Builder B (Codex)",
+            "status": "Todo",
+            "priority": "P3",
+            "start": None,
+            "target": None,
+        },
+        12288: {
+            "owner": "Atlas (Builder D)",
+            "status": "In Progress",
+            "priority": "P1",
+            "start": "2026-11-08",
+            "target": "2026-11-13",
+        },
+    }
+
+    untracked = bs.check_launch_board_untracked(issues, launch_board_items)
+    assert [f["issue"] for f in untracked] == [101]
+
+    field_findings = bs.check_launch_board_fields(issues, launch_board_items)
+    assert [
+        (f["check"], f["issue"]) for f in field_findings
+    ] == [
+        ("launch_board_missing_fields", 102),
+        ("launch_board_p1_missing_dates", 103),
+    ]
+    assert field_findings[0]["missing_fields"] == ["Owner", "Priority"]
+    assert field_findings[1]["missing_dates"] == ["Start"]
+
+    parked_findings = bs.check_launch_board_parked(
+        issues, launch_board_items, today="2026-11-10"
+    )
+    assert [
+        (f["check"], f["issue"]) for f in parked_findings
+    ] == [
+        ("launch_board_parked_on_board", 104),
+        ("launch_board_parked_review_due", 104),
+    ]
+
+    taxonomy_findings = bs.check_launch_board_parent_and_labels(issues)
+    assert [
+        (f["check"], f["issue"]) for f in taxonomy_findings
+    ] == [
+        ("launch_board_missing_parent", 102),
+        ("launch_board_taxonomy_labels", 102),
+    ]
+
+
+def test_classify_board_launch_checks_report_unknown_when_reads_fail():
+    issues = [
+        _iss(
+            100,
+            title="Clean item",
+            labels=("pillar:discover", "area:discover", "needs-agent", "priority:p2"),
+            column="In Progress",
+        )
+    ]
+    c = bs.classify_board(
+        issues,
+        NOW,
+        columns_available=True,
+        project_numbers={100},
+        launch_board_items=None,
+        launch_issue_metadata=None,
+        launch_board_check_enabled=True,
+    )
+    assert c["real"] == []
+    unknown_checks = {u["check"] for u in c["unknown"]}
+    assert "launch_board_items" in unknown_checks
+    assert "launch_issue_metadata" in unknown_checks
+    assert bs.board_verdict(c) == "unknown"

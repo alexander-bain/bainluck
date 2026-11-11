@@ -595,6 +595,272 @@ def check_evals_gap_targets(
 
 
 # ---------------------------------------------------------------------------
+# #1449 / #12487 — Daily Launch Board ('Nov 2026 launch') hygiene check
+# ---------------------------------------------------------------------------
+LAUNCH_PROJECT_ID = "PVT_kwHOC0ai9c4Bp5gq"
+_LAUNCH_EPIC_NUMBERS = frozenset({
+    12284, 12285, 12286, 12287, 12288, 12289, 12290,
+    12291, 12292, 12293, 12294, 12295, 12296, 12297,
+    12470,
+})
+_MONTH_MAP = {
+    "jan": 1, "january": 1,
+    "feb": 2, "february": 2,
+    "mar": 3, "march": 3,
+    "apr": 4, "april": 4,
+    "may": 5,
+    "jun": 6, "june": 6,
+    "jul": 7, "july": 7,
+    "aug": 8, "august": 8,
+    "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10,
+    "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}
+
+
+def _parse_review_by_date(text: str | None, default_year: int = 2026) -> str | None:
+    """Extract a 'YYYY-MM-DD' date from a park comment containing a 'Review by ...'
+    phrase (e.g. 'Review by **Mon Dec 7**.', 'Review by **Mon Jan 4, 2027**.',
+    'Review by 2026-12-07'). Returns None if no Review-by date is present."""
+    if not text:
+        return None
+    import re
+
+    iso_match = re.search(
+        r"review\s+by\s*:?\s*\*{0,2}\s*(\d{4}-\d{2}-\d{2})\b",
+        text,
+        re.IGNORECASE,
+    )
+    if iso_match:
+        return iso_match.group(1)
+
+    named_match = re.search(
+        r"review\s+by\s*:?\s*\*{0,2}\s*"
+        r"(?:(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|"
+        r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)\.?,?\s+)?"
+        r"([a-zA-Z]+)\.?\s+(\d{1,2})(?:,\s*(\d{4}))?",
+        text,
+        re.IGNORECASE,
+    )
+    if not named_match:
+        return None
+    month_num = _MONTH_MAP.get(named_match.group(1).lower())
+    if month_num is None:
+        return None
+    day_num = int(named_match.group(2))
+    year_num = int(named_match.group(3)) if named_match.group(3) else default_year
+    if not (1 <= day_num <= 31):
+        return None
+    return f"{year_num:04d}-{month_num:02d}-{day_num:02d}"
+
+
+def _extract_latest_review_by(
+    comments: list[dict] | None,
+    body: str | None = None,
+    default_year: int = 2026,
+) -> str | None:
+    """Return the latest 'Review by' date ('YYYY-MM-DD') across an issue's comments
+    (falling back to the issue body)."""
+    latest: str | None = None
+    for c in comments or []:
+        c_body = c.get("body") if isinstance(c, dict) else str(c or "")
+        c_year = default_year
+        if isinstance(c, dict) and c.get("created_at"):
+            dt = _parse_dt(str(c.get("created_at")))
+            if dt is not None:
+                c_year = dt.year
+        parsed = _parse_review_by_date(c_body, default_year=c_year)
+        if parsed:
+            latest = parsed
+    if latest is None and body:
+        latest = _parse_review_by_date(body, default_year=default_year)
+    return latest
+
+
+def _is_launch_epic(issue: dict) -> bool:
+    num = issue.get("number")
+    if num in _LAUNCH_EPIC_NUMBERS:
+        return True
+    labels = set(_labels(issue))
+    if "epic" in labels:
+        return True
+    title = str(issue.get("title") or "").strip().lower()
+    return title.startswith("epic:")
+
+
+def check_launch_board_untracked(
+    issues: list[dict],
+    launch_board_items: dict[int, dict],
+) -> list[dict]:
+    """#1449 / #12487 (1): open issues neither on the launch board nor labelled
+    ``parked``, leaving out ``taxonomy-exempt``."""
+    out: list[dict] = []
+    for i in issues:
+        num = i.get("number")
+        if num is None:
+            continue
+        labels = set(_labels(i))
+        if "taxonomy-exempt" in labels or "parked" in labels:
+            continue
+        if num not in launch_board_items:
+            title = (i.get("title") or "")[:60]
+            out.append({
+                "check": "launch_board_untracked",
+                "issue": num,
+                "detail": f"#{num} '{title}' is open and neither on the launch board "
+                          f"nor labelled 'parked' — add it to the launch board or park it",
+            })
+    return out
+
+
+def check_launch_board_fields(
+    issues: list[dict],
+    launch_board_items: dict[int, dict],
+) -> list[dict]:
+    """#1449 / #12487 (2): launch board items with no Owner, Status or Priority, and
+    P1s with no Start or Target."""
+    by_num = {i.get("number"): i for i in issues if i.get("number") is not None}
+    out: list[dict] = []
+    for num in sorted(launch_board_items):
+        item = launch_board_items.get(num) or {}
+        issue = by_num.get(num) or {}
+        title = (issue.get("title") or item.get("title") or "")[:60]
+        owner = item.get("owner")
+        status = item.get("status")
+        priority = item.get("priority")
+        start = item.get("start")
+        target = item.get("target")
+
+        missing_fields = [
+            name
+            for name, val in (("Owner", owner), ("Status", status), ("Priority", priority))
+            if not val
+        ]
+        if missing_fields:
+            out.append({
+                "check": "launch_board_missing_fields",
+                "issue": num,
+                "missing_fields": missing_fields,
+                "detail": f"#{num} '{title}' is on the launch board without "
+                          f"{', '.join(missing_fields)}",
+            })
+
+        if priority == "P1":
+            missing_dates = [
+                name for name, val in (("Start", start), ("Target", target)) if not val
+            ]
+            if missing_dates:
+                out.append({
+                    "check": "launch_board_p1_missing_dates",
+                    "issue": num,
+                    "missing_dates": missing_dates,
+                    "detail": f"#{num} '{title}' is P1 on the launch board without "
+                              f"{', '.join(missing_dates)}",
+                })
+    return out
+
+
+def check_launch_board_parked(
+    issues: list[dict],
+    launch_board_items: dict[int, dict] | None,
+    *,
+    today: str | None = None,
+    issue_metadata: dict[int, dict] | None = None,
+    metadata_available: bool = True,
+) -> list[dict]:
+    """#1449 / #12487 (3): parked issues still on the launch board, and parked issues
+    whose review-by date (the 'Review by' line in the park comment) has passed."""
+    out: list[dict] = []
+    default_year = int(today[:4]) if (today and len(today) >= 4 and today[:4].isdigit()) else 2026
+    for i in issues:
+        num = i.get("number")
+        if num is None:
+            continue
+        labels = set(_labels(i))
+        if "parked" not in labels:
+            continue
+        title = (i.get("title") or "")[:60]
+        if launch_board_items is not None and num in launch_board_items:
+            out.append({
+                "check": "launch_board_parked_on_board",
+                "issue": num,
+                "detail": f"#{num} '{title}' is labelled 'parked' but still sits on "
+                          f"the launch board — remove it from the board or unpark it",
+            })
+
+        if today and (metadata_available or "review_by" in i or "comments" in i):
+            meta = (issue_metadata or {}).get(num) or {}
+            review_by = (
+                i.get("review_by")
+                or meta.get("review_by")
+                or _extract_latest_review_by(
+                    i.get("comments") or meta.get("comments"),
+                    body=i.get("body"),
+                    default_year=default_year,
+                )
+            )
+            if isinstance(review_by, str) and review_by < today:
+                out.append({
+                    "check": "launch_board_parked_review_due",
+                    "issue": num,
+                    "review_by": review_by,
+                    "today": today,
+                    "detail": f"#{num} '{title}' is parked with Review by {review_by} "
+                              f"(past due before {today}) — review, unpark or extend",
+                })
+    return out
+
+
+def check_launch_board_parent_and_labels(
+    issues: list[dict],
+    issue_metadata: dict[int, dict] | None = None,
+    *,
+    metadata_available: bool = True,
+) -> list[dict]:
+    """#1449 / #12487 (4): open issues with no parent epic (epics and taxonomy-exempt
+    excepted), or without exactly one ``pillar:`` and one ``area:`` label
+    (taxonomy-exempt excepted)."""
+    out: list[dict] = []
+    for i in issues:
+        num = i.get("number")
+        if num is None:
+            continue
+        labels = _labels(i)
+        labelset = set(labels)
+        if "taxonomy-exempt" in labelset:
+            continue
+        title = (i.get("title") or "")[:60]
+
+        if (metadata_available or "parent_number" in i) and not _is_launch_epic(i):
+            meta = (issue_metadata or {}).get(num) or {}
+            parent_num = (
+                i.get("parent_number")
+                if "parent_number" in i
+                else meta.get("parent_number")
+            )
+            if not parent_num:
+                out.append({
+                    "check": "launch_board_missing_parent",
+                    "issue": num,
+                    "detail": f"#{num} '{title}' has no parent epic — attach it to one epic",
+                })
+
+        pillars = sorted(str(lbl) for lbl in labels if str(lbl).startswith("pillar:"))
+        areas = sorted(str(lbl) for lbl in labels if str(lbl).startswith("area:"))
+        if len(pillars) != 1 or len(areas) != 1:
+            out.append({
+                "check": "launch_board_taxonomy_labels",
+                "issue": num,
+                "pillars": pillars,
+                "areas": areas,
+                "detail": f"#{num} '{title}' must carry exactly one pillar:* and one "
+                          f"area:* label (has pillars={pillars}, areas={areas})",
+            })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Classification → verdict. REAL = any objective violation. UNKNOWN = a check
 # could not run (no column data / fetch failure). GREEN = everything ran clean.
 # ---------------------------------------------------------------------------
@@ -612,6 +878,9 @@ def classify_board(
     evals_gap_targets: dict | None = None,
     launch_board_targets: dict[int, str | None] | None = None,
     evals_gap_check_enabled: bool = False,
+    launch_board_items: dict[int, dict] | None = None,
+    launch_issue_metadata: dict[int, dict] | None = None,
+    launch_board_check_enabled: bool = False,
 ) -> dict:
     """Run every check and split into real findings + unknown checks. ``now``,
     ``columns_available`` and the Project data are injected so the whole
@@ -694,13 +963,14 @@ def classify_board(
     for err in fetch_errors:
         unknown.append({"check": "fetch_error", "detail": err.get("detail", str(err))})
 
+    today_iso = (
+        now.strftime("%Y-%m-%d")
+        if hasattr(now, "strftime")
+        else None
+    )
+
     if evals_gap_check_enabled:
         if evals_gap_targets is not None and launch_board_targets is not None:
-            today_iso = (
-                now.strftime("%Y-%m-%d")
-                if hasattr(now, "strftime")
-                else None
-            )
             real += check_evals_gap_targets(
                 evals_gap_targets,
                 issues,
@@ -714,6 +984,44 @@ def classify_board(
                 "detail": "Launch board Target field or gap-targets.json unavailable "
                           "— /evals gap-date parity check could not run (UNKNOWN, not GREEN)",
             })
+
+    if launch_board_check_enabled:
+        if launch_board_items is not None:
+            real += check_launch_board_untracked(issues, launch_board_items)
+            real += check_launch_board_fields(issues, launch_board_items)
+        else:
+            unknown.append({
+                "check": "launch_board_items",
+                "detail": "Launch board (Nov 2026 launch) GraphQL read unavailable "
+                          "— untracked, field, and parked-on-board checks could not run "
+                          "(UNKNOWN, not GREEN)",
+            })
+
+        inline_metadata = any(
+            "parent_number" in i or "review_by" in i or "comments" in i
+            for i in issues
+        )
+        metadata_available = launch_issue_metadata is not None or inline_metadata
+        if not metadata_available and issues:
+            unknown.append({
+                "check": "launch_issue_metadata",
+                "detail": "Open-issue parent/comment GraphQL read unavailable "
+                          "— missing-parent and parked review-by checks could not run "
+                          "(UNKNOWN, not GREEN)",
+            })
+
+        real += check_launch_board_parked(
+            issues,
+            launch_board_items,
+            today=today_iso,
+            issue_metadata=launch_issue_metadata,
+            metadata_available=metadata_available,
+        )
+        real += check_launch_board_parent_and_labels(
+            issues,
+            launch_issue_metadata,
+            metadata_available=metadata_available,
+        )
 
     return {
         "real": real,
@@ -1018,13 +1326,15 @@ def _load_evals_gap_targets(path: Any = None) -> dict | None:
     return None
 
 
-def _fetch_launch_board_targets(
-    project_id: str,
+def _fetch_launch_board_items(
+    project_id: str = LAUNCH_PROJECT_ID,
     deadline: float | None = None,
-) -> dict[int, str | None] | None:
-    """Read issue number → ``Target`` date ('YYYY-MM-DD' or None) from the launch
-    project board (#12467). Returns ``None`` on any read failure so the check
-    reports UNKNOWN rather than a false GREEN or false RED."""
+) -> dict[int, dict] | None:
+    """Read OPEN Bain Luck issue items from the launch project board ('Nov 2026 launch',
+    #1449 / #12487 / #12467):
+      ``{issue_number: {status, owner, priority, start, target}}``
+    Returns ``None`` on any read failure, malformed response, or truncated pagination
+    so the sentinel reports UNKNOWN rather than a false GREEN or false RED."""
     from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
 
     if not GITHUB_TOKEN or not project_id:
@@ -1037,12 +1347,25 @@ def _fetch_launch_board_targets(
           items(first: 100, after: $cursor) {
             pageInfo { hasNextPage endCursor }
             nodes {
+              status: fieldValueByName(name: "Status") {
+                ... on ProjectV2ItemFieldSingleSelectValue { name }
+              }
+              owner: fieldValueByName(name: "Owner") {
+                ... on ProjectV2ItemFieldSingleSelectValue { name }
+              }
+              priority: fieldValueByName(name: "Priority") {
+                ... on ProjectV2ItemFieldSingleSelectValue { name }
+              }
+              start: fieldValueByName(name: "Start") {
+                ... on ProjectV2ItemFieldDateValue { date }
+              }
               target: fieldValueByName(name: "Target") {
                 ... on ProjectV2ItemFieldDateValue { date }
               }
               content {
                 __typename
                 ... on Issue { number state repository { nameWithOwner } }
+                ... on PullRequest { number state repository { nameWithOwner } }
               }
             }
           }
@@ -1050,7 +1373,7 @@ def _fetch_launch_board_targets(
       }
     }
     """
-    targets: dict[int, str | None] = {}
+    board_items: dict[int, dict] = {}
     cursor = None
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
@@ -1060,7 +1383,7 @@ def _fetch_launch_board_targets(
     try:
         for _ in range(_PROJECT_MAX_PAGES):
             if deadline is not None and _time.monotonic() > deadline:
-                logger.warning("Board sentinel: launch board Target read exceeded deadline")
+                logger.warning("Board sentinel: launch board read exceeded deadline")
                 return None
             resp = httpx.post(
                 "https://api.github.com/graphql",
@@ -1094,18 +1417,141 @@ def _fetch_launch_board_targets(
                 num = content.get("number")
                 if num is None:
                     continue
-                date_val = ((card or {}).get("target") or {}).get("date")
-                targets[num] = str(date_val) if date_val else None
+                status_val = ((card or {}).get("status") or {}).get("name")
+                owner_val = ((card or {}).get("owner") or {}).get("name")
+                priority_val = ((card or {}).get("priority") or {}).get("name")
+                start_val = ((card or {}).get("start") or {}).get("date")
+                target_val = ((card or {}).get("target") or {}).get("date")
+                board_items[num] = {
+                    "status": str(status_val) if status_val else None,
+                    "owner": str(owner_val) if owner_val else None,
+                    "priority": str(priority_val) if priority_val else None,
+                    "start": str(start_val) if start_val else None,
+                    "target": str(target_val) if target_val else None,
+                }
             if not page.get("hasNextPage"):
                 truncated = False
                 break
             cursor = page.get("endCursor")
     except Exception as exc:
-        logger.warning("Board sentinel: launch board Target fetch failed: %s", exc)
+        logger.warning("Board sentinel: launch board fetch failed: %s", exc)
         return None
     if truncated:
         return None
-    return targets
+    return board_items
+
+
+def _fetch_launch_board_targets(
+    project_id: str,
+    deadline: float | None = None,
+) -> dict[int, str | None] | None:
+    """Read issue number → ``Target`` date ('YYYY-MM-DD' or None) from the launch
+    project board (#12467). Returns ``None`` on any read failure so the check
+    reports UNKNOWN rather than a false GREEN or false RED."""
+    items = _fetch_launch_board_items(project_id, deadline=deadline)
+    if items is None:
+        return None
+    return {num: val.get("target") for num, val in items.items()}
+
+
+def _fetch_open_issue_metadata(
+    deadline: float | None = None,
+    default_year: int = 2026,
+) -> dict[int, dict] | None:
+    """Read parent epic number and latest 'Review by' date for all OPEN repository
+    issues via GraphQL (#1449 / #12487). Returns ``None`` on any failure, malformed
+    payload, or truncated pagination so dependent checks report UNKNOWN (never GREEN)."""
+    from app.tasks.bug_report_github import GITHUB_TOKEN, REPO
+
+    if not GITHUB_TOKEN or not REPO or "/" not in REPO:
+        return None
+    owner, name = REPO.split("/", 1)
+    query = """
+    query($owner: String!, $name: String!, $cursor: String) {
+      repository(owner: $owner, name: $name) {
+        issues(states: OPEN, first: 100, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            number
+            body
+            parent { number }
+            comments(last: 10) {
+              nodes { body createdAt }
+            }
+          }
+        }
+      }
+    }
+    """
+    metadata: dict[int, dict] = {}
+    cursor = None
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    truncated = True
+    try:
+        for _ in range(_OPEN_ISSUES_MAX_PAGES):
+            if deadline is not None and _time.monotonic() > deadline:
+                logger.warning("Board sentinel: open-issue metadata read exceeded deadline")
+                return None
+            resp = httpx.post(
+                "https://api.github.com/graphql",
+                headers=headers,
+                json={"query": query, "variables": {"owner": owner, "name": name, "cursor": cursor}},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if not isinstance(data, dict) or data.get("errors"):
+                return None
+            repo_node = (data.get("data") or {}).get("repository")
+            if not isinstance(repo_node, dict):
+                return None
+            issues_conn = repo_node.get("issues")
+            if not isinstance(issues_conn, dict):
+                return None
+            nodes = issues_conn.get("nodes")
+            page = issues_conn.get("pageInfo")
+            if not isinstance(nodes, list) or not isinstance(page, dict):
+                return None
+            for issue_node in nodes:
+                if not isinstance(issue_node, dict):
+                    continue
+                num = issue_node.get("number")
+                if num is None:
+                    continue
+                parent = issue_node.get("parent")
+                parent_num = parent.get("number") if isinstance(parent, dict) else None
+                raw_comments = ((issue_node.get("comments") or {}).get("nodes") or [])
+                comments = [
+                    {
+                        "body": c.get("body") or "",
+                        "created_at": c.get("createdAt"),
+                    }
+                    for c in raw_comments
+                    if isinstance(c, dict)
+                ]
+                review_by = _extract_latest_review_by(
+                    comments,
+                    body=issue_node.get("body"),
+                    default_year=default_year,
+                )
+                metadata[num] = {
+                    "parent_number": parent_num,
+                    "review_by": review_by,
+                    "comments": comments,
+                }
+            if not page.get("hasNextPage"):
+                truncated = False
+                break
+            cursor = page.get("endCursor")
+    except Exception as exc:
+        logger.warning("Board sentinel: open-issue metadata fetch failed: %s", exc)
+        return None
+    if truncated:
+        return None
+    return metadata
 
 
 def _fetch_board_state(deadline: float | None = None) -> tuple[list[dict], dict, list[dict]]:
@@ -1187,13 +1633,26 @@ def _fetch_board_state(deadline: float | None = None) -> tuple[list[dict], dict,
             "column": None if num in dup_set else columns.get(num),
         })
     evals_gap_targets = _load_evals_gap_targets()
+    launch_project_id = (
+        str(evals_gap_targets.get("project_id") or LAUNCH_PROJECT_ID)
+        if isinstance(evals_gap_targets, dict)
+        else LAUNCH_PROJECT_ID
+    )
+    launch_board_items = _fetch_launch_board_items(
+        launch_project_id, deadline=deadline
+    )
     launch_board_targets: dict[int, str | None] | None = None
     evals_gap_check_enabled = True
     if evals_gap_targets is not None:
-        launch_project_id = str(evals_gap_targets.get("project_id") or "")
-        launch_board_targets = _fetch_launch_board_targets(
-            launch_project_id, deadline=deadline
-        )
+        if launch_board_items is not None:
+            launch_board_targets = {
+                num: item.get("target") for num, item in launch_board_items.items()
+            }
+        else:
+            launch_board_targets = _fetch_launch_board_targets(
+                launch_project_id, deadline=deadline
+            )
+    launch_issue_metadata = _fetch_open_issue_metadata(deadline=deadline)
 
     board = {
         "columns_available": columns_available,
@@ -1204,6 +1663,9 @@ def _fetch_board_state(deadline: float | None = None) -> tuple[list[dict], dict,
         "evals_gap_targets": evals_gap_targets,
         "launch_board_targets": launch_board_targets,
         "evals_gap_check_enabled": evals_gap_check_enabled,
+        "launch_board_items": launch_board_items,
+        "launch_issue_metadata": launch_issue_metadata,
+        "launch_board_check_enabled": True,
     }
     return issues, board, errors
 
@@ -1457,6 +1919,9 @@ async def _run_board_sentinel(
         evals_gap_targets=board.get("evals_gap_targets"),
         launch_board_targets=board.get("launch_board_targets"),
         evals_gap_check_enabled=board.get("evals_gap_check_enabled", False),
+        launch_board_items=board.get("launch_board_items"),
+        launch_issue_metadata=board.get("launch_issue_metadata"),
+        launch_board_check_enabled=board.get("launch_board_check_enabled", False),
     )
     verdict = board_verdict(classified)
 
