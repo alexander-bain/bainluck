@@ -37,6 +37,10 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
         /// Actual request cutoff. Nil ONLY for an unbounded/full-history route.
         /// Current wire does not mark cutoff restamps; reject through cutoff+2m.
         let requestCutoffAt: Date?
+        /// #12578 — the score at the floor, when the floor's own evidence says it
+        /// (`ProjectedFinalPointsMount.openingScore`). Nil draws the score from
+        /// its first recorded reading, as before.
+        var openingScore: Actual? = nil
     }
     struct Point: Equatable {
         let at: Date
@@ -96,6 +100,8 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
     /// kickoff instant: the chart opens there and marks it. Nil before a game,
     /// or when no drawn projection was holding at kickoff.
     var kickoffProjection: Point? = nil
+    /// #12578 — the score line opens at the floor (``Input/openingScore``).
+    var scoreOpensAtFloor = false
     let yMax: Double
     let tickStep: Double
     var yTicks: [Double] { Array(stride(from: 0, through: yMax, by: tickStep)) }
@@ -151,11 +157,21 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
         }
         let start = input.windowStartAt ?? defaultStart
         guard start <= end else { return nil }
-        let actuals = input.actuals.filter {
+        var actuals = input.actuals.filter {
             phase != .before && floor != nil &&
             validTime($0.at) && $0.at >= (floor ?? end) && $0.at <= end &&
             isPoints($0.home) && isPoints($0.away)
         }.sorted { $0.at < $1.at }
+        // #12578 — Fable, on the started card: the dashed score began at the first
+        // capture, 20 minutes in, though the game was 0–0 from kickoff. The score
+        // opens at the floor only on the floor's own evidence, and only ahead of a
+        // recorded score: alone, it would claim the game is still 0–0 now.
+        var opensAtFloor = false
+        if let opening = input.openingScore, let floor, opening.at == floor,
+           let first = actuals.first, first.at > floor {
+            actuals.insert(opening, at: 0)
+            opensAtFloor = true
+        }
 
         // Keep invalid captures in order: they break a run instead of disappearing.
         let rows = input.pairs.enumerated().filter {
@@ -206,10 +222,12 @@ nonisolated struct ProjectedFinalPointsSeries: Equatable {
         let actualHigh = actuals.map { max($0.home, $0.away) }.max() ?? 0
         let step = league.tickStep
         let yMax = max(step, ceil((max(forecastHigh, actualHigh) + step / 4) / step) * step)
-        return Self(sourceKey: input.sourceKey, sourceName: sourceName, phase: phase,
+        var series = Self(sourceKey: input.sourceKey, sourceName: sourceName, phase: phase,
                     segments: segments, withheld: withheld, actualSteps: actuals,
                     start: start, end: end, latest: latest, latestActual: actual(at: end, in: actuals),
                     latestIntervalUnavailable: unavailable, kickoffProjection: kickoffPoint, yMax: yMax, tickStep: step)
+        series.scoreOpensAtFloor = opensAtFloor
+        return series
     }
 
     /// Freeze the original window and clip both quantities, so inspection never

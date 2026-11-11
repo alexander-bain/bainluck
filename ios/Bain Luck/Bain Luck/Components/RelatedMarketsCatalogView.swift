@@ -10,8 +10,9 @@ import SwiftUI
 /// before this they had no way onto the page.
 enum RelatedMarketsCatalog {
     /// The family a served `display_category` is browsed under. A category
-    /// with no entry, or no category at all, is "More questions" — a row is
-    /// never given a classification the server did not make.
+    /// with no entry, or no category at all, is "Other markets" — a row is
+    /// never given a classification the server did not make. #11547: never
+    /// "More questions"; a reader has no idea what a "question" is.
     static let familyNames: [String: String] = [
         "playoff_path": "Season outcomes",
         "conference": "Conference",
@@ -19,9 +20,9 @@ enum RelatedMarketsCatalog {
         "award": "Awards",
         "series": "Series",
         "trade": "Next team",
-        "novelty": "More questions",
+        "novelty": "Other markets",
     ]
-    static let fallbackFamily = "More questions"
+    static let fallbackFamily = "Other markets"
     /// Pill order. Families not listed sort after these, by name.
     static let familyOrder = [
         "Season outcomes", "Conference", "Awards", "Season totals", "Series", "Next team",

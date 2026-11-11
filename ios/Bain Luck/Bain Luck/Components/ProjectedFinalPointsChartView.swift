@@ -90,11 +90,15 @@ struct ProjectedFinalPointsChartView: View {
             // The chip strip is added on top, so it never eats the plot's height.
             plot(full, markers: markers)
                 .frame(height: height + (markers.isEmpty ? 0 : Self.markerStripHeight))
-            // #12578 — the method notes live behind "How to read this", so the
-            // card itself carries one grey line.
+            // #12578 — the method notes and the recorded times live behind
+            // "How to read this"; the card itself carries no grey sentence.
             DisclosureGroup("How to read this", isExpanded: details) {
                 VStack(alignment: .leading, spacing: 8) {
+                    Text(Self.recordedLine(for: full))
                     Text(Self.legend(for: full))
+                    if let note = Self.scoreStartNote(for: full) {
+                        Text(note)
+                    }
                     if full.latestIntervalUnavailable {
                         Text("Latest interval unavailable. Last recorded projection shown.")
                     }
@@ -148,12 +152,34 @@ struct ProjectedFinalPointsChartView: View {
                 // #12578 — away first, the page title's order ("NE vs DET").
                 teamReadout(awayTeam, forecast: series.latest.away, actual: series.latestActual?.away, color: awayColor)
                 teamReadout(homeTeam, forecast: series.latest.home, actual: series.latestActual?.home, color: homeColor)
+                // #12578 (Alex: "isn't it actually obvious from the x-axis when the
+                // projection is from?") — an age only when the projection has gone
+                // quiet, as the app's one age mark; a fresh one says nothing.
+                // Aged on the clock the history arrived on, the chart's own right edge.
+                if let mark = Self.ageMark(for: series, now: input.asOf) {
+                    mark.padding(.top, 3)
+                }
             }
-            // #12578 — the one grey line: when the numbers above were recorded.
-            Text(Self.recordedLine(for: series))
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// #12578 — the price-age mark beside the projected numbers, by the app's
+    /// one rule (`PriceAgeMarkView`, the live cadence a sportsbook row uses).
+    /// Nil while the projection is inside its cadence, and nil once the game is
+    /// over: a finished game's last projection is old by definition, and the
+    /// card already says the game is final.
+    static func ageMark(for series: ProjectedFinalPointsSeries, now: Date = Date()) -> PriceAgeMarkView? {
+        guard series.phase != .after else { return nil }
+        return PriceAgeMarkView(observedAt: series.latest.at.ISO8601Format(), cadence: .live, now: now)
+    }
+
+    /// #12578 — said only when the dashed score line starts after the chart
+    /// opens: the score is drawn from its first recorded reading, and the floor
+    /// gave no score to open it with.
+    static func scoreStartNote(for series: ProjectedFinalPointsSeries) -> String? {
+        guard !series.scoreOpensAtFloor, let first = series.actualSteps.first,
+              first.at > windowStart(series) else { return nil }
+        return "The dashed score line starts at the first recorded score."
     }
 
     /// #12578 — where the drawn window begins: kickoff once a game has
@@ -186,7 +212,7 @@ struct ProjectedFinalPointsChartView: View {
     }
 
     /// #12578 — "Latest projection recorded Nov 10, 7:12 PM", with the score's
-    /// time after a dot when one is held: one line, not two.
+    /// time after a dot when one is held. Behind "How to read this", not on the card.
     static func recordedLine(for series: ProjectedFinalPointsSeries) -> String {
         let projection = "\(readingLabel(for: series)) recorded \(series.latest.at.formatted(date: .abbreviated, time: .shortened))"
         guard let actual = series.latestActual else { return projection }

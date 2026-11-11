@@ -20,18 +20,17 @@ final class PregameQuiet12578Tests: XCTestCase {
               finalAt: final.map(t), asOf: t(now), windowStartAt: nil, requestCutoffAt: nil)
     }
 
-    // MARK: - 1. A quiet source credit
+    // MARK: - 1. No venue name in the header (137-A)
 
-    func testThePropsSourceIsAQuietCreditNotAPill() throws {
-        XCTAssertEqual(PlayerPropsCardView.sourceCredit12578("Kalshi"), "from Kalshi")
+    func testThePropsHeaderNamesNoVenue() throws {
         let source = try Self.source("Bain Luck/Components/PlayerPropsCardView.swift")
-        let at = try XCTUnwrap(source.range(of: "Text(Self.sourceCredit12578(src))"))
-        let chain = String(source[at.upperBound...].prefix(160))
-        XCTAssertTrue(chain.contains(".font(.caption)"))
-        XCTAssertTrue(chain.contains(".foregroundStyle(.secondary)"))
-        for pill in ["Capsule", ".heavy", "Color.blue", ".background("] {
-            XCTAssertFalse(chain.contains(pill), "the credit has no \(pill)")
+        let header = try XCTUnwrap(source.range(of: "Text(\"Player Props\")"))
+        let chain = String(source[header.upperBound...].prefix(220))
+        XCTAssertTrue(chain.contains("Spacer()"), chain)
+        for venue in ["SourceLabels", "sources.first", "from \\(", "Kalshi", "Capsule"] {
+            XCTAssertFalse(chain.contains(venue), "the header carries no \(venue)")
         }
+        XCTAssertFalse(source.contains("sourceCredit12578"))
     }
 
     // MARK: - 2. One grey line
@@ -56,6 +55,8 @@ final class PregameQuiet12578Tests: XCTestCase {
         XCTAssertTrue(inside.contains("Latest interval unavailable. Last recorded projection shown."))
         XCTAssertFalse(card.contains("Text(\"Latest interval unavailable"), "nor the interval note")
         XCTAssertFalse(source.contains("Text(\"Score recorded"), "the score time joins the one recorded line")
+        XCTAssertTrue(inside.contains("Text(Self.recordedLine(for: full))"), "the recorded times are behind the disclosure")
+        XCTAssertEqual(source.components(separatedBy: "Text(Self.recordedLine(").count, 2, "and nowhere else")
     }
 
     // MARK: - 3. The chart opens at kickoff, the kickoff projection marked
@@ -116,5 +117,73 @@ final class PregameQuiet12578Tests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent(relative)
         return try String(contentsOf: url, encoding: .utf8)
+    }
+}
+
+/// #11220 follow-up on #12578 — a finished period prints no clock. Production
+/// served `period: "Final"` with `game_clock: "12:00"` for event 15344868 (Lakers
+/// at Hawks), and the title read "LAL 124 - ATL 114 • Final 12:00".
+final class FinishedPeriodClock12578Tests: XCTestCase {
+    func testAFinalWithAResetClockSaysFinalAlone() {
+        XCTAssertEqual(PeriodLabel.liveStatusText(period: "Final", gameClock: "12:00"), "Final")
+    }
+
+    func testEveryFinishedPeriodDropsItsClock() {
+        for (period, clock) in [("Final/OT", "5:00"), ("FT", "90'"), ("Full Time", "45:00"), ("AET", "120'"),
+                                ("End of 4th Quarter", "0:00"), ("final", "12:00")] {
+            let text = PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
+            XCTAssertFalse(text.contains(clock), "\(period) + \(clock) printed \(text)")
+        }
+    }
+
+    func testALivePeriodKeepsItsClock() {
+        XCTAssertEqual(PeriodLabel.liveStatusText(period: "2nd Quarter", gameClock: "5:11"), "Q2 5:11")
+        XCTAssertEqual(PeriodLabel.liveStatusText(period: "4th Quarter", gameClock: "12:00"), "Q4 12:00",
+                       "a live period's 12:00 is a real clock")
+        XCTAssertFalse(PeriodLabel.isFinishedPeriod("Overtime"))
+        XCTAssertFalse(PeriodLabel.isFinishedPeriod("Halftime"), "halftime is its own label, not a finished game")
+    }
+}
+
+/// #12578 — three more on the core game page, each checked on build 5704 first.
+final class GamePageOrderAndNames12578Tests: XCTestCase {
+    private static func source(_ relative: String) throws -> String {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(relative)
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// #11547 — Alex, build 82: "What the heck is a 'question'?!"
+    func testNoRelatedMarketsTabIsCalledAQuestion() {
+        for name in Array(RelatedMarketsCatalog.familyNames.values) + RelatedMarketsCatalog.familyOrder + [RelatedMarketsCatalog.fallbackFamily] {
+            XCTAssertFalse(name.lowercased().contains("question"), "a tab reads \"\(name)\"")
+        }
+        XCTAssertEqual(RelatedMarketsCatalog.fallbackFamily, "Other markets")
+    }
+
+    /// The props filter follows the title: away first.
+    func testThePropsTeamFilterListsAwayBeforeHome() throws {
+        let source = try Self.source("Bain Luck/Components/PlayerPropsCardView.swift")
+        let away = try XCTUnwrap(source.range(of: "filterButton(awayAbbr, value: \"away\")"))
+        let home = try XCTUnwrap(source.range(of: "filterButton(homeAbbr, value: \"home\")"))
+        XCTAssertLessThan(away.lowerBound, home.lowerBound)
+    }
+
+    /// #11546 — Totals read 56+, 58+, then 36+: the ladder is drawn low to high.
+    func testATotalsLadderServedOutOfOrderIsDrawnLowToHigh() throws {
+        func rung(_ bound: Int, period: String = "full_game", side: String = "game", key: String? = nil) -> String {
+            #"{"question_key":"\#(key ?? "q:\(period)|\(side)|ge:\(bound)")","kind":"count_threshold","label":"\#(bound)+ points","display_scope":"game","#
+                + #""quantity":{"key":"points"},"period":{"key":"\#(period)"},"subject":{"side":"\#(side)"},"#
+                + #""predicate":{"relation":"ge","bound":\#(bound),"line":\#(Double(bound) - 0.5)},"options":[]}"#
+        }
+        let named = #"{"question_key":"q:winner","kind":"named_options","label":"Winner","display_scope":"game","options":[]}"#
+        let served = [rung(56), rung(58), named, rung(36), rung(40), rung(10, period: "q1"), rung(38), rung(2, period: "q1")]
+        let json = #"{"display_scope":"game","questions":["# + served.joined(separator: ",") + "]}"
+        let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let matrix = try decoder.decode(EventQuestionMatrix.self, from: Data(json.utf8))
+        let keys = EventQuestionMatrixAdapter.ladderOrdered(matrix.questions).map(\.questionKey)
+        XCTAssertEqual(keys, ["q:full_game|game|ge:36", "q:full_game|game|ge:38", "q:winner", "q:full_game|game|ge:40",
+                              "q:full_game|game|ge:56", "q:q1|game|ge:2", "q:full_game|game|ge:58", "q:q1|game|ge:10"],
+                       "each ladder sorts inside its own slots; the winner question and the quarter ladder keep their places")
     }
 }

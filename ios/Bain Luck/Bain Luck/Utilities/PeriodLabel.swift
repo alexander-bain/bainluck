@@ -251,6 +251,12 @@ enum PeriodLabel {
         // finished NBA game read "Final 0.0". Any clock that is only zeros and
         // separators ("0", "0:00", "0.0", "0:00.0") says nothing.
         if Self.isSpentClock(clock) { clock = "" }
+        // #11220 follow-up (#12578): a finished period prints no clock. On
+        // event 15344868 production served `period: "Final"` with
+        // `game_clock: "12:00"`, and the title read "Final 12:00".
+        // A clock that IS the period ("Final" / "FINAL") is the collision rule's
+        // below, which prints it once in the clock's own spelling.
+        if Self.isFinishedPeriod(label), label.caseInsensitiveCompare(clock) != .orderedSame { clock = "" }
 
         // THE DEFECT. Drop the LABEL, never the clock: `game_clock` is the field
         // that is always a clock, where `period` is whatever ESPN chose to send.
@@ -260,6 +266,16 @@ enum PeriodLabel {
 
         let text = parts.filter { !$0.isEmpty }.joined(separator: " ")
         return text.isEmpty ? nil : text
+    }
+
+    /// #12578 — a period label that says the game, or the period, is over:
+    /// "Final", "Final/OT", "FT", "Full Time", "AET", "End of 4th Quarter".
+    /// Whatever clock is served beside it has nothing left to count.
+    static func isFinishedPeriod(_ label: String) -> Bool {
+        let text = label.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !text.isEmpty else { return false }
+        if text.hasPrefix("final") || text.hasPrefix("end of ") { return true }
+        return ["ft", "full time", "full-time", "aet", "after extra time"].contains(text)
     }
 
     /// #11220 — a clock that has run out: only zeros, colons and points.
