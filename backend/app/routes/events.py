@@ -37147,6 +37147,7 @@ def _format_event(
             sport_key,
             event.period,
             event.game_clock,
+            status=event.status,
         )
         if display_clock:
             espn_data["game_clock"] = display_clock

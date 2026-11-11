@@ -66,7 +66,9 @@ def _live_state(event) -> dict | None:
     if event is None:
         return None
     sport_key = event.sport.key if event.sport else None
-    period, clock = normalize_live_game_state(sport_key, event.period, event.game_clock)
+    period, clock = normalize_live_game_state(
+        sport_key, event.period, event.game_clock, status=getattr(event, "status", None)
+    )
     return {"period": period or None, "game_clock": clock or None}
 
 
