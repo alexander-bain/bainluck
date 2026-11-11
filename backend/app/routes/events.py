@@ -28483,6 +28483,9 @@ async def _build_game_markets(
         player_and_stat=_prop_player_and_stat,
         home_team=event.home_team_name, away_team=event.away_team_name,
         sport_key=sport_key,
+        orient_under_verdict=lambda row: _settled_over_verdict(
+            row, True, row.get("_market_id") in markets_with_a_winner,
+        ),
     )
 
     # 9b. Cross-source dedup: when Kalshi and Polymarket both have the same
@@ -28490,7 +28493,13 @@ async def _build_game_markets(
     # and a sources list, instead of showing duplicate rows.
     if len(player_props) > 1:
         dedup_map: dict[tuple, list[dict]] = {}
+        merged_props = []
         for p in player_props:
+            if sport_key == "americanfootball_nfl" and p.get("player") and p.get("stat"):
+                # Typed NFL books were handled above. In particular, do not
+                # average away a graded book or merge different contract rules.
+                merged_props.append(p)
+                continue
             # WHO and WHICH STAT, read provider-appropriately (#3594). The key also
             # carries the side, so this stays a CROSS-SOURCE dedup and never folds a
             # market's own Over row into its Under row.
@@ -28500,7 +28509,6 @@ async def _build_game_markets(
             key = (player_part, stat_part, p.get("threshold"), _prop_side(p.get("outcome_name")))
             dedup_map.setdefault(key, []).append(p)
 
-        merged_props = []
         for entries in dedup_map.values():
             if len(entries) == 1:
                 merged_props.append(entries[0])

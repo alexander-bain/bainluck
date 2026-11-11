@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Callable, Mapping
 
 from app.utils.event_props_matrix import STAT_TABLE, _team_forms, type_prop_row
-from app.utils.source_mark import _probability
+from app.utils.source_mark import _probability, no_source_mark
 
 # Verified against the actual KXNFL parents and Polymarket event 1356913.
 # Kept local to this slice: the DURING matrix's closed stat table is unchanged.
@@ -126,6 +126,49 @@ def _book_width(row: dict, legs: Mapping[int, Any]) -> float:
     return round(max(widths), 10) if widths else float("inf")
 
 
+def _shape_entry(
+    row: dict,
+    typed: dict,
+    protected: bool,
+    entries: list[tuple[dict, dict, bool]],
+    home_team: str | None,
+    away_team: str | None,
+) -> dict:
+    """The same names and over-axis prices before and after settlement."""
+    result = dict(row)
+    stat = typed["stat_key"]
+    count = typed["count"] + (typed["kind"] == "count_at_most")
+    label = _LABELS[stat] + (" (Protected)" if protected else "")
+    result.update(
+        player={"key": typed["subject_key"], "name": typed["subject_label"]},
+        stat={"key": stat + ("_protected" if protected else ""), "label": label},
+        line={"kind": "count_at_least", "value": count, "label": f"{count}+"},
+        side="over",
+        period="full_game",
+        contract_key="kalshi_protected" if protected else str(row.get("source")),
+        market_name=f"{away_team} vs {home_team}: {label}",
+        outcome_name=f"{typed['subject_label']}: {count}+",
+        threshold=count,
+        represented_outcome_ids=sorted(
+            {
+                oid
+                for entry in entries
+                for oid in entry[0].get("contributor_outcome_ids", [])
+            }
+        ),
+        _inverted=False,
+        all_sources=[row["source"]],
+        source_count=1,
+    )
+    if typed["side"] == "under" and isinstance(result.get("movement"), (int, float)):
+        result["movement"] = -result["movement"]
+    # Installed SourceLabels shows no pill for this compatibility key. Actual
+    # venue provenance stays in the mark, including for a finished card.
+    if row.get("source") == "polymarket":
+        result["source"] = "bainluck"
+    return result
+
+
 def shape_nfl_prop_rows(
     rows: list[dict],
     *,
@@ -135,19 +178,21 @@ def shape_nfl_prop_rows(
     home_team: str | None,
     away_team: str | None,
     sport_key: str | None,
+    orient_under_verdict: Callable[[dict], dict],
 ) -> tuple[list[dict], list[dict]]:
     """One standard row per typed prop; protected remains a separate family.
 
     The hold records name every discarded contributor. A source-only prop
     remains present, including Polymarket rows older apps couldn't parse.
-    Untyped rows are left intact. Graded rows share the same family name as
-    live rungs, but keep their existing verdicts, prices and outcome names;
-    they never enter book selection.
+    Untyped rows are left intact. Graded books never enter venue selection.
+    A graded Polymarket book uses its Over leg (or reorients its lone Under),
+    retaining both leg identities and the existing grade without re-grading.
     """
     if sport_key != "americanfootball_nfl":
         return rows, []
     team_forms = _team_forms(home_team, away_team)
     groups: dict[tuple, list[tuple[dict, dict, bool]]] = {}
+    graded_books: dict[tuple, list[tuple[dict, dict, bool]]] = {}
     untouched = []
     for row in rows:
         market = markets.get(row.get("_market_id"))
@@ -162,16 +207,52 @@ def shape_nfl_prop_rows(
         # before the grade/live split so one ladder cannot split in mid-game.
         label = _LABELS[typed["stat_key"]] + (" (Protected)" if protected_stat else "")
         row = {**row, "market_name": f"{away_team} vs {home_team}: {label}"}
-        if row.get("resolution_source") is not None or row.get("hit") is not None:
-            untouched.append(row)
-            continue
         count = typed["count"] + (typed["kind"] == "count_at_most")
         key = (typed["subject_key"], typed["stat_key"], count, bool(protected_stat))
-        groups.setdefault(key, []).append((row, typed, bool(protected_stat)))
+        entry = (row, typed, bool(protected_stat))
+        if row.get("resolution_source") is not None or row.get("hit") is not None:
+            if row.get("source") == "polymarket":
+                graded_books.setdefault((*key, row.get("_market_id")), []).append(entry)
+            else:
+                untouched.append(row)
+            continue
+        groups.setdefault(key, []).append(entry)
+
+    for (*predicate, market_id), entries in graded_books.items():
+        key = tuple(predicate)
+        # A partially resolved book still contributes its own Over leg. It
+        # must not be sent to live venue selection while its Under is graded.
+        siblings = groups.get(key, [])
+        entries.extend(e for e in siblings if e[0].get("_market_id") == market_id)
+        groups[key] = [e for e in siblings if e[0].get("_market_id") != market_id]
+        row, typed, protected = min(entries, key=lambda e: e[1]["side"] != "over")
+        result = _shape_entry(row, typed, protected, entries, home_team, away_team)
+        if typed["side"] == "under":
+            # The route's existing verdict gate retains void/retraction
+            # refusals. Typed hit is already a verdict, never inferred here.
+            result.update(orient_under_verdict(row))
+            if row.get("hit") is not None:
+                result["hit"] = not row["hit"]
+            elif row.get("source_mark", {}).get("state") == "settled":
+                won = result.get("is_winner")
+                result["source_mark"] = (
+                    {
+                        **row["source_mark"],
+                        "settled": {
+                            **row["source_mark"]["settled"],
+                            "result": "Won" if won else "Lost",
+                        },
+                    }
+                    if won is not None
+                    else no_source_mark("settled_verdict_unproved")
+                )
+        untouched.append(result)
 
     selected = []
     held = []
     for (player, stat, count, protected), entries in groups.items():
+        if not entries:
+            continue
         # First choose one own-side leg per venue/market. A genuine over/yes
         # leg outranks the complemented under leg of that SAME book.
         books: dict[tuple, tuple[dict, dict, bool]] = {}
@@ -194,44 +275,7 @@ def shape_nfl_prop_rows(
             ),
         )
         row, typed, _ = chosen
-        result = dict(row)
-        result["player"] = {"key": player, "name": typed["subject_label"]}
-        label = _LABELS[stat] + (" (Protected)" if protected else "")
-        result["stat"] = {
-            "key": stat + ("_protected" if protected else ""),
-            "label": label,
-        }
-        result["line"] = {
-            "kind": "count_at_least",
-            "value": count,
-            "label": f"{count}+",
-        }
-        result["side"] = "over"
-        result["period"] = "full_game"
-        result["contract_key"] = (
-            "kalshi_protected" if protected else str(row.get("source"))
-        )
-        result["market_name"] = f"{away_team} vs {home_team}: {label}"
-        result["outcome_name"] = f"{typed['subject_label']}: {count}+"
-        result["threshold"] = count
-        result["represented_outcome_ids"] = sorted(
-            {
-                oid
-                for entry in entries
-                for oid in entry[0].get("contributor_outcome_ids", [])
-            }
-        )
-        if typed["side"] == "under" and isinstance(
-            result.get("movement"), (int, float)
-        ):
-            result["movement"] = -result["movement"]
-        result["_inverted"] = False
-        result["all_sources"] = [row["source"]]
-        result["source_count"] = 1
-        # SourceLabels on installed iOS builds renders this key as no pill.
-        # Actual venue provenance remains solely the chosen source mark.
-        if row.get("source") == "polymarket":
-            result["source"] = "bainluck"
+        result = _shape_entry(row, typed, protected, entries, home_team, away_team)
         selected.append(result)
 
         venues = {entry[0].get("source") for entry in entries}

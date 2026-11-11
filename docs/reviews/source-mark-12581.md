@@ -60,7 +60,7 @@ The named Kalshi-only control is Denver at Kansas City, event 14638896: the serv
 read on Nov 11 at 8:31 AM PT has 448 prop rows, all Kalshi. Passing those saved
 rows through the local selection utility retains all 448 and the `kalshi` header
 source. This is a finished-game control; the deployed check must also use a
-scheduled Kalshi-only NFL game, because graded rows skip the shaping.
+scheduled Kalshi-only NFL game, because graded rows bypass live book selection.
 
 For the Patriots–Lions headline and all ten NBA games scheduled tonight, replay of
 the selected source inputs reproduces all eleven served hero values. Each has
@@ -126,7 +126,7 @@ typecheck pass. The original failures are retained in the run record.
 
 Fable withdrew ACCEPT at 9:38 AM PT after finding that partially graded NFL
 ladders split on installed readers: graded rungs retained the venue's short
-family name while live rungs used the fixture's full names. The correction
+family name while live rungs used the fixture's full names. The first correction
 assigns one family name to every typed NFL row before the grade/live split in
 `shape_nfl_prop_rows`. Graded rows still bypass book selection and retain their
 outcome text, grade fields and probabilities. Untyped rows remain unchanged.
@@ -142,3 +142,31 @@ title-case replay: 270 rows, 336 represented IDs and 24 single-book holds.
 Alex's explicit merge hold remains in force. Fresh CI, actual head-bound bot
 approval and Fable's new review are still required; no prior ACCEPT carries
 over this correction automatically.
+
+Fable's 9:53 AM PT review found that the family-name correction lost the player
+on graded Polymarket `Over` / `Under` rows. The finished-game regression first
+fails at `83fa6e9b99` in all four cases (both outcomes, with both legs or only
+Under). The correction uses the same naming function before and after grading:
+`Josh Allen: 225+` remains under the Passing Yards family. A graded Polymarket
+book uses its own Over leg once, or complements the existing verdict of its
+lone Under. Both represented IDs survive; the chosen contributing ID stays
+explicit. Current/opening prices were already on the Over axis and are not
+inverted again. No box-score lookup or new adjudication is introduced.
+
+Under-only venue verdicts go through the route's existing
+`_settled_over_verdict` gate. Void and low-authority retraction controls retain
+their refusal, with no invented Over winner. Typed graded NFL books also bypass
+the old cross-source mean, so their prices and verdicts cannot be averaged away.
+The mixed live/settled Kalshi and protected ladder tests remain in the band.
+
+The real route builds the finished-game fixture consumed by the web's actual
+`groupPlayerProps` tests. All four cases produce Josh Allen's card with the
+server's HIT/MISS, never a player named Over or Under. The source tests pin that
+shared fixture to the current route output. The saved Patriots–Lions response
+is unchanged from the title-case replay: 270 rows, 336 IDs, 24 holds, no new caps.
+
+Validation of this correction: 538 backend checks including the neighbouring
+settlement/price/identity guards and startup; 76 web grouping checks; all 43
+source tests at all twelve clock points; fresh build and typecheck (65 baseline,
+no new errors). Hosted CI, bot approval and Fable's review are still required.
+Alex's no-merge hold remains in force.
