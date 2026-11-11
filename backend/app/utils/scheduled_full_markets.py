@@ -19,6 +19,10 @@ turn one fetch an hour into four.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 #: The two leagues decision 138 names. No other league.
 SCHEDULED_FULL_MARKET_SPORTS = frozenset({"americanfootball_nfl", "basketball_nba"})
 
@@ -61,5 +65,7 @@ def record_full_fetch(sport_key: str, r, now_ts: float) -> None:
         return
     try:
         r.set(stamp_key(sport_key), str(now_ts), ex=SCHEDULED_FULL_MARKETS_INTERVAL_SECONDS * 3)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — the stamp is an optimisation, never a reason to fail a poll
+        # A lost stamp means the next pass may pay for lines again within the hour:
+        # bounded quota cost, never a failed fetch. Logged so a sick Redis is visible.
+        logger.debug("scheduled full-markets stamp not recorded for %s", sport_key, exc_info=True)
