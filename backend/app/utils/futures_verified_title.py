@@ -358,12 +358,34 @@ def _row_team_id(
     external_id: Optional[str],
     name: Optional[str],
     index: TeamAliasIndex,
+    *,
+    kalshi_event_ticker: Optional[str] = None,
 ) -> Optional[int]:
     if is_field_outcome(name):
         return None
     by_name = None if index.is_ambiguous(name) else index.alias_team(name)
     if source == "kalshi":
-        ids = ticker_team_ids(external_id, index)
+        ids = set(ticker_team_ids(external_id, index))
+        if kalshi_event_ticker is not None:
+            ticker = (external_id or "").strip()
+            prefix = f"{kalshi_event_ticker}-"
+            if not ticker.startswith(prefix):
+                return None
+            code = ticker[len(prefix) :]
+            if not code or "-" in code or code.upper() in index.ambiguous_abbrevs:
+                return None
+            # #12530: Kalshi's JAC/WAS differ from the roster's JAX/WSH.
+            # Reuse the venue's sport-scoped vocabulary, then require an exact,
+            # unambiguous roster name. Never consult stored outcome team IDs or
+            # let a second club named by the roster's abbreviation lose a vote.
+            from app.utils.prediction_market_matching import (
+                extract_team_code_from_outcome_ticker,
+            )
+
+            venue = extract_team_code_from_outcome_ticker(ticker)
+            venue_tid = index.alias_team(venue[1]) if venue else None
+            if venue_tid is not None:
+                ids.add(venue_tid)
         if len(ids) != 1:
             return None
         (tid,) = ids
@@ -463,7 +485,10 @@ def compose_outcomes(
     for m in members:
         claims: dict[int, list[BoardRow]] = {}
         for row in boards.get(m.market_id, []):
-            tid = _row_team_id(m.source, row.external_id, row.name, index)
+            tid = _row_team_id(
+                m.source, row.external_id, row.name, index,
+                kalshi_event_ticker=spec.kalshi_event_ticker(m.edition),
+            )
             if tid is not None:
                 claims.setdefault(tid, []).append(row)
         # Two rows claiming one club inside one venue: neither speaks for it.
@@ -550,7 +575,10 @@ def compose_outcomes(
         multi |= len(value.contributing_sources) > 1
         display = display_by_team.get(tid)
         display_overlay[row.outcome_id] = (
-            {key: display[key] for key in ("probability", "rendered_percent") if key in display}
+            # Search opens the canonical board, so its club labels come from
+            # that board too. apply_title_display deliberately copies only the
+            # numeric fields: direct venue pages keep their own row names.
+            {key: display[key] for key in ("name", "probability", "rendered_percent") if key in display}
             if display is not None else {"probability": value.probability}
         )
 

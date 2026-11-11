@@ -284,7 +284,7 @@ function GroupingGradeSession() {
   }
 
   if (!grader) {
-    const cardCount = isLookSheetSlate ? 9 : (deck?.items.length ?? 0);
+    const cardCount = isLookSheetSlate ? 15 : (deck?.items.length ?? 0);
     return (
       <Shell tally={tallyLine} summary={summary}>
         <h1 className="text-xl font-semibold text-text-primary">Who&apos;s grading proposed cards?</h1>
@@ -298,7 +298,7 @@ function GroupingGradeSession() {
             { id: "grouping-candidates-2026-11", label: "Proposed candidates (32)" },
             { id: "sibling-family-exam-test-2026-11", label: "Sibling-family exam (20)" },
             { id: "new-kinds-exam-test-2026-11", label: "New-kinds exam (20)" },
-            { id: "visual-forms-look-sheet-2026-11", label: "Visual forms look sheet (9)" },
+            { id: "visual-forms-look-sheet-2026-11", label: "Visual forms look sheet (15)" },
           ].map((opt) => (
             <button
               key={opt.id}
