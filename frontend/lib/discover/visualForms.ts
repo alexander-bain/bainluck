@@ -1481,7 +1481,6 @@ export interface LookSheetCardSpec {
   position: number;
   block_id: number;
   item_key: string;
-  legacy_v1_item_key?: string;
   label: string;
   form: VisualFormContract;
   set_id: string;
@@ -1492,10 +1491,9 @@ export interface LookSheetCardSpec {
 
 export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
   {
-    position: 16,
+    position: 7,
     block_id: 1,
     item_key: "form-1-v2-paired-bars-with-art-best-picture",
-    legacy_v1_item_key: "form-1-paired-bars-with-art-best-picture",
     label: "Card 1 (v2) · Stacked Dual Bars with Poster (Full 10-Row Baseline)",
     form: VISUAL_FORM_LIBRARY.paired_bars_with_art,
     set_id: "oscars-2027-best-picture",
@@ -1504,10 +1502,9 @@ export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
       "Alex's baseline form: one row per film (for the 10 films most likely to be nominated, ordered by Wins %) with its poster and both bars stacked together in one column (Nominated % above Wins %).",
   },
   {
-    position: 17,
+    position: 8,
     block_id: 2,
     item_key: "form-2-v2-poster-spotlight-tiles-best-picture",
-    legacy_v1_item_key: "form-2-poster-spotlight-tiles-best-picture",
     label: "Card 2 (v2) · Poster-Led 2-Up Spotlight Tiles (Best Picture 2027)",
     form: VISUAL_FORM_LIBRARY.poster_spotlight_tiles,
     set_id: "oscars-2027-best-picture",
@@ -1516,10 +1513,9 @@ export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
       "Cinema-first grid: the poster leads each tile while Wins % remains the headline number and Nominated % sits beside it.",
   },
   {
-    position: 18,
+    position: 9,
     block_id: 3,
     item_key: "form-3-v2-step-conversion-path-best-picture",
-    legacy_v1_item_key: "form-3-step-conversion-path-best-picture",
     label: "Card 3 (v2) · Path from Nominated to Wins (Best Picture 2027)",
     form: VISUAL_FORM_LIBRARY.step_conversion_path,
     set_id: "oscars-2027-best-picture",
@@ -1528,10 +1524,9 @@ export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
       "Draws the two propositions as one funnel track (outer reach = Nominated %, inner fill = Wins %), immediately exposing nomination locks that are longshots to win (Wild Horse Nine: 93% → 2%).",
   },
   {
-    position: 19,
+    position: 10,
     block_id: 4,
     item_key: "form-4-v2-leader-and-chasers-split-best-picture",
-    legacy_v1_item_key: "form-4-leader-and-chasers-split-best-picture",
     form: VISUAL_FORM_LIBRARY.leader_and_chasers_split,
     label: "Card 4 (v2) · One Leader and Its Chasers (Best Picture 2027)",
     set_id: "oscars-2027-best-picture",
@@ -1540,10 +1535,9 @@ export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
       "Picked when #1 holds >= 40% to win: The Odyssey (57% win / 98% nom, +40 pts ahead of #2) gets a hero spotlight banner while the chasing pack sits in compact two-number strips.",
   },
   {
-    position: 20,
+    position: 11,
     block_id: 5,
     item_key: "form-5-v2-sports-playoffs-to-title-nhl",
-    legacy_v1_item_key: "form-5-sports-playoffs-to-title-nhl",
     label: "Card 5 (v2) · Non-Oscars Proof: NHL Make Playoffs % beside Win Stanley Cup % (All 9 Clubs >= 5%)",
     form: VISUAL_FORM_LIBRARY.paired_bars_with_art,
     set_id: "nhl-2026-27-playoffs-and-cup",
@@ -1552,10 +1546,9 @@ export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
       "Proves the form travels outside the Oscars without hardcoding: same 'two related numbers per subject + picture' contract with ESPN NHL crests and deterministic tie-breaking (Dallas Stars 84%/5% alongside Tampa Bay Lightning 82%/5%).",
   },
   {
-    position: 21,
+    position: 12,
     block_id: 6,
     item_key: "form-6-v2-post-nominations-settled-gate",
-    legacy_v1_item_key: "form-6-post-nominations-settled-gate",
     label: "Card 6 (v2) · Post-Nominations State: ✓ / ✗ Replaces the First Bar ('Settled Means Settled')",
     form: VISUAL_FORM_LIBRARY.settled_gate_after_nominations,
     set_id: "oscars-2027-best-picture",
@@ -1568,7 +1561,7 @@ export const VISUAL_FORM_LOOK_SHEET_CARDS: LookSheetCardSpec[] = [
 
 export const VISUAL_FORM_SHEET_2_CARDS: LookSheetCardSpec[] = [
   {
-    position: 10,
+    position: 1,
     block_id: 10,
     item_key: "form-1a-paired-bars-top5-expandable-best-picture",
     label: "Shorter Card 1A · Top 5 Dual Bars + 'Show All 10' Expander (Cuts Default Height by 48%)",
@@ -1579,7 +1572,7 @@ export const VISUAL_FORM_SHEET_2_CARDS: LookSheetCardSpec[] = [
       "Alex's 8:33 PM reaction: from the 10 films most likely to be nominated, keeps the exact poster + two-bar comparison row from Card 1 for the top 5 by Win % by default with a one-tap 'Show all 10 most likely nominees' expander.",
   },
   {
-    position: 11,
+    position: 2,
     block_id: 11,
     item_key: "form-1b-paired-bars-single-line-best-picture",
     label: "Shorter Card 1B · One Line Per Film with Mini Poster, Micro-Bars & Both Numbers (All 10 Visible)",
@@ -1590,7 +1583,7 @@ export const VISUAL_FORM_SHEET_2_CARDS: LookSheetCardSpec[] = [
       "Shows all 10 films most likely to be nominated (ordered by Win %) at once with zero truncation in 46% less vertical height by placing the mini poster, title, dual micro-bars, Nominated % and Wins % on one compact row.",
   },
   {
-    position: 12,
+    position: 3,
     block_id: 12,
     item_key: "form-1c-paired-bars-top3-plus-strip-best-picture",
     label: "Shorter Card 1C · Top 3 Full Dual-Bar Rows + 2-Up Grid for the Other 7 Most Likely Nominees",
@@ -1601,7 +1594,7 @@ export const VISUAL_FORM_SHEET_2_CARDS: LookSheetCardSpec[] = [
       "From the 10 films most likely to be nominated, gives the top 3 by Win % (The Odyssey 57%, You Can See Everything 17%, The Black Ball 15%) full poster + dual-bar rows while packing the remaining 7 into a 2-column grid below.",
   },
   {
-    position: 13,
+    position: 4,
     block_id: 13,
     item_key: "form-7-podium-and-tiers-best-picture",
     label: "Wild Form A · Three-Spot Trophy Podium + 70%+ vs <70% Nomination Tiers",
@@ -1612,7 +1605,7 @@ export const VISUAL_FORM_SHEET_2_CARDS: LookSheetCardSpec[] = [
       "Breaks out of row lists: puts #1 The Odyssey (center), #2 You Can See Everything (left), and #3 The Black Ball (right) on a visual podium, with the other 7 of the top 10 most likely nominees grouped into 'Likely Nominees (70%+ to be nominated)' vs 'On the Nomination Bubble (<70% to be nominated)'.",
   },
   {
-    position: 14,
+    position: 5,
     block_id: 14,
     item_key: "form-8-barbell-race-track-best-picture",
     label: "Wild Form B · 0–100% Barbell Gap Track (Wins ●━━━━○ Nominated on One Shared Scale)",
@@ -1623,7 +1616,7 @@ export const VISUAL_FORM_SHEET_2_CARDS: LookSheetCardSpec[] = [
       "For the 10 films most likely to be nominated, plots both numbers as a connected barbell on a single 0–100% horizontal track (green dot = Wins %, dark dot = Nominated %), turning the gap between getting nominated and winning into a physical span.",
   },
   {
-    position: 15,
+    position: 6,
     block_id: 15,
     item_key: "form-9-ballot-quadrant-map-best-picture",
     label: "Wild Form C · 2×2 Ballot Quadrant Board (Favorites vs Safe Nominees vs Likely vs Bubble)",
@@ -1638,7 +1631,6 @@ export const VISUAL_FORM_SHEET_2_CARDS: LookSheetCardSpec[] = [
 export interface ContainerLookSheetSpec {
   position: number;
   item_key: string;
-  legacy_v1_item_key?: string;
   option_code: "A" | "B" | "C";
   title: string;
   subtitle: string;
@@ -1647,9 +1639,8 @@ export interface ContainerLookSheetSpec {
 
 export const OSCARS_CONTAINER_LOOK_SHEET_OPTIONS: ContainerLookSheetSpec[] = [
   {
-    position: 22,
+    position: 13,
     item_key: "container-a-v2-alternating-form-magazine",
-    legacy_v1_item_key: "container-a-alternating-form-magazine",
     option_code: "A",
     title: "Container A (v2) · Magazine Rhythm (Adjacent Sections Never Repeat a Form)",
     subtitle:
@@ -1658,9 +1649,8 @@ export const OSCARS_CONTAINER_LOOK_SHEET_OPTIONS: ContainerLookSheetSpec[] = [
       "Container rule: each section picks a form from the library subject to `form[i] !== form[i-1]`, using movie posters for film categories and circular headshots for person categories.",
   },
   {
-    position: 23,
+    position: 14,
     item_key: "container-b-v2-shape-driven-contrast",
-    legacy_v1_item_key: "container-b-shape-driven-contrast",
     option_code: "B",
     title: "Container B (v2) · Shape-Driven Contrast (Runaway Locks vs Open Duels vs Deep 10-Film Field)",
     subtitle:
@@ -1669,9 +1659,8 @@ export const OSCARS_CONTAINER_LOOK_SHEET_OPTIONS: ContainerLookSheetSpec[] = [
       "Container rule: the probability distribution chooses the visual form — a >=70% leader gets a compact Lock Banner, a tight top-3 gets a Headshot Duel Strip, and a 10-nominee slate gets Stacked Dual Bars.",
   },
   {
-    position: 24,
+    position: 15,
     item_key: "container-c-v2-two-act-ballot",
-    legacy_v1_item_key: "container-c-two-act-ballot",
     option_code: "C",
     title: "Container C (v2) · Two-Act Ballot (90%+ Nomination Locks Rail + Category Cards)",
     subtitle:

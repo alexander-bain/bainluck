@@ -2074,9 +2074,7 @@ export const renderVisualLookSheetDeckItem = (
   options?: { simulateSettled?: boolean; kidSurface?: boolean },
 ): React.ReactNode | null => {
   const allCards = [...VISUAL_FORM_LOOK_SHEET_CARDS, ...VISUAL_FORM_SHEET_2_CARDS];
-  const cardSpec = allCards.find(
-    (c) => c.item_key === itemKey || c.legacy_v1_item_key === itemKey,
-  );
+  const cardSpec = allCards.find((c) => c.item_key === itemKey);
   if (cardSpec) {
     return (
       <div className="space-y-2" data-testid={`look-sheet-item-${itemKey}`}>
@@ -2086,7 +2084,7 @@ export const renderVisualLookSheetDeckItem = (
     );
   }
   const containerSpec = OSCARS_CONTAINER_LOOK_SHEET_OPTIONS.find(
-    (c) => c.item_key === itemKey || c.legacy_v1_item_key === itemKey,
+    (c) => c.item_key === itemKey,
   );
   if (containerSpec) {
     return (

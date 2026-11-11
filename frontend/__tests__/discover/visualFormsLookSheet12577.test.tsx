@@ -22,6 +22,7 @@ import {
   OscarsContainerLayoutPreview,
   VisualFormLookSheetGallery,
   renderLookSheetCardBySpec,
+  renderVisualLookSheetDeckItem,
 } from "@/components/discover/forms/VisualFormLookSheet";
 import { renderedPercent } from "@/lib/renderedPercent";
 
@@ -46,13 +47,9 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     // Lesson 25: revised Sheet 1 cards and containers carry distinct v2 item_keys
     for (const card of VISUAL_FORM_LOOK_SHEET_CARDS) {
       expect(card.item_key).toContain("-v2-");
-      expect(card.legacy_v1_item_key).toBeDefined();
-      expect(card.item_key).not.toBe(card.legacy_v1_item_key);
     }
     for (const opt of OSCARS_CONTAINER_LOOK_SHEET_OPTIONS) {
       expect(opt.item_key).toContain("-v2-");
-      expect(opt.legacy_v1_item_key).toBeDefined();
-      expect(opt.item_key).not.toBe(opt.legacy_v1_item_key);
     }
   });
 
@@ -324,5 +321,35 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
 
     // Verify all 11 visual forms in library
     expect(Object.keys(VISUAL_FORM_LIBRARY)).toHaveLength(11);
+  });
+
+  it("deals 15 active items (positions 1..15) with no retired v1 keys and refuses to draw retired v1 keys", () => {
+    const retiredV1Keys = [
+      "form-1-paired-bars-with-art-best-picture",
+      "form-2-poster-spotlight-tiles-best-picture",
+      "form-3-step-conversion-path-best-picture",
+      "form-4-leader-and-chasers-split-best-picture",
+      "form-5-sports-playoffs-to-title-nhl",
+      "form-6-post-nominations-settled-gate",
+      "container-a-alternating-form-magazine",
+      "container-b-shape-driven-contrast",
+      "container-c-two-act-ballot",
+    ];
+    const activeItems = [
+      ...VISUAL_FORM_SHEET_2_CARDS,
+      ...VISUAL_FORM_LOOK_SHEET_CARDS,
+      ...OSCARS_CONTAINER_LOOK_SHEET_OPTIONS,
+    ];
+    expect(activeItems).toHaveLength(15);
+    expect(activeItems.map((it) => it.position)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    ]);
+    for (const it of activeItems) {
+      expect(retiredV1Keys).not.toContain(it.item_key);
+      expect(renderVisualLookSheetDeckItem(it.item_key)).not.toBeNull();
+    }
+    for (const v1Key of retiredV1Keys) {
+      expect(renderVisualLookSheetDeckItem(v1Key)).toBeNull();
+    }
   });
 });

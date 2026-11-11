@@ -1015,7 +1015,16 @@ def load_grouping_grade_deck(
             raise HTTPException(
                 status_code=404, detail="visual forms look sheet file not found"
             )
-        return json.loads(look_sheet_path.read_text(encoding="utf-8"))
+        raw_sheet = json.loads(look_sheet_path.read_text(encoding="utf-8"))
+        active_items = [
+            item
+            for item in raw_sheet.get("items", [])
+            if not item.get("retired")
+        ]
+        return {
+            **raw_sheet,
+            "items": active_items,
+        }
 
     target_path = candidates_path
     if target_path is None:

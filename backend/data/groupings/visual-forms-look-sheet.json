@@ -81,7 +81,9 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 2,
@@ -159,7 +161,9 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 3,
@@ -237,7 +241,9 @@
         "rendered_percent": 93,
         "resolution_date": "2027-01-23T00:00:00Z",
         "rule_quote": "Resolves Yes if Wild Horse Nine is nominated for Best Picture."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 4,
@@ -315,7 +321,9 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 5,
@@ -393,7 +401,9 @@
         "rendered_percent": 13,
         "resolution_date": "2027-06-30T00:00:00Z",
         "rule_quote": "Resolves Yes if the Carolina Hurricanes win the 2026-27 Stanley Cup."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 6,
@@ -485,7 +495,9 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 7,
@@ -556,7 +568,9 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 8,
@@ -627,7 +641,9 @@
         "rendered_percent": 42,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if John Malkovich wins Best Actor at the 99th Academy Awards."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
       "position": 9,
@@ -691,10 +707,12 @@
         "rendered_percent": 99,
         "resolution_date": "2027-01-23T00:00:00Z",
         "rule_quote": "Resolves Yes if Christopher Nolan is nominated for Best Director."
-      }
+      },
+      "retired": true,
+      "retired_note": "graded as sheet 1 stood on Nov 10"
     },
     {
-      "position": 10,
+      "position": 1,
       "item_key": "form-1a-paired-bars-top5-expandable-best-picture",
       "title": "Shorter Card 1A · Top 5 Dual Bars + 'Show All 10' Expander — Best Picture 2027",
       "source": "kalshi",
@@ -772,7 +790,7 @@
       }
     },
     {
-      "position": 11,
+      "position": 2,
       "item_key": "form-1b-paired-bars-single-line-best-picture",
       "title": "Shorter Card 1B · Compact One-Line-Per-Film Table (All 10 Visible) — Best Picture 2027",
       "source": "kalshi",
@@ -850,7 +868,7 @@
       }
     },
     {
-      "position": 12,
+      "position": 3,
       "item_key": "form-1c-paired-bars-top3-plus-strip-best-picture",
       "title": "Shorter Card 1C · Top 3 Full Dual-Bar Rows + 2-Up Contender Strip (#4–#10) — Best Picture 2027",
       "source": "kalshi",
@@ -928,7 +946,7 @@
       }
     },
     {
-      "position": 13,
+      "position": 4,
       "item_key": "form-7-podium-and-tiers-best-picture",
       "title": "Wild Form A · Three-Spot Trophy Podium + Nomination Lock & Bubble Tiers — Best Picture 2027",
       "source": "kalshi",
@@ -1006,7 +1024,7 @@
       }
     },
     {
-      "position": 14,
+      "position": 5,
       "item_key": "form-8-barbell-race-track-best-picture",
       "title": "Wild Form B · 0–100% Barbell Gap Track (Wins ●━━━━○ Nominated) — Best Picture 2027",
       "source": "kalshi",
@@ -1084,7 +1102,7 @@
       }
     },
     {
-      "position": 15,
+      "position": 6,
       "item_key": "form-9-ballot-quadrant-map-best-picture",
       "title": "Wild Form C · 2×2 Ballot Quadrant Board (Favorites, Safe Nominees, Likely & Bubble) — Best Picture 2027",
       "source": "kalshi",
@@ -1155,7 +1173,7 @@
       }
     },
     {
-      "position": 16,
+      "position": 7,
       "item_key": "form-1-v2-paired-bars-with-art-best-picture",
       "title": "Form 1 · Stacked Dual Bars with Poster (Full 10-Row Baseline) — Best Picture 2027",
       "source": "kalshi",
@@ -1233,7 +1251,7 @@
       }
     },
     {
-      "position": 17,
+      "position": 8,
       "item_key": "form-2-v2-poster-spotlight-tiles-best-picture",
       "title": "Form 2 · Poster-Led 2-Up Spotlight Tiles — Best Picture 2027",
       "source": "kalshi",
@@ -1311,7 +1329,7 @@
       }
     },
     {
-      "position": 18,
+      "position": 9,
       "item_key": "form-3-v2-step-conversion-path-best-picture",
       "title": "Form 3 · Path from Nominated to Wins (Nested Funnel Track) — Best Picture 2027",
       "source": "kalshi",
@@ -1389,7 +1407,7 @@
       }
     },
     {
-      "position": 19,
+      "position": 10,
       "item_key": "form-4-v2-leader-and-chasers-split-best-picture",
       "title": "Form 4 · One Leader and Its Chasers — Best Picture 2027",
       "source": "kalshi",
@@ -1467,7 +1485,7 @@
       }
     },
     {
-      "position": 20,
+      "position": 11,
       "item_key": "form-5-v2-sports-playoffs-to-title-nhl",
       "title": "Form 5 · Non-Oscars Proof: NHL Make Playoffs % beside Win Stanley Cup % (All 9 Clubs >= 5%)",
       "source": "kalshi",
@@ -1545,7 +1563,7 @@
       }
     },
     {
-      "position": 21,
+      "position": 12,
       "item_key": "form-6-v2-post-nominations-settled-gate",
       "title": "Form 6 · Post-Nominations State: ✓ / ✗ Replaces the First Bar ('Settled Means Settled')",
       "source": "kalshi",
@@ -1637,7 +1655,7 @@
       }
     },
     {
-      "position": 22,
+      "position": 13,
       "item_key": "container-a-v2-alternating-form-magazine",
       "title": "Oscars Container A · Magazine Rhythm (Adjacent Sections Never Repeat a Form)",
       "source": "kalshi",
@@ -1708,7 +1726,7 @@
       }
     },
     {
-      "position": 23,
+      "position": 14,
       "item_key": "container-b-v2-shape-driven-contrast",
       "title": "Oscars Container B · Shape-Driven Contrast (Runaway Favorites vs Open Duels vs Top-5 Expandable Board)",
       "source": "kalshi",
@@ -1779,7 +1797,7 @@
       }
     },
     {
-      "position": 24,
+      "position": 15,
       "item_key": "container-c-v2-two-act-ballot",
       "title": "Oscars Container C · Two-Act Ballot (90%+ Nomination Locks Strip + Film vs Acting Category Forms)",
       "source": "kalshi",

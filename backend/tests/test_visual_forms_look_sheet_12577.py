@@ -71,38 +71,55 @@ def test_paired_metric_register_is_valid_and_never_blends():
 
 
 def test_load_visual_forms_look_sheet_deck():
+    retired_v1_keys = {
+        "form-1-paired-bars-with-art-best-picture",
+        "form-2-poster-spotlight-tiles-best-picture",
+        "form-3-step-conversion-path-best-picture",
+        "form-4-leader-and-chasers-split-best-picture",
+        "form-5-sports-playoffs-to-title-nhl",
+        "form-6-post-nominations-settled-gate",
+        "container-a-alternating-form-magazine",
+        "container-b-shape-driven-contrast",
+        "container-c-two-act-ballot",
+    }
+
+    # Raw file retains the 9 retired v1 records ("graded as sheet 1 stood on Nov 10") + 15 active items
+    sheet_path = (
+        Path(__file__).resolve().parents[1]
+        / "data"
+        / "groupings"
+        / "visual-forms-look-sheet.json"
+    )
+    raw = json.loads(sheet_path.read_text(encoding="utf-8"))
+    assert len(raw["items"]) == 24
+    retired_items = [it for it in raw["items"] if it.get("retired")]
+    assert len(retired_items) == 9
+    assert {it["item_key"] for it in retired_items} == retired_v1_keys
+    for it in retired_items:
+        assert it["retired_note"] == "graded as sheet 1 stood on Nov 10"
+
+    # The deck dealt for this slate holds 15 items (positions 1..15), none with a v1 key
     deck = load_grouping_grade_deck(slate_id=VISUAL_FORMS_LOOK_SHEET_SLATE_ID)
     assert deck["slate_id"] == "visual-forms-look-sheet-2026-11"
     assert deck["surface"] == "grouping"
     items = deck["items"]
-    assert len(items) == 24
+    assert len(items) == 15
+    assert [it["position"] for it in items] == list(range(1, 16))
+    for it in items:
+        assert it["item_key"] not in retired_v1_keys
 
-    positions = [it["position"] for it in items]
-    assert positions == list(range(1, 25))
+    # Items 1–6: Sheet 2 shorter Card 1 variants (1A–1C) + 3 wilder forms
+    assert items[0]["item_key"] == "form-1a-paired-bars-top5-expandable-best-picture"
+    assert items[1]["item_key"] == "form-1b-paired-bars-single-line-best-picture"
+    assert items[2]["item_key"] == "form-1c-paired-bars-top3-plus-strip-best-picture"
+    assert items[3]["item_key"] == "form-7-podium-and-tiers-best-picture"
+    assert items[4]["item_key"] == "form-8-barbell-race-track-best-picture"
+    assert items[5]["item_key"] == "form-9-ballot-quadrant-map-best-picture"
 
-    # Items 1–9: Preserved v1 Sheet 1 cards + containers (Lesson 25: tonight's grades stay bound to v1)
-    assert items[0]["item_key"] == "form-1-paired-bars-with-art-best-picture"
-    assert items[4]["item_key"] == "form-5-sports-playoffs-to-title-nhl"
-    assert items[4]["category"] == "hockey"
-    assert items[6]["item_key"] == "container-a-alternating-form-magazine"
-    assert items[7]["item_key"] == "container-b-shape-driven-contrast"
-    assert items[8]["item_key"] == "container-c-two-act-ballot"
-
-    # Items 10–15: Sheet 2 shorter Card 1 variants (1A–1C) + 3 wilder forms
-    assert (
-        items[9]["item_key"] == "form-1a-paired-bars-top5-expandable-best-picture"
-    )
-    assert items[10]["item_key"] == "form-1b-paired-bars-single-line-best-picture"
-    assert (
-        items[11]["item_key"] == "form-1c-paired-bars-top3-plus-strip-best-picture"
-    )
-    assert items[12]["item_key"] == "form-7-podium-and-tiers-best-picture"
-    assert items[13]["item_key"] == "form-8-barbell-race-track-best-picture"
-    assert items[14]["item_key"] == "form-9-ballot-quadrant-map-best-picture"
-
-    # Items 16–24: Revised v2 Sheet 1 cards + containers with distinct v2 item_keys
-    assert items[15]["item_key"] == "form-1-v2-paired-bars-with-art-best-picture"
-    assert items[19]["item_key"] == "form-5-v2-sports-playoffs-to-title-nhl"
-    assert items[21]["item_key"] == "container-a-v2-alternating-form-magazine"
-    assert items[22]["item_key"] == "container-b-v2-shape-driven-contrast"
-    assert items[23]["item_key"] == "container-c-v2-two-act-ballot"
+    # Items 7–15: Revised v2 Sheet 1 cards + containers with distinct v2 item_keys
+    assert items[6]["item_key"] == "form-1-v2-paired-bars-with-art-best-picture"
+    assert items[10]["item_key"] == "form-5-v2-sports-playoffs-to-title-nhl"
+    assert items[10]["category"] == "hockey"
+    assert items[12]["item_key"] == "container-a-v2-alternating-form-magazine"
+    assert items[13]["item_key"] == "container-b-v2-shape-driven-contrast"
+    assert items[14]["item_key"] == "container-c-v2-two-act-ballot"
