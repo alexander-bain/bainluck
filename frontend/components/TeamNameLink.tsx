@@ -21,7 +21,10 @@ export default function TeamNameLink({
   const url = buildTeamPageUrl(name, sportKey);
 
   if (!url) {
-    return <span className={className} style={style}>{children ?? name}</span>;
+    const spanClassName = className
+      ? className.replace(/\bhover:underline\b/g, "").replace(/\s+/g, " ").trim()
+      : undefined;
+    return <span className={spanClassName || undefined} style={style}>{children ?? name}</span>;
   }
 
   return (

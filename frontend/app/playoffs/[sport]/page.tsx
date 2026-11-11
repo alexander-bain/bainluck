@@ -8,6 +8,7 @@ import TournamentProgressionTable from "@/components/TournamentProgressionTable"
 import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
 import { gridCellsToProgression } from "@/lib/gridCellState";
+import { gridSlugToSportKey } from "@/lib/gridSlug";
 import { conferenceSectionHeadings } from "@/lib/playoffConferenceSections";
 import { formatMovementPointsLikeSentence } from "@/lib/probabilityDisplay";
 import {
@@ -91,7 +92,7 @@ function teamsToProgression(
   });
 
   return {
-    sport: sportLabel,
+    sport: gridSlugToSportKey(sportLabel) ?? sportLabel,
     tournament_name: tournamentName,
     stages,
     participants,

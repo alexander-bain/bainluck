@@ -17,9 +17,23 @@ const GRID_SLUG_MAP: Record<string, string> = {
   americanfootball_ncaaf: "ncaa-football",
   basketball_nba: "nba",
   basketball_ncaab: "ncaa-basketball",
+  basketball_wncaab: "ncaa-women-basketball",
   basketball_wnba: "wnba",
   icehockey_nhl: "nhl",
   baseball_mlb: "mlb",
+};
+
+const SLUG_TO_SPORT_KEY: Record<string, string> = {
+  ...Object.fromEntries(
+    Object.entries(GRID_SLUG_MAP).map(([sportKey, slug]) => [slug, sportKey]),
+  ),
+  ucl: "soccer_uefa_champs_league",
+  "la-liga": "soccer_spain_la_liga",
+  laliga: "soccer_spain_la_liga",
+  ncaab: "basketball_ncaab",
+  ncaa: "basketball_ncaab",
+  ncaaf: "americanfootball_ncaaf",
+  wncaab: "basketball_wncaab",
 };
 
 // Season-phase suffixes a team's sport.key can carry (e.g.
@@ -50,4 +64,18 @@ export function sportKeyToGridSlug(sportKey: string | null | undefined): string 
   // Fallback: strip the leading provider prefix ("baseball_mlb" → "mlb").
   const suffix = canonical.split("_").slice(1).join("_");
   return suffix || canonical;
+}
+
+/**
+ * Inverse of `sportKeyToGridSlug` (#11492): resolve the canonical `sport_key`
+ * (e.g. `"baseball_mlb"`) for a championship-grid league slug (`"mlb"`,
+ * `"la-liga"`, `"ncaa-women-basketball"`), or `null` when the slug is not a
+ * team-sport grid (e.g. `"golf"`).
+ */
+export function gridSlugToSportKey(slug: string | null | undefined): string | null {
+  if (!slug) return null;
+  const normalized = slug.trim().toLowerCase();
+  if (!normalized) return null;
+  if (GRID_SLUG_MAP[normalized]) return normalized;
+  return SLUG_TO_SPORT_KEY[normalized] ?? null;
 }

@@ -34,6 +34,7 @@ import {
 } from "@/lib/hierarchyLoadFailure";
 import PageLoadFailureScreen from "@/components/PageLoadFailureScreen";
 import { gridCellsToProgression } from "@/lib/gridCellState";
+import { gridSlugToSportKey } from "@/lib/gridSlug";
 import { partitionLeagueMarkets, unreportedRailTitle } from "@/lib/leagueCards";
 import TournamentCard from "@/components/TournamentCard";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
@@ -136,7 +137,7 @@ function gridToProgression(grid: ChampionshipGridResponse): ProgressionResponse 
   });
 
   return {
-    sport: grid.name,
+    sport: gridSlugToSportKey(grid.league) ?? grid.league ?? grid.name,
     tournament_name: grid.name,
     stages,
     participants,
