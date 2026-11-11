@@ -657,9 +657,15 @@ async def _maybe_set_opening_odds(
     home_spread: float | None,
     over_under: float | None,
     commence_time: datetime | None = None,
+    lines_fetched: bool = True,
 ):
     """
     Update opening odds for a scheduled event.
+
+    ``lines_fetched=False`` (#11286 review): the fetch asked for the moneyline
+    only, so its spread and total are absent, not withdrawn. The moneyline,
+    probabilities and favourite update as always; the opening spread and total
+    keep the last value a lines-carrying fetch wrote instead of going to NULL.
 
     Opening odds represent the last pregame consensus — they keep updating
     on every poll while the game is still scheduled. Once the game starts,
@@ -693,16 +699,18 @@ async def _maybe_set_opening_odds(
     opening_favorite = favorite_from_pair(home_prob, away_prob)
 
     # Update opening odds (keeps updating until game starts)
+    values = {
+        "opening_home_probability": home_prob,
+        "opening_away_probability": away_prob,
+        "opening_favorite": opening_favorite,
+    }
+    if lines_fetched:
+        values["opening_home_spread"] = home_spread
+        values["opening_over_under"] = over_under
     await session.execute(
         Event.__table__.update()
         .where(Event.id == event_id)
-        .values(
-            opening_home_probability=home_prob,
-            opening_away_probability=away_prob,
-            opening_home_spread=home_spread,
-            opening_over_under=over_under,
-            opening_favorite=opening_favorite,
-        )
+        .values(**values)
     )
 
 
@@ -815,6 +823,7 @@ async def _ingest_event_odds(
     update_opening: bool = True,
     drop_below_floor: bool = True,
     received_at: Optional[float] = None,
+    lines_fetched: bool = True,
 ) -> int:
     """Create odds snapshots for every bookmaker of one event, then update the
     event's opening-odds consensus and win_probability_sources['betting'].
@@ -949,6 +958,7 @@ async def _ingest_event_odds(
                 avg_home, avg_away,
                 avg_spread, avg_ou,
                 commence_time=commence_time,
+                lines_fetched=lines_fetched,
             )
 
         # Write betting consensus to win_probability_sources so the multi-source
@@ -1763,11 +1773,10 @@ async def _poll_all_odds():
                         total_snapshots += await _ingest_event_odds(
                             session, event, event_data, commence_time, snapshot_cache,
                             received_at=received_at,
-                            # #11286 review: opening lines only from a fetch
-                            # that asked for lines. A moneyline-only fetch would
-                            # write the opening spread and total back to NULL
-                            # (`_ingest_event_odds`, `update_opening`).
-                            update_opening="spreads" in api_markets,
+                            # #11286 review (bot): a fetch that didn't ask for
+                            # lines still writes the opening moneyline, but must
+                            # not write the opening spread and total to NULL.
+                            lines_fetched="spreads" in api_markets,
                         )
                         # #10090: commit AND publish this game before the next
                         # game's registry lookup and snapshot bookkeeping. The

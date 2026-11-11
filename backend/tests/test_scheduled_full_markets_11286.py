@@ -111,6 +111,83 @@ def test_the_pollers_later_tier_asks_the_helper_and_nothing_else_changed():
     # Live and starting-soon are untouched, and conservation still forces h2h first.
     assert code.count("api_markets = 'h2h,spreads,totals'") == 2
     assert code.index("if quota_conservation:") < code.index("api_markets = scheduled_markets(")
-    # Fable's review: opening lines are written only by a fetch that asked for lines,
-    # so the next moneyline-only fetch cannot write them back to NULL.
-    assert "update_opening='spreads' in api_markets" in code
+    # Review (bot, Fable): every poll still writes opening odds; a fetch that didn't
+    # ask for lines says so, so its absent spread and total don't overwrite them.
+    assert "lines_fetched='spreads' in api_markets" in code
+    assert "update_opening='spreads' in api_markets" not in code
+
+
+
+# --- Review (bot, 8690c248): opening odds on a moneyline-only poll ---
+
+
+class _OpeningSession:
+    """Answers the status read with 'scheduled' and records the opening UPDATE's values."""
+
+    def __init__(self):
+        self.updates = []
+
+    async def execute(self, stmt):
+        from sqlalchemy.sql.dml import Update
+
+        if isinstance(stmt, Update):
+            self.updates.append({
+                (c if isinstance(c, str) else c.key): getattr(v, "value", v)
+                for c, v in stmt._values.items()
+            })
+            return None
+
+        class _R:
+            def scalar_one_or_none(self_inner):
+                return "scheduled"
+        return _R()
+
+
+@pytest.mark.asyncio
+async def test_a_moneyline_only_poll_still_writes_the_opening_moneyline():
+    """Calibration reads COALESCE(calibration_probability, opening_probability):
+    an h2h-only poll must keep writing the opening probabilities and favourite."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.tasks.odds_polling import _maybe_set_opening_odds
+
+    session = _OpeningSession()
+    await _maybe_set_opening_odds(
+        session, 1, 0.62, 0.38, None, None,
+        commence_time=datetime.now(timezone.utc) + timedelta(days=2), lines_fetched=False,
+    )
+    assert len(session.updates) == 1
+    written = session.updates[0]
+    assert written["opening_home_probability"] == 0.62 and written["opening_away_probability"] == 0.38
+    assert "opening_favorite" in written
+
+
+@pytest.mark.asyncio
+async def test_a_moneyline_only_poll_after_a_full_fetch_does_not_null_the_opening_lines():
+    from datetime import datetime, timedelta, timezone
+
+    from app.tasks.odds_polling import _maybe_set_opening_odds
+
+    later = datetime.now(timezone.utc) + timedelta(days=2)
+    session = _OpeningSession()
+    await _maybe_set_opening_odds(session, 1, 0.62, 0.38, -3.5, 47.5, commence_time=later, lines_fetched=True)
+    await _maybe_set_opening_odds(session, 1, 0.63, 0.37, None, None, commence_time=later, lines_fetched=False)
+    full, h2h = session.updates
+    assert full["opening_home_spread"] == -3.5 and full["opening_over_under"] == 47.5
+    assert "opening_home_spread" not in h2h and "opening_over_under" not in h2h  # left as the full fetch wrote them
+    assert h2h["opening_home_probability"] == 0.63
+
+
+@pytest.mark.asyncio
+async def test_a_full_fetch_still_writes_the_lines_exactly_as_before():
+    """Default behaviour is unchanged: a lines-carrying fetch writes spread and total,
+    including None when every book has pulled them."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.tasks.odds_polling import _maybe_set_opening_odds
+
+    session = _OpeningSession()
+    await _maybe_set_opening_odds(session, 1, 0.5, 0.5, None, None,
+                                  commence_time=datetime.now(timezone.utc) + timedelta(days=1))
+    assert session.updates[0]["opening_home_spread"] is None
+    assert session.updates[0]["opening_over_under"] is None
