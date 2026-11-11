@@ -588,20 +588,10 @@ class TestLiveDefinitionsAndDecisionA:
         )
 
     @pytest.mark.asyncio
-    async def test_registered_in_roundup_producers_and_folds_covered_feed_cards(self, monkeypatch) -> None:
-        # The pool's prices were observed Nov 3 (OBS). The producer reads the
-        # clock itself (``select_sibling_family`` defaults ``now`` to the real
-        # time), so on the real clock its freshness gate withholds every row a
-        # week later: this test went red on master at Nov 10, 22:00 UTC. Pin
-        # the producer's clock to NOW_NOV_3.
-        import app.utils.sibling_family as sibling_family_module
-
-        class _FrozenDatetime(datetime):
-            @classmethod
-            def now(cls, tz=None):
-                return NOW_NOV_3 if tz is None else NOW_NOV_3.astimezone(tz)
-
-        monkeypatch.setattr(sibling_family_module, "datetime", _FrozenDatetime)
+    async def test_registered_in_roundup_producers_and_folds_covered_feed_cards(self) -> None:
+        # Passing ``now=NOW_NOV_3.timestamp()`` (or ``now=NOW_NOV_3``) to
+        # ``evaluate_roundup_producer`` threads the clock through to
+        # ``produce_sibling_family`` -> ``select_sibling_family`` (#12374).
         reset_roundup_cache_for_tests()
         assert SNOW_FIRST_FLAKES_2026_SLUG in ROUNDUP_PRODUCERS
         assert GTA_VI_ALBUM_FEATURES_SLUG in ROUNDUP_PRODUCERS
@@ -617,6 +607,15 @@ class TestLiveDefinitionsAndDecisionA:
         )
         assert snow_feed is not None
         assert snow_container is not None
+
+        # When the caller passes a clock 8 days after the Nov 3 quotes, the
+        # 7-day freshness rule withholds the rows and refuses the card.
+        stale_now = datetime(2026, 11, 12, 0, 0, tzinfo=timezone.utc)
+        stale_feed, stale_container = await evaluate_roundup_producer(
+            SNOW_FIRST_FLAKES_2026_PRODUCER, _live_snow_pool(), now=stale_now
+        )
+        assert stale_feed is None
+        assert stale_container is None
 
         deck: list[dict[str, Any]] = [
             {
