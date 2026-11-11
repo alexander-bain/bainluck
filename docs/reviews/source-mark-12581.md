@@ -58,7 +58,8 @@ pass. Every old row maps to its replacement rows in the complete ledger.
 The named Kalshi-only control is Denver at Kansas City, event 14638896: the served
 read on Nov 11 at 8:31 AM PT has 448 prop rows, all Kalshi. Passing those saved
 rows through the local selection utility retains all 448 and the `kalshi` header
-source. The deployed check is still owed.
+source. This is a finished-game control; the deployed check must also use a
+scheduled Kalshi-only NFL game, because graded rows skip the shaping.
 
 For the Patriots–Lions headline and all ten NBA games scheduled tonight, replay of
 the selected source inputs reproduces all eleven served hero values. Each has
@@ -87,3 +88,17 @@ Still owed: live NBA cap count (none was live at the morning read), fresh CI,
 head-bound bot approval, Fable ACCEPT, protected merge, deployment and served
 390 px proof including the mixed card and Kalshi-only control. No column, index,
 stored-data repair or iOS edit is part of this slice.
+
+The Nov 11, 9:01 AM PT review asks for title-case stat pills on installed readers.
+`NFL_LABELS` now matches the venue's casing, including `(Protected)`. The same
+captured cohort was replayed again: only names and labels in the row ledger
+change; prices, clocks and contributor identities are unchanged. All 33 source
+tests and the four startup checks pass after this correction.
+
+Fable's deployment conditions: land outside live NBA hours, Speed records web
+memory before and after with the restart capture, and Builder C or the Apple
+lane captures a mixed NFL props card on build 5704. Follow-up records remain on
+#12581: non-NFL blended-prop count and slice 2's selection, same-venue versus
+cross-venue capped rungs, the settled row/script source mismatch, scheduled
+opening-only headlines, and the repeated mark's payload cost. These are not
+claimed fixed by this first slice.

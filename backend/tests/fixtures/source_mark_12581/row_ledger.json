@@ -14,7 +14,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 1+",
         "threshold": 1,
         "over_probability": 0.855,
@@ -31,7 +31,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -68,7 +68,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 1+",
         "threshold": 1,
         "over_probability": 0.855,
@@ -85,7 +85,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -105,7 +105,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns (Protected)",
         "outcome_name": "Drake Maye: 1+",
         "threshold": 1,
         "over_probability": 0.83,
@@ -120,7 +120,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns_protected",
-          "label": "Passing touchdowns (protected)"
+          "label": "Passing Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -156,7 +156,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 2+",
         "threshold": 2,
         "over_probability": 0.555,
@@ -173,7 +173,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -210,7 +210,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 2+",
         "threshold": 2,
         "over_probability": 0.555,
@@ -227,7 +227,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -247,7 +247,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns (Protected)",
         "outcome_name": "Drake Maye: 2+",
         "threshold": 2,
         "over_probability": 0.545,
@@ -262,7 +262,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns_protected",
-          "label": "Passing touchdowns (protected)"
+          "label": "Passing Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -298,7 +298,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 3+",
         "threshold": 3,
         "over_probability": 0.255,
@@ -315,7 +315,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -352,7 +352,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 3+",
         "threshold": 3,
         "over_probability": 0.255,
@@ -369,7 +369,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -389,7 +389,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns (Protected)",
         "outcome_name": "Drake Maye: 3+",
         "threshold": 3,
         "over_probability": 0.21,
@@ -404,7 +404,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns_protected",
-          "label": "Passing touchdowns (protected)"
+          "label": "Passing Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -440,7 +440,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 4+",
         "threshold": 4,
         "over_probability": 0.07,
@@ -457,7 +457,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -494,7 +494,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 4+",
         "threshold": 4,
         "over_probability": 0.07,
@@ -511,7 +511,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -531,7 +531,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns (Protected)",
         "outcome_name": "Drake Maye: 4+",
         "threshold": 4,
         "over_probability": 0.07,
@@ -546,7 +546,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns_protected",
-          "label": "Passing touchdowns (protected)"
+          "label": "Passing Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -582,7 +582,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 1+",
         "threshold": 1,
         "over_probability": 0.855,
@@ -599,7 +599,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -635,7 +635,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 2+",
         "threshold": 2,
         "over_probability": 0.555,
@@ -652,7 +652,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -688,7 +688,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 3+",
         "threshold": 3,
         "over_probability": 0.255,
@@ -705,7 +705,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -741,7 +741,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Drake Maye: 4+",
         "threshold": 4,
         "over_probability": 0.07,
@@ -758,7 +758,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -1002,7 +1002,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Drake Maye: 200+",
         "threshold": 200,
         "over_probability": 0.755,
@@ -1018,7 +1018,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1054,7 +1054,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Drake Maye: 225+",
         "threshold": 225,
         "over_probability": 0.66,
@@ -1070,7 +1070,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1106,7 +1106,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Drake Maye: 250+",
         "threshold": 250,
         "over_probability": 0.535,
@@ -1122,7 +1122,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1158,7 +1158,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Drake Maye: 275+",
         "threshold": 275,
         "over_probability": 0.42,
@@ -1174,7 +1174,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1210,7 +1210,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Drake Maye: 375+",
         "threshold": 375,
         "over_probability": 0.1,
@@ -1226,7 +1226,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1262,7 +1262,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Drake Maye: 200+",
         "threshold": 200,
         "over_probability": 0.755,
@@ -1278,7 +1278,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1314,7 +1314,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Drake Maye: 225+",
         "threshold": 225,
         "over_probability": 0.66,
@@ -1330,7 +1330,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1366,7 +1366,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Drake Maye: 250+",
         "threshold": 250,
         "over_probability": 0.535,
@@ -1382,7 +1382,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1418,7 +1418,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Drake Maye: 275+",
         "threshold": 275,
         "over_probability": 0.42,
@@ -1434,7 +1434,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1470,7 +1470,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Drake Maye: 375+",
         "threshold": 375,
         "over_probability": 0.1,
@@ -1486,7 +1486,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1522,7 +1522,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Jared Goff: 225+",
         "threshold": 225,
         "over_probability": 0.69,
@@ -1538,7 +1538,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1574,7 +1574,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Jared Goff: 250+",
         "threshold": 250,
         "over_probability": 0.58,
@@ -1590,7 +1590,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1626,7 +1626,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Jared Goff: 275+",
         "threshold": 275,
         "over_probability": 0.45,
@@ -1642,7 +1642,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1678,7 +1678,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Jared Goff: 375+",
         "threshold": 375,
         "over_probability": 0.105,
@@ -1694,7 +1694,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1730,7 +1730,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Jared Goff: 225+",
         "threshold": 225,
         "over_probability": 0.69,
@@ -1746,7 +1746,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1782,7 +1782,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Jared Goff: 250+",
         "threshold": 250,
         "over_probability": 0.58,
@@ -1798,7 +1798,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1834,7 +1834,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Jared Goff: 275+",
         "threshold": 275,
         "over_probability": 0.45,
@@ -1850,7 +1850,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1886,7 +1886,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Yards",
         "outcome_name": "Jared Goff: 375+",
         "threshold": 375,
         "over_probability": 0.105,
@@ -1902,7 +1902,7 @@
         ],
         "stat": {
           "key": "passing_yards",
-          "label": "Passing yards"
+          "label": "Passing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -1938,7 +1938,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Jared Goff: 1+",
         "threshold": 1,
         "over_probability": 0.88,
@@ -1955,7 +1955,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -1992,7 +1992,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Jared Goff: 1+",
         "threshold": 1,
         "over_probability": 0.88,
@@ -2009,7 +2009,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -2029,7 +2029,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns (Protected)",
         "outcome_name": "Jared Goff: 1+",
         "threshold": 1,
         "over_probability": 0.865,
@@ -2044,7 +2044,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns_protected",
-          "label": "Passing touchdowns (protected)"
+          "label": "Passing Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -2080,7 +2080,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Jared Goff: 2+",
         "threshold": 2,
         "over_probability": 0.615,
@@ -2097,7 +2097,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -2134,7 +2134,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Jared Goff: 2+",
         "threshold": 2,
         "over_probability": 0.615,
@@ -2151,7 +2151,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -2171,7 +2171,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns (Protected)",
         "outcome_name": "Jared Goff: 2+",
         "threshold": 2,
         "over_probability": 0.63,
@@ -2186,7 +2186,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns_protected",
-          "label": "Passing touchdowns (protected)"
+          "label": "Passing Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -2222,7 +2222,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Jared Goff: 3+",
         "threshold": 3,
         "over_probability": 0.31,
@@ -2239,7 +2239,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -2276,7 +2276,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Jared Goff: 3+",
         "threshold": 3,
         "over_probability": 0.31,
@@ -2293,7 +2293,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -2313,7 +2313,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns (Protected)",
         "outcome_name": "Jared Goff: 3+",
         "threshold": 3,
         "over_probability": 0.26,
@@ -2328,7 +2328,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns_protected",
-          "label": "Passing touchdowns (protected)"
+          "label": "Passing Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -2365,7 +2365,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Jared Goff: 4+",
         "threshold": 4,
         "over_probability": 0.095,
@@ -2380,7 +2380,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -2400,7 +2400,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns (Protected)",
         "outcome_name": "Jared Goff: 4+",
         "threshold": 4,
         "over_probability": 0.075,
@@ -2415,7 +2415,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns_protected",
-          "label": "Passing touchdowns (protected)"
+          "label": "Passing Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -2451,7 +2451,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Jared Goff: 1+",
         "threshold": 1,
         "over_probability": 0.88,
@@ -2468,7 +2468,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -2504,7 +2504,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Jared Goff: 2+",
         "threshold": 2,
         "over_probability": 0.615,
@@ -2521,7 +2521,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -2557,7 +2557,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Passing touchdowns",
+        "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
         "outcome_name": "Jared Goff: 3+",
         "threshold": 3,
         "over_probability": 0.31,
@@ -2574,7 +2574,7 @@
         ],
         "stat": {
           "key": "passing_touchdowns",
-          "label": "Passing touchdowns"
+          "label": "Passing Touchdowns"
         },
         "line": {
           "kind": "count_at_least",
@@ -2610,7 +2610,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 20+",
         "threshold": 20,
         "over_probability": 0.685,
@@ -2627,7 +2627,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -2663,7 +2663,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 70+",
         "threshold": 70,
         "over_probability": 0.1,
@@ -2680,7 +2680,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -2717,7 +2717,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 10+",
         "threshold": 10,
         "over_probability": 0.85,
@@ -2732,7 +2732,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -2752,7 +2752,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 10+",
         "threshold": 10,
         "over_probability": 0.83,
@@ -2767,7 +2767,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -2804,7 +2804,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 15+",
         "threshold": 15,
         "over_probability": 0.77,
@@ -2819,7 +2819,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -2839,7 +2839,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 15+",
         "threshold": 15,
         "over_probability": 0.75,
@@ -2854,7 +2854,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -2890,7 +2890,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 20+",
         "threshold": 20,
         "over_probability": 0.685,
@@ -2907,7 +2907,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -2944,7 +2944,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 20+",
         "threshold": 20,
         "over_probability": 0.685,
@@ -2961,7 +2961,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -2981,7 +2981,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 20+",
         "threshold": 20,
         "over_probability": 0.67,
@@ -2996,7 +2996,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3033,7 +3033,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 25+",
         "threshold": 25,
         "over_probability": 0.595,
@@ -3048,7 +3048,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3068,7 +3068,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 25+",
         "threshold": 25,
         "over_probability": 0.58,
@@ -3083,7 +3083,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3120,7 +3120,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 30+",
         "threshold": 30,
         "over_probability": 0.495,
@@ -3135,7 +3135,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3155,7 +3155,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 30+",
         "threshold": 30,
         "over_probability": 0.49,
@@ -3170,7 +3170,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3207,7 +3207,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 40+",
         "threshold": 40,
         "over_probability": 0.365,
@@ -3222,7 +3222,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3242,7 +3242,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 40+",
         "threshold": 40,
         "over_probability": 0.325,
@@ -3257,7 +3257,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3294,7 +3294,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 50+",
         "threshold": 50,
         "over_probability": 0.24,
@@ -3309,7 +3309,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3329,7 +3329,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 50+",
         "threshold": 50,
         "over_probability": 0.2,
@@ -3344,7 +3344,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3381,7 +3381,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 60+",
         "threshold": 60,
         "over_probability": 0.155,
@@ -3396,7 +3396,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3416,7 +3416,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 60+",
         "threshold": 60,
         "over_probability": 0.12,
@@ -3431,7 +3431,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3467,7 +3467,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 70+",
         "threshold": 70,
         "over_probability": 0.1,
@@ -3484,7 +3484,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3521,7 +3521,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 70+",
         "threshold": 70,
         "over_probability": 0.1,
@@ -3538,7 +3538,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3558,7 +3558,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 70+",
         "threshold": 70,
         "over_probability": 0.075,
@@ -3573,7 +3573,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3610,7 +3610,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jahmyr Gibbs: 80+",
         "threshold": 80,
         "over_probability": 0.065,
@@ -3625,7 +3625,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3645,7 +3645,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 80+",
         "threshold": 80,
         "over_probability": 0.05,
@@ -3660,7 +3660,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3697,7 +3697,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 20+",
         "threshold": 20,
         "over_probability": 0.865,
@@ -3712,7 +3712,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3732,7 +3732,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 20+",
         "threshold": 20,
         "over_probability": 0.835,
@@ -3747,7 +3747,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3784,7 +3784,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 25+",
         "threshold": 25,
         "over_probability": 0.825,
@@ -3799,7 +3799,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3819,7 +3819,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 25+",
         "threshold": 25,
         "over_probability": 0.795,
@@ -3834,7 +3834,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3871,7 +3871,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 30+",
         "threshold": 30,
         "over_probability": 0.77,
@@ -3886,7 +3886,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -3906,7 +3906,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 30+",
         "threshold": 30,
         "over_probability": 0.75,
@@ -3921,7 +3921,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -3957,7 +3957,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 40+",
         "threshold": 40,
         "over_probability": 0.665,
@@ -3974,7 +3974,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4011,7 +4011,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 40+",
         "threshold": 40,
         "over_probability": 0.665,
@@ -4028,7 +4028,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4048,7 +4048,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 40+",
         "threshold": 40,
         "over_probability": 0.645,
@@ -4063,7 +4063,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -4099,7 +4099,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 50+",
         "threshold": 50,
         "over_probability": 0.555,
@@ -4116,7 +4116,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4153,7 +4153,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 50+",
         "threshold": 50,
         "over_probability": 0.555,
@@ -4170,7 +4170,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4190,7 +4190,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 50+",
         "threshold": 50,
         "over_probability": 0.535,
@@ -4205,7 +4205,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -4241,7 +4241,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 60+",
         "threshold": 60,
         "over_probability": 0.455,
@@ -4258,7 +4258,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4295,7 +4295,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 60+",
         "threshold": 60,
         "over_probability": 0.455,
@@ -4312,7 +4312,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4332,7 +4332,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 60+",
         "threshold": 60,
         "over_probability": 0.43,
@@ -4347,7 +4347,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -4384,7 +4384,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 70+",
         "threshold": 70,
         "over_probability": 0.35,
@@ -4399,7 +4399,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4419,7 +4419,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 70+",
         "threshold": 70,
         "over_probability": 0.32,
@@ -4434,7 +4434,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -4471,7 +4471,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 80+",
         "threshold": 80,
         "over_probability": 0.265,
@@ -4486,7 +4486,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4506,7 +4506,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 80+",
         "threshold": 80,
         "over_probability": 0.23,
@@ -4521,7 +4521,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -4558,7 +4558,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 90+",
         "threshold": 90,
         "over_probability": 0.195,
@@ -4573,7 +4573,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4593,7 +4593,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 90+",
         "threshold": 90,
         "over_probability": 0.16,
@@ -4608,7 +4608,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -4645,7 +4645,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 100+",
         "threshold": 100,
         "over_probability": 0.14,
@@ -4660,7 +4660,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4680,7 +4680,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 100+",
         "threshold": 100,
         "over_probability": 0.11,
@@ -4695,7 +4695,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -4732,7 +4732,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 110+",
         "threshold": 110,
         "over_probability": 0.105,
@@ -4747,7 +4747,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4767,7 +4767,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 110+",
         "threshold": 110,
         "over_probability": 0.075,
@@ -4782,7 +4782,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -4819,7 +4819,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 120+",
         "threshold": 120,
         "over_probability": 0.075,
@@ -4834,7 +4834,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -4854,7 +4854,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 120+",
         "threshold": 120,
         "over_probability": 0.065,
@@ -4869,7 +4869,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -4905,7 +4905,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Jameson Williams: 130+",
         "threshold": 130,
         "over_probability": 0.05,
@@ -4920,7 +4920,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -4956,7 +4956,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 40+",
         "threshold": 40,
         "over_probability": 0.665,
@@ -4973,7 +4973,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5009,7 +5009,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 50+",
         "threshold": 50,
         "over_probability": 0.555,
@@ -5026,7 +5026,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5062,7 +5062,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Jameson Williams: 60+",
         "threshold": 60,
         "over_probability": 0.455,
@@ -5079,7 +5079,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5115,7 +5115,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 30+",
         "threshold": 30,
         "over_probability": 0.67,
@@ -5132,7 +5132,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5168,7 +5168,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 40+",
         "threshold": 40,
         "over_probability": 0.53,
@@ -5185,7 +5185,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5221,7 +5221,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 60+",
         "threshold": 60,
         "over_probability": 0.285,
@@ -5238,7 +5238,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5275,7 +5275,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 15+",
         "threshold": 15,
         "over_probability": 0.86,
@@ -5290,7 +5290,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5310,7 +5310,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 15+",
         "threshold": 15,
         "over_probability": 0.845,
@@ -5325,7 +5325,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -5362,7 +5362,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 20+",
         "threshold": 20,
         "over_probability": 0.805,
@@ -5377,7 +5377,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5397,7 +5397,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 20+",
         "threshold": 20,
         "over_probability": 0.79,
@@ -5412,7 +5412,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -5449,7 +5449,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 25+",
         "threshold": 25,
         "over_probability": 0.735,
@@ -5464,7 +5464,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5484,7 +5484,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 25+",
         "threshold": 25,
         "over_probability": 0.72,
@@ -5499,7 +5499,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -5535,7 +5535,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 30+",
         "threshold": 30,
         "over_probability": 0.67,
@@ -5552,7 +5552,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5589,7 +5589,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 30+",
         "threshold": 30,
         "over_probability": 0.67,
@@ -5606,7 +5606,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5626,7 +5626,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 30+",
         "threshold": 30,
         "over_probability": 0.645,
@@ -5641,7 +5641,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -5677,7 +5677,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 40+",
         "threshold": 40,
         "over_probability": 0.53,
@@ -5694,7 +5694,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5731,7 +5731,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 40+",
         "threshold": 40,
         "over_probability": 0.53,
@@ -5748,7 +5748,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5768,7 +5768,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 40+",
         "threshold": 40,
         "over_probability": 0.505,
@@ -5783,7 +5783,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -5820,7 +5820,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 50+",
         "threshold": 50,
         "over_probability": 0.395,
@@ -5835,7 +5835,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5855,7 +5855,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 50+",
         "threshold": 50,
         "over_probability": 0.365,
@@ -5870,7 +5870,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -5906,7 +5906,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 60+",
         "threshold": 60,
         "over_probability": 0.285,
@@ -5923,7 +5923,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5960,7 +5960,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 60+",
         "threshold": 60,
         "over_probability": 0.285,
@@ -5977,7 +5977,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -5997,7 +5997,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 60+",
         "threshold": 60,
         "over_probability": 0.25,
@@ -6012,7 +6012,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -6049,7 +6049,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 70+",
         "threshold": 70,
         "over_probability": 0.2,
@@ -6064,7 +6064,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6084,7 +6084,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 70+",
         "threshold": 70,
         "over_probability": 0.16,
@@ -6099,7 +6099,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -6136,7 +6136,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 80+",
         "threshold": 80,
         "over_probability": 0.135,
@@ -6151,7 +6151,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6171,7 +6171,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 80+",
         "threshold": 80,
         "over_probability": 0.095,
@@ -6186,7 +6186,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -6223,7 +6223,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 90+",
         "threshold": 90,
         "over_probability": 0.09,
@@ -6238,7 +6238,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6258,7 +6258,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 90+",
         "threshold": 90,
         "over_probability": 0.07,
@@ -6273,7 +6273,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -6310,7 +6310,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Sam LaPorta: 100+",
         "threshold": 100,
         "over_probability": 0.055,
@@ -6325,7 +6325,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6345,7 +6345,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Sam LaPorta: 100+",
         "threshold": 100,
         "over_probability": 0.055,
@@ -6360,7 +6360,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -6503,7 +6503,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 60+",
         "threshold": 60,
         "over_probability": 0.81,
@@ -6518,7 +6518,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6538,7 +6538,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 60+",
         "threshold": 60,
         "over_probability": 0.8,
@@ -6553,7 +6553,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -6590,7 +6590,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 70+",
         "threshold": 70,
         "over_probability": 0.75,
@@ -6605,7 +6605,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6625,7 +6625,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 70+",
         "threshold": 70,
         "over_probability": 0.73,
@@ -6640,7 +6640,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -6677,7 +6677,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 80+",
         "threshold": 80,
         "over_probability": 0.65,
@@ -6692,7 +6692,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6712,7 +6712,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 80+",
         "threshold": 80,
         "over_probability": 0.635,
@@ -6727,7 +6727,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -6763,7 +6763,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 90+",
         "threshold": 90,
         "over_probability": 0.555,
@@ -6780,7 +6780,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6817,7 +6817,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 90+",
         "threshold": 90,
         "over_probability": 0.555,
@@ -6834,7 +6834,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6854,7 +6854,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 90+",
         "threshold": 90,
         "over_probability": 0.54,
@@ -6869,7 +6869,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -6905,7 +6905,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 100+",
         "threshold": 100,
         "over_probability": 0.44,
@@ -6922,7 +6922,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6959,7 +6959,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 100+",
         "threshold": 100,
         "over_probability": 0.44,
@@ -6976,7 +6976,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -6996,7 +6996,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 100+",
         "threshold": 100,
         "over_probability": 0.46,
@@ -7011,7 +7011,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -7048,7 +7048,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 110+",
         "threshold": 110,
         "over_probability": 0.38,
@@ -7063,7 +7063,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7083,7 +7083,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 110+",
         "threshold": 110,
         "over_probability": 0.35,
@@ -7098,7 +7098,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -7135,7 +7135,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 120+",
         "threshold": 120,
         "over_probability": 0.305,
@@ -7150,7 +7150,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7170,7 +7170,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 120+",
         "threshold": 120,
         "over_probability": 0.29,
@@ -7185,7 +7185,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -7222,7 +7222,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 130+",
         "threshold": 130,
         "over_probability": 0.235,
@@ -7237,7 +7237,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7257,7 +7257,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 130+",
         "threshold": 130,
         "over_probability": 0.215,
@@ -7272,7 +7272,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -7309,7 +7309,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 140+",
         "threshold": 140,
         "over_probability": 0.18,
@@ -7324,7 +7324,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7344,7 +7344,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 140+",
         "threshold": 140,
         "over_probability": 0.15,
@@ -7359,7 +7359,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -7396,7 +7396,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 150+",
         "threshold": 150,
         "over_probability": 0.135,
@@ -7411,7 +7411,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7431,7 +7431,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 150+",
         "threshold": 150,
         "over_probability": 0.09,
@@ -7446,7 +7446,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -7483,7 +7483,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 160+",
         "threshold": 160,
         "over_probability": 0.095,
@@ -7498,7 +7498,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7518,7 +7518,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 160+",
         "threshold": 160,
         "over_probability": 0.085,
@@ -7533,7 +7533,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -7570,7 +7570,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 170+",
         "threshold": 170,
         "over_probability": 0.07,
@@ -7585,7 +7585,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7605,7 +7605,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 170+",
         "threshold": 170,
         "over_probability": 0.065,
@@ -7620,7 +7620,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -7657,7 +7657,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 180+",
         "threshold": 180,
         "over_probability": 0.05,
@@ -7672,7 +7672,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7692,7 +7692,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jahmyr Gibbs: 180+",
         "threshold": 180,
         "over_probability": 0.05,
@@ -7707,7 +7707,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -7743,7 +7743,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 90+",
         "threshold": 90,
         "over_probability": 0.555,
@@ -7760,7 +7760,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7796,7 +7796,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jahmyr Gibbs: 100+",
         "threshold": 100,
         "over_probability": 0.44,
@@ -7813,7 +7813,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7849,7 +7849,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 10+",
         "threshold": 10,
         "over_probability": 0.65,
@@ -7866,7 +7866,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7903,7 +7903,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 10+",
         "threshold": 10,
         "over_probability": 0.65,
@@ -7920,7 +7920,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -7940,7 +7940,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Isaac TeSlaa: 10+",
         "threshold": 10,
         "over_probability": 0.63,
@@ -7955,7 +7955,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -7992,7 +7992,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 15+",
         "threshold": 15,
         "over_probability": 0.545,
@@ -8007,7 +8007,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8027,7 +8027,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Isaac TeSlaa: 15+",
         "threshold": 15,
         "over_probability": 0.53,
@@ -8042,7 +8042,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -8078,7 +8078,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 20+",
         "threshold": 20,
         "over_probability": 0.46,
@@ -8095,7 +8095,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8132,7 +8132,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 20+",
         "threshold": 20,
         "over_probability": 0.46,
@@ -8149,7 +8149,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8169,7 +8169,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Isaac TeSlaa: 20+",
         "threshold": 20,
         "over_probability": 0.43,
@@ -8184,7 +8184,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -8220,7 +8220,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 25+",
         "threshold": 25,
         "over_probability": 0.38,
@@ -8237,7 +8237,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8274,7 +8274,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 25+",
         "threshold": 25,
         "over_probability": 0.38,
@@ -8291,7 +8291,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8311,7 +8311,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Isaac TeSlaa: 25+",
         "threshold": 25,
         "over_probability": 0.35,
@@ -8326,7 +8326,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -8363,7 +8363,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 30+",
         "threshold": 30,
         "over_probability": 0.31,
@@ -8378,7 +8378,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8398,7 +8398,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Isaac TeSlaa: 30+",
         "threshold": 30,
         "over_probability": 0.28,
@@ -8413,7 +8413,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -8450,7 +8450,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 40+",
         "threshold": 40,
         "over_probability": 0.2,
@@ -8465,7 +8465,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8485,7 +8485,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Isaac TeSlaa: 40+",
         "threshold": 40,
         "over_probability": 0.165,
@@ -8500,7 +8500,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -8537,7 +8537,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 50+",
         "threshold": 50,
         "over_probability": 0.13,
@@ -8552,7 +8552,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8572,7 +8572,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Isaac TeSlaa: 50+",
         "threshold": 50,
         "over_probability": 0.095,
@@ -8587,7 +8587,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -8624,7 +8624,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 60+",
         "threshold": 60,
         "over_probability": 0.08,
@@ -8639,7 +8639,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8659,7 +8659,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Isaac TeSlaa: 60+",
         "threshold": 60,
         "over_probability": 0.075,
@@ -8674,7 +8674,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -8710,7 +8710,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Isaac TeSlaa: 70+",
         "threshold": 70,
         "over_probability": 0.05,
@@ -8725,7 +8725,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -8761,7 +8761,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 10+",
         "threshold": 10,
         "over_probability": 0.65,
@@ -8778,7 +8778,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8814,7 +8814,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 20+",
         "threshold": 20,
         "over_probability": 0.46,
@@ -8831,7 +8831,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -8867,7 +8867,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Isaac TeSlaa: 25+",
         "threshold": 25,
         "over_probability": 0.38,
@@ -8884,7 +8884,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -9792,7 +9792,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Jahmyr Gibbs: 1+",
         "threshold": 1,
         "over_probability": 0.65,
@@ -9807,7 +9807,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -9879,7 +9879,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Jahmyr Gibbs: 2+",
         "threshold": 2,
         "over_probability": 0.25,
@@ -9894,7 +9894,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -9966,7 +9966,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 1+",
         "threshold": 1,
         "over_probability": 0.44,
@@ -9981,7 +9981,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -10053,7 +10053,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 2+",
         "threshold": 2,
         "over_probability": 0.09,
@@ -10068,7 +10068,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -10140,7 +10140,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Corey Kiner: 1+",
         "threshold": 1,
         "over_probability": 0.395,
@@ -10155,7 +10155,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -10229,7 +10229,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Corey Kiner: 2+",
         "threshold": 2,
         "over_probability": 0.08,
@@ -10244,7 +10244,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -10316,7 +10316,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Jameson Williams: 1+",
         "threshold": 1,
         "over_probability": 0.285,
@@ -10331,7 +10331,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -10456,7 +10456,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Sam LaPorta: 1+",
         "threshold": 1,
         "over_probability": 0.275,
@@ -10471,7 +10471,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -10596,7 +10596,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "DeMario Douglas: 1+",
         "threshold": 1,
         "over_probability": 0.23,
@@ -10611,7 +10611,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -10683,7 +10683,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Hunter Henry: 1+",
         "threshold": 1,
         "over_probability": 0.235,
@@ -10698,7 +10698,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -10770,7 +10770,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Mack Hollins: 1+",
         "threshold": 1,
         "over_probability": 0.215,
@@ -10785,7 +10785,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -10857,7 +10857,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Drake Maye: 1+",
         "threshold": 1,
         "over_probability": 0.195,
@@ -10872,7 +10872,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -10944,7 +10944,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Eli Raridon: 1+",
         "threshold": 1,
         "over_probability": 0.25,
@@ -10959,7 +10959,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -11031,7 +11031,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Lan Larison: 1+",
         "threshold": 1,
         "over_probability": 0.15,
@@ -11046,7 +11046,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -11118,7 +11118,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Efton Chism III: 1+",
         "threshold": 1,
         "over_probability": 0.15,
@@ -11133,7 +11133,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -11205,7 +11205,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Isaac TeSlaa: 1+",
         "threshold": 1,
         "over_probability": 0.135,
@@ -11220,7 +11220,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -11292,7 +11292,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Kyle Williams: 1+",
         "threshold": 1,
         "over_probability": 0.12,
@@ -11307,7 +11307,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -11379,7 +11379,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Sione Vaki: 1+",
         "threshold": 1,
         "over_probability": 0.095,
@@ -11394,7 +11394,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -11466,7 +11466,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "DET Lions D/ST: 1+",
         "threshold": 1,
         "over_probability": 0.19,
@@ -11481,7 +11481,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -11553,7 +11553,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "NE Patriots D/ST: 1+",
         "threshold": 1,
         "over_probability": 0.17,
@@ -11568,7 +11568,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -11640,7 +11640,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Touchdowns (Protected)",
         "outcome_name": "Brock Wright: 1+",
         "threshold": 1,
         "over_probability": 0.06,
@@ -11655,7 +11655,7 @@
         ],
         "stat": {
           "key": "touchdowns_protected",
-          "label": "Touchdowns (protected)"
+          "label": "Touchdowns (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -11898,7 +11898,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Drake Maye: 10+",
         "threshold": 10,
         "over_probability": 0.83,
@@ -11913,7 +11913,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -11933,7 +11933,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Drake Maye: 10+",
         "threshold": 10,
         "over_probability": 0.83,
@@ -11948,7 +11948,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -11985,7 +11985,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Drake Maye: 15+",
         "threshold": 15,
         "over_probability": 0.73,
@@ -12000,7 +12000,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12020,7 +12020,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Drake Maye: 15+",
         "threshold": 15,
         "over_probability": 0.735,
@@ -12035,7 +12035,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -12072,7 +12072,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Drake Maye: 20+",
         "threshold": 20,
         "over_probability": 0.62,
@@ -12087,7 +12087,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12107,7 +12107,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Drake Maye: 20+",
         "threshold": 20,
         "over_probability": 0.62,
@@ -12122,7 +12122,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -12158,7 +12158,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Drake Maye: 25+",
         "threshold": 25,
         "over_probability": 0.515,
@@ -12175,7 +12175,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12212,7 +12212,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Drake Maye: 25+",
         "threshold": 25,
         "over_probability": 0.515,
@@ -12229,7 +12229,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12249,7 +12249,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Drake Maye: 25+",
         "threshold": 25,
         "over_probability": 0.505,
@@ -12264,7 +12264,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -12301,7 +12301,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Drake Maye: 30+",
         "threshold": 30,
         "over_probability": 0.415,
@@ -12316,7 +12316,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12336,7 +12336,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Drake Maye: 30+",
         "threshold": 30,
         "over_probability": 0.39,
@@ -12351,7 +12351,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -12388,7 +12388,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Drake Maye: 40+",
         "threshold": 40,
         "over_probability": 0.255,
@@ -12403,7 +12403,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12423,7 +12423,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Drake Maye: 40+",
         "threshold": 40,
         "over_probability": 0.215,
@@ -12438,7 +12438,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -12475,7 +12475,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Drake Maye: 50+",
         "threshold": 50,
         "over_probability": 0.15,
@@ -12490,7 +12490,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12510,7 +12510,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Drake Maye: 50+",
         "threshold": 50,
         "over_probability": 0.105,
@@ -12525,7 +12525,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -12562,7 +12562,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Drake Maye: 60+",
         "threshold": 60,
         "over_probability": 0.09,
@@ -12577,7 +12577,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12597,7 +12597,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Drake Maye: 60+",
         "threshold": 60,
         "over_probability": 0.06,
@@ -12612,7 +12612,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -12648,7 +12648,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Drake Maye: 25+",
         "threshold": 25,
         "over_probability": 0.515,
@@ -12665,7 +12665,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12702,7 +12702,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 40+",
         "threshold": 40,
         "over_probability": 0.855,
@@ -12717,7 +12717,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12737,7 +12737,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 40+",
         "threshold": 40,
         "over_probability": 0.825,
@@ -12752,7 +12752,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -12789,7 +12789,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 50+",
         "threshold": 50,
         "over_probability": 0.775,
@@ -12804,7 +12804,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12824,7 +12824,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 50+",
         "threshold": 50,
         "over_probability": 0.745,
@@ -12839,7 +12839,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -12876,7 +12876,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 60+",
         "threshold": 60,
         "over_probability": 0.68,
@@ -12891,7 +12891,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12911,7 +12911,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 60+",
         "threshold": 60,
         "over_probability": 0.65,
@@ -12926,7 +12926,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -12963,7 +12963,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 70+",
         "threshold": 70,
         "over_probability": 0.595,
@@ -12978,7 +12978,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -12998,7 +12998,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 70+",
         "threshold": 70,
         "over_probability": 0.555,
@@ -13013,7 +13013,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13050,7 +13050,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 80+",
         "threshold": 80,
         "over_probability": 0.48,
@@ -13065,7 +13065,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -13085,7 +13085,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 80+",
         "threshold": 80,
         "over_probability": 0.45,
@@ -13100,7 +13100,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13137,7 +13137,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 90+",
         "threshold": 90,
         "over_probability": 0.38,
@@ -13152,7 +13152,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -13172,7 +13172,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 90+",
         "threshold": 90,
         "over_probability": 0.345,
@@ -13187,7 +13187,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13224,7 +13224,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 100+",
         "threshold": 100,
         "over_probability": 0.295,
@@ -13239,7 +13239,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -13259,7 +13259,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 100+",
         "threshold": 100,
         "over_probability": 0.255,
@@ -13274,7 +13274,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13311,7 +13311,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 110+",
         "threshold": 110,
         "over_probability": 0.225,
@@ -13326,7 +13326,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -13346,7 +13346,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 110+",
         "threshold": 110,
         "over_probability": 0.185,
@@ -13361,7 +13361,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13398,7 +13398,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 120+",
         "threshold": 120,
         "over_probability": 0.165,
@@ -13413,7 +13413,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -13433,7 +13433,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 120+",
         "threshold": 120,
         "over_probability": 0.135,
@@ -13448,7 +13448,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13485,7 +13485,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 130+",
         "threshold": 130,
         "over_probability": 0.125,
@@ -13500,7 +13500,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -13520,7 +13520,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 130+",
         "threshold": 130,
         "over_probability": 0.1,
@@ -13535,7 +13535,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13572,7 +13572,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 140+",
         "threshold": 140,
         "over_probability": 0.085,
@@ -13587,7 +13587,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -13607,7 +13607,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 140+",
         "threshold": 140,
         "over_probability": 0.07,
@@ -13622,7 +13622,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13659,7 +13659,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards",
         "outcome_name": "Amon-Ra St. Brown: 150+",
         "threshold": 150,
         "over_probability": 0.055,
@@ -13674,7 +13674,7 @@
         ],
         "stat": {
           "key": "receiving_yards",
-          "label": "Receiving yards"
+          "label": "Receiving Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -13694,7 +13694,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 150+",
         "threshold": 150,
         "over_probability": 0.05,
@@ -13709,7 +13709,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13745,7 +13745,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Receiving yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Receiving Yards (Protected)",
         "outcome_name": "Amon-Ra St. Brown: 160+",
         "threshold": 160,
         "over_probability": 0.05,
@@ -13760,7 +13760,7 @@
         ],
         "stat": {
           "key": "receiving_yards_protected",
-          "label": "Receiving yards (protected)"
+          "label": "Receiving Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13797,7 +13797,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Corey Kiner: 30+",
         "threshold": 30,
         "over_probability": 0.775,
@@ -13812,7 +13812,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -13832,7 +13832,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 30+",
         "threshold": 30,
         "over_probability": 0.765,
@@ -13847,7 +13847,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13884,7 +13884,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Corey Kiner: 40+",
         "threshold": 40,
         "over_probability": 0.645,
@@ -13899,7 +13899,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -13919,7 +13919,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 40+",
         "threshold": 40,
         "over_probability": 0.63,
@@ -13934,7 +13934,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -13971,7 +13971,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Corey Kiner: 50+",
         "threshold": 50,
         "over_probability": 0.505,
@@ -13986,7 +13986,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14006,7 +14006,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 50+",
         "threshold": 50,
         "over_probability": 0.49,
@@ -14021,7 +14021,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14058,7 +14058,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Corey Kiner: 55+",
         "threshold": 55,
         "over_probability": 0.455,
@@ -14073,7 +14073,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14093,7 +14093,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 55+",
         "threshold": 55,
         "over_probability": 0.415,
@@ -14108,7 +14108,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14145,7 +14145,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Corey Kiner: 60+",
         "threshold": 60,
         "over_probability": 0.385,
@@ -14160,7 +14160,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14180,7 +14180,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 60+",
         "threshold": 60,
         "over_probability": 0.355,
@@ -14195,7 +14195,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14232,7 +14232,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Corey Kiner: 70+",
         "threshold": 70,
         "over_probability": 0.275,
@@ -14247,7 +14247,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14267,7 +14267,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 70+",
         "threshold": 70,
         "over_probability": 0.245,
@@ -14282,7 +14282,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14319,7 +14319,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Corey Kiner: 80+",
         "threshold": 80,
         "over_probability": 0.19,
@@ -14334,7 +14334,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14354,7 +14354,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 80+",
         "threshold": 80,
         "over_probability": 0.16,
@@ -14369,7 +14369,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14406,7 +14406,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Corey Kiner: 90+",
         "threshold": 90,
         "over_probability": 0.13,
@@ -14421,7 +14421,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14441,7 +14441,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 90+",
         "threshold": 90,
         "over_probability": 0.095,
@@ -14456,7 +14456,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14493,7 +14493,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Corey Kiner: 100+",
         "threshold": 100,
         "over_probability": 0.09,
@@ -14508,7 +14508,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14528,7 +14528,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 100+",
         "threshold": 100,
         "over_probability": 0.07,
@@ -14543,7 +14543,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14580,7 +14580,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Corey Kiner: 110+",
         "threshold": 110,
         "over_probability": 0.06,
@@ -14595,7 +14595,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14615,7 +14615,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 110+",
         "threshold": 110,
         "over_probability": 0.05,
@@ -14630,7 +14630,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14666,7 +14666,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Corey Kiner: 120+",
         "threshold": 120,
         "over_probability": 0.05,
@@ -14681,7 +14681,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14718,7 +14718,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Sione Vaki: 10+",
         "threshold": 10,
         "over_probability": 0.575,
@@ -14733,7 +14733,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14753,7 +14753,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Sione Vaki: 10+",
         "threshold": 10,
         "over_probability": 0.575,
@@ -14768,7 +14768,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14805,7 +14805,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Sione Vaki: 15+",
         "threshold": 15,
         "over_probability": 0.43,
@@ -14820,7 +14820,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14840,7 +14840,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Sione Vaki: 15+",
         "threshold": 15,
         "over_probability": 0.43,
@@ -14855,7 +14855,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14892,7 +14892,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Sione Vaki: 20+",
         "threshold": 20,
         "over_probability": 0.32,
@@ -14907,7 +14907,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -14927,7 +14927,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Sione Vaki: 20+",
         "threshold": 20,
         "over_probability": 0.315,
@@ -14942,7 +14942,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -14979,7 +14979,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Sione Vaki: 25+",
         "threshold": 25,
         "over_probability": 0.235,
@@ -14994,7 +14994,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -15014,7 +15014,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Sione Vaki: 25+",
         "threshold": 25,
         "over_probability": 0.22,
@@ -15029,7 +15029,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -15066,7 +15066,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Sione Vaki: 30+",
         "threshold": 30,
         "over_probability": 0.155,
@@ -15081,7 +15081,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -15101,7 +15101,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Sione Vaki: 30+",
         "threshold": 30,
         "over_probability": 0.16,
@@ -15116,7 +15116,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -15153,7 +15153,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Sione Vaki: 40+",
         "threshold": 40,
         "over_probability": 0.08,
@@ -15168,7 +15168,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -15188,7 +15188,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Sione Vaki: 40+",
         "threshold": 40,
         "over_probability": 0.075,
@@ -15203,7 +15203,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -15240,7 +15240,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Sione Vaki: 50+",
         "threshold": 50,
         "over_probability": 0.05,
@@ -15255,7 +15255,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -15275,7 +15275,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Sione Vaki: 50+",
         "threshold": 50,
         "over_probability": 0.055,
@@ -15290,7 +15290,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -15327,7 +15327,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jared Goff: 10+",
         "threshold": 10,
         "over_probability": 0.13,
@@ -15342,7 +15342,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -15362,7 +15362,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jared Goff: 10+",
         "threshold": 10,
         "over_probability": 0.1,
@@ -15377,7 +15377,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",
@@ -15414,7 +15414,7 @@
     },
     "after": [
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards",
         "outcome_name": "Jared Goff: 15+",
         "threshold": 15,
         "over_probability": 0.065,
@@ -15429,7 +15429,7 @@
         ],
         "stat": {
           "key": "rushing_yards",
-          "label": "Rushing yards"
+          "label": "Rushing Yards"
         },
         "line": {
           "kind": "count_at_least",
@@ -15449,7 +15449,7 @@
         }
       },
       {
-        "market_name": "New England Patriots vs Detroit Lions: Rushing yards (protected)",
+        "market_name": "New England Patriots vs Detroit Lions: Rushing Yards (Protected)",
         "outcome_name": "Jared Goff: 15+",
         "threshold": 15,
         "over_probability": 0.055,
@@ -15464,7 +15464,7 @@
         ],
         "stat": {
           "key": "rushing_yards_protected",
-          "label": "Rushing yards (protected)"
+          "label": "Rushing Yards (Protected)"
         },
         "line": {
           "kind": "count_at_least",

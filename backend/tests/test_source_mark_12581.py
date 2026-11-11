@@ -390,7 +390,7 @@ class TestServedPropSelection:
         assert rows["receiving_yards"]["over_probability"] == 0.86
         protected = rows["receiving_yards_protected"]
         assert protected["over_probability"] == 0.845
-        assert protected["market_name"].endswith("Receiving yards (protected)")
+        assert protected["market_name"].endswith("Receiving Yards (Protected)")
         assert protected["source"] == "kalshi"
         assert protected["contributor_outcome_ids"] == [262830012]
 
@@ -562,6 +562,11 @@ class TestCapturedPatriotsLions:
         assert represented == {o.id for o in legs}
         assert all(
             r["player"] and r["stat"] and r["line"] and r["side"] == "over"
+            for r in props
+        )
+        assert all(
+            r["stat"]["label"] == r["stat"]["label"].title()
+            and r["market_name"].endswith(": " + r["stat"]["label"])
             for r in props
         )
         assert len(page["prop_source_holds"]) == 24

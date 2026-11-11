@@ -22,10 +22,10 @@ NFL_STATS = {
     "touchdowns": "touchdowns",
 }
 NFL_LABELS = {
-    "passing_yards": "Passing yards",
-    "passing_touchdowns": "Passing touchdowns",
-    "receiving_yards": "Receiving yards",
-    "rushing_yards": "Rushing yards",
+    "passing_yards": "Passing Yards",
+    "passing_touchdowns": "Passing Touchdowns",
+    "receiving_yards": "Receiving Yards",
+    "rushing_yards": "Rushing Yards",
     "touchdowns": "Touchdowns",
 }
 _LABELS = {r[0]: r[1] for r in STAT_TABLE} | NFL_LABELS
@@ -56,7 +56,7 @@ def _typed(
     )
     name = row.get("market_name") or ""
     # Only a verified protected series may shed the suffix for parsing.
-    if protected and name.endswith(" (protected)"):
+    if protected and name.casefold().endswith(" (protected)"):
         name = name[: -len(" (protected)")]
     typed = type_prop_row(
         name,
@@ -101,7 +101,7 @@ def annotate_prop_fields(
             )
             continue
         stat = typed["stat_key"]
-        label = _LABELS[stat] + (" (protected)" if protected else "")
+        label = _LABELS[stat] + (" (Protected)" if protected else "")
         count = typed["count"] + (typed["kind"] == "count_at_most")
         row.update(
             player={"key": typed["subject_key"], "name": typed["subject_label"]},
@@ -192,7 +192,7 @@ def shape_nfl_prop_rows(
         row, typed, _ = chosen
         result = dict(row)
         result["player"] = {"key": player, "name": typed["subject_label"]}
-        label = _LABELS[stat] + (" (protected)" if protected else "")
+        label = _LABELS[stat] + (" (Protected)" if protected else "")
         result["stat"] = {
             "key": stat + ("_protected" if protected else ""),
             "label": label,
