@@ -77,5 +77,19 @@
   },
   "soccer": "All names and values are invented samples. Public EPL lists returned no events in two bounded reads; not a claim no events exist.",
   "tennis": "All names and values are invented samples.",
-  "snapshot_date": "2026-11-11"
+  "snapshot_date": "2026-11-11",
+  "round_two_soccer_sample_projections": {
+    "before": [
+      1.6,
+      1.4,
+      null
+    ],
+    "during_live": [
+      2.4,
+      1.6,
+      null
+    ],
+    "provenance": "Invented samples; whole-goal views show these values rounded."
+  },
+  "round_two_live_display": "Values over 99% display >99%; values below 1% display <1%. No live 100% or 0%."
 }
