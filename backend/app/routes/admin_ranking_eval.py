@@ -420,6 +420,7 @@ async def get_grades(
 SURFACE_GROUPING = "grouping"
 DEFAULT_GROUPING_SLATE_ID = "grouping-candidates-2026-11"
 EXAM_TEST_GROUPING_SLATE_ID = "sibling-family-exam-test-2026-11"
+VISUAL_FORMS_LOOK_SHEET_SLATE_ID = "visual-forms-look-sheet-2026-11"
 GROUPING_GRADES = ("amazing", "fine", "no")
 # Lossless 1-to-1 bijection scoped to RankingGrade.surface == "grouping" so
 # writes satisfy Postgres ck_ranking_grades_grade ("grade IN ('shareable',
@@ -1003,6 +1004,18 @@ def load_grouping_grade_deck(
             "question": "Is the grouping card worth more than its best single member?",
             "items": test_items,
         }
+    if slate_id == VISUAL_FORMS_LOOK_SHEET_SLATE_ID:
+        look_sheet_path = (
+            Path(__file__).resolve().parents[2]
+            / "data"
+            / "groupings"
+            / "visual-forms-look-sheet.json"
+        )
+        if not look_sheet_path.exists():
+            raise HTTPException(
+                status_code=404, detail="visual forms look sheet file not found"
+            )
+        return json.loads(look_sheet_path.read_text(encoding="utf-8"))
 
     target_path = candidates_path
     if target_path is None:

@@ -14,6 +14,10 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import {
+  VisualFormLookSheetGallery,
+  renderVisualLookSheetDeckItem,
+} from "@/components/discover/forms/VisualFormLookSheet";
 import { RoundupCard } from "@/components/discover/roundup/RoundupCard";
 import { buildRoundupCardModel } from "@/lib/discover/roundupCard";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
@@ -69,11 +73,15 @@ function GroupingGradeSession() {
   const [tally, setTally] = useState<TallyEntry[]>([]);
   const [summary, setSummary] = useState<GroupingGradeSummary | null>(null);
   const [existingGrades, setExistingGrades] = useState<
-    Array<{ grader: string; item_key: string }>
+    Array<{ grader: string; item_key: string; grade?: GroupingGrade }>
   >([]);
+  const [savingItemKey, setSavingItemKey] = useState<string | null>(null);
   const [selectedSlate, setSelectedSlate] = useState<string>(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
+      if (sp.get("view") === "look-sheet") {
+        return "visual-forms-look-sheet-2026-11";
+      }
       return sp.get("slate") || sp.get("slate_id") || "grouping-candidates-2026-11";
     }
     return "grouping-candidates-2026-11";
@@ -201,15 +209,73 @@ function GroupingGradeSession() {
   };
 
   const tallyLine = formatTally(tally);
+  const isLookSheetSlate = selectedSlate === "visual-forms-look-sheet-2026-11";
+  const activeGraderForLookSheet = grader || resolvedGrader || null;
+  const existingGradesByItemKey: Record<string, GroupingGrade> = {};
+  if (activeGraderForLookSheet) {
+    const gLower = activeGraderForLookSheet.toLowerCase();
+    for (const g of existingGrades) {
+      if ((g.grader || "").toLowerCase() === gLower && g.grade) {
+        existingGradesByItemKey[g.item_key] = g.grade;
+      }
+    }
+  }
 
-  if (error && !deck) {
+  const submitLookSheetItemGrade = async (
+    position: number,
+    itemKey: string,
+    grade: GroupingGrade,
+    itemNote: string,
+  ) => {
+    const targetGrader = grader || resolvedGrader;
+    if (!targetGrader || savingItemKey) return;
+    setSavingItemKey(itemKey);
+    setError(null);
+    try {
+      const res = await adminFetch("/api/admin/ranking/grouping-grades", secret, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slate_id: "visual-forms-look-sheet-2026-11",
+          grader: targetGrader,
+          kid,
+          position,
+          item_key: itemKey,
+          grade,
+          note: itemNote.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        setError(`Not saved (${res.status}): ${(await res.text()).slice(0, 200)}`);
+        return;
+      }
+      setGraded((n) => n + 1);
+      setExistingGrades((prev) => [
+        ...prev.filter(
+          (x) =>
+            !(
+              (x.grader || "").toLowerCase() === targetGrader.toLowerCase() &&
+              x.item_key === itemKey
+            ),
+        ),
+        { grader: targetGrader, item_key: itemKey, grade },
+      ]);
+      void loadTallyAndSummary("visual-forms-look-sheet-2026-11");
+    } catch {
+      setError("Not saved: the network dropped. Try that card again.");
+    } finally {
+      setSavingItemKey(null);
+    }
+  };
+
+  if (error && !deck && !isLookSheetSlate) {
     return (
       <Shell>
         <p className="text-sm text-text-secondary">{error}</p>
       </Shell>
     );
   }
-  if (!deck) {
+  if (!deck && !isLookSheetSlate) {
     return (
       <Shell>
         <p className="text-sm text-text-muted animate-pulse">Loading proposed grouping cards…</p>
@@ -218,11 +284,12 @@ function GroupingGradeSession() {
   }
 
   if (!grader) {
+    const cardCount = isLookSheetSlate ? 9 : (deck?.items.length ?? 0);
     return (
       <Shell tally={tallyLine} summary={summary}>
         <h1 className="text-xl font-semibold text-text-primary">Who&apos;s grading proposed cards?</h1>
         <p className="mt-1 text-sm text-text-secondary">
-          {deck.items.length} proposed grouping cards shown beside each card&apos;s best single member.
+          {cardCount} proposed grouping cards shown beside each card&apos;s best single member.
           One question per pair: is the card worth more than the single?
         </p>
 
@@ -231,6 +298,7 @@ function GroupingGradeSession() {
             { id: "grouping-candidates-2026-11", label: "Proposed candidates (32)" },
             { id: "sibling-family-exam-test-2026-11", label: "Sibling-family exam (20)" },
             { id: "new-kinds-exam-test-2026-11", label: "New-kinds exam (20)" },
+            { id: "visual-forms-look-sheet-2026-11", label: "Visual forms look sheet (9)" },
           ].map((opt) => (
             <button
               key={opt.id}
@@ -296,11 +364,37 @@ function GroupingGradeSession() {
 
         <button
           className="mt-4 w-full rounded-lg bg-accent-brand px-4 py-2 font-semibold text-text-inverse disabled:opacity-50"
-          disabled={!resolvedGrader}
+          disabled={!resolvedGrader || !deck}
           onClick={start}
         >
-          Start ({deck.items.length} cards)
+          Start ({cardCount} cards)
         </button>
+
+        {isLookSheetSlate && (
+          <div className="mt-6 border-t border-surface-border pt-6">
+            <VisualFormLookSheetGallery
+              kidSurface={kid}
+              grader={activeGraderForLookSheet}
+              existingGradesByItemKey={existingGradesByItemKey}
+              onGradeItem={submitLookSheetItemGrade}
+              savingItemKey={savingItemKey}
+            />
+          </div>
+        )}
+      </Shell>
+    );
+  }
+
+  if (!deck) {
+    return (
+      <Shell tally={tallyLine} summary={summary}>
+        <VisualFormLookSheetGallery
+          kidSurface={kid}
+          grader={activeGraderForLookSheet}
+          existingGradesByItemKey={existingGradesByItemKey}
+          onGradeItem={submitLookSheetItemGrade}
+          savingItemKey={savingItemKey}
+        />
       </Shell>
     );
   }
@@ -324,6 +418,9 @@ function GroupingGradeSession() {
   const item = deck.items[index];
   const card = item.proposed_card;
   const single = item.best_single;
+  const lookSheetCustomNode = renderVisualLookSheetDeckItem(item.item_key, {
+    kidSurface: kid,
+  });
   const roundupContract = buildRoundupContractForProposedCard(card);
   const canRenderRoundupCard =
     buildRoundupCardModel(card.title, roundupContract).model !== null;
@@ -368,7 +465,9 @@ function GroupingGradeSession() {
               Snapshot {item.as_of_label || card.as_of_label}
             </div>
           )}
-          {canRenderRoundupCard ? (
+          {lookSheetCustomNode ? (
+            <div className="pointer-events-none">{lookSheetCustomNode}</div>
+          ) : canRenderRoundupCard ? (
             <div className="pointer-events-none">
               <RoundupCard
                 title={card.title}
