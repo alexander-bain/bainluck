@@ -40,7 +40,8 @@ final class ServerSourceMarks12581Tests: XCTestCase {
             XCTAssertEqual(mark.state, .blend, prop.id)
             XCTAssertEqual(mark.sources.count, 1, "145-A: props aren't blended; one venue per prop (\(prop.id))")
             XCTAssertTrue(mark.draws)
-            XCTAssertEqual(SourceMarkSheet.method(mark), "\(mark.sources[0].name)'s price")
+            XCTAssertTrue(SourceMarkSheet.isOneVenue(mark), prop.id)
+            XCTAssertNil(SourceMarkSheet.method(mark), "a one-venue prop is never called a blend")
         }
         // The 18 Polymarket-only props now arrive named "Player: N+", so the card draws them.
         let polymarket = props.filter { $0.sourceMark?.sources.first?.key == "polymarket" }
@@ -48,32 +49,20 @@ final class ServerSourceMarks12581Tests: XCTestCase {
         XCTAssertTrue(polymarket.allSatisfy { $0.outcomeName.contains(":") })
     }
 
-    func testABlendedNumberListsEachVenueOnceAndSaysItIsABlend() throws {
+    func testABlendedNumberListsEachVenueOnceAndSaysOnlyWhatTheListShows() throws {
         let blend = try XCTUnwrap(try marks()["blend"])
         XCTAssertEqual(SourceMarkSheet.lines(blend, now: now), [
             .init(name: "Kalshi", price: "57%", age: "1m ago"),
             .init(name: "Polymarket", price: "59%", age: nil),
             .init(name: "Sportsbooks (6)", price: "59%", age: "just now"),
         ], "server order; a source with no observation time shows no age")
-        XCTAssertEqual(SourceMarkSheet.method(blend), "Bain Luck blend, weighted by freshness and depth")
+        XCTAssertEqual(SourceMarkSheet.method(blend), "Bain Luck blend of these three")
     }
 
-    func testASettledNumberNamesNoSources() throws {
-        let settled = try XCTUnwrap(try marks()["settled"])
-        XCTAssertTrue(SourceMarkSheet.lines(settled, now: now).isEmpty)
-        XCTAssertEqual(SourceMarkSheet.settledLine(settled, now: now)?.name, "Official result")
-        XCTAssertEqual(SourceMarkSheet.settledLine(settled, now: now)?.price, "Won")
-        XCTAssertNil(SourceMarkSheet.method(settled))
-        XCTAssertEqual(SourceMarkSheet.headline(1, mark: settled), "Won", "a result, never \"100%\"")
-    }
-
-    func testACappedRungKeepsTheMarkAndSaysWhyNoSourceStandsBehindIt() throws {
-        let capped = try XCTUnwrap(try marks()["none_capped"])
-        XCTAssertEqual(capped.state, .none)
-        XCTAssertEqual(capped.reason, "monotonic_conflict")
-        XCTAssertNotNil(SourceMarkButton(capped, number: 0.31, numberSize: 20), "the ⓘ is on every marked number")
-        XCTAssertTrue(SourceMarkSheet.lines(capped, now: now).isEmpty)
-        XCTAssertEqual(SourceMarkSheet.method(capped),
-                       "This line is held to the price of the line below it, so no source's own price stands behind this number.")
+    func testSettledAndCappedServerMarksDrawNoMark() throws {
+        let all = try marks()
+        XCTAssertNil(SourceMarkButton(all["settled"], figure: "Won", numberSize: 20))
+        XCTAssertNil(SourceMarkButton(all["none_capped"], figure: "31%", numberSize: 20))
+        XCTAssertEqual(all["none_capped"]?.reason, "monotonic_conflict", "the reason still decodes")
     }
 }

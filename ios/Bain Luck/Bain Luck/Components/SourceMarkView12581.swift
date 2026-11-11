@@ -9,8 +9,9 @@ import SwiftUI
 /// test can assert.
 struct SourceMarkButton: View {
     let mark: SourceMark
-    /// The number the mark follows, as the row prints it; the sheet repeats it.
-    let number: Double?
+    /// The number the mark follows, exactly as the row prints it ("58.3%",
+    /// "86%"); a blend's sheet repeats it in the same precision.
+    let figure: String?
     /// The font size of the number the ring follows; the ring is 0.7 of it.
     let numberSize: CGFloat
 
@@ -19,10 +20,10 @@ struct SourceMarkButton: View {
     /// The ring's share of the number's type size (Alex's ruling: about 0.7).
     static let ringScale: CGFloat = 0.7
 
-    init?(_ mark: SourceMark?, number: Double? = nil, numberSize: CGFloat) {
+    init?(_ mark: SourceMark?, figure: String? = nil, numberSize: CGFloat) {
         guard let mark, mark.draws else { return nil }
         self.mark = mark
-        self.number = number
+        self.figure = figure
         self.numberSize = numberSize
     }
 
@@ -39,29 +40,41 @@ struct SourceMarkButton: View {
         .accessibilityLabel("Where this number comes from")
         .accessibilityIdentifier("source-mark-12581")
         .sheet(isPresented: $open) {
-            SourceMarkSheet(mark: mark, number: number)
-                .presentationDetents([.medium, .large])
+            SourceMarkSheet(mark: mark, figure: figure)
+                .presentationDetents(SourceMarkSheet.isOneVenue(mark) ? [.height(170)] : [.medium, .large])
         }
     }
 }
 
-/// The sheet: the number the reader tapped, large and whole; one row per source
-/// the server listed, in its order, with the source's name, its price as a whole
-/// number and how old that price is (no age when the server sent no observation
-/// time); then one line of method. A settled number says "Official result" first.
+/// "Where this number comes from" (#12581; Alex's second look, Nov 11).
+///
+/// - **A blend** (more than one source): the tapped number in the row's own
+///   precision, one row per source the server listed, in its order, with its
+///   price and age (no age when the server sent no observation time), then
+///   "Bain Luck blend of these three". The server sends no method yet, so the
+///   line claims only what the list shows; "weighted by freshness and depth"
+///   was wrong (Builder B: the headline is a weighted median before play and a
+///   guarded weighted average during it, never weighted by depth).
+/// - **One venue** (a `blend` mark with one source is not a blend): said once,
+///   "From Kalshi · 4m ago", with no number repeated.
+/// - Settled and capped numbers draw no ⓘ at all (`SourceMark.draws`).
 struct SourceMarkSheet: View {
     let mark: SourceMark
-    var number: Double? = nil
+    var figure: String? = nil
     var now: Date = Date()
     @Environment(\.dismiss) private var dismiss
 
     static let title = "Where this number comes from"
 
-    /// One source as the sheet prints it.
+    /// One source as the blend sheet prints it.
     struct Line: Equatable {
         let name: String
         let price: String?
         let age: String?
+    }
+
+    static func isOneVenue(_ mark: SourceMark) -> Bool {
+        mark.state == .blend && mark.sources.count == 1
     }
 
     static func lines(_ mark: SourceMark, now: Date = Date()) -> [Line] {
@@ -72,72 +85,24 @@ struct SourceMarkSheet: View {
         }
     }
 
-    /// The tapped number, as a whole percent: "67%". A settled number's
-    /// headline is its result ("Won"), never a percent that reads as a price.
-    static func headline(_ number: Double?, mark: SourceMark? = nil) -> String? {
-        if mark?.state == .settled, let result = mark?.settled?.result { return result }
-        return number.map { "\(Int(($0 * 100).rounded()))%" }
+    /// The one-venue sheet's only line: "From Kalshi · 4m ago", or "From Kalshi"
+    /// when the server reported no time.
+    static func oneVenueLine(_ mark: SourceMark, now: Date = Date()) -> String? {
+        guard isOneVenue(mark), let source = mark.sources.first else { return nil }
+        let age = SourceAge.format(source.observedAt, now: now)
+        return (["From \(source.name)"] + (age.map { [$0] } ?? [])).joined(separator: " · ")
     }
 
-    /// One line of method under the rows. "Bain Luck blend" only where the
-    /// server's mark says the number is a blend of more than one source (145-A,
-    /// Nov 11: props aren't blended for now, so a prop names its one venue).
+    /// The blend's last line: what the list shows, and nothing it doesn't.
     static func method(_ mark: SourceMark) -> String? {
-        switch mark.state {
-        case .blend where mark.sources.count > 1:
-            return "Bain Luck blend, weighted by freshness and depth"
-        case .blend:
-            return mark.sources.first.map { "\($0.name)'s price" }
-        case .settled:
-            return nil
-        case .none:
-            return noneSentence(mark.reason)
-        case .unknown:
-            return nil
-        }
-    }
-
-    /// What a `none` mark says instead of sources, by the server's reason.
-    static func noneSentence(_ reason: String?) -> String {
-        switch reason {
-        case "monotonic_conflict":
-            return "This line is held to the price of the line below it, so no source's own price stands behind this number."
-        case "opening_only":
-            return "This is the opening line. No newer price has been quoted."
-        case "final_unresolved":
-            return "The game is over and no result has been recorded yet."
-        case "away_unavailable":
-            return "Bain Luck doesn't show a separate chance for this side."
-        case "no_contributing_source", "no_probability":
-            return "No source price stands behind this number right now."
-        default:
-            return "Bain Luck can't show every source behind this number right now."
-        }
-    }
-
-    /// "Official result" and the result as served, for a settled number.
-    static func settledLine(_ mark: SourceMark, now: Date = Date()) -> Line? {
-        guard mark.state == .settled, let settled = mark.settled else { return nil }
-        return Line(name: "Official result", price: settled.result, age: SourceAge.format(settled.at, now: now))
+        guard mark.state == .blend, mark.sources.count > 1 else { return nil }
+        let words = [2: "two", 3: "three", 4: "four", 5: "five", 6: "six"]
+        return "Bain Luck blend of these \(words[mark.sources.count] ?? String(mark.sources.count))"
     }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if let headline = Self.headline(number, mark: mark) {
-                        Text(headline)
-                            .font(.system(size: 44, weight: .bold))
-                            .monospacedDigit()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    rows
-                    if let method = Self.method(mark) {
-                        Text(method).font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
-                .padding()
-            }
+            ScrollView { content.padding() }
                 .navigationTitle(Self.title)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -150,10 +115,32 @@ struct SourceMarkSheet: View {
         }
     }
 
-    /// The sheet's rows, the settled line first. Plain stacks rather than a
-    /// `List`, so the rows are one view a fixture render can photograph.
+    /// Everything under the title bar. Plain stacks rather than a `List`, so a
+    /// fixture render can photograph it.
+    @ViewBuilder var content: some View {
+        if let line = Self.oneVenueLine(mark, now: now) {
+            Text(line)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                if let figure {
+                    Text(figure)
+                        .font(.system(size: 44, weight: .bold))
+                        .monospacedDigit()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                rows
+                if let method = Self.method(mark) {
+                    Text(method).font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     var rows: some View {
-        let lines = (Self.settledLine(mark, now: now).map { [$0] } ?? []) + Self.lines(mark, now: now)
+        let lines = Self.lines(mark, now: now)
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                 if index > 0 { Divider() }

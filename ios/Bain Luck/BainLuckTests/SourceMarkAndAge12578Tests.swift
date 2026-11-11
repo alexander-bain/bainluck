@@ -41,7 +41,7 @@ final class SourceMark12581Tests: XCTestCase {
         XCTAssertTrue(mark.draws)
     }
 
-    func testTheSheetListsEachSourceWithAWholeNumberPriceAndItsAge() throws {
+    func testABlendListsEachSourceWithAWholeNumberPriceAndItsAge() throws {
         let mark = try XCTUnwrap(try decode(fixture()).sourceMark)
         XCTAssertEqual(SourceMarkSheet.title, "Where this number comes from")
         XCTAssertEqual(SourceMarkSheet.lines(mark, now: now), [
@@ -49,23 +49,31 @@ final class SourceMark12581Tests: XCTestCase {
             .init(name: "Polymarket", price: "60%", age: "3h ago"),
             .init(name: "Sportsbooks (5)", price: "61%", age: "just now"),
         ])
-        XCTAssertNil(SourceMarkSheet.settledLine(mark, now: now))
     }
 
-    /// Fable, 10:41 PM Tue + 8:19 AM Wed (139-A, 145-A): the tapped number large
-    /// and whole above the rows, one line of method below, and "Bain Luck blend"
-    /// only where the mark is a blend of more than one source.
-    func testTheSheetRepeatsTheNumberAndSaysHowItWasMade() throws {
+    /// Fable (12:20 + 12:53 PM PT Nov 11) and Builder B (12:51): the blend line
+    /// says only what the list shows; nothing about freshness or depth.
+    func testABlendSaysOnlyWhatTheListShows() throws {
         let blend = try XCTUnwrap(try decode(fixture()).sourceMark)
-        XCTAssertEqual(SourceMarkSheet.headline(0.624), "62%")
-        XCTAssertNil(SourceMarkSheet.headline(nil))
-        XCTAssertEqual(SourceMarkSheet.method(blend), "Bain Luck blend, weighted by freshness and depth")
+        XCTAssertEqual(SourceMarkSheet.method(blend), "Bain Luck blend of these three")
+        XCTAssertNil(SourceMarkSheet.oneVenueLine(blend, now: now))
+        let code = try Self.source("Bain Luck/Components/SourceMarkView12581.swift")
+            .split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("///") }
+            .joined(separator: "\n")
+        XCTAssertFalse(code.contains("freshness and depth"), "no method claim the server doesn't make")
+    }
+
+    /// Alex (12:29 PM PT Nov 11): "the venue is awkwardly redundant". One venue
+    /// is said once, with no number repeated; a one-source `blend` isn't a blend.
+    func testOneVenueIsSaidOnce() throws {
         let prop = SourceMark(state: .blend, sources: [
+            .init(key: "kalshi", name: "Kalshi", probability: 0.62, observedAt: stamp(240))])
+        XCTAssertTrue(SourceMarkSheet.isOneVenue(prop))
+        XCTAssertEqual(SourceMarkSheet.oneVenueLine(prop, now: now), "From Kalshi · 4m ago")
+        XCTAssertNil(SourceMarkSheet.method(prop), "never called a blend")
+        let undated = SourceMark(state: .blend, sources: [
             .init(key: "kalshi", name: "Kalshi", probability: 0.62, observedAt: nil)])
-        XCTAssertEqual(SourceMarkSheet.method(prop), "Kalshi's price", "one venue is named, never called a blend")
-        XCTAssertEqual(SourceMarkSheet.lines(prop, now: now), [.init(name: "Kalshi", price: "62%", age: nil)],
-                       "no observation time, no age")
-        XCTAssertNil(SourceMarkSheet.method(SourceMark(state: .settled, sources: [], settled: .init(source: "kalshi", result: "Yes", at: nil))))
+        XCTAssertEqual(SourceMarkSheet.oneVenueLine(undated, now: now), "From Kalshi", "no observation time, no age")
     }
 
     func testTheMarkIsTheInfoRing() throws {
@@ -73,16 +81,12 @@ final class SourceMark12581Tests: XCTestCase {
         XCTAssertTrue(source.contains("Image(systemName: \"info.circle\")"), "139-A: the ⓘ ring")
     }
 
-    func testASettledNumberSaysOfficialResultFirst() throws {
-        let data = fixture("settled", settled: "{\"source\": \"kalshi\", \"result\": \"Yes\", \"at\": \"\(stamp(7200))\"}")
-        let mark = try XCTUnwrap(try decode(data).sourceMark)
-        XCTAssertEqual(SourceMarkSheet.settledLine(mark, now: now), .init(name: "Official result", price: "Yes", age: "2h ago"))
-    }
-
-    func testNothingToSayDrawsNoMark() throws {
+    /// Alex (12:29 PM PT Nov 11): a settled result and a capped line get no ⓘ.
+    func testSettledAndCappedNumbersDrawNoMark() throws {
         XCTAssertNil(SourceMarkButton(nil, numberSize: 20), "an unserved mark draws nothing: the app never infers one")
-        XCTAssertNotNil(SourceMarkButton(try decode(fixture("none")).sourceMark, numberSize: 20),
-                        "a none mark keeps the ⓘ; its sheet says why no source stands behind the number")
+        let settled = fixture("settled", settled: "{\"source\": \"kalshi\", \"result\": \"Yes\", \"at\": \"\(stamp(7200))\"}")
+        XCTAssertNil(SourceMarkButton(try decode(settled).sourceMark, numberSize: 20), "\"Won\" needs no sheet")
+        XCTAssertNil(SourceMarkButton(try decode(fixture("none")).sourceMark, numberSize: 20), "a capped line needs no sheet")
         XCTAssertNil(SourceMarkButton(try decode(fixture("someday")).sourceMark, numberSize: 20), "an unknown state")
         XCTAssertNil(SourceMarkButton(SourceMark(state: .blend, sources: []), numberSize: 20), "never an empty sheet")
         XCTAssertNotNil(SourceMarkButton(try decode(fixture()).sourceMark, numberSize: 20))
@@ -112,8 +116,8 @@ final class SourceMark12581Tests: XCTestCase {
 
     func testEveryPropNumberCarriesTheMark() throws {
         let source = try Self.source("Bain Luck/Components/PlayerPropsCardView.swift")
-        XCTAssertTrue(source.contains("SourceMarkButton(target.rung.sourceMark, number: target.rung.probability, numberSize: targetNumberSize)"))
-        XCTAssertTrue(source.contains("SourceMarkButton(rung.sourceMark, number: rung.probability, numberSize: rungNumberSize)"))
+        XCTAssertTrue(source.contains("SourceMarkButton(target.rung.sourceMark, figure: \"\\(PlayerPropsPricing.displayPercent(target.rung.probability))%\", numberSize: targetNumberSize)"))
+        XCTAssertTrue(source.contains("SourceMarkButton(rung.sourceMark, figure: \"\\(PlayerPropsPricing.displayPercent(rung.probability))%\", numberSize: rungNumberSize)"))
         XCTAssertTrue(source.contains("sourceMark: prop.sourceMark"))
     }
 

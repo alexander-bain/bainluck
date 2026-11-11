@@ -427,7 +427,7 @@ struct PlayerPropsCardView: View {
             }
             .accessibilityElement(children: .combine)
                 // #12581 — outside the combined element, so it stays its own button.
-                if let target, let mark = SourceMarkButton(target.rung.sourceMark, number: target.rung.probability, numberSize: targetNumberSize) {
+                if let target, let mark = SourceMarkButton(target.rung.sourceMark, figure: "\(PlayerPropsPricing.displayPercent(target.rung.probability))%", numberSize: targetNumberSize) {
                     mark
                 }
             }
@@ -973,7 +973,7 @@ struct PlayerPropsCardView: View {
             }
         }
         // #12581 — the same quiet ring after every rung's number, as served.
-        let sourceMark = SourceMarkButton(rung.sourceMark, number: rung.probability, numberSize: rungNumberSize)
+        let sourceMark = SourceMarkButton(rung.sourceMark, figure: "\(PlayerPropsPricing.displayPercent(rung.probability))%", numberSize: rungNumberSize)
         let track = GeometryReader { geo in
             Capsule()
                 .fill(Color.secondary.opacity(0.08))

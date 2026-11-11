@@ -77,17 +77,12 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
         reason = (try? c.decodeIfPresent(String.self, forKey: .reason)) ?? nil
     }
 
-    /// Does this mark draw at all? The ⓘ is constant on every number the server
-    /// marked (Alex, Nov 3): a blend with a source, a settled result, and a
-    /// `none` mark, whose sheet says why no source stands behind the number (a
-    /// rung capped to its sibling keeps its number, #12597). An unknown state
-    /// and an empty blend draw nothing — never an empty sheet.
+    /// Does this mark draw an ⓘ? Only where the sheet has a source to name: a
+    /// `blend` with at least one source. Alex's second look (Nov 11): a settled
+    /// result ("Won") and a capped line draw none — a tap that answers nothing,
+    /// or explains our ladder housekeeping, isn't offered. Unknown states and an
+    /// empty blend draw nothing either.
     var draws: Bool {
-        switch state {
-        case .blend: return !sources.isEmpty
-        case .settled: return settled != nil
-        case .none: return true
-        case .unknown: return false
-        }
+        state == .blend && !sources.isEmpty
     }
 }
