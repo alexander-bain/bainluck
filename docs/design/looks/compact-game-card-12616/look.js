@@ -10,7 +10,7 @@ const cases = [
  pre:[41,59],projection:[null,null],sampleProjection:[24,27],score:[17,14],liveProjection:[30,24],now:[68,32],final:[31,27],winner:0,
  beforeMeta:'6:30 AM PT',duringMeta:'Q3 · 6:42',
  source:'Before: API snapshot · later states: samples',
- notes:'Nov 11, 1:31 PM PT API read: 41% / 59% as supplied by rendered-percent fields; no recent projected lines. Before stays blank. Later scores, projections and frozen pregame chances are sample scenarios, not forecasts or results.',sample:['during-live','during-pregame','after']},
+ notes:'Nov 11 API snapshot: 41% / 59% as supplied by rendered-percent fields; no recent projected lines. Before stays blank. Later scores, projections and frozen pregame chances are sample scenarios, not forecasts or results.',sample:['during-live','during-pregame','after']},
  {key:'soccer',title:'North FC at South FC',sport:'SOCCER',date:'Sample',names:['North FC','South FC','Draw'],
  pre:[45,30,25],projection:[2,1,null],score:[1,1,null],liveProjection:[2,2,null],now:[31,24,45],final:[2,2,null],winner:2,
  beforeMeta:'Sample',duringMeta:'68′',source:'Sample fixture · all numbers invented',

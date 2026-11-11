@@ -1,0 +1,135 @@
+{
+  "passed": true,
+  "checks": [
+    "8 views at 390px",
+    "fixed right edges across states",
+    "no wrapped/overflowing cells at normal size",
+    "16px numeric type",
+    "123 and 100%",
+    "draw has no score",
+    "no-projection slot blank",
+    "24px text scrolls without shrinking"
+  ],
+  "reports": [
+    {
+      "variant": "A",
+      "sport": "nba",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "sport": "nfl",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "sport": "soccer",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "A",
+      "sport": "tennis",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "sport": "nba",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "sport": "nfl",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "sport": "soccer",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    },
+    {
+      "variant": "B",
+      "sport": "tennis",
+      "issues": [],
+      "tableCount": 4,
+      "edges": [
+        139,
+        185,
+        253,
+        317,
+        365
+      ],
+      "viewport": 390,
+      "pageWidth": 390
+    }
+  ]
+}

@@ -1,5 +1,4 @@
 {
-  "captured_at_pt": "Nov 11, 2026 \u00b7 1:31 PM PT",
   "nba": {
     "url": "https://api.bainluck.com/api/events/15344730",
     "history_url": "https://api.bainluck.com/api/events/15344730/history",
@@ -77,5 +76,6 @@
     "state_read_fresh": false
   },
   "soccer": "All names and values are invented samples. Public EPL lists returned no events in two bounded reads; not a claim no events exist.",
-  "tennis": "All names and values are invented samples."
+  "tennis": "All names and values are invented samples.",
+  "snapshot_date": "2026-11-11"
 }
