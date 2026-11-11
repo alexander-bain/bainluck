@@ -89,7 +89,7 @@ describe("Step E2 — Game chart marks on OddsChart (#11974)", () => {
     expect(html).not.toContain('data-testid="atlas-chart-result-word"');
   });
 
-  it("draws hollow Pregame mark and solid recorded reading marks on All when atlasMode is enabled", () => {
+  it("draws hollow Pregame mark without solid reading marks on All, and legend says only what is true in All (#12615)", () => {
     const html = renderHtml(
       <OddsChart
         history={SAMPLE_POINTS}
@@ -105,18 +105,20 @@ describe("Step E2 — Game chart marks on OddsChart (#11974)", () => {
 
     expect(html).toContain('data-testid="atlas-chart-mark-key"');
     expect(html).toContain(">Pregame<");
-    expect(html).toContain(">Recorded reading<");
+    expect(html).not.toContain(">Recorded reading<");
     expect(html).toContain(">Change<");
     expect(html).toContain("Tap any reading for exact time (PT)");
 
     const openingMatches = html.match(/data-testid="atlas-chart-opening-mark"/g) ?? [];
     const recordedMatches = html.match(/data-testid="atlas-chart-recorded-mark"/g) ?? [];
+    const hitMatches = html.match(/data-testid="atlas-chart-reading-hit"/g) ?? [];
     expect(openingMatches).toHaveLength(1);
-    // Only the two subsequent real readings get recorded marks, not the 75 gap-filled minutes
-    expect(recordedMatches).toHaveLength(2);
+    expect(recordedMatches).toHaveLength(0);
+    // Every real reading remains tappable in All even when solid dots are suppressed
+    expect(hitMatches).toHaveLength(3);
   });
 
-  it("omits the hollow Pregame mark on Since Start (live window) when atlasMode is enabled", () => {
+  it("omits the hollow Pregame mark on Since Start (live window) and shows Recorded reading in legend (#12615)", () => {
     const html = renderHtml(
       <OddsChart
         history={SAMPLE_POINTS}
@@ -132,9 +134,41 @@ describe("Step E2 — Game chart marks on OddsChart (#11974)", () => {
 
     expect(html).toContain('data-testid="atlas-chart-mark-key"');
     expect(html).not.toContain(">Pregame<");
+    expect(html).toContain(">Recorded reading<");
     expect(html).not.toContain('data-testid="atlas-chart-opening-mark"');
     const recordedMatches = html.match(/data-testid="atlas-chart-recorded-mark"/g) ?? [];
     expect(recordedMatches).toHaveLength(2);
+  });
+
+  it("shows a solid mark for every recorded reading during a 146-minute game in Since Start without thinning (#12615)", () => {
+    const gameReadings: OddsHistoryPoint[] = Array.from({ length: 146 }, (_, idx) => ({
+      timestamp: new Date(START + idx * 60_000).toISOString(),
+      home_probability: Math.min(0.99, Math.max(0.01, 0.42 + Math.sin(idx / 9) * 0.28)),
+      away_probability: Math.min(0.99, Math.max(0.01, 0.58 - Math.sin(idx / 9) * 0.28)),
+      over_under: null,
+      projected_home_score: null,
+      projected_away_score: null,
+      bookmaker: "blend",
+    }));
+
+    const html = renderHtml(
+      <OddsChart
+        history={gameReadings}
+        homeTeam="Philadelphia 76ers"
+        awayTeam="Boston Celtics"
+        commenceTime={new Date(START).toISOString()}
+        isLive={false}
+        eventStatus="completed"
+        externalTimeRange="live"
+        atlasMode
+        settledWinnerSide="home"
+      />,
+    );
+
+    const recordedMatches = html.match(/data-testid="atlas-chart-recorded-mark"/g) ?? [];
+    expect(recordedMatches).toHaveLength(146);
+    expect(html).toContain(">Recorded reading<");
+    expect(html).not.toContain(">Pregame<");
   });
 
   it("renders settled result word (✓ Won / ✗ Lost) beside the final reading when settled", () => {
