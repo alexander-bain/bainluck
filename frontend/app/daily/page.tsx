@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowDown,
   ArrowLeft,
@@ -16,6 +17,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { fetchFeed } from "@/lib/api";
+import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
 import type {
   FeedEventData,
   FeedFuturesData,
@@ -269,20 +271,28 @@ export default function DailyPage() {
   useScrollDepth({ pageType: "daily" });
   useEngagementTime({ pageType: "daily" });
 
+  const router = useRouter();
   const [feed, setFeed] = useState<FeedResponse | null>(null);
   const [state, setState] = useState<DailyState | null>(null);
   const [meta, setMeta] = useState<DailyMeta>(EMPTY_META);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(CHALLENGE_SURFACES_ENABLED);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [shareCopied, setShareCopied] = useState(false);
 
   useEffect(() => {
+    if (!CHALLENGE_SURFACES_ENABLED) {
+      router.replace("/discover");
+      return;
+    }
     const timer = window.setInterval(() => setNow(new Date()), 30000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [router]);
 
   useEffect(() => {
+    // #12601: when the web quiz is switched off, do not fetch a feed set or
+    // touch localStorage — `/daily` redirects straight to `/discover`.
+    if (!CHALLENGE_SURFACES_ENABLED) return;
     let cancelled = false;
 
     async function loadDaily() {
@@ -438,6 +448,29 @@ export default function DailyPage() {
       }, { immediate: true });
     } catch {}
   }, [meta.streak, questions.length, score]);
+
+  if (!CHALLENGE_SURFACES_ENABLED) {
+    return (
+      <main className="min-h-screen bg-surface-deep text-text-primary">
+        <section className="mx-auto max-w-3xl px-4 py-16 text-center">
+          <div
+            data-testid="daily-held-back"
+            className="mx-auto max-w-md rounded-lg border border-surface-border bg-surface-card p-6 shadow-sm"
+          >
+            <h1 className="text-title-2">Daily Challenge isn&apos;t open yet</h1>
+            <p className="mt-2 text-sm text-text-secondary">
+              Sending you to Discover.
+            </p>
+            <Button asChild className="mt-5">
+              <Link href="/discover">
+                Back to Discover
+              </Link>
+            </Button>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   if (loading) {
     return (

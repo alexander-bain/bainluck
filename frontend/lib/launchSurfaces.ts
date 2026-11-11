@@ -44,7 +44,11 @@
 // So the claim is no longer load-bearing on its own. It is true because
 // `predictionDoorsAreGated8187.test.ts` SCANS `app/` and `components/` for any
 // navigation into the predictions route family and fails on one that does not
-// read this constant. A fifth door fails that scan; it cannot fail this comment.
+// read this constant, and `webQuizSwitchedOff12601.test.tsx` (#12601) verifies
+// that `/daily` itself redirects to `/discover` and renders no quiz when this
+// constant is `false`, alongside every Discover quiz surface (`DailyChallengeCard`,
+// `GuessCard`, `ResolutionGroup`, `ResolutionCard`, `ChallengeModal`, and the
+// `/discover/stats` header link).
 //
-// Restoring: flip this to `true`. The scan above is what makes that enough.
+// Restoring: flip this to `true`. The scans above are what make that enough.
 export const CHALLENGE_SURFACES_ENABLED = false;
