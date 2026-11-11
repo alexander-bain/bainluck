@@ -268,11 +268,11 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         let shownProps = allProps.prefix(Self.propsLimit).map { Self.propRow($0) }
         props = Array(shownProps)
         propsEmptyNote = shownProps.isEmpty
-            ? "No curated questions on this tournament yet — they appear here as "
+            ? "No curated markets on this tournament yet — they appear here as "
               + "Kalshi and Polymarket open them."
             : nil
         propsTrimNote = allProps.count > shownProps.count
-            ? "Showing \(shownProps.count) of \(allProps.count) questions"
+            ? "Showing \(shownProps.count) of \(allProps.count) markets"
             : nil
 
         let bracketEntries = response.bracket.values.reduce(0) { $0 + $1.count }
@@ -971,7 +971,7 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             incompleteNote = settlement == nil
                 ? "We have no number for \(who) yet, so this comparison is not complete."
                 : "We have no number for \(who), so this comparison is not complete and "
-                    + "the question has closed."
+                    + "the market has closed."
         }
 
         return PropRow(

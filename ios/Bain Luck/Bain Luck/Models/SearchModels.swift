@@ -488,7 +488,7 @@ nonisolated struct RelatedGameListing: Decodable, Equatable, Sendable {
     let questionCount: Int
 
     var label: String {
-        "\(questionCount) \(questionCount == 1 ? "question" : "questions") on this game"
+        "\(questionCount) \(questionCount == 1 ? "market" : "markets") on this game"
     }
 }
 
