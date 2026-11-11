@@ -183,8 +183,8 @@ function FreshnessMark({
       >
         {partial}
         {fresh.ageHours === null
-          ? "We have not seen a number for this question yet."
-          : `We have not seen a new number for this question in ${fresh.age.replace(
+          ? "We have not seen a number for this market yet."
+          : `We have not seen a new number for this market in ${fresh.age.replace(
               / ago$/,
               ""
             )}.`}
@@ -289,7 +289,7 @@ function incompleteComparisonNote(
         : `${unnamed} of the names in it`
       : `${nameList(named)}${unnamed > 0 ? ` and ${unnamed} more` : ""}`;
   return settled
-    ? `We have no number for ${who}, so this comparison is not complete and the question has closed.`
+    ? `We have no number for ${who}, so this comparison is not complete and the market has closed.`
     : `We have no number for ${who} yet, so this comparison is not complete.`;
 }
 
@@ -707,7 +707,7 @@ export default function TournamentProps({
                 back soon." A section that cannot name a date should not name a
                 time at all; what it owes the reader is the present fact. */}
             {reason ??
-              "Beyond the title race and today’s matches, we only show questions worth asking. This draw has none with a probability against them."}
+              "Beyond the title race and today’s matches, we only show markets with a probability against them. This draw has none right now."}
           </p>
           {/* WHAT THIS SECTION IS. Ruling 142 (Alex, 2026-08-28): a section
               states what it IS, not what it WILL be — "we should make it the
@@ -717,7 +717,7 @@ export default function TournamentProps({
               two venues while doing it, which ruling 141 bans outright.
               Present tense, our number, no date we do not control. */}
           <p className="mt-2 max-w-[62ch] border-t border-surface-border pt-2 text-[11.5px] leading-snug text-text-muted">
-            This section holds the questions about this draw worth asking beyond who
+            This section holds the markets on this draw beyond who
             reaches which round — <i>Will Sinner actually play?</i> is the shape of one.
             None have a probability against them today.
           </p>

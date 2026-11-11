@@ -55,7 +55,7 @@ const family = (headline: FuturesMarket): FuturesFamily =>
 describe("Answers family row", () => {
   test("beside its game: the link, and no percentage anywhere on the row", () => {
     const html = renderToStaticMarkup(<SearchFamilyCard family={family(listing({ related_game_listing: KEY }))} />);
-    expect(html).toContain("4 questions on this game");
+    expect(html).toContain("4 markets on this game");
     expect(html).toContain("data-related-listing-link");
     expect(html).toContain(`href="/futures/${LISTING_ID}"`);
     expect(html).not.toMatch(/\d%/);
@@ -73,7 +73,7 @@ describe("flat Futures & Markets card", () => {
   afterEach(() => { jest.useRealTimers(); });
   test("beside its game: the link replaces the rows, the price age and the corner count", () => {
     const html = renderToStaticMarkup(<FuturesCard market={listing({ related_game_listing: KEY })} />);
-    expect(html).toContain("4 questions on this game");
+    expect(html).toContain("4 markets on this game");
     expect(html).not.toMatch(/\d%/);
     expect(html).not.toContain("Spread -5.5");
     expect(html).not.toMatch(/>4<\/span>/);
@@ -97,7 +97,7 @@ describe("typeahead row", () => {
   } as TypeaheadSuggestion);
   test("beside its game row: the link text, no answer, not counted as an answer", () => {
     const keyed = row({ related_game_listing: KEY });
-    expect(suggestionSubtitle(keyed)).toEqual({ kind: "futures-label", text: "4 questions on this game" });
+    expect(suggestionSubtitle(keyed)).toEqual({ kind: "futures-label", text: "4 markets on this game" });
     expect(futuresAnswer(keyed)).toBeNull();
     expect(countAnswersShown([keyed])).toBe(0);
   });
@@ -110,9 +110,9 @@ describe("typeahead row", () => {
 });
 
 test("wording: singular, and an unusable count still says where the link goes", () => {
-  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 1 })).toBe("1 question on this game");
-  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 0 })).toBe("More questions on this game");
-  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 2.5 })).toBe("More questions on this game");
+  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 1 })).toBe("1 market on this game");
+  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 0 })).toBe("More markets on this game");
+  expect(relatedGameListingText({ event_id: GAME_ID, question_count: 2.5 })).toBe("More markets on this game");
   expect(relatedGameListingText(null)).toBeNull();
   expect(relatedGameListingText(undefined)).toBeNull();
 });

@@ -102,7 +102,7 @@ const CORRECTIONS = [
   { date: "2026-07-09", title: "DataGolf survivorship exclusion", rows: null, description: "" },
   {
     date: "2026-09-13",
-    title: "The one-question markets we were throwing away are now scored",
+    title: "The yes-or-no markets we were throwing away are now scored",
     rows: null,
     description: "",
   },
@@ -276,7 +276,7 @@ describe("#7363 — the corrections log promises only what every entry carries",
     // digit-suffix ban is a substring collision waiting for a round number.
     const section = correctionsSection(renderPage());
     expect(section).toContain(correctionTitle("DataGolf survivorship exclusion"));
-    expect(section).toContain("The one-question markets we were throwing away are now scored");
+    expect(section).toContain("The yes-or-no markets we were throwing away are now scored");
 
     // Exactly as many counts as the payload supplies — two, not four.
     //

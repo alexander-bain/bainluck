@@ -166,7 +166,7 @@ export default function MatchProps({ payload }: { payload: MatchPropsSource }) {
               ? "We hold no numbers from before this match beyond the winner."
               : // Ruling 142: "…appear here as soon as anyone opens one" described
                 // what the section WOULD hold. This says what is true now.
-                "Who wins is the only question anyone is answering on this match. Sets, games and margins have no probability against them."}
+                "Match winner is the only market with a number on this match. Sets, games and margins have no probability against them."}
           </p>
         </div>
       </section>
@@ -208,7 +208,7 @@ export default function MatchProps({ payload }: { payload: MatchPropsSource }) {
           may be that five stopped updating. */}
       {hidden > 0 && (
         <p className="text-[11px] text-text-muted" data-testid="match-props-hidden">
-          {hidden} more question{hidden === 1 ? "" : "s"} exist{hidden === 1 ? "s" : ""} on
+          {hidden} more prop{hidden === 1 ? "" : "s"} exist{hidden === 1 ? "s" : ""} on
           this match with no number against {hidden === 1 ? "it" : "them"} yet.
         </p>
       )}
