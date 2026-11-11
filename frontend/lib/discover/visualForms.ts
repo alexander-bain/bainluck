@@ -692,9 +692,8 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
         subject: "Alejandro G. Iñárritu",
         detail: "Digger",
         stage_1_market_id: 5601024,
-        stage_1_outcome: null,
-        stage_1_probability: null,
-        missing_stage_1_reason: "Not listed to be nominated",
+        stage_1_outcome: "Alejandro González Iñárritu",
+        stage_1_probability: 0.205,
         stage_1_settled_state: null,
         stage_2_market_id: 5869747,
         stage_2_outcome: "Alejandro G. Iñárritu",
@@ -1329,7 +1328,7 @@ export const OSCARS_CONTAINER_LOOK_SHEET_OPTIONS: ContainerLookSheetSpec[] = [
     option_code: "C",
     title: "Container C · Two-Act Ballot (90%+ Nomination Locks Rail + Category Cards)",
     subtitle:
-      "Act I: Horizontal rail of 90%+ nomination locks across categories (Nolan 99%, Odyssey 98%, Moore 98%, Wildwood 97%, Malkovich 95%) → Act II: Film Poster Dual Bars vs Acting/Directing Headshot Strips",
+      "Act I: 2-up grid of 90%+ nomination locks across categories (Nolan 99%, Odyssey 98%, Moore 98%, Wildwood 97%, Malkovich 95%, The Black Ball 94%) → Act II: Best Picture Poster Tile Grid + Best Director Headshot Conversion Path",
     rule_summary:
       "Container rule: separates 'What's locked for January nominations?' at the top from 'Who wins the statue in March?' below, and flips the top rail to ✓ Confirmed Nominees on nomination morning.",
   },

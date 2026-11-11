@@ -1152,7 +1152,7 @@ export function OscarsContainerLayoutPreview({
         set={dirSet}
         simulateSettled={simulateSettled}
         kidSurface={kidSurface}
-        maxRows={5}
+        maxRows={6}
       />
     </section>
   );

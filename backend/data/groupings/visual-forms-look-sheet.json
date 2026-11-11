@@ -77,7 +77,7 @@
           { "label": "Dune: Part Three (82% nom)", "value": "8%", "market_id": 6173044, "probability": 0.075, "rendered_percent": 8 },
           { "label": "Wild Horse Nine (93% nom)", "value": "2%", "market_id": 6173044, "probability": 0.015, "rendered_percent": 2 }
         ],
-        "count_line": "6 poster tiles shown · I Play Rocky (48% nom · No recent win %)",
+        "count_line": "6 poster tiles shown · I Play Rocky (48% nom · Not listed to win)",
         "footer": "Poster-first grid where Wins % is the headline and Nominated % sits beside it.",
         "relations": ["paired_stage_propositions"],
         "level": "proposed",
@@ -259,7 +259,9 @@
           { "label": "✓ You Can See Everything (Nominated)", "value": "17%", "market_id": 6173044, "probability": 0.165, "rendered_percent": 17 },
           { "label": "✓ The Black Ball (Nominated)", "value": "15%", "market_id": 6173044, "probability": 0.145, "rendered_percent": 15 },
           { "label": "✓ Dune: Part Three (Nominated)", "value": "8%", "market_id": 6173044, "probability": 0.075, "rendered_percent": 8 },
-          { "label": "✗ Elsinore (Missed nomination · was 44%)", "value": "0%", "market_id": 6173044, "probability": 0.0, "rendered_percent": 0 }
+          { "label": "✓ Wild Horse Nine (Nominated)", "value": "2%", "market_id": 6173044, "probability": 0.015, "rendered_percent": 2 },
+          { "label": "✗ Artificial (Not nominated · was 57%)", "value": "0%", "market_id": 6173044, "probability": 0.0, "rendered_percent": 0 },
+          { "label": "✗ I Play Rocky (Not nominated · was 48%)", "value": "0%", "market_id": 6173044, "probability": 0.0, "rendered_percent": 0 }
         ],
         "count_line": "Illustration: nominations aren't out · First bar becomes ✓ or ✗ once step 1 resolves",
         "footer": "Settled means settled: once nominations are announced, no stale nomination % bar remains.",
@@ -391,10 +393,9 @@
         "title": "Oscars 2027 — Two-Act Ballot (Nomination Locks + Category Forms)",
         "subtitle": "Top rail: 90%+ nomination locks across categories · Below: Film posters vs Acting/Directing headshots",
         "rows": [
-          { "label": "Lock Rail · Nolan 99%, Odyssey 98%, Moore 98%, Wildwood 97%, Malkovich 95%", "value": "99%", "market_id": 5601024, "probability": 0.985, "rendered_percent": 99 },
-          { "label": "Best Picture (Poster Dual Bars) · The Odyssey 57% win / 98% nom", "value": "57%", "market_id": 6173044, "probability": 0.565, "rendered_percent": 57 },
-          { "label": "Best Director (Headshot Dual Strip) · Christopher Nolan 56% win / 99% nom", "value": "56%", "market_id": 5869747, "probability": 0.557, "rendered_percent": 56 },
-          { "label": "Best Actor (Headshot Dual Strip) · John Malkovich 42% win / 95% nom", "value": "42%", "market_id": 5869749, "probability": 0.424, "rendered_percent": 42 }
+          { "label": "Lock Rail · Nolan 99%, Odyssey 98%, Moore 98%, Wildwood 97%, Malkovich 95%, The Black Ball 94%", "value": "99%", "market_id": 5601024, "probability": 0.985, "rendered_percent": 99 },
+          { "label": "Best Picture (Poster Tile Grid) · The Odyssey 57% win / 98% nom", "value": "57%", "market_id": 6173044, "probability": 0.565, "rendered_percent": 57 },
+          { "label": "Best Director (Headshot Step Conversion Path) · Christopher Nolan 56% win / 99% nom", "value": "56%", "market_id": 5869747, "probability": 0.557, "rendered_percent": 56 }
         ],
         "count_line": "Separates 'Who gets nominated in January?' from 'Who takes home the statue in March?'",
         "footer": "On nomination morning, the top rail flips to ✓ Confirmed Nominees and Snubs.",

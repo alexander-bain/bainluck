@@ -76,10 +76,16 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
       e.subject.includes("Iñárritu"),
     );
     expect(inarritu).toBeDefined();
+    expect(inarritu?.stage_1_outcome).toBe("Alejandro González Iñárritu");
     expect(formatStage1Display(inarritu!, dirSet)).toEqual({
-      kind: "missing",
-      percent: null,
-      label: "Not listed to be nominated",
+      kind: "percent",
+      percent: 21,
+      label: "21%",
+    });
+    expect(formatStage2Display(inarritu!, dirSet)).toEqual({
+      kind: "percent",
+      percent: 1,
+      label: "1%",
     });
 
     const actSet = PAIRED_METRIC_REGISTER["oscars-2027-best-actress"];
@@ -193,7 +199,6 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet", () => {
     // Missing probability notices render explicitly
     expect(html).toContain('data-testid="missing-probability-notice"');
     expect(html).toContain("Not listed to win");
-    expect(html).toContain("Not listed to be nominated");
 
     // Card 6 carries "Illustration: nominations aren't out" on the card itself
     expect(html).toContain('data-testid="settled-gate-illustration-banner"');
