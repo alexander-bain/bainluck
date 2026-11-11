@@ -380,6 +380,81 @@ def nfl_page(*, kalshi_width=0.08, polymarket_width=0.02, poly_under_only=False)
 
 
 class TestServedPropSelection:
+    @pytest.mark.parametrize("protected", [False, True])
+    def test_mixed_live_and_settled_ladder_keeps_names_and_existing_grades(
+        self, protected
+    ):
+        from copy import deepcopy
+        from app.routes.events import _prop_player_and_stat
+        from app.utils.game_prop_sources import (
+            annotate_prop_fields,
+            shape_nfl_prop_rows,
+        )
+
+        suffix = " (Protected)" if protected else ""
+        market = SimpleNamespace(
+            id=501,
+            source="kalshi",
+            external_id=("KXNFLRSHYDSPROT" if protected else "KXNFLRSHYDS")
+            + "-26NOV12BUFHOU",
+        )
+        original = [
+            {
+                "market_name": "Buffalo vs Houston: Rushing Yards" + suffix,
+                "outcome_name": f"James Cook: {count}+",
+                "threshold": count,
+                "over_probability": probability,
+                "source": "kalshi",
+                "_market_id": 501,
+                "contributor_outcome_ids": [count],
+            }
+            for count, probability in [(25, 0.9), (50, 0.7), (75, 0.5), (100, 0.3)]
+        ]
+        arguments = dict(
+            markets={501: market},
+            player_and_stat=_prop_player_and_stat,
+            home_team="Houston Texans",
+            away_team="Buffalo Bills",
+        )
+
+        def shape(rows):
+            rows = deepcopy(rows)
+            annotate_prop_fields(rows, **arguments)
+            result, holds = shape_nfl_prop_rows(
+                rows, legs={}, sport_key="americanfootball_nfl", **arguments
+            )
+            assert holds == []
+            return {r["contributor_outcome_ids"][0]: r for r in result}
+
+        before = shape(original)
+        mixed = deepcopy(original)
+        mixed[0].update(hit=True, actual=63, over_probability=1.0)
+        mixed[1].update(
+            is_winner=True, resolution_source="api_settlement", over_probability=1.0
+        )
+        after = shape(mixed)
+        assert set(after) == {25, 50, 75, 100}
+        # The installed iPhone groups by player + FULL market name, not stat.
+        assert {r["market_name"] for r in after.values()} == {
+            "Buffalo Bills vs Houston Texans: Rushing Yards" + suffix
+        }
+        for outcome_id in before:
+            assert (
+                after[outcome_id]["market_name"],
+                after[outcome_id]["outcome_name"],
+            ) == (before[outcome_id]["market_name"], before[outcome_id]["outcome_name"])
+        # Naming cannot re-adjudicate, select away or change a settled rung.
+        for raw in mixed:
+            row = after[raw["contributor_outcome_ids"][0]]
+            for key in (
+                "hit",
+                "actual",
+                "is_winner",
+                "resolution_source",
+                "over_probability",
+            ):
+                assert row.get(key) == raw.get(key), (key, raw)
+
     def test_protected_contract_never_gets_averaged_with_standard(self):
         page = nfl_page(kalshi_width=0.01)
         laporta = [

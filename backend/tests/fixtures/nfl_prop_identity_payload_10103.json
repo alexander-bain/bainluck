@@ -4,7 +4,7 @@
   "away_team": "Buffalo Bills",
   "player_props": [
     {
-      "market_name": "Buffalo vs Houston: Passing Yards",
+      "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
       "outcome_name": "C.J. Stroud: 225+",
       "threshold": 225.0,
       "over_probability": 0.55,
@@ -14,7 +14,7 @@
       "player_team_entity_key": "espn:team:americanfootball_nfl:34"
     },
     {
-      "market_name": "Buffalo vs Houston: Passing Yards",
+      "market_name": "Buffalo Bills vs Houston Texans: Passing Yards",
       "outcome_name": "Josh Allen: 250+",
       "threshold": 250.0,
       "over_probability": 0.55,
@@ -24,7 +24,7 @@
       "player_team_entity_key": "espn:team:americanfootball_nfl:2"
     },
     {
-      "market_name": "Buffalo vs Houston: Rushing Yards",
+      "market_name": "Buffalo Bills vs Houston Texans: Rushing Yards",
       "outcome_name": "David Montgomery: 50+",
       "threshold": 50.0,
       "over_probability": 0.55,

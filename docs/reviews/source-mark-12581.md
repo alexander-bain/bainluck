@@ -123,3 +123,22 @@ typecheck pass. The original failures are retained in the run record.
   new source-mark namespace; it still substitutes the concept namespace. Its
   targeted run passes the unmutated baseline and kills M13 (1/1, no harness
   failures); source files are restored afterward.
+
+Fable withdrew ACCEPT at 9:38 AM PT after finding that partially graded NFL
+ladders split on installed readers: graded rungs retained the venue's short
+family name while live rungs used the fixture's full names. The correction
+assigns one family name to every typed NFL row before the grade/live split in
+`shape_nfl_prop_rows`. Graded rows still bypass book selection and retain their
+outcome text, grade fields and probabilities. Untyped rows remain unchanged.
+
+The new four-rung regression fails on the prior implementation, and checks both
+standard and protected families. Two rungs are graded (box score and venue),
+two remain live; every rung keeps its market and outcome names across the grade
+transition, and every grade/price field survives. The affected 319-check band
+passes, all 35 source checks pass all twelve clock points, and build/typecheck
+pass. The saved Patriots–Lions replay is byte-for-value identical to the prior
+title-case replay: 270 rows, 336 represented IDs and 24 single-book holds.
+
+Alex's explicit merge hold remains in force. Fresh CI, actual head-bound bot
+approval and Fable's new review are still required; no prior ACCEPT carries
+over this correction automatically.

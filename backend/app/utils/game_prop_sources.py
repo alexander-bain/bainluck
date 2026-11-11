@@ -140,7 +140,9 @@ def shape_nfl_prop_rows(
 
     The hold records name every discarded contributor. A source-only prop
     remains present, including Polymarket rows older apps couldn't parse.
-    Untyped/graded rows are left intact rather than guessed or re-adjudicated.
+    Untyped rows are left intact. Graded rows share the same family name as
+    live rungs, but keep their existing verdicts, prices and outcome names;
+    they never enter book selection.
     """
     if sport_key != "americanfootball_nfl":
         return rows, []
@@ -150,15 +152,17 @@ def shape_nfl_prop_rows(
     for row in rows:
         market = markets.get(row.get("_market_id"))
         typed, protected_stat = _typed(row, market, player_and_stat, team_forms)
-        if (
-            "refused" in typed
-            or typed["stat_key"] not in _LABELS
-            or row.get("resolution_source") is not None
-            or row.get("hit") is not None
-        ):
+        if "refused" in typed or typed["stat_key"] not in _LABELS:
             untouched.append(row)
             continue
         if protected_stat is not None and protected_stat != typed["stat_key"]:
+            untouched.append(row)
+            continue
+        # Installed readers group by the full market name. Name the family
+        # before the grade/live split so one ladder cannot split in mid-game.
+        label = _LABELS[typed["stat_key"]] + (" (Protected)" if protected_stat else "")
+        row = {**row, "market_name": f"{away_team} vs {home_team}: {label}"}
+        if row.get("resolution_source") is not None or row.get("hit") is not None:
             untouched.append(row)
             continue
         count = typed["count"] + (typed["kind"] == "count_at_most")
