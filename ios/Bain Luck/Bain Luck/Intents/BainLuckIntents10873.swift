@@ -76,14 +76,25 @@ struct GetProbabilityIntent10873: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-        let answer = try await answer(now: Date())
+        let outcomeParameter = $outcome
+        let answer = try await Self.answer(subject: subject, outcome: outcome, now: Date()) { options, dialog in
+            try await outcomeParameter.requestDisambiguation(among: options, dialog: dialog)
+        }
         return .result(value: answer.text, dialog: IntentDialog("\(answer.text)"))
     }
 
     /// One read of the detail feeds both the outcome list and the answer, so the
     /// reader chooses among exactly the outcomes the answer is computed from.
+    /// #12417 — shared with "Ask Bain Luck", which reaches the same subject
+    /// through the reader's own words; `askOutcome` puts the question to the
+    /// reader through the calling intent's own outcome parameter.
     @MainActor
-    private func answer(now: Date) async throws -> ProbabilityAnswer10873 {
+    static func answer(
+        subject: GameOrMarketEntity10873,
+        outcome: OutcomeEntity10873?,
+        now: Date,
+        askOutcome: @MainActor ([OutcomeEntity10873], IntentDialog) async throws -> OutcomeEntity10873?
+    ) async throws -> ProbabilityAnswer10873 {
         switch subject.kind {
         case .game:
             let event: EventDetail
@@ -119,7 +130,8 @@ struct GetProbabilityIntent10873: AppIntent {
                 return ProbabilityAnswer10873.market(market, outcomeID: named, now: now)
             }
             let chosen = try await choose(
-                from: OutcomeEntity10873.options(for: market), dialog: "Which outcome?")
+                from: OutcomeEntity10873.options(for: market), supplied: outcome,
+                dialog: "Which outcome?", ask: askOutcome)
             guard let chosen, let outcomeID = Int(chosen.key) else {
                 return ProbabilityAnswer10873(
                     kind: .unavailable,
@@ -134,14 +146,19 @@ struct GetProbabilityIntent10873: AppIntent {
     /// THIS subject (its identifier carries the subject's); otherwise, and when
     /// none was supplied, the reader picks. Only a lone outcome is taken unasked.
     @MainActor
-    private func choose(from options: [OutcomeEntity10873], dialog: IntentDialog) async throws -> OutcomeEntity10873? {
+    private static func choose(
+        from options: [OutcomeEntity10873],
+        supplied outcome: OutcomeEntity10873?,
+        dialog: IntentDialog,
+        ask: @MainActor ([OutcomeEntity10873], IntentDialog) async throws -> OutcomeEntity10873?
+    ) async throws -> OutcomeEntity10873? {
         if let outcome, let match = OutcomeChoice10873.supplied(outcome.id, among: options) {
             return match
         }
         switch OutcomeChoice10873.decide(optionCount: options.count) {
         case .none: return nil
         case .only: return options[0]
-        case .ask: return try await $outcome.requestDisambiguation(among: options, dialog: dialog)
+        case .ask: return try await ask(options, dialog)
         }
     }
 }
@@ -216,6 +233,19 @@ nonisolated struct BainLuckShortcuts10873: AppShortcutsProvider {
             ],
             shortTitle: "Get Probability",
             systemImageName: "percent"
+        )
+        // #12417 — the reader's own words: Siri asks "What do you want to know?"
+        // and the answer goes through the app's search, as the Search tab's would.
+        AppShortcut(
+            intent: AskBainLuckIntent12417(),
+            phrases: [
+                "Ask \(.applicationName)",
+                "Ask \(.applicationName) something",
+                "What does \(.applicationName) say",
+                "Search \(.applicationName)",
+            ],
+            shortTitle: "Ask Bain Luck",
+            systemImageName: "text.bubble"
         )
         AppShortcut(
             intent: OpenGameOrMarketIntent10873(),
