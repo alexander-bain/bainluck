@@ -360,7 +360,9 @@ def test_one_statement_for_many_cards_and_refused_cards_are_not_read(monkeypatch
         ],
     ]
     pairs = asyncio.run(cpp.read_card_projected_pairs(db, cards))
-    assert len(db.statements) == 1
+    # #12595: one batched latest-rows read plus ONE batched recent-lines read
+    # for the scheduled cards, still per page, never per card.
+    assert len(db.statements) == 2
     assert seen_ids == [[2, 14780563]]
     assert set(pairs) == {2, 14780563}
     assert pairs[2]["projected_home_score"] == 23.5
@@ -486,12 +488,13 @@ def test_feed_cards_gain_the_pair_in_one_savepointed_read():
             db, items, [_event(14780563), _event(5, "completed"), _event(6)]
         )
     )
-    assert db.savepoints == 1 and len(db.statements) == 1
+    assert db.savepoints == 1 and len(db.statements) == 2  # #12595: + recent lines, one read
     # No request budget passed: the cap alone. Rolled back, never released.
     assert db.log == [
         "SAVEPOINT",
         f"SET LOCAL statement_timeout = '{cpp.CARD_PROJECTION_READ_CAP_MS}ms'",
         "READ",
+        "READ",  # #12595: the recent-lines read, inside the same bound
         "ROLLBACK TO SAVEPOINT",
     ]
     odds = items[0]["data"]["current_odds"]
@@ -712,7 +715,9 @@ def test_league_upcoming_cards_gain_the_pair_matched_by_id():
             db, [_event(14780563), _event(7), _event(8)], briefs
         )
     )
-    assert len(db.statements) == 1
+    # #12595: one batched latest-rows read plus ONE batched recent-lines read
+    # for the scheduled cards, still per page, never per card.
+    assert len(db.statements) == 2
     assert briefs[1]["current_odds"]["projected_home_score"] == 29.7
     assert "projected_home_score" not in briefs[0]["current_odds"]
     assert "current_odds" not in briefs[2]
@@ -737,3 +742,13 @@ def test_card_keys_are_the_detail_names_the_clients_already_read():
         "projected_away_score",
     )
     assert math.isfinite(_pair(_board())["projected_away_score"])
+
+
+@pytest.fixture(autouse=True)
+def _recent_lines_clock_at_kickoff(monkeypatch):
+    """#12595: a scheduled pair counts only line readings within 90 min of now.
+    These fixtures are dated, so the clock is pinned to their kickoff, the
+    moment the rows describe, rather than the wall clock."""
+    from app.utils import recent_line_readings
+
+    monkeypatch.setattr(recent_line_readings, "_utcnow", lambda: _KICKOFF)
