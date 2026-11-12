@@ -1,0 +1,65 @@
+[
+  {
+    "id": "nfl-12609-section-1-paired-bars-collapsed",
+    "title": "NFL Section 1: Make Playoffs % beside Win Super Bowl % (Top 6 Default)",
+    "image": "01-nfl-section-1-playoffs-super-bowl-390.png",
+    "ask": "Does this top-6 paired dual-bar card with ESPN crests and full-width expander work as the opening section of the NFL Playoffs & Super Bowl container?",
+    "context": "Pairs Pro Football Playoff Qualifiers beside the unified Super Bowl LXI winner board (Resolves Feb 14, 2027); top 6 shown first with a prominent expander for all 12 clubs at 4%+ title chance."
+  },
+  {
+    "id": "nfl-12609-section-1-paired-bars-expanded",
+    "title": "NFL Section 1 (Expanded): All 12 Clubs at 4%+ Super Bowl Chance",
+    "image": "02-nfl-section-1-expanded-12-clubs-390.png",
+    "ask": "When expanded to all 12 clubs in the hunt, is the density and ordering by Super Bowl % easy to scan on a phone?",
+    "context": "Shows all 12 NFL contenders from 49ers (98% playoffs / 13% Super Bowl) and Bills (98% / 13%) down to Packers (65% / 4%) and Vikings (70% / 4%)."
+  },
+  {
+    "id": "nfl-12609-section-2-conference-funnels",
+    "title": "NFL Section 2: AFC & NFC Conference Championship Conversion Funnels",
+    "image": "03-nfl-section-2-afc-nfc-funnels-390.png",
+    "ask": "Does the nested conversion bar (outer bar = Reach Conference Final %, inner fill = Win Conference %) clearly show who gets through the AFC and NFC brackets?",
+    "context": "Adjacent to Section 1's dual bars, Section 2 switches visual form to two conference tracks (AFC top 5 and NFC top 5) with Reach Final % and Win Conference %."
+  },
+  {
+    "id": "nfl-12609-section-3-division-shapes",
+    "title": "NFL Section 3: Division Races Chosen by Distribution Shape",
+    "image": "04-nfl-section-3-division-shapes-390.png",
+    "ask": "Does letting the distribution shape pick the form (4-way grids for scrambles, tug-of-war bars for 2-team duels, compact chips for 90% locks) beat 8 identical division tables?",
+    "context": "NFC North & South render as 4-club comparison grids, AFC West / NFC East / AFC North render as 2-horse duel bars, and AFC South (Jaguars 90%) / AFC East (Bills 89%) compress into lock chips."
+  },
+  {
+    "id": "nfl-12609-section-4-mvp-opoy-headshots",
+    "title": "NFL Section 4: NFL MVP & OPOY Spotlight (Circular Player Headshots)",
+    "image": "05-nfl-section-4-mvp-opoy-headshots-390.png",
+    "ask": "Does the 3-spot player headshot podium + finalist chasers strip work for NFL MVP and Offensive Player of the Year?",
+    "context": "Pairs AP MVP Finalist % beside MVP Winner % with verified ESPN player headshots (Burrow 32% win / 80% finalist, Allen 22% / 71%, Purdy 16% / 56%; Goff 79% finalist / 1% win) plus the OPOY race."
+  },
+  {
+    "id": "nfl-12609-section-5-swing-games",
+    "title": "NFL Section 5: This Week's Games That Move the Playoff Picture Most",
+    "image": "06-nfl-section-5-swing-games-390.png",
+    "ask": "Do these matchup swing cards connect Sunday's slate to the season playoff picture clearly?",
+    "context": "Four high-leverage Week 10/11 matchups pairing blended game win % with each club's live playoff berth % (Steelers 36% at Bengals 64%, Vikings 40% at Packers 61%, 49ers 66% at Cowboys 35%, Patriots 42% at Lions 59%)."
+  },
+  {
+    "id": "nfl-12609-section-6-too-many-props-first-screen",
+    "title": "NFL Section 6 ('Too Many Props'): 3-Lens First Screen on a 681-Market NFL Game",
+    "image": "07-nfl-section-6-too-many-props-first-screen-390.png",
+    "ask": "Does this 3-lens first screen (1. The Script >=50% star benchmarks, 2. 50/50 Coin-Flips, 3. First TD & Specials) make a 681-market NFL prop board fun and scannable without overwhelming the reader?",
+    "context": "Built on Pittsburgh Steelers at Cincinnati Bengals (394 player prop lines + 261 margin/total/period lines + 26 specials = 681 live markets), curating 11 headline numbers up front with one button to open the rest."
+  },
+  {
+    "id": "nfl-12609-section-6-too-many-props-drawer-open",
+    "title": "NFL Section 6 (Drawer Open): Category Tabs + Player Milestone Ladders",
+    "image": "08-nfl-section-6-too-many-props-drawer-open-390.png",
+    "ask": "Behind the toggle, does collapsing 6-8 alternate yardage thresholds per player into one horizontal Milestone Ladder inside category tabs (Receiving 215, Passing 37, Rushing 95, Touchdowns 47, Margins & Totals 261) work?",
+    "context": "Shows the expanded prop board drawer where Ja'Marr Chase's 7 receiving yardage lines (50+ 82% through 140+ 14%) sit in a single horizontal ladder instead of 7 separate rows."
+  },
+  {
+    "id": "chart-12639-web-projected-final-connected-line",
+    "title": "Decision 164 (Web): Connected Line with Reading Marks on Projected Final Points",
+    "image": "09-chart-12639-projected-final-connected-line-390.png",
+    "ask": "Does the connected projected final points line with a dot on every recorded reading (no smoothing, no gap ticks) match the win probability chart's look?",
+    "context": "Tuesday's Celtics at 76ers (event 15344730) at 390 px showing one continuous straight-segment line per team with a dot mark at every recorded projection."
+  }
+]
