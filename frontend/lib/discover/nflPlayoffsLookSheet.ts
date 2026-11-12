@@ -964,11 +964,11 @@ export const STEELERS_BENGALS_PROP_BOARD = {
   // 2. Closest 50/50 Toss-Ups (highest tension lines on the board)
   coin_flips: [
     {
-      label: "Game Spread (-3.5)",
-      sublabel: "Key 3.5-point hook in AFC North clash",
-      left_side: "Steelers +3.5",
+      label: "Winning Margin (4+ Points)",
+      sublabel: "Key 3.5-point margin mark in AFC North clash",
+      left_side: "Steelers or 1–3 pt game",
       left_probability: 0.515,
-      right_side: "Bengals -3.5",
+      right_side: "Bengals by 4+ pts",
       right_probability: 0.485,
     },
     {
@@ -1226,17 +1226,17 @@ export const STEELERS_BENGALS_PROP_BOARD = {
       ] satisfies NflPlayerMilestoneLadder[],
     },
     lines: {
-      label: "Spreads & Totals (261)",
+      label: "Margins & Totals (261)",
       ladders: [
         {
-          player: "Cincinnati Bengals Spread Ladder",
+          player: "Cincinnati Bengals Winning Margin Ladder",
           team_abbr: "GAME",
-          stat_label: "87 alternate & period spread lines collapsed into 1 ladder",
+          stat_label: "87 alternate & period margin lines collapsed into 1 ladder",
           milestones: [
-            { threshold_label: "CIN -1.5", probability: 0.600 },
-            { threshold_label: "CIN -3.5", probability: 0.485 },
-            { threshold_label: "CIN -7.5 (1H)", probability: 0.260 },
-            { threshold_label: "CIN -19.5", probability: 0.165 },
+            { threshold_label: "CIN by 2+", probability: 0.600 },
+            { threshold_label: "CIN by 4+", probability: 0.485 },
+            { threshold_label: "CIN by 8+ (1H)", probability: 0.260 },
+            { threshold_label: "CIN by 20+", probability: 0.165 },
           ],
         },
         {
@@ -1369,11 +1369,11 @@ export const NFL_PLAYOFFS_LOOK_SHEET_ITEMS: NflLookSheetItemSpec[] = [
     item_key: "nfl-section-5-games-that-move-the-picture",
     section_number: 5,
     title:
-      "Section 5 · This Week's Games That Move the Playoff Picture Most (Blended Win % + Playoff Stakes)",
+      "Section 5 · This Week's Games That Move the Playoff Picture Most (Win % + Playoff Stakes)",
     subtitle:
       "Four real Week 10/11 matchups ranked by division & wild-card leverage: Steelers at Bengals (36%/64%), Vikings at Packers (40%/61%), 49ers at Cowboys (66%/35%), Patriots at Lions (42%/59%)",
     why_it_exists:
-      "Connects Sunday's live slate to the season-long container: each game card pairs the blended game win probability (Kalshi + Polymarket + Sportsbooks) with each club's live playoff berth % and division stakes.",
+      "Connects Sunday's live slate to the season-long container: each game card pairs the game win probability with each club's live playoff berth % and division stakes.",
     form: {
       form_id: "matchup_swing_cards",
       form_name: "2-Up Matchup Swing Cards with Playoff Stakes Badges",
@@ -1381,7 +1381,7 @@ export const NFL_PLAYOFFS_LOOK_SHEET_ITEMS: NflLookSheetItemSpec[] = [
       parts_vocabulary: ["pictures", "tiles", "bars"] as FormVocabularyPart[],
       slots: ["stakes_header", "away_home_crests", "win_prob_tug_bar", "playoff_berth_context"],
       missing_number_rule:
-        "If blended game win probability is not yet posted, displays kickoff time and each club's playoff berth %.",
+        "If game win probability is not yet posted, displays kickoff time and each club's playoff berth %.",
       settled_step_rule:
         "Once a game goes Final, the winner receives ✓ and the updated playoff berth % is shown.",
       domain_agnostic: true,
@@ -1396,10 +1396,10 @@ export const NFL_PLAYOFFS_LOOK_SHEET_ITEMS: NflLookSheetItemSpec[] = [
     subtitle:
       "Fable's 11:39 AM addition (#12609): turns 384 player props + 287 game/special lines into a calm 11-number first screen (The Script · 50/50 Coin-Flips · First TD) + one category milestone drawer for the rest",
     why_it_exists:
-      "Solves the big-container overload problem (Super Bowl LXI, Oscars, NBA playoffs, elections): instead of dumping 671 flat rows, the first screen curates 3 lenses a reader can take in at a glance, while one toggle opens a category-tabbed drawer that collapses 8–10 alternate yardage lines per player into a single horizontal Milestone Ladder.",
+      "Solves the big-container overload problem (Super Bowl LXI, Oscars, NBA playoffs, elections): instead of dumping 671 flat rows, the first screen highlights 3 lenses a reader can take in at a glance, while one toggle opens a category-tabbed drawer that collapses 8–10 alternate yardage lines per player into a single horizontal Milestone Ladder.",
     form: {
       form_id: "curated_prop_board_with_drawer",
-      form_name: "Three-Lens Curated Prop Digest + Player Milestone Ladder Drawer",
+      form_name: "Three-Lens Prop Digest + Player Milestone Ladder Drawer",
       data_shape: "hundreds of game/player props ranked into (1) >=50% Star Script, (2) ~50% Coin-Flips, (3) First TD strip + (4) expandable Milestone Ladders by category",
       parts_vocabulary: ["pictures", "tiles", "bars", "strips"] as FormVocabularyPart[],
       slots: [
@@ -1409,7 +1409,7 @@ export const NFL_PLAYOFFS_LOOK_SHEET_ITEMS: NflLookSheetItemSpec[] = [
         "category_milestone_drawer_toggle",
       ],
       missing_number_rule:
-        "Withholds unpriced props and groups alternate thresholds under one player row.",
+        "Withholds props without a current probability and groups alternate thresholds under one player row.",
       settled_step_rule:
         "Settled props grade inline as ✓ Hit or ✗ Missed ('What Hit').",
       domain_agnostic: true,
