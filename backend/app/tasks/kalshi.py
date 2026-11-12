@@ -7224,7 +7224,9 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                             _rc.setex(_cursor_key, 86400 * 7, cursor)
                             break
                         _rc.setex(_cursor_key, 86400 * 7, cursor)
-                        await asyncio.sleep(0.1)
+                        # #12042: the pause scales with the page, so a series
+                        # pauses as long per 200 events as it did before.
+                        await asyncio.sleep(0.1 * _SETTLED_PAGE_EVENTS / 200)
 
                     if (
                         series_resolved > 0

@@ -189,7 +189,7 @@ _APPLY_MATCHUPS_SQL = """
                           || jsonb_build_object('matchup_title', v.title)
     FROM unnest(CAST(:ids AS bigint[]), CAST(:titles AS text[])) AS v(id, title)
     WHERE fm.id = v.id
-      AND (fm.market_metadata->>'matchup_title') IS NULL
+      AND COALESCE(fm.market_metadata->>'matchup_title', '') = ''
 """
 
 
@@ -252,14 +252,21 @@ async def backfill_polymarket_matchups_impl(
                 complete = True
                 break
 
-            mstmt = select(
-                FuturesMarket.id,
-                FuturesMarket.name,
-                FuturesMarket.group_id,
-                FuturesMarket.market_metadata["matchup_title"].astext,
-            ).where(
-                FuturesMarket.source == "polymarket",
-                FuturesMarket.group_id.in_(group_ids),
+            # Id order, as the old reader had: when two sibling names of equal
+            # length both parse, `group_matchup` keeps the first, so the lower id
+            # must come first or the stored title can change between runs.
+            mstmt = (
+                select(
+                    FuturesMarket.id,
+                    FuturesMarket.name,
+                    FuturesMarket.group_id,
+                    FuturesMarket.market_metadata["matchup_title"].astext,
+                )
+                .where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.group_id.in_(group_ids),
+                )
+                .order_by(FuturesMarket.id)
             )
             if linked_only:
                 mstmt = mstmt.where(FuturesMarket.event_id.isnot(None))

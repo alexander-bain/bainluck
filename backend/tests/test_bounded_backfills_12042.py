@@ -61,11 +61,12 @@ class _FakeMarkets:
     walk issues (next group ids, members of those groups, the batched UPDATE)
     and records every batch's size so the bound can be read back."""
 
-    def __init__(self, rows):
+    def __init__(self, rows, on_members_read=None):
         self.rows = rows
         self.group_batches: list[list[str]] = []
         self.member_loads: list[int] = []
         self.commits = 0
+        self.on_members_read = on_members_read
 
     def _visible(self, stmt_sql):
         linked = "event_id IS NOT NULL" in stmt_sql
@@ -74,10 +75,18 @@ class _FakeMarkets:
     async def execute(self, stmt, params=None):
         sql = str(stmt)
         if sql.lstrip().startswith("UPDATE futures_markets"):
+            # Apply the guard the SQL actually carries, so a changed guard is
+            # caught here even though no real database runs under test.
+            if "COALESCE(fm.market_metadata->>'matchup_title', '') = ''" in sql:
+                writable = lambda title: title in (None, "")  # noqa: E731
+            elif "->>'matchup_title') IS NULL" in sql:
+                writable = lambda title: title is None  # noqa: E731
+            else:
+                writable = lambda title: True  # noqa: E731
             n = 0
             for mid, title in zip(params["ids"], params["titles"]):
                 r = next(r for r in self.rows if r["id"] == mid)
-                if r["matchup_title"] is None:
+                if writable(r["matchup_title"]):
                     r["matchup_title"] = title
                     n += 1
             return _Res(rowcount=n)
@@ -92,8 +101,15 @@ class _FakeMarkets:
             return _Res([(g,) for g in out])
         wanted = set(next(v for k, v in p.items() if k.startswith("group_id")))
         members = [r for r in self._visible(sql) if r["group_id"] in wanted]
+        # A database returns rows in any order unless asked; model the worst
+        # case (highest id first) unless the read orders by id.
+        ordered = "ORDER BY futures_markets.id" in sql
+        members.sort(key=lambda r: r["id"], reverse=not ordered)
         self.member_loads.append(len(members))
-        return _Res([(r["id"], r["name"], r["group_id"], r["matchup_title"]) for r in members])
+        out = _Res([(r["id"], r["name"], r["group_id"], r["matchup_title"]) for r in members])
+        if self.on_members_read:
+            self.on_members_read(self.rows)
+        return out
 
     async def commit(self):
         self.commits += 1
@@ -238,6 +254,46 @@ async def test_redis_down_still_finishes_one_bounded_pass(monkeypatch):
         all_groups=True, groups_per_batch=3
     )
     assert result["complete"] is True and result["applied"] == 8
+
+
+@pytest.mark.asyncio
+async def test_an_equal_length_tie_keeps_the_lower_ids_title(monkeypatch):
+    """Builder B's case on #12629: two sibling names of the same length both
+    parse; the old reader went in id order, so the lower id's matchup won."""
+    gid = "polymarket:tie"
+    rows = [
+        _row(30, gid, "Alpha vs. Bravo"),
+        _row(31, gid, "Delta vs. Echoo"),
+        _row(32, gid, "Will there be a red card?"),
+    ]
+    assert len(rows[0]["name"]) == len(rows[1]["name"])
+    markets = _FakeMarkets(rows)
+    _install(monkeypatch, markets, _FakeRedis())
+    await entity_seed.backfill_polymarket_matchups_impl(all_groups=True)
+    assert rows[2]["matchup_title"] == "Alpha vs. Bravo"
+
+
+@pytest.mark.asyncio
+async def test_empty_titles_are_filled_and_a_concurrent_title_is_kept(monkeypatch):
+    gid = "polymarket:mixed"
+    rows = [
+        _row(40, gid, "Team9A vs. Team9B"),
+        _row(41, gid, "Spread: Team9A (-1.5)"),  # NULL title
+        _row(42, gid, "Total corners over 9.5?", matchup_title=""),  # empty title
+        _row(43, gid, "Will Team9A keep a clean sheet?"),  # filled after the read
+    ]
+
+    def _ingest_writes_one(all_rows):
+        next(r for r in all_rows if r["id"] == 43)["matchup_title"] = "Written By Ingest"
+
+    markets = _FakeMarkets(rows, on_members_read=_ingest_writes_one)
+    _install(monkeypatch, markets, _FakeRedis())
+    result = await entity_seed.backfill_polymarket_matchups_impl(all_groups=True)
+
+    assert rows[1]["matchup_title"] == "Team9A vs. Team9B"
+    assert rows[2]["matchup_title"] == "Team9A vs. Team9B"  # "" counts as missing
+    assert rows[3]["matchup_title"] == "Written By Ingest"  # never overwritten
+    assert result["needed"] == 3 and result["applied"] == 2
 
 
 # --------------------------------------------------------------------- Kalshi
