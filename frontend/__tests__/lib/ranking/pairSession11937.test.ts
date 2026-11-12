@@ -2,7 +2,7 @@
  * #11937 (171-A): /grade/pair reads only a slate and an opaque pair name from the
  * link, and asks the server for two unlabelled sides.
  */
-import { PAIR_CHOICES, PAIR_CHOICE_LABELS, pairFromSearch, pairPath } from "@/lib/ranking/pairSession";
+import { PAIR_CHOICES, PAIR_CHOICE_LABELS, gradeDeckHref, pairFromSearch, pairPath } from "@/lib/ranking/pairSession";
 
 describe("pairFromSearch", () => {
   it("needs both a slate and a pair, each a safe reference", () => {
@@ -25,5 +25,11 @@ describe("the three answers", () => {
     for (const label of Object.values(PAIR_CHOICE_LABELS)) {
       expect(label).not.toMatch(/served|candidate|today|new|current/i);
     }
+  });
+});
+
+describe("gradeDeckHref", () => {
+  it("goes on to the same slate's deck after the pick", () => {
+    expect(gradeDeckHref("59da9307253a78dc")).toBe("/grade?slate=59da9307253a78dc");
   });
 });

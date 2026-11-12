@@ -427,7 +427,12 @@ async def get_grades(
 ) -> dict:
     _check_admin_secret(secret, request=request)
     now = datetime.now(timezone.utc)
-    stmt = select(RankingGrade).where(RankingGrade.graded_at >= now - timedelta(days=days))
+    # #11937 (171-A): side-by-side picks are not card grades; "30 grades" must
+    # keep meaning 30 cards, so they never come back here (they have /pair-picks).
+    stmt = select(RankingGrade).where(
+        RankingGrade.graded_at >= now - timedelta(days=days),
+        RankingGrade.surface != SURFACE_PAIR,
+    )
     if slate_id:
         stmt = stmt.where(RankingGrade.slate_id == slate_id)
     else:
@@ -1333,7 +1338,13 @@ class PairPickIn(BaseModel):
     pair: str = Field(..., min_length=1, max_length=64)
     grader: str = Field(..., min_length=1, max_length=40)
     choice: str
-    note: str | None = Field(None, max_length=300)
+    # Amendment 2 of the pass rule: whether he had already opened Discover that
+    # morning, stored with the pick in a fixed form the read-back parses.
+    opened_discover_today: bool
+
+
+#: The fixed note a pick carries, e.g. ``opened_discover_today=no``.
+OPENED_NOTE = "opened_discover_today={}"
 
 
 @router.post("/pair-picks")
@@ -1355,6 +1366,18 @@ async def post_pair_pick(
         raise HTTPException(status_code=422, detail="grader needs a name")
     if load_pairs().get(body.slate_id, {}).get(body.pair) is None:
         raise HTTPException(status_code=404, detail="no such pair for this slate")
+    # The first saved pick stands: a pick made again after grading that morning's
+    # deck is no longer blind.
+    earlier = (await db.execute(
+        select(RankingGrade).where(
+            RankingGrade.surface == SURFACE_PAIR,
+            RankingGrade.slate_id == body.slate_id,
+            RankingGrade.item_key == f"pair:{body.pair}",
+            RankingGrade.grader == grader,
+        )
+    )).scalars().all()
+    if earlier:
+        raise HTTPException(status_code=409, detail="already picked")
     if body.choice == "none":
         meaning = "none"
     else:
@@ -1369,7 +1392,7 @@ async def post_pair_pick(
             position=1,
             item_key=f"pair:{body.pair}",
             grade=_PAIR_TO_DB_GRADE[meaning],
-            note=(body.note or "").strip() or None,
+            note=OPENED_NOTE.format("yes" if body.opened_discover_today else "no"),
         )
     )
     await db.commit()
@@ -1395,4 +1418,19 @@ async def get_pair_picks(
             RankingGrade.graded_at >= now - timedelta(days=days),
         )
     )).scalars().all()
-    return {"slate_id": slate_id, "surface": SURFACE_PAIR, "grades": latest_grades(rows)}
+    first: dict[tuple, Any] = {}
+    for r in sorted(rows, key=lambda r: (r.graded_at, r.id or 0)):
+        first.setdefault((r.grader, r.item_key), r)  # the first pick stands
+    picks = []
+    for r in first.values():
+        note = r.note or ""
+        opened = note.split("=", 1)[1] if note.startswith("opened_discover_today=") else None
+        picks.append({
+            "slate_id": r.slate_id,
+            "pair": str(r.item_key).removeprefix("pair:"),
+            "grader": r.grader,
+            "pick": _DB_TO_PAIR_PICK.get(str(r.grade), str(r.grade)),
+            "opened_discover_today": {"yes": True, "no": False}.get(opened),
+            "graded_at": r.graded_at.isoformat() if r.graded_at else None,
+        })
+    return {"slate_id": slate_id, "surface": SURFACE_PAIR, "picks": picks}

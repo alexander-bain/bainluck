@@ -42,3 +42,8 @@ export function pairFromSearch(search: string): { slate: string; pair: string } 
 export function pairPath(slate: string, pair: string): string {
   return `/api/admin/ranking/pair?${new URLSearchParams({ slate, pair }).toString()}`;
 }
+
+/** After a pick, the morning goes on to that slate's deck (amendment 2). */
+export function gradeDeckHref(slateId: string): string {
+  return `/grade?${new URLSearchParams({ slate: slateId }).toString()}`;
+}
