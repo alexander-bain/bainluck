@@ -28,9 +28,17 @@ export interface AtlasSelectedReading {
 }
 
 /**
- * Shared mark-grammar legend for Atlas charts (#883 Step F3, #11974):
+ * Upper bound on visible solid reading marks drawn in `solidMarkMode="all"` (#12615).
+ * Standard basketball/football/hockey games have ~120–200 readings (`<= 300`, stride 1).
+ * Multi-day or marathon events (cricket, golf, 5-set tennis) with > 300 readings thin
+ * above this ceiling so the step line never smears into a solid bar of circles.
+ */
+export const ATLAS_ALL_MARKS_CEILING = 300;
+
+/**
+ * Shared mark-grammar legend for Atlas charts (#883 Step F3, #11974, #12615):
  * - Hollow = opening or pregame
- * - Solid = recorded reading
+ * - Solid = recorded reading (or sampled readings when thinned above `ATLAS_ALL_MARKS_CEILING`)
  * - Connector = change
  * - ✓ Won / ✗ Lost = result shown as a word, never a 100% point
  * - Any real reading tappable for its exact time in PT
@@ -39,13 +47,19 @@ export function AtlasChartMarkKey({
   settled = false,
   showOpening = true,
   showRecordedReading = true,
+  recordedReadingCount,
   openingLabel = "Opening",
 }: {
   settled?: boolean;
   showOpening?: boolean;
   showRecordedReading?: boolean;
+  recordedReadingCount?: number;
   openingLabel?: string;
 }) {
+  const thinnedAboveCeiling =
+    typeof recordedReadingCount === "number" &&
+    recordedReadingCount > ATLAS_ALL_MARKS_CEILING;
+
   return (
     <div
       data-testid="atlas-chart-mark-key"
@@ -67,7 +81,11 @@ export function AtlasChartMarkKey({
             aria-hidden="true"
             className="inline-block h-2.5 w-2.5 rounded-full bg-text-primary"
           />
-          <span>Recorded reading</span>
+          <span>
+            {thinnedAboveCeiling
+              ? `Recorded readings (sampled above ${ATLAS_ALL_MARKS_CEILING})`
+              : "Recorded reading"}
+          </span>
         </span>
       )}
       <span className="inline-flex items-center gap-1.5">
@@ -135,10 +153,17 @@ export function AtlasSeriesReadingMarks({
 
   const stride =
     solidMarkMode === "all"
-      ? 1
+      ? points.length <= ATLAS_ALL_MARKS_CEILING
+        ? 1
+        : Math.max(1, Math.ceil(points.length / ATLAS_ALL_MARKS_CEILING))
       : points.length <= 36
         ? 1
         : Math.max(1, Math.ceil(points.length / 28));
+
+  const hitStride =
+    points.length <= ATLAS_ALL_MARKS_CEILING
+      ? 1
+      : Math.max(1, Math.ceil(points.length / ATLAS_ALL_MARKS_CEILING));
 
   return (
     <g
@@ -156,6 +181,12 @@ export function AtlasSeriesReadingMarks({
           (solidMarkMode === "none"
             ? isSelected
             : isLast || isSelected || index % stride === 0);
+        const showHitTarget =
+          isOpening || isLast || isSelected || index % hitStride === 0;
+
+        if (!isOpening && !showVisibleSolid && !showHitTarget) {
+          return null;
+        }
 
         const exactPt =
           formatAtlasTimestampPT(pt.timestamp, { includeSeconds: true }) ??

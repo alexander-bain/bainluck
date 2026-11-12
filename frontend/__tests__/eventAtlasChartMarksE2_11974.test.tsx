@@ -167,8 +167,44 @@ describe("Step E2 — Game chart marks on OddsChart (#11974)", () => {
 
     const recordedMatches = html.match(/data-testid="atlas-chart-recorded-mark"/g) ?? [];
     expect(recordedMatches).toHaveLength(146);
+    expect(html).toContain('data-testid="event-atlas-how-to-read"');
+    expect(html).toContain(">How to read this<");
     expect(html).toContain(">Recorded reading<");
     expect(html).not.toContain(">Pregame<");
+  });
+
+  it("thins solid reading marks and hit targets above the 300-mark ceiling on a 2,000-reading match and keeps the key truthful (#12615)", () => {
+    const marathonReadings: OddsHistoryPoint[] = Array.from({ length: 2000 }, (_, idx) => ({
+      timestamp: new Date(START + idx * 60_000).toISOString(),
+      home_probability: Math.min(0.99, Math.max(0.01, 0.5 + Math.sin(idx / 40) * 0.3)),
+      away_probability: Math.min(0.99, Math.max(0.01, 0.5 - Math.sin(idx / 40) * 0.3)),
+      over_under: null,
+      projected_home_score: null,
+      projected_away_score: null,
+      bookmaker: "blend",
+    }));
+
+    const html = renderHtml(
+      <OddsChart
+        history={marathonReadings}
+        homeTeam="England"
+        awayTeam="Australia"
+        commenceTime={new Date(START).toISOString()}
+        isLive={false}
+        eventStatus="completed"
+        externalTimeRange="live"
+        atlasMode
+        settledWinnerSide="home"
+      />,
+    );
+
+    const recordedMatches = html.match(/data-testid="atlas-chart-recorded-mark"/g) ?? [];
+    const hitMatches = html.match(/data-testid="atlas-chart-reading-hit"/g) ?? [];
+    expect(recordedMatches.length).toBeGreaterThan(250);
+    expect(recordedMatches.length).toBeLessThanOrEqual(300);
+    expect(hitMatches.length).toBeLessThanOrEqual(300);
+    expect(html).toContain("Recorded readings (sampled above 300)");
+    expect(html).not.toContain(">Recorded reading<");
   });
 
   it("renders settled result word (✓ Won / ✗ Lost) beside the final reading when settled", () => {
