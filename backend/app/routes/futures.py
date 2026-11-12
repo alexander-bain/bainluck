@@ -5603,6 +5603,11 @@ async def get_futures_market(
         _apply_verified_title_to_detail(
             detail, await _resolve_verified_title(db, market), market
         )
+    # Installed readers request verified_title. Its source-only fallback can
+    # be rechecked too; a genuinely composed price is never dated by this read.
+    from app.utils.futures_live_observation import apply_live_observation
+
+    await apply_live_observation(detail, market)
     return detail
 
 
