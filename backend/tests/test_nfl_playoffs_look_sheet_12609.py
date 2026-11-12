@@ -52,10 +52,10 @@ def test_load_nfl_playoffs_look_sheet_deck():
     assert s1["best_single"]["id"] == 86832
     assert s1["best_single"]["rendered_percent"] == 13
 
-    # Section 6 is the 'too many props' section on Steelers at Bengals (671 markets)
+    # Section 6 is the 'too many props' section on Steelers at Bengals (681 markets)
     s6 = items[5]
-    assert s6["member_count"] == 671
-    assert "384 player props" in s6["proposed_card"]["subtitle"]
+    assert s6["member_count"] == 681
+    assert "394 player props" in s6["proposed_card"]["subtitle"]
 
     # No reader-facing card copy calls a market a 'question' (#12591)
     for it in items:

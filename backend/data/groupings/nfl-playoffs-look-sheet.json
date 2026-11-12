@@ -399,11 +399,11 @@
     {
       "position": 6,
       "item_key": "nfl-section-6-too-many-props-steelers-bengals",
-      "title": "Section 6 · The 'Too Many Props' Section on a Real Full NFL Prop Board (Steelers at Bengals — 671 Live Markets)",
+      "title": "Section 6 · The 'Too Many Props' Section on a Real Full NFL Prop Board (Steelers at Bengals — 681 Live Markets)",
       "source": "kalshi",
       "category": "football",
       "template_key": "curated_prop_board_with_drawer:event_14780578",
-      "member_count": 671,
+      "member_count": 681,
       "kind_verdict": "serve",
       "refusal_reasons": [],
       "trust_pass": true,
@@ -412,9 +412,9 @@
       "as_of_label": "as of 2026-11-11",
       "proposed_card": {
         "kicker": "SECTION 6 · CURATED_PROP_BOARD_WITH_DRAWER",
-        "tag": "671 GAME MARKETS",
+        "tag": "681 GAME MARKETS",
         "title": "Pittsburgh Steelers at Cincinnati Bengals · Prop Board",
-        "subtitle": "Turns 384 player props + 287 game/special lines into a 3-lens first screen (The Script · 50/50 Coin-Flips · First TD) + 1 category Milestone Ladder drawer",
+        "subtitle": "Turns 394 player props + 287 game/special lines into a 3-lens first screen (The Script · 50/50 Coin-Flips · First TD) + 1 category Milestone Ladder drawer",
         "rows": [
           {
             "label": "Joe Burrow · 2+ Passing TDs (67%) · 275+ Passing Yds (57%)",
@@ -452,7 +452,7 @@
             "rendered_percent": 52
           }
         ],
-        "count_line": "11 curated numbers on the first screen · 660 remaining prop lines organized into 5 category Milestone Ladders behind 1 toggle",
+        "count_line": "11 curated numbers on the first screen · 670 remaining prop lines organized into 5 category Milestone Ladders behind 1 toggle",
         "footer": "Large-set rule (#12609): curate The Script (>=50%), 50/50 Coin-Flips, and First TD up front; collapse alternate yardage thresholds into one Milestone Ladder per player behind a toggle.",
         "relations": [
           "same_event",
@@ -524,7 +524,7 @@
             "rendered_percent": 32
           },
           {
-            "label": "5. Swing Games + 6. Curated 671-Market Prop Board (Steelers at Bengals)",
+            "label": "5. Swing Games + 6. Curated 681-Market Prop Board (Steelers at Bengals)",
             "value": "64%",
             "market_id": 14780578,
             "probability": 0.635,

@@ -58,14 +58,14 @@ describe("#12609 NFL Playoffs & Super Bowl Container Look Sheet", () => {
   });
 
   test("Section 6 ('too many props') shows 3 scannable lenses on Steelers at Bengals and renders the category Milestone Ladder drawer when open", () => {
-    expect(STEELERS_BENGALS_PROP_BOARD.total_raw_markets).toBe(671);
-    expect(STEELERS_BENGALS_PROP_BOARD.total_player_prop_lines).toBe(384);
+    expect(STEELERS_BENGALS_PROP_BOARD.total_raw_markets).toBe(681);
+    expect(STEELERS_BENGALS_PROP_BOARD.total_player_prop_lines).toBe(394);
 
     const firstScreenHtml = renderToStaticMarkup(<NflTooManyPropsSectionCard />);
     expect(firstScreenHtml).toContain("nfl-section-6-too-many-props");
-    expect(firstScreenHtml).toContain("1. THE SCRIPT · LIKELY STAR BENCHMARKS");
-    expect(firstScreenHtml).toContain("2. COIN-FLIP TENSION");
-    expect(firstScreenHtml).toContain("3. FIRST TOUCHDOWN LEADERS");
+    expect(firstScreenHtml).toContain("1. THE SCRIPT (50%+ BENCHMARKS)");
+    expect(firstScreenHtml).toContain("2. 50/50 COIN-FLIPS");
+    expect(firstScreenHtml).toContain("3. FIRST TD &amp; SPECIALS");
     expect(firstScreenHtml).not.toContain("nfl-too-many-props-drawer-content");
 
     const drawerOpenHtml = renderToStaticMarkup(
