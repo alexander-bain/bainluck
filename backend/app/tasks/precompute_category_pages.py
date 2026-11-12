@@ -10,8 +10,10 @@ read from cache first and only fall back to a live query when the cache
 is missing.
 """
 
+import contextlib
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -2264,18 +2266,9 @@ def _write_precompute_report(report: dict) -> None:
         logger.warning("Category precompute report write failed: %s", exc)
 
 
-async def _precompute_all_category_pages():
-    """Precompute all category page caches.
-
-    #1484: the run is now self-reporting. Each section records dispatch →
-    start → success/failure with a duration, and the whole report is written to
-    Redis even when a section blows up, so ``/api/admin/category-precompute/last``
-    can answer "did the MLB grid warm actually run, and how long did it take?"
-    without reading worker logs.
-    """
-    import time as _time
-
-    sections = [
+def _category_sections():
+    """The sections of one category precompute, in run order."""
+    return [
         ("politics", _precompute_politics),
         ("entertainment", _precompute_entertainment),
         ("economics", _precompute_economics),
@@ -2287,6 +2280,126 @@ async def _precompute_all_category_pages():
         ("golf_schedule", _precompute_golf_schedule),
         ("grids", _precompute_grids),
     ]
+
+
+def category_section_names() -> list[str]:
+    """#12042: the names the hourly dispatcher sends, one task each, in order."""
+    return [name for name, _ in _category_sections()]
+
+
+#: #12042: set while ``precompute_discover_candidate_base`` runs (every 2 min, on
+#: the same two-child worker, peaks ~280-330 MB). A category section that finds it
+#: set waits its turn instead of building beside it. TTL = that task's hard limit.
+DISCOVER_BASE_RUNNING_KEY = "bainluck:precompute:discover_base:running"
+DISCOVER_BASE_RUNNING_TTL_S = 180
+
+
+@contextlib.contextmanager
+def mark_discover_base_running():
+    """Hold the base-build flag for the duration of one build. Never raises."""
+    token = uuid.uuid4().hex
+    rc = None
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        rc.set(DISCOVER_BASE_RUNNING_KEY, token, ex=DISCOVER_BASE_RUNNING_TTL_S)
+    except Exception as exc:
+        logger.warning("discover base running flag not set: %s", exc)
+        rc = None
+    try:
+        yield
+    finally:
+        if rc is not None:
+            try:
+                held = rc.get(DISCOVER_BASE_RUNNING_KEY)
+                if (held.decode() if isinstance(held, bytes) else held) == token:
+                    rc.delete(DISCOVER_BASE_RUNNING_KEY)
+            except Exception as exc:
+                logger.warning("discover base running flag not cleared: %s", exc)
+
+
+def discover_base_running() -> bool:
+    """Whether a base build holds the flag now. False when Redis can't say."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        return bool(get_redis_client().exists(DISCOVER_BASE_RUNNING_KEY))
+    except Exception:
+        return False
+
+
+def _merge_section_report(name: str, entry: dict, started_at: str) -> None:
+    """#12042: fold one section's result into the shared run report. Never raises.
+
+    Each section now runs as its own task, so two can finish at once; the merge
+    is a WATCH transaction that retries, so neither result overwrites the other.
+    """
+    order = category_section_names()
+    try:
+        from redis.exceptions import WatchError
+
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        for _ in range(5):
+            with rc.pipeline(transaction=True) as pipe:
+                try:
+                    pipe.watch(PRECOMPUTE_STATUS_KEY)
+                    raw = pipe.get(PRECOMPUTE_STATUS_KEY)
+                    try:
+                        report = json.loads(raw) if raw else {}
+                    except (TypeError, ValueError):
+                        report = {}
+                    if not isinstance(report, dict):
+                        report = {}
+                    old = report.get("sections") if isinstance(report.get("sections"), dict) else {}
+                    sections = {n: old.get(n, {"outcome": "not_attempted"}) for n in order}
+                    sections[name] = entry
+                    now = datetime.now(timezone.utc).isoformat()
+                    report.update(
+                        mode="per_section",
+                        sections=sections,
+                        section_order=order,
+                        started_at=report.get("started_at") or started_at,
+                        generated_at=now,
+                        finished_at=now,
+                    )
+                    pipe.multi()
+                    pipe.setex(
+                        PRECOMPUTE_STATUS_KEY,
+                        PRECOMPUTE_STATUS_TTL,
+                        json.dumps(report, default=str),
+                    )
+                    pipe.execute()
+                    return
+                except WatchError:
+                    continue
+        logger.warning("Category precompute report: %s not merged after 5 tries", name)
+    except Exception as exc:
+        logger.warning("Category precompute report merge failed: %s", exc)
+
+
+async def _precompute_all_category_pages(only: str | None = None):
+    """Precompute all category page caches.
+
+    #1484: the run is now self-reporting. Each section records dispatch →
+    start → success/failure with a duration, and the whole report is written to
+    Redis even when a section blows up, so ``/api/admin/category-precompute/last``
+    can answer "did the MLB grid warm actually run, and how long did it take?"
+    without reading worker logs.
+
+    #12042: ``only`` runs one section and merges its result into the report.
+    The hourly beat sends one task per section, so the worker checks a child's
+    memory after each section instead of after all seven.
+    """
+    import time as _time
+
+    sections = _category_sections()
+    if only is not None:
+        sections = [(name, fn) for name, fn in sections if name == only]
+        if not sections:
+            raise ValueError(f"unknown category section: {only}")
     run_started = _time.monotonic()
     report: dict = {
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -2324,7 +2437,10 @@ async def _precompute_all_category_pages():
         # leaves evidence of exactly how far the run got.
         report["duration_s"] = round(_time.monotonic() - run_started, 1)
         report["finished_at"] = datetime.now(timezone.utc).isoformat()
-        _write_precompute_report(report)
+        if only is not None:
+            _merge_section_report(only, report["sections"][only], report["started_at"])
+        else:
+            _write_precompute_report(report)
 
     logger.info("Category page precompute complete: %s", results)
     return {"status": "ok", "results": results}

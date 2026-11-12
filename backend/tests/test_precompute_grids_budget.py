@@ -165,7 +165,11 @@ def test_pass_budget_fits_under_the_task_soft_time_limit():
 
     # Read the real declaration rather than restating it: a test that hard-codes
     # 300 keeps passing after someone lowers the limit.
-    task = tasks_mod.celery_app.tasks["app.tasks.precompute_category_pages"]
+    # #12042: each section now runs as its own `precompute_category_section`
+    # task, so the grid pass shares its soft limit with no other section. The
+    # sum below is kept anyway: it is the stricter bound, and a later change
+    # that folds sections back into one task must still fit it.
+    task = tasks_mod.celery_app.tasks["app.tasks.precompute_category_section"]
     soft_limit = task.soft_time_limit
     assert soft_limit, "the task lost its soft_time_limit; the budget is unbounded"
 

@@ -7109,11 +7109,52 @@ def snapshot_coverage_metrics(self):
     return _tracked_run("coverage_metrics", _snapshot_coverage_metrics())
 
 
-@celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.precompute_category_pages")
+#: #12042: a section that finds the Discover base build running waits this long
+#: and asks again, up to this many times, then runs anyway (an hourly page is
+#: never skipped for an hour on account of a build that takes ~30 s).
+CATEGORY_SECTION_BASE_WAIT_S = 15
+CATEGORY_SECTION_BASE_WAIT_TRIES = 8
+
+
+@celery_app.task(bind=True, soft_time_limit=60, time_limit=90, name="app.tasks.precompute_category_pages")
 def precompute_category_pages(self):
-    """Precompute category page responses and cache in Redis (every 1h)."""
-    from app.tasks.precompute_category_pages import _precompute_all_category_pages
-    return _tracked_run("precompute_category_pages", _precompute_all_category_pages())
+    """Precompute category page responses and cache in Redis (every 1h).
+
+    #12042: this now SENDS one task per section instead of running all seven in
+    one child. worker-background's prefork children are checked against
+    ``--max-memory-per-child`` only when a task ends; with seven sections in one
+    task a child ended near the sum of their peaks, beside the every-2-minute
+    Discover base build on the other child, and the worker was killed (R15) with
+    this task in flight at 2:28, 5:26 and 7:27 AM PT on Nov 12. One task per
+    section lets the worker recycle a child between sections.
+    """
+    from app.tasks.precompute_category_pages import category_section_names
+
+    names = category_section_names()
+    for name in names:
+        precompute_category_section.apply_async(args=[name], queue="background")
+    return {"status": "dispatched", "sections": names}
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=300,
+    time_limit=360,
+    max_retries=CATEGORY_SECTION_BASE_WAIT_TRIES,
+    name="app.tasks.precompute_category_section",
+)
+def precompute_category_section(self, section: str):
+    """#12042: one section of the hourly category precompute."""
+    from app.tasks.precompute_category_pages import (
+        _precompute_all_category_pages,
+        discover_base_running,
+    )
+
+    if discover_base_running() and self.request.retries < CATEGORY_SECTION_BASE_WAIT_TRIES:
+        raise self.retry(countdown=CATEGORY_SECTION_BASE_WAIT_S)
+    return _tracked_run(
+        f"category_section_{section}", _precompute_all_category_pages(only=section)
+    )
 
 
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=280, name="app.tasks.warm_event_concepts")
@@ -7591,11 +7632,19 @@ def refresh_league(self, sport_key: str, token: str | None = None):
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.precompute_discover_candidate_base")
 def precompute_discover_candidate_base(self):
-    """Precompute + publish the anonymous Discover candidate-ID base (Queue 285)."""
-    from app.tasks.precompute_category_pages import _precompute_discover_candidate_base
-    return _tracked_run(
-        "precompute_discover_candidate_base", _precompute_discover_candidate_base()
+    """Precompute + publish the anonymous Discover candidate-ID base (Queue 285).
+
+    #12042: holds a short running flag so a category section on the other child
+    waits instead of building beside it. The base itself never waits."""
+    from app.tasks.precompute_category_pages import (
+        _precompute_discover_candidate_base,
+        mark_discover_base_running,
     )
+
+    with mark_discover_base_running():
+        return _tracked_run(
+            "precompute_discover_candidate_base", _precompute_discover_candidate_base()
+        )
 
 
 #: #2236. The limits are derived from the period, not chosen: the hard limit is
