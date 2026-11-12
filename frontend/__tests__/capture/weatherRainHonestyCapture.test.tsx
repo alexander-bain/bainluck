@@ -154,7 +154,7 @@ describe("UX-P170 · loading and loaded-empty stop being the same thing", () => 
     // ENTITY, but `renderToStaticMarkup` has already resolved it to the
     // character by then, so the replacement never fires. Asserting the
     // character is asserting what the reader is served.
-    expect(text).toContain("This card tracks daily “will it rain?” questions.");
+    expect(text).toContain("This card tracks daily “will it rain?” markets.");
     expect(text).not.toContain("appear here");
   });
 

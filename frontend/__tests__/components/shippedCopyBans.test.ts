@@ -141,9 +141,9 @@ describe("the rules reject the copy Alex read on production", () => {
     // The failure mode of a copy fix is a replacement that trips a different
     // rule and gets reverted, so each new sentence is pinned as passing next
     // to the sentence it replaced (which is pinned as rejected, below).
-    "Open questions, merged into one number",
+    "Open markets, merged into one number",
     "Who wins each tournament, one number per golfer",
-    "Daily “Will it rain?” questions, one per day",
+    "Daily “Will it rain?” markets, one per day",
     "Sportsbooks, ESPN, prediction markets, and live stat models each have a guess.",
   ];
 
@@ -400,9 +400,9 @@ describe("the rules reject the copy Alex read on production", () => {
      * the retired wording that the risk is real rather than theoretical.
      */
     const REPLACEMENTS = [
-      "We have no number for Iga Swiatek, so this comparison is not complete and the question has closed.",
+      "We have no number for Iga Swiatek, so this comparison is not complete and the market has closed.",
       "We have no number for Carlos Alcaraz yet, so this comparison is not complete.",
-      "We have no number for 3 of the names in it, so this comparison is not complete and the question has closed.",
+      "We have no number for 3 of the names in it, so this comparison is not complete and the market has closed.",
     ];
 
     it.each(REPLACEMENTS)("the shipped replacement passes: %j", (sentence) => {

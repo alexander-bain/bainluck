@@ -11,5 +11,5 @@ import type { RelatedGameListing } from "./types";
 export function relatedGameListingText(listing: RelatedGameListing | null | undefined): string | null {
   if (!listing) return null;
   const count = Number.isSafeInteger(listing.question_count) && listing.question_count > 0 ? listing.question_count : 0;
-  return count ? `${count} ${count === 1 ? "question" : "questions"} on this game` : "More questions on this game";
+  return count ? `${count} ${count === 1 ? "market" : "markets"} on this game` : "More markets on this game";
 }

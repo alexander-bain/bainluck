@@ -341,7 +341,7 @@ describe("UX-1052 item 8 — the board that stays", () => {
       partitionLeagueMarkets([binaryMarket(100 + i, `Question ${i}`, 0.5 - i * 0.01, "props")]).binaries[0],
     );
     const wall = renderToStaticMarkup(<LeagueBinaryBoard binaries={many} />);
-    expect(wall).toContain("Show 18 more questions");
+    expect(wall).toContain("Show 18 more markets");
     expect(wall).toContain("Question 0");
     expect(wall).not.toContain("Question 25");
     // The count in the header states the WHOLE board, not the visible slice.
