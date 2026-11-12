@@ -30,8 +30,11 @@ and ``ranking_grades``; the writes go only there.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 import json
 import math
+import os
 from pathlib import Path
 import re
 import urllib.parse
@@ -383,6 +386,8 @@ def latest_grades(rows) -> list[dict]:
         grade_out = (
             _DB_TO_GROUPING_GRADE.get(raw_grade, raw_grade)
             if r.surface == SURFACE_GROUPING
+            else _DB_TO_PAIR_PICK.get(raw_grade, raw_grade)
+            if r.surface == "pair"
             else raw_grade
         )
         latest[(r.slate_id, r.grader, r.item_key)] = {
@@ -1249,3 +1254,145 @@ async def get_grouping_kind_proposals(
     return data
 
 
+
+
+# ── #11937 (171-A): the blind side-by-side ──────────────────────────────────
+#
+# For one slate, the served first ten and a candidate's first ten, side by side,
+# sides assigned at random and never labelled; the grader answers left, right or
+# no difference. A candidate's first ten is computed offline by the harness and
+# shipped by PR in ``data/ranking_pairs.json`` under an opaque pair name
+# (``{slate_id: {pair_name: [item_key x 10]}}``), so the server runs no candidate
+# code and nothing in the URL names the candidate. Which side is which comes from
+# a server-only hash, so neither the page, the URL nor the response can tell.
+
+SURFACE_PAIR = "pair"
+PAIRS_PATH = Path(__file__).resolve().parents[1] / "data" / "ranking_pairs.json"
+PAIR_CHOICES = ("left", "right", "none")
+PAIR_SIZE = 10
+# Stored through ranking_grades' grade check (shareable/interesting/neither), as
+# the grouping grades are: what a pick MEANS, never which side it was on.
+_PAIR_TO_DB_GRADE: dict[str, str] = {"candidate": "shareable", "none": "interesting", "served": "neither"}
+_DB_TO_PAIR_PICK: dict[str, str] = {v: k for k, v in _PAIR_TO_DB_GRADE.items()}
+
+
+def load_pairs(path: Path = PAIRS_PATH) -> dict[str, dict[str, list[str]]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _side_key() -> bytes:
+    # Server-only: the grader never holds the admin token on the page.
+    return hashlib.sha256(f"{os.environ.get('ADMIN_TOKEN', '')}|pair-sides|11937".encode()).digest()
+
+
+def candidate_on_left(slate_id: str, pair: str) -> bool:
+    """The random side for this slate and pair: fixed, so a reload shows the
+    same sides, and unpredictable without the server's key."""
+    digest = hmac.new(_side_key(), f"{slate_id}|{pair}".encode(), hashlib.sha256).digest()
+    return digest[0] % 2 == 0
+
+
+def _pair_sides(row: Mapping[str, Any], keys: list[str]) -> tuple[list[dict], list[dict]]:
+    by_key = {c.get("item_key"): c for c in row.get("candidates") or ()}
+    served = [by_key.get(k) for k in (row.get("served_order") or [])[:PAIR_SIZE]]
+    candidate = [by_key.get(k) for k in keys[:PAIR_SIZE]]
+    if any(c is None for c in served + candidate) or len(candidate) < PAIR_SIZE:
+        raise HTTPException(status_code=422, detail="the pair names cards this slate doesn't hold")
+    if not all(has_drawing(c.get("card")) for c in served + candidate):
+        raise HTTPException(status_code=409, detail="a card in one of the two first tens has no stored drawing")
+    # Only the drawing goes out: no positions, keys or scores that could tell a side.
+    return [{"card": c["card"]} for c in served], [{"card": c["card"]} for c in candidate]
+
+
+@router.get("/pair")
+async def get_pair(
+    request: Request,
+    slate: str = Query(..., max_length=64),
+    pair: str = Query(..., max_length=64),
+    surface: str = Query(SURFACE_DISCOVER, max_length=32),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """#11937 (171-A): two first tens for one slate, unlabelled, sides random."""
+    _check_admin_secret(secret, request=request)
+    row = slate_row_dict(await _slate_row(db, slate, surface))
+    keys = load_pairs().get(row["slate_id"], {}).get(pair)
+    if keys is None:
+        raise HTTPException(status_code=404, detail=f"no pair {pair!r} for this slate")
+    served, candidate = _pair_sides(row, list(keys))
+    left, right = (candidate, served) if candidate_on_left(row["slate_id"], pair) else (served, candidate)
+    return {"slate_id": row["slate_id"], "pair": pair, "left": left, "right": right}
+
+
+class PairPickIn(BaseModel):
+    slate_id: str = Field(..., min_length=1, max_length=64)
+    pair: str = Field(..., min_length=1, max_length=64)
+    grader: str = Field(..., min_length=1, max_length=40)
+    choice: str
+    note: str | None = Field(None, max_length=300)
+
+
+@router.post("/pair-picks")
+async def post_pair_pick(
+    body: PairPickIn,
+    request: Request,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db_rw),
+) -> dict:
+    """Saves the pick as what it means (candidate, served or none), per slate,
+    pair and grader. The response says only "ok", never which side won."""
+    _check_admin_secret(secret, request=request)
+    if not ranking_snapshots_enabled():
+        raise HTTPException(status_code=409, detail="RANKING_SNAPSHOTS is off")
+    if body.choice not in PAIR_CHOICES:
+        raise HTTPException(status_code=422, detail=f"choice must be one of {PAIR_CHOICES}")
+    grader = " ".join(body.grader.split())
+    if not grader:
+        raise HTTPException(status_code=422, detail="grader needs a name")
+    if load_pairs().get(body.slate_id, {}).get(body.pair) is None:
+        raise HTTPException(status_code=404, detail="no such pair for this slate")
+    if body.choice == "none":
+        meaning = "none"
+    else:
+        left_is_candidate = candidate_on_left(body.slate_id, body.pair)
+        meaning = "candidate" if (body.choice == "left") == left_is_candidate else "served"
+    db.add(
+        RankingGrade(
+            slate_id=body.slate_id,
+            surface=SURFACE_PAIR,
+            grader=grader,
+            expert=True,
+            position=1,
+            item_key=f"pair:{body.pair}",
+            grade=_PAIR_TO_DB_GRADE[meaning],
+            note=(body.note or "").strip() or None,
+        )
+    )
+    await db.commit()
+    return {"status": "ok"}
+
+
+@router.get("/pair-picks")
+async def get_pair_picks(
+    request: Request,
+    slate_id: str = Query(..., max_length=64),
+    days: int = Query(30, ge=1, le=90),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The side-by-side picks for a slate, latest per grader and pair, as what
+    they mean (candidate, served, none). For scoring; the page never calls it."""
+    _check_admin_secret(secret, request=request)
+    now = datetime.now(timezone.utc)
+    rows = (await db.execute(
+        select(RankingGrade).where(
+            RankingGrade.surface == SURFACE_PAIR,
+            RankingGrade.slate_id == slate_id,
+            RankingGrade.graded_at >= now - timedelta(days=days),
+        )
+    )).scalars().all()
+    return {"slate_id": slate_id, "surface": SURFACE_PAIR, "grades": latest_grades(rows)}
