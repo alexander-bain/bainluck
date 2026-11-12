@@ -11,7 +11,8 @@ import Foundation
 /// "source_mark": {
 ///   "state": "blend" | "single" | "settled" | "none",
 ///   "sources": [{"key", "name", "probability", "observed_at", "count"?}],
-///   "settled": {"source", "result", "at"}
+///   "settled": {"source", "result", "at"},
+///   "method"?: "<short calculation name>"
 /// }
 /// ```
 ///
@@ -40,14 +41,16 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
     let state: State
     let sources: [Source]
     let settled: Settled?
+    let method: String?
 
-    init(state: State, sources: [Source], settled: Settled? = nil) {
+    init(state: State, sources: [Source], settled: Settled? = nil, method: String? = nil) {
         self.state = state
         self.sources = sources
         self.settled = settled
+        self.method = method
     }
 
-    private enum CodingKeys: String, CodingKey { case state, sources, settled }
+    private enum CodingKeys: String, CodingKey { case state, sources, settled, method }
 
     /// Decodes `[Source]` element by element so one bad entry drops alone.
     private struct Lenient<T: Decodable>: Decodable {
@@ -58,7 +61,7 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         // Not an object at all: no mark, and the row it rides on still decodes.
         guard let c = try? decoder.container(keyedBy: CodingKeys.self) else {
-            state = .unknown; sources = []; settled = nil
+            state = .unknown; sources = []; settled = nil; method = nil
             return
         }
         switch (try? c.decodeIfPresent(String.self, forKey: .state)) ?? nil {
@@ -71,6 +74,7 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
         sources = ((try? c.decodeIfPresent([Lenient<Source>].self, forKey: .sources)) ?? nil)?
             .compactMap(\.value) ?? []
         settled = (try? c.decodeIfPresent(Settled.self, forKey: .settled)) ?? nil
+        method = (try? c.decodeIfPresent(String.self, forKey: .method)) ?? nil
     }
 
     /// Does this mark draw at all? Only when the sheet would have something to

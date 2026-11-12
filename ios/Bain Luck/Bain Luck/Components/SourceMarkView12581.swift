@@ -77,13 +77,14 @@ struct SourceMarkSheet: View {
         number.map { formatProbability($0) }
     }
 
-    /// One line of method under the rows. "Bain Luck blend" only where the
-    /// server's mark says the number is a blend of more than one source (145-A,
-    /// Nov 11: props aren't blended for now, so a prop names its one venue).
+    /// One line of method under the rows. Multi-source blends print the
+    /// server's `method` when present and non-empty, else "Bain Luck blend";
+    /// one-source marks name that venue ("<Venue>'s price", 145-A).
     static func method(_ mark: SourceMark) -> String? {
         switch mark.state {
         case .blend where mark.sources.count > 1:
-            return "Bain Luck blend, weighted by freshness and depth"
+            let served = mark.method?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (served?.isEmpty == false) ? served : "Bain Luck blend"
         case .blend, .single:
             return mark.sources.first.map { "\($0.name)'s price" }
         case .settled:

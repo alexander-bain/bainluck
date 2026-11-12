@@ -61,7 +61,7 @@ final class SourceMark12581Tests: XCTestCase {
         XCTAssertEqual(SourceMarkSheet.headline(0.996), ">99%", "a live number never prints 100%")
         XCTAssertEqual(SourceMarkSheet.headline(0.004), "<1%", "a live number never prints 0%")
         XCTAssertNil(SourceMarkSheet.headline(nil))
-        XCTAssertEqual(SourceMarkSheet.method(blend), "Bain Luck blend, weighted by freshness and depth")
+        XCTAssertEqual(SourceMarkSheet.method(blend), "Bain Luck blend")
         let extremes = SourceMark(state: .blend, sources: [
             .init(key: "kalshi", name: "Kalshi", probability: 0.996, observedAt: nil),
             .init(key: "polymarket", name: "Polymarket", probability: 0.004, observedAt: nil)])
@@ -75,6 +75,47 @@ final class SourceMark12581Tests: XCTestCase {
         XCTAssertEqual(SourceMarkSheet.lines(prop, now: now), [.init(name: "Kalshi", price: "62%", age: nil)],
                        "no observation time, no age")
         XCTAssertNil(SourceMarkSheet.method(SourceMark(state: .settled, sources: [], settled: .init(source: "kalshi", result: "Yes", at: nil))))
+    }
+
+    func testServedMethodPrintsWhenPresentAndFallsBackToBainLuckBlend() throws {
+        func blendRow(methodJSON: String?) -> Data {
+            let methodField = methodJSON.map { ", \"method\": \($0)" } ?? ""
+            return """
+            {"market_name": "New England vs Detroit: Touchdowns", "outcome_name": "Drake Maye: 1+",
+             "threshold": 1, "over_probability": 0.62, "source": "kalshi", "movement": null,
+             "player_headshot": null, "player_team": null, "actual": null, "hit": null, "pregame_mark": null,
+             "source_mark": {"state": "blend",
+               "sources": [
+                 {"key": "kalshi", "name": "Kalshi", "probability": 0.62, "observed_at": "\(stamp(64))"},
+                 {"key": "polymarket", "name": "Polymarket", "probability": 0.60, "observed_at": "\(stamp(120))"}
+               ],
+               "settled": null\(methodField)}}
+            """.data(using: .utf8)!
+        }
+
+        // 1. Present: prints the server's exact calculation description.
+        let served = try XCTUnwrap(try decode(blendRow(methodJSON: "\"Bain Luck blend, weighted by freshness\"")).sourceMark)
+        XCTAssertEqual(served.method, "Bain Luck blend, weighted by freshness")
+        XCTAssertEqual(SourceMarkSheet.method(served), "Bain Luck blend, weighted by freshness")
+
+        // 2. Absent: prints "Bain Luck blend" and nothing more.
+        let absent = try XCTUnwrap(try decode(blendRow(methodJSON: nil)).sourceMark)
+        XCTAssertNil(absent.method)
+        XCTAssertEqual(SourceMarkSheet.method(absent), "Bain Luck blend")
+
+        // 3. Empty / whitespace string: falls back to "Bain Luck blend".
+        let empty = try XCTUnwrap(try decode(blendRow(methodJSON: "\"\"")).sourceMark)
+        XCTAssertEqual(SourceMarkSheet.method(empty), "Bain Luck blend")
+        let blank = try XCTUnwrap(try decode(blendRow(methodJSON: "\"   \"")).sourceMark)
+        XCTAssertEqual(SourceMarkSheet.method(blank), "Bain Luck blend")
+
+        // 4. Not-a-string: decodes as absent, the row still decodes, and prints "Bain Luck blend".
+        for bad in ["7", "true", "[\"bad\"]", "{\"kind\": 1}"] {
+            let row = try decode(blendRow(methodJSON: bad))
+            let mark = try XCTUnwrap(row.sourceMark, "\(bad) must not drop the row or its mark")
+            XCTAssertNil(mark.method, "\(bad) decodes as absent")
+            XCTAssertEqual(SourceMarkSheet.method(mark), "Bain Luck blend")
+        }
     }
 
     func testASingleSourceStateDecodesAndDrawsLikeAOneVenueMark() throws {
