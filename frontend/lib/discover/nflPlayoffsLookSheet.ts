@@ -902,7 +902,7 @@ export const STEELERS_BENGALS_PROP_BOARD = {
   event_id: 14780578,
   matchup_title: "Pittsburgh Steelers at Cincinnati Bengals",
   kickoff_label: "Sun Nov 15 · 5:20 PM PT",
-  win_prob_recorded_at_label: "Recorded Wed Nov 11, 2026 · 8:15 PM PT (blended game win probability)",
+  win_prob_recorded_at_label: "Recorded Wed Nov 11, 2026 · 8:15 PM PT (game win probability)",
   away_team: "Pittsburgh Steelers",
   away_abbr: "PIT" as const,
   away_record: "6-2",
