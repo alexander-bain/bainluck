@@ -952,21 +952,32 @@ function AtlasOddsChartHeader({
   settled,
   showOpening,
   showRecordedReading,
+  recordedReadingCount,
 }: {
   bus: AtlasSelectionBus;
   settled: boolean;
   showOpening: boolean;
   showRecordedReading: boolean;
+  recordedReadingCount: number;
 }) {
   const [selectedReading, setSelectedReading] = useAtlasSelectionBus(bus);
   return (
-    <div className="space-y-2 shrink-0" data-testid="event-atlas-chart-header">
-      <AtlasChartMarkKey
-        settled={settled}
-        showOpening={showOpening}
-        showRecordedReading={showRecordedReading}
-        openingLabel="Pregame"
-      />
+    <div className="space-y-1.5 shrink-0" data-testid="event-atlas-chart-header">
+      <details
+        className="text-xs text-text-secondary"
+        data-testid="event-atlas-how-to-read"
+      >
+        <summary className="cursor-pointer">How to read this</summary>
+        <div className="mt-1.5">
+          <AtlasChartMarkKey
+            settled={settled}
+            showOpening={showOpening}
+            showRecordedReading={showRecordedReading}
+            recordedReadingCount={recordedReadingCount}
+            openingLabel="Pregame"
+          />
+        </div>
+      </details>
       <AtlasSelectedReadingReadout
         reading={
           selectedReading && !showOpening && selectedReading.isOpening
@@ -3683,6 +3694,7 @@ export default function OddsChart({
               settled={atlasSettledResult !== null}
               showOpening={atlasIncludesOpening}
               showRecordedReading={atlasShowsRecordedMarks}
+              recordedReadingCount={atlasObservationRows.length}
             />
           </div>
         )}
