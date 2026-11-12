@@ -288,7 +288,7 @@ final class AfterPropsQuoteEligibility10237Tests: XCTestCase {
         let q = try XCTUnwrap(after.questions.first { $0.questionKey == judge1 })
         let shown = PropExpectationActualDisplay.expectation(q.expectation)
         XCTAssertNil(shown.valueText)
-        XCTAssertEqual(shown.label, "No pregame chance was saved for this question.")
+        XCTAssertEqual(shown.label, "No pregame chance was saved for this prop.")
         XCTAssertNil(shown.label.rangeOfCharacter(from: .decimalDigits), "never a number inferred from the result")
         XCTAssertTrue(PropExpectationActualDisplay.accessibilityLabel(q, actual: after.actual(for: q),
                                                                       stat: after.stat("home_runs"))

@@ -252,7 +252,7 @@ describe("what the eight specimens now say", () => {
     ],
     [
       "Esports match-bundle exclusion",
-      "Esports markets that pack a whole match into one question are no longer scored",
+      "Esports markets that bundle a whole match together are no longer scored",
     ],
   ];
 

@@ -46,7 +46,7 @@ final class ContainerDiscoveryContractTests: XCTestCase {
         let response = try ContainerDiscoveryFixture.decode()
         let entry = try XCTUnwrap(request.entries(in: response).first)
         XCTAssertEqual(entry.collection.name, "MLB 2026 · Postseason")
-        XCTAssertEqual(entry.subtitle, "9 games · 6 questions")
+        XCTAssertEqual(entry.subtitle, "9 games · 6 markets")
         XCTAssertEqual(entry.collection.revision, 2)
         XCTAssertEqual(entry.route, .containerHub(slug: "mlb-2026-postseason", name: "MLB 2026 · Postseason"))
     }
@@ -116,7 +116,7 @@ final class ContainerDiscoveryContractTests: XCTestCase {
         let response = try ContainerDiscoveryFixture.decode { object in
             ContainerDiscoveryFixture.changeCard(&object) { $0["game_count"] = 0; $0["question_count"] = 1 }
         }
-        XCTAssertEqual(request.entries(in: response).first?.subtitle, "1 question")
+        XCTAssertEqual(request.entries(in: response).first?.subtitle, "1 market")
     }
 
     func testNFLStageWeekAndSlugMustRoundTripWithoutGuessing() throws {
