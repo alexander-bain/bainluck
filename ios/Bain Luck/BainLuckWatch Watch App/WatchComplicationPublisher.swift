@@ -10,7 +10,7 @@ nonisolated enum WatchComplicationProjection {
         let detail: String
         let observed: Date?
         let kind: WatchCircularReading.Kind
-        let rectangularKind: WatchRectangularReading.Kind
+        var rectangularKind: WatchRectangularReading.Kind?
         var rectHomeScore: Int?
         var rectAwayScore: Int?
         var rectScoreObserved: Date?
@@ -40,7 +40,7 @@ nonisolated enum WatchComplicationProjection {
                     rectangularKind = .liveForecast
                     if let hs = game.homeScore, let ascore = game.awayScore, hs >= 0, ascore >= 0,
                        let sClock = game.scoreObservedAt, validObservation(sClock, savedAt: savedAt),
-                       abs(sClock.timeIntervalSince(clock)) <= WatchRectangularReading.liveStaleThresholdSeconds {
+                       abs(sClock.timeIntervalSince(clock)) <= WatchRectangularReading.liveAgeThresholdSeconds {
                         rectHomeScore = hs
                         rectAwayScore = ascore
                         rectScoreObserved = sClock
@@ -54,26 +54,11 @@ nonisolated enum WatchComplicationProjection {
             } else if ["live", "in_progress"].contains(statusLower), let home = game.homeScore, let away = game.awayScore,
                       home >= 0, away >= 0,
                       let clock = game.scoreObservedAt, validObservation(clock, savedAt: savedAt) {
-                // A score is independently useful when no honest probability reading exists.
-                // Keep away-home order aligned with the named matchup, and use only its clock.
+                // Keep parent/circular score snapshot intact; rectangular face omits score-without-odds.
                 kind = .score
-                rectangularKind = .liveScoreOnly
                 title = "\(game.awayTeam) at \(game.homeTeam)"
                 detail = "Score \(away)–\(home) · Live"
                 observed = clock
-                rectHomeScore = home
-                rectAwayScore = away
-                rectScoreObserved = clock
-            } else if ["scheduled", "upcoming", "pregame"].contains(statusLower),
-                      let start = game.commenceTime, start.timeIntervalSinceReferenceDate.isFinite,
-                      savedAt.timeIntervalSinceReferenceDate.isFinite {
-                // Scheduled game without pregame probability yet: show matchup and scheduled start without fake 0–0.
-                kind = .forecast
-                rectangularKind = .scheduledStart
-                title = "\(game.awayTeam) at \(game.homeTeam)"
-                detail = "\(game.stateLabel) · \(start.formatted(.dateTime.month(.abbreviated).day().hour().minute()))"
-                observed = savedAt
-                rectCommenceTime = start
             } else {
                 return nil
             }
@@ -92,28 +77,30 @@ nonisolated enum WatchComplicationProjection {
             if let vh = validHome, (vh.teamID == $0.teamID || vh.abbreviation == $0.abbreviation) { return nil }
             return $0
         }
-        let rectangular = WatchRectangularReading(
-            version: 1,
-            eventID: game.id,
-            kind: rectangularKind,
-            homeName: game.homeTeam,
-            awayName: game.awayTeam,
-            home: validHome,
-            away: validAway,
-            homePercent: (rectangularKind == .liveForecast || rectangularKind == .scheduledForecast) ? game.homeRenderedPercent : nil,
-            homeScore: rectHomeScore,
-            awayScore: rectAwayScore,
-            commenceTime: rectCommenceTime,
-            stateLabel: kind == .final ? "Final" : game.stateLabel,
-            observedAt: observed,
-            scoreObservedAt: rectScoreObserved
-        )
+        let rectangular: WatchRectangularReading? = rectangularKind.map { rKind in
+            WatchRectangularReading(
+                version: 1,
+                eventID: game.id,
+                kind: rKind,
+                homeName: game.homeTeam,
+                awayName: game.awayTeam,
+                home: validHome,
+                away: validAway,
+                homePercent: (rKind == .liveForecast || rKind == .scheduledForecast) ? game.homeRenderedPercent : nil,
+                homeScore: rectHomeScore,
+                awayScore: rectAwayScore,
+                commenceTime: rectCommenceTime,
+                stateLabel: kind == .final ? "Final" : game.stateLabel,
+                observedAt: observed,
+                scoreObservedAt: rectScoreObserved
+            )
+        }
         let parent = WatchComplicationSnapshot(version: 1, eventID: game.id, title: title,
             detail: detail, observedAt: observed, savedAt: savedAt)
         return WatchComplicationSnapshot(version: 1, eventID: game.id, title: title,
             detail: detail, observedAt: observed, savedAt: savedAt,
             circularReading: compact.matches(parent) ? compact : nil,
-            rectangularReading: rectangular.matches(parent) ? rectangular : nil)
+            rectangularReading: rectangular.flatMap { $0.matches(parent) ? $0 : nil })
     }
 
     private static func validObservation(_ observed: Date, savedAt: Date) -> Bool {

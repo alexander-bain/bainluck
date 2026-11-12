@@ -93,28 +93,29 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         let center = host.otherElements["center"].firstMatch
         XCTAssertTrue(center.waitForExistence(timeout: 15) && center.isHittable && host.frame.contains(center.frame))
         // #4933: the installed extension reads the App Group file the app just published
-        // and draws the chosen game's named saved reading with its age, not the launcher.
+        // and draws the chosen game's compact probability reading with its age or As-of clock, never "Saved" or "stale".
         let reading = host.descendants(matching: .any)["watch.complication.rectangular.reading"].firstMatch
-        XCTAssertTrue(reading.waitForExistence(timeout: 20), "Actual installed extension must render the published saved reading")
+        XCTAssertTrue(reading.waitForExistence(timeout: 20), "Actual installed extension must render the published reading")
         let spoken = reading.label
-        XCTAssertTrue(spoken.hasPrefix("Saved reading. Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants win probability 64%. Live. Observed "), spoken)
+        XCTAssertTrue(spoken.hasPrefix("Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64%. "), spoken)
         XCTAssertTrue(spoken.hasSuffix(" Open your game in Bain Luck."), spoken)
-        // The age belongs to the original observation. Under two minutes is never stale;
-        // three minutes or more always is (two minutes is the one-second threshold boundary).
-        let fresh = spoken.contains("Observed less than 1 minute ago.") || spoken.contains("Observed 1 minute ago.")
-        let stale = spoken.contains(" Stale reading. ")
-        XCTAssertFalse(fresh && stale, spoken)
-        XCTAssertTrue(fresh || stale || spoken.contains("Observed 2 minutes ago."), spoken)
+        XCTAssertFalse(spoken.localizedCaseInsensitiveContains("stale"), spoken)
+        XCTAssertFalse(spoken.localizedCaseInsensitiveContains("saved"), spoken)
+        let freshSpoken = spoken.contains("Live, less than 1 minute ago.") || spoken.contains("Live, 1 minute ago.") || spoken.contains("Live, 2 minutes ago.")
+        let agedSpoken = spoken.contains("As of ")
+        XCTAssertTrue(freshSpoken || agedSpoken, spoken)
         print("WATCH_RECTANGULAR_READING_LABEL=\(spoken)")
-        // The drawn lines: compact matchup with the verified score, the named chance
-        // (full or compact by width), and the saved line that always carries its age.
+        // The drawn lines: compact matchup with the verified score, "SF 64%",
+        // and "Live · <age>" (or "As of <clock>" once > 2 minutes old).
         let header = host.descendants(matching: .any)["watch.complication.rectangular.header"].firstMatch
         let primary = host.descendants(matching: .any)["watch.complication.rectangular.primary"].firstMatch
         let metadata = host.descendants(matching: .any)["watch.complication.rectangular.metadata"].firstMatch
         XCTAssertEqual(header.label, "LA at SF · 2–3")
-        XCTAssertTrue(["SF win 64%", "San Francisco Giants win 64%"].contains(primary.label), primary.label)
-        XCTAssertTrue((metadata.label.hasPrefix("Saved · Live · ") || metadata.label.hasPrefix("Saved · Stale · "))
-                      && metadata.label.hasSuffix(" ago"), metadata.label)
+        XCTAssertEqual(primary.label, "SF 64%")
+        XCTAssertFalse(metadata.label.localizedCaseInsensitiveContains("stale"), metadata.label)
+        XCTAssertFalse(metadata.label.localizedCaseInsensitiveContains("saved"), metadata.label)
+        XCTAssertTrue((metadata.label.hasPrefix("Live · ") && metadata.label.hasSuffix(" ago"))
+                      || metadata.label.hasPrefix("As of "), metadata.label)
         try requireNamedReadingInsideSlot(reading, center: center, host: host)
         XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)
         XCTAssertFalse(host.descendants(matching: .any)["watch.complication.rectangular.legacy"].firstMatch.exists)

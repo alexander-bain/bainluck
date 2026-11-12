@@ -357,9 +357,11 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     try runRectangularComplicationChecks()
 }
 
-/// Deterministic #4933 checks for all six large-rectangular (`accessoryRectangular`) states and line/character budgets.
+/// Deterministic #4933 checks for the large-rectangular (`accessoryRectangular`) probability/final states,
+/// omitted odds-less states, and Alex's wording contract (never "Saved", never "stale").
 @MainActor func runRectangularComplicationChecks() throws {
     let now = ISO8601DateFormatter().date(from: "2026-10-04T18:00:00Z")!
+    let pacific = TimeZone(identifier: "America/Los_Angeles")!
     let home = "\"home_team_data\":{\"team_id\":1,\"abbreviation\":\"SF\"}"
     let away = "\"away_team_data\":{\"team_id\":2,\"abbreviation\":\"LA\"}"
     func decodeGame(_ fields: String) throws -> WatchSelectedGame {
@@ -376,17 +378,30 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     precondition(rectLiveScore.kind == .liveForecast)
     precondition(rectLiveScore.headerLine() == "LA at SF · 2–3",
                  "Long matchup automatically uses canonical abbreviations + verified live score within the 26-char header budget")
-    precondition(rectLiveScore.primaryLine(at: now) == "San Francisco Giants win 64%")
-    precondition(rectLiveScore.primaryLine(preferCompact: true, at: now) == "SF win 64%")
-    precondition(rectLiveScore.metadataLine(at: now) == "Saved · Live · 2m ago" && !rectLiveScore.isStale(at: now))
-    precondition(rectLiveScore.accessibilityDescription(at: now).contains("Score Los Angeles Dodgers 2, San Francisco Giants 3.")
-                 && rectLiveScore.accessibilityDescription(at: now).contains("San Francisco Giants win probability 64%."))
+    precondition(rectLiveScore.primaryLine(at: now) == "SF 64%")
+    precondition(rectLiveScore.primaryLine(preferCompact: true, at: now) == "SF 64%")
+    let oneMinuteAfter = rectLiveScore.observedAt.addingTimeInterval(60)
+    precondition(rectLiveScore.metadataLine(at: oneMinuteAfter, timeZone: pacific) == "Live · 1m ago")
+    precondition(rectLiveScore.metadataLine(at: now, timeZone: pacific) == "Live · 2m ago" && !rectLiveScore.isAgedLive(at: now))
+    let liveSpoken = rectLiveScore.accessibilityDescription(at: oneMinuteAfter, timeZone: pacific)
+    precondition(liveSpoken == "Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64%. Live, 1 minute ago. Open your game in Bain Luck.",
+                 "Unexpected live spoken copy: \(liveSpoken)")
     let liveDates = WatchRectangularReading.timelineDates(for: snapLiveScore, now: now)
-    let staleBoundary = rectLiveScore.observedAt.addingTimeInterval(121)
+    let ageSwitch = rectLiveScore.observedAt.addingTimeInterval(121)
     precondition(liveDates.first == now && liveDates == liveDates.sorted())
-    precondition(liveDates.contains(staleBoundary) && rectLiveScore.metadataLine(at: staleBoundary) == "Saved · Stale · 2m ago")
-    precondition(rectLiveScore.metadataLine(at: rectLiveScore.observedAt.addingTimeInterval(59 * 60)) == "Saved · Stale · 59m ago")
-    precondition(rectLiveScore.accessibilityDescription(at: staleBoundary).contains("Stale reading."))
+    precondition(liveDates.contains(ageSwitch) && rectLiveScore.isAgedLive(at: ageSwitch))
+    precondition(rectLiveScore.metadataLine(at: ageSwitch, timeZone: pacific) == "As of 10:58 AM")
+    precondition(rectLiveScore.metadataLine(at: rectLiveScore.observedAt.addingTimeInterval(59 * 60), timeZone: pacific) == "As of 10:58 AM")
+    precondition(rectLiveScore.accessibilityDescription(at: ageSwitch, timeZone: pacific).contains("As of 10:58 AM."))
+
+    // Verify exact "As of 1:29 PM" specimen in Pacific time (20:29Z in PDT = 1:29 PM).
+    let specimenClock = ISO8601DateFormatter().date(from: "2026-10-04T21:28:00Z")!
+    let specimenGame = try decodeGame(
+        "\"status\":\"live\",\"sport\":\"baseball_mlb\",\"hero_probability\":0.64,\"hero_probability_away\":0.36,\"hero_probability_observed_at\":\"2026-10-04T20:29:00Z\",\(home),\(away)"
+    )
+    let rectSpecimen = WatchComplicationProjection.snapshot(game: specimenGame, savedAt: specimenClock)!.validatedRectangularReading(now: specimenClock)!
+    precondition(rectSpecimen.metadataLine(at: specimenClock, timeZone: pacific) == "As of 1:29 PM")
+    precondition(rectSpecimen.accessibilityDescription(at: specimenClock, timeZone: pacific).contains("As of 1:29 PM."))
 
     // A changed score under the same probability clock must replace shared bytes and request a reload.
     let changedScore = try decodeGame(
@@ -426,7 +441,7 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     )
     let rectLagged = WatchComplicationProjection.snapshot(game: laggedScore, savedAt: now)!.validatedRectangularReading(now: now)!
     precondition(rectLagged.kind == .liveForecast && rectLagged.homeScore == nil && rectLagged.awayScore == nil)
-    precondition(rectLagged.headerLine() == "LA at SF" && rectLagged.metadataLine(at: now) == "Saved · Live · <1m ago")
+    precondition(rectLagged.headerLine() == "LA at SF" && rectLagged.metadataLine(at: now, timeZone: pacific) == "Live · <1m ago")
 
     // Exact 120s score lag is kept (`<=`); 121s lag is omitted (`A3`/`D15` guard); forged lagged score in stored JSON is rejected by validation (`A1`/`D7` guard).
     let exactBoundaryScore = try decodeGame(
@@ -447,33 +462,25 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     precondition(forgedLagSnapshot.rectangularReading?.scoreObservedAt != nil && forgedLagSnapshot.validatedRectangularReading(now: now) == nil,
                  "Forged lagged scoreObservedAt in stored JSON must be refused by validatedRectangularReading")
 
-    // 2. Live score-only state (missing probability shows honest copy without fabricated numbers)
+    // 2. Live score-only state: omitted from the rectangular face (falls back to launcher; parent/circular score retained).
     let liveScoreOnly = try decodeGame(
         "\"status\":\"live\",\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\",\(home),\(away)"
     )
     let snapScoreOnly = WatchComplicationProjection.snapshot(game: liveScoreOnly, savedAt: now)!
-    let rectScoreOnly = snapScoreOnly.validatedRectangularReading(now: now)!
-    precondition(rectScoreOnly.kind == .liveScoreOnly && rectScoreOnly.homePercent == nil)
-    precondition(rectScoreOnly.headerLine() == "LA at SF")
-    precondition(rectScoreOnly.primaryLine(at: now) == "Score 2–3 · No win prob" && !rectScoreOnly.primaryLine(at: now).contains("%"))
-    precondition(rectScoreOnly.metadataLine(at: now) == "Saved · Live · 1m ago")
-    precondition(rectScoreOnly.accessibilityDescription(at: now).contains("Win probability unavailable."))
-    precondition(rectScoreOnly.primaryLine(preferCompact: true, at: now) == "2–3 · No win prob")
-    // lane1b A7: on a 41 mm face the compact card cut "Score 112–108 · No win prob" at the
-    // right edge. Its compact copy keeps both scores and the whole missing-chance cue.
-    let tripleScoreOnly = try decodeGame(
-        "\"status\":\"live\",\"home_score\":108,\"away_score\":112,\"score_observed_at\":\"2026-10-04T17:59:00Z\",\(home),\(away)"
-    )
-    let rectTriple = WatchComplicationProjection.snapshot(game: tripleScoreOnly, savedAt: now)!.validatedRectangularReading(now: now)!
-    precondition(rectTriple.kind == .liveScoreOnly && rectTriple.primaryLine(at: now) == "Score 112–108 · No win prob")
-    let compactTriple = rectTriple.primaryLine(preferCompact: true, at: now)
-    precondition(compactTriple == "112–108 · No win prob"
-                 && compactTriple.count <= WatchRectangularReading.maxCompactScheduledPrimaryCharacters,
-                 "Compact three-digit score-only line must keep its cue within the compact budget: \(compactTriple)")
-    precondition(rectTriple.accessibilityDescription(at: now).contains(
-        "Los Angeles Dodgers, score 112. San Francisco Giants, score 108. Win probability unavailable."))
+    precondition(snapScoreOnly.validatedCircularReading(now: now)?.value == "Score 2–3")
+    precondition(snapScoreOnly.rectangularReading == nil && snapScoreOnly.validatedRectangularReading(now: now) == nil,
+                 "Live score without probability must not appear on the rectangular face")
+    for retiredKind in ["liveScoreOnly", "scheduledStart"] {
+        var retiredObj = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapLiveScore)) as! [String: Any]
+        var retiredRect = retiredObj["rectangularReading"] as! [String: Any]
+        retiredRect["kind"] = retiredKind
+        retiredObj["rectangularReading"] = retiredRect
+        let decodedRetired = try JSONDecoder().decode(WatchComplicationSnapshot.self, from: JSONSerialization.data(withJSONObject: retiredObj))
+        precondition(decodedRetired.rectangularReading == nil && decodedRetired.validatedRectangularReading(now: now) == nil,
+                     "Retired odds-less kind \(retiredKind) must decode nil and fall back to launcher")
+    }
 
-    // 3a. Scheduled state with pregame probability (never shows fake 0–0 even if payload has 0–0 scores)
+    // 3a. Scheduled state with pregame probability (never shows fake 0–0; shows "Open to update" once start passes)
     let scheduledForecast = try decodeGame(
         "\"status\":\"scheduled\",\"commence_time\":\"2026-10-04T23:00:00Z\",\"home_score\":0,\"away_score\":0,\"score_observed_at\":\"2026-10-04T17:59:00Z\",\"hero_probability\":0.55,\"hero_probability_away\":0.45,\"hero_probability_observed_at\":\"2026-10-04T17:57:00Z\",\(home),\(away)"
     )
@@ -481,68 +488,22 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     let rectSchedForecast = snapSchedForecast.validatedRectangularReading(now: now)!
     precondition(rectSchedForecast.kind == .scheduledForecast && rectSchedForecast.homeScore == nil && rectSchedForecast.awayScore == nil)
     precondition(rectSchedForecast.headerLine() == "LA at SF" && !rectSchedForecast.headerLine().contains("0–0"))
-    precondition(rectSchedForecast.primaryLine(at: now) == "San Francisco Giants win 55%")
-    precondition(rectSchedForecast.metadataLine(at: now) == "Saved · Scheduled · 3m ago" && !rectSchedForecast.isStale(at: now))
+    precondition(rectSchedForecast.primaryLine(at: now) == "SF 55%")
+    precondition(rectSchedForecast.metadataLine(at: now, timeZone: pacific) == "Scheduled · 3m ago" && !rectSchedForecast.isAgedLive(at: now))
     let forecastStart = rectSchedForecast.commenceTime!
     precondition(WatchRectangularReading.timelineDates(for: snapSchedForecast, now: now).contains(forecastStart))
-    precondition(rectSchedForecast.metadataLine(at: forecastStart) == "Saved · Past start · 5h ago")
-    precondition(rectSchedForecast.metadataLine(at: rectSchedForecast.observedAt.addingTimeInterval(23 * 3600)) == "Saved · Past start · 23h ago")
-    precondition(rectSchedForecast.accessibilityDescription(at: forecastStart).contains("game status unconfirmed"))
+    precondition(rectSchedForecast.metadataLine(at: forecastStart, timeZone: pacific) == "Open to update")
+    precondition(rectSchedForecast.metadataLine(at: rectSchedForecast.observedAt.addingTimeInterval(23 * 3600), timeZone: pacific) == "Open to update")
+    precondition(rectSchedForecast.accessibilityDescription(at: forecastStart, timeZone: pacific).contains("Open to update."))
 
-    // 3b. Scheduled state without pregame probability (shows scheduled start without fake 0–0)
+    // 3b. Scheduled state without pregame probability: omitted completely (falls back to launcher)
     let scheduledStartOnly = try decodeGame(
         "\"status\":\"scheduled\",\"commence_time\":\"2026-10-04T23:00:00Z\",\"home_score\":0,\"away_score\":0,\"score_observed_at\":\"2026-10-04T17:59:00Z\",\(home),\(away)"
     )
-    let snapSchedStart = WatchComplicationProjection.snapshot(game: scheduledStartOnly, savedAt: now)!
-    let rectSchedStart = snapSchedStart.validatedRectangularReading(now: now)!
-    precondition(rectSchedStart.kind == .scheduledStart && rectSchedStart.homeScore == nil && rectSchedStart.awayScore == nil && rectSchedStart.homePercent == nil)
-    precondition(snapSchedStart.validatedCircularReading(now: now) == nil, "Scheduled-start-only reading does not invent a circular percentage")
-    precondition(rectSchedStart.headerLine() == "LA at SF" && !rectSchedStart.headerLine().contains("0–0"))
-    precondition(rectSchedStart.primaryLine(at: now).hasPrefix("Scheduled · ") && !rectSchedStart.primaryLine(at: now).contains("0–0"))
-    let compactPreStartPrimary = rectSchedStart.primaryLine(preferCompact: true, at: now)
-    precondition(compactPreStartPrimary.hasPrefix("Start ") && !compactPreStartPrimary.hasPrefix("Scheduled · ") && !compactPreStartPrimary.contains("0–0"))
-    precondition(compactPreStartPrimary.count <= WatchRectangularReading.maxCompactScheduledPrimaryCharacters,
-                 "Compact pre-start scheduled primary must fit narrow 41mm single-line budget (\(compactPreStartPrimary.count)): \(compactPreStartPrimary)")
-    // lane1b P2: both cards keep the whole start (day, hour and minute), not just the prefix.
-    let wholeStart = rectSchedStart.commenceTime!.formatted(.dateTime.month(.abbreviated).day().hour().minute())
-    precondition(compactPreStartPrimary == "Start " + wholeStart,
-                 "Compact pre-start primary must keep the whole start time: \(compactPreStartPrimary)")
-    precondition(rectSchedStart.primaryLine(at: now) == "Scheduled · " + wholeStart,
-                 "Full pre-start primary must keep the whole start time: \(rectSchedStart.primaryLine(at: now))")
-    precondition(rectSchedStart.metadataLine(at: now) == "Saved · No win prob")
-    precondition(rectSchedStart.accessibilityDescription(at: now).contains("Win probability unavailable."))
-    let start = rectSchedStart.commenceTime!
-    let scheduledDates = WatchRectangularReading.timelineDates(for: snapSchedStart, now: now)
-    precondition(scheduledDates.contains(start))
-    precondition(rectSchedStart.primaryLine(at: start) == "Start time passed · check app")
-    let compactPastStartPrimary = rectSchedStart.primaryLine(preferCompact: true, at: start)
-    precondition(compactPastStartPrimary == "Past start · check app"
-                 && compactPastStartPrimary.count <= WatchRectangularReading.maxCompactScheduledPrimaryCharacters)
-    let missingTimeStart = WatchRectangularReading(
-        version: 1,
-        eventID: 101,
-        kind: .scheduledStart,
-        homeName: "San Francisco Giants",
-        awayName: "Los Angeles Dodgers",
-        home: rectSchedStart.home,
-        away: rectSchedStart.away,
-        homePercent: nil,
-        homeScore: nil,
-        awayScore: nil,
-        commenceTime: nil,
-        stateLabel: "Scheduled",
-        observedAt: now,
-        scoreObservedAt: nil
-    )
-    precondition(missingTimeStart.primaryLine(preferCompact: false, at: now) == "Scheduled · time unavailable")
-    precondition(missingTimeStart.primaryLine(preferCompact: true, at: now) == "Time unavailable"
-                 && missingTimeStart.primaryLine(preferCompact: true, at: now).count <= WatchRectangularReading.maxCompactScheduledPrimaryCharacters)
-    precondition(rectSchedStart.metadataLine(at: start) == "Saved · Past start · 5h ago")
-    precondition(rectSchedStart.metadataLine(at: rectSchedStart.observedAt.addingTimeInterval(23 * 3600)) == "Saved · Past start · 23h ago")
-    precondition(rectSchedStart.accessibilityDescription(at: start).contains("game status unconfirmed"))
-    precondition(!rectSchedStart.accessibilityDescription(at: start).contains("Observed"), "Saved time is not a producer observation")
+    precondition(WatchComplicationProjection.snapshot(game: scheduledStartOnly, savedAt: now) == nil,
+                 "Scheduled game without probability must not publish a snapshot")
 
-    // 4. Final state (matchup + final score/winner without stale pre-final probability)
+    // 4. Final state ("Final · SF 4, LA 2", winner first, without stale pre-final probability)
     let finalGame = try decodeGame(
         "\"status\":\"completed\",\"home_score\":4,\"away_score\":2,\"hero_probability\":0.99,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\",\"score_observed_at\":\"2026-10-04T17:58:00Z\",\(home),\(away)"
     )
@@ -550,26 +511,30 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     let rectFinal = snapFinal.validatedRectangularReading(now: now)!
     precondition(rectFinal.kind == .finalResult && rectFinal.homePercent == nil)
     precondition(rectFinal.headerLine() == "LA at SF")
-    precondition(rectFinal.primaryLine(at: now) == "San Francisco Giants won · 4–2" && !rectFinal.primaryLine(at: now).contains("%"))
-    precondition(rectFinal.primaryLine(preferCompact: true, at: now) == "SF won · 4–2")
-    precondition(rectFinal.metadataLine(at: now) == "Saved · Final · 2m ago" && !rectFinal.isStale(at: now.addingTimeInterval(3600)))
+    precondition(rectFinal.primaryLine(at: now) == "Final · SF 4, LA 2" && !rectFinal.primaryLine(at: now).contains("%"))
+    precondition(rectFinal.primaryLine(preferCompact: true, at: now) == "Final · SF 4, LA 2")
+    precondition(rectFinal.metadataLine(at: now, timeZone: pacific) == "2m ago" && !rectFinal.isAgedLive(at: now.addingTimeInterval(3600)))
     let finalDates = WatchRectangularReading.timelineDates(for: snapFinal, now: now)
     let oneHour = rectFinal.observedAt.addingTimeInterval(3600)
     let oneDay = rectFinal.observedAt.addingTimeInterval(86400)
     precondition(finalDates.contains(oneHour) && finalDates.contains(oneDay))
-    precondition(rectFinal.metadataLine(at: oneHour) == "Saved · Final · 1h ago")
-    precondition(rectFinal.metadataLine(at: oneDay) == "Saved · Final · 1d ago")
+    precondition(rectFinal.metadataLine(at: oneHour, timeZone: pacific) == "1h ago")
+    precondition(rectFinal.metadataLine(at: oneDay, timeZone: pacific) == "1d ago")
 
-    // 5. Stale/restored live state (explicitly flags stale when observation age > 120s)
-    let staleClock = now.addingTimeInterval(180) // 5 minutes after 17:58:00Z observation
-    precondition(rectLiveScore.isStale(at: staleClock))
-    precondition(rectLiveScore.metadataLine(at: staleClock) == "Saved · Stale · 5m ago")
-    precondition(rectLiveScore.accessibilityDescription(at: staleClock).contains("Stale reading."))
-    precondition(rectScoreOnly.isStale(at: staleClock))
-    precondition(rectScoreOnly.metadataLine(at: staleClock) == "Saved · Stale · 4m ago")
+    let awayFinalGame = try decodeGame(
+        "\"status\":\"completed\",\"home_score\":2,\"away_score\":4,\"score_observed_at\":\"2026-10-04T17:58:00Z\",\(home),\(away)"
+    )
+    let rectAwayFinal = WatchComplicationProjection.snapshot(game: awayFinalGame, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectAwayFinal.primaryLine(at: now) == "Final · LA 4, SF 2")
 
-    // 6. Narrow-face metadata character-budget & cue-preservation guard across all timeline entries and worst-case ages
-    for snap in [snapLiveScore, snapScoreOnly, snapSchedForecast, snapSchedStart, snapFinal] {
+    let tieFinalGame = try decodeGame(
+        "\"status\":\"completed\",\"home_score\":2,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:58:00Z\",\(home),\(away)"
+    )
+    let rectTieFinal = WatchComplicationProjection.snapshot(game: tieFinalGame, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectTieFinal.primaryLine(at: now) == "Final · LA 2, SF 2")
+
+    // 5. Standing-rule guard across all timeline entries and worst-case ages: never "Saved", never "Stale", and fits budget.
+    for snap in [snapLiveScore, snapSchedForecast, snapFinal] {
         let reading = snap.validatedRectangularReading(now: now)!
         for date in WatchRectangularReading.timelineDates(for: snap, now: now) + [
             reading.observedAt.addingTimeInterval(30),
@@ -577,25 +542,22 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
             reading.observedAt.addingTimeInterval(23 * 3600),
             reading.observedAt.addingTimeInterval(7 * 86400),
         ] {
-            let meta = reading.metadataLine(at: date)
-            precondition(meta.hasPrefix("Saved · "), "Metadata must always retain Saved provenance: \(meta)")
+            let primary = reading.primaryLine(at: date)
+            let meta = reading.metadataLine(at: date, timeZone: pacific)
+            let spoken = reading.accessibilityDescription(at: date, timeZone: pacific)
+            for text in [primary, meta, spoken] {
+                precondition(!text.localizedCaseInsensitiveContains("stale"), "Standing rule: never say stale anywhere: \(text)")
+                precondition(!text.localizedCaseInsensitiveContains("saved"), "Standing rule: never say saved on rectangular face: \(text)")
+            }
             precondition(meta.count <= WatchRectangularReading.maxSingleLineMetadataCharacters,
                          "Metadata exceeds \(WatchRectangularReading.maxSingleLineMetadataCharacters)-char narrow-face budget (\(meta.count)): \(meta)")
-            if reading.isStale(at: date) {
-                precondition(meta.contains("Stale") && meta.hasSuffix("ago"),
-                             "Stale live reading must retain both Stale and elapsed age: \(meta)")
+            if reading.isAgedLive(at: date) {
+                precondition(meta.hasPrefix("As of "), "Aged live reading must show As of clock time: \(meta)")
             }
-            if (reading.kind == .scheduledStart || reading.kind == .scheduledForecast),
-               let kickoff = reading.commenceTime, date >= kickoff {
-                precondition(meta.contains("Past start") && meta.hasSuffix("ago"),
-                             "Passed scheduled start must retain both Past start and elapsed age: \(meta)")
-            }
-            if reading.kind == .scheduledStart {
-                let compactPrimary = reading.primaryLine(preferCompact: true, at: date)
-                precondition(compactPrimary.count <= WatchRectangularReading.maxCompactScheduledPrimaryCharacters,
-                             "Compact scheduled-start primary exceeds \(WatchRectangularReading.maxCompactScheduledPrimaryCharacters)-char narrow-face budget (\(compactPrimary.count)): \(compactPrimary)")
+            if reading.kind == .scheduledForecast, let kickoff = reading.commenceTime, date >= kickoff {
+                precondition(meta == "Open to update", "Passed scheduled start must show Open to update: \(meta)")
             }
         }
     }
-    print("PASS: rectangular complication live probability+score, live score-only, scheduled forecast/start without fake 0–0, final winner without stale probability, and explicit saved/stale age")
+    print("PASS: rectangular complication probability/final wording, As of clock, Open to update, Final · SF 4 LA 2, omitted odds-less states, and zero Saved/stale strings")
 }

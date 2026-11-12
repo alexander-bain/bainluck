@@ -185,22 +185,19 @@ nonisolated struct WatchCircularReading: Codable, Sendable, Equatable {
 }
 
 /// Structured large-rectangular (`accessoryRectangular`) reading for #4933.
-/// Supports live probability (with optional verified live score), live score-only,
-/// scheduled pregame probability or scheduled start (without fake 0–0), final result
-/// (without stale pre-final probability), and explicit saved/stale observation age.
+/// Shows live probability (with optional verified live score), scheduled pregame probability
+/// (without fake 0–0), and final result (without stale pre-final probability).
+/// Games without odds (and not final) are omitted so the slot falls back to the launcher.
 nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
     enum Kind: String, Codable, Sendable {
         case liveForecast
-        case liveScoreOnly
         case scheduledForecast
-        case scheduledStart
         case finalResult
     }
 
     static let maxSingleLineHeaderCharacters = 26
-    static let maxCompactScheduledPrimaryCharacters = 24
     static let maxSingleLineMetadataCharacters = 28
-    static let liveStaleThresholdSeconds: TimeInterval = 120
+    static let liveAgeThresholdSeconds: TimeInterval = 120
 
     let version: Int
     let eventID: Int
@@ -241,18 +238,10 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
                       let sClock = scoreObservedAt,
                       sClock.timeIntervalSinceReferenceDate.isFinite,
                       sClock <= snapshot.savedAt,
-                      abs(sClock.timeIntervalSince(observedAt)) <= Self.liveStaleThresholdSeconds else { return false }
+                      abs(sClock.timeIntervalSince(observedAt)) <= Self.liveAgeThresholdSeconds else { return false }
             }
             let probability = (Double(homePercent) / 100).formatted(.percent.precision(.fractionLength(0)))
             return snapshot.title == "\(homeName) win" && snapshot.detail == "\(probability) · Live"
-        case .liveScoreOnly:
-            guard stateLabel == "Live",
-                  homePercent == nil,
-                  commenceTime == nil,
-                  let hs = homeScore, let ascore = awayScore, hs >= 0, ascore >= 0,
-                  scoreObservedAt == observedAt else { return false }
-            return snapshot.title == "\(awayName) at \(homeName)"
-                && snapshot.detail == "Score \(ascore)–\(hs) · Live"
         case .scheduledForecast:
             guard ["Scheduled", "Upcoming", "Pregame"].contains(stateLabel),
                   let homePercent, (0...100).contains(homePercent),
@@ -260,13 +249,6 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
             if let start = commenceTime, !start.timeIntervalSinceReferenceDate.isFinite { return false }
             let probability = (Double(homePercent) / 100).formatted(.percent.precision(.fractionLength(0)))
             return snapshot.title == "\(homeName) win" && snapshot.detail == "\(probability) · \(stateLabel)"
-        case .scheduledStart:
-            guard ["Scheduled", "Upcoming", "Pregame"].contains(stateLabel),
-                  homePercent == nil,
-                  homeScore == nil, awayScore == nil, scoreObservedAt == nil,
-                  let start = commenceTime, start.timeIntervalSinceReferenceDate.isFinite else { return false }
-            return snapshot.title == "\(awayName) at \(homeName)"
-                && snapshot.detail.hasPrefix("\(stateLabel) · ")
         case .finalResult:
             guard stateLabel == "Final",
                   homePercent == nil,
@@ -305,70 +287,54 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         return fullCandidate
     }
 
-    /// Primary reading line (Line 2): named probability, live score with honest missing-probability copy,
-    /// scheduled start time, or final winner + score.
+    /// Primary reading line (Line 2): compact side probability ("SF 64%") or final result ("Final · SF 4, LA 2").
     func primaryLine(preferCompact: Bool = false, at now: Date) -> String {
         switch kind {
         case .liveForecast, .scheduledForecast:
             guard let pct = formattedHomePercent else { return "Win probability unavailable" }
-            let team = (preferCompact ? home?.abbreviation : nil) ?? homeName
-            return "\(team) win \(pct)"
-        case .liveScoreOnly:
-            guard let ascore = awayScore, let hs = homeScore else { return "Score unavailable" }
-            // The compact card drops "Score": the matchup line above already names the sides,
-            // and a 41 mm face cut "Score 112–108 · No win prob" to "No win pr…" (lane1b A7).
-            return preferCompact ? "\(ascore)–\(hs) · No win prob" : "Score \(ascore)–\(hs) · No win prob"
-        case .scheduledStart:
-            guard let start = commenceTime else {
-                return preferCompact ? "Time unavailable" : "\(stateLabel) · time unavailable"
-            }
-            if now >= start {
-                return preferCompact ? "Past start · check app" : "Start time passed · check app"
-            }
-            let formattedStart = start.formatted(.dateTime.month(.abbreviated).day().hour().minute())
-            return preferCompact ? "Start \(formattedStart)" : "\(stateLabel) · \(formattedStart)"
+            let team = home?.abbreviation ?? homeName
+            return "\(team) \(pct)"
         case .finalResult:
             guard let hs = homeScore, let ascore = awayScore else { return "Final score unavailable" }
+            let homeLabel = home?.abbreviation ?? homeName
+            let awayLabel = away?.abbreviation ?? awayName
             if hs > ascore {
-                let winner = (preferCompact ? home?.abbreviation : nil) ?? homeName
-                return "\(winner) won · \(hs)–\(ascore)"
+                return "Final · \(homeLabel) \(hs), \(awayLabel) \(ascore)"
             }
-            if ascore > hs {
-                let winner = (preferCompact ? away?.abbreviation : nil) ?? awayName
-                return "\(winner) won · \(ascore)–\(hs)"
-            }
-            return "Final · tied \(hs)–\(ascore)"
+            return "Final · \(awayLabel) \(ascore), \(homeLabel) \(hs)"
         }
     }
 
-    func isStale(at now: Date) -> Bool {
-        guard kind == .liveForecast || kind == .liveScoreOnly else { return false }
+    func isAgedLive(at now: Date) -> Bool {
+        guard kind == .liveForecast else { return false }
         let elapsed = now.timeIntervalSince(observedAt)
-        return elapsed.isFinite && elapsed > Self.liveStaleThresholdSeconds
+        return elapsed.isFinite && elapsed > Self.liveAgeThresholdSeconds
     }
 
-    /// Status and compact observation age line (Line 3). Never presents a saved reading as live now,
-    /// and stays within `maxSingleLineMetadataCharacters` so narrow Watch faces keep age/stale/past-start cues.
-    func metadataLine(at now: Date) -> String {
-        if kind == .scheduledStart {
-            if let start = commenceTime, now >= start {
-                let age = Self.compactAge(observedAt: observedAt, now: now) ?? "no time"
-                return "Saved · Past start · \(age)"
-            }
-            return "Saved · No win prob"
+    static func asOfClock(_ date: Date, timeZone: TimeZone = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: date)
+    }
+
+    /// Status and observation age line (Line 3). Never uses the words "Saved" or "Stale".
+    func metadataLine(at now: Date, timeZone: TimeZone = .current) -> String {
+        if kind == .scheduledForecast, let start = commenceTime, now >= start {
+            return "Open to update"
+        }
+        if isAgedLive(at: now) {
+            return "As of \(Self.asOfClock(observedAt, timeZone: timeZone))"
         }
         let age = Self.compactAge(observedAt: observedAt, now: now) ?? "no time"
-        if kind == .scheduledForecast, let start = commenceTime, now >= start {
-            return "Saved · Past start · \(age)"
+        if kind == .finalResult {
+            return age
         }
-        if isStale(at: now) {
-            return "Saved · Stale · \(age)"
-        }
-        return "Saved · \(stateLabel) · \(age)"
+        return "\(stateLabel) · \(age)"
     }
 
-    func accessibilityDescription(at now: Date) -> String {
-        let staleNote = isStale(at: now) ? " Stale reading." : ""
+    func accessibilityDescription(at now: Date, timeZone: TimeZone = .current) -> String {
         switch kind {
         case .liveForecast:
             let scorePart: String = {
@@ -376,38 +342,27 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
                 return " Score \(awayName) \(ascore), \(homeName) \(hs)."
             }()
             let pct = formattedHomePercent ?? "unavailable"
-            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
-            return "Saved reading. \(awayName) at \(homeName).\(scorePart) \(homeName) win probability \(pct). Live. Observed \(age).\(staleNote) Open your game in Bain Luck."
-        case .liveScoreOnly:
-            let ascore = awayScore ?? 0
-            let hs = homeScore ?? 0
-            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
-            return "Saved reading. \(awayName), score \(ascore). \(homeName), score \(hs). Win probability unavailable. Live. Observed \(age).\(staleNote) Open your game in Bain Luck."
+            if isAgedLive(at: now) {
+                let clockText = Self.asOfClock(observedAt, timeZone: timeZone)
+                return "\(awayName) at \(homeName).\(scorePart) \(homeName) \(pct). As of \(clockText). Open your game in Bain Luck."
+            }
+            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
+            return "\(awayName) at \(homeName).\(scorePart) \(homeName) \(pct). Live, \(age). Open your game in Bain Luck."
         case .scheduledForecast:
             let pct = formattedHomePercent ?? "unavailable"
-            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
             if let start = commenceTime, now >= start {
-                return "Saved reading. \(awayName) at \(homeName). \(homeName) win probability \(pct). Scheduled start has passed; game status unconfirmed. Observed \(age). Open your game in Bain Luck."
+                return "\(awayName) at \(homeName). \(homeName) \(pct). Open to update. Open your game in Bain Luck."
             }
-            return "Saved reading. \(awayName) at \(homeName). \(homeName) win probability \(pct). \(stateLabel). Observed \(age). Open your game in Bain Luck."
-        case .scheduledStart:
-            let startText = commenceTime.map { $0.formatted(.dateTime.month(.abbreviated).day().hour().minute()) } ?? "time unavailable"
-            if let start = commenceTime, now >= start {
-                let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
-                return "Saved reading. \(awayName) at \(homeName). Scheduled start \(startText) has passed; game status unconfirmed. Win probability unavailable. Saved \(age). Open your game in Bain Luck."
-            }
-            return "Saved reading. \(awayName) at \(homeName). \(stateLabel) \(startText). Win probability unavailable. Open your game in Bain Luck."
+            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
+            return "\(awayName) at \(homeName). \(homeName) \(pct). \(stateLabel), \(age). Open your game in Bain Luck."
         case .finalResult:
             let hs = homeScore ?? 0
             let ascore = awayScore ?? 0
-            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "observation time unavailable"
+            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
             if hs > ascore {
-                return "Saved reading. \(awayName), score \(ascore). \(homeName) won, score \(hs). Final. Observed \(age). Open your game in Bain Luck."
+                return "\(awayName) at \(homeName). Final, \(homeName) \(hs), \(awayName) \(ascore). \(age). Open your game in Bain Luck."
             }
-            if ascore > hs {
-                return "Saved reading. \(awayName) won, score \(ascore). \(homeName), score \(hs). Final. Observed \(age). Open your game in Bain Luck."
-            }
-            return "Saved reading. \(awayName), score \(ascore). \(homeName), score \(hs). Final tie. Observed \(age). Open your game in Bain Luck."
+            return "\(awayName) at \(homeName). Final, \(awayName) \(ascore), \(homeName) \(hs). \(age). Open your game in Bain Luck."
         }
     }
 
@@ -442,13 +397,13 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         guard now.timeIntervalSinceReferenceDate.isFinite,
               let snapshot, let reading = snapshot.validatedRectangularReading(now: now) else { return [now] }
         var dates = [now]
-        let stale = reading.observedAt.addingTimeInterval(liveStaleThresholdSeconds + 1)
-        if (reading.kind == .liveForecast || reading.kind == .liveScoreOnly), stale > now {
-            dates.append(stale)
+        let ageSwitch = reading.observedAt.addingTimeInterval(liveAgeThresholdSeconds + 1)
+        if reading.kind == .liveForecast, ageSwitch > now {
+            dates.append(ageSwitch)
         }
         let horizon = now.addingTimeInterval(7 * 24 * 3600)
         if let start = reading.commenceTime,
-           (reading.kind == .scheduledStart || reading.kind == .scheduledForecast),
+           reading.kind == .scheduledForecast,
            start > now, start <= horizon { dates.append(start) }
         // Age changes every minute up to one hour, hourly to one day, then daily.
         // Keep the list finite; WidgetKit requests the next timeline at its end.

@@ -73,8 +73,8 @@ def require_activation_paths(source):
         "XCTAssertTrue(face.isHittable)",
     )
 
-    # #4933: the mounted rectangular slot shows the published named reading and
-    # its age (never the launcher) inside the slot before the same real tap.
+    # #4933: the mounted rectangular slot shows the published probability reading and
+    # its age/As-of clock (never the launcher, never "Saved" or "stale") inside the slot before the same real tap.
     launcher = function(source, "testActualRectangularLauncherAndTap")
     ordered(
         launcher,
@@ -82,14 +82,15 @@ def require_activation_paths(source):
         "let center =",
         'let reading = host.descendants(matching: .any)["watch.complication.rectangular.reading"].firstMatch',
         "XCTAssertTrue(reading.waitForExistence(timeout: 20)",
-        'spoken.hasPrefix("Saved reading. Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants win probability 64%. Live. Observed ")',
+        'spoken.hasPrefix("Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64%. ")',
         'spoken.hasSuffix(" Open your game in Bain Luck.")',
-        "XCTAssertFalse(fresh && stale, spoken)",
-        'XCTAssertTrue(fresh || stale || spoken.contains("Observed 2 minutes ago."), spoken)',
+        'XCTAssertFalse(spoken.localizedCaseInsensitiveContains("stale"), spoken)',
+        'XCTAssertFalse(spoken.localizedCaseInsensitiveContains("saved"), spoken)',
+        "XCTAssertTrue(freshSpoken || agedSpoken, spoken)",
         'XCTAssertEqual(header.label, "LA at SF · 2–3")',
-        '["SF win 64%", "San Francisco Giants win 64%"].contains(primary.label)',
-        'metadata.label.hasPrefix("Saved · Live · ") || metadata.label.hasPrefix("Saved · Stale · ")',
-        'metadata.label.hasSuffix(" ago")',
+        'XCTAssertEqual(primary.label, "SF 64%")',
+        'metadata.label.hasPrefix("Live · ") && metadata.label.hasSuffix(" ago")',
+        'metadata.label.hasPrefix("As of ")',
         "try requireNamedReadingInsideSlot(reading, center: center, host: host)",
         'XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)',
         "center.tap()",

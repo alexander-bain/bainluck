@@ -50,13 +50,11 @@ struct BainLuckComplicationView: View {
         .widgetURL(WatchLaunchRoute.url)
     }
     private var accessibilityDescription: String {
-        guard family == .accessoryRectangular, let snapshot = entry.snapshot else {
-            return "Open your selected game in Bain Luck, or choose a game"
-        }
-        if let rectangular = snapshot.validatedRectangularReading(now: entry.date) {
+        if family == .accessoryRectangular,
+           let rectangular = entry.snapshot?.validatedRectangularReading(now: entry.date) {
             return rectangular.accessibilityDescription(at: entry.date)
         }
-        return "Saved reading. \(snapshot.title). \(snapshot.detail). Saved \(snapshot.savedAt.formatted(date: .abbreviated, time: .shortened)). Open your game in Bain Luck."
+        return "Open your selected game in Bain Luck, or choose a game"
     }
 }
 

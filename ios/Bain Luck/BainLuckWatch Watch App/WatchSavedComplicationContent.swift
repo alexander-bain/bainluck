@@ -21,14 +21,6 @@ struct WatchSavedComplicationContent: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(reading.accessibilityDescription(at: now))
             .accessibilityIdentifier("watch.complication.rectangular.reading")
-        } else if let snapshot, snapshot.isValid(now: now) {
-            legacyCard(snapshot)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(
-                    "Saved reading. \(snapshot.title). \(snapshot.detail). Saved \(snapshot.savedAt.formatted(date: .abbreviated, time: .shortened)). Open your game in Bain Luck."
-                )
-                .accessibilityIdentifier("watch.complication.rectangular.legacy")
         } else {
             HStack(spacing: 8) {
                 Image(systemName: "chart.bar.fill").font(.title2)
@@ -69,29 +61,6 @@ struct WatchSavedComplicationContent: View {
                 .minimumScaleFactor(0.85)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("watch.complication.rectangular.metadata")
-        }
-    }
-
-    private func legacyCard(_ snapshot: WatchComplicationSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(snapshot.title)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(2)
-                .minimumScaleFactor(0.85)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("watch.complication.title")
-            Text("Saved · \(snapshot.detail)")
-                .font(.system(size: 11))
-                .lineLimit(2)
-                .minimumScaleFactor(0.85)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("watch.complication.detail")
-            Text("Saved \(snapshot.savedAt.formatted(date: .abbreviated, time: .shortened))")
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("watch.complication.observed")
         }
     }
 }

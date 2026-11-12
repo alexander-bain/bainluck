@@ -29,7 +29,7 @@ class WatchRectangularComplication4933Tests(unittest.TestCase):
             self.assertIn(member, exception_block)
         self.assertIn("group.com.bainluck.watch", ENTITLEMENTS.read_text())
 
-    def test_rectangular_reading_covers_all_six_states_and_keeps_tap_route(self):
+    def test_rectangular_reading_covers_probability_and_final_states_and_keeps_tap_route(self):
         snapshot = (WATCH / "WatchComplicationSnapshot.swift").read_text()
         publisher = (WATCH / "WatchComplicationPublisher.swift").read_text()
         content = (WATCH / "WatchSavedComplicationContent.swift").read_text()
@@ -37,37 +37,37 @@ class WatchRectangularComplication4933Tests(unittest.TestCase):
 
         for kind in (
             "case liveForecast",
-            "case liveScoreOnly",
             "case scheduledForecast",
-            "case scheduledStart",
             "case finalResult",
         ):
             self.assertIn(kind, snapshot)
+        for retired_kind in (
+            "case liveScoreOnly",
+            "case scheduledStart",
+        ):
+            self.assertNotIn(retired_kind, snapshot)
         self.assertIn("static let maxSingleLineHeaderCharacters = 26", snapshot)
-        self.assertIn("static let maxCompactScheduledPrimaryCharacters = 24", snapshot)
         self.assertIn("static let maxSingleLineMetadataCharacters = 28", snapshot)
-        self.assertIn("static let liveStaleThresholdSeconds: TimeInterval = 120", snapshot)
-        self.assertIn('preferCompact ? "Past start · check app" : "Start time passed · check app"', snapshot)
-        self.assertIn('preferCompact ? "Start \\(formattedStart)" : "\\(stateLabel) · \\(formattedStart)"', snapshot)
-        self.assertIn(
-            'preferCompact ? "\\(ascore)–\\(hs) · No win prob" : "Score \\(ascore)–\\(hs) · No win prob"',
-            snapshot,
-            "Compact score-only copy keeps three-digit scores and the No win prob cue on 41mm (lane1b A7)",
-        )
-        self.assertIn('"Saved · Past start · \\(age)"', snapshot)
-        self.assertIn('"Saved · Stale · \\(age)"', snapshot)
-        self.assertIn('"Saved · No win prob"', snapshot)
-        self.assertNotIn("Start unconfirmed", snapshot)
+        self.assertIn("static let liveAgeThresholdSeconds: TimeInterval = 120", snapshot)
+        self.assertIn('"\\(team) \\(pct)"', snapshot)
+        self.assertIn('"Final · \\(homeLabel) \\(hs), \\(awayLabel) \\(ascore)"', snapshot)
+        self.assertIn('"Final · \\(awayLabel) \\(ascore), \\(homeLabel) \\(hs)"', snapshot)
+        self.assertIn('"Open to update"', snapshot)
+        self.assertIn('"As of \\(Self.asOfClock(observedAt, timeZone: timeZone))"', snapshot)
+        for forbidden in ("Saved ·", "Stale reading", "No win prob", "Past start", "Start unconfirmed"):
+            self.assertNotIn(forbidden, snapshot)
+            self.assertNotIn(forbidden, content)
+            self.assertNotIn(forbidden, widget)
         self.assertIn("existing.rectangularReading == valid.rectangularReading", publisher)
         self.assertIn("snapshot.validatedRectangularReading(now: now)", content)
+        self.assertNotIn(
+            "legacyCard",
+            content,
+            "Odds-less snapshots must fall back to the launcher, never a Saved legacy card",
+        )
         view_that_fits_block = content.split("ViewThatFits(in: [.horizontal, .vertical]) {", 1)[1].split("}", 1)[0]
         self.assertIn("readingCard(reading, preferCompact: false)", view_that_fits_block)
         self.assertIn("readingCard(reading, preferCompact: true)", view_that_fits_block)
-        self.assertNotIn(
-            "legacyCard",
-            view_that_fits_block,
-            "Validated rectangular reading must not fall back to legacyCard and lose age/stale/past-start cues",
-        )
         primary_block = content.split("Text(reading.primaryLine(preferCompact: preferCompact, at: now))", 1)[1].split("Text(reading.metadataLine(at: now))", 1)[0]
         self.assertIn(
             ".lineLimit(preferCompact ? 1 : 2)",
