@@ -3466,12 +3466,11 @@ struct OddsChartView: View {
             return contractSegments(ordered, liveEdge: liveEdge, gameStart: gameStart, resolution: resolution)
         }
 
-        var segments: [[ChartDataPoint]] = [ordered]
         var median: TimeInterval?
         if ordered.count > 1, let gameStart {
             // The series' own in-game rhythm. Taken over exactly the intervals
-            // the rule can act on, so a long pre-match sleep cannot inflate it
-            // and thereby excuse a real in-game hole.
+            // the trailing live-edge check acts on, so a long pre-match sleep
+            // cannot inflate it.
             var inGameIntervals: [TimeInterval] = []
             for (previous, current) in zip(ordered, ordered.dropFirst())
             where previous.date >= gameStart {
@@ -3479,27 +3478,14 @@ struct OddsChartView: View {
             }
             if !inGameIntervals.isEmpty {
                 let sortedIntervals = inGameIntervals.sorted()
-                let cadence = sortedIntervals[sortedIntervals.count / 2]
-                median = cadence
-
-                segments = []
-                var run: [ChartDataPoint] = [ordered[0]]
-                for (previous, current) in zip(ordered, ordered.dropFirst()) {
-                    let interval = current.date.timeIntervalSince(previous.date)
-                    let inGame = previous.date >= gameStart && current.date >= gameStart
-                    if inGame, interval > floor, interval > cadenceMultiple * cadence {
-                        segments.append(run)
-                        run = [current]
-                    } else {
-                        run.append(current)
-                    }
-                }
-                segments.append(run)
+                median = sortedIntervals[sortedIntervals.count / 2]
             }
         }
 
-        // The trailing interval, judged by the same three conditions. No
-        // in-game cadence (or no `gameStart`) means nothing is judged.
+        // #12639 (Decision 164): all recorded readings of a series connect with
+        // straight segments; only the synthetic trailing live edge is dropped
+        // when the trailing interval is unsupported.
+        var run = ordered
         if let liveEdge, let lastReal = ordered.last, liveEdge.date > lastReal.date {
             let interval = liveEdge.date.timeIntervalSince(lastReal.date)
             var unsupported = false
@@ -3507,10 +3493,10 @@ struct OddsChartView: View {
                 unsupported = interval > floor && interval > cadenceMultiple * median
             }
             if !unsupported {
-                segments[segments.count - 1].append(liveEdge)
+                run.append(liveEdge)
             }
         }
-        return segments
+        return [run]
     }
 
     /// The contract's reading of one served point (#7878.v1), mirroring the web's
@@ -3568,23 +3554,15 @@ struct OddsChartView: View {
             return to > holeStart && to.timeIntervalSince(holeStart) > resolution
         }
 
-        var segments: [[ChartDataPoint]] = []
-        var run: [ChartDataPoint] = [ordered[0]]
-        for (previous, current) in zip(ordered, ordered.dropFirst()) {
-            if unknown(after: previous, until: current.date) {
-                segments.append(run)
-                run = [current]
-            } else {
-                run.append(current)
-            }
-        }
-        segments.append(run)
-
+        // #12639 (Decision 164): recorded readings stay joined by straight
+        // segments across quiet interior stretches; the live edge still ends
+        // the run only when the trailing interval is supported.
+        var run = ordered
         if let liveEdge, let last = ordered.last, liveEdge.date > last.date,
            !unknown(after: last, until: liveEdge.date) {
-            segments[segments.count - 1].append(liveEdge)
+            run.append(liveEdge)
         }
-        return segments
+        return [run]
     }
 
     /// What to say instead of an empty frame (#3278).
@@ -5333,12 +5311,16 @@ extension OddsChartView {
                                gameStart: Date?) -> PrimaryInk9483 {
         if let checkpoints {
             let plan = checkpoints.plan
-            return PrimaryInk9483(
-                runs: plan.lines.map(\.points),
-                marks: plan.dots.map(\.point) + plan.checkpoints.map {
+            let connected = plan.connectedPoints
+            let drawnCheckpoints = plan.checkpoints.count <= PublicationCheckpointRenderPlan4974.standaloneDotCeiling
+                ? plan.checkpoints.map {
                     ChartDataPoint(date: $0.date, probability: $0.probability,
                                    source: PublicationCheckpointMount4974.blendSource)
-                })
+                }
+                : []
+            return PrimaryInk9483(
+                runs: connected.count >= 2 ? [connected] : [],
+                marks: (connected.count == 1 ? connected : []) + drawnCheckpoints)
         }
         let primary = primarySource(in: dataPoints)
         let segments = observationSegments(dataPoints.filter { $0.source == primary }, gameStart: gameStart)
