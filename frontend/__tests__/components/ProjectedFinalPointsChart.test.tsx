@@ -108,17 +108,31 @@ describe("a finished game", () => {
     expect(html).not.toMatch(/current|settled/i);
   });
 
-  it("draws each lone reading as a dot, never stretched toward a gap", () => {
-    // 01:20 and 02:30 each sit between two withheld readings, and 03:09 is the
-    // last capture before the completion boundary: three dots for each team.
-    expect(count(html, 'data-single-point="true"')).toBe(6);
-    expect(count(html, 'data-series="forecast-home"')).toBe(4);
+  it("draws one connected line per team with a mark at every admitted projection and no smoothing", () => {
+    expect(count(html, 'data-series="forecast-home"')).toBe(1);
+    expect(count(html, 'data-series="forecast-away"')).toBe(1);
+    // 5 admitted readings (23:30, 00:30, 01:20, 02:30, 03:09) -> 5 marks per team
+    expect(count(html, 'data-forecast-mark="home"')).toBe(5);
+    expect(count(html, 'data-forecast-mark="away"')).toBe(5);
+    const homeD = html.match(/data-series="forecast-home" d="([^"]+)"/)?.[1] ?? "";
+    expect(homeD).toMatch(/^M[\d.]+,[\d.]+( L[\d.]+,[\d.]+){4}$/);
+    expect(homeD).not.toMatch(/[HVCSQTA]/);
   });
 
-  it("marks each withheld reading on the time axis", () => {
-    expect(html).toContain('data-withheld="pair_incomplete"');
-    expect(html).toContain('data-withheld="not_a_number"');
-    expect(html).toContain('data-withheld="below_recorded_score"');
+  it("draws a single-reading game as a dot with its mark", () => {
+    const singleHtml = render(
+      nflInput({
+        pairs: [{ timestamp: "2026-09-29T00:30:00Z", home: 27.5, away: 17.0, homeProbability: 0.75 }],
+      }),
+    );
+    expect(count(singleHtml, 'data-single-point="true"')).toBe(2);
+    expect(count(singleHtml, 'data-forecast-mark="home"')).toBe(1);
+    expect(count(singleHtml, 'data-forecast-mark="away"')).toBe(1);
+  });
+
+  it("omits unusable readings without drawing gap marks or printing 'Gaps are not joined'", () => {
+    expect(html).not.toContain("data-withheld=");
+    expect(html).not.toContain("Gaps are not joined");
   });
 
   it("keeps sportsbook jargon off the page", () => {
@@ -175,23 +189,12 @@ describe("#10539 the plot is taller", () => {
     expect(html).not.toMatch(/class="relative mt-3 h-48"/);
   });
 
-  it("spends the height on the lines: the gutter below the baseline only fits the gap marks", () => {
-    // The plot stretches to its box, so every viewBox unit of gutter grows with the taller plot.
-    // At 262/300 the 390px render showed an empty strip between the gap marks and the time labels.
+  it("spends the height on the lines: the gutter below the baseline stays tight above the time labels", () => {
     const html = render(nflInput());
     const viewH = Number(html.match(/viewBox="0 0 \d+ (\d+)"/)?.[1]);
     const gridYs = [...html.matchAll(/<line[^>]*\by1="([\d.]+)"[^>]*\by2="\1"/g)].map((m) => Number(m[1]));
     const baseline = Math.max(...gridYs);
-    const gaps = [...html.matchAll(/<line[^>]*data-withheld="[^"]+"[^>]*>/g)].map((m) => ({
-      y1: Number(m[0].match(/\by1="([\d.]+)"/)?.[1]),
-      y2: Number(m[0].match(/\by2="([\d.]+)"/)?.[1]),
-    }));
     expect(viewH).toBe(300);
-    expect(gaps.length).toBeGreaterThan(0);
-    for (const g of gaps) {
-      expect(g.y1).toBeGreaterThan(baseline);
-      expect(g.y2).toBeLessThanOrEqual(viewH);
-    }
     expect(viewH - baseline).toBeLessThanOrEqual(16);
   });
 });

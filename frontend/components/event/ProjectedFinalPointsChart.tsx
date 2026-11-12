@@ -72,8 +72,7 @@ const H = 300;
 const LEFT = 64;
 const RIGHT = 990;
 const TOP = 16;
-// #10539: the gutter below the plot holds only the gap marks (BOTTOM+4..+12). The plot stretches
-// to its box, so a wider gutter grew into an empty strip above the time labels once the box got taller.
+// #10539: the plot stretches to its box, keeping a tight lower gutter above the time labels.
 const BOTTOM = 284;
 
 export function formatProjectionTime(t: number): string {
@@ -89,17 +88,17 @@ function points(value: number): string {
   return value.toFixed(1);
 }
 
-function stepPath(
-  seg: ForecastPoint[],
+function forecastPath(
+  pts: ForecastPoint[],
   key: "home" | "away",
   x: (t: number) => number,
   y: (v: number) => number,
 ): string {
-  let d = `M${x(seg[0].at).toFixed(1)},${y(seg[0][key]).toFixed(1)}`;
-  for (let i = 1; i < seg.length; i++) {
-    d += ` H${x(seg[i].at).toFixed(1)} V${y(seg[i][key]).toFixed(1)}`;
+  let d = `M${x(pts[0].at).toFixed(1)},${y(pts[0][key]).toFixed(1)}`;
+  for (let i = 1; i < pts.length; i++) {
+    d += ` L${x(pts[i].at).toFixed(1)},${y(pts[i][key]).toFixed(1)}`;
   }
-  return d + ` H${x(seg[seg.length - 1].holdEnd).toFixed(1)}`;
+  return d;
 }
 
 function actualPath(
@@ -196,6 +195,7 @@ export default function ProjectedFinalPointsChart({
   const y = (v: number) => BOTTOM - (v / full.yMax) * (BOTTOM - TOP);
 
   const reading = full.latest;
+  const forecastPoints = full.segments.flat();
   const actual = full.latestActual;
   const after = full.phase === "after";
   const showActual = full.phase !== "before";
@@ -307,7 +307,7 @@ export default function ProjectedFinalPointsChart({
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
         role="img"
-        aria-label={`Projected final points for ${homeTeam} and ${awayTeam}, with the actual score as a quieter dashed step line. Gaps are missing or unusable readings and are not joined.`}
+        aria-label={`Projected final points for ${homeTeam} and ${awayTeam}, with each recorded projection marked on a connected line and the actual score as a quieter dashed step line.`}
       >
         {full.yTicks.map((v) => (
           <line
@@ -355,16 +355,15 @@ export default function ProjectedFinalPointsChart({
         {([
             ["home", homeStroke],
             ["away", awayStroke],
-          ] as const).map(([key, stroke]) =>
-            full.segments.map((seg, i) =>
-              seg.length === 1 && seg[0].holdEnd === seg[0].at ? (
+          ] as const).map(([key, stroke]) => (
+            <g key={`forecast-group-${key}`}>
+              {forecastPoints.length === 1 ? (
                 // A round-capped stroke, not a circle: the plot stretches to its
                 // box, and a circle would stretch with it into an ellipse.
                 <path
-                  key={`${key}-${i}`}
                   data-series={`forecast-${key}`}
                   data-single-point="true"
-                  d={`M${x(seg[0].at).toFixed(1)},${y(seg[0][key]).toFixed(1)} h0.01`}
+                  d={`M${x(forecastPoints[0].at).toFixed(1)},${y(forecastPoints[0][key]).toFixed(1)} h0.01`}
                   stroke={stroke}
                   strokeWidth={8}
                   strokeLinecap="round"
@@ -372,30 +371,29 @@ export default function ProjectedFinalPointsChart({
                 />
               ) : (
                 <path
-                  key={`${key}-${i}`}
                   data-series={`forecast-${key}`}
-                  d={stepPath(seg, key, x, y)}
+                  d={forecastPath(forecastPoints, key, x, y)}
                   fill="none"
                   stroke={stroke}
                   strokeWidth={3}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
                   vectorEffect="non-scaling-stroke"
                 />
-              ),
-            ),
-          )}
-        {full.withheld.map((w) => (
-          <line
-            key={`gap-${w.at}`}
-            data-withheld={w.reason}
-            x1={x(w.at)}
-            x2={x(w.at)}
-            y1={BOTTOM + 4}
-            y2={BOTTOM + 12}
-            stroke="var(--text-secondary)"
-            strokeWidth={2}
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
+              )}
+              {forecastPoints.map((pt, i) => (
+                <path
+                  key={`${key}-mark-${i}`}
+                  data-forecast-mark={key}
+                  d={`M${x(pt.at).toFixed(1)},${y(pt[key]).toFixed(1)} h0.01`}
+                  stroke={stroke}
+                  strokeWidth={6}
+                  strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </g>
+          ))}
       </svg>
       </div>
       <div className="flex justify-between pl-6 text-xs text-text-secondary" aria-hidden="true">
@@ -406,7 +404,6 @@ export default function ProjectedFinalPointsChart({
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary">
         <span>━ Projected final</span>
         {actualDrawn && <span>┅ Actual score</span>}
-        <span>Gaps are not joined</span>
       </div>
 
       {markers.length > 0 && (
@@ -430,9 +427,9 @@ export default function ProjectedFinalPointsChart({
           average of sources.
         </p>
         <p className="mt-1">
-          The solid lines are the projections; the dashed steps are the score so far. A break in a line means that reading
-          was missing or could not be right, such as a projection below points already scored. The last projection is never
-          joined to the final score.
+          The solid lines connect each recorded projection; the dashed steps are the score so far. Readings that were
+          missing or could not be right, such as a projection below points already scored, are omitted. The last projection
+          is never joined to the final score.
           {markers.length > 0 &&
             ` The thin vertical rules mark each ${firstPeriodWord}, halftime or overtime where it was first seen in progress, which can be a little after it began.`}
         </p>
