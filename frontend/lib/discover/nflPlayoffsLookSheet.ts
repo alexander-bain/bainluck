@@ -10,8 +10,8 @@
  *
  * Includes Fable's 11:39 AM PT addition (#12609#issuecomment-6805505680):
  * Section 6 is a "too many props" section on a real NFL game with a full prop
- * board (Pittsburgh Steelers at Cincinnati Bengals, Event #14780578 — 671 live
- * game markets / 384 player prop lines), showing a first screen a reader can
+ * board (Pittsburgh Steelers at Cincinnati Bengals, Event #14780578 — 681 live
+ * game markets / 394 player prop lines), showing a first screen a reader can
  * take in (visually interesting, useful, fun, organized, not overwhelming) and
  * one way to reach the rest behind a toggle.
  *
@@ -428,7 +428,7 @@ export const NFL_CONFERENCE_PATH_ENTRIES: NflConferencePathEntry[] = [
     team: "San Francisco 49ers",
     abbreviation: "SF",
     conference: "NFC",
-    detail: "NFC West · 7-1 (51% #1 seed)",
+    detail: "NFC West · 7-1",
     reach_conf_final_market_id: 60087221,
     reach_conf_final_probability: 0.445,
     win_conference_market_id: 31615,
@@ -519,7 +519,7 @@ export const NFL_DIVISION_RACES_BY_SHAPE: NflDivisionRaceSpec[] = [
     conference: "NFC",
     shape: "four_way_scramble",
     market_id: 2279147,
-    summary_note: "All 4 clubs between 13% and 38% · league's deepest division (82% most total wins)",
+    summary_note: "Sample note · Four-way division race with all four clubs in contention",
     candidates: [
       { team: "Chicago Bears", abbreviation: "CHI", probability: 0.380, logo: TEAM_LOGO("chi") },
       { team: "Detroit Lions", abbreviation: "DET", probability: 0.265, logo: TEAM_LOGO("det") },
@@ -532,7 +532,7 @@ export const NFL_DIVISION_RACES_BY_SHAPE: NflDivisionRaceSpec[] = [
     conference: "NFC",
     shape: "four_way_scramble",
     market_id: 2279151,
-    summary_note: "All 4 clubs between 17% and 39% · wide-open four-team race",
+    summary_note: "Sample note · Wide-open four-team division race",
     candidates: [
       { team: "Tampa Bay Buccaneers", abbreviation: "TB", probability: 0.388, logo: TEAM_LOGO("tb") },
       { team: "Carolina Panthers", abbreviation: "CAR", probability: 0.263, logo: TEAM_LOGO("car") },
@@ -545,7 +545,7 @@ export const NFL_DIVISION_RACES_BY_SHAPE: NflDivisionRaceSpec[] = [
     conference: "AFC",
     shape: "two_team_duel",
     market_id: 2248392,
-    summary_note: "Two-horse race separated by 15 pts · both clubs >92% to make playoffs",
+    summary_note: "Sample note · Two-team duel with both leaders holding strong playoff position",
     candidates: [
       { team: "Denver Broncos", abbreviation: "DEN", probability: 0.565, logo: TEAM_LOGO("den") },
       { team: "Kansas City Chiefs", abbreviation: "KC", probability: 0.415, logo: TEAM_LOGO("kc") },
@@ -557,7 +557,7 @@ export const NFL_DIVISION_RACES_BY_SHAPE: NflDivisionRaceSpec[] = [
     conference: "NFC",
     shape: "two_team_duel",
     market_id: 53674,
-    summary_note: "Giants lead Cowboys by 33 pts ahead of Thursday night's divisional clash",
+    summary_note: "Sample note · Two-team division race between New York and Dallas",
     candidates: [
       { team: "New York Giants", abbreviation: "NYG", probability: 0.617, logo: TEAM_LOGO("nyg") },
       { team: "Dallas Cowboys", abbreviation: "DAL", probability: 0.284, logo: TEAM_LOGO("dal") },
@@ -569,7 +569,7 @@ export const NFL_DIVISION_RACES_BY_SHAPE: NflDivisionRaceSpec[] = [
     conference: "AFC",
     shape: "two_team_duel",
     market_id: 53677,
-    summary_note: "6-2 Bengals host 6-2 Steelers this Sunday night for first place",
+    summary_note: "Sample note · Bengals and Steelers meet Sunday night for first place",
     candidates: [
       { team: "Cincinnati Bengals", abbreviation: "CIN", probability: 0.635, logo: TEAM_LOGO("cin") },
       { team: "Pittsburgh Steelers", abbreviation: "PIT", probability: 0.305, logo: TEAM_LOGO("pit") },
@@ -581,7 +581,7 @@ export const NFL_DIVISION_RACES_BY_SHAPE: NflDivisionRaceSpec[] = [
     conference: "AFC",
     shape: "near_lock",
     market_id: 53676,
-    summary_note: "Jaguars 90% lock · Texans 10% chaser",
+    summary_note: "Sample note · Clear division leader with one trailing chaser",
     candidates: [
       { team: "Jacksonville Jaguars", abbreviation: "JAX", probability: 0.900, logo: TEAM_LOGO("jax") },
       { team: "Houston Texans", abbreviation: "HOU", probability: 0.100, logo: TEAM_LOGO("hou") },
@@ -592,7 +592,7 @@ export const NFL_DIVISION_RACES_BY_SHAPE: NflDivisionRaceSpec[] = [
     conference: "AFC",
     shape: "near_lock",
     market_id: 53678,
-    summary_note: "Bills 89% lock · Patriots 11% chaser",
+    summary_note: "Sample note · Clear division leader with one trailing chaser",
     candidates: [
       { team: "Buffalo Bills", abbreviation: "BUF", probability: 0.885, logo: TEAM_LOGO("buf") },
       { team: "New England Patriots", abbreviation: "NE", probability: 0.112, logo: TEAM_LOGO("ne") },
@@ -779,17 +779,17 @@ export const NFL_SWING_GAMES_THIS_WEEK: NflSwingGameSpec[] = [
     event_id: 14780578,
     kickoff_label: "Sun Nov 15 · 5:20 PM PT",
     stakes_tag: "AFC NORTH #1 PLACE",
-    stakes_note: "Both clubs sit 6-2 · Bengals hold 64% division chance vs Steelers 31%",
+    stakes_note: "Sample note · Sunday night division game between the top two clubs in the AFC North",
     away_team: "Pittsburgh Steelers",
     away_abbr: "PIT",
     away_record: "6-2",
-    away_win_prob: 0.365,
+    away_win_prob: 0.36,
     away_playoff_prob: 0.735,
     away_logo: TEAM_LOGO("pit"),
     home_team: "Cincinnati Bengals",
     home_abbr: "CIN",
     home_record: "6-2",
-    home_win_prob: 0.635,
+    home_win_prob: 0.64,
     home_playoff_prob: 0.925,
     home_logo: TEAM_LOGO("cin"),
   },
@@ -797,7 +797,7 @@ export const NFL_SWING_GAMES_THIS_WEEK: NflSwingGameSpec[] = [
     event_id: 14969886,
     kickoff_label: "Sun Nov 15 · 10:00 AM PT",
     stakes_tag: "NFC NORTH & WILD CARD SWING",
-    stakes_note: "Direct head-to-head between two 65%+ NFC playoff contenders",
+    stakes_note: "Sample note · Divisional matchup between two NFC North playoff contenders",
     away_team: "Minnesota Vikings",
     away_abbr: "MIN",
     away_record: "6-2",
@@ -815,7 +815,7 @@ export const NFL_SWING_GAMES_THIS_WEEK: NflSwingGameSpec[] = [
     event_id: 14969889,
     kickoff_label: "Sun Nov 15 · 1:25 PM PT",
     stakes_tag: "NFC #1 SEED VS BUBBLE",
-    stakes_note: "49ers lead NFC #1 seed race (51%); Cowboys chase NFC East & Wild Card (30%)",
+    stakes_note: "Sample note · Conference leader visits an NFC East club chasing a wild-card berth",
     away_team: "San Francisco 49ers",
     away_abbr: "SF",
     away_record: "7-1",
@@ -833,7 +833,7 @@ export const NFL_SWING_GAMES_THIS_WEEK: NflSwingGameSpec[] = [
     event_id: 14639206,
     kickoff_label: "Sun Nov 15 · 6:30 AM PT",
     stakes_tag: "AFC BUBBLE AT NFC CONTENDER",
-    stakes_note: "Patriots (59% playoffs) test Lions (77% playoffs · 27% NFC North)",
+    stakes_note: "Sample note · Interconference test between an AFC wild-card contender and an NFC North contender",
     away_team: "New England Patriots",
     away_abbr: "NE",
     away_record: "5-4",
@@ -902,18 +902,19 @@ export const STEELERS_BENGALS_PROP_BOARD = {
   event_id: 14780578,
   matchup_title: "Pittsburgh Steelers at Cincinnati Bengals",
   kickoff_label: "Sun Nov 15 · 5:20 PM PT",
+  win_prob_recorded_at_label: "Recorded Wed Nov 11, 2026 · 8:15 PM PT (blended game win probability)",
   away_team: "Pittsburgh Steelers",
   away_abbr: "PIT" as const,
   away_record: "6-2",
-  away_win_prob: 0.365,
+  away_win_prob: 0.36,
   away_logo: TEAM_LOGO("pit"),
   home_team: "Cincinnati Bengals",
   home_abbr: "CIN" as const,
   home_record: "6-2",
-  home_win_prob: 0.635,
+  home_win_prob: 0.64,
   home_logo: TEAM_LOGO("cin"),
-  total_raw_markets: 671,
-  total_player_prop_lines: 384,
+  total_raw_markets: 681,
+  total_player_prop_lines: 394,
   total_game_and_period_lines: 261,
   total_specials_and_first_td: 26,
   curated_first_screen_count: 11,
@@ -965,7 +966,7 @@ export const STEELERS_BENGALS_PROP_BOARD = {
   coin_flips: [
     {
       label: "Winning Margin (4+ Points)",
-      sublabel: "Key 3.5-point margin mark in AFC North clash",
+      sublabel: "Sample note · Key margin mark in Sunday night's AFC North matchup",
       left_side: "Steelers or 1–3 pt game",
       left_probability: 0.515,
       right_side: "Bengals by 4+ pts",
@@ -973,7 +974,7 @@ export const STEELERS_BENGALS_PROP_BOARD = {
     },
     {
       label: "Ja'Marr Chase Receiving",
-      sublabel: "Exact 50/50 yardage mark + Tee Higgins 6+ catches (49%)",
+      sublabel: "Sample note · Yardage mark near an even split alongside Tee Higgins receptions",
       left_side: "90+ Rec Yds",
       left_probability: 0.500,
       right_side: "Under 90 Yds",
@@ -981,7 +982,7 @@ export const STEELERS_BENGALS_PROP_BOARD = {
     },
     {
       label: "Aaron Rodgers Multi-TD",
-      sublabel: "2+ Passing TDs vs Chase Brown 40+ Rush Yds (53%)",
+      sublabel: "Sample note · Multi-touchdown passing mark alongside Chase Brown rushing",
       left_side: "2+ Pass TDs",
       left_probability: 0.480,
       right_side: "0–1 Pass TDs",
@@ -1392,11 +1393,11 @@ export const NFL_PLAYOFFS_LOOK_SHEET_ITEMS: NflLookSheetItemSpec[] = [
     item_key: "nfl-section-6-too-many-props-steelers-bengals",
     section_number: 6,
     title:
-      "Section 6 · The 'Too Many Props' Section on a Real Full NFL Prop Board (Steelers at Bengals — 671 Live Markets)",
+      "Section 6 · The 'Too Many Props' Section on a Real Full NFL Prop Board (Steelers at Bengals — 681 Live Markets)",
     subtitle:
-      "Fable's 11:39 AM addition (#12609): turns 384 player props + 287 game/special lines into a calm 11-number first screen (The Script · 50/50 Coin-Flips · First TD) + one category milestone drawer for the rest",
+      "Fable's 11:39 AM addition (#12609): turns 394 player props + 287 game/special lines into a calm 11-number first screen (The Script · 50/50 Coin-Flips · First TD) + one category milestone drawer for the rest",
     why_it_exists:
-      "Solves the big-container overload problem (Super Bowl LXI, Oscars, NBA playoffs, elections): instead of dumping 671 flat rows, the first screen highlights 3 lenses a reader can take in at a glance, while one toggle opens a category-tabbed drawer that collapses 8–10 alternate yardage lines per player into a single horizontal Milestone Ladder.",
+      "Solves the big-container overload problem (Super Bowl LXI, Oscars, NBA playoffs, elections): instead of dumping 681 flat rows, the first screen highlights 3 lenses a reader can take in at a glance, while one toggle opens a category-tabbed drawer that collapses 8–10 alternate yardage lines per player into a single horizontal Milestone Ladder.",
     form: {
       form_id: "curated_prop_board_with_drawer",
       form_name: "Three-Lens Prop Digest + Player Milestone Ladder Drawer",

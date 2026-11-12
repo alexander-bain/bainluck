@@ -183,7 +183,7 @@ export function NflPlayoffsToSuperBowlSectionCard({
                   <span className="text-xs font-bold text-text-primary sm:text-sm">
                     {club.team}
                   </span>
-                  <span className="shrink-0 text-xs font-medium text-text-muted">
+                  <span className="shrink-0 whitespace-nowrap text-xs font-medium text-text-muted">
                     {club.division} · {club.record}
                   </span>
                 </div>
@@ -348,7 +348,7 @@ export function NflConferencePathsSectionCard({
                     <div className="text-xs font-bold text-text-primary sm:text-sm">
                       {entry.team}
                     </div>
-                    <div className="text-xs text-text-muted">
+                    <div className="whitespace-nowrap text-xs text-text-muted">
                       {entry.detail}
                     </div>
                   </div>
@@ -380,10 +380,8 @@ export function NflConferencePathsSectionCard({
                   />
                 </div>
                 <div className="mt-1 flex items-center justify-between text-xs text-text-muted">
-                  <span>Outer reach: {reachPct}%</span>
-                  <span>
-                    Converts {Math.round((winPct / Math.max(1, reachPct)) * 100)}% if in title game
-                  </span>
+                  <span>Reach {confLabel} Final: {reachPct}%</span>
+                  <span>Win {confLabel}: {winPct}%</span>
                 </div>
               </div>
             </div>
@@ -412,12 +410,12 @@ export function NflConferencePathsSectionCard({
       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
         {renderConferenceColumn(
           "AFC",
-          "Bills (25%) & Jaguars (21%) lead a 5-team pack",
+          "Sample note · Five clubs contending for the AFC title game",
           afc,
         )}
         {renderConferenceColumn(
           "NFC",
-          "49ers (28%) & Bears (18%) pace the conference",
+          "Sample note · Top NFC contenders to reach and win the conference final",
           nfc,
         )}
       </div>
@@ -853,7 +851,7 @@ export function NflSwingGamesSectionCard({
         Games this week that move the playoff picture most
       </h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        Pairs each game&apos;s win probability with both clubs&apos; live playoff berth chance and division leverage.
+        Pairs each game&apos;s win probability with both clubs&apos; live playoff berth chance and division leverage. Readings recorded Wed Nov 11, 2026 · 8:15 PM PT.
       </p>
 
       <div className="mt-3 space-y-2.5">
@@ -893,12 +891,12 @@ export function NflSwingGamesSectionCard({
                       <span className="text-xs font-bold text-text-primary sm:text-sm">
                         {game.away_team}
                       </span>
-                      <span className="ml-1.5 text-xs text-text-muted">
+                      <span className="ml-1.5 inline-block whitespace-nowrap text-xs text-text-muted">
                         ({game.away_record} · {awayPlayoff}% playoffs)
                       </span>
                     </div>
                   </div>
-                  <span className="shrink-0 text-sm font-bold tabular-nums text-text-secondary">
+                  <span className="shrink-0 whitespace-nowrap text-sm font-bold tabular-nums text-text-secondary">
                     {awayWin}% win
                   </span>
                 </div>
@@ -918,12 +916,12 @@ export function NflSwingGamesSectionCard({
                       <span className="text-xs font-bold text-text-primary sm:text-sm">
                         {game.home_team}
                       </span>
-                      <span className="ml-1.5 text-xs text-text-muted">
+                      <span className="ml-1.5 inline-block whitespace-nowrap text-xs text-text-muted">
                         ({game.home_record} · {homePlayoff}% playoffs)
                       </span>
                     </div>
                   </div>
-                  <span className="shrink-0 text-sm font-bold tabular-nums text-accent-brand">
+                  <span className="shrink-0 whitespace-nowrap text-sm font-bold tabular-nums text-accent-brand">
                     {homeWin}% win
                   </span>
                 </div>
@@ -982,7 +980,7 @@ export function NflTooManyPropsSectionCard({
     >
       {/* Header Banner */}
       <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-semibold uppercase tracking-wide text-text-muted">
-        <span>LARGE-SET PROP BOARD (#12609) · 671 LIVE MARKETS → 11-NUMBER FIRST SCREEN</span>
+        <span>LARGE-SET PROP BOARD (#12609) · 681 LIVE MARKETS → 11-NUMBER FIRST SCREEN</span>
         <span>{board.kickoff_label}</span>
       </div>
       <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
@@ -1007,19 +1005,19 @@ export function NflTooManyPropsSectionCard({
             {board.matchup_title} · Prop Board
           </h3>
         </div>
-        <span className="shrink-0 rounded-full border border-surface-border bg-surface-elevated px-2.5 py-0.5 text-xs font-bold tabular-nums text-text-primary">
-          PIT 36% · CIN 64%
+        <span className="shrink-0 whitespace-nowrap rounded-full border border-surface-border bg-surface-elevated px-2.5 py-0.5 text-xs font-bold tabular-nums text-text-primary">
+          PIT {renderedPercent(board.away_win_prob)}% · CIN {renderedPercent(board.home_win_prob)}%
         </span>
       </div>
       <p className="mt-1 text-xs text-text-secondary">
-        This game carries <span className="font-semibold text-text-primary">384 player prop lines</span>, <span className="font-semibold text-text-primary">261 margin/total/period lines</span>, and <span className="font-semibold text-text-primary">26 touchdown/novelty specials</span> (671 total). Instead of a 671-row wall, the first screen shows <span className="font-semibold text-text-primary">three scannable lenses</span>, and one toggle opens player milestone ladders for the rest.
+        This game carries <span className="font-semibold text-text-primary">394 player prop lines</span>, <span className="font-semibold text-text-primary">261 margin/total/period lines</span>, and <span className="font-semibold text-text-primary">26 touchdown/novelty specials</span> (681 total · {board.win_prob_recorded_at_label}). Instead of a 681-row wall, the first screen shows <span className="font-semibold text-text-primary">three scannable lenses</span>, and one toggle opens player milestone ladders for the rest.
       </p>
 
       {/* LENS 1: The Script (Likely Star Benchmarks >= 50%) */}
       <div className="mt-3 rounded-xl border border-surface-border bg-surface-elevated p-3">
-        <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wide text-accent-brand">
-          <span>1. THE SCRIPT · LIKELY STAR BENCHMARKS (50%+ CHANCE)</span>
-          <span>4 STARS · 8 NUMBERS</span>
+        <div className="flex items-center justify-between gap-2 text-xs font-bold uppercase tracking-wide text-accent-brand">
+          <span>1. THE SCRIPT (50%+ BENCHMARKS)</span>
+          <span className="shrink-0 whitespace-nowrap">4 STARS</span>
         </div>
         <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           {board.star_script.map((star) => (
@@ -1065,9 +1063,9 @@ export function NflTooManyPropsSectionCard({
 
       {/* LENS 2: 50/50 Coin-Flip Tension (Closest to 50%) */}
       <div className="mt-3 rounded-xl border border-surface-border bg-surface-elevated p-3">
-        <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wide text-accent-brand">
-          <span>2. COIN-FLIP TENSION · CLOSEST TO 50/50 ON THE BOARD</span>
-          <span>48%–52% WINDOW</span>
+        <div className="flex items-center justify-between gap-2 text-xs font-bold uppercase tracking-wide text-accent-brand">
+          <span>2. 50/50 COIN-FLIPS</span>
+          <span className="shrink-0 whitespace-nowrap">48%–52%</span>
         </div>
         <div className="mt-2 space-y-2">
           {board.coin_flips.map((flip) => {
@@ -1110,9 +1108,9 @@ export function NflTooManyPropsSectionCard({
 
       {/* LENS 3: First Touchdown & Specials Strip */}
       <div className="mt-3 rounded-xl border border-surface-border bg-surface-elevated p-3">
-        <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wide text-accent-brand">
-          <span>3. FIRST TOUCHDOWN LEADERS &amp; GAME SPECIALS</span>
-          <span>TOP 4 + WEATHER</span>
+        <div className="flex items-center justify-between gap-2 text-xs font-bold uppercase tracking-wide text-accent-brand">
+          <span>3. FIRST TD &amp; SPECIALS</span>
+          <span className="shrink-0 whitespace-nowrap">TOP 4</span>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {board.first_td_leaders.map((cand) => (
@@ -1139,11 +1137,11 @@ export function NflTooManyPropsSectionCard({
             </div>
           ))}
         </div>
-        <div className="mt-2 flex items-center justify-between rounded-lg border border-surface-border bg-surface-card px-2.5 py-1.5 text-xs">
-          <span className="font-medium text-text-secondary">
-            Game Special · Weather Delay during Pittsburgh at Cincinnati
+        <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-surface-border bg-surface-card px-2.5 py-1.5 text-xs">
+          <span className="min-w-0 font-medium text-text-secondary">
+            Game Special · Weather Delay (Steelers at Bengals)
           </span>
-          <span className="font-bold tabular-nums text-text-primary">
+          <span className="shrink-0 whitespace-nowrap font-bold tabular-nums text-text-primary">
             {formatPct(board.weather_delay_probability)} chance
           </span>
         </div>
@@ -1154,7 +1152,7 @@ export function NflTooManyPropsSectionCard({
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="text-xs font-bold text-text-primary">
-              Want the rest of the 671 game &amp; player prop lines?
+              Want the rest of the 681 game &amp; player prop lines?
             </div>
             <div className="text-xs text-text-secondary">
               Grouped by category with 8–10 yardage thresholds collapsed into one Milestone Ladder per player.
@@ -1169,7 +1167,7 @@ export function NflTooManyPropsSectionCard({
             <span>
               {drawerOpen
                 ? "Hide full prop board drawer"
-                : "Browse all 384 player props & 287 game lines"}
+                : "Browse all 394 player props & 287 game lines"}
             </span>
             <span aria-hidden="true">{drawerOpen ? "▴" : "▾"}</span>
           </button>
@@ -1535,7 +1533,7 @@ export function NflPlayoffsLookSheetGallery({
               #12609 · NFL PLAYOFFS &amp; SUPER BOWL LXI CONTAINER LOOK SHEET
             </div>
             <h2 className="mt-0.5 text-lg font-bold text-text-primary">
-              Six non-repeating section forms on live NFL numbers + one &ldquo;too many props&rdquo; section on a 671-market NFL game
+              Six non-repeating section forms on live NFL numbers + one &ldquo;too many props&rdquo; section on a 681-market NFL game
             </h2>
           </div>
           <button
@@ -1565,7 +1563,7 @@ export function NflPlayoffsLookSheetGallery({
           </li>
           <li>
             • <span className="font-semibold text-text-primary">&ldquo;Too many props&rdquo; digest rule (Section 6):</span>{" "}
-            Built on <span className="font-medium text-text-primary">Pittsburgh Steelers at Cincinnati Bengals</span> (671 live game markets / 384 player props) — highlights an 11-number first screen (The Script, 50/50 Coin-Flips, First TD) with one toggle to browse player Milestone Ladders by category.
+            Built on <span className="font-medium text-text-primary">Pittsburgh Steelers at Cincinnati Bengals</span> (681 live game markets / 394 player props) — highlights an 11-number first screen (The Script, 50/50 Coin-Flips, First TD) with one toggle to browse player Milestone Ladders by category.
           </li>
         </ul>
       </div>
