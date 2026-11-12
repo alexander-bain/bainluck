@@ -2846,3 +2846,158 @@ async def test_the_props_arm_statements_run_on_postgres_and_agree(poll_db, monke
     owned = {r[0] for r in (await db.execute(pm_hot_props.props_arm_stmt([prop, ml]))).all()}
     assert prop not in seeds and ml in seeds
     assert owned == {prop}
+
+
+async def _quiet_governor_field_12633(db, *, series=False):
+    """The saved 24-leg field with old quote clocks and real keepalive points."""
+    import json
+    from pathlib import Path
+
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.stream_history_points import keepalive_insert_statement
+
+    frozen = json.loads(
+        (Path(__file__).parents[1] / "fixtures/governor_quote_12633.json").read_text()
+    )
+    now = datetime.now(timezone.utc)
+    market = FuturesMarket(
+        source="kalshi",
+        external_id="KXMLB-26" if series else frozen["event"]["event_ticker"],
+        name="Closest Governor race in 2026?",
+        category="politics",
+        market_type="field",
+        market_tier=1,
+        mutually_exclusive=True,
+        volume=20_000,
+        status="open",
+        resolution_date=now + timedelta(days=2),
+    )
+    db.add(market)
+    await db.flush()
+    ids = []
+    for saved in frozen["stored"]:
+        values = {key: value for key, value in saved.items()
+                  if key not in {"id", "last_updated", "price_changed_at"}}
+        leg = FuturesOutcome(
+            **values, market_id=market.id,
+            last_updated=now - timedelta(hours=8),
+            price_changed_at=now - timedelta(days=2),
+        )
+        db.add(leg)
+        await db.flush()
+        ids.append(leg.id)
+    await db.commit()
+    points = (await db.execute(
+        keepalive_insert_statement("kalshi"), {"keepalive_outcome_ids": ids},
+    )).all()
+    assert len(points) == 24
+    await db.commit()
+    return market.id, frozen
+
+
+@pytest.mark.parametrize("arm", ["class", "registered", "served", "category", "in_play", "series"])
+@pytest.mark.parametrize("observation", ["old", "fresh"])
+async def test_keepalive_cannot_suppress_price_refresh_12633(poll_db, arm, observation):
+    from sqlalchemy import text
+
+    from app.tasks import futures_price_refresh as fpr
+
+    mid, _ = await _quiet_governor_field_12633(poll_db, series=arm == "series")
+    if observation == "fresh":
+        await poll_db.execute(text(
+            "UPDATE futures_outcomes SET last_updated = :observed WHERE market_id = :mid"
+        ), {"mid": mid, "observed": datetime.now(timezone.utc)})
+        await poll_db.commit()
+    if arm == "class":
+        selected = await fpr._scan_candidates(
+            poll_db, volume_floor=fpr.HIGH_VALUE_VOLUME_FLOOR, stale_hours=6,
+        )
+    elif arm == "in_play":
+        selected = await fpr._scan_in_play_candidates(poll_db, stale_minutes=45)
+    elif arm == "series":
+        selected = await fpr._scan_series_card_candidates(poll_db, stale_minutes=45)
+    else:
+        scan = {"registered": fpr._scan_registered_candidates,
+                "served": fpr._scan_served_candidates,
+                "category": fpr._scan_category_page_candidates}[arm]
+        selected = await scan(poll_db, market_ids=[mid], stale_minutes=45)
+    assert (mid in {row["id"] for row in selected}) == (observation != "fresh")
+
+
+@pytest.mark.parametrize("arm", ["class", "registered"])
+@pytest.mark.parametrize("observation", ["old", "fresh"])
+async def test_freshness_guard_sees_keepalive_without_price_read_12633(
+    poll_db, arm, observation,
+):
+    from sqlalchemy import text
+
+    from app.routes import admin_source_health as health
+    from app.tasks import futures_price_refresh as fpr
+
+    mid, _ = await _quiet_governor_field_12633(poll_db)
+    if observation == "fresh":
+        await poll_db.execute(text(
+            "UPDATE futures_outcomes SET last_updated = :observed WHERE market_id = :mid"
+        ), {"mid": mid, "observed": datetime.now(timezone.utc)})
+        await poll_db.commit()
+    sql = health._PRICE_DARK_SQL if arm == "class" else health._REGISTERED_SQL
+    result = (await poll_db.execute(text(sql), {
+        **fpr.pool_bind_params(),
+        "max_age_hours": 6,
+        "market_ids": [mid],
+    })).mappings().all()
+    assert len(result) == 1
+    assert result[0]["is_dark"] == (observation != "fresh")
+
+
+@pytest.mark.parametrize("changed", [False, True])
+async def test_real_governor_read_dates_the_quote_without_inventing_movement_12633(
+    poll_db, changed,
+):
+    from copy import deepcopy
+    from sqlalchemy import text
+
+    from app.services.kalshi_api import KalshiAPIService
+    from app.tasks import futures_price_refresh as fpr
+
+    db = poll_db
+    mid, frozen = await _quiet_governor_field_12633(db)
+    raw = deepcopy(frozen["event"])
+    if changed:
+        kansas = next(row for row in raw["markets"] if row["ticker"].endswith("-KS"))
+        kansas["yes_bid_dollars"], kansas["yes_ask_dollars"] = "0.9000", "0.9400"
+
+    class Venue(KalshiAPIService):
+        def __init__(self):
+            pass  # parser only; never creates an HTTP client
+
+        async def get_event(self, ticker, *, with_nested_markets):
+            assert ticker == raw["event_ticker"] and with_nested_markets
+            return raw
+
+    async def rows():
+        stored_quotes = await db.execute(text(
+            "SELECT external_id, current_probability, last_updated, price_changed_at, "
+            "is_winner, resolution_source FROM futures_outcomes WHERE market_id = :mid"
+        ), {"mid": mid})
+        return {r[0]: tuple(r[1:]) for r in stored_quotes.all()}
+
+    before = await rows()
+    quotes = await fpr._fetch_kalshi_prices(Venue(), raw["event_ticker"])
+    assert len(quotes) == 24
+    assert await fpr._write_prices(db, mid, "kalshi", quotes, _stats()) == 24
+    await db.commit()
+    after = await rows()
+    for key, previous in before.items():
+        current = after[key]
+        assert current[1] > previous[1]  # a real read advances observation
+        assert current[3:] == previous[3:]  # no grade rewrite
+        if changed and key.endswith("-KS"):
+            assert float(current[0]) == pytest.approx(0.92)
+            assert current[2] > previous[2]
+        else:
+            assert current[0] == previous[0]
+            assert current[2] == previous[2]
+    # The unchanged field is genuinely fresh now; the next pass stays bounded.
+    selected = await fpr._scan_registered_candidates(db, market_ids=[mid], stale_minutes=45)
+    assert selected == []

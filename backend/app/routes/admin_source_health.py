@@ -285,6 +285,7 @@ _PRICE_DARK_SQL = f"""
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
               WHERE fo.market_id = fm.id
                 AND s.captured_at > NOW() - make_interval(hours => :max_age_hours)
+                AND fo.last_updated > NOW() - make_interval(hours => :max_age_hours)
            ) AS is_dark
       FROM futures_markets fm
       JOIN pool ON pool.id = fm.id
@@ -321,6 +322,7 @@ _REGISTERED_SQL = f"""
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
               WHERE fo.market_id = fm.id
                 AND s.captured_at > NOW() - make_interval(hours => :max_age_hours)
+                AND fo.last_updated > NOW() - make_interval(hours => :max_age_hours)
            ) AS is_dark
       FROM futures_markets fm
      WHERE fm.id = ANY(:market_ids)

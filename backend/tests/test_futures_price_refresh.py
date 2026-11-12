@@ -336,19 +336,20 @@ class TestSelectionPredicate:
         assert _normalise(LIVE_MARKET_SQL) in _normalise(fpr._CANDIDATE_SQL.text)
         assert "select count(*) from futures_markets fm" in source
 
-    def test_guard_endpoint_reads_snapshots_not_updated_at(self):
+    def test_guard_endpoint_requires_price_observation_not_market_metadata(self):
         """`futures_markets.updated_at` is what made this class invisible.
 
         The discovery polls stamp `updated_at` on rows they re-read while
         capturing no price, so a freshness check built on it reads green over a
-        month-dark market. Only `futures_odds_snapshots.captured_at` answers
-        whether a price was actually captured.
+        month-dark market. A chart point must also have a recent outcome
+        observation: a keepalive alone does not establish a venue price read.
         """
-        for name in ("_PRICE_DARK_SQL",):
+        for name in ("_PRICE_DARK_SQL", "_REGISTERED_SQL"):
             sql = _extract_sql_literal(_ADMIN_SRC, name)
             assert "futures_odds_snapshots" in sql
             assert "s.captured_at" in sql
-            assert "updated_at" not in sql
+            assert "fo.last_updated" in sql
+            assert "fm.updated_at" not in sql
 
 
 class TestOrderingHasNoFixedPoint:

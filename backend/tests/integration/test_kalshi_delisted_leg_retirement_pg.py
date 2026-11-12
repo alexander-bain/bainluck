@@ -551,8 +551,8 @@ class TestTheReachArmSeesWhatTheSelectorCannot:
     """
 
     @staticmethod
-    async def _snapshot(session, market_id, ticker, *, age_minutes):
-        from sqlalchemy import select
+    async def _snapshot(session, market_id, ticker, *, age_minutes, price_read=False):
+        from sqlalchemy import select, update
 
         from app.models.models import FuturesOddsSnapshot, FuturesOutcome
 
@@ -562,13 +562,21 @@ class TestTheReachArmSeesWhatTheSelectorCannot:
                 FuturesOutcome.external_id == ticker,
             )
         )
+        observed_at = datetime.now(timezone.utc) - timedelta(minutes=age_minutes)
+        if price_read:
+            # #12633: the actively quoted control needs a real observation as
+            # well as its chart point. A keepalive alone leaves this clock old.
+            await session.execute(
+                update(FuturesOutcome)
+                .where(FuturesOutcome.id == outcome_id)
+                .values(last_updated=observed_at)
+            )
         session.add(
             FuturesOddsSnapshot(
                 outcome_id=outcome_id,
                 bookmaker="kalshi",
                 probability=0.73,
-                captured_at=datetime.now(timezone.utc)
-                - timedelta(minutes=age_minutes),
+                captured_at=observed_at,
             )
         )
         await session.commit()
@@ -633,7 +641,9 @@ class TestTheReachArmSeesWhatTheSelectorCannot:
         )
         # A price captured twelve minutes ago — production 108555's real age when
         # the defect was measured, against a six-hour gate.
-        await self._snapshot(db, market.id, "KXIPOTEST-27JUN01", age_minutes=12)
+        await self._snapshot(
+            db, market.id, "KXIPOTEST-27JUN01", age_minutes=12, price_read=True,
+        )
 
         assert market.id not in await self._selector_ids(db), (
             "the staleness gate should hide an actively traded market — if this "
@@ -649,7 +659,9 @@ class TestTheReachArmSeesWhatTheSelectorCannot:
             db,
             [("KXIPOTEST-25SEP01", 1.0, False), ("KXIPOTEST-27JUN01", 0.73, False)],
         )
-        await self._snapshot(db, market.id, "KXIPOTEST-27JUN01", age_minutes=60 * 9)
+        await self._snapshot(
+            db, market.id, "KXIPOTEST-27JUN01", age_minutes=60 * 9, price_read=True,
+        )
 
         assert market.id in await self._selector_ids(db)
         assert market.id in await self._reach_ids(db)
