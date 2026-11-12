@@ -1,30 +1,25 @@
-"""#11937 (127-A, stage 1): Discover's card-worth ranker, candidate 1.
+"""#11937 (127-A, stage 1): Discover's two frozen ranking candidates.
 
-The design (Fable, #11937, 2:28 PM PT Nov 11, amended by the 2:31 PM rulings)
-asks the same questions of every card and lets each surface weigh the answers.
-This module answers them for Discover from the features a slate already stores
-(``ranking_eval.card_features``), so the harness's ``--replay`` and, once a
-candidate passes, the feed call the same function.
+The design (Fable, #11937, 2:28 PM PT Nov 11) and its rulings (2:31 PM and
+9:33 PM Nov 11, 5:19 AM Nov 12) leave two candidates, both frozen before any
+held-out slate is read and both run on Nov 11 and Nov 12:
 
-What candidate 1 does, and deliberately does not do:
+* **Candidate 1** (``rank_c1_story``): a fixed weight for a grouped card plus one
+  free weight for "Discover's market classifier finds a story key for this
+  card". The free weight was picked on Nov 8's 35 graded cards from a grid
+  written down first (``STORY_KEY_GRID``).
+* **Candidate 2** (``rank_c2_score``, labelled as using ``score``): today's
+  stored score plus the same fixed grouped weight. No free weight.
 
-* It reorders the cards Discover already served, within the first page
-  (``PAGE`` seats). It never seats a card the feed did not serve: the feed's own
-  gates, suppressed families and caps decided those, and an unserved card is
-  usually ungraded, which the held-out score cannot read anyway.
-* Gates come first and are never traded for worth: a served card whose truth
-  flags fail (settled without its result, stale price, missing blend) leaves the
-  page instead of moving down it.
-* Standing seating rules hold: a finished game keeps its served seat; two
-  grouped cards are never adjacent; no entity appears more than twice in the
-  opening ten.
-* Question 1 ("how many care") has no stored input yet (tier, stakes and story
-  class are not captured), so it carries no weight. ``score`` is never an input.
-* "Grouped beats lone" has a fixed weight; it is not tuned on Nov 8, which has
-  nothing usable about grouped cards below its opening ten.
+Both reorder only the cards Discover already served, within the first page
+(``PAGE`` seats), under the same rules: a served card failing a truth gate
+leaves the page; a finished game keeps its served seat; two grouped cards are
+never adjacent; no entity appears more than twice in the opening ten. Neither
+seats a card the feed did not serve.
 
-Unknown inputs are neutral, never zero: an unknown 24-hour move is not "did not
-move".
+The harness reaches them with ``scorecard.py --replay
+app.utils.discover_rank:rank_c1_story`` (and ``:rank_c2_score``); the feed would
+call the winner behind a default-off switch, only if it clears the bar.
 """
 
 from __future__ import annotations
@@ -43,20 +38,13 @@ MAX_ENTITY_REPEATS = 2
 #: Grouped card kinds: one card standing for several markets.
 GROUPED_TYPES = frozenset({"bundle", "concept", "tournament"})
 
-#: Discover weights, frozen for candidate 1. "form" is the fixed starting weight
-#: for grouped-beats-lone (ruling 6) and is not tuned.
-WEIGHTS: dict[str, float] = {
-    "contest": 1.0,
-    "moved": 1.0,
-    "timely": 0.5,
-    "form": 1.0,
-    "support": 0.25,
-}
-
-#: A 24-hour move this large (10 points) counts as fully "moved".
-MOVE_FULL = 0.10
-#: Neutral value for an input the card does not have.
-NEUTRAL = 0.5
+#: The fixed grouped-beats-lone weight (ruling 6): not tuned on Nov 8.
+GROUPED_WEIGHT = 1.0
+#: Candidate 1's one free weight, on "the card has a story key" (Fable, 5:19 AM
+#: PT Nov 12). Chosen on Nov 8 only, from STORY_KEY_GRID written down before
+#: scoring.
+STORY_KEY_GRID = (0.0, 0.5, 1.0, 2.0)
+STORY_KEY_WEIGHT = 0.5  # Nov 8 pick: 0.5 and 1.0 tie at 0.689 (same top ten); the smaller one
 
 GATE_FLAGS = ("settled_without_result", "stale", "blend_missing")
 
@@ -89,59 +77,29 @@ def is_finished_game(card: dict) -> bool:
     return card.get("type") == "event" and card.get("settled") is True
 
 
-def contest(card: dict) -> float:
-    """A real contest: 1.0 at 50%, 0.0 at a certainty. Unknown is neutral."""
-    p = _num(card.get("probability"))
-    if p is None:
-        return NEUTRAL
-    return max(0.0, 1.0 - abs(p - 0.5) * 2.0)
+def has_story_key(card: dict) -> bool:
+    """Question 1's one usable part (#11937, Nov 12): whether Discover's own
+    market classifier finds a story for the card's title and category."""
+    from app.utils.feed_market_quality import classify_market_quality
+
+    quality = classify_market_quality(
+        card.get("title"), card.get("category"), outcome_names=list(card.get("entities") or [])
+    )
+    return bool(quality.story_key)
 
 
-def moved(card: dict) -> float:
-    m = _num(card.get("movement_24h"))
-    if m is None:
-        return NEUTRAL
-    return min(abs(m) / MOVE_FULL, 1.0)
+def worth_story(card: dict, now: Optional[datetime] = None) -> float:
+    """Candidate 1: grouped (fixed) plus "has a story key" (one free weight)."""
+    return (GROUPED_WEIGHT if is_grouped(card) else 0.0) + (
+        STORY_KEY_WEIGHT if has_story_key(card) else 0.0
+    )
 
 
-def timely(card: dict, now: Optional[datetime]) -> float:
-    """Live or starting within a day, or resolving within a week: 1.0. A card
-    with no clock at all is neutral."""
-    start = _when(card.get("start_time"))
-    resolve = _when(card.get("resolution_time"))
-    if now is None or (start is None and resolve is None):
-        return NEUTRAL
-    hours = []
-    if start is not None:
-        hours.append((start - now).total_seconds() / 3600)
-    if resolve is not None:
-        hours.append((resolve - now).total_seconds() / 3600)
-    soonest = min(hours, key=abs)
-    if -6 <= soonest <= 24:
-        return 1.0
-    if 0 < soonest <= 24 * 7:
-        return 0.5
-    return 0.0
-
-
-def support(card: dict) -> float:
-    count = _num(card.get("source_count"))
-    if count is None:
-        return NEUTRAL
-    spread = _num(card.get("source_spread"))
-    base = 1.0 if count >= 2 else 0.5
-    return base - (0.5 if spread is not None and spread > 0.10 else 0.0)
-
-
-def worth(card: dict, now: Optional[datetime] = None) -> float:
-    parts = {
-        "contest": contest(card),
-        "moved": moved(card),
-        "timely": timely(card, now),
-        "form": 1.0 if is_grouped(card) else 0.0,
-        "support": support(card),
-    }
-    return sum(WEIGHTS[name] * value for name, value in parts.items())
+def worth_score(card: dict, now: Optional[datetime] = None) -> float:
+    """Candidate 2, labelled as using ``score``: today's stored score (0-100,
+    scaled to 0-1) plus the same fixed grouped weight. No free weight."""
+    score = _num(card.get("score"))
+    return (score / 100.0 if score is not None else 0.0) + (GROUPED_WEIGHT if is_grouped(card) else 0.0)
 
 
 def _served_pos(card: dict) -> float:
@@ -153,9 +111,10 @@ def _entities(card: dict) -> list[str]:
     return [str(e) for e in (card.get("entities") or []) if e]
 
 
-def rank(candidates: Iterable[dict], *, now: Optional[datetime] = None) -> list[dict]:
-    """Candidate 1's order: the served first page reordered by worth under the
-    gates and seating rules, then everything else in served order."""
+def rank(candidates: Iterable[dict], *, now: Optional[datetime] = None, worth=None) -> list[dict]:
+    """A candidate's order: the served first page reordered by ``worth`` under
+    the gates and seating rules, then everything else in served order."""
+    worth = worth or worth_story
     cards = sorted((dict(c) for c in candidates), key=_served_pos)
     if now is None:
         # Replay has no clock: the slate's newest price reading stands in for
@@ -204,7 +163,14 @@ def rank(candidates: Iterable[dict], *, now: Optional[datetime] = None) -> list[
             pick = card
             break
         if pick is None and queue:
-            pick = queue[0]  # nothing satisfies the rules: keep worth order
+            # Nothing satisfies both rules here. Keep the repeat rule and give up
+            # the adjacency one; only if every card breaks the repeat rule (the
+            # served page itself repeats that much) keep worth order.
+            pick = next(
+                (c for c in queue
+                 if not (index < OPENING and any(counts.get(n, 0) >= MAX_ENTITY_REPEATS for n in _entities(c)))),
+                queue[0],
+            )
         if pick is None:
             break
         queue.remove(pick)
@@ -215,3 +181,13 @@ def rank(candidates: Iterable[dict], *, now: Optional[datetime] = None) -> list[
 
     ordered = [c for c in seats if c is not None] + queue
     return ordered + gated + rest + unserved
+
+
+def rank_c1_story(candidates: Iterable[dict]) -> list[dict]:
+    """Frozen candidate 1 (``--replay app.utils.discover_rank:rank_c1_story``)."""
+    return rank(candidates, worth=worth_story)
+
+
+def rank_c2_score(candidates: Iterable[dict]) -> list[dict]:
+    """Frozen candidate 2, uses ``score`` (``--replay app.utils.discover_rank:rank_c2_score``)."""
+    return rank(candidates, worth=worth_score)
