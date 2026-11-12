@@ -193,22 +193,36 @@ async def test_a_full_fetch_still_writes_the_lines_exactly_as_before():
     assert session.updates[0]["opening_over_under"] is None
 
 
-@pytest.mark.parametrize("lag_s", [10, 70, 130])
-def test_discovery_at_05_and_35_refreshes_lines_every_hour_not_ninety_minutes(lag_s):
-    """Nov 12 (#11286): lines landed at 5:36 and the 6:35 run, 59 minutes later,
-    stayed moneyline-only, so the next lines were at 7:05, matching the
-    90-minute projection bound. Replay six hours of discovery runs at :05 and :35,
-    each fetch landing ``lag_s`` into its run."""
+# Each tuple is one discovery run: (seconds into the run when it asks which
+# markets to fetch, seconds the fetch then takes before the stamp is written).
+_STEADY = [(50, 20)] * 12
+_NOV_12 = [(55, 15), (20, 10), (5, 10), (40, 25), (10, 60), (30, 5),
+           (60, 10), (15, 45), (25, 20), (45, 15), (5, 30), (35, 10)]
+_SLOW_FETCHES = [(10, 120), (10, 5), (10, 5), (10, 90), (10, 5), (10, 5),
+                 (10, 150), (10, 5), (10, 5), (10, 60), (10, 5), (10, 5)]
+
+
+@pytest.mark.parametrize("runs", [_STEADY, _NOV_12, _SLOW_FETCHES], ids=["steady", "nov-12", "slow-fetches"])
+def test_discovery_at_05_and_35_refreshes_lines_every_hour_not_ninety_minutes(runs):
+    """Nov 12 (#11286): the stamp was written at 5:36:10, when the fetch came
+    back; the 6:35 run asked 59 minutes after that and stayed moneyline-only, so
+    the next lines came at 7:05, 90 minutes on, and the projected final blinked
+    out. Replay six hours of discovery runs at :05 and :35. A run ASKS first and
+    STAMPS only after its fetch returns, so the stamp is always later than the
+    ask, and the run an hour on asks less than 60 minutes after it. With a
+    60-minute stamp this replay gives 90-minute gaps and fails."""
     r = _Redis()
-    fetches = []
+    stamps = []
     start = NOW - (NOW % 3600) + 5 * 60  # a :05 run
-    for run in range(12):
-        t = start + run * 1800 + lag_s
-        if sfm.scheduled_markets("americanfootball_nfl", r, t) == "h2h,spreads,totals":
-            sfm.record_full_fetch("americanfootball_nfl", r, t)
-            fetches.append(t)
-    gaps = [b - a for a, b in zip(fetches, fetches[1:])]
-    assert len(fetches) == 6 and set(gaps) == {3600}
-    # never two lines fetches inside 55 minutes, never a 90-minute wait
+    for run, (ask_lag, fetch_s) in enumerate(runs):
+        asked = start + run * 1800 + ask_lag
+        if sfm.scheduled_markets("americanfootball_nfl", r, asked) == "h2h,spreads,totals":
+            stamped = asked + fetch_s
+            sfm.record_full_fetch("americanfootball_nfl", r, stamped)
+            stamps.append(stamped)
+    gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+    # one lines fetch an hour: six in six hours, never a 90-minute wait
+    assert len(stamps) == 6, [round(g / 60, 1) for g in gaps]
+    assert max(gaps) < 75 * 60, [round(g / 60, 1) for g in gaps]
+    # and never two inside the stamp's interval (the quota guard)
     assert min(gaps) >= sfm.SCHEDULED_FULL_MARKETS_INTERVAL_SECONDS
-    assert max(gaps) < 90 * 60
