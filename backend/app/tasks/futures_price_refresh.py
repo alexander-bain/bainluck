@@ -937,6 +937,7 @@ _CANDIDATE_SQL = text(
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
               WHERE fo.market_id = fm.id
                 AND s.captured_at > NOW() - make_interval(hours => :stale_hours)
+                AND fo.last_updated > NOW() - make_interval(hours => :stale_hours)
            )
      ORDER BY fm.volume DESC NULLS LAST, fm.liquidity DESC NULLS LAST, fm.id
     """
@@ -966,6 +967,7 @@ _BY_ID_CANDIDATE_SQL = f"""
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
               WHERE fo.market_id = fm.id
                 AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
+                AND fo.last_updated > NOW() - make_interval(mins => :stale_minutes)
            )
      ORDER BY fm.id
 """
@@ -1037,6 +1039,7 @@ _IN_PLAY_CANDIDATE_SQL = text(
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
               WHERE fo.market_id = fm.id
                 AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
+                AND fo.last_updated > NOW() - make_interval(mins => :stale_minutes)
            )
      ORDER BY fm.resolution_date, fm.id
      LIMIT :in_play_limit
@@ -1065,6 +1068,7 @@ _SERIES_CARD_CANDIDATE_SQL = text(
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
               WHERE fo.market_id = fm.id
                 AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
+                AND fo.last_updated > NOW() - make_interval(mins => :stale_minutes)
            )
      ORDER BY fm.resolution_date, fm.id
      LIMIT :series_card_limit
@@ -4498,6 +4502,7 @@ async def _refresh_stale_futures_prices(
                                   WHERE fo.market_id = fm.id
                                     AND s.captured_at
                                         > NOW() - make_interval(hours => :stale_hours)
+                                    AND fo.last_updated > NOW() - make_interval(hours => :stale_hours)
                                )
                         """
                     ),
