@@ -126,12 +126,19 @@ export function pickJourneyFuture(
   // carries `false` for a graded LOSER and for an ungraded row alike (never
   // null, measured), so `true` is the only value that unambiguously means
   // settled. Graded losers are parked near 0 and lose the tie-break anyway.
+  //
+  // #11634: a leg whose outcome is one of the club's players is that player's
+  // price, not the team's season. The eliminated Dodgers led with
+  // "CHAMPIONSHIP 27%" — Max Muncy's tier-5 Silver Slugger leg, which no tier
+  // or award test caught. The server marks it from the roster; the row stays in
+  // Season Futures.
   const eligible = futures.filter(
     (f) =>
       f.probability !== null &&
       f.market_id != null &&
       f.outcome_id != null &&
       f.is_winner !== true &&
+      f.outcome_is_player !== true &&
       !isDeclaredAward(f) &&
       !isPlayerDestinationMarket(f.market_name),
   );
