@@ -328,7 +328,7 @@
     {
       "position": 5,
       "item_key": "nfl-section-5-games-that-move-the-picture",
-      "title": "Section 5 · This Week's Games That Move the Playoff Picture Most (Blended Win % + Playoff Stakes)",
+      "title": "Section 5 · This Week's Games That Move the Playoff Picture Most (Win % + Playoff Stakes)",
       "source": "kalshi",
       "category": "football",
       "template_key": "matchup_swing_cards:nfl_week_10_11",
@@ -343,7 +343,7 @@
         "kicker": "SECTION 5 · MATCHUP_SWING_CARDS",
         "tag": "THIS WEEK'S SLATE",
         "title": "Games this week that move the playoff picture most",
-        "subtitle": "Blended game win probability (Kalshi + Polymarket + Sportsbooks) paired with each club's playoff berth %",
+        "subtitle": "Game win probability paired with each club's playoff berth %",
         "rows": [
           {
             "label": "Steelers (6-2, 74% playoffs) at Bengals (6-2, 93% playoffs)",
@@ -393,7 +393,7 @@
         "yes_probability": 0.635,
         "rendered_percent": 64,
         "resolution_date": "2026-11-16T01:20:00Z",
-        "rule_quote": "Blended full-game win probability across Kalshi (64%), Polymarket (64%), and 11 Sportsbooks (63%)."
+        "rule_quote": "Full-game win probability paired with season playoff chances."
       }
     },
     {
