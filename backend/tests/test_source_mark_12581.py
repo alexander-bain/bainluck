@@ -743,13 +743,19 @@ class TestServedPropSelection:
         laporta = [
             r for r in page["player_props"] if r["player"]["key"] == "sam laporta"
         ]
-        assert len(laporta) == 2
+        assert len(laporta) == 1
         rows = {r["stat"]["key"]: r for r in laporta}
         assert rows["receiving_yards"]["over_probability"] == 0.86
-        protected = rows["receiving_yards_protected"]
+        assert (
+            rows["receiving_yards"]["source_mark"]["sources"][0]["probability"] == 0.86
+        )
+        (held,) = page["prop_contract_withheld"]
+        assert held["reason"] == "protected_contract_not_standard"
+        assert held["contract_key"] == "kalshi_protected"
+        protected = held["evidence"]
         assert protected["over_probability"] == 0.845
-        assert protected["market_name"].endswith("Receiving Yards (Protected)")
-        assert protected["source"] == "kalshi"
+        assert protected["source_mark"]["sources"][0]["key"] == "kalshi"
+        assert protected["source_mark"]["sources"][0]["probability"] == 0.845
         assert protected["contributor_outcome_ids"] == [262830012]
 
     def test_held_pair_uses_tighter_book_once_with_its_own_quote(self):
@@ -811,6 +817,170 @@ class TestServedPropSelection:
         assert script["current"] == 0.82
 
 
+class TestStandardOnlyPolicy:
+    def test_frozen_served_273_becomes_146_without_changing_any_kept_quote(self):
+        from copy import deepcopy
+        from app.utils.game_prop_sources import select_standard_prop_rows
+
+        fixture = json.loads(
+            (
+                Path(__file__).parent
+                / "fixtures/source_mark_12581/served_patriots_lions_157.json"
+            ).read_text()
+        )
+        original = fixture["player_props"]
+        before = deepcopy(original)
+        markets = {m["id"]: SimpleNamespace(**m) for m in fixture["markets"]}
+        selected, withheld = select_standard_prop_rows(
+            original,
+            markets=markets,
+            sport_key="americanfootball_nfl",
+        )
+        assert len(before) == 273
+        assert len(selected) == 146
+        assert len(withheld) == 127
+        assert original == before
+        assert selected == [
+            r for r in before if r["contract_key"] != "kalshi_protected"
+        ]
+        keys = [
+            (r["player"]["key"], r["stat"]["key"], r["line"]["value"], r["period"])
+            for r in selected
+        ]
+        assert len(keys) == len(set(keys))
+        omitted_ids = {
+            oid for h in withheld for oid in h["evidence"]["contributor_outcome_ids"]
+        }
+        assert {262830064, 262830066, 262830883} <= omitted_ids
+        kept_ids = {oid for r in selected for oid in r["represented_outcome_ids"]}
+        assert not kept_ids & omitted_ids
+        for row in before:
+            if row["contract_key"] == "kalshi_protected":
+                held = next(
+                    h
+                    for h in withheld
+                    if h["evidence"]["contributor_outcome_ids"]
+                    == row["contributor_outcome_ids"]
+                )
+                assert held["reason"] == "protected_contract_not_standard"
+                for field in ("source_mark", "over_probability", "observed_at"):
+                    assert held["evidence"][field] == row[field]
+
+    @pytest.mark.parametrize("status", ["scheduled", "live", "completed"])
+    def test_protected_only_and_paired_rungs_leave_every_prop_presentation(
+        self, status, monkeypatch
+    ):
+        from app.routes import events
+        from tests.test_event_props_matrix_10236 import _db, _event, _market, _outcome
+
+        now = datetime.now(timezone.utc)
+        commence = (
+            now + timedelta(days=4)
+            if status == "scheduled"
+            else now - timedelta(hours=6)
+        )
+        event = _event(status=status, commence=commence)
+        event.sport.key = "americanfootball_nfl"
+        event.home_team_name, event.away_team_name = (
+            "Detroit Lions",
+            "New England Patriots",
+        )
+        event.home_score, event.away_score = (
+            (21, 24) if status != "scheduled" else (None, None)
+        )
+        event.period = "Q3" if status == "live" else None
+        event.completed_at = now - timedelta(hours=2) if status == "completed" else None
+        markets = [
+            _market(
+                id=mid,
+                name="New England vs Detroit: Receiving Yards",
+                source="kalshi",
+                commence=commence,
+            )
+            for mid in (1, 2)
+        ]
+        for market, ticker in zip(markets, ("KXNFLRECYDS", "KXNFLRECYDSPROT")):
+            market.external_id = ticker + "-26NOV15NEDET"
+            market.llm_sport_category = "americanfootball"
+            market.status = "resolved" if status == "completed" else "open"
+        outcomes = [
+            _outcome(id=11, market_id=1, name="Sam LaPorta: 15+", prob=0.86),
+            _outcome(id=21, market_id=2, name="Sam LaPorta: 15+", prob=0.845),
+            _outcome(id=22, market_id=2, name="Amon-Ra St. Brown: 160+", prob=0.05),
+        ]
+        for leg in outcomes:
+            leg.current_yes_bid = leg.current_yes_ask = None
+            if status == "completed":
+                leg.current_probability = 0.97 if leg.id == 11 else 0.03
+                leg.is_winner, leg.resolution_source = leg.id == 11, "api_settlement"
+        seen_inputs = []
+        for name in ("build_during_player_props", "build_after_player_props"):
+            original = getattr(events, name)
+
+            def observe(rows, _builder=original, **kwargs):
+                seen_inputs.append(rows)
+                return _builder(rows, **kwargs)
+
+            monkeypatch.setattr(events, name, observe)
+        page, _, _ = asyncio.run(
+            events._build_game_markets(
+                event.id,
+                _db(
+                    event,
+                    markets,
+                    outcomes,
+                    {o.id: now - timedelta(minutes=2) for o in outcomes},
+                ),
+            )
+        )
+        assert [r["contributor_outcome_ids"] for r in page["player_props"]] == [[11]]
+        assert [r["label"] for r in page["props_script"]] == ["Sam LaPorta: 15+"]
+        assert len(seen_inputs) == (status != "scheduled")
+        for rows in seen_inputs:
+            assert [r["contributor_outcome_ids"] for r in rows] == [[11]]
+        held = page["prop_contract_withheld"]
+        assert {h["evidence"]["contributor_outcome_ids"][0] for h in held} == {21, 22}
+        if status == "completed":
+            assert page["props_script"][0]["graded_result"] == "hit"
+            assert all(h["evidence"]["source_mark"]["state"] == "settled" for h in held)
+        else:
+            assert page["player_props"][0]["over_probability"] == 0.86
+            assert sorted(h["evidence"]["over_probability"] for h in held) == [
+                0.05,
+                0.845,
+            ]
+
+    def test_series_identity_holds_even_when_typing_fails_and_names_cannot_fake_it(
+        self,
+    ):
+        from app.utils.game_prop_sources import select_standard_prop_rows
+
+        rows = [
+            {
+                "_market_id": n,
+                "outcome_name": "Unknown",
+                "over_probability": 0.6,
+                "typing_refusal": "untyped_stat",
+            }
+            for n in (1, 2, 3)
+        ]
+        markets = {
+            1: SimpleNamespace(source="kalshi", external_id="KXNFLRECYDSPROT-game"),
+            2: SimpleNamespace(source="polymarket", external_id="KXNFLRECYDSPROT-game"),
+            3: SimpleNamespace(source="kalshi", external_id="KXNFLRECYDS-game"),
+        }
+        rows[2]["market_name"] = "Unknown (Protected)"
+        selected, held = select_standard_prop_rows(
+            rows, markets=markets, sport_key="americanfootball_nfl"
+        )
+        assert selected == rows[1:]
+        assert held[0]["evidence"]["over_probability"] == 0.6
+        for sport in (None, "basketball_nba", "baseball_mlb"):
+            assert select_standard_prop_rows(
+                rows, markets=markets, sport_key=sport
+            ) == (rows, [])
+
+
 class TestAllGameMarketFamilies:
     def test_every_served_price_has_its_actual_quote_and_observation(self):
         from tests.test_a_game_market_row_carries_its_own_price_age_4970 import (
@@ -869,7 +1039,7 @@ class TestAllGameMarketFamilies:
 
 
 class TestCapturedPatriotsLions:
-    def test_all_336_legs_remain_represented_and_all_24_holds_select_one_book(self):
+    def test_all_336_legs_remain_accounted_for_and_24_holds_select_one_book(self):
         from sqlalchemy import DateTime
         from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
         from app.routes.events import _build_game_markets
@@ -910,14 +1080,21 @@ class TestCapturedPatriotsLions:
             _build_game_markets(event.id, _db(event, markets, legs, seen))
         )
         props = page["player_props"]
-        assert len(props) == 270
+        assert len(props) == 144
         represented = {
             oid
             for r in props
             for oid in r.get("represented_outcome_ids", r["contributor_outcome_ids"])
         }
-        assert len(represented) == 336
-        assert represented == {o.id for o in legs}
+        withheld = {
+            oid
+            for hold in page["prop_contract_withheld"]
+            for oid in hold["evidence"]["contributor_outcome_ids"]
+        }
+        assert len(represented) == 210
+        assert len(withheld) == 126
+        assert not (represented & withheld)
+        assert represented | withheld == {o.id for o in legs}
         assert all(
             r["player"] and r["stat"] and r["line"] and r["side"] == "over"
             for r in props

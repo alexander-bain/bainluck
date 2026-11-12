@@ -198,9 +198,13 @@ def test_a_young_live_mirror_is_servable():
     assert servable and reason == "fresh_enough"
 
 
-def test_source_mark_release_does_not_rewarm_from_old_primary_or_mirror():
+@pytest.mark.parametrize(
+    "old_prefix",
+    ["bainluck:game_markets:", "bainluck:game_markets:source_mark_v1:"],
+)
+def test_source_mark_release_does_not_rewarm_from_old_primary_or_mirror(old_prefix):
     redis = _FakeRedis()
-    old_keys = concept_cache.cache_keys("7", prefix="bainluck:game_markets:")
+    old_keys = concept_cache.cache_keys("7", prefix=old_prefix)
     old_body = _stamped("live")
     old_body["player_props"] = [{"over_probability": 0.6, "source": "kalshi"}]
     for key in (old_keys.primary, old_keys.stale):

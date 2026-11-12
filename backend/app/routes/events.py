@@ -27786,6 +27786,14 @@ async def _build_game_markets(
         for _source_row in _source_matchup["outcomes"]:
             _source_row["source_mark"] = _initial_source_mark(_source_row)
 
+    # 157-A: a Protected contract is not the standard prop. Apply the policy
+    # before any live/finished copy, price fold or script can retain it.
+    from app.utils.game_prop_sources import select_standard_prop_rows
+
+    player_props, _prop_contract_withheld = select_standard_prop_rows(
+        player_props, markets=market_map, sport_key=sport_key,
+    )
+
     # 6. Sort totals and spreads by threshold value
     totals_thresholds.sort(key=lambda t: t["threshold"])
     spreads.sort(key=lambda s: s.get("threshold") or 0)
@@ -29088,6 +29096,7 @@ async def _build_game_markets(
         "totals": game_totals,
         "player_props": player_props,
         "prop_source_holds": _prop_source_holds,
+        "prop_contract_withheld": _prop_contract_withheld,
         "team_totals": team_total_items,
         "spreads": spreads,
         "period_markets": period_markets,

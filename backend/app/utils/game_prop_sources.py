@@ -7,6 +7,7 @@ hold selects one book; it never averages the incompatible contracts.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Callable, Mapping
 
 from app.utils.event_props_matrix import STAT_TABLE, _team_forms, type_prop_row
@@ -43,6 +44,60 @@ _PROTECTED_SERIES = {
     "KXNFLRSHYDSPROT": "rushing_yards",
     "KXNFLTDPROT": "touchdowns",
 }
+
+
+def select_standard_prop_rows(
+    rows: list[dict], *, markets: Mapping[int, Any], sport_key: str | None
+) -> tuple[list[dict], list[dict]]:
+    """157-A: omit verified Protected contracts from every prop presentation.
+
+    Select by the venue's series identity, not a name suffix or a successful
+    player/stat parse. A Protected-only rung is also withheld; it never fills
+    in for an absent standard contract. The caller runs this before copying
+    DURING/AFTER inputs or folding prices. Separate diagnostics retain the
+    original quote/grade evidence without adding a reader-facing prop row.
+    """
+    if sport_key != "americanfootball_nfl":
+        return rows, []
+    selected, withheld = [], []
+    for row in rows:
+        market = markets.get(row.get("_market_id"))
+        ticker = getattr(market, "external_id", "") or ""
+        if (
+            getattr(market, "source", None) != "kalshi"
+            or ticker.split("-", 1)[0] not in _PROTECTED_SERIES
+        ):
+            selected.append(row)
+            continue
+        withheld.append(
+            {
+                "reason": "protected_contract_not_standard",
+                "contract_key": "kalshi_protected",
+                "market_id": row.get("_market_id"),
+                "external_id": ticker,
+                "evidence": deepcopy(
+                    {
+                        key: row[key]
+                        for key in (
+                            "outcome_name",
+                            "contributor_outcome_ids",
+                            "observed_at",
+                            "over_probability",
+                            "source_mark",
+                            "hit",
+                            "actual",
+                            "is_winner",
+                            "resolution_source",
+                            "player",
+                            "stat",
+                            "line",
+                        )
+                        if key in row
+                    }
+                ),
+            }
+        )
+    return selected, withheld
 
 
 def _typed(
