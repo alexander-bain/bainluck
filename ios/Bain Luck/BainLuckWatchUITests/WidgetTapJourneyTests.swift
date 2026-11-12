@@ -713,7 +713,7 @@ enum WatchComplicationGalleryNavigation {
         // visible alphabetical app rows to choose direction and move by at most
         // half a row, rather than sweeping past the target on a fixed schedule.
         var visits: [String: Int] = [:]
-        for step in 0..<48 {
+        for step in 0..<32 {
             let exists = choice.exists
             let belowChrome = exists && choice.frame.minY > chromeBottom
             if belowChrome && choice.isHittable && host.frame.contains(choice.frame) { return choice }
