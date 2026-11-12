@@ -1,0 +1,1275 @@
+{
+ "lane": "Builder E",
+ "for": "Plane pack, Thu Nov 12 (Fable 6:48 AM)",
+ "source": "docs/matching/twin-candidates-2026-11.json (batch msgbatch_01PJJkwRU1easj8nnHAZQ6qa, #11927): 120 Kalshi-Polymarket pairs, 0 high, 3 medium, 117 low confidence",
+ "order": "Medium-confidence pairs first, then pairs the model judged the same proposition but unconfirmed on deadline or rules, then same-deadline pairs; the most likely to become links (and unblock a blended number) lead.",
+ "how_to_answer": "For each pair: same market / near-twin / related / different, plus a note if it matters.",
+ "items": [
+  {
+   "id": "pair-52755988-3814372",
+   "title": "F1 Action of the Year Award Winner",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets cover the F1 Action of the Year award with matching leading outcomes and similar year-end deadlines, but the missing rules text and the 23 vs 33 outcome-count mismatch leave resolution equivalence unverified, so they are not confirmed twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "F1 Action of the Year Award Winner",
+    "category": "motorsports",
+    "closes": "2026-12-31"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "F1: Action of the Year",
+    "category": "motorsports",
+    "closes": "2027-01-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: medium)",
+   "why_uncertain": "same resolution rule: Neither market provides a description or rules text, and the outcome counts differ (23 vs 33), so the outcome sets and settlement rules cannot be confirmed as identical.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Max Verstappen",
+     "polymarket": "Max Verstappen"
+    },
+    {
+     "kalshi": "Andrea Kimi Antonelli",
+     "polymarket": "Kimi Antonelli"
+    },
+    {
+     "kalshi": "Charles Leclerc",
+     "polymarket": "Charles Leclerc"
+    }
+   ]
+  },
+  {
+   "id": "pair-56775571-58492246",
+   "title": "Grammy Winner: Best New Artist",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both the Kalshi and Polymarket markets cover the 2027 Grammy Best New Artist winner with matching top outcomes, but the listed resolution dates differ by about five months and neither market includes rules text, so this is not a high-confidence twin.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Grammy Winner: Best New Artist",
+    "category": "entertainment",
+    "closes": "2027-02-09"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Grammys 2027: Best New Artist Winner",
+    "category": "entertainment",
+    "closes": "2027-07-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: medium)",
+   "why_uncertain": "same deadline: The Kalshi market resolves 2027-02-09 while the Polymarket market runs to 2027-07-01, a gap of about five months in the settlement windows, even though both likely settle at the same ceremony.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Ella Langley",
+     "polymarket": "Ella Langley"
+    },
+    {
+     "kalshi": "SIENNA SPIRO",
+     "polymarket": "SIENNA SPIRO"
+    }
+   ]
+  },
+  {
+   "id": "pair-52755801-58495138",
+   "title": "Grammy winner: Album of the Year",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Kalshi and Polymarket list the same Grammy Album of the Year market with matching leading nominees, but their resolution dates differ (Feb 2027 vs Jul 2027) and the outcome counts differ (12 vs 15), so the pair is not a verified high-confidence twin.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Grammy winner: Album of the Year",
+    "category": "entertainment",
+    "closes": "2027-02-08"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Grammys 2027: Album of the Year Winner",
+    "category": "entertainment",
+    "closes": "2027-07-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: medium)",
+   "why_uncertain": "same deadline: Kalshi's cutoff is 2027-02-08 while Polymarket's is 2027-07-01, so the settlement windows differ by about five months even though both likely resolve on the same ceremony.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "you seem pretty sad for a girl so in love",
+     "polymarket": "you seem pretty sad for a girl so in love - Olivia Rodrigo"
+    },
+    {
+     "kalshi": "Lux",
+     "polymarket": "Lux - Rosalía"
+    },
+    {
+     "kalshi": "The Art of Loving",
+     "polymarket": "The Art of Loving - Olivia Dean"
+    }
+   ]
+  },
+  {
+   "id": "pair-56775503-60607659",
+   "title": "2027 FIFA Women's World Cup Champion",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets target the 2027 Women's World Cup winner with a same-day cutoff, but the rules text is missing, the outcome lists differ (32 vs 18), and the visible outcomes do not overlap (Spain/USA/England vs Argentina/Brazil/Japan), so the pair is not verified as a blendable twin.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "2027 FIFA Women's World Cup Champion",
+    "category": "soccer",
+    "closes": "2027-07-26"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "FIFA Women's World Cup 2027 Winner",
+    "category": "soccer",
+    "closes": "2027-07-26"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same resolution rule: Neither market includes a description or rules text, and the outcome sets differ (32 vs 18 outcomes), so identical settlement criteria such as a field-or-other bucket and the handling of cancellation or postponement cannot be confirmed.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-60481116-64564200",
+   "title": "Wild Horse Nine · Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets cover the Wild Horse Nine Rotten Tomatoes score with the same resolution date, but strict 'Above' rungs on Kalshi do not match inclusive '+' rungs on Polymarket, so no rung aliases exist and the pair should not be blended as twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Wild Horse Nine · Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "\"Wild Horse Nine\" Rotten Tomatoes Score?",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same resolution rule: The Kalshi market uses strict 'Above X' rungs (65, 50, 85) while the Polymarket market uses inclusive 'X+' rungs (87+, 90+, 92+), and the thresholds do not line up, so the settlement rules are not equivalent.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-61484909-67734797",
+   "title": "I Play Rocky · Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets track the same film's Rotten Tomatoes score with the same resolution date, but strict 'Above X' rungs on Kalshi do not match inclusive 'X+' rungs on Polymarket and no shown rungs overlap, so the pair cannot be blended as a twin.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "I Play Rocky · Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-11-23"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "\"I Play Rocky\" Rotten Tomatoes Score?",
+    "category": "entertainment",
+    "closes": "2026-11-23"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same resolution rule: Kalshi settles on strict 'Above X' rungs at 45, 50 and 55 across 13 outcomes, while Polymarket uses inclusive 'X+' rungs at 60, 70 and 75 across 5 outcomes, so the thresholds differ in both type and placement.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-61484910-64783070",
+   "title": "The Hunger Games: Sunrise on the Reaping · Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets cover the same film's Rotten Tomatoes score with the same resolution date, but the strict Kalshi rungs (Above 45/50/55) do not match the inclusive Polymarket rungs (50+/60+/70+), so they are not exact twins for an explicit twin register.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "The Hunger Games: Sunrise on the Reaping · Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-11-23"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "\"The Hunger Games: Sunrise on the Reaping\" Rotten Tomatoes Score?",
+    "category": "entertainment",
+    "closes": "2026-11-23"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same resolution rule: Kalshi uses strict thresholds (Above 45/50/55) while Polymarket uses inclusive thresholds (50+/60+/70+), so the rungs differ and even the nearest pair, Above 50 vs 50+, differs at exactly 50.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-62383659-65563521",
+   "title": "Godzilla Minus Zero · Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets track the Godzilla Minus Zero Rotten Tomatoes score with the same resolution date, but strict 'Above' rungs on Kalshi and inclusive '+' rungs on Polymarket have no matching thresholds, so they should not be blended as twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Godzilla Minus Zero · Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "\"Godzilla Minus Zero\" Rotten Tomatoes Score?",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same resolution rule: The Kalshi market uses strict 'Above X' rungs (45, 50, 65) while the Polymarket market uses inclusive 'X+' rungs (70+, 80+, 85+), so thresholds and rung sets do not align and no rung maps one-to-one.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-65536534-67734803",
+   "title": "Ebenezer · Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi market uses strict 'Above' thresholds in steps of 5 and the Polymarket market uses inclusive 'N+' thresholds in steps of 10, so no rung is an exact equivalent and the two markets should not be blended in the twin register despite the matching film and deadline.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Ebenezer · Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-11-16"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "\"Ebenezer\" Rotten Tomatoes Score?",
+    "category": "entertainment",
+    "closes": "2026-11-16"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same resolution rule: Kalshi rungs are strict 'Above N' thresholds (20, 25, 30) while Polymarket rungs are inclusive 'N+' thresholds (20, 30, 40), so the cutoffs and rung ladders differ, and the prices diverge (Above 30 at 0.695 vs 30+ at 0.82).",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-65536662-67734827",
+   "title": "The Cat in the Hat · Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi and Polymarket markets track the same Rotten Tomatoes score with the same deadline, but their strict versus inclusive and misaligned thresholds mean no rung is an exact match, so they should not be blended as twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "The Cat in the Hat · Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "\"The Cat in the Hat\" Rotten Tomatoes Score?",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same resolution rule: Kalshi uses strict 'Above 45/50/55' rungs while Polymarket uses inclusive '50+/60+/70+' rungs, so the thresholds differ (only 50 overlaps, and 'Above 50' is not the same as '50+'), and the rung ladders are not aligned.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-65536662-67734828",
+   "title": "The Cat in the Hat · Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi market's strict 'Above 50' rung does not match the Polymarket market's inclusive 'at least 50' threshold, so the two are not exact twins and should not be blended in the twin register.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "The Cat in the Hat · Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Will \"The Cat in the Hat\" score at least 50 on the Rotten Tomatoes Tomatometer?",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same resolution rule: Kalshi's 'Above 50' rung is strict (greater than 50, so 51+ on integer scores) while Polymarket resolves Yes at 'at least 50' (50+), so the thresholds differ at 50 and the 64.5% vs 82.65% prices reflect this gap.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-230-113706",
+   "title": "F1 Constructors Champion",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi and Polymarket markets both cover the F1 Constructors' Champion with Mercedes near 99%, but the deadlines differ (2026-12-07 vs 2027-04-01), the outcome sets differ (11 vs 12), and neither market states rules, so they cannot be treated as verified twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "F1 Constructors Champion",
+    "category": "motorsports",
+    "closes": "2026-12-07"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "F1 Constructors' Champion",
+    "category": "motorsports",
+    "closes": "2027-04-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi resolves 2026-12-07 while Polymarket resolves 2027-04-01, a gap of about four months, so the settlement and cutoff windows differ.; same resolution rule: Neither market gives a description or rules, and the outcome counts differ (11 vs 12), so identical settlement criteria cannot be verified.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Mercedes AMG Motorsport",
+     "polymarket": "Mercedes"
+    },
+    {
+     "kalshi": "Cadillac",
+     "polymarket": "Cadillac"
+    }
+   ]
+  },
+  {
+   "id": "pair-112816-114629",
+   "title": "What will inflation in Brazil be in Dec 2026?",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi market (cumulative 'Above X%' ladder, resolves 2027-01-01) and the Polymarket market (exclusive range bins, resolves 2027-01-13) cover the same Brazil 2026 inflation topic, but their outcome structures and cutoff dates differ, so no one-to-one outcome aliases exist and they should not be blended as twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "What will inflation in Brazil be in Dec 2026?",
+    "category": "economics",
+    "closes": "2027-01-01"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Brazil Annual Inflation 2026",
+    "category": "economics",
+    "closes": "2027-01-13"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: The Kalshi market lists a 2027-01-01 resolution date and the Polymarket market lists 2027-01-13, so the settlement windows differ by about 12 days.; same resolution rule: The Kalshi market uses cumulative 'Above X%' thresholds, while the Polymarket market uses mutually exclusive bins such as 5.00-5.49%, so the rungs do not settle the same way.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-12572131-68169138",
+   "title": "US GDP growth in Q4 2026?",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi and Polymarket markets share a title, but the deadlines differ by about a day and the Kalshi market has no outcome ladder or rules to compare with the Polymarket bins, so they should not be blended as twins yet.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "US GDP growth in Q4 2026?",
+    "category": "economics",
+    "closes": "2027-01-30"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "US GDP growth in Q4 2026?",
+    "category": "economics",
+    "closes": "2027-01-29"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: The Kalshi market resolves 2027-01-30 13:29 UTC and the Polymarket market 2027-01-29 04:59 UTC, so the cutoffs differ by about 32 hours and cannot be confirmed as the same settlement window.; same resolution rule: The Kalshi market lists no outcomes or rungs and the Polymarket market shows only 3 of its 7 bins (e.g. '1.5% to 2.0%'), so threshold boundaries and inclusivity cannot be matched.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-52755650-66031970",
+   "title": "Pro Basketball MVP Winner",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi market (Pro Basketball MVP Winner) and the Polymarket market (NBA: 2026-27 MVP) likely cover the same award with matching top outcome names, but the deadlines differ by about 30 days and neither market has rules text, so they are not verified twins for blending.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Pro Basketball MVP Winner",
+    "category": "basketball",
+    "closes": "2027-07-31"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "NBA: 2026-27 MVP",
+    "category": "basketball",
+    "closes": "2027-07-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi's market closes 2027-07-31 14:00 UTC while Polymarket's closes 2027-07-01 03:59 UTC, a gap of about 30 days, so the cutoff windows do not match exactly.; same resolution rule: Neither market provides a description or rules text, so the winner-determination source, tie handling and treatment of unlisted players cannot be verified, and the outcome counts differ (53 vs 34).",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Luka Doncic",
+     "polymarket": "Luka Doncic"
+    },
+    {
+     "kalshi": "Victor Wembanyama",
+     "polymarket": "Victor Wembanyama"
+    },
+    {
+     "kalshi": "Shai Gilgeous-Alexander",
+     "polymarket": "Shai Gilgeous-Alexander"
+    }
+   ]
+  },
+  {
+   "id": "pair-52755711-65677948",
+   "title": "Pro Basketball Eastern Conference #1 Seed",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets cover the 2026-27 Eastern Conference #1 seed, but the resolution dates differ (2027-06-01 vs 2027-04-26), no rules text is available to confirm matching settlement, and the outcome lists differ in size (15 vs 16), so the pair is not safe to blend as a twin.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Pro Basketball Eastern Conference #1 Seed",
+    "category": "basketball",
+    "closes": "2027-06-01"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "NBA: 2026-27 Eastern Conference #1 Seed",
+    "category": "basketball",
+    "closes": "2027-04-26"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi resolves 2027-06-01 while Polymarket resolves 2027-04-26, a gap of about five weeks, so the settlement and cutoff windows do not match.; same resolution rule: Neither market includes a description, so tiebreaker handling, seed-finalization timing and treatment of unlisted teams cannot be verified, and the outcome counts differ (15 vs 16).",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Philadelphia",
+     "polymarket": "Philadelphia 76ers"
+    },
+    {
+     "kalshi": "Boston",
+     "polymarket": "Boston Celtics"
+    },
+    {
+     "kalshi": "Detroit",
+     "polymarket": "Detroit Pistons"
+    }
+   ]
+  },
+  {
+   "id": "pair-59164860-65682566",
+   "title": "NHL Metropolitan Division Winner",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets cover the 2026-27 NHL Metropolitan Division winner with matching team names, but the settlement dates differ by about 2.5 days, the outcome counts differ (8 vs 9), and neither market has a description, so they are not confirmed twins for the explicit register.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "NHL Metropolitan Division Winner",
+    "category": "hockey",
+    "closes": "2027-04-17"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "NHL: 2026-27 Metropolitan Division Winner",
+    "category": "hockey",
+    "closes": "2027-04-20"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi resolves 2027-04-17 14:00 UTC while Polymarket resolves 2027-04-20 03:59 UTC, a gap of about 2.5 days, so the settlement windows are not identical.; same resolution rule: Neither market provides a description, and the outcome counts differ (8 vs 9), so the field and any extra or other-team rungs may settle differently and the rule cannot be verified as equivalent.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Carolina Hurricanes",
+     "polymarket": "Carolina Hurricanes"
+    },
+    {
+     "kalshi": "New Jersey Devils",
+     "polymarket": "New Jersey Devils"
+    },
+    {
+     "kalshi": "Washington Capitals",
+     "polymarket": "Washington Capitals"
+    }
+   ]
+  },
+  {
+   "id": "pair-63135159-60552214",
+   "title": "Worlds 2026 Finals MVP",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets cover Worlds 2026 Finals MVP with matching leaders Chovy (0.165 vs 0.18) and Ruler (0.095 vs 0.1065), but the deadlines differ by two weeks, the outcome lists differ in size, and no rules text is available, so they should not be blended as twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Worlds 2026 Finals MVP",
+    "category": "esports",
+    "closes": "2026-11-15"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Worlds 2026: Finals MVP",
+    "category": "esports",
+    "closes": "2026-11-29"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi lists a resolution date of 2026-11-15 15:00 UTC while Polymarket lists 2026-11-29 04:59 UTC, a gap of about two weeks in the settlement windows.; same resolution rule: Neither market provides a description or rules text, and the outcome sets differ (59 vs 51 outcomes), so identical settlement of the winner and of any field, 'other' or no-award handling cannot be confirmed.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Chovy",
+     "polymarket": "Chovy"
+    },
+    {
+     "kalshi": "Ruler",
+     "polymarket": "Ruler"
+    }
+   ]
+  },
+  {
+   "id": "pair-108594-113340",
+   "title": "US real GDP growth in 2026?",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi and Polymarket markets both cover 2026 US GDP growth, but their bin boundaries, rung counts and settlement dates differ, and the prices diverge sharply (77.75% vs 49.5% for the central bin), so they are not safe twins for blending in the register.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "US real GDP growth in 2026?",
+    "category": "economics",
+    "closes": "2027-02-28"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "GDP growth in 2026",
+    "category": "economics",
+    "closes": "2027-01-29"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi resolves 2027-02-28 while Polymarket resolves 2027-01-29, so the settlement windows differ by about a month and may use different GDP data releases (advance vs. later estimate).; same resolution rule: Kalshi uses 0.5-point bins (1.6-2.0%, 2.1-2.5%, 2.6-3.0%) with 14 rungs, while Polymarket uses 2.0-2.5%, >2.5% and 1.5-2.0% with 6 rungs, so the thresholds and boundaries do not align and the bins cannot be mapped one-to-one.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "2.1% to 2.5%",
+     "polymarket": "2.0–2.5%"
+    },
+    {
+     "kalshi": "1.6% to 2.0%",
+     "polymarket": "1.5–2.0%"
+    }
+   ]
+  },
+  {
+   "id": "pair-65521769-65677920",
+   "title": "Pro Basketball Steals Per Game (SPG) Leader",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets cover the NBA steals per game leader with 61 outcomes each and shared top candidates, but the resolution dates differ (2027-07-01 vs 2027-04-26) and neither market documents its settlement rules, so the pair is not a verified twin.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Pro Basketball Steals Per Game (SPG) Leader",
+    "category": "basketball",
+    "closes": "2027-07-01"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "NBA: 2026-27 Steals Per Game Leader",
+    "category": "basketball",
+    "closes": "2027-04-26"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: The Kalshi market has a 2027-07-01 resolution date, while the Polymarket market has 2027-04-26, a gap of more than two months, so the settlement windows differ.; same resolution rule: Neither market has a description, so the rules for minimum games played, tie handling and the stats source cannot be confirmed as identical, and the different cutoffs suggest different settlement mechanics.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Dyson Daniels",
+     "polymarket": "Dyson Daniels"
+    },
+    {
+     "kalshi": "Ausar Thompson",
+     "polymarket": "Ausar Thompson"
+    }
+   ]
+  },
+  {
+   "id": "pair-65521775-65677937",
+   "title": "Pro Basketball Assists Per Game (APG) Leader",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets cover the NBA assists-per-game leader with matching top candidates, but the settlement dates differ (Kalshi 2027-07-01 vs Polymarket 2027-04-26) and neither market publishes rules text, so they cannot be treated as verified twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Pro Basketball Assists Per Game (APG) Leader",
+    "category": "basketball",
+    "closes": "2027-07-01"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "NBA: 2026-27 Assists Per Game Leader",
+    "category": "basketball",
+    "closes": "2027-04-26"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi's market resolves 2027-07-01 while Polymarket's resolves 2027-04-26, a gap of about two months, so the settlement windows do not match.; same resolution rule: Neither market has a description, so the qualification rules (minimum games played, regular season versus playoffs, tie handling) cannot be confirmed as identical.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Trae Young",
+     "polymarket": "Trae Young"
+    },
+    {
+     "kalshi": "Nikola Jokić",
+     "polymarket": "Nikola Jokic"
+    },
+    {
+     "kalshi": "Tyrese Haliburton",
+     "polymarket": "Tyrese Haliburton"
+    }
+   ]
+  },
+  {
+   "id": "pair-5869748-57366460",
+   "title": "Oscar winner: Best Actress",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets cover the 2027 Oscars Best Actress winner with matching top outcomes, but the resolution dates differ (2027-12-31 vs 2027-07-01), outcome counts differ (19 vs 18), and no rules text is provided, so the pair is not confirmed as a true twin for blending.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Oscar winner: Best Actress",
+    "category": "entertainment",
+    "closes": "2027-12-31"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Oscars 2027: Best Actress Winner",
+    "category": "entertainment",
+    "closes": "2027-07-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi lists a resolution date of 2027-12-31 while Polymarket lists 2027-07-01, so the settlement windows differ by about six months even though both likely track the same ceremony.; same resolution rule: No resolution descriptions are given for either market, and the outcome sets differ (19 vs 18 outcomes, with Zendaya listed on Kalshi and Sandra Hüller on Polymarket), so identical settlement of every outcome cannot be verified.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Julianne Moore",
+     "polymarket": "Julianne Moore"
+    },
+    {
+     "kalshi": "Inde Navarrette",
+     "polymarket": "Inde Navarrette"
+    }
+   ]
+  },
+  {
+   "id": "pair-6173044-57313556",
+   "title": "Oscar Winner: Best Picture",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets target the 2027 Oscars Best Picture winner with matching top outcomes, but the resolution dates differ (2027-12-31 vs 2027-07-01), outcome counts differ (41 vs 27) and no rules text is available, so the pair is not a verified twin.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Oscar Winner: Best Picture",
+    "category": "entertainment",
+    "closes": "2027-12-31"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Oscars 2027: Best Picture Winner",
+    "category": "entertainment",
+    "closes": "2027-07-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi lists a resolution date of 2027-12-31 while Polymarket lists 2027-07-01, so the settlement cutoff windows differ by about six months even though both likely cover the same ceremony.; same resolution rule: Neither market provides a description or rules text, and the outcome counts differ (41 vs 27), so identical winner settlement and outcome-set coverage cannot be verified.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "The Odyssey",
+     "polymarket": "The Odyssey"
+    },
+    {
+     "kalshi": "You Can See Everything",
+     "polymarket": "You Can See Everything"
+    },
+    {
+     "kalshi": "The Black Ball",
+     "polymarket": "La Bola Negra"
+    }
+   ]
+  },
+  {
+   "id": "pair-108599-113386",
+   "title": "How high will inflation get this year?",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi and Polymarket markets cover similar 2026 peak-inflation ladders, but they differ in inclusive vs strict thresholds, resolution dates (Feb 14 vs Feb 1, 2027) and rung counts (9 vs 8), so they should not be blended as exact twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "How high will inflation get this year?",
+    "category": "economics",
+    "closes": "2027-02-14"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "How high will inflation get in 2026?",
+    "category": "economics",
+    "closes": "2027-02-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: The Kalshi market resolves 2027-02-14 and the Polymarket market resolves 2027-02-01, so the settlement windows differ by about 13 days and could capture different data releases.; same resolution rule: Kalshi rungs are inclusive ('At least X%') while Polymarket rungs are strict ('Above X%'), so a reading exactly at a threshold would settle the two markets differently.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "At least 4.0%",
+     "polymarket": "Above 4%"
+    },
+    {
+     "kalshi": "At least 3.5%",
+     "polymarket": "Above 3.5%"
+    },
+    {
+     "kalshi": "At least 3.0%",
+     "polymarket": "Above 3%"
+    }
+   ]
+  },
+  {
+   "id": "pair-8122712-56933329",
+   "title": "Coach of the Year Winner?",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The markets look like probable twins on the NFL Coach of the Year with matching top candidates and close prices, but the deadlines differ, the rules are unverified and the outcome counts differ, so they should not be blended as confirmed twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Coach of the Year Winner?",
+    "category": "football",
+    "closes": "2027-03-30"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Pro Football: 2026-27 AP Coach of the Year Winner",
+    "category": "football",
+    "closes": "2027-03-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: The Kalshi market resolves 2027-03-30 while the Polymarket market resolves 2027-03-01, so the settlement windows differ by about a month.; same resolution rule: Neither market provides a description, and the Kalshi market does not state the AP award as its source, so identical settlement rules cannot be confirmed; the outcome sets also differ (33 vs 9).",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "John Harbaugh",
+     "polymarket": "John Harbaugh"
+    },
+    {
+     "kalshi": "Ben Johnson",
+     "polymarket": "Ben Johnson"
+    }
+   ]
+  },
+  {
+   "id": "pair-57774278-63490289",
+   "title": "Serie A: Team Points",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Kalshi Serie A Team Points market (80 team-threshold outcomes, resolves 2027-05-31) cannot be verified as a twin of the Polymarket 2026-27 Team Points market, which has no outcomes or rules and resolves 2027-06-14, so it is not registered as a twin.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Serie A: Team Points",
+    "category": "soccer",
+    "closes": "2027-05-31"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Serie A: 2026-27 Team Points",
+    "category": "soccer",
+    "closes": "2027-06-14"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi resolves 2027-05-31T02:00Z while Polymarket resolves 2027-06-14T03:59Z, a gap of about two weeks, so the settlement windows do not match.; same resolution rule: Kalshi settles per-team inclusive point-threshold rungs (e.g. 'Lazio: 50+ Points'), while the Polymarket market has no outcomes or rules to confirm the same rungs or settlement method.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-65521771-65677938",
+   "title": "Pro Basketball Points Per Game (PPG) Leader",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi and Polymarket PPG leader markets look like the same topic with matching 50-outcome lists and similar Luka Doncic pricing, but the resolution dates differ (2027-07-01 vs 2027-04-26) and neither market has a description, so they cannot be registered as verified twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Pro Basketball Points Per Game (PPG) Leader",
+    "category": "basketball",
+    "closes": "2027-07-01"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "NBA: 2026-27 Points Per Game Leader",
+    "category": "basketball",
+    "closes": "2027-04-26"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: The Kalshi market resolves 2027-07-01 while the Polymarket market resolves 2027-04-26, a gap of about two months, so the settlement windows do not match.; same resolution rule: Both descriptions are null, so the rules for settling the winner (season scope, minimum games played, tie handling, data source) cannot be compared, and the differing resolution dates suggest different settlement timing.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Luka Dončić",
+     "polymarket": "Luka Doncic"
+    }
+   ]
+  },
+  {
+   "id": "pair-65521856-63068098",
+   "title": "NHL: Worst Regular Season Record",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Both markets cover the 32-team NHL bottom-of-standings outcome and Vancouver and Chicago match, but the cutoffs differ by about 34 hours and the tiebreak rules are undocumented, so the pair is not registered as a verified twin.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "NHL: Worst Regular Season Record",
+    "category": "hockey",
+    "closes": "2027-05-01"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "NHL: Fewest Regular Season Points",
+    "category": "hockey",
+    "closes": "2027-04-30"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same deadline: Kalshi's market closes 2027-05-01 14:00 UTC and Polymarket's closes 2027-04-30 03:59 UTC, so the cutoffs differ by about 34 hours and neither is tied to a stated settlement trigger.; same resolution rule: Neither market gives a description, so the tiebreaker for teams level on points (and whether 'record' means points, wins or points percentage) cannot be confirmed to match.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Vancouver Canucks",
+     "polymarket": "Vancouver Canucks"
+    },
+    {
+     "kalshi": "Chicago Blackhawks",
+     "polymarket": "Chicago Blackhawks"
+    }
+   ]
+  },
+  {
+   "id": "pair-1630482-113339",
+   "title": "Fed rate cut before 2027?",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Not twins: the Kalshi market on any Fed rate cut before 2027 (2.65%) is broader than the Polymarket market on an emergency cut only (1.7%), despite matching deadlines, so the two should not be blended in the twin register.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Fed rate cut before 2027?",
+    "category": "economics",
+    "closes": "2027-01-01"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Fed emergency rate cut before 2027?",
+    "category": "economics",
+    "closes": "2027-01-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: The Kalshi market covers any Fed rate cut before 2027, while the Polymarket market covers only an emergency (unscheduled) rate cut, which is a narrower event.; same resolution rule: The Kalshi market would settle Yes on any scheduled or emergency cut, whereas the Polymarket market settles Yes only on an emergency cut, so the settlement triggers differ and no descriptions confirm otherwise.",
+   "outcome_aliases_seen": [
+    {
+     "kalshi": "Yes",
+     "polymarket": "Yes"
+    }
+   ]
+  },
+  {
+   "id": "pair-60481116-64564201",
+   "title": "Wild Horse Nine · Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "Kalshi market is a multi-rung 'Above X' Rotten Tomatoes ladder for Wild Horse Nine, while the Polymarket market is a single inclusive 87+ binary; the deadlines match but the thresholds do not, so the markets are not twins for the register.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Wild Horse Nine · Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Will \"Wild Horse Nine\" score at least 87 on the Rotten Tomatoes Tomatometer?",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: The Kalshi market is a multi-rung Rotten Tomatoes score ladder (Above 50, 65, 85 and others) for Wild Horse Nine, while the Polymarket market is a single binary on a score of at least 87, a threshold the visible Kalshi rungs do not match.; same resolution rule: Kalshi settles on strict 'Above X' rungs (visible ones are 50, 65, 85), while Polymarket settles on an inclusive 'at least 87' threshold, so no rung matches and the rules differ.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-62383659-65563522",
+   "title": "Godzilla Minus Zero · Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi ladder market (Above 45/50/65 shown, 13 outcomes) and the Polymarket binary market (at least 80) share a deadline but have no matching threshold, so they are not twins for the register.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Godzilla Minus Zero · Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Will \"Godzilla Minus Zero\" score at least 80 on the Rotten Tomatoes Tomatometer?",
+    "category": "entertainment",
+    "closes": "2026-11-09"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: Both markets concern the Rotten Tomatoes score for Godzilla Minus Zero, but the Kalshi market is a multi-rung ladder (shown rungs Above 45, 50, 65) while the Polymarket market is a single binary on a score of at least 80.; same resolution rule: Kalshi rungs use strict 'Above X' thresholds at 45, 50 and 65, none of which match Polymarket's inclusive 'at least 80' threshold, so no rung settles identically.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-67804800-65843299",
+   "title": "October 2026 CPI MoM Combo · Headline & Core",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi market is a 16-outcome headline and core CPI combo, while the Polymarket market is a 7-outcome core-only CPI market, so the two should not be blended as twins in the register.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "October 2026 CPI MoM Combo · Headline & Core",
+    "category": "economics",
+    "closes": "2026-11-10"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Core CPI MoM - October 2026",
+    "category": "economics",
+    "closes": "2026-11-11"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: The Kalshi market is a combined headline and core CPI MoM outcome for October 2026, while the Polymarket market covers core CPI MoM alone, so they are not the same proposition.; same resolution rule: Kalshi rungs are joint headline-and-core combinations (e.g. Headline 0.2% and Core 0.3%), while Polymarket rungs are single core CPI buckets, so winners settle on different conditions.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-5398277-63624402",
+   "title": "Avengers: Doomsday: Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi Rotten Tomatoes ladder market (Above 45/50/55 shown) and the Polymarket 'at least 70' binary market share a film and date but have different thresholds and rung semantics, so they are not twins for blending.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Avengers: Doomsday: Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-12-21"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Will \"Avengers: Doomsday\" score at least 70 on the Rotten Tomatoes Tomatometer?",
+    "category": "entertainment",
+    "closes": "2026-12-21"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: Both markets concern the Rotten Tomatoes score for Avengers: Doomsday, but the Kalshi market is a multi-rung score ladder (shown rungs Above 45, 50, 55) while the Polymarket market is a single binary on a score of at least 70.; same resolution rule: Kalshi settles each rung on a strict 'Above X' threshold (45, 50, 55 shown), whereas Polymarket settles Yes on an inclusive 'at least 70' threshold, and no displayed Kalshi rung matches 70.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-61484909-67734798",
+   "title": "I Play Rocky · Rotten Tomatoes score",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi market is a strict 'Above' ladder (45/50/55 shown) and the Polymarket market is a single inclusive 60+ binary; no visible rung matches, so the two markets are not verified twins despite the same resolution date.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "I Play Rocky · Rotten Tomatoes score",
+    "category": "entertainment",
+    "closes": "2026-11-23"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Will \"I Play Rocky\" score at least 60 on the Rotten Tomatoes Tomatometer?",
+    "category": "entertainment",
+    "closes": "2026-11-23"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: Both markets concern the Rotten Tomatoes score for I Play Rocky, but the Kalshi market is a multi-threshold ladder (shown rungs 45, 50, 55) while the Polymarket market is a single 'at least 60' threshold, and no matching 60 rung is visible.; same resolution rule: Kalshi rungs settle on strict 'Above X' thresholds (45/50/55 shown), whereas Polymarket settles Yes on an inclusive 'at least 60' Tomatometer score, so the thresholds and strict-versus-inclusive wording do not align.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-65536411-63501820",
+   "title": "Las Vegas Pro Basketball Expansion Franchise Price",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi market uses cumulative above-threshold rungs for the franchise price, while the Polymarket market uses discrete bands for franchise and arena price with no matching thresholds and no probabilities, so the two markets are not verified twins and should not be blended.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Las Vegas Pro Basketball Expansion Franchise Price",
+    "category": "basketball",
+    "closes": "2027-01-01"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Las Vegas NBA franchise and arena price?",
+    "category": "basketball",
+    "closes": "2027-01-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: The Kalshi market tracks the Las Vegas expansion franchise price using 'Above $X billion' thresholds, while the Polymarket market covers a combined 'franchise and arena' price, so the two may not measure the same quantity.; same resolution rule: Kalshi uses cumulative 'Above $X billion' rungs, while Polymarket uses discrete price bands ($13B-$14B, <$11B) with a gap between them and no shared thresholds, so the rungs do not align.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-52755800-65677900",
+   "title": "Pro Basketball Players Traded",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi market (58 outcomes, sample players Dort, Ingram, Leonard at 1.0) and the Polymarket market (5 outcomes, Thompson, Irving, Embiid) share a resolution date but have no overlapping listed players, scope, or documented rules, so they are not confirmed twins.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Pro Basketball Players Traded",
+    "category": "basketball",
+    "closes": "2027-02-12"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "NBA: Players to be Traded Before the 2027 Trade Deadline",
+    "category": "basketball",
+    "closes": "2027-02-12"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: The Kalshi market covers a broad set of 58 pro basketball players traded, with sample outcomes already at 1.0, while the Polymarket market covers a 5-outcome list of NBA players to be traded before the 2027 deadline, so the player sets and scope differ.; same resolution rule: No descriptions or rules are provided for either market, and the Kalshi outcomes at 1.0 suggest a different or already-settled trade criterion versus Polymarket's pending per-player trade-before-deadline outcomes, so settlement rules cannot be confirmed as equivalent.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-12924898-68691945",
+   "title": "Recession in 2027?",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "The Kalshi market is a standalone 2027 recession market, while the Polymarket market is a joint Dem sweep and recession market, so they are related but not true twins and should not be blended in the twin register without a derived marginal.",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Recession in 2027?",
+    "category": "economics",
+    "closes": "2028-01-31"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Dem sweep & US recession by end of 2027?",
+    "category": "economics",
+    "closes": "2028-02-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: The Kalshi market asks only whether a recession occurs in 2027, while the Polymarket market is a joint outcome of a Democratic sweep and a US recession, so the two are not the same proposition.; same resolution rule: The Kalshi market settles on a single binary recession outcome, while the Polymarket market is a four-way combination of a sweep and a recession, so the Yes outcome would require summing the recession legs across both sweep states.",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-207-7448404",
+   "title": "NL Rookie of the Year Winner",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "",
+   "a": {
+    "venue": "Kalshi",
+    "title": "NL Rookie of the Year Winner",
+    "category": "baseball",
+    "closes": "2026-12-08"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "MLB: NL Rookie of the Year",
+    "category": "baseball",
+    "closes": "2027-01-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: ; same deadline: ; same resolution rule: ",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-214-7448386",
+   "title": "AL Rookie of the Year Winner",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "",
+   "a": {
+    "venue": "Kalshi",
+    "title": "AL Rookie of the Year Winner",
+    "category": "baseball",
+    "closes": "2026-12-08"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "MLB: AL Rookie of the Year",
+    "category": "baseball",
+    "closes": "2027-01-01"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: ; same deadline: ; same resolution rule: ",
+   "outcome_aliases_seen": []
+  },
+  {
+   "id": "pair-109657-57574250",
+   "title": "Fed decision in Dec 2026?",
+   "ask": "Same market, near-twin (same thing, different rules or dates), related, or different?",
+   "answers": [
+    "same market",
+    "near-twin",
+    "related",
+    "different"
+   ],
+   "context": "",
+   "a": {
+    "venue": "Kalshi",
+    "title": "Fed decision in Dec 2026?",
+    "category": "economics",
+    "closes": "2026-12-09"
+   },
+   "b": {
+    "venue": "Polymarket",
+    "title": "Fed Decision in December?",
+    "category": "economics",
+    "closes": "2026-12-10"
+   },
+   "frozen_relation": "not linked (candidate from the Nov twin-register batch, model confidence: low)",
+   "why_uncertain": "same proposition: ; same deadline: ; same resolution rule: ",
+   "outcome_aliases_seen": []
+  }
+ ]
+}
