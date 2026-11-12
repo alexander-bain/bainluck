@@ -9,7 +9,7 @@ import Foundation
 ///
 /// ```
 /// "source_mark": {
-///   "state": "blend" | "settled" | "none",
+///   "state": "blend" | "single" | "settled" | "none",
 ///   "sources": [{"key", "name", "probability", "observed_at", "count"?}],
 ///   "settled": {"source", "result", "at"}
 /// }
@@ -19,7 +19,7 @@ import Foundation
 /// source, never the prop row it rides on, and an unknown `state` reads as
 /// ``State/unknown``, which draws no mark.
 nonisolated struct SourceMark: Decodable, Equatable, Sendable {
-    enum State: Equatable, Sendable { case blend, settled, none, unknown }
+    enum State: Equatable, Sendable { case blend, single, settled, none, unknown }
 
     nonisolated struct Source: Decodable, Equatable, Sendable {
         let key: String
@@ -63,6 +63,7 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
         }
         switch (try? c.decodeIfPresent(String.self, forKey: .state)) ?? nil {
         case "blend": state = .blend
+        case "single": state = .single
         case "settled": state = .settled
         case "none": state = .none
         default: state = .unknown
@@ -73,11 +74,12 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
     }
 
     /// Does this mark draw at all? Only when the sheet would have something to
-    /// say: a blend with at least one source, or a settled result. "none", an
-    /// unknown state and an empty blend draw nothing — never an empty sheet.
+    /// say: a blend or single-venue mark with at least one source, or a settled
+    /// result. "none", an unknown state and an empty mark draw nothing — never
+    /// an empty sheet.
     var draws: Bool {
         switch state {
-        case .blend: return !sources.isEmpty
+        case .blend, .single: return !sources.isEmpty
         case .settled: return settled != nil || !sources.isEmpty
         case .none, .unknown: return false
         }

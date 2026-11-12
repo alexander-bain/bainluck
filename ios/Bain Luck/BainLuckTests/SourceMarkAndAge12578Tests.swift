@@ -58,14 +58,41 @@ final class SourceMark12581Tests: XCTestCase {
     func testTheSheetRepeatsTheNumberAndSaysHowItWasMade() throws {
         let blend = try XCTUnwrap(try decode(fixture()).sourceMark)
         XCTAssertEqual(SourceMarkSheet.headline(0.624), "62%")
+        XCTAssertEqual(SourceMarkSheet.headline(0.996), ">99%", "a live number never prints 100%")
+        XCTAssertEqual(SourceMarkSheet.headline(0.004), "<1%", "a live number never prints 0%")
         XCTAssertNil(SourceMarkSheet.headline(nil))
         XCTAssertEqual(SourceMarkSheet.method(blend), "Bain Luck blend, weighted by freshness and depth")
+        let extremes = SourceMark(state: .blend, sources: [
+            .init(key: "kalshi", name: "Kalshi", probability: 0.996, observedAt: nil),
+            .init(key: "polymarket", name: "Polymarket", probability: 0.004, observedAt: nil)])
+        XCTAssertEqual(SourceMarkSheet.lines(extremes, now: now), [
+            .init(name: "Kalshi", price: ">99%", age: nil),
+            .init(name: "Polymarket", price: "<1%", age: nil),
+        ])
         let prop = SourceMark(state: .blend, sources: [
             .init(key: "kalshi", name: "Kalshi", probability: 0.62, observedAt: nil)])
         XCTAssertEqual(SourceMarkSheet.method(prop), "Kalshi's price", "one venue is named, never called a blend")
         XCTAssertEqual(SourceMarkSheet.lines(prop, now: now), [.init(name: "Kalshi", price: "62%", age: nil)],
                        "no observation time, no age")
         XCTAssertNil(SourceMarkSheet.method(SourceMark(state: .settled, sources: [], settled: .init(source: "kalshi", result: "Yes", at: nil))))
+    }
+
+    func testASingleSourceStateDecodesAndDrawsLikeAOneVenueMark() throws {
+        let json = """
+        {"market_name": "New England vs Detroit: Touchdowns", "outcome_name": "Drake Maye: 1+",
+         "threshold": 1, "over_probability": 0.62, "source": "kalshi", "movement": null,
+         "player_headshot": null, "player_team": null, "actual": null, "hit": null, "pregame_mark": null,
+         "source_mark": {"state": "single",
+           "sources": [{"key": "kalshi", "name": "Kalshi", "probability": 0.62, "observed_at": "\(stamp(64))"}],
+           "settled": null}}
+        """.data(using: .utf8)!
+        let mark = try XCTUnwrap(try decode(json).sourceMark)
+        XCTAssertEqual(mark.state, .single)
+        XCTAssertTrue(mark.draws)
+        XCTAssertNotNil(SourceMarkButton(mark, number: 0.62, numberSize: 20))
+        XCTAssertEqual(SourceMarkSheet.lines(mark, now: now), [.init(name: "Kalshi", price: "62%", age: "1m ago")])
+        XCTAssertEqual(SourceMarkSheet.method(mark), "Kalshi's price")
+        XCTAssertNil(SourceMarkButton(SourceMark(state: .single, sources: []), numberSize: 20))
     }
 
     func testTheMarkIsTheInfoRing() throws {

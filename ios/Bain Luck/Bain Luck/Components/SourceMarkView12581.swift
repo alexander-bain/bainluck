@@ -67,14 +67,14 @@ struct SourceMarkSheet: View {
     static func lines(_ mark: SourceMark, now: Date = Date()) -> [Line] {
         mark.sources.map { source in
             Line(name: source.count.map { "\(source.name) (\($0))" } ?? source.name,
-                 price: source.probability.map { "\(Int(($0 * 100).rounded()))%" },
+                 price: source.probability.map { formatProbability($0) },
                  age: SourceAge.format(source.observedAt, now: now))
         }
     }
 
-    /// The tapped number, as a whole percent: "67%".
+    /// The tapped number, clamped like the row (`formatProbability`: "<1%" / ">99%").
     static func headline(_ number: Double?) -> String? {
-        number.map { "\(Int(($0 * 100).rounded()))%" }
+        number.map { formatProbability($0) }
     }
 
     /// One line of method under the rows. "Bain Luck blend" only where the
@@ -84,7 +84,7 @@ struct SourceMarkSheet: View {
         switch mark.state {
         case .blend where mark.sources.count > 1:
             return "Bain Luck blend, weighted by freshness and depth"
-        case .blend:
+        case .blend, .single:
             return mark.sources.first.map { "\($0.name)'s price" }
         case .settled:
             return nil
