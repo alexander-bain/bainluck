@@ -83,8 +83,9 @@ async def read_scored_futures(db: Any, now: datetime) -> list[dict]:
 
 
 async def read_market_facts(db: Any, futures_ids: list[int]) -> dict[int, dict]:
-    """Per futures id: the largest |24h move| across its outcomes and the
-    market's ``updated_at``. One indexed read by primary key."""
+    """Per futures id: the largest |24h move| across its outcomes, the market's
+    ``updated_at``, its ``market_tier`` and its stored ``market_tags`` (#11937:
+    the ``stakes:*`` tags live only on the row). One indexed read by primary key."""
     if not futures_ids:
         return {}
     from sqlalchemy import select
@@ -107,8 +108,38 @@ async def read_market_facts(db: Any, futures_ids: list[int]) -> dict[int, dict]:
         facts[market.id] = {
             "movement_24h": max(moves) if moves else None,
             "updated_at": market.updated_at,
+            "market_tier": market.market_tier,
+            "market_tags": list(market.market_tags or []),
         }
     return facts
+
+
+async def read_event_facts(db: Any, event_ids: list[int]) -> dict[int, dict]:
+    """Per event id: the row's stored ``event_tags`` (#11937). A served game card
+    carries only the inline tags, which hold no ``stakes:*``; the event scorer
+    boosts on the stored ones. One indexed read by primary key, two columns."""
+    if not event_ids:
+        return {}
+    from sqlalchemy import select
+
+    from app.models.models import Event
+
+    rows = await db.execute(select(Event.id, Event.event_tags).where(Event.id.in_(event_ids)))
+    return {eid: {"event_tags": list(tags or [])} for eid, tags in rows.all()}
+
+
+def _ids(items: list[dict], kind: str) -> list[int]:
+    """Integer ids of ``kind`` cards among ``items`` and their bundle members."""
+    found: set[int] = set()
+    for it in items:
+        cards = [it]
+        if it.get("type") == "bundle":
+            cards += [m for m in ((it.get("data") or {}).get("items") or []) if isinstance(m, dict)]
+        for card in cards:
+            ident = (card.get("data") or {}).get("id")
+            if card.get("type") == kind and isinstance(ident, int) and not isinstance(ident, bool):
+                found.add(ident)
+    return sorted(found)
 
 
 def _not_captured(result: dict[str, Any]) -> dict[str, Any]:
@@ -125,14 +156,16 @@ async def snapshot_ranking_slate(
     read_deck=read_served_discover_deck,
     read_pool=read_scored_futures,
     read_facts=read_market_facts,
+    read_events=read_event_facts,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Take one slate snapshot. Returns a run summary; never raises past a
     failed read (the summary says what failed). Off unless the switch is on.
 
-    Statuses: ``ok``; ``ok_partial`` (stored, but the candidate pool or the
-    market facts read failed — ``pool_error`` / ``facts_error`` say which, so a
-    failure never reads as an empty pool); ``deck_read_failed``,
+    Statuses: ``ok``; ``ok_partial`` (stored, but the candidate pool, the
+    market facts or the event facts read failed — ``pool_error`` /
+    ``facts_error`` / ``event_facts_error`` say which, so a failure never reads
+    as an empty pool); ``deck_read_failed``,
     ``degraded_deck``, ``empty_deck`` (nothing stored, logged at ERROR)."""
     if not ranking_snapshots_enabled(environ):
         return {"status": "disabled"}
@@ -160,21 +193,24 @@ async def snapshot_ranking_slate(
         pool_error = str(exc)[:200]
         logger.error("ranking slate: candidate pool read failed: %s", pool_error)
         pool = []
-    futures_ids = sorted(
-        {
-            int((it.get("data") or {})["id"])
-            for it in [*served, *pool]
-            if it.get("type") == "futures" and isinstance((it.get("data") or {}).get("id"), int)
-        }
-    )
+    futures_ids = _ids([*served, *pool], "futures")
     try:
         facts = await read_facts(db, futures_ids)
     except Exception as exc:  # noqa: BLE001 — card payload features still stand
         facts_error = str(exc)[:200]
         logger.error("ranking slate: market facts read failed: %s", facts_error)
         facts = {}
+    event_facts_error = None
+    try:
+        event_facts = await read_events(db, _ids(served, "event"))
+    except Exception as exc:  # noqa: BLE001 — stakes then read unknown, never empty
+        event_facts_error = str(exc)[:200]
+        logger.error("ranking slate: event facts read failed: %s", event_facts_error)
+        event_facts = {}
 
-    served_order, candidates = build_slate(served, pool, now=now, market_facts=facts)
+    served_order, candidates = build_slate(
+        served, pool, now=now, market_facts=facts, event_facts=event_facts
+    )
     version = ranker_version(environ)
     summary = {
         "served_count": len(served_order),
@@ -188,6 +224,7 @@ async def snapshot_ranking_slate(
         "not_stored": ["movement_1h", "movement_7d"],
         "pool_error": pool_error,
         "facts_error": facts_error,
+        "event_facts_error": event_facts_error,
     }
     row_id = str(uuid4())
     db.add(
@@ -209,7 +246,7 @@ async def snapshot_ranking_slate(
     )
     await db.commit()
     return {
-        "status": "ok_partial" if (pool_error or facts_error) else "ok",
+        "status": "ok_partial" if (pool_error or facts_error or event_facts_error) else "ok",
         "id": row_id,
         "slate_id": str(edition)[:SLATE_ID_MAX],
         "ranker_version": version,
