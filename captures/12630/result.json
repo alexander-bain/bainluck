@@ -1,0 +1,123 @@
+{
+  "event_id": 14639206,
+  "status": "scheduled",
+  "player_props": 169,
+  "typed_player_props": 165,
+  "team_field_goals": 4,
+  "protected_visible": 0,
+  "duplicate_typed_lines": 0,
+  "prop_sources": {
+    "kalshi": 154,
+    "bainluck": 15
+  },
+  "prop_mark_states": {
+    "blend": 165,
+    "none": 4
+  },
+  "props_script": 169,
+  "withheld_diagnostics": 153,
+  "withheld_reasons": {
+    "protected_contract_not_standard": 153
+  },
+  "primary_sections": {
+    "player_props": {
+      "rows": 169,
+      "marked": 169
+    },
+    "totals": {
+      "rows": 31,
+      "marked": 31
+    },
+    "team_totals": {
+      "rows": 62,
+      "marked": 62
+    },
+    "spreads": {
+      "rows": 90,
+      "marked": 90
+    },
+    "period_markets": {
+      "rows": 221,
+      "marked": 221
+    },
+    "closed_period_markets": {
+      "rows": 0,
+      "marked": 0
+    },
+    "matchups": {
+      "rows": 0,
+      "marked": 0
+    },
+    "other": {
+      "rows": 81,
+      "marked": 81
+    }
+  },
+  "uncompressed_bytes": 1298737,
+  "formerly_doubled_line": {
+    "market_name": "New England Patriots vs Detroit Lions: Passing Touchdowns",
+    "outcome_name": "Drake Maye: 1+",
+    "over_probability": 0.86,
+    "source_mark": {
+      "state": "blend",
+      "sources": [
+        {
+          "key": "kalshi",
+          "name": "Kalshi",
+          "probability": 0.86,
+          "observed_at": "2026-11-12T15:34:31.711632Z"
+        }
+      ]
+    }
+  },
+  "before_rows": 307,
+  "before_protected": 142,
+  "before_standard": 165,
+  "retained_standard_lines": 165,
+  "new_standard_lines": 0,
+  "missing_standard_lines": 0,
+  "new_team_field_goal_rows": 4,
+  "before_uncompressed_bytes": 1351182,
+  "before_gzip_bytes": 76496,
+  "after_gzip_bytes": 72329,
+  "production_commit": "6506ee40eb85127ad6d7ef51e94161a3dc72e64a",
+  "master_ci": 43245415007,
+  "served_healthy_at": "2026-11-12T15:38:03.910289+00:00",
+  "web_viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "browser_checks": [
+    "standard Passing Touchdowns category; Drake Maye 1+ once at 86%",
+    "Lions team link loads populated Detroit page",
+    "browser Back returns populated game",
+    "Refresh returns populated standard props"
+  ],
+  "known_followups": [
+    "Four new Team Field Goals rows are in player_props without player/stat/line objects; not part of the typed-player count",
+    "single-source marks still say blend pending #12581 follow-up",
+    "installed 5704 capture is separate from this web proof"
+  ],
+  "captures": [
+    {
+      "file": "before-props-390.png",
+      "captured_at": "2026-11-12T15:01:04.803040+00:00"
+    },
+    {
+      "file": "after-props-390.png",
+      "captured_at": "2026-11-12T15:39:19.771256+00:00"
+    },
+    {
+      "file": "after-team-390.png",
+      "captured_at": "2026-11-12T15:40:06.395879+00:00"
+    },
+    {
+      "file": "after-back-390.png",
+      "captured_at": "2026-11-12T15:40:14.652270+00:00"
+    },
+    {
+      "file": "after-refresh-390.png",
+      "captured_at": "2026-11-12T15:40:58.971479+00:00"
+    }
+  ]
+}
