@@ -2329,6 +2329,27 @@ def discover_base_running() -> bool:
         return False
 
 
+def start_section_report() -> None:
+    """#12042: open this hour's report before any section is sent. Never raises.
+
+    Sections merge into the report already in Redis, so without a fresh one each
+    hour a section that never ran (the worker killed first) would keep last
+    hour's ``ok`` under this hour's ``generated_at``, and the rail would read it
+    as fresh and complete. Every section starts ``not_attempted``.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    order = category_section_names()
+    _write_precompute_report(
+        {
+            "mode": "per_section",
+            "started_at": now,
+            "generated_at": now,
+            "sections": {n: {"outcome": "not_attempted"} for n in order},
+            "section_order": order,
+        }
+    )
+
+
 def _merge_section_report(name: str, entry: dict, started_at: str) -> None:
     """#12042: fold one section's result into the shared run report. Never raises.
 

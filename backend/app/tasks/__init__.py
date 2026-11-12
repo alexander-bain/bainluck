@@ -7128,9 +7128,15 @@ def precompute_category_pages(self):
     this task in flight at 2:28, 5:26 and 7:27 AM PT on Nov 12. One task per
     section lets the worker recycle a child between sections.
     """
-    from app.tasks.precompute_category_pages import category_section_names
+    from app.tasks.precompute_category_pages import (
+        category_section_names,
+        start_section_report,
+    )
 
     names = category_section_names()
+    # This hour's report first: a section that never lands reads not_attempted,
+    # never last hour's ok (Fable's review, 10:38 AM Nov 12).
+    start_section_report()
     for name in names:
         precompute_category_section.apply_async(args=[name], queue="background")
     return {"status": "dispatched", "sections": names}

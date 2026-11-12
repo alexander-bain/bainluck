@@ -74,6 +74,9 @@ class _Redis:
     def set(self, key, value, ex=None):
         self.store[key] = value
 
+    def setex(self, key, ttl, value):
+        self.store[key] = value
+
     def get(self, key):
         return self.store.get(key)
 
@@ -237,3 +240,34 @@ def test_the_base_build_holds_the_flag_while_it_runs(monkeypatch, rc):
     TASKS["app.tasks.precompute_discover_candidate_base"].run()
     assert seen == [True]
     assert pcp.discover_base_running() is False
+
+
+@pytest.mark.asyncio
+async def test_a_section_that_never_lands_reads_not_attempted_next_hour(monkeypatch, rc):
+    """Fable's probe (10:38 AM Nov 12): hour 1 all seven land; hour 2 only
+    politics lands before the worker dies. Without a fresh report each hour the
+    other six kept hour 1's ok under hour 2's generated_at."""
+    async def _ok(*a):
+        return {}
+
+    names = pcp.category_section_names()
+    monkeypatch.setattr(pcp, "_category_sections", lambda: [(n, _ok) for n in names])
+    monkeypatch.setattr(TASKS["app.tasks.precompute_category_section"], "apply_async", lambda *a, **k: None)
+    dispatch = TASKS["app.tasks.precompute_category_pages"]
+
+    dispatch.run()  # hour 1
+    for name in names:
+        await pcp._precompute_all_category_pages(only=name)
+    hour1 = _report(rc)
+    assert all(v["outcome"] == "ok" for v in hour1["sections"].values())
+
+    dispatch.run()  # hour 2
+    opened = _report(rc)
+    assert all(v == {"outcome": "not_attempted"} for v in opened["sections"].values())
+    await pcp._precompute_all_category_pages(only="politics")
+
+    hour2 = _report(rc)
+    assert hour2["sections"]["politics"]["outcome"] == "ok"
+    assert all(hour2["sections"][n] == {"outcome": "not_attempted"} for n in names if n != "politics")
+    assert hour2["started_at"] == opened["started_at"]
+    assert hour2["started_at"] >= hour1["started_at"]
