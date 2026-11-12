@@ -1113,3 +1113,114 @@ class TestEveryGatePassOrFail:
         assert len(grouped_indices) == 7
         for a, b in zip(grouped_indices, grouped_indices[1:]):
             assert b - a >= 2, f"Adjacent grouped cards at indices {a} and {b}"
+
+    def test_insert_roundup_feed_items_terminates_with_one_non_sibling_and_pins_2_and_3_order(
+        self,
+    ) -> None:
+        """Regression guard for the Nov 11 production hang: when exactly one
+        non-sibling round-up is paired with sibling-family round-ups, the
+        interleaving loop in ``insert_roundup_feed_items`` must advance and
+        finish within a strict time limit, while preserving the existing
+        interleaving order for 2 and 3 non-siblings.
+        """
+        import signal
+        from app.utils.roundup_containers import (
+            _is_roundup_bundle_card,
+            insert_roundup_feed_items,
+        )
+
+        base_deck = [
+            {
+                "type": "futures",
+                "score": float(100 - idx),
+                "headline": f"Story {idx}",
+                "data": {"id": 6000 + idx, "name": f"Market {idx}", "status": "open"},
+            }
+            for idx in range(25)
+        ]
+
+        def _make_roundup(slug: str, *, sibling: bool) -> dict:
+            return {
+                "type": "bundle",
+                "score": 80.0,
+                "headline": slug,
+                "data": {
+                    "id": f"roundup:{slug}",
+                    "title": slug,
+                    "kind": "roundup",
+                    "story_key": f"roundup:{slug}",
+                    "collection_ref": {
+                        "slug": slug,
+                        "href": f"/collections/{slug}",
+                        "name": slug,
+                        "revision": 1,
+                        "collection_count": 10,
+                    },
+                    "roundup": {
+                        "kicker": "ROUNDUP",
+                        "tag": "SPORTS",
+                        "footer": "Each row is its own market.",
+                        "relations": (
+                            ["same_measure", "same_window", "sibling"]
+                            if sibling
+                            else ["same_window"]
+                        ),
+                        "level": "grouped",
+                        "rows": [
+                            {"label": f"{slug} row {i}", "probability": 0.5 - i * 0.05}
+                            for i in range(3)
+                        ],
+                    },
+                },
+            }
+
+        def _run_with_timeout(roundup_cards: list[dict]) -> list[str]:
+            def _on_alarm(_signum: int, _frame: object) -> None:
+                raise TimeoutError("insert_roundup_feed_items timed out")
+
+            prev_handler = signal.signal(signal.SIGALRM, _on_alarm)
+            signal.setitimer(signal.ITIMER_REAL, 0.5)
+            try:
+                seated = insert_roundup_feed_items(
+                    base_deck,
+                    roundup_cards,
+                    seat_floor=10,
+                    page_window=20,
+                )
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0.0)
+                signal.signal(signal.SIGALRM, prev_handler)
+            return [
+                it["data"]["id"] for it in seated if _is_roundup_bundle_card(it)
+            ]
+
+        ns1 = _make_roundup("ns-1", sibling=False)
+        ns2 = _make_roundup("ns-2", sibling=False)
+        ns3 = _make_roundup("ns-3", sibling=False)
+        sib1 = _make_roundup("sib-1", sibling=True)
+        sib2 = _make_roundup("sib-2", sibling=True)
+
+        # Case 1: 1 non-sibling + 2 siblings (hung infinitely on master)
+        assert _run_with_timeout([ns1, sib1, sib2]) == [
+            "roundup:ns-1",
+            "roundup:sib-1",
+            "roundup:sib-2",
+        ]
+
+        # Case 2: 2 non-siblings + 2 siblings (pins existing order)
+        assert _run_with_timeout([ns1, sib1, ns2, sib2]) == [
+            "roundup:ns-1",
+            "roundup:ns-2",
+            "roundup:sib-1",
+            "roundup:sib-2",
+        ]
+
+        # Case 3: 3 non-siblings + 2 siblings (pins existing order)
+        assert _run_with_timeout([ns1, sib1, ns2, sib2, ns3]) == [
+            "roundup:ns-1",
+            "roundup:ns-2",
+            "roundup:sib-1",
+            "roundup:ns-3",
+            "roundup:sib-2",
+        ]
+
