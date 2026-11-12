@@ -1,9 +1,0 @@
-import {eventReaderTime} from './eventReaderTime';
-import captures from './headlineCaptures.json';
-import {probabilityLabel as pct} from './probabilityLabel';
-export const headlineCapture=(key:string)=>captures.find(c=>c.key===key);
-const clock=(s?:string|null)=>eventReaderTime.full(s,true);
-export function CapturedHeadlineFacts({eventKey,homeChance,awayChance,homeScore,awayScore,projection,historyCount}:{eventKey:string;homeChance:number|null;awayChance:number|null;homeScore:number|null;awayScore:number|null;projection?:{home:number;away:number;at:string;source?:string};historyCount:number}){
- const c=headlineCapture(eventKey);if(!c)return null;
- return <div className="capture-headline-facts"><h3>Pregame expectation</h3><p>{c.home} {pct(c.homeBaseline)}; {c.away} {pct(c.awayBaseline)}. These are the event's opening probabilities. Exact opening observation time is unavailable.</p><h3>Recorded win chance</h3><p>{c.home} {pct(homeChance)}; {c.away} {pct(awayChance)}. Captured {clock(c.chanceAt)}. These are archived observations, not live probabilities.</p><h3>Actual score</h3><p>{homeScore}–{awayScore}. Score observed {clock(c.scoreAt)}. Inspecting an earlier probability does not reconstruct an earlier score.</p><h3>Projected final</h3><p>{projection?`${projection.home}–${projection.away}. Observed ${clock(projection.at)}.${projection.source?' From '+projection.source+' full-game markets.':''}`:'No recent projection. Last qualified evidence remains in the projection card details.'}</p><h3>History and source</h3><p>{historyCount.toLocaleString()} retained observations from the Bain Luck blend. Gaps over five minutes remain blank; no smoothing or reconstructed probabilities. Times use your local timezone. Score, probability and projection have independent capture times.</p><p>Event {c.eventID}. Scheduled start {clock(c.start)}. Opening baselines are historical and remain visible when recent probabilities are unavailable.</p></div>;
-}

@@ -1,7 +1,0 @@
-.tennis-prop-chance{color:var(--series-home);position:relative;display:flex;align-items:center;justify-content:center;flex-direction:column;font-variant-numeric:tabular-nums;gap:3px}
-.tennis-prop-chance.ring{width:84px;height:84px;max-width:100%}.tennis-prop-chance.ring svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}
-.tennis-prop-chance svg .track{fill:none;stroke:var(--surface-border);stroke-width:3}.tennis-prop-chance svg .chance{fill:none;stroke:currentColor;stroke-width:4;stroke-linecap:round}.tennis-prop-chance svg .marker{fill:var(--surface-primary,white);stroke:currentColor;stroke-width:2}
-.tennis-prop-chance strong{font-size:20px;line-height:1.15}.tennis-prop-chance span{font-size:10px;line-height:1.2;color:var(--text-secondary)}
-.tennis-prop-chance.rail{align-items:flex-start;gap:4px;margin:8px 0}.tennis-prop-chance.rail svg{width:100%;height:16px;order:3}.tennis-set-baselines{display:grid;grid-template-columns:1fr 1fr;gap:12px}.tennis-set-baselines>div>span{font-size:12px}.tennis-set-baselines>div:last-child .tennis-prop-chance{color:var(--series-away)}
-.large-text .tennis-prop-chance.ring{width:108px;height:108px}.large-text .tennis-prop-chance strong{font-size:24px}.large-text .tennis-prop-chance span,.large-text .tennis-set-baselines>div>span{font-size:16px}.large-text .tennis-total-options{flex-wrap:wrap}.large-text .tennis-total-options>button{min-width:125px}
-.tennis-set-baselines{grid-column:1/-1}

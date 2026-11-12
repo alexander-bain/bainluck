@@ -1,5 +1,0 @@
-.fv-history{border-top:1px solid var(--surface-border);margin-top:12px;font-size:12px;line-height:1.5;color:var(--text-secondary)}
-.fv-history summary{min-height:44px;display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text-primary);font-weight:600;list-style:none}
-.fv-history summary::before{content:'›';font-size:20px;font-weight:400}.fv-history[open] summary::before{transform:rotate(90deg)}
-.fv-history p{margin:0 0 10px}.fv-history strong{font-size:18px;color:var(--text-primary);font-variant-numeric:tabular-nums}
-.mf-large .fv-history,.cf-large .fv-history{font-size:15px}.fv-history summary:focus-visible{outline:2px solid var(--series-home);outline-offset:2px;border-radius:4px}
