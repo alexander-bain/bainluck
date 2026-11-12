@@ -169,7 +169,7 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "M13",
         "share the concept tier's namespace — two payload shapes on one key",
         CACHE,
-        'CACHE_PREFIX = "bainluck:game_markets:source_mark_v1:"',
+        'CACHE_PREFIX = "bainluck:game_markets:standard_props_v2:"',
         'CACHE_PREFIX = "bainluck:event_concept:"',
     ),
     (
