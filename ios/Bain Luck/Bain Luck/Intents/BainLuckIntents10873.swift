@@ -200,6 +200,7 @@ nonisolated enum IntentFailure10873: Error, CustomLocalizedStringResourceConvert
 /// The phrases Siri listens for. Every phrase names the app, as Apple requires.
 /// Registering them promises these phrases and these Shortcuts actions — not
 /// free-form questions.
+@available(iOS 17.4, macOS 14.4, visionOS 1.1, *)
 nonisolated struct BainLuckShortcuts10873: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -228,9 +229,21 @@ nonisolated struct BainLuckShortcuts10873: AppShortcutsProvider {
                 "Open My Stuff in \(.applicationName)",
                 "Show My Stuff in \(.applicationName)",
                 "Show my saved markets in \(.applicationName)",
+                "Go to My Stuff in \(.applicationName)",
+                "\(.applicationName) My Stuff",
             ],
             shortTitle: "My Stuff",
             systemImageName: "person.fill"
         )
+        if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
+            AppShortcut(
+                intent: SearchInBainLuckIntent10873(),
+                phrases: [
+                    "Search \(.applicationName)",
+                ],
+                shortTitle: "Search",
+                systemImageName: "magnifyingglass"
+            )
+        }
     }
 }

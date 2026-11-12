@@ -260,6 +260,7 @@ struct SearchView: View {
     private func consumePendingSearchQuery() {
         guard navCoordinator.selectedTab == .search,
               let query = navCoordinator.consumeSearchQuery() else { return }
+        if !path.isEmpty { path = NavigationPath() }
         viewModel.query = query
         Task { await viewModel.search() }
     }
