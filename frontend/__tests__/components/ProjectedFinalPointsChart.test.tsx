@@ -130,6 +130,31 @@ describe("a finished game", () => {
     expect(count(singleHtml, 'data-forecast-mark="away"')).toBe(1);
   });
 
+  it("caps visible marks via shouldShowChartReadingMark on a 98-reading game while keeping all 98 vertices on the connected line", () => {
+    const baseMs = Date.parse("2026-09-29T00:05:00Z");
+    const densePairs = Array.from({ length: 98 }, (_, idx) => ({
+      timestamp: new Date(baseMs + idx * 60_000).toISOString(),
+      home: 27 + (idx % 5) * 0.5,
+      away: 10 + (idx % 3) * 0.5,
+      homeProbability: 0.85,
+    }));
+    const denseHtml = render(
+      nflInput({
+        pairs: densePairs,
+      }),
+      { home: 27, away: 7 },
+    );
+    const homeD = denseHtml.match(/data-series="forecast-home" d="([^"]+)"/)?.[1] ?? "";
+    // All 98 readings stay in the continuous straight-segment path (1 M + 97 L segments)
+    expect((homeD.match(/ L/g) ?? []).length).toBe(97);
+    // Visible marks are capped by shouldShowChartReadingMark (<= 36 per team, stride = ceil(98/28) = 4 -> 26 marks)
+    const homeMarks = count(denseHtml, 'data-forecast-mark="home"');
+    const awayMarks = count(denseHtml, 'data-forecast-mark="away"');
+    expect(homeMarks).toBe(26);
+    expect(awayMarks).toBe(26);
+    expect(homeMarks).toBeLessThanOrEqual(36);
+  });
+
   it("omits unusable readings without drawing gap marks or printing 'Gaps are not joined'", () => {
     expect(html).not.toContain("data-withheld=");
     expect(html).not.toContain("Gaps are not joined");

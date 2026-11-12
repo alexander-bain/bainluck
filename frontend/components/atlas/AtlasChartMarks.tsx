@@ -96,6 +96,43 @@ export function AtlasChartMarkKey({
 }
 
 /**
+ * Shared mark-capping rule across web game charts (`OddsChart` via
+ * `AtlasSeriesReadingMarks` and `ProjectedFinalPointsChart`, #11974 / #12615):
+ * - Up to `ATLAS_READING_MARKS_CEILING` (36) readings per series, every reading
+ *   gets a visible mark (`stride = 1`).
+ * - Above `ATLAS_READING_MARKS_CEILING`, visible marks thin by
+ *   `Math.ceil(pointCount / ATLAS_READING_MARKS_TARGET)` (~26–36 marks across
+ *   the plot, always keeping the first and last reading) so dense in-play series
+ *   never fuse into a beaded rope.
+ */
+export const ATLAS_READING_MARKS_CEILING = 36;
+export const ATLAS_READING_MARKS_TARGET = 28;
+
+export function chartReadingMarkStride(
+  pointCount: number,
+  ceiling: number = ATLAS_READING_MARKS_CEILING,
+  target: number = ATLAS_READING_MARKS_TARGET,
+): number {
+  if (pointCount <= ceiling) return 1;
+  return Math.max(1, Math.ceil(pointCount / target));
+}
+
+export function shouldShowChartReadingMark(
+  index: number,
+  pointCount: number,
+  opts?: {
+    ceiling?: number;
+    target?: number;
+    isSelected?: boolean;
+  },
+): boolean {
+  if (pointCount <= 0 || index < 0 || index >= pointCount) return false;
+  if (index === 0 || index === pointCount - 1 || opts?.isSelected) return true;
+  const stride = chartReadingMarkStride(pointCount, opts?.ceiling, opts?.target);
+  return index % stride === 0;
+}
+
+/**
  * Renders the SVG mark grammar for one plotted series:
  * - First real observation (when `includesOpening` is true) -> hollow opening mark (`data-testid="atlas-chart-opening-mark"`)
  * - All other real observations -> solid recorded reading marks (`data-testid="atlas-chart-recorded-mark"`)
@@ -125,9 +162,6 @@ export function AtlasSeriesReadingMarks({
 }) {
   if (points.length === 0) return null;
 
-  const stride =
-    points.length <= 36 ? 1 : Math.max(1, Math.ceil(points.length / 28));
-
   return (
     <g
       data-testid="atlas-series-marks"
@@ -135,12 +169,12 @@ export function AtlasSeriesReadingMarks({
     >
       {points.map((pt, index) => {
         const isOpening = includesOpening && index === 0;
-        const isLast = index === points.length - 1;
         const isSelected =
           selectedReading?.outcomeId === outcomeId &&
           selectedReading?.timestamp === pt.timestamp;
         const showVisibleSolid =
-          !isOpening && (isLast || isSelected || index % stride === 0);
+          !isOpening &&
+          shouldShowChartReadingMark(index, points.length, { isSelected });
 
         const exactPt =
           formatAtlasTimestampPT(pt.timestamp, { includeSeconds: true }) ??

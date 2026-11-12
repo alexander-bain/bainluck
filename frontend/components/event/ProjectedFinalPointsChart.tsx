@@ -82,6 +82,7 @@ export function formatProjectionTime(t: number): string {
 // #10547 / #9483 — the team-line pair now lives in `lib/teamLineStrokes.ts`, so the
 // event page's win-probability lines and game-story cards decide colours the same way.
 import { projectedTeamStrokes } from "@/lib/teamLineStrokes";
+import { shouldShowChartReadingMark } from "@/components/atlas/AtlasChartMarks";
 export { LINE_RESCUE_COLORS, MIN_LINE_PAIR_DISTANCE, projectedTeamStrokes } from "@/lib/teamLineStrokes";
 
 function points(value: number): string {
@@ -381,17 +382,19 @@ export default function ProjectedFinalPointsChart({
                   vectorEffect="non-scaling-stroke"
                 />
               )}
-              {forecastPoints.map((pt, i) => (
-                <path
-                  key={`${key}-mark-${i}`}
-                  data-forecast-mark={key}
-                  d={`M${x(pt.at).toFixed(1)},${y(pt[key]).toFixed(1)} h0.01`}
-                  stroke={stroke}
-                  strokeWidth={6}
-                  strokeLinecap="round"
-                  vectorEffect="non-scaling-stroke"
-                />
-              ))}
+              {forecastPoints.map((pt, i) =>
+                shouldShowChartReadingMark(i, forecastPoints.length) ? (
+                  <path
+                    key={`${key}-mark-${i}`}
+                    data-forecast-mark={key}
+                    d={`M${x(pt.at).toFixed(1)},${y(pt[key]).toFixed(1)} h0.01`}
+                    stroke={stroke}
+                    strokeWidth={5}
+                    strokeLinecap="round"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : null,
+              )}
             </g>
           ))}
       </svg>
