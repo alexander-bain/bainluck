@@ -52,10 +52,10 @@ def test_no_other_league_changes(sport):
 def test_once_an_hour_shared_by_both_paths():
     r = _Redis()
     sfm.record_full_fetch("americanfootball_nfl", r, NOW)
-    # Discovery's next three passes (every 15 min) and the poller inside the hour pay nothing.
-    for minutes in (15, 30, 45, 59):
+    # Every pass inside 55 minutes pays nothing.
+    for minutes in (15, 30, 45, 54):
         assert sfm.scheduled_markets("americanfootball_nfl", r, NOW + minutes * 60) == "h2h"
-    assert sfm.scheduled_markets("americanfootball_nfl", r, NOW + 3600) == "h2h,spreads,totals"
+    assert sfm.scheduled_markets("americanfootball_nfl", r, NOW + 55 * 60) == "h2h,spreads,totals"
     # The other league's hour is its own.
     assert sfm.scheduled_markets("basketball_nba", r, NOW + 60) == "h2h,spreads,totals"
 
@@ -191,3 +191,24 @@ async def test_a_full_fetch_still_writes_the_lines_exactly_as_before():
                                   commence_time=datetime.now(timezone.utc) + timedelta(days=1))
     assert session.updates[0]["opening_home_spread"] is None
     assert session.updates[0]["opening_over_under"] is None
+
+
+@pytest.mark.parametrize("lag_s", [10, 70, 130])
+def test_discovery_at_05_and_35_refreshes_lines_every_hour_not_ninety_minutes(lag_s):
+    """Nov 12 (#11286): lines landed at 5:36 and the 6:35 run, 59 minutes later,
+    stayed moneyline-only, so the next lines were at 7:05, matching the
+    90-minute projection bound. Replay six hours of discovery runs at :05 and :35,
+    each fetch landing ``lag_s`` into its run."""
+    r = _Redis()
+    fetches = []
+    start = NOW - (NOW % 3600) + 5 * 60  # a :05 run
+    for run in range(12):
+        t = start + run * 1800 + lag_s
+        if sfm.scheduled_markets("americanfootball_nfl", r, t) == "h2h,spreads,totals":
+            sfm.record_full_fetch("americanfootball_nfl", r, t)
+            fetches.append(t)
+    gaps = [b - a for a, b in zip(fetches, fetches[1:])]
+    assert len(fetches) == 6 and set(gaps) == {3600}
+    # never two lines fetches inside 55 minutes, never a 90-minute wait
+    assert min(gaps) >= sfm.SCHEDULED_FULL_MARKETS_INTERVAL_SECONDS
+    assert max(gaps) < 90 * 60
