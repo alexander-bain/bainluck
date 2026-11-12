@@ -1884,10 +1884,7 @@ def insert_roundup_feed_items(
             if ns_idx < len(non_sibs):
                 candidate_queue.append(non_sibs[ns_idx])
                 ns_idx += 1
-            if ns_idx == 2 and s_idx < len(sibs):
-                candidate_queue.append(sibs[s_idx])
-                s_idx += 1
-            elif ns_idx >= 3 and s_idx < len(sibs):
+            if s_idx < len(sibs) and (ns_idx >= 2 or ns_idx >= len(non_sibs)):
                 candidate_queue.append(sibs[s_idx])
                 s_idx += 1
     else:
