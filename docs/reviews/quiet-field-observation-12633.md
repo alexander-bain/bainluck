@@ -68,12 +68,24 @@ fix begins running, the follow-up counts real reads inside 30 minutes, two
 hours and six hours. The writer fix alone does not close the phone failure.
 
 Validation: the complete PostgreSQL 17 file passes all 70 cases, including all
-18 new controls. The related backend band passes 131 checks including startup;
+18 new controls. The related backend band passes 144 checks including startup;
 all 112 unit cases pass at all twelve clock points. Frontend build and typecheck
 pass (65 baseline errors, no new errors). The initial full-file attempt used
 PostgreSQL 14: 37 cases passed and 33 could not create a pre-existing
 `NULLS NOT DISTINCT` index. That harness failure is retained; PostgreSQL 17
 runs the whole file without skips.
+
+The first CI run, 43269760989, failed three existing guards. The correction
+records `admin_source_health.py` in the exact consumer audit with its real
+observation-clock semantics; renames a local result variable that accidentally
+matched the mutation harness's generic M21 replacement; and gives the existing
+fresh/old quoted-field controls an actual outcome observation alongside their
+chart points. The audit classifier, mutation scanner, SQL and all existing
+assertions stay intact. The 26 mutation guards and all 17 delisted-leg
+PostgreSQL cases now pass as well. The failed CI run and its separate,
+nonblocking quarantined DNPL canary failure remain recorded; none is erased
+by retrying the old run. Production code is unchanged from Fable's accepted
+`4b360212544d` head.
 
 Speed released both files at 9:21 AM PT on #12647. Delivery still requires green
 CI, exact-head bot approval, Fable ACCEPT and the assigned merge slot. After
@@ -81,3 +93,9 @@ deployment, record the first scheduled pass's processed count and `task_memory`
 peak. The scheduled writer must produce a real read and the served Governor
 detail must carry its number and honest clock. The 390 px page, Back/Refresh and
 installed-phone result are separate proof obligations.
+
+Fable confirmed at 9:34 AM PT that one aggregate red-then-recovery report on
+#12633 satisfies the guard's deploy receipt. There is no per-field filer or
+configured freshness monitor. Decision 170's Friday plan will propose one
+scheduled aggregate signal and recovery for Alex's approval; this PR creates
+no monitor or production configuration.

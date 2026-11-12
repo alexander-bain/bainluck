@@ -2976,11 +2976,11 @@ async def test_real_governor_read_dates_the_quote_without_inventing_movement_126
             return raw
 
     async def rows():
-        result = await db.execute(text(
+        stored_quotes = await db.execute(text(
             "SELECT external_id, current_probability, last_updated, price_changed_at, "
             "is_winner, resolution_source FROM futures_outcomes WHERE market_id = :mid"
         ), {"mid": mid})
-        return {r[0]: tuple(r[1:]) for r in result.all()}
+        return {r[0]: tuple(r[1:]) for r in stored_quotes.all()}
 
     before = await rows()
     quotes = await fpr._fetch_kalshi_prices(Venue(), raw["event_ticker"])
