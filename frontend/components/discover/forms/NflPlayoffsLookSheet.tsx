@@ -156,7 +156,7 @@ export function NflPlayoffsToSuperBowlSectionCard({
         Make the Playoffs % beside Win the Super Bowl %
       </h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        All 12 NFL clubs at 4%+ Super Bowl chance, ordered by Super Bowl %. Top 6 shown first; Make Playoffs % and Win Super Bowl % are kept separate and never blended.
+        All 12 NFL clubs at 4%+ Super Bowl chance, ordered by Super Bowl %. Top 6 shown first; Make Playoffs % and Win Super Bowl % are kept separate and never combined.
       </p>
 
       <div className="mt-3 divide-y divide-surface-border">
@@ -406,7 +406,7 @@ export function NflConferencePathsSectionCard({
         Who gets through the AFC &amp; NFC brackets?
       </h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        Outer bar shows chance to reach the Conference Championship Game; inner fill shows blended chance to win the conference trophy.
+        Outer bar shows chance to reach the Conference Championship Game; inner fill shows chance to win the conference trophy.
       </p>
 
       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -783,7 +783,7 @@ export function NflAwardsSpotlightSectionCard({
       <div className="mt-3 rounded-xl border border-surface-border bg-surface-elevated p-3">
         <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-text-muted">
           <span>OFFENSIVE PLAYER OF THE YEAR · RB &amp; WR RACE</span>
-          <span>BLENDED WIN %</span>
+          <span>WIN OPOY %</span>
         </div>
         <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           {NFL_OPOY_CANDIDATES.map((cand) => {
@@ -846,14 +846,14 @@ export function NflSwingGamesSectionCard({
       className="rounded-xl border border-surface-border bg-surface-card p-4"
     >
       <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-semibold uppercase tracking-wide text-text-muted">
-        <span>THIS WEEK&apos;S SWING GAMES · BLENDED WIN % + PLAYOFF STAKES</span>
+        <span>THIS WEEK&apos;S SWING GAMES · WIN % + PLAYOFF STAKES</span>
         <span>WEEK 10 / 11 SLATE</span>
       </div>
       <h3 className="mt-1 text-lg font-bold text-text-primary">
         Games this week that move the playoff picture most
       </h3>
       <p className="mt-0.5 text-xs text-text-secondary">
-        Pairs each game&apos;s blended win probability (Kalshi, Polymarket &amp; Sportsbooks) with both clubs&apos; live playoff berth chance and division leverage.
+        Pairs each game&apos;s win probability with both clubs&apos; live playoff berth chance and division leverage.
       </p>
 
       <div className="mt-3 space-y-2.5">
@@ -982,7 +982,7 @@ export function NflTooManyPropsSectionCard({
     >
       {/* Header Banner */}
       <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-semibold uppercase tracking-wide text-text-muted">
-        <span>LARGE-SET PROP CURATION (#12609) · 671 LIVE MARKETS → 11-NUMBER FIRST SCREEN</span>
+        <span>LARGE-SET PROP BOARD (#12609) · 671 LIVE MARKETS → 11-NUMBER FIRST SCREEN</span>
         <span>{board.kickoff_label}</span>
       </div>
       <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
@@ -1012,7 +1012,7 @@ export function NflTooManyPropsSectionCard({
         </span>
       </div>
       <p className="mt-1 text-xs text-text-secondary">
-        This game carries <span className="font-semibold text-text-primary">384 player prop lines</span>, <span className="font-semibold text-text-primary">261 spread/total/period lines</span>, and <span className="font-semibold text-text-primary">26 touchdown/novelty specials</span> (671 total). Instead of a 671-row wall, the first screen shows <span className="font-semibold text-text-primary">three scannable lenses</span>, and one toggle opens player milestone ladders for the rest.
+        This game carries <span className="font-semibold text-text-primary">384 player prop lines</span>, <span className="font-semibold text-text-primary">261 margin/total/period lines</span>, and <span className="font-semibold text-text-primary">26 touchdown/novelty specials</span> (671 total). Instead of a 671-row wall, the first screen shows <span className="font-semibold text-text-primary">three scannable lenses</span>, and one toggle opens player milestone ladders for the rest.
       </p>
 
       {/* LENS 1: The Script (Likely Star Benchmarks >= 50%) */}
@@ -1333,11 +1333,11 @@ export function NflFullComposedContainerPreview({
 
         <p className="mt-2 text-xs text-text-secondary">
           {seasonStage === "race_to_get_in" &&
-            "Active selector rule (Nov–Jan): leads with Make Playoffs % beside Win Super Bowl %, followed by AFC/NFC Conversion Funnels, Shape-Driven Division Races, MVP/OPOY Headshots, Swing Games, and the Curated Game Prop Board."}
+            "Active selector rule (Nov–Jan): leads with Make Playoffs % beside Win Super Bowl %, followed by AFC/NFC Conversion Funnels, Shape-Driven Division Races, MVP/OPOY Headshots, Swing Games, and the 3-Lens Game Prop Board."}
           {seasonStage === "the_bracket" &&
             "Active selector rule (Mid-Jan): Playoff berths lock to ✓ Clinched / ✗ Eliminated; AFC & NFC Conference Conversion Funnels move to the top alongside Wild Card & Divisional Round matchup props."}
           {seasonStage === "the_game" &&
-            "Active selector rule (Feb 14, 2027): AFC & NFC Champions lock to ✓; the container promotes the Super Bowl LXI Matchup Hero, the 3-Lens Curated Super Bowl Prop Board, and Super Bowl MVP."}
+            "Active selector rule (Feb 14, 2027): AFC & NFC Champions lock to ✓; the container promotes the Super Bowl LXI Matchup Hero, the 3-Lens Super Bowl Prop Board, and Super Bowl MVP."}
         </p>
       </div>
 
@@ -1557,15 +1557,15 @@ export function NflPlayoffsLookSheetGallery({
         <ul className="mt-2.5 space-y-1 text-xs text-text-secondary">
           <li>
             • <span className="font-semibold text-text-primary">Adjacent sections never repeat a form (#12523):</span>{" "}
-            Section 1 (Stacked Dual Bars + Expander) → Section 2 (Two-Step Conference Conversion Funnels) → Section 3 (Shape-Driven Division Grids, Duels &amp; Locks) → Section 4 (Player Headshot Podium &amp; Paired Finalist Strip) → Section 5 (Matchup Swing Cards) → Section 6 (3-Lens Curated Prop Digest + Milestone Drawer).
+            Section 1 (Stacked Dual Bars + Expander) → Section 2 (Two-Step Conference Conversion Funnels) → Section 3 (Shape-Driven Division Grids, Duels &amp; Locks) → Section 4 (Player Headshot Podium &amp; Paired Finalist Strip) → Section 5 (Matchup Swing Cards) → Section 6 (3-Lens Prop Digest + Milestone Drawer).
           </li>
           <li>
             • <span className="font-semibold text-text-primary">One unified Super Bowl number (#12530):</span>{" "}
             Stands on the verified Super Bowl LXI board (<span className="font-medium text-text-primary">San Francisco 49ers 13%</span>, <span className="font-medium text-text-primary">Buffalo Bills 13%</span>, <span className="font-medium text-text-primary">Jacksonville Jaguars 10%</span>, <span className="font-medium text-text-primary">Chicago Bears 9%</span> · Resolves Feb 14, 2027).
           </li>
           <li>
-            • <span className="font-semibold text-text-primary">&ldquo;Too many props&rdquo; curation rule (Section 6):</span>{" "}
-            Built on <span className="font-medium text-text-primary">Pittsburgh Steelers at Cincinnati Bengals</span> (671 live game markets / 384 player props) — curates an 11-number first screen (The Script, 50/50 Coin-Flips, First TD) with one toggle to browse player Milestone Ladders by category.
+            • <span className="font-semibold text-text-primary">&ldquo;Too many props&rdquo; digest rule (Section 6):</span>{" "}
+            Built on <span className="font-medium text-text-primary">Pittsburgh Steelers at Cincinnati Bengals</span> (671 live game markets / 384 player props) — highlights an 11-number first screen (The Script, 50/50 Coin-Flips, First TD) with one toggle to browse player Milestone Ladders by category.
           </li>
         </ul>
       </div>
