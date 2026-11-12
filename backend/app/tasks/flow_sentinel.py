@@ -2109,10 +2109,12 @@ async def _run_matured_linkage(client: httpx.AsyncClient) -> dict:
 async def _run_unlinked_held(client: httpx.AsyncClient) -> dict:
     """Queue #223 Item 4 — the STRONGER linkage flow (Alex's ruling). Distinct from
     matured_linkage: that finds a blend source with no market; THIS finds a game-
-    winner market we ALREADY HOLD (Kalshi/Poly, open, event_id NULL) whose both teams
-    match an imminent event — the matcher missed a link it could have made. Reads the
+    winner market we ALREADY HOLD (Kalshi/Poly, open, event_id NULL) whose teams,
+    sport/gender and fixture window match an imminent event. Reads the
     ``unlinked_held`` block of the precomputed matured-linkage metric from Redis (kept
-    warm every 10 min) and files each miss. Read-only — the sentinel files work."""
+    warm by the scheduled precompute) and files each miss. Read-only detection."""
+    from app.utils.unlinked_held_fixture import FIXTURE_RULE
+
     payload = None
     try:
         import json as _json
@@ -2142,6 +2144,13 @@ async def _run_unlinked_held(client: httpx.AsyncClient) -> dict:
             "evidence": {"reason": (payload or {}).get("status", "cache cold — beat has not run")},
         }
 
+    if payload.get("fixture_rule") != FIXTURE_RULE:
+        return {
+            "flow": "unlinked_held", "checked": 0, "passed": True,
+            "skipped": True, "failures": [],
+            "evidence": {"reason": "unlinked-held cache awaits fixture-qualified refresh"},
+        }
+
     misses = payload.get("misses") or []
     failures = [
         {
@@ -2149,21 +2158,27 @@ async def _run_unlinked_held(client: httpx.AsyncClient) -> dict:
             "source": m.get("source"),
             "detail": f"imminent {m.get('sport')} event {m.get('matchup')} — we hold "
                       f"unlinked {m.get('source')} market #{m.get('market_id')} "
-                      f"'{m.get('market_name')}' whose both teams match this event, but "
+                      f"'{m.get('market_name')}' whose teams, sport/gender and fixture window match, but "
                       f"event_id is NULL (matcher miss; event {m.get('event_id')})",
         }
         for m in misses
     ]
+    unassessed = payload.get("unassessed_pairs", 0)
     return {
         "flow": "unlinked_held",
         "checked": payload.get("candidates_scanned", 0),
         "passed": len(failures) == 0,
+        **({"skipped": True} if unassessed and not failures else {}),
         "failures": failures,
         "evidence": {
             "headline_unlinked_held": payload.get("headline_unlinked_held"),
             "events_checked": payload.get("events_checked"),
             "candidates_scanned": payload.get("candidates_scanned"),
             "by_source": payload.get("by_source"),
+            "fixture_rule": payload["fixture_rule"],
+            "fixture_pair_refusals": payload.get("fixture_pair_refusals", {}),
+            "unassessed_pairs": unassessed,
+            **({"reason": "matching-name pairs lack fixture evidence"} if unassessed else {}),
         },
     }
 
