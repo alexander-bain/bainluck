@@ -158,15 +158,15 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let all = describe(read)
         let away = try XCTUnwrap(scoreLine("17", in: read), "\(name): no 17 — \(all)")
         let home = try XCTUnwrap(scoreLine("23", in: read), "\(name): no 23 — \(all)")
-        let awayName = try XCTUnwrap(read.first { $0.text.contains("Washington Commanders") }, "\(name): \(all)")
-        let homeName = try XCTUnwrap(read.first { $0.text.contains("San Francisco 49ers") && !$0.text.contains("Washington") },
+        let awayName = try XCTUnwrap(read.first { $0.text.contains("Commanders") }, "\(name): \(all)")
+        let homeName = try XCTUnwrap(read.first { $0.text.contains("49ers") && !$0.text.contains("Commanders") },
                                      "\(name): \(all)")
         XCTAssertTrue(sameRow(away, awayName), "\(name): 17 left its name's row — \(all)")
         XCTAssertTrue(sameRow(home, homeName), "\(name): 23 left its name's row — \(all)")
         let league = try XCTUnwrap(read.first { tokens($0.text).contains("NFL") }, "\(name): \(all)")
         let status = try XCTUnwrap(read.first { badgeTokens($0).contains("FINAL") }, "\(name): \(all)")
         XCTAssertTrue(sameRow(league, status), "\(name): league and FINAL no longer share the top row — \(all)")
-        XCTAssertTrue(read.contains { $0.text.contains("Projection") }, "\(name): forecast line gone — \(all)")
+        XCTAssertTrue(read.contains { $0.text.contains("Projected") }, "\(name): forecast line gone — \(all)")
     }
 
     func testALiveSportsCardAtAX5KeepsItsSingleRows() throws {
@@ -253,13 +253,10 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
 
     // MARK: - #9483 — the finished single row names its pre-game number
 
-    /// At default size the finished row printed a bare "32%" beside
-    /// Stuttgart's actual "1", and nothing on the card said the percent was
-    /// from before the game. Now the word "Pregame" prints immediately before
-    /// each pre-game number, on its own team's row, after that team's score —
-    /// and whole, at both widths. At 320pt the word must not cost a name: the
-    /// name wraps rather than truncating. A copy that drops the word, puts it
-    /// on the other row, or cuts the word or a name has no such row.
+    /// #12616 (161-B): at default size the finished card prints "Pregame" ONCE
+    /// in the medium column header and "Final" ONCE in the large column header,
+    /// with each short team name followed by its Pregame % (medium) and Final
+    /// score (large), and nothing elided at either width.
     func testTheFinishedSportsCardAtLargeNamesEachPreGameProbability() throws {
         let odds = try served(14780563, editing: #""ended_at": "#,
                               to: Self.constructedOpeningOdds + #", "ended_at": "#)
@@ -267,31 +264,27 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let name = "sports-nfl-\(Int(width))-large-constructed-odds"
             let read = try sportsLines(odds, width: width, size: .large, name: name)
             let all = describe(read)
-            for (team, score, percent) in [("WashingtonCommanders", "17", "24%"), ("SanFrancisco49ers", "23", "76%")] {
+            for (team, score, percent) in [("Commanders", "17", "24%"), ("49ers", "23", "76%")] {
                 let row = try XCTUnwrap(qualifiedRow(percent, in: read),
                                         "\(name): \(percent) is not printed exactly once — \(all)")
-                XCTAssertEqual(row.firstIndex(of: percent).map { row[row.index(before: $0)] }, "Pregame",
-                               "\(name): \(percent) is not directly after a whole 'Pregame' — \(row)")
-                let at = try XCTUnwrap(row.firstIndex(of: score), "\(name): \(score) left \(percent)'s row — \(row)")
-                XCTAssertLessThan(at, row.index(before: row.firstIndex(of: percent)!),
-                                  "\(name): 'Pregame \(percent)' is not after the actual \(score) — \(row)")
-                // The complete name, before the score (a crest Vision fuses on
-                // — "®San" — only adds a leading mark), whole at both widths.
-                XCTAssertTrue(normalized(row[..<at].joined()).hasSuffix(team),
-                              "\(name): \(team) is not complete before \(score) on \(percent)'s row — \(row)")
+                let pctAt = try XCTUnwrap(row.firstIndex(of: percent), "\(name): missing \(percent) — \(row)")
+                let scoreAt = try XCTUnwrap(row.firstIndex(of: score), "\(name): \(score) left \(percent)'s row — \(row)")
+                XCTAssertLessThan(pctAt, scoreAt,
+                                  "\(name): medium Pregame \(percent) must sit left of large Final \(score) — \(row)")
+                XCTAssertTrue(normalized(row[..<pctAt].joined()).contains(team),
+                              "\(name): \(team) is not complete before \(percent) on its row — \(row)")
             }
-            XCTAssertEqual(read.filter { tokens($0.text).contains("Pregame") }.count, 2,
-                           "\(name): not one 'Pregame' per number — \(all)")
+            XCTAssertEqual(read.filter { tokens($0.text).contains("Pregame") }.count, 1,
+                           "\(name): 'Pregame' header must appear once — \(all)")
             for line in read where tokens(line.text).contains("Pregame") || line.text.contains("%") {
                 XCTAssertFalse(isElided(line.text), "\(name): '\(line.text)' is cut short — \(all)")
             }
         }
     }
 
-    /// The case Design read: Stuttgart 1, Atlético Madrid 1, a board that prices
-    /// a draw, so only the home number prints (#5363). Its row reads
-    /// "VfB Stuttgart 1 Pregame 32%"; Atlético's row carries no word and no
-    /// percent, and the card prints the word exactly once.
+    /// Stuttgart 1, Atlético Madrid 1, a two-way complement soccer row (#5363):
+    /// only Stuttgart's home pre-game 32% prints under the single "Pregame"
+    /// header; Atlético's row carries no pre-game percent.
     func testTheStuttgartFinalAtLargeReadsPregameBeforeItsOnlyNumber() throws {
         let card = try leagueFeedEvent(Self.stuttgartLeagueRow)
         for width: CGFloat in [320, 393] {
@@ -299,15 +292,15 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let read = try sportsLines(card, width: width, size: .large, name: name)
             let all = describe(read)
             let row = try XCTUnwrap(qualifiedRow("32%", in: read), "\(name): 32% is not printed exactly once — \(all)")
-            XCTAssertEqual(Array(row.suffix(4)), ["Stuttgart", "1", "Pregame", "32%"],
-                           "\(name): Stuttgart's row does not end '1 Pregame 32%' — \(row)")
-            let atletico = try XCTUnwrap(read.first { normalized($0.text).contains("AtleticoMadrid") },
-                                         "\(name): no Atlético Madrid row — \(all)")
+            XCTAssertTrue(row.contains("Stuttgart") && row.contains("32%") && row.contains("1"),
+                          "\(name): Stuttgart's row missing name, 32% or 1 — \(row)")
+            let atletico = try XCTUnwrap(read.first { normalized($0.text).contains("Atletico") },
+                                         "\(name): no Atlético row — \(all)")
             let other = rowTokens(atletico, in: read)
             XCTAssertFalse(other.contains("Pregame") || other.contains { $0.hasSuffix("%") },
                            "\(name): Atlético's row carries a pre-game word or number — \(other)")
             XCTAssertEqual(read.filter { tokens($0.text).contains("Pregame") }.count, 1,
-                           "\(name): 'Pregame' is not printed exactly once — \(all)")
+                           "\(name): 'Pregame' header is not printed exactly once — \(all)")
         }
     }
 
@@ -476,10 +469,14 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         }
     }
 
-    /// The topmost line reading exactly `digits`, clear of the forecast line.
+    /// The topmost line reading `digits` above the forecast line (`Projection`
+    /// on AX5 or `Projected` on compact 161-B).
     private func scoreLine(_ digits: String, in read: [Line]) -> Line? {
-        let label = read.first { $0.text.contains("Projection") }?.box.minY ?? .infinity
-        return read.first { $0.text.trimmingCharacters(in: .whitespaces) == digits && $0.box.minY < label }
+        let label = read.first { $0.text.contains("Projection") || $0.text.hasPrefix("Projected ") }?.box.minY ?? .infinity
+        return read.first {
+            let t = $0.text.trimmingCharacters(in: .whitespaces)
+            return (t == digits || valueTokens($0.text).last == digits) && $0.box.minY < label
+        }
     }
 
     /// Whether the lines directly above `score`, in its column, read exactly

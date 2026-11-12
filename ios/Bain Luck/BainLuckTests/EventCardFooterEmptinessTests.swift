@@ -54,11 +54,21 @@ final class EventCardFooterEmptinessTests: XCTestCase {
 
     // MARK: - The other direction: everything that must still draw
 
-    func testUpsetCardKeepsItsFooter() {
-        // The one settled sentence #4094 deliberately preserves.
+    func testFinishedUpsetCardSuppressesReasonBanner12616() {
+        // #12616 — finished game cards drop the orange underdog sentence;
+        // the upset reads from the orange Pregame % beside a winning Final.
+        XCTAssertFalse(
+            Footer.hasContent(
+                reason: "Green Bay Packers won as a 38% underdog", isLive: false,
+                isFinished: true,
+                awayOpening: 0.38, homeOpening: 0.62, sport: twoWay
+            )
+        )
+        // Non-finished cards with a served reason still keep their footer.
         XCTAssertTrue(
             Footer.hasContent(
-                reason: "Won as 34% underdog", isLive: false,
+                reason: "Possible upset", isLive: false,
+                isFinished: false,
                 awayOpening: 0.6589, homeOpening: 0.3411, sport: twoWay
             )
         )

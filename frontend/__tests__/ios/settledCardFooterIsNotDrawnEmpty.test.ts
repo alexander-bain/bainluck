@@ -88,6 +88,7 @@ d("#4094 — the settled card's footer is not drawn when it is empty", () => {
     const body = footerBody();
     expect(body).toMatch(/reason: reason/);
     expect(body).toMatch(/isLive: isLive/);
+    expect(body).toMatch(/isFinished: isFinished/);
     expect(body).toMatch(/awayOpening: event\.openingOdds\?\.awayProbability/);
     expect(body).toMatch(/homeOpening: event\.openingOdds\?\.homeProbability/);
   });
@@ -101,6 +102,8 @@ d("#4094 — the settled card's footer is not drawn when it is empty", () => {
     const start = source.indexOf("static func hasContent(");
     expect(start).toBeGreaterThan(-1);
     const helper = source.slice(start, source.indexOf("\n    }", start));
+    // #12616 — finished cards suppress the reason banner altogether.
+    expect(helper).toMatch(/guard !isFinished else \{ return false \}/);
     expect(helper).toMatch(/if let reason, !reason\.isEmpty \{ return true \}/);
     // #5363 — the row this mirrors grew a second branch: on a draw-priced
     // sport `footerRow` draws a NAMED single-sided caption ("Opened Boca 68%"),
