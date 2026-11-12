@@ -1,0 +1,55 @@
+--- a/backend/app/utils/blend_preview.py
++++ b/backend/app/utils/blend_preview.py
+@@ -187,0 +188,7 @@
++@dataclass(frozen=True)
++class _ChainLease:
++    # TEST-ONLY additive protocol metadata, never a new observation clock.
++    identity: int
++    original_expires_at_ms: Optional[int]
++
++
+@@ -197,0 +205 @@
++    lease: _ChainLease
+@@ -223,0 +232 @@
++        wall_clock: Callable[[], float] = time.time,
+@@ -233,0 +243,2 @@
++        self._wall_clock = wall_clock
++        self._chain_identity = itertools.count(1)
+@@ -235,0 +247,33 @@
++
++    def _new_chain_lease(self, since: float) -> _ChainLease:
++        identity = next(self._chain_identity)
++        try:
++            # Anchor once. Sampling monotonic AFTER wall time conservatively
++            # charges time spent obtaining the pair. Server clock alignment is
++            # still a protocol prerequisite, not established by this adapter.
++            wall = self._wall_clock()
++            after = self._clock()
++            remaining = self.max_uncommitted_s - (after - since)
++            expiry = math.floor(wall * 1000 + remaining * 1000) - 1
++            if not (0 <= expiry <= 2**53 - 1) or after < since:
++                expiry = None
++        except Exception:
++            expiry = None
++        return _ChainLease(identity, expiry)
++
++    def _chain_metadata(self, event_id: int, state: _EventState) -> dict:
++        try:
++            # Mirrors the producer's oldest-pending-since lease. A changed
++            # probability, observation, seq or base is NOT a new chain.
++            _, oldest = min(state.pending.items(), key=lambda item: (item[1].since, item[0]))
++            expiry = oldest.lease.original_expires_at_ms
++            issued = math.floor(self._wall_clock() * 1000)
++            if expiry is None or not (0 <= issued <= 2**53 - 1):
++                return {}
++            return {"lease_id": "pending:" + str(oldest.lease.identity),
++                    "original_expires_at_ms": expiry,
++                    "lease_issued_at_ms": issued}
++        except Exception:
++            # Optional metadata must never suppress an independently accepted
++            # live preview. Absence means live-only, not reconstructed expiry.
++            return {}
+@@ -360,0 +405 @@
++                **self._chain_metadata(event_id, state),
+@@ -476,0 +522 @@
++            lease=prior.lease if prior is not None else self._new_chain_lease(now),

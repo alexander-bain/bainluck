@@ -1,0 +1,6 @@
+Lua 5.1
+distinct numeric values:	100000000000001	100000000000002
+legacy tostring:	1e+14	1e+14
+tostring collision:	true
+fraction rounds to allowed integer:	true
+canonical decimal formatter:	9007199254740991

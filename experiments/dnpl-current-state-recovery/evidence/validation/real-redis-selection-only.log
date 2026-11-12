@@ -1,0 +1,8 @@
+test_actual_adapter_tuples_selected_without_connection (__main__.Selection.test_actual_adapter_tuples_selected_without_connection) ... ok
+test_corrected_hashes_and_adapter (__main__.Selection.test_corrected_hashes_and_adapter) ... ok
+test_real_case_count_is_only_syntax_inventory (__main__.Selection.test_real_case_count_is_only_syntax_inventory) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.163s
+
+OK
