@@ -1,0 +1,335 @@
+[
+  {
+    "id": "search-01",
+    "title": "celtics",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-01",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 27 cards at 2026-11-12T14:50:45.040404+00:00; complete response."
+  },
+  {
+    "id": "search-02",
+    "title": "patriots",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-02",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 30 cards at 2026-11-12T14:50:49.791378+00:00; partial response: collections"
+  },
+  {
+    "id": "search-03",
+    "title": "lakers",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-03",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 35 cards at 2026-11-12T14:50:55.491764+00:00; complete response."
+  },
+  {
+    "id": "search-04",
+    "title": "chiefs",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-04",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 21 cards at 2026-11-12T14:50:56.678460+00:00; complete response."
+  },
+  {
+    "id": "search-05",
+    "title": "bruins",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-05",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 33 cards at 2026-11-12T14:50:58.299989+00:00; complete response."
+  },
+  {
+    "id": "search-06",
+    "title": "pats",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-06",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 27 cards at 2026-11-12T14:51:01.520614+00:00; complete response."
+  },
+  {
+    "id": "search-07",
+    "title": "patroits",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-07",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 0 cards at 2026-11-12T14:51:04.025028+00:00; complete response."
+  },
+  {
+    "id": "search-08",
+    "title": "niners",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-08",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 25 cards at 2026-11-12T14:51:05.387657+00:00; complete response."
+  },
+  {
+    "id": "search-09",
+    "title": "celts",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-09",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 28 cards at 2026-11-12T14:51:08.231740+00:00; complete response."
+  },
+  {
+    "id": "search-10",
+    "title": "man u",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-10",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 20 cards at 2026-11-12T14:51:10.595698+00:00; complete response."
+  },
+  {
+    "id": "search-11",
+    "title": "KC chiefs",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-11",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 22 cards at 2026-11-12T14:51:13.765126+00:00; complete response."
+  },
+  {
+    "id": "search-12",
+    "title": "superbowl patriots",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-12",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 1 cards at 2026-11-12T14:51:16.660703+00:00; complete response."
+  },
+  {
+    "id": "search-13",
+    "title": "super bowl patriots",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-13",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 1 cards at 2026-11-12T14:51:18.372383+00:00; complete response."
+  },
+  {
+    "id": "search-14",
+    "title": "patriots super bowl",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-14",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 1 cards at 2026-11-12T14:51:20.746318+00:00; complete response."
+  },
+  {
+    "id": "search-15",
+    "title": "super bowl",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-15",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 6 cards at 2026-11-12T14:51:22.385487+00:00; complete response."
+  },
+  {
+    "id": "search-16",
+    "title": "who will win the super bowl",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-16",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 0 cards at 2026-11-12T14:51:23.897652+00:00; complete response."
+  },
+  {
+    "id": "search-17",
+    "title": "celtics championship",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-17",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 4 cards at 2026-11-12T14:51:26.396453+00:00; complete response."
+  },
+  {
+    "id": "search-18",
+    "title": "nba champion",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-18",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 9 cards at 2026-11-12T14:51:27.971931+00:00; complete response."
+  },
+  {
+    "id": "search-19",
+    "title": "best picture",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-19",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 7 cards at 2026-11-12T14:51:29.866637+00:00; complete response."
+  },
+  {
+    "id": "search-20",
+    "title": "oscars",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-20",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 8 cards at 2026-11-12T14:51:31.374392+00:00; complete response."
+  },
+  {
+    "id": "search-21",
+    "title": "celtics next three games",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-21",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 0 cards at 2026-11-12T14:51:33.447505+00:00; complete response."
+  },
+  {
+    "id": "search-22",
+    "title": "celtics next 3 games",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-22",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 0 cards at 2026-11-12T14:51:36.282172+00:00; complete response."
+  },
+  {
+    "id": "search-23",
+    "title": "close games tonight",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-23",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 1 cards at 2026-11-12T14:51:37.666894+00:00; complete response."
+  },
+  {
+    "id": "search-24",
+    "title": "games tonight",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-24",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 20 cards at 2026-11-12T14:51:40.586283+00:00; complete response."
+  },
+  {
+    "id": "search-25",
+    "title": "nba tonight",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-25",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 31 cards at 2026-11-12T14:51:42.921871+00:00; complete response."
+  },
+  {
+    "id": "search-26",
+    "title": "nfl week 10",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-26",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 4 cards at 2026-11-12T14:51:44.896387+00:00; complete response."
+  },
+  {
+    "id": "search-27",
+    "title": "nfl this week",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-27",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 0 cards at 2026-11-12T14:51:46.672837+00:00; complete response."
+  },
+  {
+    "id": "search-28",
+    "title": "awards season",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-28",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 0 cards at 2026-11-12T14:51:50.676558+00:00; complete response."
+  },
+  {
+    "id": "search-29",
+    "title": "will the fed cut rates",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-29",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 0 cards at 2026-11-12T14:51:53.859844+00:00; complete response."
+  },
+  {
+    "id": "search-30",
+    "title": "fed december",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-30",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 6 cards at 2026-11-12T14:51:56.771758+00:00; complete response."
+  },
+  {
+    "id": "search-31",
+    "title": "gemini",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-31",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 7 cards at 2026-11-12T14:51:59.636498+00:00; complete response."
+  },
+  {
+    "id": "search-32",
+    "title": "snow boston",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-32",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 1 cards at 2026-11-12T14:52:01.219682+00:00; complete response."
+  },
+  {
+    "id": "search-33",
+    "title": "ufo",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-33",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 6 cards at 2026-11-12T14:52:04.098401+00:00; complete response."
+  },
+  {
+    "id": "search-34",
+    "title": "largest ipo 2026",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-34",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 1 cards at 2026-11-12T14:52:06.112192+00:00; complete response."
+  },
+  {
+    "id": "search-35",
+    "title": "giants",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-35",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 27 cards at 2026-11-12T14:52:08.716762+00:00; partial response: verified_title"
+  },
+  {
+    "id": "search-36",
+    "title": "rangers",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-36",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 35 cards at 2026-11-12T14:52:16.715933+00:00; complete response."
+  },
+  {
+    "id": "search-37",
+    "title": "asdfgh",
+    "image": null,
+    "data_file": "search-results.json",
+    "data_id": "search-37",
+    "ask": "Right or wrong? What did you expect?",
+    "context": "Search returned 0 cards at 2026-11-12T14:52:21.718793+00:00; complete response."
+  }
+]
