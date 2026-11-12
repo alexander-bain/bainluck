@@ -196,8 +196,12 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
         XCTAssertNil(input.finalAt)
         let series = try XCTUnwrap(ProjectedFinalPointsSeries.build(input))
         XCTAssertEqual(series.phase, .during)
-        XCTAssertEqual(series.actualSteps.map(\.at), ["2026-09-14T00:50:00Z".asDate!, "2026-09-14T02:00:00Z".asDate!],
+        // #12578 — the observed first-quarter start opens the score at 0–0 at the
+        // floor; the pregame 0–0 row before the floor is still not a step.
+        XCTAssertEqual(series.actualSteps.map(\.at), ["2026-09-14T00:20:00Z".asDate!, "2026-09-14T00:50:00Z".asDate!,
+                                                      "2026-09-14T02:00:00Z".asDate!],
                        "the pregame 0–0 before the floor is not a step")
+        XCTAssertEqual(series.actualSteps.first.map { [$0.home, $0.away] }, [0, 0])
         XCTAssertEqual(series.latestActual, .init(at: "2026-09-14T02:00:00Z".asDate!, home: 14, away: 3))
     }
 
@@ -235,7 +239,8 @@ final class ProjectedFinalPointsMount10239Tests: XCTestCase {
         let input = try XCTUnwrap(mount(try duringHistory(), page: "live", now: "2026-09-14T02:10:00Z".asDate))
         let cursor = try XCTUnwrap(ProjectedFinalPointsSeries.at("2026-09-14T01:00:10Z".asDate!, input: input))
         XCTAssertEqual(cursor.latest.at, capture("00:40"), "01:00's capture is 20 s past the cursor")
-        XCTAssertEqual(cursor.actualSteps.map(\.at), ["2026-09-14T00:50:00Z".asDate!])
+        XCTAssertEqual(cursor.actualSteps.map(\.at), ["2026-09-14T00:20:00Z".asDate!, "2026-09-14T00:50:00Z".asDate!],
+                       "#12578: the 0–0 opening at the floor, then the scores up to the cursor")
     }
 
     // MARK: - Final (legacy compatibility)

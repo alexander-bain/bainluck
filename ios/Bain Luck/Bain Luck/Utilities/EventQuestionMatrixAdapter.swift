@@ -86,7 +86,7 @@ nonisolated enum EventQuestionMatrixAdapter {
     /// There is no zip, binary complement, sorting by probability or cap.
     static func rows(in matrix: EventQuestionMatrix?, scope: QuestionMatrixScope) -> [Row] {
         guard let matrix, matrix.displayScope == nil || matrix.displayScope == scope.rawValue else { return [] }
-        return matrix.questions.compactMap { question in
+        return ladderOrdered(matrix.questions).compactMap { question in
             guard question.displayScope == nil || question.displayScope == scope.rawValue else { return nil }
             // Options a reader cannot tell apart are not a question we can
             // show. Production served every Polymarket team total as
@@ -94,6 +94,31 @@ nonisolated enum EventQuestionMatrixAdapter {
             guard !hasIndistinguishableOptions(question) else { return nil }
             return row(question, scope: scope)
         }
+    }
+
+    /// #11546 — the server serves threshold questions in ingest order (Totals
+    /// read 56+, 58+, 36+ …). Questions that are rungs of one ladder (same kind,
+    /// period, subject, quantity and relation) are sorted low to high inside the
+    /// slots that ladder already holds; every other question keeps its place.
+    static func ladderOrdered(_ questions: [QuestionMatrixQuestion]) -> [QuestionMatrixQuestion] {
+        func ladderKey(_ q: QuestionMatrixQuestion) -> String? {
+            guard q.kind == QuestionMatrixKind.countThreshold.rawValue, q.predicate?.bound != nil else { return nil }
+            return [q.displayScope ?? "", q.period?.key ?? "", q.subject?.side ?? "", q.subject?.label ?? "",
+                    q.quantity?.key ?? "", q.predicate?.relation ?? ""].joined(separator: "|")
+        }
+        var slots: [String: [Int]] = [:]
+        for (index, question) in questions.enumerated() {
+            if let key = ladderKey(question) { slots[key, default: []].append(index) }
+        }
+        var ordered = questions
+        for indices in slots.values where indices.count > 1 {
+            let rungs = indices.map { questions[$0] }.enumerated().sorted { a, b in
+                let lhs = a.element.predicate?.bound ?? 0, rhs = b.element.predicate?.bound ?? 0
+                return lhs == rhs ? a.offset < b.offset : lhs < rhs
+            }.map(\.element)
+            for (slot, rung) in zip(indices, rungs) { ordered[slot] = rung }
+        }
+        return ordered
     }
 
     /// The market ids behind the questions `rows(in:scope:)` draws.
