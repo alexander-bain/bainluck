@@ -68,10 +68,19 @@ export function slateFromSearch(search: string): string | null {
   return raw && SLATE_REF.test(raw) ? raw : null;
 }
 
-/** The deck request: today's opening ten, or a named slate's deck. */
-export function gradeDeckPath(slate: string | null): string {
+/** #11937 (159-A): the `?set=` a link names (an extra card set for that slate), or null. */
+export function setFromSearch(search: string): string | null {
+  const raw = new URLSearchParams(search).get("set");
+  return raw && SLATE_REF.test(raw) ? raw : null;
+}
+
+/** The deck request: today's opening ten, or a named slate's deck (with an
+ * extra set mixed in when the link names one). */
+export function gradeDeckPath(slate: string | null, set: string | null = null): string {
   if (!slate) return "/api/admin/ranking/grade-deck";
-  return `/api/admin/ranking/grade-deck?${new URLSearchParams({ slate }).toString()}`;
+  const params: Record<string, string> = { slate };
+  if (set) params.set = set;
+  return `/api/admin/ranking/grade-deck?${new URLSearchParams(params).toString()}`;
 }
 
 /** The grader's name rides in a header, never the URL (request logs), so the
