@@ -401,9 +401,11 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
         XCTAssertEqual(settledPage.detailsSheet.openingChanceValue, "38%")
         XCTAssertEqual(settledPage.detailsSheet.currentOrSettlementValue, "✓ Won")
 
-        // Decide 10-C: an open outcome whose `observed_at` is older than 30 minutes ages to
-        // `"No recent probability"` rather than printing an old quote as live.
-        let staleOneLeg = makeMarket(
+        // Decision 170-A & Ruling 188 (#12633): an open outcome whose `observed_at` is older
+        // than 30 minutes keeps its number and shows `"As of …"` (never `"No recent probability"`
+        // unless no probability was supplied at all).
+        let ptZone = TimeZone(identifier: "America/Los_Angeles")!
+        let agedOneLeg = makeMarket(
             id: 109918,
             name: "Will Democrats sweep all swing state Governor races",
             category: "politics",
@@ -414,17 +416,37 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
                     name: "Yes",
                     probability: 0.58,
                     openingProbability: 0.38,
-                    observedAt: "2026-11-04T01:00:00Z" // 93 minutes before referenceNow
+                    observedAt: "2026-11-04T01:00:00Z" // 93 minutes before referenceNow (5:00 PM PT vs 6:33 PM PT)
                 ),
             ]
         )
-        let stalePage = FuturesAtlasPresentation11666.build(market: staleOneLeg, now: referenceNow)
-        XCTAssertEqual(stalePage.header.primaryDisplay.primaryLabel, "No recent probability")
+        let agedPage = FuturesAtlasPresentation11666.build(market: agedOneLeg, now: referenceNow, timeZone: ptZone)
+        XCTAssertEqual(agedPage.header.primaryDisplay.primaryLabel, "58%")
+        XCTAssertEqual(agedPage.header.primaryDisplay.asOfText, "As of 5:00 PM")
+
+        let unpricedOneLeg = makeMarket(
+            id: 109918,
+            name: "Will Democrats sweep all swing state Governor races",
+            category: "politics",
+            status: "active",
+            outcomes: [
+                makeOutcomeDict(
+                    id: 401,
+                    name: "Yes",
+                    probability: nil,
+                    openingProbability: 0.38,
+                    observedAt: nil
+                ),
+            ]
+        )
+        let unpricedPage = FuturesAtlasPresentation11666.build(market: unpricedOneLeg, now: referenceNow, timeZone: ptZone)
+        XCTAssertEqual(unpricedPage.header.primaryDisplay.primaryLabel, "No recent probability")
     }
 
-    // MARK: - 6. Chart Agreement Expectation Follows Selected Outcome & Withholds Stale Headline (#9387 + Decide 10-C)
+    // MARK: - 6. Chart Agreement Expectation Follows Selected Outcome & Withholds Unpriced Headline (#9387 + 170-A / 188)
 
-    func testChartExpectationFollowsSelectedOutcomeAndWithholdsStaleHeadlineProbability() throws {
+    func testChartExpectationFollowsSelectedOutcomeAndWithholdsUnpricedHeadlineProbability() throws {
+        let ptZone = TimeZone(identifier: "America/Los_Angeles")!
         let market = makeMarket(
             id: 108629,
             name: "Closest Governor race in 2026",
@@ -450,13 +472,21 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
                     name: "Wisconsin",
                     probability: 0.16,
                     openingProbability: 0.15,
-                    observedAt: "2026-11-04T01:00:00Z" // > 30m before referenceNow (stale)
+                    observedAt: "2026-11-04T01:00:00Z" // > 30m before referenceNow (170-A: shows number + As of)
+                ),
+                makeOutcomeDict(
+                    id: 4,
+                    name: "Other",
+                    probability: nil,
+                    openingProbability: nil,
+                    observedAt: nil
                 ),
             ]
         )
 
-        // Default headline follows leading outcome (id: 1, probability: 0.29)
-        let defaultPresentation = FuturesAtlasPresentation11666.build(market: market, now: referenceNow)
+        // Default headline follows leading outcome (id: 1, probability: 0.29, fresh -> nil asOfText)
+        let defaultPresentation = FuturesAtlasPresentation11666.build(market: market, now: referenceNow, timeZone: ptZone)
+        XCTAssertNil(defaultPresentation.header.primaryDisplay.asOfText)
         let defaultExpectation = try XCTUnwrap(
             FuturesAtlasPresentation11666.chartExpectation(
                 market: market,
@@ -467,38 +497,42 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
         XCTAssertEqual(defaultExpectation.heroOutcomeId, 1)
         XCTAssertEqual(defaultExpectation.heroProbability, 0.29)
 
-        // Picking another fresh outcome updates the chart expectation to follow the pick (id: 2, probability: 0.21)
-        let pickedPresentation = FuturesAtlasPresentation11666.build(
-            market: market,
-            selectedOutcomeId: 2,
-            now: referenceNow
-        )
-        let pickedExpectation = try XCTUnwrap(
-            FuturesAtlasPresentation11666.chartExpectation(
-                market: market,
-                presentation: pickedPresentation,
-                representation: .verifiedTitle
-            )
-        )
-        XCTAssertEqual(pickedExpectation.heroOutcomeId, 2)
-        XCTAssertEqual(pickedExpectation.heroProbability, 0.21)
-
-        // Picking a stale outcome whose headline reads "No recent probability" withholds heroProbability (nil)
-        let stalePickedPresentation = FuturesAtlasPresentation11666.build(
+        // Picking an aged outcome (> 30m) keeps its number ("16%") with "As of 5:00 PM" and heroProbability 0.16
+        let agedPickedPresentation = FuturesAtlasPresentation11666.build(
             market: market,
             selectedOutcomeId: 3,
-            now: referenceNow
+            now: referenceNow,
+            timeZone: ptZone
         )
-        XCTAssertEqual(stalePickedPresentation.header.primaryDisplay.primaryLabel, "No recent probability")
-        let staleExpectation = try XCTUnwrap(
+        XCTAssertEqual(agedPickedPresentation.header.primaryDisplay.primaryLabel, "16%")
+        XCTAssertEqual(agedPickedPresentation.header.primaryDisplay.asOfText, "As of 5:00 PM")
+        let agedExpectation = try XCTUnwrap(
             FuturesAtlasPresentation11666.chartExpectation(
                 market: market,
-                presentation: stalePickedPresentation,
+                presentation: agedPickedPresentation,
                 representation: .verifiedTitle
             )
         )
-        XCTAssertEqual(staleExpectation.heroOutcomeId, 3)
-        XCTAssertNil(staleExpectation.heroProbability)
+        XCTAssertEqual(agedExpectation.heroOutcomeId, 3)
+        XCTAssertEqual(agedExpectation.heroProbability, 0.16)
+
+        // Picking an unpriced outcome whose headline reads "No recent probability" withholds heroProbability (nil)
+        let unpricedPickedPresentation = FuturesAtlasPresentation11666.build(
+            market: market,
+            selectedOutcomeId: 4,
+            now: referenceNow,
+            timeZone: ptZone
+        )
+        XCTAssertEqual(unpricedPickedPresentation.header.primaryDisplay.primaryLabel, "No recent probability")
+        let unpricedExpectation = try XCTUnwrap(
+            FuturesAtlasPresentation11666.chartExpectation(
+                market: market,
+                presentation: unpricedPickedPresentation,
+                representation: .verifiedTitle
+            )
+        )
+        XCTAssertEqual(unpricedExpectation.heroOutcomeId, 4)
+        XCTAssertNil(unpricedExpectation.heroProbability)
 
         // Source representation continues to pass nil expectation
         XCTAssertNil(
@@ -510,9 +544,11 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
         )
     }
 
-    func testWithheldCurrentOutcomeIdsWithholdsStaleSourceModeChartProbabilities108629() throws {
-        // Production 108629 ("Closest Governor race"): representation is "source", and Kansas
-        // (1594085) + Nebraska (235955688) are older than 30 minutes while Alaska (235955685) is fresh.
+    func testAgedSourceModeOutcomesKeepProbabilitiesWithAsOfWhileUnpricedOutcomesAreWithheld108629() throws {
+        // Production 108629 ("Closest Governor race") under Decision 170-A + Ruling 188 (#12633):
+        // Kansas (1h58m) and Nebraska (6h03m) keep their probabilities with `"As of …"` and stay
+        // visible in the chart `Prob` column, while only genuinely unpriced rows are withheld (`"—"`).
+        let ptZone = TimeZone(identifier: "America/Los_Angeles")!
         let market = makeMarket(
             id: 108629,
             name: "Closest Governor race",
@@ -524,31 +560,40 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
                     name: "Kansas",
                     probability: 0.92125984,
                     openingProbability: 0.85,
-                    observedAt: "2026-11-04T00:35:00Z" // 1h50m before referenceNow (stale)
+                    observedAt: "2026-11-04T00:35:00Z" // 1h58m before referenceNow -> As of 4:35 PM
                 ),
                 makeOutcomeDict(
                     id: 235955685,
                     name: "Alaska",
                     probability: 0.0246063,
                     openingProbability: 0.03,
-                    observedAt: "2026-11-04T02:20:00Z" // 13m before referenceNow (fresh)
+                    observedAt: "2026-11-04T02:20:00Z" // 13m before referenceNow -> fresh (nil)
                 ),
                 makeOutcomeDict(
                     id: 235955688,
                     name: "Nebraska",
                     probability: 0.01968504,
                     openingProbability: 0.02,
-                    observedAt: "2026-11-03T20:30:00Z" // 6h before referenceNow (stale)
+                    observedAt: "2026-11-03T20:30:00Z" // 6h03m before referenceNow -> As of 12:30 PM
+                ),
+                makeOutcomeDict(
+                    id: 235955699,
+                    name: "Other",
+                    probability: nil,
+                    openingProbability: nil,
+                    observedAt: nil
                 ),
             ]
         )
 
-        let presentation = FuturesAtlasPresentation11666.build(market: market, now: referenceNow)
+        let presentation = FuturesAtlasPresentation11666.build(market: market, now: referenceNow, timeZone: ptZone)
         XCTAssertEqual(presentation.header.selectedOutcomeId, 1594085)
-        XCTAssertEqual(presentation.header.primaryDisplay.primaryLabel, "No recent probability")
+        XCTAssertEqual(presentation.header.primaryDisplay.primaryLabel, "92%")
+        XCTAssertEqual(presentation.header.primaryDisplay.asOfText, "As of 4:35 PM")
+        XCTAssertNil(presentation.header.recordedAtText)
 
         let withheldIds = FuturesAtlasPresentation11666.withheldCurrentOutcomeIds(presentation: presentation)
-        XCTAssertEqual(withheldIds, Set([1594085, 235955688]))
+        XCTAssertEqual(withheldIds, Set([235955699]))
 
         let timelineOutcomesJSON: [[String: Any]] = [
             [
@@ -569,6 +614,11 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
                 "current_probability": 0.01968504,
                 "probability_change_24h": 0.0,
             ],
+            [
+                "id": 235955699,
+                "name": "Other",
+                "current_probability": 0.01,
+            ],
         ]
         let data = try JSONSerialization.data(withJSONObject: timelineOutcomesJSON)
         let rawOutcomes = try makeDecoder().decode([TimelineOutcomeMeta].self, from: data)
@@ -578,24 +628,21 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
             withholdsCurrent: false,
             withheldCurrentOutcomeIds: withheldIds
         )
-        XCTAssertEqual(resolved.count, 3)
-        // Stale Kansas and Nebraska have their currentProbability withheld (nil -> "—")
-        XCTAssertNil(resolved[0].currentProbability)
-        XCTAssertNil(resolved[0].probabilityChange24h)
-        // Fresh Alaska keeps its currentProbability (2%)
+        XCTAssertEqual(resolved.count, 4)
+        XCTAssertEqual(resolved[0].currentProbability ?? 0, 0.92125984, accuracy: 0.0001)
         XCTAssertEqual(resolved[1].currentProbability ?? 0, 0.0246063, accuracy: 0.0001)
-        // Stale Nebraska has its currentProbability withheld (nil -> "—")
-        XCTAssertNil(resolved[2].currentProbability)
+        XCTAssertEqual(resolved[2].currentProbability ?? 0, 0.01968504, accuracy: 0.0001)
+        XCTAssertNil(resolved[3].currentProbability)
 
         let percents = EvolutionLeaderboardGeometry.renderedPercents(forServedField: resolved)
-        XCTAssertEqual(percents, [nil, 2, nil])
+        XCTAssertEqual(percents, [92, 2, 2, nil])
         XCTAssertEqual(
             EvolutionLeaderboardGeometry.probLabel(resolved[0].currentProbability.map { $0 * 100 }, renderedPercent: percents[0]),
-            "—"
+            "92%"
         )
         XCTAssertEqual(
-            EvolutionLeaderboardGeometry.probLabel(resolved[1].currentProbability.map { $0 * 100 }, renderedPercent: percents[1]),
-            "2%"
+            EvolutionLeaderboardGeometry.probLabel(resolved[3].currentProbability.map { $0 * 100 }, renderedPercent: percents[3]),
+            "—"
         )
     }
 
