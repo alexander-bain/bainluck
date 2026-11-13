@@ -2,7 +2,7 @@
 
 PILLAR: DISCOVER · MATCHING · TRUTH
 SHIP: Dynamic division-winner container across active sports leagues (NBA, NHL,
-NFL, MLB) that selects open division-winner markets, blends two-source twins via
+NFL) that selects open division-winner markets, blends two-source twins via
 ``futures_source_merge.blend_with_verdict`` (refusing 40+ pt divergence), drops
 the brittle all-8-or-nothing gate in favour of ``>= min_divisions`` (default 4),
 orders card rows from tightest race to clearest lock, and emits a dynamic
@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -290,10 +290,10 @@ def _canonical_club(raw_name: Any, aliases: Mapping[str, str]) -> Optional[str]:
     normed = _norm(raw_name)
     if not normed or normed in {"other", "field", "tie", "none"}:
         return None
-    if normed in aliases:
-        return aliases[normed]
-    raw_clean = str(raw_name or "").strip()
-    return raw_clean if raw_clean else None
+    resolved = aliases.get(normed) or str(raw_name or "").strip()
+    if not resolved or _FORBIDDEN_COPY_RE.search(resolved):
+        return None
+    return resolved
 
 
 def _match_league_and_division(
@@ -361,7 +361,7 @@ def _resolve_single_division(
     division: str,
     source_markets: Sequence[Mapping[str, Any]],
     aliases: Mapping[str, str],
-) -> Optional[DivisionStanding]:
+) -> tuple[Optional[DivisionStanding], Optional[tuple[Any, ...]]]:
     by_source: dict[str, tuple[Mapping[str, Any], dict[str, float]]] = {}
     for m in source_markets:
         src = str(m.get("source") or "").strip().lower()
@@ -375,7 +375,7 @@ def _resolve_single_division(
             by_source[src] = (m, clubs)
 
     if not by_source:
-        return None
+        return None, None
 
     sources_sorted = sorted(by_source.keys())
     all_clubs: set[str] = set()
@@ -393,35 +393,47 @@ def _resolve_single_division(
             val, divergence, rule_name = blend_with_verdict(rows_for_blend)
             if divergence is not None or rule_name == "divergence_gate" or val is None:
                 # 40+ pt cross-source disagreement refuses the division (never print a bad blend)
-                return None
+                return None, ("division_divergence_gate", division, club)
             blended_clubs.append((club, float(val), rule_name))
-        elif len(by_source) == 1:
+        elif len(rows_for_blend) == 1:
+            # Preserve clubs quoted by only one source so an incomplete secondary source
+            # never erases the true division leader.
             blended_clubs.append((club, float(rows_for_blend[0]["probability"]), "single_source"))
 
     if len(blended_clubs) < 2:
-        return None
+        return None, None
 
     blended_clubs.sort(key=lambda item: (-item[1], item[0]))
     leader_club, leader_prob, lead_rule = blended_clubs[0]
     runner_club, runner_prob, _ = blended_clubs[1]
     gap_pts = round((leader_prob - runner_prob) * 100.0, 1)
 
-    primary_src = "kalshi" if "kalshi" in by_source else sources_sorted[0]
+    # Link primary_market_id to a source market that actually quotes leader_club
+    # (preferring Kalshi when both quote the leader); revision_ids tracks all twins.
+    sources_with_leader = [s for s in sources_sorted if leader_club in by_source[s][1]]
+    primary_src = (
+        "kalshi"
+        if "kalshi" in sources_with_leader
+        else (sources_with_leader[0] if sources_with_leader else sources_sorted[0])
+    )
     primary_market = dict(by_source[primary_src][0])
     primary_id = int(primary_market["id"])
     contrib_ids = tuple(sorted(int(by_source[s][0]["id"]) for s in sources_sorted))
 
-    return DivisionStanding(
-        division=division,
-        leader_club=leader_club,
-        leader_probability=leader_prob,
-        runner_up_club=runner_club,
-        runner_up_probability=runner_prob,
-        gap_points=gap_pts,
-        primary_market_id=primary_id,
-        contributing_market_ids=contrib_ids,
-        blend_rule=lead_rule,
-        primary_card=primary_market,
+    return (
+        DivisionStanding(
+            division=division,
+            leader_club=leader_club,
+            leader_probability=leader_prob,
+            runner_up_club=runner_club,
+            runner_up_probability=runner_prob,
+            gap_points=gap_pts,
+            primary_market_id=primary_id,
+            contributing_market_ids=contrib_ids,
+            blend_rule=lead_rule,
+            primary_card=primary_market,
+        ),
+        None,
     )
 
 
@@ -473,16 +485,22 @@ def select_league_division_races(
             grouped[div].append(m)
 
     standings: list[DivisionStanding] = []
+    drop_reasons: list[tuple[Any, ...]] = []
     for div in cfg["divisions"]:
         if not grouped[div]:
             continue
-        resolved = _resolve_single_division(div, grouped[div], cfg["club_aliases"])
+        resolved, drop_reason = _resolve_single_division(div, grouped[div], cfg["club_aliases"])
         if resolved is not None:
             standings.append(resolved)
+        elif drop_reason is not None:
+            drop_reasons.append(drop_reason)
 
     if len(standings) < max(2, int(min_divisions)):
         return RoundupRefusal(
-            [("insufficient_divisions", sport, len(standings), int(min_divisions))]
+            [
+                ("insufficient_divisions", sport, len(standings), int(min_divisions)),
+                *drop_reasons,
+            ]
         )
 
     # Order from tightest race (smallest leader-to-runner-up gap, then closest to 50%)
@@ -538,10 +556,6 @@ def select_league_division_races(
 
     title = _assert_clean_copy(f"{league_label} division races")
     kicker = _assert_clean_copy(f"{league_label} · DIVISIONS")
-    feed_stub = {
-        "score": 92.0,
-        "context_line": context_line,
-    }
     return RoundupMembers(
         members=members,
         rows=rows,
@@ -567,7 +581,7 @@ async def produce_league_division_races(
     rule: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
-    _ = now or datetime.now(timezone.utc)
+    del now
     cfg_rule = dict(rule or {})
     sport = str(cfg_rule.get("sport") or "basketball_nba")
     min_divs = int(cfg_rule.get("min_divisions") or 4)
@@ -603,7 +617,6 @@ async def produce_league_division_races(
             "name": m.name,
             "status": m.status,
             "source": m.source,
-            "sport": getattr(m, "sport", None),
             "category": m.category,
             "llm_sport_category": m.llm_sport_category,
             "outcomes": [
