@@ -60,6 +60,9 @@ class _FakeResult:
     def scalar(self):
         return None
 
+    def fetchall(self):
+        return []
+
     @property
     def rowcount(self):
         return 0

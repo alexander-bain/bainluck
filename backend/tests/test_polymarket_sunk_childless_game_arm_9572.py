@@ -106,7 +106,13 @@ class TestTheFixtureIsTheSpecimen:
         # not a venue that has nothing to price.
         event = _service(_Gamma())._parse_event(SPECIMEN_RAW)
         assert poly.sunk_event_is_open(event)
-        assert poly.sunk_event_child_census(event) == (328, 78)
+        # #12658: the one-sided Rams -21.5 quote (no bid, ask 9%) no longer
+        # invents a 4.5% forecast. The 77 usable children still prove reach.
+        assert poly.sunk_event_child_census(event) == (328, 77)
+        one_sided = next(m for m in event.markets if m.condition_id ==
+            "0xf8ad17949486f1f048a257fd641872cad27d8878a0ce0e1390727323d0be199f")
+        assert one_sided.best_bid is None and one_sided.best_ask == 0.09
+        assert poly._resolve_market_probability_with_source(one_sided) == (None, None)
 
 
 class TestTheChildlessGameIsReadSecond:

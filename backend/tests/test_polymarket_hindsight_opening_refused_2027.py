@@ -246,6 +246,10 @@ class _FakeResult:
     def scalar(self):
         return None
 
+    def fetchall(self):
+        # A fresh fixture has no stored prices for the guarded withdrawal read.
+        return []
+
     @property
     def rowcount(self):
         return 0
