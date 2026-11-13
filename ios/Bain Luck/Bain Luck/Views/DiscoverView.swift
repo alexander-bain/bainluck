@@ -370,25 +370,27 @@ struct DiscoverView: View {
     /// delegate to `DiscoverCategory`, so they cannot disagree (gotcha #129).
     private var sportsCats: Set<String> { DiscoverCategory.sportsCategories }
 
-    private func itemCategory(_ item: FeedItem) -> String {
-        // The bundle resolver keeps this call site's C29 P2 behavior: derive from
-        // the first ELIGIBLE child, never a stale raw first child. That gate is
-        // time-dependent view state, so it is injected rather than pulled into the
-        // pure classifier. `filteredItems` sanitizes bundles up front, so this is
-        // normally already the first child; the explicit admit keeps the
-        // derivation correct for any caller that passes a raw bundle.
+    static func classifyItemCategory(_ item: FeedItem) -> String {
         DiscoverCollectionFeed.category(of: item) { bundle in
-            Self.eligibleBundleItems(bundle).first ?? bundle.items.first
+            eligibleBundleItems(bundle).first ?? bundle.items.first
         }
+    }
+
+    static func classifyItemFamily(_ item: FeedItem) -> String {
+        DiscoverCollectionFeed.family(of: item) { bundle in
+            eligibleBundleItems(bundle).first ?? bundle.items.first
+        }
+    }
+
+    private func itemCategory(_ item: FeedItem) -> String {
+        Self.classifyItemCategory(item)
     }
 
     /// #1885: the interleave's finer run token — category narrowed by the story
     /// key. Uses the SAME eligibility-gated bundle resolver as `itemCategory`, so
     /// a bundle's family and its category always describe the same child.
     private func itemFamily(_ item: FeedItem) -> String {
-        DiscoverCollectionFeed.family(of: item) { bundle in
-            Self.eligibleBundleItems(bundle).first ?? bundle.items.first
-        }
+        Self.classifyItemFamily(item)
     }
 
     /// Pure, testable staleness predicate powering the Discover stale gate
@@ -555,11 +557,15 @@ struct DiscoverView: View {
         return nil
     }
 
-    private func primaryItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
+    static func primaryFeedItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
         switch grouped {
         case .single(let item): return item
         case .group(_, let items, _, _, _, _): return items.first
         }
+    }
+
+    private func primaryItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
+        Self.primaryFeedItem(grouped)
     }
 
     /// Five-card window ranking after pinning the first three cards, reading a
@@ -1569,11 +1575,185 @@ struct DiscoverView: View {
         let continuationStart: Int?
         let admittedIds: Set<String>
         let pullEpoch: Int
+        let dismissVersion: Int
+        /// Every `feedItemId` present in the raw `vm.items` snapshot that built or
+        /// incrementally extended this presentation, so automatic pagination and
+        /// non-reordering reconciles freeze already-drawn cards and only group
+        /// newly arrived items (#11984 Path 3).
+        let sourceItemIds: Set<String>
+
+        init(
+            items: [DiscoverGroupedItem],
+            continuationStart: Int?,
+            admittedIds: Set<String>,
+            pullEpoch: Int,
+            dismissVersion: Int = 0,
+            sourceItemIds: Set<String> = []
+        ) {
+            self.items = items
+            self.continuationStart = continuationStart
+            self.admittedIds = admittedIds
+            self.pullEpoch = pullEpoch
+            self.dismissVersion = dismissVersion
+            self.sourceItemIds = sourceItemIds
+        }
     }
 
     private func buildGroupedItems() -> GroupedPresentation {
-        let filtered = filteredItems
-        let admitted = retainedItemIdsForCurrentPull.union(Self.admittedItemIds(in: filtered))
+        Self.resolveGroupedPresentation(
+            rawItems: vm.items,
+            cached: presentationCache.cachedValue,
+            pullEpoch: pullEpoch,
+            dismissVersion: dismissVersion,
+            dismissedAt: dismissedAt,
+            profile: orderingProfile ?? interactionProfile,
+            sectionOf: vm.seatedSection(of:)
+        )
+    }
+
+    /// #11984 Path 3: pure grouped-presentation resolver.
+    ///
+    /// When `cached` comes from the same `pullEpoch` and `dismissVersion` and is
+    /// non-empty, every already-drawn card in `cached.items` keeps its exact seat,
+    /// `.single`/`.group` shape, and `continuationStart`, with its `FeedItem`
+    /// payloads refreshed in place from `rawItems`. Only newly arrived items
+    /// (`!cached.sourceItemIds.contains(feedItemId($0))`) are filtered, spaced,
+    /// grouped among themselves, and appended below. On initial load, swipe
+    /// dismissal (`dismissVersion` bump), or pull-to-refresh (`pullEpoch` bump),
+    /// the deck is built cleanly across the full eligible input.
+    static func resolveGroupedPresentation(
+        rawItems: [FeedItem],
+        cached: GroupedPresentation?,
+        pullEpoch: Int,
+        dismissVersion: Int,
+        dismissedAt: [String: TimeInterval],
+        profile: DiscoverInteractionProfile?,
+        now: Date = Date(),
+        sectionOf: (FeedItem) -> FeedSection? = { _ in nil }
+    ) -> GroupedPresentation {
+        let nowEpoch = now.timeIntervalSince1970
+        if let cached,
+           !cached.items.isEmpty,
+           cached.pullEpoch == pullEpoch,
+           cached.dismissVersion == dismissVersion {
+            let refreshedPrefix = refreshFrozenPrefix(cached.items, from: rawItems)
+            let allSourceIds = cached.sourceItemIds.union(rawItems.map(feedItemId))
+            let deltaRaw = rawItems.filter { !cached.sourceItemIds.contains(feedItemId($0)) }
+            guard !deltaRaw.isEmpty else {
+                return GroupedPresentation(
+                    items: refreshedPrefix,
+                    continuationStart: cached.continuationStart,
+                    admittedIds: cached.admittedIds,
+                    pullEpoch: pullEpoch,
+                    dismissVersion: dismissVersion,
+                    sourceItemIds: allSourceIds
+                )
+            }
+
+            let sanitizedDelta = sanitizedFeedItems(deltaRaw, now: now, retainingIds: cached.admittedIds)
+            let eligibleDelta = eligibleItems(sanitizedDelta, now: now, retainingIds: cached.admittedIds)
+            let deltaDismissFiltered: [FeedItem]
+            if refreshedPrefix.count >= feedFloor {
+                let cutoff = nowEpoch - dismissTTL
+                deltaDismissFiltered = eligibleDelta.filter { item in
+                    guard let ts = dismissedAt[feedItemId(item)] else { return true }
+                    return ts < cutoff
+                }
+            } else {
+                deltaDismissFiltered = applyDismissFloor(to: eligibleDelta, dismissedAt: dismissedAt, now: nowEpoch)
+            }
+            let deltaFiltered = applyCooldownSink(
+                to: deltaDismissFiltered,
+                isCooled: { profile?.suppresses(category: classifyItemCategory($0)) ?? false }
+            )
+            let admitted = cached.admittedIds.union(admittedItemIds(in: deltaFiltered))
+            guard !deltaFiltered.isEmpty else {
+                return GroupedPresentation(
+                    items: refreshedPrefix,
+                    continuationStart: cached.continuationStart,
+                    admittedIds: admitted,
+                    pullEpoch: pullEpoch,
+                    dismissVersion: dismissVersion,
+                    sourceItemIds: allSourceIds
+                )
+            }
+
+            let existingGroupIds = Set(refreshedPrefix.map(\.id))
+            let remainingFloor = max(0, groupExpansionFloor - refreshedPrefix.count)
+
+            if cached.continuationStart == nil,
+               refreshedPrefix.compactMap(primaryFeedItem).allSatisfy({ sectionOf($0) == .opening }),
+               let sections = partitionBySection(deltaFiltered, section: sectionOf),
+               !sections.continuation.isEmpty {
+                let deltaOpening = groupRelatedItems(
+                    spaceItems(sections.opening),
+                    retainingIds: admitted,
+                    excludingGroupIds: existingGroupIds
+                )
+                let usedIds = existingGroupIds.union(deltaOpening.map(\.id))
+                let deltaContinuation = groupRelatedItems(
+                    spaceItems(sections.continuation),
+                    retainingIds: admitted,
+                    excludingGroupIds: usedIds
+                )
+                var deltaBoundary = deltaOpening.count
+                let flooredDelta = enforceGroupFloorTarget(
+                    deltaOpening + deltaContinuation,
+                    floor: remainingFloor,
+                    boundary: &deltaBoundary
+                )
+                let openingAppended = spaceGrouped(personalizeGrouped(Array(flooredDelta[..<deltaBoundary]), profile: profile))
+                let continuationAppended = spaceGrouped(personalizeGrouped(Array(flooredDelta[deltaBoundary...]), profile: profile))
+                return GroupedPresentation(
+                    items: refreshedPrefix + openingAppended + continuationAppended,
+                    continuationStart: refreshedPrefix.count + openingAppended.count,
+                    admittedIds: admitted,
+                    pullEpoch: pullEpoch,
+                    dismissVersion: dismissVersion,
+                    sourceItemIds: allSourceIds
+                )
+            }
+
+            var unused = 0
+            let deltaGrouped = spaceGrouped(
+                personalizeGrouped(
+                    enforceGroupFloorTarget(
+                        groupRelatedItems(
+                            spaceItems(deltaFiltered),
+                            retainingIds: admitted,
+                            excludingGroupIds: existingGroupIds
+                        ),
+                        floor: remainingFloor,
+                        boundary: &unused
+                    ),
+                    profile: profile
+                )
+            )
+            return GroupedPresentation(
+                items: refreshedPrefix + deltaGrouped,
+                continuationStart: cached.continuationStart,
+                admittedIds: admitted,
+                pullEpoch: pullEpoch,
+                dismissVersion: dismissVersion,
+                sourceItemIds: allSourceIds
+            )
+        }
+
+        let retained: Set<String> = {
+            guard let cached, cached.pullEpoch == pullEpoch else { return [] }
+            return cached.admittedIds
+        }()
+        let sanitized = sanitizedFeedItems(rawItems, now: now, retainingIds: retained)
+        let staleBase = eligibleItems(sanitized, now: now, retainingIds: retained)
+        let filtered = personalize(
+            staleBase,
+            dismissedAt: dismissedAt,
+            now: nowEpoch,
+            isCooled: { profile?.suppresses(category: classifyItemCategory($0)) ?? false }
+        )
+        let admitted = retained.union(admittedItemIds(in: filtered))
+        let allSourceIds = Set(rawItems.map(feedItemId))
+
         // #5105: every filter and fallback above stayed GLOBAL (dismiss floor,
         // cooldown sink, stale gate). With an accepted seated edition the
         // admitted cards are then split by the section the server served them
@@ -1581,30 +1761,81 @@ struct DiscoverView: View {
         // section — so a shared group prefix can never merge cards across the
         // heading. A card the edition never placed cannot be guessed into a
         // section, so the list is shown whole rather than split on a guess.
-        if let sections = Self.partitionBySection(filtered, section: vm.seatedSection(of:)),
+        if let sections = partitionBySection(filtered, section: sectionOf),
            !sections.continuation.isEmpty {
-            let opening = groupRelated(interleave(sections.opening))
-            // The expansion floor counts the whole feed, as before; it only ever
-            // splits a group into its own singles in place, and moves the
-            // boundary by what it inserted ahead of it.
+            let opening = groupRelatedItems(spaceItems(sections.opening), retainingIds: retained)
             var boundary = opening.count
-            let floored = enforceGroupFloor(
-                opening + groupRelated(interleave(sections.continuation)), boundary: &boundary)
-            let openingItems = interleaveGrouped(applyLocalPersonalization(Array(floored[..<boundary])))
-            let continuationItems = interleaveGrouped(applyLocalPersonalization(Array(floored[boundary...])))
+            let floored = enforceGroupFloorTarget(
+                opening + groupRelatedItems(spaceItems(sections.continuation), retainingIds: retained),
+                floor: groupExpansionFloor,
+                boundary: &boundary
+            )
+            let openingItems = spaceGrouped(personalizeGrouped(Array(floored[..<boundary]), profile: profile))
+            let continuationItems = spaceGrouped(personalizeGrouped(Array(floored[boundary...]), profile: profile))
             return GroupedPresentation(
                 items: openingItems + continuationItems,
                 continuationStart: openingItems.count,
                 admittedIds: admitted,
-                pullEpoch: pullEpoch
+                pullEpoch: pullEpoch,
+                dismissVersion: dismissVersion,
+                sourceItemIds: allSourceIds
             )
         }
+        var unused = 0
+        let fullItems = spaceGrouped(
+            personalizeGrouped(
+                enforceGroupFloorTarget(
+                    groupRelatedItems(spaceItems(filtered), retainingIds: retained),
+                    floor: groupExpansionFloor,
+                    boundary: &unused
+                ),
+                profile: profile
+            )
+        )
         return GroupedPresentation(
-            items: interleaveGrouped(applyLocalPersonalization(enforceGroupFloor(groupRelated(interleave(filtered))))),
+            items: fullItems,
             continuationStart: nil,
             admittedIds: admitted,
-            pullEpoch: pullEpoch
+            pullEpoch: pullEpoch,
+            dismissVersion: dismissVersion,
+            sourceItemIds: allSourceIds
         )
+    }
+
+    private static func refreshFrozenPrefix(
+        _ prefix: [DiscoverGroupedItem],
+        from rawItems: [FeedItem]
+    ) -> [DiscoverGroupedItem] {
+        var latestById: [String: FeedItem] = [:]
+        var latestLeafById: [String: FeedItem] = [:]
+        for item in rawItems {
+            latestById[feedItemId(item)] = item
+            if let bundle = item.bundle {
+                for child in bundle.items {
+                    latestLeafById[feedItemId(child)] = child
+                }
+            }
+        }
+        return prefix.map { gi in
+            switch gi {
+            case .single(let old):
+                let id = feedItemId(old)
+                return .single(latestById[id] ?? latestLeafById[id] ?? old)
+            case .group(let title, let members, let kind, let theme, let sharedQuestion, let collectionRef):
+                let refreshed = members.map { m -> FeedItem in
+                    let id = feedItemId(m)
+                    return latestById[id] ?? latestLeafById[id] ?? m
+                }
+                return .group(
+                    title: title,
+                    items: refreshed,
+                    kind: kind,
+                    theme: theme,
+                    sharedQuestion: sharedQuestion,
+                    collectionRef: collectionRef
+                )
+            }
+        }
     }
 
     /// #5105: split an already-filtered list by served section, keeping order
@@ -1660,8 +1891,12 @@ struct DiscoverView: View {
     }
 
     /// Bundles and futures groups for one already-spaced list (#1221's grouping,
-    /// unchanged; extracted so #5105 can run it inside one section at a time).
-    private func groupRelated(_ mixedItems: [FeedItem]) -> [DiscoverGroupedItem] {
+    /// unchanged; extracted so #5105 and #11984 can run it per section or delta chunk).
+    static func groupRelatedItems(
+        _ mixedItems: [FeedItem],
+        retainingIds: Set<String> = [],
+        excludingGroupIds: Set<String> = []
+    ) -> [DiscoverGroupedItem] {
         var groups: [String: [FeedItem]] = [:]
         var groupTitles: [String: String] = [:]
         var result: [DiscoverGroupedItem] = []
@@ -1669,7 +1904,7 @@ struct DiscoverView: View {
 
         for item in mixedItems {
             if item.type == "bundle" { continue }
-            guard item.type == "futures", let grouping = futuresGrouping(for: item) else { continue }
+            guard item.type == "futures", let grouping = futuresGroupingStatic(for: item) else { continue }
             if groups[grouping.key] == nil {
                 groupTitles[grouping.key] = grouping.title
             }
@@ -1678,27 +1913,25 @@ struct DiscoverView: View {
 
         for item in mixedItems {
             if item.type == "bundle", let bundle = item.bundle {
-                // Recursively admit bundle children through the stale gate (C26
-                // P1): drop settled/closed/past/extreme children before the card
-                // ever sees them, and drop the whole bundle if nothing eligible
-                // remains rather than rendering a stale comparison.
-                let eligibleChildren = Self.eligibleBundleItems(bundle, retainingIds: retainedItemIdsForCurrentPull)
+                let eligibleChildren = eligibleBundleItems(bundle, retainingIds: retainingIds)
                 if eligibleChildren.isEmpty { continue }
-                result.append(.group(
+                let candidate = DiscoverGroupedItem.group(
                     title: bundle.title,
                     items: eligibleChildren,
                     kind: bundle.kind,
                     theme: bundle.comparisonTheme,
                     sharedQuestion: bundle.sharedQuestion,
                     collectionRef: bundle.themeCollectionRef
-                ))
+                )
+                if excludingGroupIds.contains(candidate.id) { continue }
+                result.append(candidate)
                 continue
             }
             if item.type != "futures" {
                 result.append(.single(item))
                 continue
             }
-            guard let grouping = futuresGrouping(for: item) else {
+            guard let grouping = futuresGroupingStatic(for: item) else {
                 result.append(.single(item))
                 continue
             }
@@ -1706,7 +1939,15 @@ struct DiscoverView: View {
             usedPrefixes.insert(grouping.key)
             let group = groups[grouping.key] ?? [item]
             if group.count >= 2 {
-                result.append(.group(title: groupTitles[grouping.key] ?? grouping.title, items: group))
+                let candidate = DiscoverGroupedItem.group(
+                    title: groupTitles[grouping.key] ?? grouping.title,
+                    items: group
+                )
+                if excludingGroupIds.contains(candidate.id) {
+                    result.append(contentsOf: group.map { .single($0) })
+                } else {
+                    result.append(candidate)
+                }
             } else {
                 result.append(.single(group[0]))
             }
@@ -1714,40 +1955,38 @@ struct DiscoverView: View {
         return result
     }
 
-    private func groupItemCount(_ item: DiscoverGroupedItem) -> Int {
+    private func groupRelated(_ mixedItems: [FeedItem]) -> [DiscoverGroupedItem] {
+        Self.groupRelatedItems(mixedItems, retainingIds: retainedItemIdsForCurrentPull)
+    }
+
+    private static func groupItemCountStatic(_ item: DiscoverGroupedItem) -> Int {
         if case .group(_, let items, _, _, _, _) = item { return items.count }
         return 1
     }
 
-    /// Futures group-collapse must not shrink the visible feed below
-    /// `groupExpansionFloor` (#1221). When a page of many small futures groups
-    /// collapses too far, expand the largest prefix/group-id groups (kind == nil
-    /// — never the API's intentional comparison bundles) back into singles until
-    /// the floor is met or nothing is left to expand.
-    ///
-    /// Deliberately NOT `feedFloor`: this floor is met by un-collapsing ladders,
-    /// so chasing the G1 card count here would put back exactly the near-
-    /// duplicate cards grouping exists to remove.
+    private func groupItemCount(_ item: DiscoverGroupedItem) -> Int {
+        Self.groupItemCountStatic(item)
+    }
+
     private func enforceGroupFloor(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
         var unused = 0
         return enforceGroupFloor(items, boundary: &unused)
     }
 
-    /// #5105: the same floor, keeping a section `boundary` (an index into
-    /// `items`) on the same card: expanding a group ahead of it shifts it by the
-    /// singles inserted.
-    private func enforceGroupFloor(
-        _ items: [DiscoverGroupedItem], boundary: inout Int
+    static func enforceGroupFloorTarget(
+        _ items: [DiscoverGroupedItem],
+        floor: Int,
+        boundary: inout Int
     ) -> [DiscoverGroupedItem] {
         var result = items
-        while result.count < Self.groupExpansionFloor {
+        while result.count < floor {
             let expandable = result.enumerated().filter { entry in
                 if case .group(_, let its, let kind, _, _, _) = entry.element {
                     return kind == nil && its.count >= 2
                 }
                 return false
             }
-            guard let target = expandable.max(by: { groupItemCount($0.element) < groupItemCount($1.element) }) else {
+            guard let target = expandable.max(by: { groupItemCountStatic($0.element) < groupItemCountStatic($1.element) }) else {
                 break
             }
             if case .group(_, let its, _, _, _, _) = result[target.offset] {
@@ -1760,13 +1999,22 @@ struct DiscoverView: View {
         return result
     }
 
-    private func futuresGrouping(for item: FeedItem) -> (key: String, title: String)? {
+    /// #5105: the same floor, keeping a section `boundary` (an index into
+    /// `items`) on the same card: expanding a group ahead of it shifts it by the
+    /// singles inserted.
+    private func enforceGroupFloor(
+        _ items: [DiscoverGroupedItem], boundary: inout Int
+    ) -> [DiscoverGroupedItem] {
+        Self.enforceGroupFloorTarget(items, floor: Self.groupExpansionFloor, boundary: &boundary)
+    }
+
+    private static func futuresGroupingStatic(for item: FeedItem) -> (key: String, title: String)? {
         guard let futures = item.futures else { return nil }
         if let groupId = futures.groupId?.trimmingCharacters(in: .whitespacesAndNewlines), !groupId.isEmpty {
-            return ("group:\(groupId)", futuresGroupTitle(for: futures))
+            return ("group:\(groupId)", futuresGroupTitleStatic(for: futures))
         }
         if let canonical = futures.canonicalMarketKey?.trimmingCharacters(in: .whitespacesAndNewlines), !canonical.isEmpty {
-            return ("canonical:\(canonical)", futuresGroupTitle(for: futures))
+            return ("canonical:\(canonical)", futuresGroupTitleStatic(for: futures))
         }
         let name = futures.name
         if let colonIdx = name.firstIndex(of: ":"), name.distance(from: name.startIndex, to: colonIdx) < 30 {
@@ -1778,7 +2026,11 @@ struct DiscoverView: View {
         return nil
     }
 
-    private func futuresGroupTitle(for futures: FeedFuturesData) -> String {
+    private func futuresGrouping(for item: FeedItem) -> (key: String, title: String)? {
+        Self.futuresGroupingStatic(for: item)
+    }
+
+    private static func futuresGroupTitleStatic(for futures: FeedFuturesData) -> String {
         if let colonIdx = futures.name.firstIndex(of: ":"), futures.name.distance(from: futures.name.startIndex, to: colonIdx) < 30 {
             let prefix = String(futures.name[..<colonIdx]).trimmingCharacters(in: .whitespaces)
             if !prefix.isEmpty { return prefix }
@@ -1786,33 +2038,64 @@ struct DiscoverView: View {
         return futures.name
     }
 
-    private func interleave(_ items: [FeedItem]) -> [FeedItem] {
-        // Preserve this call site's small-input guard, then delegate to the shared
-        // spacing pass (#8415): it defers cards the spacing rules hold back and
-        // never promotes one because of its category.
+    private func futuresGroupTitle(for futures: FeedFuturesData) -> String {
+        Self.futuresGroupTitleStatic(for: futures)
+    }
+
+    static func spaceItems(_ items: [FeedItem]) -> [FeedItem] {
         guard items.count > 2 else { return items }
         return FeedInterleave.spaced(
-            items, sportsCategories: sportsCats,
-            category: itemCategory, family: itemFamily
+            items,
+            sportsCategories: DiscoverCategory.sportsCategories,
+            category: classifyItemCategory,
+            family: classifyItemFamily
+        )
+    }
+
+    private func interleave(_ items: [FeedItem]) -> [FeedItem] {
+        Self.spaceItems(items)
+    }
+
+    private static func groupedCategoryStatic(_ item: DiscoverGroupedItem) -> String {
+        primaryFeedItem(item).map(classifyItemCategory) ?? "other"
+    }
+
+    private static func groupedFamilyStatic(_ item: DiscoverGroupedItem) -> String {
+        primaryFeedItem(item).map(classifyItemFamily) ?? "other"
+    }
+
+    static func personalizeGrouped(
+        _ items: [DiscoverGroupedItem],
+        profile: DiscoverInteractionProfile?
+    ) -> [DiscoverGroupedItem] {
+        rankFiveCardWindows(
+            items,
+            profile: profile,
+            score: { primaryFeedItem($0)?.score ?? 0 },
+            category: groupedCategoryStatic
+        )
+    }
+
+    static func spaceGrouped(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
+        guard items.count > 2 else { return items }
+        return FeedInterleave.spaced(
+            items,
+            sportsCategories: DiscoverCategory.sportsCategories,
+            category: groupedCategoryStatic,
+            family: groupedFamilyStatic
         )
     }
 
     private func groupedCategory(_ item: DiscoverGroupedItem) -> String {
-        primaryItem(item).map(itemCategory) ?? "other"
+        Self.groupedCategoryStatic(item)
     }
 
     private func groupedFamily(_ item: DiscoverGroupedItem) -> String {
-        primaryItem(item).map(itemFamily) ?? "other"
+        Self.groupedFamilyStatic(item)
     }
 
     private func interleaveGrouped(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
-        // Same shared spacing pass as `interleave` (#8415), classified by the
-        // grouped item's primary category.
-        guard items.count > 2 else { return items }
-        return FeedInterleave.spaced(
-            items, sportsCategories: sportsCats,
-            category: groupedCategory, family: groupedFamily
-        )
+        Self.spaceGrouped(items)
     }
 
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -2474,13 +2757,15 @@ struct DiscoverView: View {
         }
     }
 
-    /// #10399 / #10094: the seeded deck must still revalidate when SwiftUI
-    /// tears down its appearance task. Match the existing pull-refresh lifetime;
-    /// load() retains its deadline, principal and newer-generation fences.
+    /// #10399 / #10094 / #11984 Path 1: the seeded deck must still revalidate
+    /// when SwiftUI tears down its appearance task, AND when a saved preview is
+    /// already painted on screen (`!items.isEmpty`), revalidation reconciles in
+    /// place (`mayReorder: false`) rather than reshuffling or dropping cards
+    /// under the reader (`allowReorder` remains true when `items.isEmpty`).
     @discardableResult
     @MainActor
     static func loadForInitialAppearance(_ model: DiscoverViewModel) async -> DiscoverLoadOutcome {
-        await Task { @MainActor in await model.load() }.value
+        await Task { @MainActor in await model.load(mayReorder: false) }.value
     }
 
     #if DEBUG
