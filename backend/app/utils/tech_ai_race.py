@@ -2,14 +2,14 @@
 
 PILLAR: DISCOVER · MATCHING · TRUTH
 SHIP: Dynamic AI leaderboard container selecting open single-winner AI model
-benchmark races (month-end overall Arena, year-end overall Arena, Coding Arena,
-LiveBench Coding), blending identical benchmark twins via
-``futures_source_merge.blend_with_verdict`` while keeping distinct benchmarks
-separate so different settlement rules are never conflated, and emitting a
-clear ``context_line`` naming the settlement benchmark behind each row.
+benchmark races (month-end overall Arena keyed per month, year-end overall Arena,
+Coding Arena, LiveBench Coding), blending identical benchmark twins via
+``futures_source_merge.blend_with_verdict`` while keeping distinct benchmarks and
+distinct months separate so different settlement rules are never conflated, and
+emitting a clear ``context_line`` naming the settlement benchmark behind each row.
 
 Publication gate: candidate definition lives in ``backend/data/discover/candidates/``
-and is NOT registered in ``ROUNDUP_PRODUCERS`` until licensed via the Discover
+and are NOT registered in ``ROUNDUP_PRODUCERS`` until licensed via the Discover
 exam and ``/grade/groupings``.
 """
 
@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -57,6 +57,28 @@ CANDIDATE_AI_RACE_PATH = (
 
 _FORBIDDEN_COPY_RE = re.compile(
     r"\b(?:questions?|stale|venues?|kalshi|polymarket|opened)\b",
+    re.IGNORECASE,
+)
+
+_MONTH_INDEX: dict[str, tuple[int, str]] = {
+    "january": (1, "Jan"),
+    "february": (2, "Feb"),
+    "march": (3, "Mar"),
+    "april": (4, "Apr"),
+    "may": (5, "May"),
+    "june": (6, "Jun"),
+    "july": (7, "Jul"),
+    "august": (8, "Aug"),
+    "september": (9, "Sep"),
+    "october": (10, "Oct"),
+    "november": (11, "Nov"),
+    "december": (12, "Dec"),
+}
+
+_MONTH_END_RE = re.compile(
+    r"\bend\s+of\s+"
+    r"(january|february|march|april|may|june|july|august|september|october|november|december)"
+    r"(?:\s+(202[6-9]))?\b",
     re.IGNORECASE,
 )
 
@@ -99,6 +121,12 @@ _AI_BENCHMARK_SLOTS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
         ),
     ),
 )
+
+_STATIC_SLOT_ORDER: dict[str, int] = {
+    "arena_year_end": 1,
+    "coding_arena_year_end": 2,
+    "livebench_coding": 3,
+}
 
 _EXCLUDED_AI_SHAPE_RE = re.compile(
     r"(?:___|reach\b.*\bscore\b|which\s+companies\s+will\s+have\s+a\s+top[- ]ranked)",
@@ -145,7 +173,10 @@ def _canonical_lab(raw_name: Any) -> Optional[str]:
     low = cleaned.lower()
     if not low or low in {"other", "none", "tie", "field"} or low.startswith("#"):
         return None
-    return _LAB_ALIASES.get(low, cleaned)
+    resolved = _LAB_ALIASES.get(low, cleaned)
+    if _FORBIDDEN_COPY_RE.search(resolved):
+        return None
+    return resolved
 
 
 def _classify_ai_benchmark(market: Mapping[str, Any]) -> Optional[tuple[str, str, str]]:
@@ -156,18 +187,29 @@ def _classify_ai_benchmark(market: Mapping[str, Any]) -> Optional[tuple[str, str
         if "livebench" in title.lower() and slot_key != "livebench_coding":
             continue
         if pat.search(title):
-            # Refine month label if month-end
             if slot_key == "arena_month_end":
-                m = re.search(
-                    r"\bend\s+of\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b",
-                    title,
-                    re.IGNORECASE,
-                )
+                m = _MONTH_END_RE.search(title)
                 if m:
-                    mon = m.group(1).capitalize()[:3]
-                    return slot_key, f"Overall Arena · End of {mon}", track
+                    mon_low = m.group(1).lower()
+                    year_tok = m.group(2)
+                    mon_idx, mon_abbr = _MONTH_INDEX[mon_low]
+                    year_key = f"{year_tok}:" if year_tok else ""
+                    label_suffix = f"{mon_abbr} {year_tok}" if year_tok else mon_abbr
+                    # Key by month (and explicit year if present) so rolling November and
+                    # December month-end markets never merge or mislabel one another.
+                    return (
+                        f"arena_month_end:{year_key}{mon_idx:02d}:{mon_low}",
+                        f"Overall Arena · End of {label_suffix}",
+                        track,
+                    )
             return slot_key, label, track
     return None
+
+
+def _slot_sort_key(slot_key: str) -> tuple[int, str]:
+    if slot_key.startswith("arena_month_end:"):
+        return (0, slot_key)
+    return (_STATIC_SLOT_ORDER.get(slot_key, 99), slot_key)
 
 
 def _extract_labs(market: Mapping[str, Any]) -> dict[str, float]:
@@ -204,7 +246,7 @@ def _resolve_slot(
     label: str,
     track: str,
     slot_markets: Sequence[Mapping[str, Any]],
-) -> Optional[BenchmarkStanding]:
+) -> tuple[Optional[BenchmarkStanding], Optional[tuple[Any, ...]]]:
     by_source: dict[str, tuple[Mapping[str, Any], dict[str, float]]] = {}
     for m in slot_markets:
         src = str(m.get("source") or "").strip().lower()
@@ -216,7 +258,7 @@ def _resolve_slot(
         if src not in by_source or len(labs) > len(by_source[src][1]):
             by_source[src] = (m, labs)
     if not by_source:
-        return None
+        return None, None
 
     sources_sorted = sorted(by_source.keys())
     all_labs: set[str] = set()
@@ -233,31 +275,42 @@ def _resolve_slot(
         if len(rows_for_blend) >= 2:
             val, divergence, rule_name = blend_with_verdict(rows_for_blend)
             if divergence is not None or rule_name == "divergence_gate" or val is None:
-                return None
+                return None, ("benchmark_divergence_gate", slot_key, lab)
             blended.append((lab, float(val)))
-        elif len(by_source) == 1:
+        elif len(rows_for_blend) == 1:
+            # Keep single-source labs in multi-source slots so a partial book never
+            # drops the true benchmark leader.
             blended.append((lab, float(rows_for_blend[0]["probability"])))
 
     if len(blended) < 2:
-        return None
+        return None, None
     blended.sort(key=lambda x: (-x[1], x[0]))
     leader_lab, leader_prob = blended[0]
     runner_lab, runner_prob = blended[1]
-    primary_src = "kalshi" if "kalshi" in by_source else sources_sorted[0]
+
+    sources_with_leader = [s for s in sources_sorted if leader_lab in by_source[s][1]]
+    primary_src = (
+        "kalshi"
+        if "kalshi" in sources_with_leader
+        else (sources_with_leader[0] if sources_with_leader else sources_sorted[0])
+    )
     primary_card = dict(by_source[primary_src][0])
     contrib_ids = tuple(sorted(int(by_source[s][0]["id"]) for s in sources_sorted))
 
-    return BenchmarkStanding(
-        slot_key=slot_key,
-        benchmark_label=label,
-        track=track,
-        leader_lab=leader_lab,
-        leader_probability=leader_prob,
-        runner_up_lab=runner_lab,
-        runner_up_probability=runner_prob,
-        primary_market_id=int(primary_card["id"]),
-        contributing_market_ids=contrib_ids,
-        primary_card=primary_card,
+    return (
+        BenchmarkStanding(
+            slot_key=slot_key,
+            benchmark_label=label,
+            track=track,
+            leader_lab=leader_lab,
+            leader_probability=leader_prob,
+            runner_up_lab=runner_lab,
+            runner_up_probability=runner_prob,
+            primary_market_id=int(primary_card["id"]),
+            contributing_market_ids=contrib_ids,
+            primary_card=primary_card,
+        ),
+        None,
     )
 
 
@@ -299,18 +352,24 @@ def select_tech_ai_race(
             slot_buckets[slot_key] = (label, track, [])
         slot_buckets[slot_key][2].append(m)
 
-    ordered_keys = [s[0] for s in _AI_BENCHMARK_SLOTS]
+    ordered_keys = sorted(slot_buckets.keys(), key=_slot_sort_key)
     standings: list[BenchmarkStanding] = []
+    drop_reasons: list[tuple[Any, ...]] = []
     for key in ordered_keys:
-        if key not in slot_buckets:
-            continue
         label, track, bucket = slot_buckets[key]
-        resolved = _resolve_slot(key, label, track, bucket)
+        resolved, drop_reason = _resolve_slot(key, label, track, bucket)
         if resolved is not None:
             standings.append(resolved)
+        elif drop_reason is not None:
+            drop_reasons.append(drop_reason)
 
     if len(standings) < max(2, int(min_benchmarks)):
-        return RoundupRefusal([("insufficient_ai_benchmarks", len(standings), int(min_benchmarks))])
+        return RoundupRefusal(
+            [
+                ("insufficient_ai_benchmarks", len(standings), int(min_benchmarks)),
+                *drop_reasons,
+            ]
+        )
 
     card_standings = standings[: max(2, int(max_card_rows))]
     context_line = _compose_context_line(card_standings)
@@ -370,7 +429,7 @@ async def produce_tech_ai_race(
     rule: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
-    _ = now or datetime.now(timezone.utc)
+    del now
     cfg_rule = dict(rule or {})
     min_b = int(cfg_rule.get("min_benchmarks") or 3)
     max_r = int(cfg_rule.get("max_card_rows") or 4)
