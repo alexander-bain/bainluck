@@ -495,6 +495,11 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     )
     let rectDaysAway = WatchComplicationProjection.snapshot(game: daysAwayForecast, savedAt: now)!.validatedRectangularReading(now: now)!
     precondition(rectDaysAway.metadataLine(at: now, timeZone: pacific) == "Tue 1:25 PM")
+    let farOutForecast = try decodeGame(
+        "\"status\":\"scheduled\",\"commence_time\":\"2026-10-16T00:15:00Z\",\"hero_probability\":0.55,\"hero_probability_away\":0.45,\"hero_probability_observed_at\":\"2026-10-04T17:57:00Z\",\(home),\(away)"
+    )
+    let rectFarOut = WatchComplicationProjection.snapshot(game: farOutForecast, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectFarOut.metadataLine(at: now, timeZone: pacific) == "Oct 15, 5:15 PM")
     let scheduledNoTime = try decodeGame(
         "\"status\":\"scheduled\",\"hero_probability\":0.55,\"hero_probability_away\":0.45,\"hero_probability_observed_at\":\"2026-10-04T17:57:00Z\",\(home),\(away)"
     )
@@ -543,8 +548,76 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     let rectTieFinal = WatchComplicationProjection.snapshot(game: tieFinalGame, savedAt: now)!.validatedRectangularReading(now: now)!
     precondition(rectTieFinal.primaryLine(at: now) == "Final · LA 2, SF 2")
 
-    // 5. Standing-rule guard across all timeline entries and worst-case ages: never "Saved", never "Stale", and fits budget.
-    for snap in [snapLiveScore, snapSchedForecast, snapFinal] {
+    // 4b. Pinned market outcome ("Newsom 23%", "As of 10:59 AM", "<1%" / ">99%" clamps, fail-closed outside (0, 1))
+    let futureObserved = now.addingTimeInterval(-60) // 17:59Z = 10:59 AM PDT
+    let snapFuture = WatchComplicationProjection.futureSnapshot(
+        marketID: 90210,
+        marketTitle: "2028 California Governor",
+        outcomeName: "Newsom",
+        probability: 0.23,
+        observedAt: futureObserved,
+        savedAt: now
+    )!
+    precondition(snapFuture.circularReading == nil && snapFuture.validatedCircularReading(now: now) == nil)
+    let rectFuture = snapFuture.validatedRectangularReading(now: now)!
+    precondition(rectFuture.kind == .futureForecast && rectFuture.homePercent == 23)
+    precondition(rectFuture.subOnePercent == nil && rectFuture.aboveNinetyNinePercent == nil)
+    precondition(rectFuture.headerLine() == "2028 California Governor")
+    precondition(rectFuture.primaryLine(at: now) == "Newsom 23%")
+    precondition(rectFuture.metadataLine(at: now, timeZone: pacific) == "1m ago" && !rectFuture.isAgedFuture(at: now))
+    let futureAgeSwitch = futureObserved.addingTimeInterval(WatchRectangularReading.liveAgeThresholdSeconds + 1)
+    precondition(WatchRectangularReading.timelineDates(for: snapFuture, now: now).contains(futureAgeSwitch))
+    precondition(rectFuture.isAgedFuture(at: futureAgeSwitch))
+    precondition(rectFuture.metadataLine(at: futureAgeSwitch, timeZone: pacific) == "As of 10:59 AM")
+    precondition(rectFuture.accessibilityDescription(at: futureAgeSwitch, timeZone: pacific).contains("As of 10:59 AM."))
+
+    let snapSubOne = WatchComplicationProjection.futureSnapshot(
+        marketID: 90211,
+        marketTitle: "2028 California Governor",
+        outcomeName: "Longshot",
+        probability: 0.002,
+        observedAt: futureObserved,
+        savedAt: now
+    )!
+    let rectSubOne = snapSubOne.validatedRectangularReading(now: now)!
+    precondition(rectSubOne.subOnePercent == true && rectSubOne.aboveNinetyNinePercent == nil && rectSubOne.homePercent == 1)
+    precondition(rectSubOne.primaryLine(at: now) == "Longshot <1%")
+
+    let snapAbove99 = WatchComplicationProjection.futureSnapshot(
+        marketID: 90212,
+        marketTitle: "2028 California Governor",
+        outcomeName: "Frontrunner",
+        probability: 0.998,
+        observedAt: futureObserved,
+        savedAt: now
+    )!
+    let rectAbove99 = snapAbove99.validatedRectangularReading(now: now)!
+    precondition(rectAbove99.aboveNinetyNinePercent == true && rectAbove99.subOnePercent == nil && rectAbove99.homePercent == 99)
+    precondition(rectAbove99.primaryLine(at: now) == "Frontrunner >99%")
+
+    for invalidProb in [0.0, 1.0, -0.1, 1.1, Double.nan, Double.infinity] {
+        precondition(
+            WatchComplicationProjection.futureSnapshot(
+                marketID: 90213,
+                marketTitle: "Market",
+                outcomeName: "Outcome",
+                probability: invalidProb,
+                observedAt: futureObserved,
+                savedAt: now
+            ) == nil,
+            "Open market outside (0, 1) must fail closed: \(invalidProb)"
+        )
+    }
+    var forgedBothFlagsObj = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapSubOne)) as! [String: Any]
+    var forgedBothFlagsRect = forgedBothFlagsObj["rectangularReading"] as! [String: Any]
+    forgedBothFlagsRect["aboveNinetyNinePercent"] = true
+    forgedBothFlagsObj["rectangularReading"] = forgedBothFlagsRect
+    let decodedBothFlags = try JSONDecoder().decode(WatchComplicationSnapshot.self, from: JSONSerialization.data(withJSONObject: forgedBothFlagsObj))
+    precondition(decodedBothFlags.validatedRectangularReading(now: now) == nil,
+                 "Forged snapshot with both <1% and >99% flags must fail closed")
+
+    // 5. Standing-rule guard across all timeline entries and worst-case ages: never "Saved", never "Stale", never "Checked", and fits budget.
+    for snap in [snapLiveScore, snapSchedForecast, snapFinal, snapFuture, snapSubOne, snapAbove99] {
         let reading = snap.validatedRectangularReading(now: now)!
         for date in WatchRectangularReading.timelineDates(for: snap, now: now) + [
             reading.observedAt.addingTimeInterval(30),
@@ -558,6 +631,7 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
             for text in [primary, meta, spoken] {
                 precondition(!text.localizedCaseInsensitiveContains("stale"), "Standing rule: never say stale anywhere: \(text)")
                 precondition(!text.localizedCaseInsensitiveContains("saved"), "Standing rule: never say saved on rectangular face: \(text)")
+                precondition(!text.localizedCaseInsensitiveContains("checked"), "Standing rule: never say checked on rectangular face: \(text)")
             }
             precondition(meta.count <= WatchRectangularReading.maxSingleLineMetadataCharacters,
                          "Metadata exceeds \(WatchRectangularReading.maxSingleLineMetadataCharacters)-char narrow-face budget (\(meta.count)): \(meta)")
