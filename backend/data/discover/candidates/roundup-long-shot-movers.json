@@ -1,0 +1,30 @@
+{
+  "slug": "roundup-long-shot-movers",
+  "membership": "long_shot_movers",
+  "kind": "roundup",
+  "relations": [
+    "movement",
+    "same_window"
+  ],
+  "level": "member",
+  "kicker": "MOVERS · LAST 24 HOURS",
+  "name": "Long shots that moved",
+  "category": "discover",
+  "tag": "MOVERS",
+  "section_title": "Long shots waking up over the last 24 hours",
+  "subtitle": "Markets that started at 12% or lower a day ago and climbed at least 6 points on recent trading.",
+  "footer": "24h change in points · started at 12% or lower · recent trading verified",
+  "score": 91.0,
+  "rule": {
+    "producer": "long_shot_movers",
+    "window": "last-24h",
+    "selector": "waking_long_shot",
+    "max_prior_prob": 0.12,
+    "min_current_prob": 0.08,
+    "min_gain_points": 6,
+    "max_quote_age_hours": 6.0,
+    "min_volume": 1000.0,
+    "min_members": 3,
+    "max_card_rows": 4
+  }
+}
