@@ -8,7 +8,6 @@ Settlement prices are handled separately by the callers.
 
 from __future__ import annotations
 
-import math
 from decimal import Decimal, InvalidOperation
 
 from app.utils.feed_market_quality import FEED_PHANTOM_MIN_SPREAD
@@ -19,16 +18,16 @@ def current_polymarket_quote(bid: object, ask: object) -> float | None:
     if bid is None or ask is None or isinstance(bid, bool) or isinstance(ask, bool):
         return None
     try:
-        bid_value, ask_value = float(bid), float(ask)
-    except (TypeError, ValueError, OverflowError):
+        bid_value, ask_value = Decimal(str(bid)), Decimal(str(ask))
+    except (InvalidOperation, TypeError, ValueError):
         return None
-    if not (math.isfinite(bid_value) and math.isfinite(ask_value)):
+    if not (bid_value.is_finite() and ask_value.is_finite()):
         return None
     if not 0 < bid_value <= ask_value < 1:
         return None
-    if ask_value - bid_value >= FEED_PHANTOM_MIN_SPREAD:
+    if ask_value - bid_value >= Decimal(str(FEED_PHANTOM_MIN_SPREAD)):
         return None
-    return (bid_value + ask_value) / 2
+    return float((bid_value + ask_value) / 2)
 
 
 def quoted_price_change_value(old_probability, old_bid, old_ask, new_probability):

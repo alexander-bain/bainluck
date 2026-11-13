@@ -70,7 +70,8 @@ def test_closed_market_keeps_its_settlement_value():
     "bid,ask",
     [(None, 0.17), (0.13, None), (0.0, 0.17), (0.13, 1.0),
      (0.18, 0.17), (float("nan"), 0.17), (0.13, float("inf")),
-     (-0.1, 0.1), (0.9, 1.1), ("bad", 0.17)],
+     (-0.1, 0.1), (0.9, 1.1), ("bad", 0.17), (0.1, 0.3),
+     (0.2, 0.4), (True, 0.17)],
 )
 def test_invalid_or_one_sided_book_cannot_invent_a_quote(bid, ask):
     assert current_polymarket_quote(bid, ask) is None
@@ -111,12 +112,12 @@ def test_live_writer_refuses_an_unusable_or_unidentified_quote(change):
     assert _live_polymarket_quote(market, "Colts") is None
 
 
-def test_only_open_conditions_actually_read_without_quotes_are_withdrawn():
+def test_a_refused_but_quoted_leg_keeps_the_existing_withdrawal_safeguard():
     from app.tasks.polymarket import _unpriced_leg_external_ids
 
     quoted = _leg().model_copy(update={"condition_id": "quoted"})
     wide = _leg(bid=0.10, ask=0.78).model_copy(update={"condition_id": "wide"})
     settled = _leg(1.0, bid=None, ask=None, closed=True).model_copy(update={"condition_id": "settled"})
     event = PolymarketEvent(id="912423", title="Colts Win Total", markets=[quoted, wide, settled])
-    assert _unpriced_leg_external_ids(event) == ["wide"]
+    assert _unpriced_leg_external_ids(event) == []
     assert _unpriced_leg_external_ids(event.model_copy(update={"markets": [quoted]})) == []

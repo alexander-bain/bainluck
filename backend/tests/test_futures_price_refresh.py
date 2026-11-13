@@ -1091,33 +1091,14 @@ class TestPolymarketAddressing:
         assert item["no"]["probability"] == pytest.approx(0.425)
 
     async def test_the_no_leg_complements_the_accepted_price_not_outcome_prices(self):
-        """The specimen this rule exists for, taken from live Gamma 2026-08-27.
+        """#12658: old raw .32/.68 beside a current .51/.55 book.
 
-        `alcaraz-semifinals` quoted `outcome_prices = [0.32, 0.68]` over an
-        untradeable 0.11/0.53 book. 0.32 IS the midpoint of that book, so #1578
-        refuses it and Yes resolves to the 0.53 last trade. Publishing 0.68 as
-        the No leg would print a card whose two sides sum to **1.21**, and 0.68
-        is the complement of the exact number the Yes side just rejected.
-
-        `1 - accepted` is the same binary CLOB addressed from the other token —
-        the reasoning `complementary_book` already applies to the book. It is
-        also lossless in the common case: measured over 92 live priced markets on
-        the four curated prop events, `outcome_prices` summed to exactly 1 every
-        time, so whenever Yes came from `outcome_prices` the two rules agree.
-
-        AMENDED BY Q432 (2026-08-28) — the specimen, not the claim. Q428 bounded
-        the last-trade escape hatch on Gamma's `volume24hr`, because
-        `lastTradePrice` carries no time and one $5 trade against a 7c/98c book
-        was putting Djokovic at 71% to reach the round of 16 above 79% to reach
-        the quarter-final. This specimen's own premise is a market that HAD
-        traded — a real 0.53 trade sitting at the ask of a live 2026-08-27 book —
-        so it now states the 24-hour volume it always implied. That restores the
-        specimen's fidelity to the row it was copied from; it does not relax the
-        bound. The twin below is the case that was silently riding on it.
+        The accepted quote is .53/.47. Its complement must not come from the
+        old raw pair. The historical .11/.53 wide book is now refused.
         """
         market = _poly_market("0xabc", 0.32, 0.68, volume_24h=1_450.0)
-        market.best_bid = 0.11
-        market.best_ask = 0.53
+        market.best_bid = 0.51
+        market.best_ask = 0.55
         market.last_trade_price = 0.53
         priced, _unpriced = await fpr._fetch_polymarket_prices(
             _FakePolyService(_poly_event("910171", [market])), ["910171"]
@@ -1177,7 +1158,7 @@ class TestPolymarketAddressing:
             # refused midpoint -> last trade, and only because the market was
             # still being traded. Its untraded twin is the test above, which
             # asserts the pair is never published at all rather than summing.
-            (0.32, 0.68, 0.11, 0.53, 0.53, 1_450.0),
+            (0.32, 0.68, 0.51, 0.55, 0.53, 1_450.0),
         ):
             market = _poly_market("0xabc", yes, no, volume_24h=vol)
             market.best_bid, market.best_ask, market.last_trade_price = bid, ask, last

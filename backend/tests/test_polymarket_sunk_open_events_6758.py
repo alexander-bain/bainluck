@@ -329,7 +329,13 @@ class TestTheChildren:
 
     def test_the_traded_event_is_partial_by_the_venues_own_books(self):
         ev = PolymarketAPIService()._parse_event(BY_ID[TRADED])
-        assert poly.sunk_event_child_census(ev) == (27, 10)
+        # #12658: submission's 0.27/0.47 book is at the existing 20-point
+        # spread limit. Its raw 0.37 cannot substitute for a usable quote.
+        assert poly.sunk_event_child_census(ev) == (27, 9)
+        submission = next(m for m in ev.markets if m.condition_id ==
+            "0x34f4ba56482af85f82f08c31fd267f69aeb9fdac7553a979278b0ca57fb723f0")
+        assert (submission.best_bid, submission.best_ask) == (0.27, 0.47)
+        assert poly._resolve_market_probability(submission) is None
 
 
 # --------------------------------------------------------------------------
@@ -343,13 +349,13 @@ class TestRecovery:
         ev = PolymarketAPIService()._parse_event(BY_ID[TRADED])
         priced = {m.condition_id for m in ev.markets if poly._resolve_market_probability(m)}
         unpriced = {m.condition_id for m in ev.markets} - priced
-        assert len(priced) == 10
+        assert len(priced) == 9
         assert priced <= set(rows), "every child the venue prices must be visited"
         assert not (unpriced & set(rows)), "an empty book must not mint a row"
         assert all(len(v) == 1 for v in rows.values()), "one child identity, one upsert"
         assert TRADED in rows, "the parent is re-stamped, which takes it out of the next passes"
         assert stats["events_partially_priced_at_venue"] == 1
-        assert (stats["children_at_venue"], stats["children_priced_at_venue"]) == (27, 10)
+        assert (stats["children_at_venue"], stats["children_priced_at_venue"]) == (27, 9)
         assert not stats["writer"]["errors"], stats["writer"]["errors"]
 
     @pytest.mark.asyncio

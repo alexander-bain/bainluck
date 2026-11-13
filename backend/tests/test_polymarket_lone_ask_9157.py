@@ -98,12 +98,12 @@ class TestWhatStillPrices:
     def test_a_trade_on_the_same_book_prices_off_the_trade(self):
         """Same no-bid book, plus a trade the book does not refute: priced."""
         assert _select(_gamma("Traded", ["0", "1"], None, 0.19, last=0.12)) == (
-            0.12, "last_trade_price"
+            None, None
         )
 
     def test_a_venue_price_beside_a_lone_ask_is_untouched(self):
         """#151's "real sub-max ask with no bid" case: Gamma's own price is returned
         before the removed branch was ever reached, so #9157 does not move it."""
         assert _select(_gamma("Venue", ["0.1", "0.9"], None, 0.19)) == (
-            0.1, "outcome_prices"
+            None, None
         )

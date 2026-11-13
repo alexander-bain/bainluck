@@ -363,7 +363,13 @@ class TestTheUnderSnapshotIsWritten:
         )
         assert not stats["errors"], f"writer raised: {stats['errors']}"
 
-        under = _snapshots_by_outcome(session)[f"{OU_CID}_no"]
+        # #12658: a missing side is no current quote, so neither side receives
+        # a snapshot. The pure mirror still keeps the absent column as None.
+        assert f"{OU_CID}_no" not in _snapshots_by_outcome(session)
+        assert f"{OU_CID}_yes" not in _snapshots_by_outcome(session)
+        from app.tasks.polymarket import complementary_book
+        bid, ask, last = complementary_book(None, OVER_ASK, OVER_LAST)
+        under = {"yes_bid": bid, "yes_ask": ask, "last_price": last}
         # no_ask = 1 - yes_bid, and yes_bid is absent -> absent, never 1.0 or 0.
         assert under["yes_ask"] is None, (
             "an absent Yes bid became a concrete No ask — the mirror invented a "

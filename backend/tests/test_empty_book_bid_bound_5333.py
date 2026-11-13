@@ -273,6 +273,8 @@ class TestTheMeasuredCohort:
 # ---------------------------------------------------------------------------
 
 
+# #12658: these historical writer exceptions are now explicit refusals;
+# volume dates turnover, not the undated lastTradePrice print.
 class TestATradedFiftyOnAWideBook:
     """A genuine traded 0.500 whose book is 0.03/0.97 RIGHT NOW.
 
@@ -306,14 +308,14 @@ class TestATradedFiftyOnAWideBook:
     def test_the_submarket_writer_preserves_it_as_a_trade_price(self):
         assert _submarket(
             _gamma("Kovalova Daria vs. Dronova Uliana", **self.TRADED)
-        ) == (0.5, "last_trade_price")
+        ) == (None, None)
 
     def test_the_parent_writer_preserves_it_too(self):
         legs = _parent(
             _gamma("Kovalova vs Dronova", cond="0xk", **self.TRADED),
             _gamma("control", [0.28, 0.72], 0.25, 0.31, cond="0xcontrol"),
         )
-        assert legs == {"0xk": pytest.approx(0.5), "0xcontrol": pytest.approx(0.28)}
+        assert legs == {"0xcontrol": pytest.approx(0.28)}
 
     def test_search_WITHDRAWS_it_and_this_is_the_measured_cost(self):
         assert _search_names(_row(0.5, 0.03, 0.97, name="Kovalova Daria")) == []
@@ -343,7 +345,7 @@ class TestATradedFiftyOnAWideBook:
                 last=0.031,
                 vol24=455.6,
             )
-        ) == (pytest.approx(0.031), "last_trade_price")
+        ) == (None, None)
 
     def test_a_stale_print_with_no_recent_volume_is_still_declined(self):
         """Q428, unchanged by this ship. 'Bryce Harper on the cover of MLB The

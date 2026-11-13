@@ -170,8 +170,8 @@ def _leg_market(idx, title, price, *, closed):
         "clobTokenIds": f'["{idx}1", "{idx}2"]',
         # A tight two-sided book with a trade, so every gate upstream of the
         # snapshot passes and the leg is one the writer genuinely prices.
-        "bestBid": round(price - 0.01, 4),
-        "bestAsk": round(price + 0.01, 4),
+        "bestBid": round(price - min(0.01, price / 2, (1 - price) / 2), 8),
+        "bestAsk": round(price + min(0.01, price / 2, (1 - price) / 2), 8),
         "lastTradePrice": price,
     }
     if closed is not None:
@@ -210,8 +210,8 @@ def _sole_child(*, price, child_closed, parent_closed=False,
         "outcomes": '["Flyers", "Hurricanes"]',
         "outcomePrices": f'["{price}", "{round(1 - price, 6)}"]',
         "clobTokenIds": '["s1", "s2"]',
-        "bestBid": round(price - 0.02, 4),
-        "bestAsk": min(1.0, round(price + 0.01, 4)),
+        "bestBid": round(price - min(0.01, price / 2, (1 - price) / 2), 8),
+        "bestAsk": min(1.0, round(price + min(0.01, price / 2, (1 - price) / 2), 8)),
         "lastTradePrice": price,
     }
     if child_closed is not None:

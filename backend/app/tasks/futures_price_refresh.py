@@ -242,6 +242,7 @@ from app.utils.kalshi_threshold_label import (  # #9543
     single_leg_threshold_label,
 )
 from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
+from app.utils.polymarket_quote import quoted_price_change
 
 logger = logging.getLogger(__name__)
 
@@ -1685,6 +1686,17 @@ async def _write_prices(
         if item.get("venue_quotes_no_price"):
             unpriced.append(item)
             continue
+        # #12658: a refused current quote still carries its condition to the
+        # existing guarded parent withdrawal, including parents reached only
+        # as twins. It is not a price for either the parent or its child.
+        if item.get("parent_book_refused"):
+            if item["external_id"] in existing:
+                stats["legs_declined_parent_refused"] = (
+                    stats.get("legs_declined_parent_refused", 0) + 1
+                )
+                continue
+            if item.get("probability") is None:
+                continue
         prob = item.get("probability")
         if prob is None or not (0 < prob < 1):
             # #5869. A second silent `continue`, on the other side of the
@@ -1694,19 +1706,6 @@ async def _write_prices(
             # said. Counted for both venues: this function is shared.
             stats["legs_declined_out_of_range"] = (
                 stats.get("legs_declined_out_of_range", 0) + 1
-            )
-            continue
-
-        # #10298. The game parent refused this condition (the fetch tagged it:
-        # non-negRisk multi-market only, its own book prices the raw value out),
-        # and the bare row IS that parent leg. No update, no snapshot: the
-        # resolver's 0.53 written here and withdrawn after would still leave a
-        # 0.53 snapshot and fresh stamps behind, and would erase a supported
-        # 0.40. `_withdraw_book_refuted_legs` judges what the row already holds.
-        # A decomposed `_yes`/`_no` row has no bare key and prices on unchanged.
-        if item.get("parent_book_refused") and item["external_id"] in existing:
-            stats["legs_declined_parent_refused"] = (
-                stats.get("legs_declined_parent_refused", 0) + 1
             )
             continue
 
@@ -1906,7 +1905,10 @@ async def _write_prices(
                     # `update_max_movement`'s statement A3 is the sweep that
                     # repairs the backlog and catches the other delta-blind
                     # writers, and this is the prevention.
-                    probability_change_24h=case(
+                    # #12658: Polymarket changes compare supported quotes only;
+                    # switching from an old trade cannot mint a market move.
+                    probability_change_24h=quoted_price_change(side_prob)
+                    if bookmaker == "polymarket" else case(
                         (
                             or_(
                                 side_prob - FuturesOutcome.probability_change_24h
@@ -3451,14 +3453,23 @@ async def _fetch_polymarket_prices(
         unpriced_out[str(event.id)] = _unpriced_leg_external_ids(event)
         refused_books = _refused_leg_books(event)
         if not event.neg_risk and len(event.markets) > 1:
-            # #10298: the resolver above priced legs the game parent branch
-            # dropped. Tag them so the writer skips their BARE (parent) row —
-            # see `_write_prices` — while decomposed `_yes`/`_no` rows and the
-            # withdrawal below still get this pass's price and book. Provenance,
-            # not shape: negRisk and single-market also use bare ids.
+            # #12658: the parent and child now refuse the same unsupported
+            # quote. Keep the refusal in this event's condition set so a parent
+            # reached only as a twin still gets #10298's guarded withdrawal.
+            # This runs only after a healthy sibling priced and the whole-field
+            # guard passed. No synthetic price or observation accompanies it.
+            priced_ids = {item["external_id"] for item in priced}
             for item in priced:
                 if item["external_id"] in refused_books:
                     item["parent_book_refused"] = True
+            priced.extend(
+                {
+                    "external_id": cid,
+                    "probability": None,
+                    "parent_book_refused": True,
+                }
+                for cid in refused_books if cid not in priced_ids
+            )
         if refuted_out is not None:
             refuted_out[str(event.id)] = refused_books
     return out, unpriced_out

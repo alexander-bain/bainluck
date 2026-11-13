@@ -5925,71 +5925,106 @@ def _parent_placeholder_legs(event, priced: list[dict]) -> list[dict]:
 
 
 def _unpriced_leg_external_ids(event) -> list[str]:
-    """Condition ids actually read without a usable current quote (#12658).
+    """Condition ids the venue SERVED this pass but quotes no price for (#4000).
 
-    Open legs use the same two-sided book as every current-price writer. An
-    undated last trade cannot keep an unsupported price alive. Closed legs
-    retain #4000's narrower empty-book rule; this is not a settlement writer.
-    Missing conditions are never inferred from a partial response.
+    The counterpart to :func:`_parent_outcome_data`, and it exists because
+    ``continue`` throws away a fact we were told. When Gamma answers a negRisk leg
+    with no price and a dead book, ``_parent_outcome_data`` drops the leg from the
+    write set — correctly, there is no price to write — and the row we already
+    hold keeps whatever number it was last given. **Declining to write is not the
+    same as withdrawing what is written**, and for 2,545 rows across 105 open
+    single-winner Polymarket fields the difference had been standing since
+    2026-05-12: measured on production 2026-09-09, market 112897 (*Presidential
+    Election Winner 2028*) carried 52 legs refreshed that day and 76 frozen at
+    ``current_probability = 1.000000``, ``price_changed_at IS NULL``, untouched for
+    120 days.
+
+    Gamma is unambiguous about them and says so on every pass — for
+    ``Will Person BG win the 2028 US Presidential Election?``::
+
+        active=false  outcomePrices=None  bestBid=0  bestAsk=1
+        lastTradePrice=0  volume=0
+
+    So the leg is not delisted (it is still in ``GET /events/31552``'s 128 markets,
+    beside the live ones) and it is not mispriced. It has no price, and our row
+    claims certainty on its behalf.
+
+    Two safeties are structural rather than heuristic, which is why the retirement
+    is keyed on the payload instead of on a database sweep:
+
+    * **A leg the pass did not cover can never be retired.** Only ids present in
+      ``event.markets`` are returned, so a truncated or partial payload withdraws
+      nothing — it simply names fewer legs.
+    * **A refused price is not an absent price.** ``_resolve_market_probability``
+      also returns ``None`` when it *distrusts* a quote the venue really is making
+      (the #151 evidence gate, the fabricated-midpoint test). Retiring those would
+      un-price live markets, so a leg with any bid or any trade behind it is
+      excluded here even though it is unpriced by us.
+
+    Scoped to negRisk multi-market events: that is the whole measured population
+    (every one of the 84 tier-1/2 markets is ``mutually_exclusive`` + ``field`` +
+    polymarket), and the other two shapes in ``_parent_outcome_data`` price through
+    different gates whose refusals mean different things.
     """
+    if not (event.neg_risk and len(event.markets) > 1):
+        return []
+
     unpriced: list[str] = []
     for market in event.markets:
         if not market.condition_id:
             continue
-        if not market.closed:
-            if current_polymarket_quote(market.best_bid, market.best_ask) is None:
-                unpriced.append(market.condition_id)
-            continue
-        if not (event.neg_risk and len(event.markets) > 1):
-            continue
         if _resolve_market_probability(market) is not None:
-            continue
-        if market.best_bid is not None and float(market.best_bid) > 0:
-            continue
-        if market.last_trade_price is not None and float(market.last_trade_price) > 0:
-            continue
+            continue  # the venue is quoting; nothing to withdraw
+        bid = market.best_bid
+        if bid is not None and float(bid) > 0:
+            continue  # a real bid — we refused it, the venue did not
+        last = market.last_trade_price
+        if last is not None and float(last) > 0:
+            continue  # it has traded — that is evidence, not an absence
         unpriced.append(market.condition_id)
     return unpriced
 
 
 async def _retire_unpriced_legs(session, futures_market_id: int, external_ids) -> int:
-    """Withdraw unsupported quotes in the read parent and its exact children.
+    """Withdraw our number on legs the venue quotes no price for. Returns the count.
 
-    Condition ids name the sibling child rows; no name or prefix matching is
-    used. Grades, openings and observation stamps stay intact. The transaction
-    timestamp protects a newer writer that committed while this pass fetched.
+    ``current_probability``/``current_american_odds`` only — the two fields that
+    render. Deliberately NOT touched:
+
+    * ``opening_probability``. These rows carry a frozen ``1.000000`` opening too,
+      which is the permanent half of the damage ``winner_field_coherence`` warns
+      about, but opening is calibration-truth and is graded by a different owner;
+      withdrawing it here would be a curve change wearing an ingest fix's clothes.
+      Filed separately with the numbers.
+    * ``is_winner IS TRUE`` rows. A crowned leg's price is its settlement, not a
+      quote, and nothing about an empty book afterwards makes the grade untrue.
+    * ``last_updated``. Tempting, and wrong: the touch-columns are what freshness
+      consumers read, and ``routes/playoffs.py`` drops an outcome from the grid on
+      a stale stamp. Stamping a retirement fresh would advertise "we have a current
+      price for this leg" at the exact moment we stopped having one, and could
+      promote a blank cell into a grid that was correctly dropping it. The row's
+      old stamp is the honest one — we have nothing newer. The retirement is made
+      observable through the ``legs_retired`` task stat and the log line instead,
+      which is where an ingest event belongs.
     """
     ids = list(external_ids)
     if not ids:
         return 0
-    from sqlalchemy import or_, select, update
-    from app.models import FuturesMarket, FuturesOutcome
+    from sqlalchemy import update
+    from app.models import FuturesOutcome
 
-    leg_ids = [suffix for cid in ids for suffix in (cid, f"{cid}_yes", f"{cid}_no", f"{cid}_side1")]
-    covered_markets = select(FuturesMarket.id).where(
-        FuturesMarket.source == "polymarket",
-        FuturesMarket.status == "open",
-        or_(
-            FuturesMarket.id == futures_market_id,
-            FuturesMarket.external_id.in_(ids),
-        ),
-    )
     result = await session.execute(
         update(FuturesOutcome)
         .where(
-            FuturesOutcome.market_id.in_(covered_markets),
-            FuturesOutcome.external_id.in_(leg_ids),
+            FuturesOutcome.market_id == futures_market_id,
+            FuturesOutcome.external_id.in_(ids),
             FuturesOutcome.current_probability.isnot(None),
             FuturesOutcome.is_winner.isnot(True),
-            FuturesOutcome.resolution_source.is_(None),
-            or_(FuturesOutcome.last_updated.is_(None), FuturesOutcome.last_updated <= func.now()),
         )
         .values(
             current_probability=None,
             current_american_odds=None,
-            probability_change_24h=None,
         )
-        .execution_options(synchronize_session=False)
     )
     return int(result.rowcount or 0)
 

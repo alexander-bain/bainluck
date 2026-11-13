@@ -19,6 +19,10 @@ moved it to 0.05 on its own production measurement (2026-09-17) and those tests 
 assert the close instead of the escape. The bound's own guard tests live in
 `test_empty_book_bid_bound_5333.py`, including the cost the move pays.
 
+#12658: open quotes now require a usable two-sided book. An undated trade and
+24-hour volume cannot prove a current price; the updated controls make that
+policy change explicit. Settlement remains a separate, closed-market path.
+
 Nothing is re-implemented here: every case runs the production parser
 (`PolymarketAPIService._parse_market` / `_parse_event`) and the production selectors.
 The raw-Gamma fixture helper and several payloads are taken from the independent
@@ -135,45 +139,26 @@ class TestAnEmptyBookIsNotAForecast:
 
 
 class TestGenuinePricesSurvive:
-    """Codex's controls. Every one of these passes BEFORE the fix and must after."""
+    """Supported quotes survive; #12658 refuses undated trade controls."""
 
     def test_a_quoted_coin_flip_on_a_tight_book(self):
         """A real 50%: 49c bid / 51c ask, never traded. The book bounds it."""
         assert _select(_gamma("tight", [0.5, 0.5], 0.49, 0.51)) == (0.5, "outcome_prices")
 
-    def test_a_traded_coin_flip_on_an_empty_book_survives_the_resolver(self):
-        """⭐ The control that decides whether this fix is safe.
-
-        The stored-skew book EXACTLY, plus a trade at 50c inside Gamma's 24-hour
-        window. The volume-gated last-trade exception runs AFTER the new predicate, so
-        a 50% somebody actually transacted at is kept — and its source label changes
-        to `last_trade_price`, which is the honest provenance and is what the pair
-        writer reads (`app.utils.pair_opening_coherence`).
-        """
+    def test_recent_volume_does_not_date_an_empty_book_trade(self):
         assert _select(
             _gamma("traded", [0.5, 0.5], last=0.5, vol24=120.0, **STORED_SKEW)
-        ) == (0.5, "last_trade_price")
+        ) == (None, None)
 
-    def test_a_traded_coin_flip_survives_the_parent_anchor_too(self):
-        """Same control on the other call site, because its fallback is different.
-
-        The parent branch falls back to `last_trade_price` with no volume gate at all
-        (that asymmetry predates this fix and is #1578's recorded judgement, preserved
-        rather than quietly tightened). Pinned so a later tidy cannot delete the
-        fallback and take the traded price with it.
-        """
+    def test_the_parent_also_refuses_that_undated_trade(self):
         traded = _gamma(
             "traded parent", [0.5, 0.5], last=0.5, vol24=120.0, cond="0xtraded",
             groupItemTitle="Total Corners: O/U 13.5", **STORED_SKEW,
         )
-        assert _parent_legs(traded, CONTROL) == {"0xtraded": 0.5, "0xcontrol": 0.28}
+        assert _parent_legs(traded, CONTROL) == {"0xcontrol": 0.28}
 
     def test_a_stale_trade_with_no_recent_volume_is_still_declined(self):
-        """The Q428 rule, unchanged: a trade beats a wide book only while it trades.
-
-        Same payload as the control above with `volume24hr` absent. This is what stops
-        the new predicate being trivially bypassed by any historical print.
-        """
+        """No volume cannot rescue a trade; positive volume cannot date it either."""
         assert _select(
             _gamma("stale trade", [0.5, 0.5], last=0.5, vol24=None, **STORED_SKEW)
         ) == (None, None)
@@ -182,16 +167,16 @@ class TestGenuinePricesSurvive:
         """LIVE 4629920 / outcome 61260583 — the control the after-check reads."""
         assert _select(CONTROL) == (0.28, "outcome_prices")
 
-    def test_a_real_line_on_a_wide_book(self):
+    def test_a_raw_line_on_a_wide_book_is_not_a_current_quote(self):
         """0.78 on 8c/97c. Wide, but the price is nowhere near the midpoint."""
-        assert _select(_gamma("7+ corners", [0.78, 0.22], 0.08, 0.97))[0] == 0.78
+        assert _select(_gamma("7+ corners", [0.78, 0.22], 0.08, 0.97)) == (None, None)
 
-    def test_a_coin_flip_with_a_real_bid_well_clear_of_the_bound(self):
+    def test_a_real_bid_alone_does_not_make_a_usable_quote(self):
         """0.5 on 20c/98c. A 20c bid is a real one; only the midpoint clause of
         `is_fabricated_midpoint` (0.59 here, not 0.5) can speak to it, and it does not."""
-        assert _select(_gamma("real bid", [0.5, 0.5], 0.20, 0.98))[0] == 0.5
+        assert _select(_gamma("real bid", [0.5, 0.5], 0.20, 0.98)) == (None, None)
 
-    def test_a_model_price_with_no_book_at_all_is_untouched(self):
+    def test_a_polymarket_raw_price_with_no_book_is_declined(self):
         """Both sides null — DataGolf, odds_api, a derived complement. Neither
         predicate applies, by construction rather than by exemption. It is declined
         here only by the #151 evidence gate, which is not this fix."""
@@ -200,7 +185,7 @@ class TestGenuinePricesSurvive:
     def test_a_settled_leg_is_untouched(self):
         """0.99 on the empty book: outside the geometric band, so nothing here can
         reach a settled 0/1 price."""
-        assert _select(_gamma("settled", [0.99, 0.01], last=0.99, vol24=5.0, **STORED_SKEW)) == (
+        assert _select(_gamma("settled", [0.99, 0.01], last=0.99, vol24=5.0, closed=True, **STORED_SKEW)) == (
             0.99, "outcome_prices"
         )
 
@@ -262,13 +247,10 @@ class TestTheGuardIsActuallyAtBothCallSites:
         assert "is_fabricated_midpoint(" in src
         assert "is_empty_book_midpoint(" in src
 
-    def test_the_parent_anchor_calls_both_predicates(self):
-        """The literal `is_fabricated_midpoint(` must survive here:
-        `test_polymarket_untradeable_book.py::test_parent_market_path_no_longer_bypasses_the_guard`
-        reads this same block for it, and the #6676 pair must not displace it."""
+    def test_the_parent_anchor_uses_the_shared_resolver(self):
         src = inspect.getsource(polymarket._parent_outcome_data)
-        assert "is_fabricated_midpoint(" in src
-        assert "is_empty_book_midpoint(" in src
+        assert "_resolve_market_probability(market)" in src
+        assert "prob = market.outcome_prices[0]" not in src
 
     def test_the_predicate_is_imported_not_restated(self):
         """One meaning of "untradeable" in this codebase. If a future edit inlines the

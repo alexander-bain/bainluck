@@ -112,3 +112,39 @@ async def test_two_gamma_rows_share_original_response_time_not_second_apply(monk
         assert aggregation.source_price_read_time(bag, source, value, now=clock[0]) == (
             started + timedelta(seconds=5)
         )
+
+
+async def test_two_polls_at_the_same_price_serve_the_second_reads_time(monkeypatch):
+    """Fable's next-slice guard: a quiet quote is a new observation on re-read."""
+    from types import SimpleNamespace
+    from app.utils.source_mark import headline_source_marks
+
+    clock, stamps = clock_and_stamps(monkeypatch)
+    started = clock[0]
+    served = []
+    previous = None
+    for offset in (5, 35):
+        population = _beat(last_seen=started - timedelta(hours=1))
+        event = population.rows[0][1]
+        if previous is not None:
+            event.win_probability_sources = previous
+
+        class Service(_KalshiService):
+            async def get_markets(self, **kwargs):
+                clock[0] = started + timedelta(seconds=offset)
+                return await super().get_markets(**kwargs)
+
+        service = Service({TICKER: [_leg(f"{TICKER}-LAR", TICKER)]}, [])
+        await _run(monkeypatch, _Session([population]), kalshi=service, blend={})
+        source, value, previous = stamps[-1]
+        marks = headline_source_marks(
+            SimpleNamespace(win_probability_sources=previous),
+            SimpleNamespace(source="blend"), [(source, value)],
+        )
+        served.append(marks)
+        expected = clock[0].isoformat().replace("+00:00", "Z")
+        assert marks[0]["sources"][0]["observed_at"] == expected
+        assert marks[1]["sources"][0]["observed_at"] == expected
+    assert len(stamps) == 2
+    assert served[0][0]["sources"][0]["probability"] == served[1][0]["sources"][0]["probability"]
+    assert served[0][0]["sources"][0]["observed_at"] != served[1][0]["sources"][0]["observed_at"]

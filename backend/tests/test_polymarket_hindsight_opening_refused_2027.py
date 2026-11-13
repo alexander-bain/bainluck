@@ -54,8 +54,8 @@ def _venue_event(*, active, closed, end_date, price, last_trade):
                 "outcomes": '["Yes", "No"]',
                 "outcomePrices": f'["{price}", "{1 - price}"]',
                 "clobTokenIds": '["111", "222"]',
-                "bestBid": 0,
-                "bestAsk": 1,
+                "bestBid": round(price - min(0.005, price / 2, (1 - price) / 2), 8),
+                "bestAsk": round(price + min(0.005, price / 2, (1 - price) / 2), 8),
                 "lastTradePrice": last_trade,
                 "closed": closed,
             }
@@ -411,8 +411,8 @@ def _venue_game_event(
             "outcomes": '["Yes", "No"]',
             "outcomePrices": f'["{price}", "{round(1 - price, 6)}"]',
             "clobTokenIds": f'["{idx}11", "{idx}22"]',
-            "bestBid": 0,
-            "bestAsk": 1,
+            "bestBid": round(price - min(0.005, price / 2, (1 - price) / 2), 8),
+            "bestAsk": round(price + min(0.005, price / 2, (1 - price) / 2), 8),
             "lastTradePrice": price,
             "closed": sub_closed,
         }
@@ -489,8 +489,8 @@ def _venue_single_child_event(*, price, child_closed):
                 "outcomes": '["Flyers", "Hurricanes"]',
                 "outcomePrices": f'["{price}", "{round(1 - price, 6)}"]',
                 "clobTokenIds": '["s11", "s22"]',
-                "bestBid": 0.97,
-                "bestAsk": 1.0,
+                "bestBid": round(price - min(0.005, price / 2, (1 - price) / 2), 8),
+                "bestAsk": round(price + min(0.005, price / 2, (1 - price) / 2), 8),
                 "lastTradePrice": price,
                 "closed": child_closed,
             }
