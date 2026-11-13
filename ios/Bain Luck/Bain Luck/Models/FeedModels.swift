@@ -215,9 +215,37 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// #9925: the published collection this theme's whole preview sits on, as
     /// the server proved it. Absent = no link; the card never guesses one.
     let collectionRef: FeedThemeCollectionRef?
+    /// #12642: optional paired-metric grouped card payload (`paired_bars_top5_expandable` / `podium_and_tiers`).
+    let pairedMetricSet: PairedMetricSet?
+    let visualForm: String?
+
+    private nonisolated struct RoundupPairedEnvelope: Decodable {
+        let pairedMetricSet: PairedMetricSet?
+        let visualForm: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case pairedMetricSet
+            case pairedMetricSetSnake = "paired_metric_set"
+            case visualForm
+            case visualFormSnake = "visual_form"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
+                ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
+            visualForm = (try? c.decodeIfPresent(String.self, forKey: .visualForm))
+                ?? (try? c.decodeIfPresent(String.self, forKey: .visualFormSnake))
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case id, title, sharedQuestion, items, kind, comparisonTheme, collectionRef
+        case pairedMetricSet
+        case pairedMetricSetSnake = "paired_metric_set"
+        case visualForm
+        case visualFormSnake = "visual_form"
+        case roundup
     }
 
     init(from decoder: Decoder) throws {
@@ -230,12 +258,30 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         comparisonTheme = try c.decodeIfPresent(String.self, forKey: .comparisonTheme)
         // Optional enrichment: a malformed ref costs the link, never the bundle.
         collectionRef = (try? c.decodeIfPresent(FeedThemeCollectionRef.self, forKey: .collectionRef)) ?? nil
+        let nestedRoundup = (try? c.decodeIfPresent(RoundupPairedEnvelope.self, forKey: .roundup)) ?? nil
+        pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
+            ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
+            ?? nestedRoundup?.pairedMetricSet
+        visualForm = (try? c.decodeIfPresent(String.self, forKey: .visualForm))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .visualFormSnake))
+            ?? nestedRoundup?.visualForm
+            ?? pairedMetricSet?.preferredVisualForm
     }
 
     /// Memberwise init so a sanitized bundle can be rebuilt with a lifecycle-
     /// admitted child list while preserving identity, title, kind, and comparison
     /// theme (C29 P2 — see `withItems`).
-    init(id: String, title: String, items: [FeedItem], kind: String?, comparisonTheme: String?, sharedQuestion: String? = nil, collectionRef: FeedThemeCollectionRef? = nil) {
+    init(
+        id: String,
+        title: String,
+        items: [FeedItem],
+        kind: String?,
+        comparisonTheme: String?,
+        sharedQuestion: String? = nil,
+        collectionRef: FeedThemeCollectionRef? = nil,
+        pairedMetricSet: PairedMetricSet? = nil,
+        visualForm: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.sharedQuestion = sharedQuestion
@@ -243,6 +289,8 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         self.kind = kind
         self.comparisonTheme = comparisonTheme
         self.collectionRef = collectionRef
+        self.pairedMetricSet = pairedMetricSet
+        self.visualForm = visualForm
     }
 
     /// Rebuild the bundle with a new child list, preserving all other metadata
@@ -251,7 +299,17 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// every consumer derives its primary/category from the first ELIGIBLE child,
     /// never a stale raw first child.
     func withItems(_ newItems: [FeedItem]) -> FeedBundle {
-        FeedBundle(id: id, title: title, items: newItems, kind: kind, comparisonTheme: comparisonTheme, sharedQuestion: sharedQuestion, collectionRef: collectionRef)
+        FeedBundle(
+            id: id,
+            title: title,
+            items: newItems,
+            kind: kind,
+            comparisonTheme: comparisonTheme,
+            sharedQuestion: sharedQuestion,
+            collectionRef: collectionRef,
+            pairedMetricSet: pairedMetricSet,
+            visualForm: visualForm
+        )
     }
 
     /// #9925: the link a grouped card may draw. Theme bundles only, as on web
@@ -327,6 +385,29 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     let bundle: FeedBundle?
     /// Optional #9653 producer card in the ordinary data envelope.
     let collection: ContainerHubCollection?
+    /// #12642: paired-metric grouped card payload (`paired_bars_top5_expandable` / `podium_and_tiers`).
+    let pairedMetricSet: PairedMetricSet?
+    let visualForm: String?
+
+    private nonisolated struct PairedItemDataEnvelope: Decodable {
+        let pairedMetricSet: PairedMetricSet?
+        let visualForm: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case pairedMetricSet
+            case pairedMetricSetSnake = "paired_metric_set"
+            case visualForm
+            case visualFormSnake = "visual_form"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
+                ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
+            visualForm = (try? c.decodeIfPresent(String.self, forKey: .visualForm))
+                ?? (try? c.decodeIfPresent(String.self, forKey: .visualFormSnake))
+        }
+    }
 
     // Personalization fields
     let personalized: Bool?
@@ -347,6 +428,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         // bundles sharing a title.
         if let b = bundle { return "bundle-\(b.id)" }
         if let c = collection { return "collection-\(c.slug)" }
+        if let p = pairedMetricSet { return "paired-metric-\(p.setId)" }
         return [
             "feed",
             type,
@@ -371,6 +453,8 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case type, score, reason, headline, contextSummary, data
         case personalized, baseScore, multiplier, personalizationReasons
+        case visualForm
+        case visualFormSnake = "visual_form"
     }
 
     init(from decoder: Decoder) throws {
@@ -384,11 +468,25 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         baseScore = try c.decodeIfPresent(Double.self, forKey: .baseScore)
         multiplier = try c.decodeIfPresent(Double.self, forKey: .multiplier)
         personalizationReasons = try c.decodeIfPresent([String].self, forKey: .personalizationReasons)
+        let topLevelForm = (try? c.decodeIfPresent(String.self, forKey: .visualForm))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .visualFormSnake))
 
         // Optional/malformed collection data never prevents siblings decoding.
         collection = type == "collection" ? (try? c.decodeIfPresent(ContainerHubCollection.self, forKey: .data)) : nil
 
         if type == "collection" {
+            event = nil
+            futures = nil
+            tournament = nil
+            concept = nil
+            bundle = nil
+            pairedMetricSet = nil
+            visualForm = topLevelForm
+        } else if type == "paired_metric" {
+            let envelope = (try? c.decodeIfPresent(PairedItemDataEnvelope.self, forKey: .data)) ?? nil
+            let direct = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .data)) ?? nil
+            pairedMetricSet = envelope?.pairedMetricSet ?? direct
+            visualForm = topLevelForm ?? envelope?.visualForm ?? pairedMetricSet?.preferredVisualForm
             event = nil
             futures = nil
             tournament = nil
@@ -400,12 +498,16 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             tournament = nil
             concept = nil
             bundle = nil
+            pairedMetricSet = nil
+            visualForm = topLevelForm
         } else if type == "tournament" {
             tournament = try c.decodeIfPresent(FeedTournamentData.self, forKey: .data)
             event = nil
             futures = nil
             concept = nil
             bundle = nil
+            pairedMetricSet = nil
+            visualForm = topLevelForm
         } else if type == "bundle" {
             // #1886: bundles arrive as `{"type":"bundle","data":{…}}` — MEASURED,
             // twice: 0 of 83 live items (2026-08-14) and 0 of 60 (2026-08-17)
@@ -426,7 +528,10 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             // a tolerated second wire shape is the same "two rules" defect the
             // cycle-80 classifier unification removed, and it is what let every
             // bundle fixture in the suite agree with the bug for so long.
-            bundle = try c.decodeIfPresent(FeedBundle.self, forKey: .data)
+            let decodedBundle = try c.decodeIfPresent(FeedBundle.self, forKey: .data)
+            bundle = decodedBundle
+            pairedMetricSet = decodedBundle?.pairedMetricSet
+            visualForm = topLevelForm ?? decodedBundle?.visualForm
             event = nil
             futures = nil
             tournament = nil
@@ -442,12 +547,16 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             futures = nil
             tournament = nil
             bundle = nil
+            pairedMetricSet = nil
+            visualForm = topLevelForm
         } else {
             futures = try c.decodeIfPresent(FeedFuturesData.self, forKey: .data)
             event = nil
             tournament = nil
             concept = nil
             bundle = nil
+            pairedMetricSet = nil
+            visualForm = topLevelForm
         }
     }
 
@@ -468,7 +577,9 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         baseScore: Double?,
         multiplier: Double?,
         personalizationReasons: [String]?,
-        collection: ContainerHubCollection? = nil
+        collection: ContainerHubCollection? = nil,
+        pairedMetricSet: PairedMetricSet? = nil,
+        visualForm: String? = nil
     ) {
         self.type = type
         self.score = score
@@ -481,6 +592,8 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         self.concept = concept
         self.bundle = bundle
         self.collection = collection
+        self.pairedMetricSet = pairedMetricSet ?? bundle?.pairedMetricSet
+        self.visualForm = visualForm ?? bundle?.visualForm
         self.personalized = personalized
         self.baseScore = baseScore
         self.multiplier = multiplier
@@ -507,7 +620,33 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             baseScore: baseScore,
             multiplier: multiplier,
             personalizationReasons: personalizationReasons,
-            collection: collection
+            collection: collection,
+            pairedMetricSet: pairedMetricSet ?? newBundle.pairedMetricSet,
+            visualForm: visualForm ?? newBundle.visualForm
+        )
+    }
+
+    /// Converts a childless paired-metric bundle into a standalone `.single` `paired_metric` item
+    /// so `DiscoverView` renders `DiscoverPairedMetricCardView` without dropping it on empty `items`.
+    func asPairedMetricItem() -> FeedItem {
+        FeedItem(
+            type: "paired_metric",
+            score: score,
+            reason: reason,
+            headline: headline ?? bundle?.title,
+            contextSummary: contextSummary,
+            event: nil,
+            futures: nil,
+            tournament: nil,
+            concept: nil,
+            bundle: nil,
+            personalized: personalized,
+            baseScore: baseScore,
+            multiplier: multiplier,
+            personalizationReasons: personalizationReasons,
+            collection: nil,
+            pairedMetricSet: pairedMetricSet ?? bundle?.pairedMetricSet,
+            visualForm: visualForm ?? bundle?.visualForm
         )
     }
 }
