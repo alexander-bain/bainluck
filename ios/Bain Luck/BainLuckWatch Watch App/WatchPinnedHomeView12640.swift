@@ -45,6 +45,14 @@ struct WatchPinnedHomeView12640: View {
                 #if DEBUG
                 if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_PINS_FIXTURE_12640"] == "outcome-picker" {
                     choosingOutcome = true
+                } else if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_PINS_FIXTURE_12640"] == "overflow-11" {
+                    DispatchQueue.main.async {
+                        scroll.scrollTo("watch.pins.overflow", anchor: .bottom)
+                    }
+                } else if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_PINS_FIXTURE_12640"] == "partial-error" {
+                    DispatchQueue.main.async {
+                        scroll.scrollTo("watch.pins.partial-error", anchor: .bottom)
+                    }
                 }
                 #endif
                 WatchTelemetry.shared.pullWatchPinsIfReachable()
@@ -151,7 +159,7 @@ struct WatchPinnedHomeView12640: View {
     // MARK: - 4-Bucket Pins List
 
     private func pinsPickerContent(inSheet: Bool) -> some View {
-        let entries = store.orderedEntries
+        let entries = store.displayedEntries
         return VStack(alignment: .leading, spacing: 10) {
             if !inSheet {
                 Text("Pinned on iPhone")
@@ -183,6 +191,22 @@ struct WatchPinnedHomeView12640: View {
                             pinRowButton(entry: entry, now: context.date, inSheet: inSheet)
                         }
                     }
+                }
+                if let failedLine = store.failedLoadLine {
+                    Text(failedLine)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .id("watch.pins.partial-error")
+                        .accessibilityIdentifier("watch.pins.partial-error")
+                }
+                if let overflowLine = store.overflowFooterLine {
+                    Text(overflowLine)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .id("watch.pins.overflow")
+                        .accessibilityIdentifier("watch.pins.overflow")
                 }
             }
 

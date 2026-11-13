@@ -72,12 +72,15 @@ final class WatchPinsStore12640: ObservableObject {
     @Published private(set) var selectedTarget: WatchSelectedPinTarget12640?
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastRefreshError: String?
+    @Published private(set) var failedLoadLine: String?
+    @Published private(set) var overflowFooterLine: String?
     @Published private(set) var lastRefreshedAt: Date?
 
     private let defaults: UserDefaults
     private let transport: any WatchPinsTransport12640
     private let publishSnapshot: @Sendable (WatchComplicationSnapshot?) -> Void
     private var refreshTask: Task<Void, Never>?
+    private var failedItemKeys: Set<String> = []
 
     private static let wireKey = "bainluck_watch_pins_wire_v1"
     private static let eventsCacheKey = "bainluck_watch_pins_events_cache_v1"
@@ -109,6 +112,34 @@ final class WatchPinsStore12640: ObservableObject {
         )
     }
 
+    var displayedEntries: [WatchPinnedOrderedEntry12640] {
+        Array(orderedEntries.prefix(WatchPinsOrdering12640.maxDisplayedPins))
+    }
+
+    private func recomputeListStatusLines() {
+        let summaries = eventsByID.mapValues(\.pinSummary12640)
+        let displayedCount = min(
+            WatchPinsOrdering12640.rank(
+                wireItems: wireItems,
+                events: summaries,
+                futures: futuresByID,
+                chosenOutcomes: chosenOutcomes
+            ).count,
+            WatchPinsOrdering12640.maxDisplayedPins
+        )
+        failedLoadLine = WatchPinsOrdering12640.failedLoadLine(
+            failedWithoutSavedCount: failedItemKeys.count,
+            displayedCount: displayedCount
+        )
+        overflowFooterLine = WatchPinsOrdering12640.overflowLine(
+            wireItems: wireItems,
+            events: summaries,
+            futures: futuresByID,
+            chosenOutcomes: chosenOutcomes,
+            failedItemKeys: failedItemKeys
+        )
+    }
+
     var hasAnyPhonePins: Bool {
         !wireItems.isEmpty
     }
@@ -127,9 +158,14 @@ final class WatchPinsStore12640: ObservableObject {
         // Prune cached items and choices that are no longer pinned on the phone (e.g., sign-out or unpin).
         let allowedEvents = Set(sanitized.filter { $0.kind == .event }.map(\.id))
         let allowedFutures = Set(sanitized.filter { $0.kind == .future }.map(\.id))
+        let allowedKeys = Set(sanitized.map(WatchPinsOrdering12640.wireKey))
         eventsByID = eventsByID.filter { allowedEvents.contains($0.key) }
         futuresByID = futuresByID.filter { allowedFutures.contains($0.key) }
         chosenOutcomes = chosenOutcomes.filter { allowedFutures.contains($0.key) }
+        failedItemKeys = failedItemKeys.intersection(allowedKeys)
+        if sanitized.isEmpty {
+            lastRefreshError = nil
+        }
 
         for item in sanitized where item.kind == .future {
             if let wireOutcome = item.outcomeId, chosenOutcomes[item.id] == nil {
@@ -148,6 +184,7 @@ final class WatchPinsStore12640: ObservableObject {
             }
         }
 
+        recomputeListStatusLines()
         saveCachesToDefaults()
         republishSelectedFaceSnapshot()
 
@@ -209,6 +246,9 @@ final class WatchPinsStore12640: ObservableObject {
         #endif
         let currentItems = wireItems
         guard !currentItems.isEmpty else {
+            failedItemKeys = []
+            failedLoadLine = nil
+            overflowFooterLine = nil
             lastRefreshError = nil
             republishSelectedFaceSnapshot()
             return
@@ -216,13 +256,22 @@ final class WatchPinsStore12640: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
+        let itemsToFetch = WatchPinsOrdering12640.itemsToRefresh(
+            wireItems: currentItems,
+            events: eventsByID.mapValues(\.pinSummary12640),
+            futures: futuresByID,
+            chosenOutcomes: chosenOutcomes,
+            selectedTarget: selectedTarget
+        )
+
         let transport = self.transport
         var fetchedEvents: [Int: WatchSelectedGame] = [:]
         var fetchedFutures: [Int: WatchFutureDetail12640] = [:]
-        var hadError = false
+        var attemptedKeys = Set<String>()
+        var attemptedFailedKeys = Set<String>()
 
         await withTaskGroup(of: (WatchPinWireItem12640, WatchSelectedGame?, WatchFutureDetail12640?, Bool).self) { group in
-            for item in currentItems {
+            for item in itemsToFetch {
                 group.addTask {
                     switch item.kind {
                     case .event:
@@ -243,7 +292,9 @@ final class WatchPinsStore12640: ObservableObject {
                 }
             }
             for await (item, game, market, failed) in group {
-                if failed { hadError = true }
+                let key = WatchPinsOrdering12640.wireKey(item)
+                attemptedKeys.insert(key)
+                if failed { attemptedFailedKeys.insert(key) }
                 if let game { fetchedEvents[item.id] = game }
                 if let market { fetchedFutures[item.id] = market }
             }
@@ -267,10 +318,20 @@ final class WatchPinsStore12640: ObservableObject {
             }
         }
 
+        let reconciliation = WatchPinsOrdering12640.reconcileRefresh(
+            wireItems: wireItems,
+            events: eventsByID.mapValues(\.pinSummary12640),
+            futures: futuresByID,
+            chosenOutcomes: chosenOutcomes,
+            attemptedKeys: attemptedKeys,
+            attemptedFailedKeys: attemptedFailedKeys,
+            previousFailedKeys: failedItemKeys
+        )
+        failedItemKeys = reconciliation.activeFailedKeys
+        failedLoadLine = reconciliation.partialFailureLine
+        overflowFooterLine = reconciliation.overflowFooterLine
         lastRefreshedAt = Date()
-        lastRefreshError = hadError && eventsByID.isEmpty && futuresByID.isEmpty
-            ? "Unable to load pins. Try Refresh."
-            : nil
+        lastRefreshError = reconciliation.fullFailureMessage
         saveCachesToDefaults()
         saveSelectedTarget()
         republishSelectedFaceSnapshot()
@@ -328,6 +389,7 @@ final class WatchPinsStore12640: ObservableObject {
            let decoded = try? JSONDecoder().decode(WatchSelectedPinTarget12640.self, from: rawTarget) {
             selectedTarget = decoded
         }
+        recomputeListStatusLines()
     }
 
     private func saveCachesToDefaults() {
@@ -455,6 +517,88 @@ final class WatchPinsStore12640: ObservableObject {
         ]
         chosenOutcomes = [9303: 301]
 
+        if mode == "overflow-11" {
+            var extraEvents = evs
+            let extraGames: [(Int, String, String, String, String, Int)] = [
+                (9205, "Philadelphia Eagles", "Dallas Cowboys", "PHI", "DAL", 56),
+                (9206, "Detroit Lions", "Green Bay Packers", "DET", "GB", 61),
+                (9207, "Baltimore Ravens", "Cincinnati Bengals", "BAL", "CIN", 63),
+                (9208, "Miami Dolphins", "New York Jets", "MIA", "NYJ", 54),
+                (9405, "Denver Nuggets", "Phoenix Suns", "DEN", "PHX", 0),
+                (9406, "Golden State Warriors", "LA Clippers", "GSW", "LAC", 0),
+                (9407, "Minnesota Timberwolves", "Oklahoma City Thunder", "MIN", "OKC", 0)
+            ]
+            for (idx, gSpec) in extraGames.enumerated() {
+                if gSpec.5 > 0 {
+                    let payload: [String: Any] = [
+                        "id": gSpec.0,
+                        "home_team": gSpec.1,
+                        "away_team": gSpec.2,
+                        "home_team_data": ["team_id": 100 + idx, "abbreviation": gSpec.3],
+                        "away_team_data": ["team_id": 200 + idx, "abbreviation": gSpec.4],
+                        "status": "scheduled",
+                        "sport": "americanfootball_nfl",
+                        "commence_time": iso.string(from: sundayStart.addingTimeInterval(Double(idx + 1) * 1800)),
+                        "hero_probability": Double(gSpec.5) / 100.0,
+                        "hero_probability_away": Double(100 - gSpec.5) / 100.0,
+                        "hero_probability_observed_at": iso.string(from: now.addingTimeInterval(-300))
+                    ]
+                    if let g = decodeGame(payload) { extraEvents[g.id] = g }
+                } else {
+                    let payload: [String: Any] = [
+                        "id": gSpec.0,
+                        "home_team": gSpec.1,
+                        "away_team": gSpec.2,
+                        "home_team_data": ["team_id": 100 + idx, "abbreviation": gSpec.3],
+                        "away_team_data": ["team_id": 200 + idx, "abbreviation": gSpec.4],
+                        "status": "completed",
+                        "sport": "basketball_nba",
+                        "home_score": 112 + idx,
+                        "away_score": 104 + idx,
+                        "commence_time": iso.string(from: now.addingTimeInterval(-Double(idx + 3) * 3600)),
+                        "score_observed_at": iso.string(from: now.addingTimeInterval(-Double(idx + 2) * 1800))
+                    ]
+                    if let g = decodeGame(payload) { extraEvents[g.id] = g }
+                }
+            }
+            eventsByID = extraEvents
+            futuresByID = [market.id: market]
+            wireItems = [
+                WatchPinWireItem12640(kind: .event, id: 9101),
+                WatchPinWireItem12640(kind: .event, id: 9202),
+                WatchPinWireItem12640(kind: .event, id: 9205),
+                WatchPinWireItem12640(kind: .event, id: 9206),
+                WatchPinWireItem12640(kind: .event, id: 9207),
+                WatchPinWireItem12640(kind: .event, id: 9208),
+                WatchPinWireItem12640(kind: .future, id: 9303),
+                WatchPinWireItem12640(kind: .event, id: 9404),
+                WatchPinWireItem12640(kind: .event, id: 9405),
+                WatchPinWireItem12640(kind: .event, id: 9406),
+                WatchPinWireItem12640(kind: .event, id: 9407)
+            ]
+            chosenOutcomes = [9303: 301]
+            selectedTarget = nil
+            recomputeListStatusLines()
+            republishSelectedFaceSnapshot()
+            return
+        }
+
+        if mode == "partial-error" {
+            eventsByID = [9101: evs[9101]].compactMapValues { $0 }
+            futuresByID = [market.id: market]
+            wireItems = [
+                WatchPinWireItem12640(kind: .event, id: 9101),
+                WatchPinWireItem12640(kind: .future, id: 9303),
+                WatchPinWireItem12640(kind: .event, id: 9999)
+            ]
+            chosenOutcomes = [9303: 301]
+            failedItemKeys = ["event:9999"]
+            selectedTarget = nil
+            recomputeListStatusLines()
+            republishSelectedFaceSnapshot()
+            return
+        }
+
         switch mode {
         case "selected-future", "outcome-picker":
             selectedTarget = .future(marketID: 9303, outcomeID: 301)
@@ -467,6 +611,7 @@ final class WatchPinsStore12640: ObservableObject {
         default:
             selectedTarget = nil
         }
+        recomputeListStatusLines()
         republishSelectedFaceSnapshot()
     }
     #endif

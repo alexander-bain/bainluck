@@ -291,6 +291,12 @@ nonisolated struct WatchPinnedOrderedEntry12640: Equatable, Sendable, Identifiab
 }
 
 nonisolated enum WatchPinsOrdering12640 {
+    static let maxDisplayedPins = 8
+
+    static func wireKey(_ item: WatchPinWireItem12640) -> String {
+        "\(item.kind.rawValue):\(item.id)"
+    }
+
     /// Applies #12640 admission ("nothing without a probability is shown", plus scored finals)
     /// and orders into:
     /// 1) live games first,
@@ -375,5 +381,228 @@ nonisolated enum WatchPinsOrdering12640 {
                 }
             }
         }
+    }
+
+    /// Caps the Watch pins list to at most 8 rows while preserving the 4-bucket order.
+    static func displayed(
+        wireItems: [WatchPinWireItem12640],
+        events: [Int: WatchPinEventSummary12640],
+        futures: [Int: WatchFutureDetail12640],
+        chosenOutcomes: [Int: Int],
+        limit: Int = maxDisplayedPins
+    ) -> [WatchPinnedOrderedEntry12640] {
+        Array(rank(
+            wireItems: wireItems,
+            events: events,
+            futures: futures,
+            chosenOutcomes: chosenOutcomes
+        ).prefix(max(0, limit)))
+    }
+
+    /// Selects at most `limit` (8) pins to fetch on a refresh, preserving the 4-bucket
+    /// priority of cached items while letting newly pinned unfetched items fill slots
+    /// ahead of finished games and keeping `selectedTarget` refreshed within the cap.
+    static func itemsToRefresh(
+        wireItems: [WatchPinWireItem12640],
+        events: [Int: WatchPinEventSummary12640],
+        futures: [Int: WatchFutureDetail12640],
+        chosenOutcomes: [Int: Int],
+        selectedTarget: WatchSelectedPinTarget12640? = nil,
+        limit: Int = maxDisplayedPins
+    ) -> [WatchPinWireItem12640] {
+        let cap = max(0, limit)
+        guard cap > 0 else { return [] }
+        let sanitized = WatchPinsWire12640.sanitize(wireItems)
+        guard sanitized.count > cap else { return sanitized }
+
+        let ranked = rank(
+            wireItems: sanitized,
+            events: events,
+            futures: futures,
+            chosenOutcomes: chosenOutcomes
+        )
+        let liveAndUpcoming = ranked.filter { $0.bucket == .liveGame || $0.bucket == .upcomingGame }.map(\.wireItem)
+        let markets = ranked.filter { $0.bucket == .market }.map(\.wireItem)
+        let finished = ranked.filter { $0.bucket == .finishedGame }.map(\.wireItem)
+
+        let unfetched = sanitized.filter { item in
+            switch item.kind {
+            case .event: return events[item.id] == nil
+            case .future: return futures[item.id] == nil
+            }
+        }
+        let knownDropped = sanitized.filter { item in
+            switch item.kind {
+            case .event:
+                guard let summary = events[item.id] else { return false }
+                return !summary.isAdmittedToWatchPins
+            case .future:
+                guard let market = futures[item.id] else { return false }
+                return market.resolvedOutcome(chosenOutcomeID: chosenOutcomes[item.id], wireOutcomeID: item.outcomeId) == nil
+            }
+        }
+
+        var orderedCandidates: [WatchPinWireItem12640] = []
+        var seen = Set<String>()
+        func appendUnique(_ item: WatchPinWireItem12640) {
+            let key = wireKey(item)
+            if seen.insert(key).inserted {
+                orderedCandidates.append(item)
+            }
+        }
+
+        if let selectedTarget {
+            switch selectedTarget {
+            case .event(let id):
+                if let match = sanitized.first(where: { $0.kind == .event && $0.id == id }) {
+                    appendUnique(match)
+                }
+            case .future(let marketID, _):
+                if let match = sanitized.first(where: { $0.kind == .future && $0.id == marketID }) {
+                    appendUnique(match)
+                }
+            }
+        }
+        for item in liveAndUpcoming { appendUnique(item) }
+        for item in unfetched { appendUnique(item) }
+        for item in markets { appendUnique(item) }
+        for item in finished { appendUnique(item) }
+        for item in knownDropped { appendUnique(item) }
+
+        return Array(orderedCandidates.prefix(cap))
+    }
+
+    /// Quiet grey line when at least one row shows and one or more refreshed pins failed
+    /// with no saved reading, so a failed pin never vanishes silently.
+    static func failedLoadLine(failedWithoutSavedCount: Int, displayedCount: Int) -> String? {
+        guard displayedCount > 0, failedWithoutSavedCount > 0 else { return nil }
+        return failedWithoutSavedCount == 1
+            ? "1 pin didn't load"
+            : "\(failedWithoutSavedCount) pins didn't load"
+    }
+
+    /// Quiet grey footer when more than 8 pins exist on the iPhone ("8 of 11 · the rest are on your iPhone").
+    static func overflowLine(
+        wireItems: [WatchPinWireItem12640],
+        events: [Int: WatchPinEventSummary12640],
+        futures: [Int: WatchFutureDetail12640],
+        chosenOutcomes: [Int: Int],
+        failedItemKeys: Set<String> = [],
+        limit: Int = maxDisplayedPins
+    ) -> String? {
+        let sanitized = WatchPinsWire12640.sanitize(wireItems)
+        let allAdmitted = rank(
+            wireItems: sanitized,
+            events: events,
+            futures: futures,
+            chosenOutcomes: chosenOutcomes
+        )
+        let displayedCount = min(allAdmitted.count, max(0, limit))
+        guard displayedCount > 0 else { return nil }
+
+        let unfetchedUnattemptedCount = sanitized.filter { item in
+            guard !failedItemKeys.contains(wireKey(item)) else { return false }
+            switch item.kind {
+            case .event: return events[item.id] == nil
+            case .future: return futures[item.id] == nil
+            }
+        }.count
+
+        let nonFailedEligibleCount = allAdmitted.count + unfetchedUnattemptedCount
+        guard nonFailedEligibleCount > limit else { return nil }
+
+        let failedCount = sanitized.filter { item in
+            guard failedItemKeys.contains(wireKey(item)) else { return false }
+            switch item.kind {
+            case .event:
+                return events[item.id]?.isAdmittedToWatchPins != true
+            case .future:
+                return futures[item.id]?.resolvedOutcome(
+                    chosenOutcomeID: chosenOutcomes[item.id],
+                    wireOutcomeID: item.outcomeId
+                ) == nil
+            }
+        }.count
+
+        let totalCount = nonFailedEligibleCount + failedCount
+        guard totalCount > displayedCount else { return nil }
+        return "\(displayedCount) of \(totalCount) · the rest are on your iPhone"
+    }
+
+    struct RefreshReconciliation: Equatable, Sendable {
+        let displayedEntries: [WatchPinnedOrderedEntry12640]
+        let activeFailedKeys: Set<String>
+        let fullFailureMessage: String?
+        let partialFailureLine: String?
+        let overflowFooterLine: String?
+    }
+
+    static func reconcileRefresh(
+        wireItems: [WatchPinWireItem12640],
+        events: [Int: WatchPinEventSummary12640],
+        futures: [Int: WatchFutureDetail12640],
+        chosenOutcomes: [Int: Int],
+        attemptedKeys: Set<String>,
+        attemptedFailedKeys: Set<String>,
+        previousFailedKeys: Set<String> = [],
+        limit: Int = maxDisplayedPins
+    ) -> RefreshReconciliation {
+        let sanitized = WatchPinsWire12640.sanitize(wireItems)
+        let candidateFailed = previousFailedKeys.subtracting(attemptedKeys).union(attemptedFailedKeys)
+
+        var activeFailedKeys = Set<String>()
+        for item in sanitized {
+            let key = wireKey(item)
+            guard candidateFailed.contains(key) else { continue }
+            let hasSavedAdmittedReading: Bool
+            switch item.kind {
+            case .event:
+                hasSavedAdmittedReading = events[item.id]?.isAdmittedToWatchPins == true
+            case .future:
+                hasSavedAdmittedReading = futures[item.id]?.resolvedOutcome(
+                    chosenOutcomeID: chosenOutcomes[item.id],
+                    wireOutcomeID: item.outcomeId
+                ) != nil
+            }
+            if !hasSavedAdmittedReading {
+                activeFailedKeys.insert(key)
+            }
+        }
+
+        let displayedEntries = displayed(
+            wireItems: sanitized,
+            events: events,
+            futures: futures,
+            chosenOutcomes: chosenOutcomes,
+            limit: limit
+        )
+
+        if displayedEntries.isEmpty && !attemptedFailedKeys.isEmpty {
+            return RefreshReconciliation(
+                displayedEntries: [],
+                activeFailedKeys: activeFailedKeys,
+                fullFailureMessage: "Unable to load pins. Try Refresh.",
+                partialFailureLine: nil,
+                overflowFooterLine: nil
+            )
+        }
+
+        return RefreshReconciliation(
+            displayedEntries: displayedEntries,
+            activeFailedKeys: activeFailedKeys,
+            fullFailureMessage: nil,
+            partialFailureLine: failedLoadLine(
+                failedWithoutSavedCount: activeFailedKeys.count,
+                displayedCount: displayedEntries.count
+            ),
+            overflowFooterLine: overflowLine(
+                wireItems: sanitized,
+                events: events,
+                futures: futures,
+                chosenOutcomes: chosenOutcomes,
+                failedItemKeys: activeFailedKeys,
+                limit: limit
+            )
+        )
     }
 }
