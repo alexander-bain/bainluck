@@ -151,6 +151,23 @@ enum CompactGameCard12616 {
         return sum >= 0.95 && sum <= 1.05
     }
 
+    /// #5363 / #12616 — whether `current_odds` (`Chance` before, `Now` during,
+    /// and the live/scheduled bar) withholds its away figure because the sport
+    /// prices a draw and `current_odds` has no explicit three-way reading.
+    nonisolated static func currentAwayIsWithheld(_ event: FeedEventData) -> Bool {
+        DrawPricedWinner.sportPricesADraw(event.sport)
+            && !hasExplicitThreeWayCurrent(event)
+    }
+
+    /// #5363 / #12616 — whether the resolved pre-match reading (`Pregame` column
+    /// after, suspended pre-match row, and the finished bar) withholds its away
+    /// figure because the sport prices a draw and `prematch_odds` has no
+    /// explicit three-way reading.
+    nonisolated static func prematchAwayIsWithheld(_ event: FeedEventData) -> Bool {
+        DrawPricedWinner.sportPricesADraw(event.sport)
+            && !hasExplicitThreeWayPrematch(event)
+    }
+
     /// Formatted draw probability when a draw-priced sport carries an explicit
     /// `drawProbability` on the active reading (`Chance` before, `Now` during,
     /// `Pregame` after). Never invents a draw probability from `1 - home`.
@@ -183,21 +200,36 @@ enum CompactGameCard12616 {
     // MARK: - Pregame notch on ProbabilityBar
 
     /// The pregame away share in `(0, 1)` for the 6pt bar's notch on live and
-    /// finished cards when a pre-match reading exists. When the card draws a
-    /// three-way Draw row (`prematchDraw != nil`), the denominator includes the
-    /// draw so the notch sits on the same three-way footing as the bar.
+    /// finished cards when a pre-match reading exists. Matches the active bar's
+    /// footing:
+    /// - Three-way bar (`barShowsThreeWayDraw == true`): divides pure `away` by
+    ///   `away + home + draw` (or withholds `nil` on draw-priced sports when
+    ///   `prematchDraw` is absent, since a two-way complement cannot separate
+    ///   `away` from `draw`).
+    /// - Two-way bar (`barShowsThreeWayDraw == false`): places the notch at the
+    ///   pregame left-segment boundary `(away + draw) / (away + home + draw)`
+    ///   (`away / (away + home)` when `draw == 0`, or `1 - homeShare` when a
+    ///   three-way pregame reading sits over a two-way `[not-home | home]` bar).
     nonisolated static func pregameBarNotch(
         prematch: PrematchReading?,
         prematchDraw: Double? = nil,
+        barShowsThreeWayDraw: Bool? = nil,
+        sportPricesADraw: Bool = false,
         isLive: Bool,
         isFinished: Bool,
         isSuspended: Bool
     ) -> Double? {
         guard !isSuspended, isLive || isFinished, let prematch else { return nil }
-        let draw = usableProbability(prematchDraw) ?? 0
+        let usableDraw = usableProbability(prematchDraw)
+        let threeWayBar = barShowsThreeWayDraw ?? (usableDraw != nil)
+        if threeWayBar && sportPricesADraw && usableDraw == nil {
+            return nil
+        }
+        let draw = usableDraw ?? 0
         let sum = prematch.awayProbability + prematch.homeProbability + draw
         guard sum.isFinite, sum > 0 else { return nil }
-        let share = prematch.awayProbability / sum
+        let numerator = threeWayBar ? prematch.awayProbability : (prematch.awayProbability + draw)
+        let share = numerator / sum
         guard share > 0, share < 1 else { return nil }
         return share
     }

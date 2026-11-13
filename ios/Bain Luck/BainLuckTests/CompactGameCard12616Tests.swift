@@ -137,6 +137,66 @@ final class CompactGameCard12616Tests: XCTestCase {
         XCTAssertEqual(notch3Way, 0.41, accuracy: 0.0001)
     }
 
+    func testMixedThreeWayAndTwoWaySoccerWithholdsPerReading() throws {
+        // Direction A: three-way prematch_odds + two-way complement current_odds.
+        // Live "Now" must STILL withhold the 1 - home complement (#5271 / #5363),
+        // while pregame context preserves the three-way pre-match reading.
+        let liveMixed = try decodeEvent("""
+        {"id": 13, "sport": "soccer_epl", "home_team": "Chelsea", "away_team": "Arsenal",
+         "status": "live",
+         "current_odds": {"away_probability": 0.32, "home_probability": 0.68},
+         "prematch_odds": {"away_probability": 0.41, "home_probability": 0.34, "draw_probability": 0.25, "source": "kalshi"}}
+        """)
+        XCTAssertTrue(CompactGameCard12616.currentAwayIsWithheld(liveMixed))
+        XCTAssertFalse(CompactGameCard12616.prematchAwayIsWithheld(liveMixed))
+        let liveDuel = CompactGameCard12616.liveTenthsStrings(
+            away: liveMixed.currentOdds?.awayProbability,
+            home: liveMixed.currentOdds?.homeProbability,
+            awayIsWithheld: CompactGameCard12616.currentAwayIsWithheld(liveMixed)
+        )
+        XCTAssertNil(liveDuel.away)
+        XCTAssertEqual(liveDuel.home, "68.0%")
+        XCTAssertNil(CompactGameCard12616.drawChanceText(
+            event: liveMixed, isScheduled: false, isLive: true, isFinished: false, isSuspended: false))
+        // On the two-way [not-home | home] live bar, the pregame notch sits at
+        // pregame not-home = (0.41 + 0.25) / 1.00 = 0.66, matching 1 - 0.34.
+        let liveMixedReading = PrematchReading.resolve(prematch: liveMixed.prematchOdds, opening: nil)
+        let mixedNotch = try XCTUnwrap(CompactGameCard12616.pregameBarNotch(
+            prematch: liveMixedReading,
+            prematchDraw: 0.25,
+            barShowsThreeWayDraw: false,
+            sportPricesADraw: true,
+            isLive: true,
+            isFinished: false,
+            isSuspended: false
+        ))
+        XCTAssertEqual(mixedNotch, 0.66, accuracy: 0.0001)
+
+        // Direction B: three-way current_odds + two-way complement prematch_odds.
+        // Finished "Pregame" must STILL withhold the 1 - home complement, and a
+        // three-way live bar never places a two-way complement notch on pure away.
+        let finishedMixed = try decodeEvent("""
+        {"id": 14, "sport": "soccer_epl", "home_team": "Chelsea", "away_team": "Arsenal",
+         "status": "completed",
+         "current_odds": {"away_probability": 0.20, "home_probability": 0.55, "draw_probability": 0.25},
+         "prematch_odds": {"away_probability": 0.66, "home_probability": 0.34, "source": "kalshi"}}
+        """)
+        XCTAssertFalse(CompactGameCard12616.currentAwayIsWithheld(finishedMixed))
+        XCTAssertTrue(CompactGameCard12616.prematchAwayIsWithheld(finishedMixed))
+        XCTAssertNil(CompactGameCard12616.drawChanceText(
+            event: finishedMixed, isScheduled: false, isLive: false, isFinished: true, isSuspended: false))
+        let twoWayPrematch = PrematchReading.resolve(prematch: finishedMixed.prematchOdds, opening: nil)
+        XCTAssertNil(CompactGameCard12616.pregameBarNotch(
+            prematch: twoWayPrematch,
+            prematchDraw: nil,
+            barShowsThreeWayDraw: true,
+            sportPricesADraw: true,
+            isLive: true,
+            isFinished: false,
+            isSuspended: false
+        ))
+    }
+
     // MARK: - 4b. Live single quiet context line (Projected + Pregame)
 
     func testLiveCombinedContextLineJoinsProjectedAndPregameInReadableGrey() {

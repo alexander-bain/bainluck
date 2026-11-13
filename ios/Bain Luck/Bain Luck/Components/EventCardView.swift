@@ -441,10 +441,10 @@ struct EventCardView: View {
 
     private var compactHeaders12616: CompactGameCard12616.ColumnHeaders {
         let hasCurrent = event.currentOdds?.homeProbability != nil
-            || (!awayIsWithheld && event.currentOdds?.awayProbability != nil)
+            || (!currentAwayIsWithheld && event.currentOdds?.awayProbability != nil)
         let reading = prematch
         let hasPrematch = reading?.homeProbability != nil
-            || (!awayIsWithheld && reading?.awayProbability != nil)
+            || (!prematchAwayIsWithheld && reading?.awayProbability != nil)
         let hasScore = event.awayScore != nil || event.homeScore != nil
         return CompactGameCard12616.columnHeaders(
             isScheduled: isScheduled,
@@ -1081,9 +1081,17 @@ struct EventCardView: View {
     /// The rows are already named — logo, then team, then the number — so the
     /// withheld side simply renders nothing, and nothing has to be renamed. The
     /// collapse-to-one-number surfaces are the ones that name their survivor.
-    private var awayIsWithheld: Bool {
+    /// #5363 / #12616 — whether each reading on this card may print an AWAY
+    /// probability. Decided per reading (`current_odds` vs `prematch`) so a
+    /// three-way pregame reading never un-withholds a two-way live complement
+    /// (`1 - home`), nor vice versa on a finished card.
+    private var currentAwayIsWithheld: Bool {
         DrawPricedWinner.sportPricesADraw(event.sport)
             && !CompactGameCard12616.hasExplicitThreeWayCurrent(event)
+    }
+
+    private var prematchAwayIsWithheld: Bool {
+        DrawPricedWinner.sportPricesADraw(event.sport)
             && !CompactGameCard12616.hasExplicitThreeWayPrematch(event)
     }
 
@@ -1091,7 +1099,7 @@ struct EventCardView: View {
         CompactGameCard12616.liveTenthsStrings(
             away: event.currentOdds?.awayProbability,
             home: event.currentOdds?.homeProbability,
-            awayIsWithheld: awayIsWithheld
+            awayIsWithheld: currentAwayIsWithheld
         )
     }
 
@@ -1099,7 +1107,7 @@ struct EventCardView: View {
     private func probabilityWithMovement(for side: TeamSide) -> some View {
         let prob: Double? = side == .home
             ? event.currentOdds?.homeProbability
-            : (awayIsWithheld ? nil : event.currentOdds?.awayProbability)
+            : (currentAwayIsWithheld ? nil : event.currentOdds?.awayProbability)
         let color = side == .home ? homeColor : awayColor
 
         if let prob {
@@ -1147,17 +1155,17 @@ struct EventCardView: View {
     @ViewBuilder
     private func preGameOddsLabel(for side: TeamSide, labelled: Bool = false) -> some View {
         let reading = prematch
-        // #5363 — the settled row's pre-game number is the same complement.
+        // #5363 — the settled row's pre-game number is gated on the pre-match reading itself.
         let prob: Double? = side == .home
             ? reading?.homeProbability
-            : (awayIsWithheld ? nil : reading?.awayProbability)
+            : (prematchAwayIsWithheld ? nil : reading?.awayProbability)
         if let prob {
             let wasHeavyFavorite = prob > 0.7
             let won = (side == .home && homeWon) || (side == .away && awayWon)
             // #9490 — against the side it beat on the same reading, not a
             // fixed cut: on a three-way board 39.5% can be the favourite.
             let isUpset = won && (reading?.winnerWasUnderdog(
-                homeWon: homeWon, awayWon: awayWon, pricesADraw: awayIsWithheld) ?? false)
+                homeWon: homeWon, awayWon: awayWon, pricesADraw: prematchAwayIsWithheld) ?? false)
 
             let text = formatProbability(prob, renderedPercent: reading?.percents[side == .home ? 1 : 0])
             if labelled {
@@ -1205,9 +1213,14 @@ struct EventCardView: View {
         let currentThreeWayDraw = CompactGameCard12616.hasExplicitThreeWayCurrent(event)
             ? event.currentOdds?.drawProbability
             : nil
+        let activeBarThreeWay = isFinished
+            ? (prematchThreeWayDraw != nil)
+            : (currentThreeWayDraw != nil)
         let notch = CompactGameCard12616.pregameBarNotch(
             prematch: reading,
             prematchDraw: prematchThreeWayDraw,
+            barShowsThreeWayDraw: activeBarThreeWay,
+            sportPricesADraw: DrawPricedWinner.sportPricesADraw(event.sport),
             isLive: isLive,
             isFinished: isFinished,
             isSuspended: isSuspended
@@ -1224,7 +1237,7 @@ struct EventCardView: View {
                     // loses that team's colour along with its number and reads
                     // as the neutral rest of the whole. The event page settled
                     // this in #5271; the card family follows it exactly.
-                    awayColor: awayIsWithheld
+                    awayColor: prematchAwayIsWithheld
                         ? Color.secondary.opacity(0.25)
                         : awayColor.opacity(0.65),
                     homeColor: homeColor.opacity(0.65),
@@ -1247,7 +1260,7 @@ struct EventCardView: View {
                 drawProb: currentThreeWayDraw,
                 // #5363 — see the settled bar above: the remainder survives, the
                 // away team's colour does not.
-                awayColor: awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor,
+                awayColor: currentAwayIsWithheld ? Color.secondary.opacity(0.25) : awayColor,
                 homeColor: homeColor,
                 height: 6,
                 animated: isLive,

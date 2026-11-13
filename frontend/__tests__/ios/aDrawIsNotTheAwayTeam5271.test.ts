@@ -494,25 +494,29 @@ d("a draw is not the away team on iOS", () => {
     const code = stripComments(eventCard());
 
     expect(code).toMatch(
-      /private var awayIsWithheld: Bool \{\s*DrawPricedWinner\.sportPricesADraw\(event\.sport\)/
+      /private var currentAwayIsWithheld: Bool \{\s*DrawPricedWinner\.sportPricesADraw\(event\.sport\)\s*&&\s*!CompactGameCard12616\.hasExplicitThreeWayCurrent\(event\)/
     );
-    // Both per-side readers gate the AWAY branch and neither touches home.
     expect(code).toMatch(
-      /side == \.home\s*\?\s*event\.currentOdds\?\.homeProbability\s*:\s*\(awayIsWithheld \? nil : event\.currentOdds\?\.awayProbability\)/
+      /private var prematchAwayIsWithheld: Bool \{\s*DrawPricedWinner\.sportPricesADraw\(event\.sport\)\s*&&\s*!CompactGameCard12616\.hasExplicitThreeWayPrematch\(event\)/
     );
-    // #8622: the settled row reads the resolved pre-match reading, same gate.
+    // Both per-side readers gate the AWAY branch on their OWN reading and neither touches home.
     expect(code).toMatch(
-      /side == \.home\s*\?\s*reading\?\.homeProbability\s*:\s*\(awayIsWithheld \? nil : reading\?\.awayProbability\)/
+      /side == \.home\s*\?\s*event\.currentOdds\?\.homeProbability\s*:\s*\(currentAwayIsWithheld \? nil : event\.currentOdds\?\.awayProbability\)/
     );
-    // Both bars keep the remainder and drop the colour.
-    const neutralised =
-      code.match(/awayIsWithheld\s*\r?\n?\s*\?\s*Color\.secondary\.opacity\(0\.25\)/g) ??
-      code.match(/awayIsWithheld \? Color\.secondary\.opacity\(0\.25\)/g) ??
-      [];
+    // #8622: the settled row reads the resolved pre-match reading, gated on prematch withholding.
+    expect(code).toMatch(
+      /side == \.home\s*\?\s*reading\?\.homeProbability\s*:\s*\(prematchAwayIsWithheld \? nil : reading\?\.awayProbability\)/
+    );
+    // Both bars keep the remainder and drop the colour on their own reading.
+    expect(code).toMatch(
+      /prematchAwayIsWithheld\s*\r?\n?\s*\?\s*Color\.secondary\.opacity\(0\.25\)/
+    );
+    expect(code).toMatch(
+      /currentAwayIsWithheld \? Color\.secondary\.opacity\(0\.25\) : awayColor/
+    );
     expect(
       (code.match(/Color\.secondary\.opacity\(0\.25\)/g) ?? []).length
     ).toBe(2);
-    expect(neutralised.length).toBeGreaterThan(0);
   });
 
   /**
