@@ -32,6 +32,7 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.services.database import Base
+from app.utils import not_trading as _not_trading
 from app.utils import wps_revision as _wps_revision
 
 # The one runtime allowlist for `discover_interactions.provenance`, imported
@@ -1002,6 +1003,13 @@ class FuturesMarket(Base):
     volume_updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True)
     )
+    # #11937: first time the venue's 24h volume read zero, with no non-zero
+    # reading since. Kept by the database trigger in `app/utils/not_trading.py`
+    # on every write of `volume_24h`; NULL = trading or not yet observed. A
+    # market quiet for QUIET_DAYS is not featured on Discover or in a round-up.
+    quiet_since: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -1034,6 +1042,20 @@ class FuturesMarket(Base):
     outcomes: Mapped[list["FuturesOutcome"]] = relationship(
         back_populates="market", cascade="all, delete-orphan"
     )
+
+
+# #11937: the quiet_since trigger is part of the table, as #9051's is part of
+# `events`, so every real-Postgres gate built by `create_all` carries it.
+sa_event.listen(
+    FuturesMarket.__table__,
+    "after_create",
+    DDL(_not_trading.CREATE_FUNCTION_SQL).execute_if(dialect="postgresql"),
+)
+sa_event.listen(
+    FuturesMarket.__table__,
+    "after_create",
+    DDL(_not_trading.CREATE_TRIGGER_SQL).execute_if(dialect="postgresql"),
+)
 
 
 class FuturesOutcome(Base):

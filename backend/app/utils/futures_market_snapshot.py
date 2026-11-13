@@ -136,6 +136,11 @@ MARKET_COLUMNS: tuple[str, ...] = (
     # path would not, so a reader's card would change its named favourite as the
     # cache turned over — a DIFFERENT feed, not a cheaper one.
     "mutually_exclusive",
+    # #11937: the start of a market's quiet spell (no venue volume), so a market
+    # nobody has traded for a week is not featured. Same rule as above: absent
+    # from the wire, the cached path could not apply the filter the direct path
+    # applies, and the feed would change as the cache turned over.
+    "quiet_since",
 )
 
 #: Columns loaded for each `FuturesOutcome`.
@@ -469,7 +474,9 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: is a MISS that rebuilds.
 # v9 carries whether every opening belongs to the one recorded field instant.
 # Older cache entries cannot prove that complete normalized comparison.
-SNAPSHOT_SCHEMA_VERSION = 9
+# v10 (#11937): `quiet_since` joins `MARKET_COLUMNS`, so a v9 row is one value
+# short and must never be decoded as a v10 one; v9 entries become unreachable.
+SNAPSHOT_SCHEMA_VERSION = 10
 
 
 class _Snapshot:

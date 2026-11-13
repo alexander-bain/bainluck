@@ -2104,6 +2104,18 @@ async def add_roundup_feed_items(
 
     if not produced:
         return items
+    # #11937 (Alex, Nov 13): a market nobody trades is not featured, and a
+    # round-up is rated by its stalest member, so those members leave the card.
+    try:
+        from app.utils.not_trading import drop_not_trading_roundup_members
+
+        produced = await drop_not_trading_roundup_members(
+            db, produced, now or datetime.now(timezone.utc), _roundup_covered_market_ids
+        )
+    except Exception:  # noqa: BLE001 — one failed read must not empty the page (gotcha #42)
+        logger.warning("Discover round-up not-trading check failed; keeping the cards", exc_info=True)
+    if not produced:
+        return items
     return insert_roundup_feed_items(
         items,
         produced,
