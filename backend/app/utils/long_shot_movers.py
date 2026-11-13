@@ -4,8 +4,11 @@ PILLAR: DISCOVER · TRUTH
 SHIP: Guarded 24-hour waking-long-shot container selecting open markets that sat
 at ``<= 12%`` 24 hours ago, now trade at ``>= 8%``, and climbed at least
 ``+6 points`` (``>= +0.06``), with freshness and liquidity guards so un-traded
-quotes never trigger a false move. Every shift is formatted in points (never
-``%``), with a dynamic ``context_line`` explaining the exact filter.
+quotes never trigger a false move, cross-source twin blending via
+``futures_source_merge.blend_with_verdict``, and ``group_id`` deduplication after
+ranking so the strongest mover in a multi-market family always wins. Every shift
+is formatted in points (never ``%``), with a dynamic ``context_line`` explaining
+the exact filter.
 
 Publication gate: candidate definition lives in ``backend/data/discover/candidates/``
 and is NOT registered in ``ROUNDUP_PRODUCERS`` until licensed via the Discover
@@ -22,6 +25,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from app.utils.container_presentation import market_destination
+from app.utils.futures_source_merge import blend_with_verdict
 from app.utils.roundup_containers import (
     RoundupMembers,
     RoundupProducer,
@@ -67,7 +71,13 @@ class LongShotMover:
     outcome_name: str
     prior_prob: float
     current_prob: float
+    prior_pct: int
+    current_pct: int
     gain_points: int
+    source: str
+    twin_key: str
+    group_key: str
+    contributing_market_ids: tuple[int, ...]
     card: dict[str, Any]
 
 
@@ -76,6 +86,16 @@ def _assert_clean_copy(text: str) -> str:
     if _FORBIDDEN_COPY_RE.search(cleaned):
         raise ValueError(f"Forbidden copy token in reader text: {cleaned!r}")
     return cleaned
+
+
+def _norm_key(text: Any) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", str(text or "").lower())).strip()
+
+
+def _coerce_utc(now: Optional[datetime]) -> datetime:
+    if isinstance(now, datetime):
+        return now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now.astimezone(timezone.utc)
+    return datetime.now(timezone.utc)
 
 
 def _is_recent_quote(
@@ -97,6 +117,22 @@ def _is_recent_quote(
     return timedelta(seconds=-300) <= age <= timedelta(hours=max_quote_age_hours)
 
 
+def _passes_liquidity_guard(market: Mapping[str, Any], min_volume: float) -> bool:
+    if min_volume <= 0:
+        return True
+    vol_raw = (
+        market.get("volume")
+        if market.get("volume") is not None
+        else market.get("volume_24h")
+    )
+    if vol_raw is None:
+        return False
+    try:
+        return float(vol_raw) >= min_volume
+    except (TypeError, ValueError):
+        return False
+
+
 def _extract_best_mover_from_market(
     market: Mapping[str, Any],
     *,
@@ -113,26 +149,27 @@ def _extract_best_mover_from_market(
         return None
     if not _is_recent_quote(market, now, max_quote_age_hours):
         return None
-
-    vol_raw = market.get("volume")
-    if vol_raw is not None:
-        try:
-            if float(vol_raw) < min_volume:
-                return None
-        except (TypeError, ValueError):
-            return None
+    if not _passes_liquidity_guard(market, min_volume):
+        return None
 
     title = str(market.get("name") or market.get("title") or "").strip()
     if not title or _FORBIDDEN_COPY_RE.search(title):
         return None
+
+    source = str(market.get("source") or "single").strip().lower() or "single"
+    mkt_id = int(market["id"])
+    grp_key = str(market.get("group_id") or f"id:{mkt_id}")
 
     outcomes = market.get("outcomes") or ()
     best: Optional[LongShotMover] = None
     for out in outcomes:
         if not isinstance(out, Mapping):
             continue
-        out_name = str(out.get("name") or "").strip()
+        out_name = " ".join(str(out.get("name") or "").split())
         if not out_name or out_name.lower() in {"no", "other", "none", "field"}:
+            continue
+        # Skip outcomes with forbidden copy tokens instead of crashing the batch (hot-list #42)
+        if _FORBIDDEN_COPY_RE.search(out_name):
             continue
         cur_raw = out.get("probability")
         prior_raw = (
@@ -149,27 +186,114 @@ def _extract_best_mover_from_market(
             continue
         if not (0.0 < prior_p <= max_prior_prob and min_current_prob <= cur_p < 1.0):
             continue
-        gain_pts = int(round((cur_p - prior_p) * 100))
-        if gain_pts < min_gain_points:
+
+        prior_pct = int(round(prior_p * 100))
+        cur_pct = int(round(cur_p * 100))
+        raw_gain_pts = (cur_p - prior_p) * 100.0
+        gain_pts = cur_pct - prior_pct
+        if raw_gain_pts < (min_gain_points - 1e-9) or gain_pts < min_gain_points:
             continue
 
-        row_label = (
-            title
-            if out_name.lower() == "yes"
-            else f"{out_name} · {title}"
-        )
+        row_label = title if out_name.lower() == "yes" else f"{out_name} · {title}"
+        twin_key = f"{_norm_key(out_name)}::{_norm_key(title)}"
         candidate = LongShotMover(
-            market_id=int(market["id"]),
+            market_id=mkt_id,
             label=_assert_clean_copy(row_label),
             outcome_name=_assert_clean_copy(out_name),
             prior_prob=prior_p,
             current_prob=cur_p,
+            prior_pct=prior_pct,
+            current_pct=cur_pct,
             gain_points=gain_pts,
+            source=source,
+            twin_key=twin_key,
+            group_key=grp_key,
+            contributing_market_ids=(mkt_id,),
             card=dict(market),
         )
-        if best is None or candidate.gain_points > best.gain_points:
+        if best is None or (candidate.gain_points, candidate.current_prob) > (
+            best.gain_points,
+            best.current_prob,
+        ):
             best = candidate
     return best
+
+
+def _blend_cross_source_twins(
+    raw_movers: Sequence[LongShotMover],
+    *,
+    max_prior_prob: float,
+    min_current_prob: float,
+    min_gain_points: int,
+) -> tuple[list[LongShotMover], list[tuple[Any, ...]]]:
+    by_twin: dict[str, dict[str, LongShotMover]] = {}
+    for mv in raw_movers:
+        src_map = by_twin.setdefault(mv.twin_key, {})
+        existing = src_map.get(mv.source)
+        if existing is None or (mv.gain_points, mv.current_prob, -mv.market_id) > (
+            existing.gain_points,
+            existing.current_prob,
+            -existing.market_id,
+        ):
+            src_map[mv.source] = mv
+
+    resolved: list[LongShotMover] = []
+    drop_reasons: list[tuple[Any, ...]] = []
+    for twin_key, src_map in by_twin.items():
+        sources_sorted = sorted(src_map.keys())
+        if len(sources_sorted) == 1:
+            resolved.append(src_map[sources_sorted[0]])
+            continue
+
+        cur_val, cur_div, cur_rule = blend_with_verdict(
+            [{"source": s, "probability": src_map[s].current_prob} for s in sources_sorted]
+        )
+        prior_val, prior_div, prior_rule = blend_with_verdict(
+            [{"source": s, "probability": src_map[s].prior_prob} for s in sources_sorted]
+        )
+        if (
+            cur_div is not None
+            or cur_rule == "divergence_gate"
+            or cur_val is None
+            or prior_div is not None
+            or prior_rule == "divergence_gate"
+            or prior_val is None
+        ):
+            drop_reasons.append(("mover_divergence_gate", twin_key))
+            continue
+
+        cur_p = float(cur_val)
+        prior_p = float(prior_val)
+        if not (0.0 < prior_p <= max_prior_prob and min_current_prob <= cur_p < 1.0):
+            continue
+        prior_pct = int(round(prior_p * 100))
+        cur_pct = int(round(cur_p * 100))
+        raw_gain_pts = (cur_p - prior_p) * 100.0
+        gain_pts = cur_pct - prior_pct
+        if raw_gain_pts < (min_gain_points - 1e-9) or gain_pts < min_gain_points:
+            continue
+
+        primary_src = "kalshi" if "kalshi" in src_map else sources_sorted[0]
+        primary = src_map[primary_src]
+        contrib = tuple(sorted({mid for s in sources_sorted for mid in src_map[s].contributing_market_ids}))
+        resolved.append(
+            LongShotMover(
+                market_id=primary.market_id,
+                label=primary.label,
+                outcome_name=primary.outcome_name,
+                prior_prob=prior_p,
+                current_prob=cur_p,
+                prior_pct=prior_pct,
+                current_pct=cur_pct,
+                gain_points=gain_pts,
+                source=primary.source,
+                twin_key=twin_key,
+                group_key=primary.group_key,
+                contributing_market_ids=contrib,
+                card=dict(primary.card),
+            )
+        )
+    return resolved, drop_reasons
 
 
 def select_long_shot_movers(
@@ -184,13 +308,8 @@ def select_long_shot_movers(
     min_members: int = 3,
     max_card_rows: int = 4,
 ) -> RoundupMembers | RoundupRefusal:
-    effective_now = (
-        now.astimezone(timezone.utc)
-        if isinstance(now, datetime) and now.tzinfo is not None
-        else datetime.now(timezone.utc)
-    )
-    movers: list[LongShotMover] = []
-    seen_groups: set[str] = set()
+    effective_now = _coerce_utc(now)
+    raw_movers: list[LongShotMover] = []
     for m in markets:
         mover = _extract_best_mover_from_market(
             m,
@@ -201,18 +320,34 @@ def select_long_shot_movers(
             max_quote_age_hours=max_quote_age_hours,
             min_volume=min_volume,
         )
-        if mover is None:
+        if mover is not None:
+            raw_movers.append(mover)
+
+    blended_movers, drop_reasons = _blend_cross_source_twins(
+        raw_movers,
+        max_prior_prob=max_prior_prob,
+        min_current_prob=min_current_prob,
+        min_gain_points=min_gain_points,
+    )
+    # Rank BEFORE group_id deduplication so a smaller sibling never masks a larger mover!
+    blended_movers.sort(key=lambda mv: (-mv.gain_points, -mv.current_prob, mv.market_id))
+
+    movers: list[LongShotMover] = []
+    seen_groups: set[str] = set()
+    for mv in blended_movers:
+        if mv.group_key in seen_groups:
             continue
-        grp = str(m.get("group_id") or f"id:{mover.market_id}")
-        if grp in seen_groups:
-            continue
-        seen_groups.add(grp)
-        movers.append(mover)
+        seen_groups.add(mv.group_key)
+        movers.append(mv)
 
     if len(movers) < max(2, int(min_members)):
-        return RoundupRefusal([("insufficient_long_shot_movers", len(movers), int(min_members))])
+        return RoundupRefusal(
+            [
+                ("insufficient_long_shot_movers", len(movers), int(min_members)),
+                *drop_reasons,
+            ]
+        )
 
-    movers.sort(key=lambda mv: (-mv.gain_points, -mv.current_prob, mv.market_id))
     shown = movers[: max(2, int(max_card_rows))]
     cap_pct = int(round(max_prior_prob * 100))
     top = shown[0]
@@ -226,18 +361,16 @@ def select_long_shot_movers(
 
     rows: list[dict[str, Any]] = []
     for mv in shown:
-        prior_pct = int(round(mv.prior_prob * 100))
-        cur_pct = int(round(mv.current_prob * 100))
         rows.append(
             {
                 "market_id": mv.market_id,
                 "label": mv.label,
                 "outcome": mv.outcome_name,
-                "prior_percent": prior_pct,
+                "prior_percent": mv.prior_pct,
                 "probability": round(mv.current_prob, 4),
-                "rendered_percent": cur_pct,
+                "rendered_percent": mv.current_pct,
                 "delta_points": mv.gain_points,
-                "delta_label": _assert_clean_copy(f"+{mv.gain_points} pts from {prior_pct}%"),
+                "delta_label": _assert_clean_copy(f"+{mv.gain_points} pts from {mv.prior_pct}%"),
                 "destination": market_destination(mv.market_id),
             }
         )
@@ -246,6 +379,12 @@ def select_long_shot_movers(
         {"id": mv.market_id, "type": "futures", "card": dict(mv.card)}
         for mv in movers
     ]
+    rev_ids: list[int] = []
+    for mv in movers:
+        for mid in mv.contributing_market_ids:
+            if mid not in rev_ids:
+                rev_ids.append(mid)
+
     return RoundupMembers(
         members=members,
         rows=rows,
@@ -253,7 +392,7 @@ def select_long_shot_movers(
         count_line=f"{len(movers)} movers",
         title="Long shots that moved",
         kicker="MOVERS · LAST 24 HOURS",
-        revision_ids=[mv.market_id for mv in movers],
+        revision_ids=rev_ids,
         sections=(
             {
                 "title": "Long shots waking up over the last 24 hours",
@@ -275,11 +414,21 @@ async def produce_long_shot_movers(
         return select_long_shot_movers(
             db,
             now=now,
-            max_prior_prob=float(cfg_rule.get("max_prior_prob") or 0.12),
-            min_current_prob=float(cfg_rule.get("min_current_prob") or 0.08),
-            min_gain_points=int(cfg_rule.get("min_gain_points") or 6),
-            max_quote_age_hours=float(cfg_rule.get("max_quote_age_hours") or 6.0),
-            min_volume=float(cfg_rule.get("min_volume") or 1000.0),
+            max_prior_prob=float(
+                cfg_rule["max_prior_prob"] if "max_prior_prob" in cfg_rule else 0.12
+            ),
+            min_current_prob=float(
+                cfg_rule["min_current_prob"] if "min_current_prob" in cfg_rule else 0.08
+            ),
+            min_gain_points=int(
+                cfg_rule["min_gain_points"] if "min_gain_points" in cfg_rule else 6
+            ),
+            max_quote_age_hours=float(
+                cfg_rule["max_quote_age_hours"] if "max_quote_age_hours" in cfg_rule else 6.0
+            ),
+            min_volume=float(
+                cfg_rule["min_volume"] if "min_volume" in cfg_rule else 1000.0
+            ),
             min_members=int(cfg_rule.get("min_members") or 3),
             max_card_rows=int(cfg_rule.get("max_card_rows") or 4),
         )
