@@ -439,15 +439,18 @@ READ_SIDE_CONSUMERS = {
         "#2024 was found through, and the one that is WRONG today: it is filtering "
         "on a stamp that says the poller ran."
     ),
-    "app/routes/admin_source_health.py": (
-        "POLLER ALIVE — #12633's class and registered freshness guards require "
+    "app/utils/futures_quote_freshness.py": (
+        "POLLER ALIVE — #12633's shared selection/guard predicate requires "
         "a recent last_updated on the same outcome as a recent chart point. "
+        "It also keeps an old, still-priced writable sibling due even when "
+        "another outcome is fresh. The task selectors and source-health "
+        "guards call this helper rather than comparing the stamp themselves. "
         "A chart keepalive alone is not a quote observation. An unchanged "
         "successful venue read advances last_updated and clears this darkness "
         "without advancing price_changed_at; the real PostgreSQL guard and "
         "Governor writer cases in test_futures_price_refresh_writes_pg prove "
         "both directions. Under option 1, a stable quoted field would remain "
-        "dark forever. This read-only aggregate guard never hides or rewrites "
+        "dark forever. This shared selection predicate never hides or rewrites "
         "a price; all existing writer semantics and consumer gates are unchanged."
     ),
     "app/routes/oscars.py": (
