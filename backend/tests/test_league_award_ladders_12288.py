@@ -132,7 +132,45 @@ async def test_nba_award_ladders_orders_closest_race_first_and_explains_context(
     assert grading["best_single"]["id"] == 52755649
 
 
-def test_nfl_awards_blend_cross_source_dpoy_twin() -> None:
+def test_single_source_leader_preserved_when_second_source_omits_candidate() -> None:
+    """When Kalshi lists X at 50% and Polymarket omits X, X must stay the MVP leader."""
+    markets = [
+        {
+            "id": 930001,
+            "source": "kalshi",
+            "status": "open",
+            "sport": "basketball_nba",
+            "name": "Pro Basketball MVP Winner",
+            "outcomes": [
+                {"name": "Nikola Jokic", "probability": 0.50},
+                {"name": "Luka Doncic", "probability": 0.25},
+                {"name": "Shai Gilgeous-Alexander", "probability": 0.15},
+            ],
+        },
+        {
+            "id": 930002,
+            "source": "polymarket",
+            "status": "open",
+            "sport": "basketball_nba",
+            "name": "NBA: 2026-27 MVP",
+            "outcomes": [
+                {"name": "Luka Doncic", "probability": 0.25},
+                {"name": "Shai Gilgeous-Alexander", "probability": 0.15},
+            ],
+        },
+        _live_nba_awards_fixture()[1],  # DPOY
+        _live_nba_awards_fixture()[2],  # ROY
+    ]
+    res = select_league_award_ladders(markets, sport="basketball_nba", min_awards=3)
+    assert isinstance(res, RoundupMembers)
+    mvp = [r for r in res.rows if r["award"] == "MVP"][0]
+    assert mvp["leader"] == "Nikola Jokic"
+    assert mvp["rendered_percent"] == 50
+    assert mvp["gap_points"] == pytest.approx(25.0, abs=1e-4)
+    assert mvp["market_id"] == 930001
+
+
+def test_nfl_awards_blend_and_40pt_divergence_drops_slot_and_refuses() -> None:
     nfl_markets = [
         {
             "id": 40532,
@@ -172,7 +210,33 @@ def test_nfl_awards_blend_cross_source_dpoy_twin() -> None:
     dpoy = [r for r in res.rows if r["award"] == "Defensive Player"][0]
     assert dpoy["probability"] == pytest.approx((0.395 + 0.328) / 2.0, abs=1e-4)
 
+    # >= 40 pt cross-source disagreement on DPOY drops the slot, taking valid awards from 3 -> 2 (< min_awards=3)
+    divergent_nfl = [
+        nfl_markets[0],
+        nfl_markets[1],
+        {
+            **nfl_markets[2],
+            "outcomes": [{"name": "Will Anderson Jr.", "probability": 0.85}, {"name": "Fred Warner", "probability": 0.10}],
+        },
+        nfl_markets[3],
+    ]
+    refusal = select_league_award_ladders(divergent_nfl, sport="americanfootball_nfl", min_awards=3)
+    assert isinstance(refusal, RoundupRefusal)
+    reason_codes = [r[0] for r in refusal.reasons]
+    assert "insufficient_awards" in reason_codes
+    assert "award_divergence_gate" in reason_codes
 
-def test_withholds_when_below_min_awards() -> None:
+
+@pytest.mark.asyncio
+async def test_withholds_below_min_awards_and_handles_unsupported_sport_and_session() -> None:
     res = select_league_award_ladders(_live_nba_awards_fixture()[:2], min_awards=3)
     assert isinstance(res, RoundupRefusal)
+    assert res.reasons[0][0] == "insufficient_awards"
+
+    bad_sport = select_league_award_ladders(_live_nba_awards_fixture(), sport="baseball_mlb")
+    assert isinstance(bad_sport, RoundupRefusal)
+    assert list(bad_sport.reasons) == [("unsupported_sport", "baseball_mlb")]
+
+    bad_session = await produce_league_award_ladders(object())
+    assert isinstance(bad_session, RoundupRefusal)
+    assert list(bad_session.reasons) == [("unsupported_session", "object")]

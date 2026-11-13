@@ -3,7 +3,7 @@
 PILLAR: DISCOVER · MATCHING · TRUTH
 SHIP: Sports major-trophy ladder dynamically grouping an active league's major
 player and coach trophies (MVP, Defensive Player of the Year, Rookie of the
-Year / Offensive ROY / Defensive ROY, Coach of the Year, Heisman) into one
+Year / Offensive ROY / Defensive ROY, Coach of the Year) into one
 leader-per-trophy card, blending cross-source twins via
 ``futures_source_merge.blend_with_verdict`` (refusing 40+ pt divergence),
 ordering from tightest trophy race to clearest favorite, and emitting a clear
@@ -11,7 +11,8 @@ ordering from tightest trophy race to clearest favorite, and emitting a clear
 
 Publication gate: candidate definition lives in ``backend/data/discover/candidates/``
 and is NOT registered in ``ROUNDUP_PRODUCERS`` until licensed via the Discover
-exam and ``/grade/groupings``.
+exam and ``/grade/groupings`` (live DB ``AsyncSession`` query wiring lands in the
+activation PR once licensed).
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -146,6 +147,8 @@ def _norm_person(raw: Any) -> Optional[str]:
     text = re.sub(r"\s+", " ", str(raw or "").strip())
     if not text or text.lower() in {"other", "field", "none", "tie", "yes", "no"}:
         return None
+    if _FORBIDDEN_COPY_RE.search(text):
+        return None
     return text
 
 
@@ -196,7 +199,7 @@ def _resolve_award_slot(
     slot_key: str,
     award_label: str,
     slot_markets: Sequence[Mapping[str, Any]],
-) -> Optional[AwardStanding]:
+) -> tuple[Optional[AwardStanding], Optional[tuple[Any, ...]]]:
     by_source: dict[str, tuple[Mapping[str, Any], dict[str, float]]] = {}
     for m in slot_markets:
         src = str(m.get("source") or "").strip().lower()
@@ -208,7 +211,7 @@ def _resolve_award_slot(
         if src not in by_source or len(cands) > len(by_source[src][1]):
             by_source[src] = (m, cands)
     if not by_source:
-        return None
+        return None, None
 
     sources_sorted = sorted(by_source.keys())
     all_names: set[str] = set()
@@ -225,32 +228,45 @@ def _resolve_award_slot(
         if len(rows_for_blend) >= 2:
             val, divergence, rule_name = blend_with_verdict(rows_for_blend)
             if divergence is not None or rule_name == "divergence_gate" or val is None:
-                return None
+                return None, ("award_divergence_gate", slot_key, name)
             blended.append((name, float(val)))
-        elif len(by_source) == 1:
+        elif len(rows_for_blend) == 1:
+            # Preserve single-source contenders in multi-source award slots so an
+            # incomplete book never erases the true front-runner.
             blended.append((name, float(rows_for_blend[0]["probability"])))
 
     if len(blended) < 2:
-        return None
+        return None, None
     blended.sort(key=lambda x: (-x[1], x[0]))
     leader_name, leader_prob = blended[0]
     runner_name, runner_prob = blended[1]
     gap_pts = round((leader_prob - runner_prob) * 100.0, 1)
-    primary_src = "kalshi" if "kalshi" in by_source else sources_sorted[0]
+
+    # row["market_id"] links the primary market quoting leader_name (preferring Kalshi
+    # when both quote the leader), while revision_ids tracks all contributing twins.
+    sources_with_leader = [s for s in sources_sorted if leader_name in by_source[s][1]]
+    primary_src = (
+        "kalshi"
+        if "kalshi" in sources_with_leader
+        else (sources_with_leader[0] if sources_with_leader else sources_sorted[0])
+    )
     primary_card = dict(by_source[primary_src][0])
     contrib_ids = tuple(sorted(int(by_source[s][0]["id"]) for s in sources_sorted))
 
-    return AwardStanding(
-        slot_key=slot_key,
-        award_label=award_label,
-        leader_name=leader_name,
-        leader_probability=leader_prob,
-        runner_up_name=runner_name,
-        runner_up_probability=runner_prob,
-        gap_points=gap_pts,
-        primary_market_id=int(primary_card["id"]),
-        contributing_market_ids=contrib_ids,
-        primary_card=primary_card,
+    return (
+        AwardStanding(
+            slot_key=slot_key,
+            award_label=award_label,
+            leader_name=leader_name,
+            leader_probability=leader_prob,
+            runner_up_name=runner_name,
+            runner_up_probability=runner_prob,
+            gap_points=gap_pts,
+            primary_market_id=int(primary_card["id"]),
+            contributing_market_ids=contrib_ids,
+            primary_card=primary_card,
+        ),
+        None,
     )
 
 
@@ -278,15 +294,23 @@ def select_league_award_ladders(
         buckets[slot_key][1].append(m)
 
     standings: list[AwardStanding] = []
+    drop_reasons: list[tuple[Any, ...]] = []
     for slot_key, label, _ in cfg["slots"]:
         if slot_key not in buckets:
             continue
-        resolved = _resolve_award_slot(slot_key, label, buckets[slot_key][1])
+        resolved, drop_reason = _resolve_award_slot(slot_key, label, buckets[slot_key][1])
         if resolved is not None:
             standings.append(resolved)
+        elif drop_reason is not None:
+            drop_reasons.append(drop_reason)
 
     if len(standings) < max(2, int(min_awards)):
-        return RoundupRefusal([("insufficient_awards", sport, len(standings), int(min_awards))])
+        return RoundupRefusal(
+            [
+                ("insufficient_awards", sport, len(standings), int(min_awards)),
+                *drop_reasons,
+            ]
+        )
 
     standings.sort(key=lambda s: (s.gap_points, abs(s.leader_probability - 0.5), s.award_label))
     shown = standings[: max(2, int(max_card_rows))]
@@ -305,6 +329,7 @@ def select_league_award_ladders(
     rows: list[dict[str, Any]] = []
     for s in shown:
         pct = int(round(s.leader_probability * 100))
+        # market_id links the primary (Kalshi-preferred) market that quotes s.leader_name
         row: dict[str, Any] = {
             "market_id": s.primary_market_id,
             "label": _assert_clean_copy(f"{s.award_label} · {s.leader_name}"),
@@ -355,7 +380,7 @@ async def produce_league_award_ladders(
     rule: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
-    _ = now or datetime.now(timezone.utc)
+    del now
     cfg_rule = dict(rule or {})
     sport = str(cfg_rule.get("sport") or "basketball_nba")
     min_a = int(cfg_rule.get("min_awards") or 3)
