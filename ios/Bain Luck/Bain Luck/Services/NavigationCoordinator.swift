@@ -299,6 +299,14 @@ final class NavigationCoordinator: ObservableObject {
                 return true
             }
 
+        case "discover":
+            // #12671 — the site's `/discover` is Discover. The About screen's
+            // "Start Exploring" button links here, and with no case the link
+            // fell through to Safari: the app sent the reader to the website.
+            pendingRoute = nil
+            selectedTab = .discover
+            return true
+
         case "daily":
             // #12601 — while the quiz is switched off, a `bainluck://daily` or
             // `bainluck.com/daily` link lands on Discover rather than pushing
