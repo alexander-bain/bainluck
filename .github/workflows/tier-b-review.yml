@@ -47,7 +47,7 @@ jobs:
           persist-credentials: false
       - name: Resolve the current eligible PR
         id: select
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const repo = context.repo;
@@ -99,7 +99,7 @@ jobs:
           REVIEW_PR: ${{ steps.select.outputs.number }}
           REVIEW_HEAD: ${{ steps.select.outputs.head }}
           EVAL_CANDIDATE: ${{ steps.select.outputs.eval_candidate }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const repo = context.repo;
@@ -254,7 +254,7 @@ jobs:
           persist-credentials: false
       - name: Publish the current-head approval verdict
         if: always() && steps.policy.conclusion == 'success'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           REVIEW_PR: ${{ steps.select.outputs.number }}
         with:
