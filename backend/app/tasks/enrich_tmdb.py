@@ -23,6 +23,10 @@ from sqlalchemy import select, update
 
 from app.tasks.base import get_task_session
 from app.utils.image_dimensions import tmdb_declared_width
+from app.utils.music_image_guard import (
+    is_music_market_ineligible_for_tmdb,
+    is_tmdb_image_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,9 +179,50 @@ async def enrich_tmdb_images(limit: int = 50):
         logger.info("TMDB credentials not set — skipping TMDB enrichment")
         return {"skipped": True}
 
-    stats = {"checked": 0, "found": 0, "no_match": 0, "skipped_no_title": 0}
+    stats = {
+        "checked": 0,
+        "found": 0,
+        "no_match": 0,
+        "skipped_no_title": 0,
+        "skipped_music": 0,
+        "cleared_music_false_positives": 0,
+    }
 
     async with get_task_session() as session:
+        # #12659: clear any previously attached TMDB film backdrops on music/song/
+        # album/chart markets so stored rows match serve-time withholding.
+        existing_tmdb_result = await session.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.name,
+                FuturesMarket.image_url,
+                FuturesMarket.market_metadata,
+            )
+            .where(
+                FuturesMarket.status == "open",
+                FuturesMarket.llm_sport_category == "entertainment",
+                FuturesMarket.image_url.like("%image.tmdb.org%"),
+            )
+            .limit(500)
+        )
+        for m_id, m_name, m_img, m_meta in existing_tmdb_result.all():
+            if is_tmdb_image_url(m_img) and is_music_market_ineligible_for_tmdb(m_name):
+                clean_meta = m_meta if isinstance(m_meta, dict) else {}
+                await session.execute(
+                    update(FuturesMarket)
+                    .where(FuturesMarket.id == m_id)
+                    .values(
+                        image_url=None,
+                        image_width=None,
+                        image_height=None,
+                        market_metadata={
+                            **clean_meta,
+                            "tmdb": {"skipped_music": True},
+                        },
+                    )
+                )
+                stats["cleared_music_false_positives"] += 1
+
         result = await session.execute(
             select(
                 FuturesMarket.id,
@@ -197,6 +242,16 @@ async def enrich_tmdb_images(limit: int = 50):
         for market_id, name, meta in rows:
             meta = meta if isinstance(meta, dict) else {}
             if meta.get("tmdb"):  # already TMDB-checked (anti-thrash)
+                continue
+            if is_music_market_ineligible_for_tmdb(name):
+                stats["skipped_music"] += 1
+                await session.execute(
+                    update(FuturesMarket)
+                    .where(FuturesMarket.id == market_id)
+                    .values(
+                        market_metadata={**meta, "tmdb": {"skipped_music": True}}
+                    )
+                )
                 continue
             title = _extract_quoted_title(name)
             if not title:

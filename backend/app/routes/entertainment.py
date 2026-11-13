@@ -21,6 +21,7 @@ from app.models import FuturesMarket
 from app.services import get_db
 from app.utils.futures_liveness import market_reads_settled
 from app.utils.hook_staleness import is_hook_stale
+from app.utils.music_image_guard import sanitize_market_image_url
 from app.utils.ladder_headline import ladder_median_row
 from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 from app.utils.cross_source_matching import (
@@ -502,7 +503,7 @@ def _market_row(
             if (_updated_at := getattr(market, "updated_at", None))
             else None
         ),
-        "image_url": market.image_url,
+        "image_url": sanitize_market_image_url(market.image_url, market.name),
         # #5926: the same gate the Discover card and (since #5906) the futures
         # detail page run. This route served `market.hook_description` raw, so
         # /entertainment was the third and last unconverted call site of a rule

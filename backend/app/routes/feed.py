@@ -56,6 +56,10 @@ from app.routes.futures import withheld_price_outcome_ids_for_markets
 from app.utils import candidate_base as _cb_limits
 from app.utils import championship_probs_cache as champ_cache
 from app.utils.canonical_market_key import canonical_key_identifies_one_question
+from app.utils.music_image_guard import (
+    sanitize_market_image_fields,
+    sanitize_market_image_url,
+)
 from app.utils.graded_out_field_legs import (
     drop_graded_out_legs,
     graded_out_leg_ids_by_market,
@@ -10453,7 +10457,7 @@ def _score_market_trace(
         },
         "explanation": {
             "has_hook": bool(market.hook_description),
-            "has_image": bool(market.image_url),
+            "has_image": bool(sanitize_market_image_url(market.image_url, market.name)),
             "headline_ok": bool(headline),
         },
         "interestingness": _get_cached_interestingness(market.id),
@@ -13874,6 +13878,12 @@ async def _score_sports_mode_futures(
             field_complete=not _field_incomplete,
         )
 
+        _safe_img_url, _safe_img_w, _safe_img_h = sanitize_market_image_fields(
+            getattr(market, "image_url", None),
+            getattr(market, "image_width", None),
+            getattr(market, "image_height", None),
+            getattr(market, "name", None),
+        )
         futures_data = {
             "id": market.id,
             "name": display_name,
@@ -13913,14 +13923,14 @@ async def _score_sports_mode_futures(
             "group_id": market.group_id,
             "group_type": market.group_type,
             "discover_card": discover_card,
-            "image_url": market.image_url,
+            "image_url": _safe_img_url,
             # LAT-P195 (#2614): true raster size, so the client can build a
             # `srcset` from the pixels the photo HAS instead of the conservative
             # lower bound the URL can prove. Null means "not measured yet" and
             # the client falls back to that bound — the same ladder it builds
             # today. Defensive read for the same reason as `market_type` above.
-            "image_width": getattr(market, "image_width", None),
-            "image_height": getattr(market, "image_height", None),
+            "image_width": _safe_img_w,
+            "image_height": _safe_img_h,
             "hook_description": effective_hook,
             "temporal_badge": _compute_temporal_badge(
                 status=market.status,
@@ -15908,6 +15918,12 @@ async def _score_futures(
                 field_complete=not _field_incomplete,
             )
 
+            _sport_img_url, _sport_img_w, _sport_img_h = sanitize_market_image_fields(
+                getattr(market, "image_url", None),
+                getattr(market, "image_width", None),
+                getattr(market, "image_height", None),
+                getattr(market, "name", None),
+            )
             futures_data = {
                 "id": market.id,
                 "name": display_name,
@@ -15944,11 +15960,11 @@ async def _score_futures(
                 "group_id": market.group_id,
                 "group_type": market.group_type,
                 "discover_card": discover_card,
-                "image_url": market.image_url,
+                "image_url": _sport_img_url,
                 # LAT-P195 (#2614): see the sibling serializer. Both surfaces
                 # carry it or the Sports hero silently keeps the old ladder.
-                "image_width": getattr(market, "image_width", None),
-                "image_height": getattr(market, "image_height", None),
+                "image_width": _sport_img_w,
+                "image_height": _sport_img_h,
                 "hook_description": effective_hook,
                 "temporal_badge": _compute_temporal_badge(
                     status=market.status,
