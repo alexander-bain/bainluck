@@ -74,27 +74,27 @@ final class LiveCardDrawsOneSentence5868Tests: XCTestCase {
             "dropping the pill must not cost the card its reason line")
     }
 
-    // MARK: - The other direction: every pill that must still draw
+    // MARK: - Ruling 182-A: no top-bar headline/records capsule in any state
 
-    /// 10 of the 11 non-live items carrying both strings in that payload are
-    /// finished games, and their headline is a short tag the reason does not
-    /// contain. A `return false` mutant deletes all of them.
-    func testFinishedCardKeepsItsTag() {
-        XCTAssertTrue(
+    func testFinishedCardDrawsNoTopBarPill182A() {
+        XCTAssertFalse(
             Pill.isDrawn(headline: "Recent upset", isLive: false),
-            "a finished card lost the tag that is the whole point of the pill")
+            "Ruling 182-A: a capsule is only for live status; non-live top-bar pills are removed")
     }
 
-    func testScheduledCardKeepsItsTag() {
-        XCTAssertTrue(Pill.isDrawn(headline: "Line moving", isLive: false))
+    func testScheduledCardDrawsNoRecordsBubbleOrTopBarPill182A() {
+        XCTAssertFalse(Pill.isDrawn(headline: "TOR 77-80 · BAL 76-81", isLive: false))
+        XCTAssertFalse(Pill.isDrawn(headline: "Line moving", isLive: false))
+        XCTAssertFalse(
+            Footer.hasContent(reason: "TOR 77-80 · BAL 76-81", isLive: false, sport: "baseball_mlb"),
+            "Ruling 182-A: team records captions never draw in the footer either")
     }
 
-    /// A sentence-length headline is not itself the disqualifier — the live
-    /// state is. A `headline.count > N` mutant dies here.
-    func testALongHeadlineOnANonLiveCardStillDraws() {
+    func testRealReasonOnScheduledCardSurvivesInFooter182A() {
+        XCTAssertFalse(Pill.isDrawn(headline: kLeagueSentence, isLive: false))
         XCTAssertTrue(
-            Pill.isDrawn(headline: kLeagueSentence, isLive: false),
-            "the rule started judging the headline's length instead of the card's state")
+            Footer.hasContent(reason: "Starting soon — close matchup", isLive: false, sport: "basketball_nba"),
+            "a real reason to care still draws once as a plain grey line in the footer")
     }
 
     // MARK: - Absence, unchanged by this ship
@@ -147,23 +147,23 @@ final class LiveCardDrawsOneSentence5868Tests: XCTestCase {
                       "the scan did not find the row the gate is about")
     }
 
-    /// The scan that makes every assertion above mean something: the top bar
-    /// must ask the helper. An inline `if let headline, !headline.isEmpty`
-    /// re-derivation would pass this whole file while drawing the pill.
-    func testTheTopBarAsksTheGate() throws {
+    /// Ruling 182-A: `topBar` draws no `EventCardHeadlinePill` and no
+    /// `SignalBarsView` / `EIBadgeView` capsules; only live status keeps a capsule.
+    func testTheTopBarDrawsNoHeadlinePill182A() throws {
         let code = try cardCode()
-        XCTAssertTrue(
-            code.contains("if EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive), let headline {"),
-            "topBar no longer draws the pill through EventCardHeadlinePill")
+        XCTAssertFalse(
+            code.contains("EventCardHeadlinePill.isDrawn("),
+            "Ruling 182-A removed the top-bar headline/records capsule from EventCardView")
+        XCTAssertFalse(
+            code.contains("SignalBarsView("),
+            "Ruling 182-A removed signal bars from game cards")
     }
 
-    /// The footer still draws the reason. Pinned in the code as well as through
-    /// `hasContent` above, because `hasContent` returning true does not prove
-    /// `footerRow` still renders a badge.
+    /// The footer still draws a real non-finished reason once as a plain grey line.
     func testTheFooterStillDrawsTheReasonBadge() throws {
         let code = try cardCode()
         XCTAssertTrue(
-            code.contains("reasonBadge(reason)"),
+            code.contains("reasonBadge(cleaned)"),
             "the sentence lost its one remaining home — the live card now says nothing")
     }
 }

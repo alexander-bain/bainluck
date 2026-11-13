@@ -33,6 +33,13 @@ struct StatusBadge: View {
     /// `/api/events/search` as well as `/api/events/{id}`), so the cards pass it
     /// too. A graded winner outranks it: see ``EventState/showsVenueClosedNoWinner(_:venueSettled:venueClosedNoWinner:commenceTime:now:)``.
     var venueClosedNoWinner: Bool = false
+    /// #12616 / Ruling 182-A — on game cards (My Stuff, Sports, Discover), a
+    /// capsule is ONLY for live status, and scheduled time is shown once as
+    /// plain text (the date when days away, today/tomorrow clock when >= 1h, a
+    /// countdown inside the last hour). Defaults false so non-card callers
+    /// (`EventDetailView`, `SearchView`, `TeamDetailView`) keep their badge.
+    var gameCardPlain182: Bool = false
+    var gameCardLeadingDot: Bool = true
 
     /// #7019 — THE ONLY THING ON THIS VIEW THAT EVER CHANGES BY ITSELF.
     ///
@@ -87,122 +94,111 @@ struct StatusBadge: View {
             .background(.red.opacity(0.1))
             .clipShape(Capsule())
         } else if EventState.isFinished(status) {
-            Text("FINAL")
-                .font(.caption2)
-                .fontWeight(.medium)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.cardBackgroundDark)
-                .clipShape(Capsule())
+            if gameCardPlain182 {
+                Text(gameCardLeadingDot ? "\u{00B7} Final" : "Final")
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+            } else {
+                Text("FINAL")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.cardBackgroundDark)
+                    .clipShape(Capsule())
+            }
         } else if EventState.showsVenueSettledVerdict(
             status, venueSettled: venueSettled, commenceTime: commenceTime?.asDate) {
-            // #6381 — ABOVE the suspended arm and below FINAL, and the order is
-            // the whole point of putting it here rather than at the end of the
-            // chain. 889 of the 1,471 rows the venue has graded are `suspended`,
-            // so an arm placed after that one would never see them and the
-            // bigger half of the class would keep printing "No result reported"
-            // over a result we are holding. FINAL stays first because it says
-            // this better: it has a score.
-            //
-            // Grey, not orange. The suspended badge is orange because it is
-            // reporting an absence the reader may want to act on; this one
-            // reports that the question is answered, which is the settled voice
-            // FINAL already wears.
-            HStack(spacing: 3) {
-                Image(systemName: "checkmark.circle")
-                    .font(.system(size: 8))
-                Text(EventState.venueSettledLabel)
-                    .font(.caption2)
-                    .fontWeight(.medium)
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.cardBackgroundDark)
-            .clipShape(Capsule())
-        } else if EventState.showsVenueClosedNoWinner(
-            status, venueSettled: venueSettled, venueClosedNoWinner: venueClosedNoWinner,
-            commenceTime: commenceTime?.asDate) {
-            // #5811 — BELOW the venue-settled arm (a graded winner outranks
-            // it) and ABOVE the suspended one, for #6381's reason: the rows
-            // this key names are `suspended`, so an arm placed after that one
-            // would never see them and they would go on printing "No result
-            // reported" over a contest the venue has closed. Grey, in the
-            // settled voice: the question is answered, it just has no winner.
-            Text(EventState.venueClosedNoWinnerLabel)
-                .font(.caption2)
-                .fontWeight(.medium)
-                // ONE LINE, AT ITS OWN WIDTH — caught in the after-shot: the
-                // search row squeezed the chip and it broke at "· " into two
-                // stacked lines inside one capsule. The row's date gives way.
-                .lineLimit(1)
-                .fixedSize()
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.cardBackgroundDark)
-                .clipShape(Capsule())
-        } else if EventState.isSuspendedAndStarted(status, commenceTime: commenceTime?.asDate) {
-            // 🔴 #4021 — THE CLOCK IS PART OF THE TEST, and it has to be tested
-            // HERE rather than left to callers. Three of this component's five
-            // call sites (`SearchView` ×2, `TeamDetailView`) hand it a raw
-            // `event.status`, so a suspended arm that trusted the status alone
-            // would have put "No result reported" on a search row and a team
-            // schedule row for event 416569 — Ohio State @ Texas, four days
-            // BEFORE kick-off. Those callers now pass `commenceTime` too.
-            //
-            // A caller that passes none still gets the badge, matching
-            // `EventState.hasStarted`'s documented default; a caller that passes
-            // a FUTURE one falls through to `EmptyView`, which is exactly what
-            // master did for it, so no surface loses a badge it had.
-            //
-            // #4002 — the state that had no badge at all. It cannot borrow
-            // FINAL's grey silence: FINAL is read against a score, and this one
-            // is read against a hero that may have nothing else on it. The
-            // wording is `EventState.suspendedLabel` and NOT the bare word
-            // "Suspended" for the reason stated where it is defined — the same
-            // status covers a rain delay and a source going dark, and only one
-            // of those is a stoppage anybody reported.
-            //
-            // #9208 — and when the authority DID report one ("Postponed",
-            // "Canceled" in `espn.period`), the badge says that word instead:
-            // `suspendedLabel(authorityPeriod:)` is the allowlist, the same as
-            // web's `authorityStoppageLabel`. Callers pass the period they hold.
-            HStack(spacing: 3) {
-                Image(systemName: "exclamationmark.circle")
-                    .font(.system(size: 8))
-                Text(EventState.suspendedLabel(authorityPeriod: period))
-                    .font(.caption2)
-                    .fontWeight(.medium)
-            }
-            .foregroundStyle(.orange)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(.orange.opacity(0.1))
-            .clipShape(Capsule())
-        } else if status == "scheduled" {
-            // #7019 — `clock.now` and not an implicit `Date()`. Passing it is
-            // what makes this arm a reader of something that changes; drop the
-            // argument and the chip compiles, draws correctly once, and then
-            // silently stops ageing on every surface at once.
-            if let countdown = StatusBadge.countdownText(
-                commenceTime: commenceTime, startIsTbd: startIsTbd, now: clock.now) {
+            if gameCardPlain182 {
+                Text(gameCardLeadingDot ? "\u{00B7} \(EventState.venueSettledLabel)" : EventState.venueSettledLabel)
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+            } else {
                 HStack(spacing: 3) {
-                    Image(systemName: "clock")
+                    Image(systemName: "checkmark.circle")
                         .font(.system(size: 8))
-                    Text("In \(countdown)")
+                    Text(EventState.venueSettledLabel)
                         .font(.caption2)
                         .fontWeight(.medium)
                 }
-                // #12364 — the system blue on its own tint read about 2.9:1.
-                .foregroundStyle(DS.blueReadable)
+                .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(DS.blueReadable.opacity(0.1))
+                .background(Color.cardBackgroundDark)
                 .clipShape(Capsule())
+            }
+        } else if EventState.showsVenueClosedNoWinner(
+            status, venueSettled: venueSettled, venueClosedNoWinner: venueClosedNoWinner,
+            commenceTime: commenceTime?.asDate) {
+            if gameCardPlain182 {
+                Text(gameCardLeadingDot ? "\u{00B7} \(EventState.venueClosedNoWinnerLabel)" : EventState.venueClosedNoWinnerLabel)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .foregroundStyle(DS.textSecondaryReadable)
             } else {
-                EmptyView()
+                Text(EventState.venueClosedNoWinnerLabel)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.cardBackgroundDark)
+                    .clipShape(Capsule())
+            }
+        } else if EventState.isSuspendedAndStarted(status, commenceTime: commenceTime?.asDate) {
+            if gameCardPlain182 {
+                let word = EventState.suspendedLabel(authorityPeriod: period)
+                Text(gameCardLeadingDot ? "\u{00B7} \(word)" : word)
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+            } else {
+                HStack(spacing: 3) {
+                    Image(systemName: "exclamationmark.circle")
+                        .font(.system(size: 8))
+                    Text(EventState.suspendedLabel(authorityPeriod: period))
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                }
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.orange.opacity(0.1))
+                .clipShape(Capsule())
+            }
+        } else if status == "scheduled" {
+            if gameCardPlain182 {
+                if let when = StatusBadge.scheduledGameCardTimeText(
+                    commenceTime: commenceTime, startIsTbd: startIsTbd, now: clock.now) {
+                    Text(gameCardLeadingDot ? "\u{00B7} \(when)" : when)
+                        .font(.caption)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                } else {
+                    EmptyView()
+                }
+            } else {
+                if let countdown = StatusBadge.countdownText(
+                    commenceTime: commenceTime, startIsTbd: startIsTbd, now: clock.now) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 8))
+                        Text("In \(countdown)")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                    }
+                    // #12364 — the system blue on its own tint read about 2.9:1.
+                    .foregroundStyle(DS.blueReadable)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(DS.blueReadable.opacity(0.1))
+                    .clipShape(Capsule())
+                } else {
+                    EmptyView()
+                }
             }
         } else {
             EmptyView()
@@ -221,6 +217,73 @@ extension StatusBadge {
     ) -> String? {
         guard !startIsTbd, let date = commenceTime?.asDate else { return nil }
         return formatCountdown(from: date, now: now)
+    }
+
+    /// #12616 / Ruling 182-A — scheduled game-card time shown ONCE as plain text:
+    /// - TBD start (#8841): `"Sep 29 · TBD"`
+    /// - Inside the last hour (`0 < interval < 3600`): `"In 42m"` (countdown)
+    /// - Today (`>= 1h` or at kickoff): `"Today 7:00 PM"`
+    /// - Tomorrow (`>= 1h`): `"Tomorrow 3:30 PM"`
+    /// - Days away (`2+` calendar days): the date (`"Sun, Nov 15"`, with year if
+    ///   in another calendar year).
+    static func scheduledGameCardTimeText(
+        commenceTime: String?,
+        startIsTbd: Bool,
+        now: Date,
+        calendar: Calendar = .current,
+        timeZone: TimeZone = .current
+    ) -> String? {
+        if startIsTbd {
+            return RelativeTimeText.tbdText(for: commenceTime)
+        }
+        guard let date = commenceTime?.asDate else { return nil }
+        let interval = date.timeIntervalSince(now)
+        if interval > 0 && interval < 3600 {
+            guard let countdown = formatCountdown(from: date, now: now) else { return nil }
+            return "In \(countdown)"
+        }
+        var cal = calendar
+        cal.timeZone = timeZone
+        let timeFormatter = DateFormatter()
+        timeFormatter.calendar = cal
+        timeFormatter.timeZone = timeZone
+        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        timeFormatter.dateFormat = "h:mm a"
+
+        if cal.isDate(date, inSameDayAs: now) {
+            return "Today \(timeFormatter.string(from: date))"
+        }
+        if let tomorrow = cal.date(byAdding: .day, value: 1, to: now),
+           cal.isDate(date, inSameDayAs: tomorrow) {
+            return "Tomorrow \(timeFormatter.string(from: date))"
+        }
+        let dateFormatter = DateFormatter()
+        dateFormatter.calendar = cal
+        dateFormatter.timeZone = timeZone
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        let sameYear = cal.component(.year, from: date) == cal.component(.year, from: now)
+        dateFormatter.dateFormat = sameYear ? "EEE, MMM d" : "EEE, MMM d, yyyy"
+        return dateFormatter.string(from: date)
+    }
+
+    /// #12616 / Ruling 182-A — finished game-card status + date as plain text
+    /// (`"Final · Nov 8"`, or `"Final"` when undated or future-dated).
+    static func finishedGameCardTimeText(
+        commenceTime: String?,
+        now: Date,
+        calendar: Calendar = .current,
+        timeZone: TimeZone = .current
+    ) -> String {
+        guard let date = commenceTime?.asDate, date <= now else { return "Final" }
+        var cal = calendar
+        cal.timeZone = timeZone
+        let formatter = DateFormatter()
+        formatter.calendar = cal
+        formatter.timeZone = timeZone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let sameYear = cal.component(.year, from: date) == cal.component(.year, from: now)
+        formatter.dateFormat = sameYear ? "MMM d" : "MMM d, yyyy"
+        return "Final \u{00B7} \(formatter.string(from: date))"
     }
 }
 
