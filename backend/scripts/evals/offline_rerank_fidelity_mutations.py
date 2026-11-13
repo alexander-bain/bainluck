@@ -126,8 +126,14 @@ MUTATIONS: list[tuple[str, Path, str, str, str]] = [
     (
         "M5", ROUTE,
         "the private-key strip is skipped when the echo is on",
-        "    for _s in suggestions:\n        _s.pop(\"_derived\", None)\n",
-        "    for _s in [] if debug_evidence else suggestions:\n        _s.pop(\"_derived\", None)\n",
+        '    for _s in suggestions:\n'
+        '        if _s.get("type") == "team":\n'
+        '            _s["query_names_team"] = _query_names_team_card(_s, q)\n'
+        '        _s.pop("_derived", None)\n',
+        '    for _s in [] if debug_evidence else suggestions:\n'
+        '        if _s.get("type") == "team":\n'
+        '            _s["query_names_team"] = _query_names_team_card(_s, q)\n'
+        '        _s.pop("_derived", None)\n',
     ),
     (
         "M6", SCORER,
