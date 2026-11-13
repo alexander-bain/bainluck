@@ -103,6 +103,75 @@ nonisolated enum WatchComplicationProjection {
             rectangularReading: rectangular.flatMap { $0.matches(parent) ? $0 : nil })
     }
 
+    /// #12640 — projects a pinned market outcome onto the rectangular Watch face slot ("Newsom 23%").
+    /// Markets without a valid open probability in (0, 1) are rejected so nothing without a chance shows.
+    static func futureSnapshot(
+        marketID: Int,
+        marketTitle: String,
+        outcomeName: String,
+        probability: Double,
+        observedAt: Date,
+        savedAt: Date
+    ) -> WatchComplicationSnapshot? {
+        let trimmedMarket = marketTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedOutcome = outcomeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard marketID > 0,
+              !trimmedMarket.isEmpty,
+              !trimmedOutcome.isEmpty,
+              probability.isFinite,
+              probability > 0,
+              probability < 1,
+              validObservation(observedAt, savedAt: savedAt) else {
+            return nil
+        }
+        let subOne = probability < 0.005
+        let aboveNinetyNine = probability > 0.995
+        let clampedPercent: Int = {
+            if subOne { return 1 }
+            if aboveNinetyNine { return 99 }
+            return min(99, max(1, Int((probability * 100).rounded())))
+        }()
+        let reading = WatchRectangularReading(
+            version: 1,
+            eventID: marketID,
+            kind: .futureForecast,
+            homeName: trimmedMarket,
+            awayName: trimmedOutcome,
+            home: nil,
+            away: nil,
+            homePercent: clampedPercent,
+            homeScore: nil,
+            awayScore: nil,
+            commenceTime: nil,
+            stateLabel: "Market",
+            observedAt: observedAt,
+            scoreObservedAt: nil,
+            subOnePercent: subOne ? true : nil,
+            aboveNinetyNinePercent: aboveNinetyNine ? true : nil
+        )
+        guard let pct = reading.formattedHomePercent else { return nil }
+        let detail = "\(trimmedOutcome) \(pct)"
+        let parent = WatchComplicationSnapshot(
+            version: 1,
+            eventID: marketID,
+            title: trimmedMarket,
+            detail: detail,
+            observedAt: observedAt,
+            savedAt: savedAt
+        )
+        guard reading.matches(parent) else { return nil }
+        return WatchComplicationSnapshot(
+            version: 1,
+            eventID: marketID,
+            title: trimmedMarket,
+            detail: detail,
+            observedAt: observedAt,
+            savedAt: savedAt,
+            circularReading: nil,
+            rectangularReading: reading
+        )
+    }
+
     private static func validObservation(_ observed: Date, savedAt: Date) -> Bool {
         observed.timeIntervalSinceReferenceDate.isFinite
             && savedAt.timeIntervalSinceReferenceDate.isFinite
@@ -114,8 +183,12 @@ nonisolated enum WatchComplicationPublisher {
     /// Shared storage is unavailable until the app and extension are properly entitled.
     /// Never substitute separate standard defaults and pretend data was shared.
     static func publish(game: WatchSelectedGame?, savedAt: Date?) {
-        let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.bainluck.watch")
         let snapshot = game.flatMap { game in savedAt.flatMap { WatchComplicationProjection.snapshot(game: game, savedAt: $0) } }
+        publishSnapshot(snapshot)
+    }
+
+    static func publishSnapshot(_ snapshot: WatchComplicationSnapshot?) {
+        let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.bainluck.watch")
         guard write(snapshot, to: directory) else { return }
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: "BainLuckComplication")

@@ -193,6 +193,7 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         case liveForecast
         case scheduledForecast
         case finalResult
+        case futureForecast
     }
 
     static let maxSingleLineHeaderCharacters = 26
@@ -213,6 +214,44 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
     let stateLabel: String
     let observedAt: Date
     let scoreObservedAt: Date?
+    let subOnePercent: Bool?
+    let aboveNinetyNinePercent: Bool?
+
+    init(
+        version: Int,
+        eventID: Int,
+        kind: Kind,
+        homeName: String,
+        awayName: String,
+        home: WatchCompactTeamIdentity?,
+        away: WatchCompactTeamIdentity?,
+        homePercent: Int?,
+        homeScore: Int?,
+        awayScore: Int?,
+        commenceTime: Date?,
+        stateLabel: String,
+        observedAt: Date,
+        scoreObservedAt: Date?,
+        subOnePercent: Bool? = nil,
+        aboveNinetyNinePercent: Bool? = nil
+    ) {
+        self.version = version
+        self.eventID = eventID
+        self.kind = kind
+        self.homeName = homeName
+        self.awayName = awayName
+        self.home = home
+        self.away = away
+        self.homePercent = homePercent
+        self.homeScore = homeScore
+        self.awayScore = awayScore
+        self.commenceTime = commenceTime
+        self.stateLabel = stateLabel
+        self.observedAt = observedAt
+        self.scoreObservedAt = scoreObservedAt
+        self.subOnePercent = subOnePercent
+        self.aboveNinetyNinePercent = aboveNinetyNinePercent
+    }
 
     func matches(_ snapshot: WatchComplicationSnapshot) -> Bool {
         guard snapshot.isValid(now: snapshot.savedAt),
@@ -258,16 +297,30 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
             if hs > ascore { return snapshot.title == "\(homeName) won" && snapshot.detail == "Final · \(hs)–\(ascore)" }
             if ascore > hs { return snapshot.title == "\(awayName) won" && snapshot.detail == "Final · \(ascore)–\(hs)" }
             return snapshot.title == "\(awayName) at \(homeName)" && snapshot.detail == "Final · tied \(hs)–\(ascore)"
+        case .futureForecast:
+            guard stateLabel == "Market",
+                  let homePercent, (1...99).contains(homePercent),
+                  home == nil, away == nil,
+                  homeScore == nil, awayScore == nil,
+                  commenceTime == nil, scoreObservedAt == nil,
+                  !(subOnePercent == true && aboveNinetyNinePercent == true) else { return false }
+            guard let pct = formattedHomePercent else { return false }
+            return snapshot.title == homeName && snapshot.detail == "\(awayName) \(pct)"
         }
     }
 
     var formattedHomePercent: String? {
+        if subOnePercent == true { return "<1%" }
+        if aboveNinetyNinePercent == true { return ">99%" }
         guard let homePercent, (0...100).contains(homePercent) else { return nil }
         return (Double(homePercent) / 100).formatted(.percent.precision(.fractionLength(0)))
     }
 
-    /// Matchup header line (Line 1), appending verified live score when present on a live probability reading.
+    /// Matchup or market header line (Line 1), appending verified live score when present on a live probability reading.
     func headerLine(preferCompact: Bool = false) -> String {
+        if kind == .futureForecast {
+            return homeName
+        }
         let fullMatchup = "\(awayName) at \(homeName)"
         let compactMatchup: String? = {
             guard let away, let home, away.isValid, home.isValid else { return nil }
@@ -287,13 +340,16 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         return fullCandidate
     }
 
-    /// Primary reading line (Line 2): compact side probability ("SF 64%") or final result ("Final · SF 4, LA 2").
+    /// Primary reading line (Line 2): compact side probability ("SF 64%"), market outcome ("Newsom 23%"), or final result ("Final · SF 4, LA 2").
     func primaryLine(preferCompact: Bool = false, at now: Date) -> String {
         switch kind {
         case .liveForecast, .scheduledForecast:
             guard let pct = formattedHomePercent else { return "Win probability unavailable" }
             let team = home?.abbreviation ?? homeName
             return "\(team) \(pct)"
+        case .futureForecast:
+            guard let pct = formattedHomePercent else { return "Probability unavailable" }
+            return "\(awayName) \(pct)"
         case .finalResult:
             guard let hs = homeScore, let ascore = awayScore else { return "Final score unavailable" }
             let homeLabel = home?.abbreviation ?? homeName
@@ -311,6 +367,12 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         return elapsed.isFinite && elapsed > Self.liveAgeThresholdSeconds
     }
 
+    func isAgedFuture(at now: Date) -> Bool {
+        guard kind == .futureForecast else { return false }
+        let elapsed = now.timeIntervalSince(observedAt)
+        return elapsed.isFinite && elapsed > Self.liveAgeThresholdSeconds
+    }
+
     static func asOfClock(_ date: Date, timeZone: TimeZone = .current) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -319,16 +381,35 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         return formatter.string(from: date)
     }
 
-    /// Status and observation age line (Line 3). Never uses the words "Saved" or "Stale".
-    func metadataLine(at now: Date, timeZone: TimeZone = .current) -> String {
-        if kind == .scheduledForecast, let start = commenceTime, now >= start {
-            return "Open to update"
+    /// Upcoming game start slot wording (#12640): "Today 7:15 PM" same day, "Sun 1:25 PM" within 6 days,
+    /// or "Nov 23, 5:15 PM" further out.
+    static func upcomingStartClock(_ start: Date, now: Date, timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        if calendar.isDate(start, inSameDayAs: now) {
+            return "Today \(asOfClock(start, timeZone: timeZone))"
         }
-        if isAgedLive(at: now) {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        let delta = start.timeIntervalSince(now)
+        formatter.dateFormat = delta < 6 * 24 * 3600 ? "EEE h:mm a" : "MMM d, h:mm a"
+        return formatter.string(from: start)
+    }
+
+    /// Status and observation age line (Line 3). Never uses "Saved", "Stale", or "Checked".
+    func metadataLine(at now: Date, timeZone: TimeZone = .current) -> String {
+        if kind == .scheduledForecast, let start = commenceTime {
+            if now >= start {
+                return "Open to update"
+            }
+            return Self.upcomingStartClock(start, now: now, timeZone: timeZone)
+        }
+        if isAgedLive(at: now) || isAgedFuture(at: now) {
             return "As of \(Self.asOfClock(observedAt, timeZone: timeZone))"
         }
         let age = Self.compactAge(observedAt: observedAt, now: now) ?? "no time"
-        if kind == .finalResult {
+        if kind == .finalResult || kind == .futureForecast {
             return age
         }
         return "\(stateLabel) · \(age)"
@@ -350,11 +431,23 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
             return "\(awayName) at \(homeName).\(scorePart) \(homeName) \(pct). Live, \(age). Open your game in Bain Luck."
         case .scheduledForecast:
             let pct = formattedHomePercent ?? "unavailable"
-            if let start = commenceTime, now >= start {
-                return "\(awayName) at \(homeName). \(homeName) \(pct). Open to update. Open your game in Bain Luck."
+            if let start = commenceTime {
+                if now >= start {
+                    return "\(awayName) at \(homeName). \(homeName) \(pct). Open to update. Open your game in Bain Luck."
+                }
+                let startText = Self.upcomingStartClock(start, now: now, timeZone: timeZone)
+                return "\(awayName) at \(homeName). \(homeName) \(pct). \(startText). Open your game in Bain Luck."
             }
             let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
             return "\(awayName) at \(homeName). \(homeName) \(pct). \(stateLabel), \(age). Open your game in Bain Luck."
+        case .futureForecast:
+            let pct = formattedHomePercent ?? "unavailable"
+            if isAgedFuture(at: now) {
+                let clockText = Self.asOfClock(observedAt, timeZone: timeZone)
+                return "\(homeName). \(awayName) \(pct). As of \(clockText). Open in Bain Luck."
+            }
+            let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
+            return "\(homeName). \(awayName) \(pct). \(age). Open in Bain Luck."
         case .finalResult:
             let hs = homeScore ?? 0
             let ascore = awayScore ?? 0
@@ -398,7 +491,7 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
               let snapshot, let reading = snapshot.validatedRectangularReading(now: now) else { return [now] }
         var dates = [now]
         let ageSwitch = reading.observedAt.addingTimeInterval(liveAgeThresholdSeconds + 1)
-        if reading.kind == .liveForecast, ageSwitch > now {
+        if (reading.kind == .liveForecast || reading.kind == .futureForecast), ageSwitch > now {
             dates.append(ageSwitch)
         }
         let horizon = now.addingTimeInterval(7 * 24 * 3600)

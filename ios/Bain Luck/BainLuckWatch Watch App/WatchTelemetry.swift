@@ -69,6 +69,7 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
         if let shownScreen { screen(shownScreen) }
         record(.appOpen, surface: currentScreen ?? .game)
         synchronize()
+        pullWatchPinsIfReachable()
     }
 
     @MainActor func background() {
@@ -184,14 +185,33 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
         let localEpoch = buffer.watchEpoch
         WCSession.default.sendMessage(["watch_telemetry_handshake": 1], replyHandler: { reply in
             let data = reply["watch_telemetry_grant"] as? Data
+            let pins = reply[WatchPinsWire12640.contextKey] as? Data
             Task { @MainActor in
                 self.handshaking = false
+                if let pins { WatchPinsStore12640.shared.receiveWireData(pins) }
                 guard self.enabled, self.buffer.watchEpoch == localEpoch else { return }
                 self.applyGrant(data)
             }
         }, errorHandler: { _ in
             Task { @MainActor in self.handshaking = false }
         })
+    }
+
+    @MainActor func pullWatchPinsIfReachable() {
+        #if DEBUG
+        if WatchUIFixture.current != nil { return }
+        #endif
+        guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
+        if let ctxPins = WCSession.default.receivedApplicationContext[WatchPinsWire12640.contextKey] as? Data {
+            WatchPinsStore12640.shared.receiveWireData(ctxPins)
+        }
+        guard WCSession.default.isReachable else { return }
+        WCSession.default.sendMessage([WatchPinsWire12640.pullMessageKey: 1], replyHandler: { reply in
+            let pins = reply[WatchPinsWire12640.contextKey] as? Data
+            Task { @MainActor in
+                if let pins { WatchPinsStore12640.shared.receiveWireData(pins) }
+            }
+        }, errorHandler: { _ in })
     }
 
     @MainActor private func applyGrant(_ data: Data?) {
@@ -239,14 +259,28 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
 
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState,
                  error: Error?) {
-        Task { @MainActor in self.synchronize() }
+        let initialPins = session.receivedApplicationContext[WatchPinsWire12640.contextKey] as? Data
+        Task { @MainActor in
+            if let initialPins { WatchPinsStore12640.shared.receiveWireData(initialPins) }
+            self.synchronize()
+            self.pullWatchPinsIfReachable()
+        }
     }
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
-        Task { @MainActor in self.synchronize() }
+        Task { @MainActor in
+            self.synchronize()
+            self.pullWatchPinsIfReachable()
+        }
     }
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
-        guard applicationContext.keys.contains("watch_telemetry_grant") else { return }
+        let hasPins = applicationContext.keys.contains(WatchPinsWire12640.contextKey)
+        let pins = applicationContext[WatchPinsWire12640.contextKey] as? Data
+        let hasGrant = applicationContext.keys.contains("watch_telemetry_grant")
         let data = applicationContext["watch_telemetry_grant"] as? Data
-        Task { @MainActor in self.applyGrant(data) }
+        guard hasPins || hasGrant else { return }
+        Task { @MainActor in
+            if hasPins, let pins { WatchPinsStore12640.shared.receiveWireData(pins) }
+            if hasGrant { self.applyGrant(data) }
+        }
     }
 }

@@ -26,11 +26,16 @@ struct WatchTabView: View {
                ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
                 // Layout stress only: watchOS Simulator cannot apply simctl content_size.
                 WatchSelectedGameView().dynamicTypeSize(.accessibility5)
-            } else {
+            } else if WatchUIFixture.current != nil {
                 WatchSelectedGameView()
+            } else if let preview = ProcessInfo.processInfo.environment["BAINLUCK_WATCH_PINS_FACE_PREVIEW_12640"],
+                      !preview.isEmpty {
+                WatchPinsFacePreviewFixture12640(scenario: preview)
+            } else {
+                WatchPinnedHomeView12640()
             }
             #else
-            WatchSelectedGameView()
+            WatchPinnedHomeView12640()
             #endif
         }
     }

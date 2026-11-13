@@ -46,7 +46,7 @@ struct WatchSavedComplicationContent: View {
             Text(reading.primaryLine(preferCompact: preferCompact, at: now))
                 .font(.system(size: 14, weight: .bold, design: .rounded))
                 .foregroundStyle(
-                    (reading.kind == .liveForecast || reading.kind == .scheduledForecast)
+                    (reading.kind == .liveForecast || reading.kind == .scheduledForecast || reading.kind == .futureForecast)
                         ? accentColor : .primary
                 )
                 .monospacedDigit()
