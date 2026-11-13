@@ -19,10 +19,26 @@ struct EventSportHeadlineCard12472: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .title2) private var winChanceSize: CGFloat = 25
     @ScaledMetric(relativeTo: .title3) private var liveTenthsChanceSize: CGFloat = 22
-    @ScaledMetric(relativeTo: .body) private var liveScoreSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .body) private var liveScoreSize: CGFloat = 18
+    @ScaledMetric(relativeTo: .subheadline) private var livePregameSize: CGFloat = 15
+    @ScaledMetric(relativeTo: .body) private var liveScoreColWidth: CGFloat = 42
+    @ScaledMetric(relativeTo: .caption2) private var livePregameColWidth: CGFloat = 54
+    @ScaledMetric(relativeTo: .title3) private var liveNowColWidth: CGFloat = 80
 
     private var stacksRowsVertically: Bool {
         dynamicTypeSize.isAccessibilitySize
+    }
+
+    private var effectiveScoreColWidth: CGFloat {
+        stacksRowsVertically ? min(liveScoreColWidth, 64) : min(liveScoreColWidth, 44)
+    }
+
+    private var effectivePregameColWidth: CGFloat {
+        stacksRowsVertically ? min(max(livePregameColWidth, 112), 120) : min(livePregameColWidth, 56)
+    }
+
+    private var effectiveNowColWidth: CGFloat {
+        stacksRowsVertically ? min(liveNowColWidth, 118) : min(liveNowColWidth, 82)
     }
 
     private static func livePregameMetaText(
@@ -53,6 +69,9 @@ struct EventSportHeadlineCard12472: View {
         VStack(alignment: .leading, spacing: 10) {
             topBar
             VStack(alignment: .leading, spacing: 8) {
+                if let headers = model.liveColumnHeaders, headers.hasAny {
+                    liveColumnHeaderRow(headers)
+                }
                 teamRow(model.away, color: colors.away, isAway: true)
                 teamRow(model.home, color: colors.home, isAway: false)
             }
@@ -202,7 +221,69 @@ struct EventSportHeadlineCard12472: View {
         }
     }
 
-    // MARK: - Team Rows
+    // MARK: - Live Column Headers & Team Rows
+
+    private func liveColumnHeaderRow(_ headers: EventSportHeadlines12472.LiveColumnHeaders) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                if let scoreHeader = headers.score {
+                    Text(scoreHeader)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: effectiveScoreColWidth, alignment: .trailing)
+                }
+                if let pregameHeader = headers.pregame {
+                    Text(pregameHeader)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(width: effectivePregameColWidth, alignment: .trailing)
+                }
+                Text(headers.now)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(width: effectiveNowColWidth, alignment: .trailing)
+            }
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
+        }
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func liveValueColumns(
+        _ side: EventSportHeadlines12472.TeamRowModel,
+        headers: EventSportHeadlines12472.LiveColumnHeaders,
+        color: Color
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            if headers.score != nil {
+                Group {
+                    if let score = side.liveScore {
+                        scoreText(score)
+                    }
+                }
+                .frame(width: effectiveScoreColWidth, alignment: .trailing)
+            }
+            if headers.pregame != nil {
+                Group {
+                    if let pregame = side.pregameChanceText {
+                        pregameLabel(pregame)
+                    }
+                }
+                .frame(width: effectivePregameColWidth, alignment: .trailing)
+            }
+            chanceText(side.winChanceText, color: color, hasInlineColumns: true)
+                .frame(width: effectiveNowColWidth, alignment: .trailing)
+        }
+    }
 
     @ViewBuilder
     private func teamRow(
@@ -210,77 +291,51 @@ struct EventSportHeadlineCard12472: View {
         color: Color,
         isAway: Bool
     ) -> some View {
-        if stacksRowsVertically {
+        if let headers = model.liveColumnHeaders, headers.hasAny {
+            if stacksRowsVertically {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        crest(side, color: color)
+                        teamIdentityStack(side, color: color)
+                    }
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        liveValueColumns(side, headers: headers, color: color)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(isAway ? "headline-12472-away-row" : "headline-12472-home-row")
+            } else {
+                HStack(alignment: .center, spacing: 6) {
+                    crest(side, color: color)
+                    teamIdentityStack(side, color: color)
+                    Spacer(minLength: 4)
+                    liveValueColumns(side, headers: headers, color: color)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(isAway ? "headline-12472-away-row" : "headline-12472-home-row")
+            }
+        } else if stacksRowsVertically {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     crest(side, color: color)
                     teamIdentityStack(side, color: color)
                 }
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        if let score = side.liveScore {
-                            scoreText(score)
-                        }
-                        if let pregame = side.pregameChanceText {
-                            pregameLabel(pregame)
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                        Spacer(minLength: 4)
-                        chanceText(side.winChanceText, color: color)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                    HStack(alignment: .center, spacing: 8) {
-                        if let score = side.liveScore {
-                            scoreText(score)
-                        }
-                        Spacer(minLength: 4)
-                        VStack(alignment: .trailing, spacing: 2) {
-                            chanceText(side.winChanceText, color: color)
-                                .fixedSize(horizontal: true, vertical: false)
-                            if let pregame = side.pregameChanceText {
-                                pregameLabel(pregame)
-                                    .fixedSize(horizontal: true, vertical: false)
-                            }
-                        }
-                    }
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Spacer(minLength: 4)
+                    chanceText(side.winChanceText, color: color)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier(isAway ? "headline-12472-away-row" : "headline-12472-home-row")
         } else {
-            ViewThatFits(in: .horizontal) {
-                // Primary layout: small grey "49% pregame" sits inline beside the win chance.
-                HStack(alignment: .center, spacing: 6) {
-                    crest(side, color: color)
-                    teamIdentityStack(side, color: color)
-                    Spacer(minLength: 4)
-                    if let score = side.liveScore {
-                        scoreText(score)
-                    }
-                    if let pregame = side.pregameChanceText {
-                        pregameLabel(pregame)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                    chanceText(side.winChanceText, color: color, hasInlinePregame: side.pregameChanceText != nil)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                // Tight-width fallback: keep "49% pregame" tucked right beneath its own win chance, never truncated.
-                HStack(alignment: .center, spacing: 6) {
-                    crest(side, color: color)
-                    teamIdentityStack(side, color: color)
-                    Spacer(minLength: 4)
-                    if let score = side.liveScore {
-                        scoreText(score)
-                    }
-                    VStack(alignment: .trailing, spacing: 1) {
-                        chanceText(side.winChanceText, color: color, hasInlinePregame: side.pregameChanceText != nil)
-                            .fixedSize(horizontal: true, vertical: false)
-                        if let pregame = side.pregameChanceText {
-                            pregameLabel(pregame)
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                    }
-                }
+            HStack(alignment: .center, spacing: 6) {
+                crest(side, color: color)
+                teamIdentityStack(side, color: color)
+                Spacer(minLength: 4)
+                chanceText(side.winChanceText, color: color)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier(isAway ? "headline-12472-away-row" : "headline-12472-home-row")
@@ -307,6 +362,8 @@ struct EventSportHeadlineCard12472: View {
                 Text(side.shortName)
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(Color.primary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
                     .fixedSize(horizontal: false, vertical: true)
                 if let record = side.record {
                     Text(record)
@@ -319,29 +376,38 @@ struct EventSportHeadlineCard12472: View {
                 Text(projected)
                     .font(.caption2.weight(.semibold).monospacedDigit())
                     .foregroundStyle(color)
-                    .fixedSize(horizontal: true, vertical: false)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
         }
     }
 
     private func scoreText(_ score: Int) -> some View {
         Text("\(score)")
-            .font(.system(size: min(liveScoreSize, 24), weight: .bold, design: .rounded).monospacedDigit())
+            .font(.system(size: min(liveScoreSize, 22), weight: .semibold, design: .rounded).monospacedDigit())
             .foregroundStyle(Color.primary)
-            .fixedSize(horizontal: true, vertical: false)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityLabel("Score \(score)")
     }
 
     private func pregameLabel(_ text: String) -> some View {
         Text(text)
-            .font(.caption2.monospacedDigit())
+            .font(.system(size: min(livePregameSize, 17), weight: .medium, design: .rounded).monospacedDigit())
             .foregroundStyle(DS.textSecondaryReadable)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityLabel("Pregame \(text)")
     }
 
-    private func chanceText(_ text: String, color: Color, hasInlinePregame: Bool = false) -> some View {
-        let base = hasInlinePregame ? liveTenthsChanceSize : winChanceSize
+    private func chanceText(_ text: String, color: Color, hasInlineColumns: Bool = false) -> some View {
+        let base = hasInlineColumns ? liveTenthsChanceSize : winChanceSize
         return Text(text)
-            .font(.system(size: min(base, 32), weight: .black, design: .rounded).monospacedDigit())
+            .font(.system(size: min(base, 30), weight: .black, design: .rounded).monospacedDigit())
             .foregroundStyle(color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityLabel(hasInlineColumns ? "Now \(text)" : text)
     }
 
     // MARK: - Segmented Bar + Pregame Notch

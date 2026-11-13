@@ -17,15 +17,27 @@ import SwiftUI
 ///    - Live capsule (`LIVE · <clock>`) + plain grey `NBA` on the top-left;
 ///      feed pulse (`EkgHeartbeatView`) + source mark (`ⓘ`) on the top-right
 ///      in place of `"1m ago"`.
-///    - Two team rows with crest, short name, live projected score **once**
-///      (never twice), live score, small grey `"49% pregame"` beside the win
-///      chance where it fits (never `"opened"`), and team-colored streaming tenths.
+///    - Three right-aligned columns (`Score`, `Pregame`, `Now`, matching `#12684`)
+///      above two team rows with crest, short name, live projected score **once**
+///      (never twice), live score, bare grey pregame percentage (`"49%"` / `"51%"`,
+///      never `"opened"`, never repeating `"pregame"` on every row), and
+///      team-colored streaming tenths.
 ///    - Segmented team-colored probability bar with pregame notch.
 enum EventSportHeadlines12472 {
 
     nonisolated enum Kind: Equatable, Sendable {
         case nflBeforeGame
         case nbaDuringGame
+    }
+
+    nonisolated struct LiveColumnHeaders: Equatable, Sendable {
+        let score: String?
+        let pregame: String?
+        let now: String
+
+        var hasAny: Bool {
+            score != nil || pregame != nil || !now.isEmpty
+        }
     }
 
     nonisolated struct TeamRowModel: Equatable, Sendable {
@@ -55,6 +67,8 @@ enum EventSportHeadlines12472 {
         let liveBadgeText: String?
         /// For `.nbaDuringGame`: plain grey `NBA` beside the live capsule.
         let leagueLabel: String?
+        /// For `.nbaDuringGame`: right-aligned `Score · Pregame · Now` column headers.
+        let liveColumnHeaders: LiveColumnHeaders?
         let away: TeamRowModel
         let home: TeamRowModel
         /// 0...1 away pregame probability for the notch on `.nbaDuringGame`.
@@ -167,6 +181,7 @@ enum EventSportHeadlines12472 {
                 eventStatus: event.status,
                 liveBadgeText: nil,
                 leagueLabel: nil,
+                liveColumnHeaders: nil,
                 away: TeamRowModel(
                     fullName: awayFullName,
                     opponentFullName: homeFullName,
@@ -212,6 +227,12 @@ enum EventSportHeadlines12472 {
             )
             let periodStatus = trimmedNonEmpty(liveStatusText)
             let liveBadge = periodStatus.map { "LIVE · \($0)" } ?? "LIVE"
+            let hasLiveScore = hasScore && (event.awayScore != nil || event.homeScore != nil)
+            let columnHeaders = LiveColumnHeaders(
+                score: hasLiveScore ? "Score" : nil,
+                pregame: pregameTexts != nil ? "Pregame" : nil,
+                now: "Now"
+            )
             return Model(
                 eventId: event.id,
                 sportKey: "basketball_nba",
@@ -223,6 +244,7 @@ enum EventSportHeadlines12472 {
                 eventStatus: event.status,
                 liveBadgeText: liveBadge,
                 leagueLabel: "NBA",
+                liveColumnHeaders: columnHeaders,
                 away: TeamRowModel(
                     fullName: awayFullName,
                     opponentFullName: homeFullName,
@@ -326,16 +348,16 @@ enum EventSportHeadlines12472 {
         return date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
     }
 
-    /// Pregame baseline beside live NBA win chances: always `"49% pregame"`,
-    /// never `"opened"` ("opened means something else to gamblers").
+    /// Bare pregame baseline percentages under the `"Pregame"` column header on
+    /// live NBA (`"49%"` / `"51%"`), never `"opened"` and never repeating `"pregame"` twice.
     nonisolated static func nbaPregameTexts(
         _ pregame: PrematchReading?
     ) -> (away: String, home: String)? {
         guard let pregame else { return nil }
         let awayPct = pregame.percents.count > 0 ? pregame.percents[0] : nil
         let homePct = pregame.percents.count > 1 ? pregame.percents[1] : nil
-        let awayText = "\(formatProbability(pregame.awayProbability, renderedPercent: awayPct)) pregame"
-        let homeText = "\(formatProbability(pregame.homeProbability, renderedPercent: homePct)) pregame"
+        let awayText = formatProbability(pregame.awayProbability, renderedPercent: awayPct)
+        let homeText = formatProbability(pregame.homeProbability, renderedPercent: homePct)
         return (away: awayText, home: homeText)
     }
 

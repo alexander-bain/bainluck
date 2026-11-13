@@ -284,6 +284,7 @@ final class EventSportHeadlines12472Tests: XCTestCase {
         XCTAssertEqual(nonStreaming.home.record, "5-4")
         XCTAssertNil(nonStreaming.away.pregameChanceText)
         XCTAssertNil(nonStreaming.home.pregameChanceText)
+        XCTAssertNil(nonStreaming.liveColumnHeaders)
         XCTAssertEqual(nonStreaming.sourceMark?.draws, true)
 
         let streaming = try XCTUnwrap(
@@ -317,7 +318,8 @@ final class EventSportHeadlines12472Tests: XCTestCase {
 
     func testNBADuringGameShowsProjectedOncePregameNeverOpenedAndNoRelativeAge() throws {
         // Even when prematch_odds is absent and PrematchReading falls back to opening_odds,
-        // the headline MUST say "pregame", NEVER "opened".
+        // the headline uses a single "Pregame" column header ("Score · Pregame · Now")
+        // with bare grey percentages ("49%", "51%"), NEVER repeating "pregame" twice and NEVER "opened".
         let fallbackToOpening = try nbaLiveFixture(includeServedPrematch: false)
         let model = try XCTUnwrap(
             resolveHeadline(fallbackToOpening, hasScore: true, numberStreams: true)
@@ -325,12 +327,18 @@ final class EventSportHeadlines12472Tests: XCTestCase {
         XCTAssertEqual(model.liveBadgeText, "LIVE · Q4 2:14")
         XCTAssertEqual(model.leagueLabel, "NBA")
         XCTAssertNil(model.plainMetaText)
+        XCTAssertEqual(
+            model.liveColumnHeaders,
+            EventSportHeadlines12472.LiveColumnHeaders(score: "Score", pregame: "Pregame", now: "Now")
+        )
         XCTAssertEqual(model.away.liveScore, 98)
         XCTAssertEqual(model.home.liveScore, 100)
         XCTAssertEqual(model.away.projectedText, "Proj. 103.5")
         XCTAssertEqual(model.home.projectedText, "Proj. 105.0")
-        XCTAssertEqual(model.away.pregameChanceText, "49% pregame")
-        XCTAssertEqual(model.home.pregameChanceText, "51% pregame")
+        XCTAssertEqual(model.away.pregameChanceText, "49%")
+        XCTAssertEqual(model.home.pregameChanceText, "51%")
+        XCTAssertFalse(model.away.pregameChanceText?.localizedCaseInsensitiveContains("pregame") ?? false)
+        XCTAssertFalse(model.home.pregameChanceText?.localizedCaseInsensitiveContains("pregame") ?? false)
         XCTAssertFalse(model.away.pregameChanceText?.localizedCaseInsensitiveContains("open") ?? false)
         XCTAssertFalse(model.home.pregameChanceText?.localizedCaseInsensitiveContains("open") ?? false)
         XCTAssertEqual(model.away.winChanceText, "41.2%")
@@ -342,6 +350,10 @@ final class EventSportHeadlines12472Tests: XCTestCase {
         let extreme = try nbaLiveFixture(homeProb: 0.999, includeLiveProjection: true)
         let modelNoScore = try XCTUnwrap(
             resolveHeadline(extreme, hasScore: false, numberStreams: true)
+        )
+        XCTAssertEqual(
+            modelNoScore.liveColumnHeaders,
+            EventSportHeadlines12472.LiveColumnHeaders(score: nil, pregame: "Pregame", now: "Now")
         )
         XCTAssertEqual(modelNoScore.away.winChanceText, "<1%")
         XCTAssertEqual(modelNoScore.home.winChanceText, ">99%")
@@ -553,7 +565,7 @@ final class EventSportHeadlines12472Tests: XCTestCase {
                     .frame(width: 358)
                 }
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("NBA During a Game · Live Proj. once, 'pregame' beside tenths, EKG")
+                    Text("NBA During a Game · Score, Pregame, Now columns + Live Proj. once + EKG")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     nbaCard
