@@ -201,7 +201,8 @@ jobs:
       cancel-in-progress: false
     needs: watch-mvp
     runs-on: xcode-27
-    timeout-minutes: 60
+    # #12513: the full suite on Xcode 27.2 ran 62 min and was cut at 60.
+    timeout-minutes: 90
     env:
       # Fallback only; the next step selects Native's local Xcode (27.2, 27B52) when present.
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
