@@ -300,6 +300,92 @@ class _CoherentFieldMember:
     raw_market: Mapping[str, Any]
 
 
+_BOX_OFFICE_RANGE_RE = re.compile(
+    r"\$?\s*(?P<lo>\d+(?:\.\d+)?)\s*(?P<lo_u>[kmb])?\s*(?:–|—|-|to)\s*\$?\s*(?P<hi>\d+(?:\.\d+)?)\s*(?P<hi_u>[kmb])?",
+    re.IGNORECASE,
+)
+_BOX_OFFICE_LOW_TAIL_RE = re.compile(
+    r"(?:^\s*[<≤]\s*|^\s*(?:under|below|less\s+than)\s+)\$?\s*(?P<val>\d+(?:\.\d+)?)\s*(?P<u1>[kmb])?"
+    r"|\$?\s*(?P<val2>\d+(?:\.\d+)?)\s*(?P<u2>[kmb])?\s+or\s+(?:less|below|under|lower)",
+    re.IGNORECASE,
+)
+_BOX_OFFICE_HIGH_TAIL_RE = re.compile(
+    r"(?:^\s*[>≥]\s*|^\s*(?:over|above|more\s+than|at\s+least)\s+)\$?\s*(?P<val>\d+(?:\.\d+)?)\s*(?P<u1>[kmb])?"
+    r"|\$?\s*(?P<val2>\d+(?:\.\d+)?)\s*(?P<u2>[kmb])?\s*(?:\+|or\s+(?:more|higher|above|greater))",
+    re.IGNORECASE,
+)
+
+
+def _to_millions(raw_val: str, raw_unit: Optional[str], fallback_unit: Optional[str] = None) -> float:
+    val = float(raw_val)
+    u = (raw_unit or fallback_unit or "m").lower()
+    if u == "k":
+        return val / 1000.0
+    if u == "b":
+        return val * 1000.0
+    return val
+
+
+def _expected_box_office_millions(buckets: Sequence[_NormalizedBucket]) -> float:
+    """Compute probability-weighted expected opening gross in $M (#12659).
+
+    Wide releases with multi-bracket dispersion (e.g. Ebenezer leading at
+    ``19m-22m`` · 38%) must rank above micro-budget releases whose ``<2.5m``
+    bottom bracket sits at 92%.
+    """
+    widths: list[float] = []
+    for b in buckets:
+        m = _BOX_OFFICE_RANGE_RE.search(b.label)
+        if m:
+            hi_u = m.group("hi_u")
+            lo_u = m.group("lo_u") or hi_u
+            lo = _to_millions(m.group("lo"), lo_u)
+            hi = _to_millions(m.group("hi"), hi_u, lo_u)
+            if hi > lo:
+                widths.append(hi - lo)
+    interior_width = sorted(widths)[len(widths) // 2] if widths else 0.0
+
+    expected = 0.0
+    matched_prob = 0.0
+    for b in buckets:
+        label = b.label.strip()
+        m_range = _BOX_OFFICE_RANGE_RE.search(label)
+        midpoint: Optional[float] = None
+        if m_range:
+            hi_u = m_range.group("hi_u")
+            lo_u = m_range.group("lo_u") or hi_u
+            lo = _to_millions(m_range.group("lo"), lo_u)
+            hi = _to_millions(m_range.group("hi"), hi_u, lo_u)
+            midpoint = (lo + hi) / 2.0
+        else:
+            m_low = _BOX_OFFICE_LOW_TAIL_RE.search(label)
+            if m_low:
+                raw_v = m_low.group("val") or m_low.group("val2")
+                raw_u = m_low.group("u1") or m_low.group("u2")
+                if raw_v is not None:
+                    cap = _to_millions(raw_v, raw_u)
+                    midpoint = max(0.0, cap / 2.0)
+            else:
+                m_high = _BOX_OFFICE_HIGH_TAIL_RE.search(label)
+                if m_high:
+                    raw_v = m_high.group("val") or m_high.group("val2")
+                    raw_u = m_high.group("u1") or m_high.group("u2")
+                    if raw_v is not None:
+                        floor = _to_millions(raw_v, raw_u)
+                        tail_half = (
+                            interior_width / 2.0
+                            if interior_width > 0
+                            else max(floor * 0.10, 1.5)
+                        )
+                        midpoint = floor + tail_half
+        if midpoint is not None:
+            expected += b.probability * midpoint
+            matched_prob += b.probability
+    if matched_prob <= 0.0:
+        return 0.0
+    return expected / matched_prob
+
+
 def _build_field_leader_card(member: _CoherentFieldMember) -> dict[str, Any]:
     base = member.raw_market
     top_outcomes = [
@@ -648,17 +734,32 @@ def select_field_leaders(
                 c.market_id,
             ),
         )[:card_rows]
+    elif order == "expected_box_office_desc":
+        selected = sorted(
+            candidates,
+            key=lambda c: (
+                -round(_expected_box_office_millions(c.buckets), 6),
+                -c.leader.probability,
+                c.subject.casefold(),
+                c.market_id,
+            ),
+        )[:card_rows]
     else:
         selected = sorted(
             candidates,
             key=lambda c: (-c.leader.probability, c.subject.casefold(), c.market_id),
         )[:card_rows]
 
-    # RoundupCard sorts rows highest-probability-first; order selected rows & members to match.
-    ordered_selected = sorted(
-        selected,
-        key=lambda c: (-c.leader.probability, c.subject.casefold(), c.market_id),
-    )
+    if order == "expected_box_office_desc":
+        # Preserve expected-gross descending order (#12659); producer emits
+        # `roundup_contract["order"] = "sequence"` so RoundupCard keeps it.
+        ordered_selected = list(selected)
+    else:
+        # RoundupCard sorts rows highest-probability-first; order selected rows & members to match.
+        ordered_selected = sorted(
+            selected,
+            key=lambda c: (-c.leader.probability, c.subject.casefold(), c.market_id),
+        )
 
     rows_out: list[dict[str, Any]] = []
     member_entries: list[dict[str, Any]] = []
@@ -956,6 +1057,10 @@ def build_field_leaders_producer(
     async def _produce(db: Any) -> Any:
         return await produce_field_leaders(db, definition)
 
+    contract_order: Optional[str] = None
+    if isinstance(rule, Mapping) and str(rule.get("order") or "") == "expected_box_office_desc":
+        contract_order = "sequence"
+
     return RoundupProducer(
         slug=slug,
         name=name,
@@ -971,6 +1076,7 @@ def build_field_leaders_producer(
         tag=tag,
         kicker=kicker,
         story_key=story_key,
+        order=contract_order,
         enabled=enabled if enabled is not None else field_leaders_enabled,
     )
 
