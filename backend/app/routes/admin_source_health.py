@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
+
+from app.utils.futures_quote_freshness import price_refresh_due_sql
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -280,13 +282,7 @@ _PRICE_DARK_SQL = f"""
     {ELIGIBLE_POOL_SQL}
     SELECT fm.source, fm.external_id, fm.name, fm.volume, fm.market_tier,
            COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
-           NOT EXISTS (
-             SELECT 1 FROM futures_outcomes fo
-               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
-              WHERE fo.market_id = fm.id
-                AND s.captured_at > NOW() - make_interval(hours => :max_age_hours)
-                AND fo.last_updated > NOW() - make_interval(hours => :max_age_hours)
-           ) AS is_dark
+           {price_refresh_due_sql("NOW() - make_interval(hours => :max_age_hours)")} AS is_dark
       FROM futures_markets fm
       JOIN pool ON pool.id = fm.id
      ORDER BY fm.volume DESC NULLS LAST
@@ -317,13 +313,7 @@ _WORST_SAMPLE = 25
 _REGISTERED_SQL = f"""
     SELECT fm.id, fm.source, fm.external_id, fm.name, fm.market_tier,
            COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
-           NOT EXISTS (
-             SELECT 1 FROM futures_outcomes fo
-               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
-              WHERE fo.market_id = fm.id
-                AND s.captured_at > NOW() - make_interval(hours => :max_age_hours)
-                AND fo.last_updated > NOW() - make_interval(hours => :max_age_hours)
-           ) AS is_dark
+           {price_refresh_due_sql("NOW() - make_interval(hours => :max_age_hours)")} AS is_dark
       FROM futures_markets fm
      WHERE fm.id = ANY(:market_ids)
        AND {LIVE_MARKET_SQL}

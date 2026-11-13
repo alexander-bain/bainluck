@@ -3001,3 +3001,98 @@ async def test_real_governor_read_dates_the_quote_without_inventing_movement_126
     # The unchanged field is genuinely fresh now; the next pass stays bounded.
     selected = await fpr._scan_registered_candidates(db, market_ids=[mid], stale_minutes=45)
     assert selected == []
+
+
+async def _mixed_age_governor_field_12633(db, *, series=False, old_leg="quoted"):
+    """Fresh siblings beside Kansas's older real price, as on build 5708."""
+    from sqlalchemy import text
+
+    mid, _ = await _quiet_governor_field_12633(db, series=series)
+    now = datetime.now(timezone.utc)
+    await db.execute(text(
+        "UPDATE futures_outcomes SET last_updated = :observed WHERE market_id = :mid"
+    ), {"mid": mid, "observed": now})
+    values = {"last_updated": now - timedelta(hours=8)}
+    if old_leg == "graded_loss":
+        values.update(is_winner=False, resolution_source="api_settlement")
+    elif old_leg == "graded_winner":
+        values["is_winner"] = True
+    elif old_leg == "retracted_grade":
+        values["resolution_source"] = "ungradeable_result"
+    elif old_leg in {"absent_price", "zero_price", "one_price"}:
+        values["current_probability"] = {
+            "absent_price": None, "zero_price": 0, "one_price": 1,
+        }[old_leg]
+    elif old_leg == "all_fresh":
+        values["last_updated"] = now
+    elif old_leg == "no_capture":
+        values["last_updated"] = now
+        await db.execute(text(
+            "DELETE FROM futures_odds_snapshots WHERE outcome_id IN "
+            "(SELECT id FROM futures_outcomes WHERE market_id = :mid)"
+        ), {"mid": mid})
+    # Only fixture-owned column names are composed; every value remains bound.
+    await db.execute(text(
+        "UPDATE futures_outcomes SET "
+        + ", ".join(f"{column} = :{column}" for column in values)
+        + " WHERE market_id = :mid AND name = 'Kansas'"
+    ), {**values, "mid": mid})
+    await db.commit()
+    return mid
+
+
+@pytest.mark.parametrize("arm", ["class", "registered", "served", "category", "in_play", "series"])
+async def test_fresh_siblings_do_not_hide_an_old_quote_12633(poll_db, arm):
+    from app.tasks import futures_price_refresh as fpr
+
+    mid = await _mixed_age_governor_field_12633(poll_db, series=arm == "series")
+    if arm == "class":
+        selected = await fpr._scan_candidates(
+            poll_db, volume_floor=fpr.HIGH_VALUE_VOLUME_FLOOR, stale_hours=6,
+        )
+    elif arm == "in_play":
+        selected = await fpr._scan_in_play_candidates(poll_db, stale_minutes=45)
+    elif arm == "series":
+        selected = await fpr._scan_series_card_candidates(poll_db, stale_minutes=45)
+    else:
+        scan = {"registered": fpr._scan_registered_candidates,
+                "served": fpr._scan_served_candidates,
+                "category": fpr._scan_category_page_candidates}[arm]
+        selected = await scan(poll_db, market_ids=[mid], stale_minutes=45)
+    assert mid in {row["id"] for row in selected}
+
+
+@pytest.mark.parametrize("arm", ["class", "registered"])
+async def test_freshness_guard_reports_an_old_quote_beside_fresh_siblings_12633(
+    poll_db, arm,
+):
+    from sqlalchemy import text
+
+    from app.routes import admin_source_health as health
+    from app.tasks import futures_price_refresh as fpr
+
+    mid = await _mixed_age_governor_field_12633(poll_db)
+    sql = health._PRICE_DARK_SQL if arm == "class" else health._REGISTERED_SQL
+    result = (await poll_db.execute(text(sql), {
+        **fpr.pool_bind_params(), "max_age_hours": 6, "market_ids": [mid],
+    })).mappings().all()
+    assert len(result) == 1
+    assert result[0]["is_dark"] is True
+
+
+@pytest.mark.parametrize("old_leg, due", [
+    ("retracted_grade", True), ("no_capture", True),
+    ("graded_loss", False), ("graded_winner", False),
+    ("absent_price", False), ("zero_price", False), ("one_price", False),
+    ("all_fresh", False),
+])
+async def test_mixed_field_keeps_settlement_and_capture_boundaries_12633(
+    poll_db, old_leg, due,
+):
+    from app.tasks import futures_price_refresh as fpr
+
+    mid = await _mixed_age_governor_field_12633(poll_db, old_leg=old_leg)
+    selected = await fpr._scan_registered_candidates(
+        poll_db, market_ids=[mid], stale_minutes=45,
+    )
+    assert (mid in {row["id"] for row in selected}) is due
