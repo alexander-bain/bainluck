@@ -171,8 +171,13 @@ final class AForecastFigureIsReadWhole9483Tests: XCTestCase {
     /// Every word of `name` appears whole on some read line — a surname broken
     /// mid-word ("Harten" / "stein") or cut ("Harten…") does not.
     private func isReadWhole(_ name: String, in lines: [String]) -> Bool {
+        // #12513 — #12399 draws a key mark beside each figure's label, and Vision
+        // reads it as punctuation glued to the word ("|Actual", "'projection",
+        // "•projection"). Trim marks at a token's edges only; a word broken
+        // mid-way ("Pre-", "game") still fails, because neither half is the word.
         let tokens = Set(lines.flatMap {
-            $0.split(whereSeparator: { $0 == " " || $0 == "-" }).map(String.init)
+            $0.split(whereSeparator: { $0 == " " || $0 == "-" })
+                .map { String($0).trimmingCharacters(in: CharacterSet.alphanumerics.inverted) }
         })
         return name.split(whereSeparator: { $0 == " " || $0 == "-" }).allSatisfy { tokens.contains(String($0)) }
     }
@@ -253,7 +258,9 @@ final class AForecastFigureIsReadWhole9483Tests: XCTestCase {
                 let lines = try read(NBALadderCardView9483(card: Self.specimenMarginCard, awayColor: .blue,
                                                            homeColor: .orange, state: NFLCardDeckState9483()),
                                      width: width, height: height, at: size, name: name)
-                for words in ["So far", "Pregame projection"] {
+                // #12513 — #12399 moved these figures into `NBAScoringFigures9483`, which
+                // says "Actual so far"; ask it rather than pin the old "So far".
+                for words in [NBAScoringFigures9483.actualLabel(.during), "Pregame projection"] {
                     XCTAssertTrue(isReadWhole(words, in: lines), "\(name): \"\(words)\" is not read whole: \(lines)")
                 }
                 XCTAssertFalse(lines.contains { isCut($0) && ($0.contains("Preg") || $0.contains("proj")) },

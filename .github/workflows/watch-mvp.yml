@@ -201,15 +201,28 @@ jobs:
       cancel-in-progress: false
     needs: watch-mvp
     runs-on: xcode-27
-    timeout-minutes: 60
+    # #12513: the full suite on Xcode 27.2 ran 62 min and was cut at 60.
+    timeout-minutes: 90
     env:
-      # Same compiler build as Native's current local Xcode (27A266a).
+      # Fallback only; the next step selects Native's local Xcode (27.2, 27B52) when present.
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Use Native's local Xcode (27.2) when this runner has it (#12513)
+        run: |
+          # Native's gate passes the full iPhone suite on Xcode 27.2 (27B52);
+          # on 27.0 (27A266a) this job failed every run since mid-October.
+          ls -d /Applications/Xcode*.app
+          for x in /Applications/Xcode_27.2.app /Applications/Xcode_27.0.app; do
+            if [ -d "$x" ]; then
+              echo "DEVELOPER_DIR=$x/Contents/Developer" >> "$GITHUB_ENV"
+              DEVELOPER_DIR="$x/Contents/Developer" xcodebuild -version
+              break
+            fi
+          done
       - name: Verify updating journeys require actual executed cases
         run: python3 -m unittest discover -s tools/tests -p test_watch_game_updating_gate.py
       - name: Verify receipt rejects incomplete and misleading results
@@ -241,6 +254,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Use Native's local Xcode (27.2) when this runner has it (#12513)
+        run: |
+          # Native's gate passes the full iPhone suite on Xcode 27.2 (27B52);
+          # on 27.0 (27A266a) this job failed every run since mid-October.
+          ls -d /Applications/Xcode*.app
+          for x in /Applications/Xcode_27.2.app /Applications/Xcode_27.0.app; do
+            if [ -d "$x" ]; then
+              echo "DEVELOPER_DIR=$x/Contents/Developer" >> "$GITHUB_ENV"
+              DEVELOPER_DIR="$x/Contents/Developer" xcodebuild -version
+              break
+            fi
+          done
       - name: Verify immutable product and stage contracts
         run: |
           python3 -m unittest discover -s tools/tests -p test_watch_ui_products.py
@@ -293,6 +318,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Use Native's local Xcode (27.2) when this runner has it (#12513)
+        run: |
+          # Native's gate passes the full iPhone suite on Xcode 27.2 (27B52);
+          # on 27.0 (27A266a) this job failed every run since mid-October.
+          ls -d /Applications/Xcode*.app
+          for x in /Applications/Xcode_27.2.app /Applications/Xcode_27.0.app; do
+            if [ -d "$x" ]; then
+              echo "DEVELOPER_DIR=$x/Contents/Developer" >> "$GITHUB_ENV"
+              DEVELOPER_DIR="$x/Contents/Developer" xcodebuild -version
+              break
+            fi
+          done
       - uses: actions/download-artifact@v4
         timeout-minutes: 5
         with:
@@ -425,6 +462,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Use Native's local Xcode (27.2) when this runner has it (#12513)
+        run: |
+          # Native's gate passes the full iPhone suite on Xcode 27.2 (27B52);
+          # on 27.0 (27A266a) this job failed every run since mid-October.
+          ls -d /Applications/Xcode*.app
+          for x in /Applications/Xcode_27.2.app /Applications/Xcode_27.0.app; do
+            if [ -d "$x" ]; then
+              echo "DEVELOPER_DIR=$x/Contents/Developer" >> "$GITHUB_ENV"
+              DEVELOPER_DIR="$x/Contents/Developer" xcodebuild -version
+              break
+            fi
+          done
       - name: Reject missing or misleading archive payloads
         run: python3 tools/tests/test_watch_companion_archive.py -v
       - name: Archive unsigned companion and inspect actual payload

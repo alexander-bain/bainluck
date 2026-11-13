@@ -221,13 +221,15 @@ final class DiscoverThemeCollectionEntry9925Tests: XCTestCase {
 
     func testTheGroupedPathCarriesOnlyTheThemeRefToTheCard() throws {
         let text = try discoverViewSource()
-        XCTAssertEqual(occurrences(of: "sharedQuestion: bundle.sharedQuestion, collectionRef: bundle.themeCollectionRef ))", in: text), 1,
+        // #12513 — #12667 builds the card as a `let candidate` before appending it,
+        // so the call now ends in one `)`; the ref it passes is unchanged.
+        XCTAssertEqual(occurrences(of: "sharedQuestion: bundle.sharedQuestion, collectionRef: bundle.themeCollectionRef )", in: text), 1,
                        "the API bundle's grouped card takes the theme-only ref")
         XCTAssertEqual(occurrences(of: "collectionRef: bundle.collectionRef", in: text), 0,
                        "the raw ref would let a comparison card link")
         XCTAssertEqual(occurrences(of: "sharedQuestion: sharedQuestion, collectionRef: collectionRef, navigationPath: $navigationPath)", in: text), 1,
                        "the card receives the ref the grouping produced")
-        XCTAssertEqual(occurrences(of: "result.append(.group(title: groupTitles[grouping.key] ?? grouping.title, items: group))", in: text), 1,
+        XCTAssertEqual(occurrences(of: "DiscoverGroupedItem.group( title: groupTitles[grouping.key] ?? grouping.title, items: group )", in: text), 1,
                        "client-side futures groups have no server ref and must never invent one")
     }
 
