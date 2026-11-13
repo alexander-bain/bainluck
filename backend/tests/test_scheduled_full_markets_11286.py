@@ -52,10 +52,10 @@ def test_no_other_league_changes(sport):
 def test_once_an_hour_shared_by_both_paths():
     r = _Redis()
     sfm.record_full_fetch("americanfootball_nfl", r, NOW)
-    # Discovery's next three passes (every 15 min) and the poller inside the hour pay nothing.
-    for minutes in (15, 30, 45, 59):
+    # Every pass inside 55 minutes pays nothing.
+    for minutes in (15, 30, 45, 54):
         assert sfm.scheduled_markets("americanfootball_nfl", r, NOW + minutes * 60) == "h2h"
-    assert sfm.scheduled_markets("americanfootball_nfl", r, NOW + 3600) == "h2h,spreads,totals"
+    assert sfm.scheduled_markets("americanfootball_nfl", r, NOW + 55 * 60) == "h2h,spreads,totals"
     # The other league's hour is its own.
     assert sfm.scheduled_markets("basketball_nba", r, NOW + 60) == "h2h,spreads,totals"
 
@@ -191,3 +191,38 @@ async def test_a_full_fetch_still_writes_the_lines_exactly_as_before():
                                   commence_time=datetime.now(timezone.utc) + timedelta(days=1))
     assert session.updates[0]["opening_home_spread"] is None
     assert session.updates[0]["opening_over_under"] is None
+
+
+# Each tuple is one discovery run: (seconds into the run when it asks which
+# markets to fetch, seconds the fetch then takes before the stamp is written).
+_STEADY = [(50, 20)] * 12
+_NOV_12 = [(55, 15), (20, 10), (5, 10), (40, 25), (10, 60), (30, 5),
+           (60, 10), (15, 45), (25, 20), (45, 15), (5, 30), (35, 10)]
+_SLOW_FETCHES = [(10, 120), (10, 5), (10, 5), (10, 90), (10, 5), (10, 5),
+                 (10, 150), (10, 5), (10, 5), (10, 60), (10, 5), (10, 5)]
+
+
+@pytest.mark.parametrize("runs", [_STEADY, _NOV_12, _SLOW_FETCHES], ids=["steady", "nov-12", "slow-fetches"])
+def test_discovery_at_05_and_35_refreshes_lines_every_hour_not_ninety_minutes(runs):
+    """Nov 12 (#11286): the stamp was written at 5:36:10, when the fetch came
+    back; the 6:35 run asked 59 minutes after that and stayed moneyline-only, so
+    the next lines came at 7:05, 90 minutes on, and the projected final blinked
+    out. Replay six hours of discovery runs at :05 and :35. A run ASKS first and
+    STAMPS only after its fetch returns, so the stamp is always later than the
+    ask, and the run an hour on asks less than 60 minutes after it. With a
+    60-minute stamp this replay gives 90-minute gaps and fails."""
+    r = _Redis()
+    stamps = []
+    start = NOW - (NOW % 3600) + 5 * 60  # a :05 run
+    for run, (ask_lag, fetch_s) in enumerate(runs):
+        asked = start + run * 1800 + ask_lag
+        if sfm.scheduled_markets("americanfootball_nfl", r, asked) == "h2h,spreads,totals":
+            stamped = asked + fetch_s
+            sfm.record_full_fetch("americanfootball_nfl", r, stamped)
+            stamps.append(stamped)
+    gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+    # one lines fetch an hour: six in six hours, never a 90-minute wait
+    assert len(stamps) == 6, [round(g / 60, 1) for g in gaps]
+    assert max(gaps) < 75 * 60, [round(g / 60, 1) for g in gaps]
+    # and never two inside the stamp's interval (the quota guard)
+    assert min(gaps) >= sfm.SCHEDULED_FULL_MARKETS_INTERVAL_SECONDS
