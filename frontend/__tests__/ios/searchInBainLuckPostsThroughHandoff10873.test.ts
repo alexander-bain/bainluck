@@ -35,9 +35,8 @@ d("SearchInBainLuckIntent10873 routes through IntentRouteHandoff10873 (#10873)",
     expect(searchSource).toContain("IntentRouteHandoff10873.shared.post(");
   });
 
-  it("registers Search Bain Luck and non-search-shaped My Stuff phrases in BainLuckShortcuts10873", () => {
-    expect(shortcutsSource).toContain("SearchInBainLuckIntent10873()");
-    expect(shortcutsSource).toContain("Search \\(.applicationName)");
+  it("keeps BainLuckShortcuts10873 available on iOS 17.0+ and registers non-search-shaped My Stuff phrases", () => {
+    expect(shortcutsSource).not.toMatch(/@available\([^)]*\)\s*(?:nonisolated\s+)?struct\s+BainLuckShortcuts10873/);
     expect(shortcutsSource).toContain("Go to My Stuff in \\(.applicationName)");
     expect(shortcutsSource).toContain("\\(.applicationName) My Stuff");
   });
