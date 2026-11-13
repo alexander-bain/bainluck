@@ -44,6 +44,7 @@ from app.config.team_aliases import (
     team_nickname_search_expansions,
 )
 from app.routes.events import (
+    _query_names_team_card,
     _team_nickname_futures_arms,
     search_events,
     typeahead_search,
@@ -71,6 +72,7 @@ def test_the_derived_expansions_are_exactly_these() -> None:
 
     assert team_nickname_search_expansions() == {
         "pats": ("Patriots", "football"),
+        "patroits": ("Patriots", "football"),
         "revs": ("Revolution", "soccer"),
         "niners": ("49ers", "football"),
         "bucs": ("Buccaneers", "football"),
@@ -163,6 +165,7 @@ def test_a_query_with_no_nickname_produces_no_arm() -> None:
     "alias,token,category",
     [
         ("pats", "Patriots", "football"),
+        ("patroits", "Patriots", "football"),
         ("revs", "Revolution", "soccer"),
         ("niners", "49ers", "football"),
         ("bucs", "Buccaneers", "football"),
@@ -193,6 +196,25 @@ def test_the_arm_is_case_insensitive_on_the_typed_nickname() -> None:
 
     assert len(_team_nickname_futures_arms(["Pats"])) == 1
     assert len(_team_nickname_futures_arms(["PATS"])) == 1
+
+
+@pytest.mark.parametrize(
+    "query,name,aliases,expected",
+    [
+        ("chiefs", "Kansas City Chiefs", ["chiefs"], True),
+        ("patroits", "New England Patriots", ["pats", "patroits"], True),
+        ("niners", "San Francisco 49ers", ["niners", "9ers"], True),
+        ("new", "New York Yankees", ["New York", "Yankees"], False),
+        ("york", "New York Yankees", ["New York", "Yankees"], False),
+        ("ai", "Shanghai Sharks", [], False),
+        ("celtics next three games", "Boston Celtics", ["Celtics"], False),
+        ("chiefs win total", "Kansas City Chiefs", ["chiefs"], False),
+        ("patroits", "St Kitts and Nevis Patriots", ["Patriots"], False),
+    ],
+)
+def test_only_an_owned_team_name_gets_the_public_promotion(query, name, aliases, expected):
+    for field in ("name", "text"):
+        assert _query_names_team_card({field: name, "_aliases": aliases}, query) is expected
 
 
 def test_the_alias_composes_with_the_rest_of_the_query() -> None:

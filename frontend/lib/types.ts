@@ -1624,6 +1624,8 @@ export interface SearchTeam {
   logo: string | null;
   record: string | null;
   sport_key: string | null;
+  /** Server-owned whole-name, nickname or curated misspelling match. */
+  query_names_team?: boolean;
 }
 
 /** #993 L2-41: a backend-composed topical family of related futures markets.

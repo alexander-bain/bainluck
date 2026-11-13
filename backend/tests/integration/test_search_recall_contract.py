@@ -779,6 +779,55 @@ def _typeahead_texts(payload) -> list[str]:
     return [str(i.get("text") or i.get("name") or "") for i in items if isinstance(i, dict)]
 
 
+@pytest.fixture
+async def team_first_rows(seeded_db):
+    """#12290 resolves curated names with no alternate-name backfill."""
+    from sqlalchemy import select
+
+    from app.models.models import Sport, Team
+
+    _engine, maker = seeded_db
+    async with maker() as session:
+        nfl = (await session.execute(
+            select(Sport).where(Sport.key == "americanfootball_nfl")
+        )).scalar_one()
+        cricket = (await session.execute(
+            select(Sport).where(Sport.key == "cricket_cpl")
+        )).scalar_one()
+        session.add_all([
+            Team(sport_id=nfl.id, name="Kansas City Chiefs", abbreviation="KC"),
+            Team(sport_id=nfl.id, name="New England Patriots", abbreviation="NE"),
+            Team(sport_id=nfl.id, name="San Francisco 49ers", abbreviation="SF"),
+            Team(sport_id=cricket.id, name="St Kitts and Nevis Patriots", abbreviation="SKN"),
+        ])
+        await session.commit()
+
+
+@pytest.mark.parametrize("surface", ["search", "typeahead"])
+@pytest.mark.parametrize("query,expected", [
+    ("chiefs", "Kansas City Chiefs"),
+    ("patroits", "New England Patriots"),
+    ("niners", "San Francisco 49ers"),
+])
+async def test_team_name_query_carries_its_owned_name_to_the_reader(
+    team_first_rows, search, typeahead, surface, query, expected
+):
+    payload = await (search if surface == "search" else typeahead)(query)
+    teams = payload["teams"] if surface == "search" else [
+        row for row in payload["suggestions"] if row.get("type") == "team"
+    ]
+    assert teams, payload
+    name_key = "name" if surface == "search" else "text"
+    assert teams[0][name_key] == expected
+    assert teams[0]["query_names_team"] is True
+    assert all("_aliases" not in row for row in teams)
+    assert not any(row[name_key] == "St Kitts and Nevis Patriots" for row in teams)
+    if query == "patroits" and surface == "search":
+        pairings = _event_pairings(payload)
+        assert any("New England Patriots" in pairing for pairing in pairings)
+        assert not any("St Kitts" in pairing for pairing in pairings)
+
+
 def _futures_names(payload: dict) -> list[str]:
     return [f.get("name") or f.get("market_name") for f in payload.get("futures", [])]
 
