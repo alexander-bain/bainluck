@@ -6,18 +6,20 @@ import SwiftUI
 /// `EventCardView`.
 enum CompactGameCard12616 {
 
-    /// The two column headers above the team rows (`medium` context on the left,
-    /// `large` primary answer on the right). A blank column draws no header.
+    /// Column headers above the team rows (`medium` context on the left,
+    /// optional `pregame` column in the middle on live cards, and `large`
+    /// primary answer on the right). A blank column draws no header.
     nonisolated struct ColumnHeaders: Equatable, Sendable {
         let medium: String?
+        var pregame: String? = nil
         let large: String?
 
-        var hasAny: Bool { medium != nil || large != nil }
+        var hasAny: Bool { medium != nil || pregame != nil || large != nil }
     }
 
-    /// Column headers for each game state under 161-B:
+    /// Column headers for each game state under 161-B + Alex's Pregame-header ruling:
     /// - Before (`isScheduled`): `Projected` (medium) · `Chance` (large)
-    /// - During (`isLive && !isSuspended`): `Score` (medium) · `Now` (large)
+    /// - During (`isLive && !isSuspended`): `Score` (medium) · `Pregame` (middle, when shown) · `Now` (large)
     /// - After (`isFinished`): `Pregame` (medium) · `Final` (large)
     /// - Suspended-and-started (`isSuspended`): neither (`No result reported`)
     nonisolated static func columnHeaders(
@@ -28,30 +30,34 @@ enum CompactGameCard12616 {
         hasProjectedBefore: Bool,
         hasCurrentChance: Bool,
         hasPrematchChance: Bool,
-        hasScore: Bool
+        hasScore: Bool,
+        showsLivePregameColumn: Bool = false
     ) -> ColumnHeaders {
         if isSuspended {
-            return ColumnHeaders(medium: nil, large: nil)
+            return ColumnHeaders(medium: nil, pregame: nil, large: nil)
         }
         if isLive {
             return ColumnHeaders(
                 medium: hasScore ? "Score" : nil,
+                pregame: (showsLivePregameColumn && hasPrematchChance) ? "Pregame" : nil,
                 large: hasCurrentChance ? "Now" : nil
             )
         }
         if isFinished {
             return ColumnHeaders(
                 medium: hasPrematchChance ? "Pregame" : nil,
+                pregame: nil,
                 large: hasScore ? "Final" : nil
             )
         }
         if isScheduled {
             return ColumnHeaders(
                 medium: hasProjectedBefore ? "Projected" : nil,
+                pregame: nil,
                 large: hasCurrentChance ? "Chance" : nil
             )
         }
-        return ColumnHeaders(medium: nil, large: nil)
+        return ColumnHeaders(medium: nil, pregame: nil, large: nil)
     }
 
     // MARK: - Live streaming tenths ("Now", 161-B)
@@ -292,10 +298,11 @@ enum CompactGameCard12616 {
         return trimmed
     }
 
-    /// Per-row `"54% pregame"` labels (lowercase `"pregame"`, never `"opened"`)
-    /// placed beside the live win chance where horizontal room permits. Withholds
-    /// the away label on two-way soccer complements (#5363) and includes `draw`
-    /// when a three-way pre-match reading is present.
+    /// Per-row percentage cells (`"54%"`, `"46%"`, `"25%"`) under the `"Pregame"`
+    /// column header on live game cards — never repeating `"pregame"` per row,
+    /// never `"opened"`, respecting #5363 away withholding on two-way soccer
+    /// complements, and including `draw` when an explicit three-way pre-match
+    /// reading is present.
     nonisolated static func liveSidePregameLabels(
         event: FeedEventData,
         prematch: PrematchReading?
@@ -305,20 +312,20 @@ enum CompactGameCard12616 {
         let awayText: String? = awayWithheld
             ? nil
             : formatProbability(reading.awayProbability, renderedPercent: reading.percents[0])
-                .map { "\($0) pregame" }
-        let homeText = "\(formatProbability(reading.homeProbability, renderedPercent: reading.percents[1])) pregame"
+        let homeText = formatProbability(reading.homeProbability, renderedPercent: reading.percents[1])
         let drawText: String?
         if hasExplicitThreeWayPrematch(event),
            let draw = usableProbability(event.prematchOdds?.drawProbability) {
-            drawText = "\(formatProbability(draw, renderedPercent: nil)) pregame"
+            drawText = formatProbability(draw, renderedPercent: nil)
         } else {
             drawText = nil
         }
         return (away: awayText, home: homeText, draw: drawText)
     }
 
-    /// Whether `"54% pregame"` fits inline beside the live win chance without
-    /// squeezing or breaking a single-word team name (`"Timberwolves"`, `.xxxLarge`).
+    /// Whether the `"Pregame"` column (`48pt` at `.large`) fits beside `Score`
+    /// and `Now` without squeezing or breaking a single-word team name
+    /// (`"Timberwolves"`, `.xxxLarge`).
     nonisolated static func liveInlinePregameFits(
         awayShortName: String,
         homeShortName: String,
@@ -333,10 +340,11 @@ enum CompactGameCard12616 {
         case .medium: scale = 0.97
         case .large: scale = 1.0
         case .xLarge: scale = 1.08
-        default: return false // .xxLarge / .xxxLarge drop inline pregame to context fallback
+        case .xxLarge: scale = 1.15
+        default: return false // .xxxLarge drops Pregame column to context fallback
         }
-        // Crest (28) + Score (42) + inline pregame (68) + Now (84) + 4 gaps (24) = 246pt at .large.
-        let nonNameBudget: CGFloat = 28 + (42 + 68 + 84) * scale + 24
+        // Crest (28) + Score (40) + Pregame column (48) + Now (82) + 4 gaps (24) = 222pt at .large.
+        let nonNameBudget: CGFloat = 28 + (40 + 48 + 82) * scale + 24
         let availableNameWidth = availableRowWidth - nonNameBudget
         guard availableNameWidth >= 56 else { return false }
         let approxCharWidth = 9.4 * scale

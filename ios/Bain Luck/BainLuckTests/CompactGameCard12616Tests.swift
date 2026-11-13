@@ -30,12 +30,20 @@ final class CompactGameCard12616Tests: XCTestCase {
                 hasProjectedBefore: false, hasCurrentChance: true, hasPrematchChance: false, hasScore: false),
             .init(medium: nil, large: "Chance")
         )
-        // Live: Score (medium) and Now (large).
+        // Live without pregame column: Score (medium) and Now (large).
         XCTAssertEqual(
             CompactGameCard12616.columnHeaders(
                 isScheduled: false, isLive: true, isFinished: false, isSuspended: false,
                 hasProjectedBefore: false, hasCurrentChance: true, hasPrematchChance: true, hasScore: true),
-            .init(medium: "Score", large: "Now")
+            .init(medium: "Score", pregame: nil, large: "Now")
+        )
+        // Live with Pregame column: Score (medium), Pregame (middle), and Now (large).
+        XCTAssertEqual(
+            CompactGameCard12616.columnHeaders(
+                isScheduled: false, isLive: true, isFinished: false, isSuspended: false,
+                hasProjectedBefore: false, hasCurrentChance: true, hasPrematchChance: true, hasScore: true,
+                showsLivePregameColumn: true),
+            .init(medium: "Score", pregame: "Pregame", large: "Now")
         )
         // Finished: Pregame (medium) and Final (large).
         XCTAssertEqual(
@@ -119,11 +127,39 @@ final class CompactGameCard12616Tests: XCTestCase {
             "25%"
         )
 
-        // Three-way bar shares: 41% Arsenal (away), 34% Chelsea (home), 25% Draw.
+        // Three-way bar shares: 41% Arsenal (away), 25% Draw (middle, 187-A), 34% Chelsea (home).
         let shares = ProbabilityBar.normalizedShares(awayProb: 0.41, homeProb: 0.34, drawProb: 0.25)
         XCTAssertEqual(shares.away, 0.41, accuracy: 0.0001)
         XCTAssertEqual(shares.home, 0.34, accuracy: 0.0001)
         XCTAssertEqual(shares.draw, 0.25, accuracy: 0.0001)
+
+        let segments3Way = ProbabilityBar.orderedSegments(awayProb: 0.41, homeProb: 0.34, drawProb: 0.25)
+        XCTAssertEqual(segments3Way.map(\.role), [.away, .draw, .home], "187-A: draw goes in the middle")
+        XCTAssertEqual(segments3Way[0].share, 0.41, accuracy: 0.0001)
+        XCTAssertEqual(segments3Way[1].share, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(segments3Way[2].share, 0.34, accuracy: 0.0001)
+
+        let segments2Way = ProbabilityBar.orderedSegments(awayProb: 0.58, homeProb: 0.42, drawProb: nil)
+        XCTAssertEqual(segments2Way.map(\.role), [.away, .home])
+
+        // Game-page soccer 90-minute three-way card (`EventAtlasSoccerThreeWayCardView11666`)
+        // feeds the same three-way bar with Draw in the middle (`187-A`).
+        let gamePageCard = EventAtlasSoccerCards11666.ThreeWayCard(
+            phase: .during,
+            legs: [
+                .init(role: .home, label: "Chelsea", rawOutcomeLabel: "Chelsea", quotedChance: 0.241, pregameChance: 0.34, observedAt: "2026-11-13T15:00:00Z", pregameObservedAt: "2026-11-13T12:25:00Z", result: nil, source: "kalshi"),
+                .init(role: .draw, label: "Draw", rawOutcomeLabel: "Draw", quotedChance: 0.235, pregameChance: 0.25, observedAt: "2026-11-13T15:00:00Z", pregameObservedAt: "2026-11-13T12:25:00Z", result: nil, source: "kalshi"),
+                .init(role: .away, label: "Arsenal", rawOutcomeLabel: "Arsenal", quotedChance: 0.524, pregameChance: 0.41, observedAt: "2026-11-13T15:00:00Z", pregameObservedAt: "2026-11-13T12:25:00Z", result: nil, source: "kalshi"),
+            ],
+            marketTitle: "Match Winner",
+            source: "kalshi",
+            sourceCount: 1,
+            quotedSum: 1.0
+        )
+        let barReading = try XCTUnwrap(EventAtlasSoccerCards11666.threeWayBarReading(for: gamePageCard))
+        let pageSegments = ProbabilityBar.orderedSegments(awayProb: barReading.away, homeProb: barReading.home, drawProb: barReading.draw)
+        XCTAssertEqual(pageSegments.map(\.role), [.away, .draw, .home])
+        XCTAssertEqual(barReading.notch ?? 0, 0.41, accuracy: 0.0001)
 
         // Three-way pregame notch divides by (away + home + draw), not (away + home).
         let prematchSoccer = try decodeEvent("""
@@ -277,8 +313,9 @@ final class CompactGameCard12616Tests: XCTestCase {
             "Starting soon — close matchup"
         )
 
-        // Inline pregame labels say "pregame" (never "opened"), respect #5363 away
-        // withholding, and include 3-way draw when present.
+        // Pregame column cells print bare percentages ("54%", "46%", "25%") under
+        // the single "Pregame" column header — never repeating "pregame" per row,
+        // never "opened", and respecting #5363 away withholding.
         let liveNBA = try decodeEvent("""
         {"id": 201, "sport": "basketball_nba", "away_team": "Boston Celtics", "home_team": "Philadelphia 76ers",
          "status": "live", "prematch_odds": {"away_probability": 0.54, "home_probability": 0.46,
@@ -286,9 +323,10 @@ final class CompactGameCard12616Tests: XCTestCase {
         """)
         let nbaReading = PrematchReading.resolve(prematch: liveNBA.prematchOdds, opening: nil)
         let nbaLabels = CompactGameCard12616.liveSidePregameLabels(event: liveNBA, prematch: nbaReading)
-        XCTAssertEqual(nbaLabels.away, "54% pregame")
-        XCTAssertEqual(nbaLabels.home, "46% pregame")
+        XCTAssertEqual(nbaLabels.away, "54%")
+        XCTAssertEqual(nbaLabels.home, "46%")
         XCTAssertNil(nbaLabels.draw)
+        XCTAssertFalse(nbaLabels.away?.localizedCaseInsensitiveContains("pregame") ?? true)
         XCTAssertFalse(nbaLabels.away?.localizedCaseInsensitiveContains("opened") ?? true)
         XCTAssertTrue(CompactGameCard12616.liveInlinePregameFits(
             awayShortName: "Celtics", homeShortName: "76ers", typeSize: .large))
@@ -302,17 +340,17 @@ final class CompactGameCard12616Tests: XCTestCase {
         """)
         let sReading = PrematchReading.resolve(prematch: liveSoccer3Way.prematchOdds, opening: nil)
         let sLabels = CompactGameCard12616.liveSidePregameLabels(event: liveSoccer3Way, prematch: sReading)
-        XCTAssertEqual(sLabels.away, "41% pregame")
-        XCTAssertEqual(sLabels.home, "34% pregame")
-        XCTAssertEqual(sLabels.draw, "25% pregame")
+        XCTAssertEqual(sLabels.away, "41%")
+        XCTAssertEqual(sLabels.home, "34%")
+        XCTAssertEqual(sLabels.draw, "25%")
     }
 
-    // MARK: - 5. 390pt native renders for PR review (when BUILDERC_EXPORT_12616=1)
+    // MARK: - 5. 390pt native renders for PR review
 
     @MainActor
     func testExport390PtRendersWhenRequested() throws {
-        guard ProcessInfo.processInfo.environment["BUILDERC_EXPORT_12616"] == "1" else { return }
-        let outDir = URL(fileURLWithPath: "/tmp/builderc-12616-renders", isDirectory: true)
+        let renderPath = ProcessInfo.processInfo.environment["BUILDERC_RENDER_DIR_12616"] ?? "/tmp/builderc-12616-187a-renders"
+        let outDir = URL(fileURLWithPath: renderPath, isDirectory: true)
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
         let pins = PinManager(
@@ -563,6 +601,33 @@ final class CompactGameCard12616Tests: XCTestCase {
             cardBox(longNamesLargeText),
             fileName: "12616-largest-text-timberwolves-blazers-390.png",
             typeSize: .xxxLarge
+        )
+
+        let gamePageSoccerCard = EventAtlasSoccerCards11666.ThreeWayCard(
+            phase: .during,
+            legs: [
+                .init(role: .home, label: "Chelsea", rawOutcomeLabel: "Chelsea", quotedChance: 0.241, pregameChance: 0.34, observedAt: "2026-11-13T15:00:00Z", pregameObservedAt: "2026-11-13T12:25:00Z", result: nil, source: "kalshi"),
+                .init(role: .draw, label: "Draw", rawOutcomeLabel: "Draw", quotedChance: 0.235, pregameChance: 0.25, observedAt: "2026-11-13T15:00:00Z", pregameObservedAt: "2026-11-13T12:25:00Z", result: nil, source: "kalshi"),
+                .init(role: .away, label: "Arsenal", rawOutcomeLabel: "Arsenal", quotedChance: 0.524, pregameChance: 0.41, observedAt: "2026-11-13T15:00:00Z", pregameObservedAt: "2026-11-13T12:25:00Z", result: nil, source: "kalshi"),
+            ],
+            marketTitle: "Match Winner",
+            source: "kalshi",
+            sourceCount: 1,
+            quotedSum: 1.0
+        )
+        let deckState = NFLCardDeckState9483()
+        try saveRender(
+            EventAtlasSoccerThreeWayCardView11666(
+                card: gamePageSoccerCard,
+                awayColor: Color(hex: "#EF0107"),
+                homeColor: Color(hex: "#034694"),
+                state: deckState
+            )
+            .padding(16)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.black.opacity(0.08), lineWidth: 1)),
+            fileName: "12616-game-page-soccer-three-way-390.png"
         )
 
         func legacyFinishedCardBox(_ e: FeedEventData, reason: String? = nil) -> some View {
