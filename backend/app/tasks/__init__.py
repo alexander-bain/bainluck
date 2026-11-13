@@ -7115,31 +7115,40 @@ def snapshot_coverage_metrics(self):
 CATEGORY_SECTION_BASE_WAIT_S = 15
 CATEGORY_SECTION_BASE_WAIT_TRIES = 8
 
+#: #12042: the category precompute's sections, in run order, one beat entry each
+#: at :26, :27, ... after the :25 entry opens the hour's report. Declared here
+#: rather than imported (the module is imported lazily by these tasks); a test
+#: pins it equal to `precompute_category_pages.category_section_names()`. Each is
+#: its own beat entry, not dispatched by another task, so the result-retention
+#: rule (`test_no_task_dispatches_another_task`) still derives from the beat.
+CATEGORY_SECTION_BEAT_ORDER = (
+    "politics", "entertainment", "economics", "weather", "golf", "golf_schedule", "grids",
+)
+#: One minute per section, in order. :31 is skipped: it is the settlement-capture
+#: sweep's clear minute on `background` (10:31 UTC daily, CERT-418's gate in
+#: `test_settlement_sweep_beat`).
+CATEGORY_SECTION_MINUTES = (26, 27, 28, 29, 30, 32, 33)
+
 
 @celery_app.task(bind=True, soft_time_limit=60, time_limit=90, name="app.tasks.precompute_category_pages")
 def precompute_category_pages(self):
-    """Precompute category page responses and cache in Redis (every 1h).
+    """Open the hour's category precompute report (every 1h at :25).
 
-    #12042: this now SENDS one task per section instead of running all seven in
-    one child. worker-background's prefork children are checked against
-    ``--max-memory-per-child`` only when a task ends; with seven sections in one
-    task a child ended near the sum of their peaks, beside the every-2-minute
-    Discover base build on the other child, and the worker was killed (R15) with
-    this task in flight at 2:28, 5:26 and 7:27 AM PT on Nov 12. One task per
-    section lets the worker recycle a child between sections.
+    #12042: the seven sections no longer run here. worker-background's prefork
+    children are checked against ``--max-memory-per-child`` only when a task
+    ends; with seven sections in one task a child ended near the sum of their
+    peaks, beside the every-2-minute Discover base build on the other child, and
+    the worker was killed (R15) with this task in flight at 2:28, 5:26 and
+    7:27 AM PT on Nov 12. Each section is now its own beat entry
+    (``precompute_category_section``, a minute apart from :26), so a child can be
+    recycled between sections and two sections rarely overlap. This entry opens
+    the report first, so a section that never lands reads ``not_attempted``,
+    never last hour's ``ok``.
     """
-    from app.tasks.precompute_category_pages import (
-        category_section_names,
-        start_section_report,
-    )
+    from app.tasks.precompute_category_pages import start_section_report
 
-    names = category_section_names()
-    # This hour's report first: a section that never lands reads not_attempted,
-    # never last hour's ok (Fable's review, 10:38 AM Nov 12).
     start_section_report()
-    for name in names:
-        precompute_category_section.apply_async(args=[name], queue="background")
-    return {"status": "dispatched", "sections": names}
+    return {"status": "report_opened", "sections": list(CATEGORY_SECTION_BEAT_ORDER)}
 
 
 @celery_app.task(
@@ -8705,7 +8714,9 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-category-pages": {
         "task": "app.tasks.precompute_category_pages",
-        "schedule": crontab(minute=25),  # Every hour at :25 — warm caches for politics/entertainment/economics/weather
+        # Every hour at :25. #12042: it opens the hour's report; the sections run
+        # as their own entries from :26 (added below the schedule literal).
+        "schedule": crontab(minute=25),
         "options": {"queue": "background"},
     },
     "warm-prop-families": {
@@ -10345,6 +10356,18 @@ celery_app.conf.beat_schedule = {
         "options": {"queue": "background"},
     },
 }
+
+# #12042: one beat entry per category section, a minute apart after the :25 entry
+# that opens the hour's report (see `precompute_category_pages`).
+for _section, _minute in zip(CATEGORY_SECTION_BEAT_ORDER, CATEGORY_SECTION_MINUTES, strict=True):
+    celery_app.conf.beat_schedule[
+        f"precompute-category-section-{_section.replace('_', '-')}"
+    ] = {
+        "task": "app.tasks.precompute_category_section",
+        "schedule": crontab(minute=_minute),
+        "kwargs": {"section": _section},
+        "options": {"queue": "background"},
+    }
 
 # Route the heavy grinder class onto the dedicated `heavy` worker. Beat entries
 # pin `options["queue"]` explicitly, which OVERRIDES task_routes at dispatch

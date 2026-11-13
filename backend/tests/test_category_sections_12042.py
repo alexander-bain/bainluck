@@ -6,8 +6,9 @@ child, and the worker checks a child against ``--max-memory-per-child`` only whe
 a task ends, so the child ended near the sum of seven peaks while the other child
 ran the every-2-minute Discover base build. Now:
 
-* the hourly task SENDS one ``precompute_category_section`` task per section, in
-  the declared order (grids last), so a child can be recycled between sections;
+* each section is its own beat entry (``precompute_category_section``, one a
+  minute from :26, grids last), so a child can be recycled between sections;
+  the :25 entry only opens the hour's report (no task dispatches another);
 * a section that finds the base build running waits and asks again, up to a cap,
   then runs anyway; the base build never waits;
 * each section folds its result into the one report the admin rail reads,
@@ -98,26 +99,42 @@ def _report(r):
     return json.loads(r.store[pcp.PRECOMPUTE_STATUS_KEY])
 
 
-def test_the_dispatcher_sends_every_section_in_order(monkeypatch):
+def test_the_hourly_task_opens_the_report_and_sends_nothing(monkeypatch, rc):
     sent = []
     monkeypatch.setattr(
         TASKS["app.tasks.precompute_category_section"],
         "apply_async",
-        lambda args=None, queue=None, **k: sent.append((args[0], queue)),
+        lambda *a, **k: sent.append((a, k)),
     )
     out = TASKS["app.tasks.precompute_category_pages"].run()
     names = pcp.category_section_names()
-    assert [s for s, _ in sent] == names
-    assert names[-1] == "grids" and names.index("golf_schedule") < names.index("grids")
-    assert {q for _, q in sent} == {"background"}
-    assert out == {"status": "dispatched", "sections": names}
+    assert sent == []  # no task dispatches another (result-retention rule)
+    assert out == {"status": "report_opened", "sections": names}
+    rep = _report(rc)
+    assert rep["mode"] == "per_section"
+    assert rep["sections"] == {n: {"outcome": "not_attempted"} for n in names}
 
 
-def test_the_beat_still_fires_the_dispatcher_once_an_hour():
+def test_the_declared_beat_order_is_the_modules_section_list():
+    assert list(tasks_mod.CATEGORY_SECTION_BEAT_ORDER) == pcp.category_section_names()
+
+
+def test_each_section_is_its_own_beat_entry_a_minute_apart_after_the_report():
     beat = tasks_mod.celery_app.conf.beat_schedule
-    entries = [e for e in beat.values() if e["task"] == "app.tasks.precompute_category_pages"]
-    assert len(entries) == 1
-    assert not any(e["task"] == "app.tasks.precompute_category_section" for e in beat.values())
+    opener = [e for e in beat.values() if e["task"] == "app.tasks.precompute_category_pages"]
+    assert len(opener) == 1 and opener[0]["schedule"].minute == {25}
+    sections = sorted(
+        (min(e["schedule"].minute), e["kwargs"]["section"], e["options"]["queue"])
+        for e in beat.values()
+        if e["task"] == "app.tasks.precompute_category_section"
+    )
+    names = pcp.category_section_names()
+    assert [s for _, s, _ in sections] == names, "one entry per section, in run order"
+    assert [m for m, _, _ in sections] == list(tasks_mod.CATEGORY_SECTION_MINUTES)
+    assert 31 not in tasks_mod.CATEGORY_SECTION_MINUTES  # the settlement sweep's minute
+    assert sorted(set(tasks_mod.CATEGORY_SECTION_MINUTES)) == list(tasks_mod.CATEGORY_SECTION_MINUTES)
+    assert {q for _, _, q in sections} == {"background"}
+    assert names[-1] == "grids" and names.index("golf_schedule") < names.index("grids")
 
 
 @pytest.mark.asyncio
@@ -252,7 +269,6 @@ async def test_a_section_that_never_lands_reads_not_attempted_next_hour(monkeypa
 
     names = pcp.category_section_names()
     monkeypatch.setattr(pcp, "_category_sections", lambda: [(n, _ok) for n in names])
-    monkeypatch.setattr(TASKS["app.tasks.precompute_category_section"], "apply_async", lambda *a, **k: None)
     dispatch = TASKS["app.tasks.precompute_category_pages"]
 
     dispatch.run()  # hour 1

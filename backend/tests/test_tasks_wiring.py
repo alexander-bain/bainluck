@@ -353,6 +353,14 @@ class TestBeatScheduleCompleteness:
         "compute-fair-fight-comparison",
         "precompute-source-intelligence",
         "precompute-category-pages",
+        # #12042: one entry per category section, :26-:30, :32, :33.
+        "precompute-category-section-politics",
+        "precompute-category-section-entertainment",
+        "precompute-category-section-economics",
+        "precompute-category-section-weather",
+        "precompute-category-section-golf",
+        "precompute-category-section-golf-schedule",
+        "precompute-category-section-grids",
         "warm-event-concepts",
         # LAT-P137 — the producer for the Search page's category census, which
         # LAT-P122 cached and left with nothing to rebuild it. Gotcha #12: this
