@@ -171,6 +171,9 @@ def admission_arm(path, *, stable_backend_clock=False):
 
 
 def consume(spec, out, *, stable_backend_clock=False):
+    if spec.get("mode") == "a1-board-contention":
+        from a1_adapter import a1_consume
+        return a1_consume(spec, out, stable_backend_clock=stable_backend_clock)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=False)  # never silently replace a result
     try:
@@ -215,6 +218,10 @@ def run_existing(spec, out, *, stable_backend_clock=False):
     New modes are not aliases for the admission fixture. Refuse rather than
     silently substituting synthetic prices for a captured or live stream.
     """
+    if spec["mode"] == "a1-board-contention":
+        # The one named A1 case: its own pins, tape and adapter, the same helper lifecycle.
+        from a1_adapter import a1_run
+        return a1_run(spec, out, stable_backend_clock=stable_backend_clock, load_module=load_module)
     if spec["mode"] != "controlled-admission":
         raise ValueError("use a named, reviewed replay/shadow adapter; do not substitute the admission control")
     if Path(out).exists():
@@ -331,7 +338,8 @@ def stage_recorder(spec, out, *, display_identity=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["consume", "run", "score", "stage-recorder", "stage-display-recorder"])
+    parser.add_argument("command", choices=["consume", "run", "score", "stage-recorder", "stage-display-recorder",
+                                            "prepare-a1"])
     parser.add_argument("spec", type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--stable-backend-clock", action="store_true",
@@ -339,6 +347,11 @@ def main():
                              "recorded in the result (default: refuse with timing_unknown)")
     args = parser.parse_args()
     spec = read(args.spec)
+    if args.command == "prepare-a1":
+        # Preparation only: the candidate's backend beside the baseline's exact frontend build.
+        from a1_adapter import a1_prepare_candidate
+        print(a1_prepare_candidate(spec["helper"], spec["baseline_prepared"], spec["candidate_sha"]))
+        return
     if args.command in ("stage-recorder", "stage-display-recorder"):
         print(stage_recorder(spec, args.out, display_identity=args.command == "stage-display-recorder"))
         return
@@ -347,6 +360,10 @@ def main():
         return
     run = consume if args.command == "consume" else run_existing
     result = run(spec, args.out, stable_backend_clock=args.stable_backend_clock)
+    if spec.get("mode") == "a1-board-contention":
+        print(json.dumps({"decision": result["decision"], "scope": result["decision_scope"],
+                          "comparison": str(args.out.resolve()/("report" if args.command == "run" else "")/"comparison.json")}, indent=2))
+        return
     print(json.dumps({"decision": result["decision"], "scope": result["decision_scope"],
                       "view": str(args.out.resolve()/("report" if args.command == "run" else "")/"index.html")}, indent=2))
 
