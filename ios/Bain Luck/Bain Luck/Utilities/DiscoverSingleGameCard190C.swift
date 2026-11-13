@@ -152,7 +152,7 @@ enum DiscoverSingleGameCard190C {
         let hasPrematchAny = pregameLabels.away != nil || pregameLabels.home != nil || pregameLabels.draw != nil
         let showPregameColumn: Bool = {
             if isSuspended { return hasPrematchAny }
-            if isScheduled { return hasPrematchAny }
+            if isScheduled { return false }
             // On 3-column states (Live / Finished), honour `showsInlinePregame` so `.xxxLarge`
             // long single-word names never break mid-word.
             return showsInlinePregame && hasPrematchAny

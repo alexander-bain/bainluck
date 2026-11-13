@@ -95,14 +95,14 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
                           "projected_away_score": 19.6, "projected_home_score": 22.6}}
         """)
         let nflModel = DiscoverSingleGameCard190C.build(event: beforeNFL, prematch: prematch(beforeNFL))
-        XCTAssertEqual(nflModel.headers, .init(score: nil, pregame: "Pregame", primary: "Now"))
+        XCTAssertEqual(nflModel.headers, .init(score: nil, pregame: nil, primary: "Now"), "Before kickoff, show Now only (no Pregame column)")
         XCTAssertEqual(nflModel.rows.map(\.shortName), ["Vikings", "Packers"])
-        XCTAssertEqual(nflModel.rows.map(\.pregameText), ["45%", "55%"])
+        XCTAssertEqual(nflModel.rows.map(\.pregameText), [nil, nil])
         XCTAssertEqual(nflModel.rows.map(\.primaryCell), [.probability("41%"), .probability("59%")])
         XCTAssertNotNil(nflModel.bar)
         XCTAssertEqual(nflModel.scheduledProjectedLine, "Projected: VIK 20 \u{2013} GBP 23")
 
-        // 2. Before (187-A Three-Way Soccer: Draw in the middle of both rows and bar!)
+        // 2. Before (187-A Three-Way Soccer: Draw in the middle of both rows and bar, Now only before kickoff!)
         let soccerThreeWay = try decodeEvent("""
         {"id": 15333846, "sport": "soccer_uefa_nations_league", "sport_name": "UEFA",
          "away_team": "Greece", "home_team": "Netherlands",
@@ -111,10 +111,10 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
          "current_odds": {"away_probability": 0.17, "home_probability": 0.63, "draw_probability": 0.20}}
         """)
         let soccerModel = DiscoverSingleGameCard190C.build(event: soccerThreeWay, prematch: prematch(soccerThreeWay))
-        XCTAssertEqual(soccerModel.headers, .init(score: nil, pregame: "Pregame", primary: "Now"))
+        XCTAssertEqual(soccerModel.headers, .init(score: nil, pregame: nil, primary: "Now"))
         XCTAssertEqual(soccerModel.rows.map(\.kind), [.away, .draw, .home], "187-A puts Draw in the middle")
         XCTAssertEqual(soccerModel.rows.map(\.shortName), ["Greece", "Draw", "Netherlands"])
-        XCTAssertEqual(soccerModel.rows.map(\.pregameText), ["19%", "21%", "60%"])
+        XCTAssertEqual(soccerModel.rows.map(\.pregameText), [nil, nil, nil])
         XCTAssertEqual(soccerModel.rows.map(\.primaryCell), [.probability("17%"), .probability("20%"), .probability("63%")])
         XCTAssertEqual(soccerModel.bar?.drawShare ?? 0, 0.20, accuracy: 0.001)
 
@@ -285,7 +285,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
             VStack(spacing: 14) {
                 NativeEventDiscoverCard(
                     event: beforeNFL,
-                    feedContext: "Packers moved 4 points since opening",
+                    feedContext: "Packers moved 4 points from pregame",
                     expandedContext: nil,
                     navigationPath: .constant(NavigationPath())
                 )
@@ -297,7 +297,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
                 )
                 NativeEventDiscoverCard(
                     event: liveNBA,
-                    feedContext: "Raptors up 7 at halftime after opening at 36%",
+                    feedContext: "Raptors up 7 at halftime from 36% pregame",
                     expandedContext: nil,
                     navigationPath: .constant(NavigationPath())
                 )
