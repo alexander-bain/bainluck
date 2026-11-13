@@ -3001,3 +3001,93 @@ async def test_real_governor_read_dates_the_quote_without_inventing_movement_126
     # The unchanged field is genuinely fresh now; the next pass stays bounded.
     selected = await fpr._scan_registered_candidates(db, market_ids=[mid], stale_minutes=45)
     assert selected == []
+
+
+async def test_12658_quote_withdrawal_preserves_grades_newer_writes_and_unread_conditions(db):
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.tasks.polymarket import _retire_unpriced_legs
+
+    now = datetime.now(timezone.utc)
+    def market(ext, source="polymarket", status="open"):
+        return FuturesMarket(source=source, external_id=ext, name=ext,
+                             category="futures", market_tier=1, status=status)
+    parent, child, unrelated, other_source, resolved = (
+        market("12658-parent"), market("0x12658"), market("unread-parent"),
+        market("0x12658", "kalshi"), market("resolved", status="resolved"),
+    )
+    db.add_all([parent, child, unrelated, other_source, resolved])
+    await db.flush()
+    rows = {}
+    def leg(label, owner, ext="0x12658", **changes):
+        values = dict(market_id=owner.id, external_id=ext, name=label,
+                      current_probability=Decimal("0.71"), current_american_odds=-245,
+                      opening_probability=Decimal("0.71"), probability_change_24h=Decimal("0.56"),
+                      current_yes_bid=Decimal("0.1"), current_yes_ask=Decimal("0.78"),
+                      is_winner=False, resolution_source=None, last_updated=now-timedelta(hours=1))
+        values.update(changes)
+        rows[label] = FuturesOutcome(**values)
+        db.add(rows[label])
+    leg("parent", parent)
+    leg("parent complement", parent, "0x12658_side1")
+    leg("child yes", child, "0x12658_yes")
+    leg("child no", child, "0x12658_no")
+    leg("winner", parent, "winner", is_winner=True)
+    leg("graded loser", parent, "graded", resolution_source="venue")
+    leg("newer", parent, "newer", last_updated=now+timedelta(hours=1))
+    leg("absent", parent, "absent")
+    leg("prefix", parent, "0x12658_yesmore")
+    leg("other parent", unrelated)
+    leg("other source", other_source)
+    leg("resolved", resolved)
+    await db.commit()
+    ids = {label: row.id for label, row in rows.items()}
+    before = {label: (row.opening_probability, row.last_updated) for label, row in rows.items()}
+    assert await _retire_unpriced_legs(db, parent.id, ["0x12658", "winner", "graded", "newer"]) == 4
+    await db.commit()
+    db.expire_all()
+    result = (await db.execute(select(FuturesOutcome).where(FuturesOutcome.id.in_(ids.values())))).scalars().all()
+    after = {row.id: row for row in result}
+    for label, oid in ids.items():
+        row = after[oid]
+        if label in {"parent", "parent complement", "child yes", "child no"}:
+            assert row.current_probability is None, label
+            assert row.current_american_odds is None, label
+            assert row.probability_change_24h is None, label
+        else:
+            assert row.current_probability == Decimal("0.71"), label
+            assert row.probability_change_24h == Decimal("0.56"), label
+        assert (row.opening_probability, row.last_updated) == before[label], label
+
+
+async def test_12658_sql_move_does_not_compare_an_old_trade_with_a_quote(db):
+    from decimal import Decimal
+    from sqlalchemy import select, update
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.polymarket_quote import quoted_price_change
+
+    market = FuturesMarket(source="polymarket", external_id="12658-moves",
+                           name="Quote movements", category="futures", status="open")
+    db.add(market)
+    await db.flush()
+    cases = [
+        ("tight old trade", "0.71", "0.13", "0.17", None),
+        ("wide old trade", "0.71", "0.10", "0.78", None),
+        ("supported quote", "0.15", "0.13", "0.17", Decimal("0.01")),
+        ("unchanged quote", "0.16", "0.15", "0.17", Decimal("0")),
+    ]
+    for name, probability, bid, ask, _ in cases:
+        db.add(FuturesOutcome(market_id=market.id, external_id=name, name=name,
+                              current_probability=Decimal(probability), current_yes_bid=Decimal(bid),
+                              current_yes_ask=Decimal(ask), is_winner=False))
+    await db.commit()
+    await db.execute(update(FuturesOutcome).where(FuturesOutcome.market_id == market.id).values(
+        current_probability=Decimal("0.16"), current_yes_bid=Decimal("0.14"),
+        current_yes_ask=Decimal("0.18"), probability_change_24h=quoted_price_change(Decimal("0.16")),
+    ).execution_options(synchronize_session=False))
+    await db.commit()
+    db.expire_all()
+    result = (await db.execute(select(FuturesOutcome))).scalars().all()
+    changes = {row.name: row.probability_change_24h for row in result}
+    assert changes == {name: expected for name, _, _, _, expected in cases}

@@ -33,6 +33,7 @@ from app.utils.content_understanding import (  # CU-1 clause (2), #5273
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.polymarket_evidence import PMEvidence  # #1870
+from app.utils.polymarket_quote import current_polymarket_quote, quoted_price_change
 from app.utils.settled_price import (  # #5246 / #7767
     SETTLED_NO_PRICE,
     SETTLED_YES_PRICE,
@@ -3540,9 +3541,17 @@ async def _process_event_batch(
                         # closed on a None partner by design, so asking it here
                         # would blank every one-sided market on the venue.
                         sub_price_ok = True
+                        sub_under_quote = sub_under_raw
+                        if not market.closed and sub_under_raw is not None:
+                            # #12658: current sides use the same binary book. The
+                            # raw pair above remains the opening provenance gate.
+                            no_bid, no_ask, _ = complementary_book(
+                                market.best_bid, market.best_ask, market.last_trade_price
+                            )
+                            sub_under_quote = current_polymarket_quote(no_bid, no_ask)
                         if sub_under_raw is not None:
                             sub_price_verdict = classify_pair_price(
-                                prob, sub_under_raw
+                                prob, sub_under_quote
                             )
                             if sub_price_verdict != PAIR_OPENING_OK:
                                 sub_price_ok = False
@@ -3599,9 +3608,7 @@ async def _process_event_batch(
                         # freshness stamp on an absence. Both keys are therefore
                         # omitted on refusal, leaving the prior values untouched.
                         if sub_price_ok:
-                            over_update["probability_change_24h"] = (
-                                prob - FuturesOutcome.current_probability
-                            )
+                            over_update["probability_change_24h"] = quoted_price_change(prob)
                             over_update["price_changed_at"] = price_changed_at_value(  # #2024
                                 FuturesOutcome.current_probability,
                                 FuturesOutcome.price_changed_at,
@@ -3678,7 +3685,7 @@ async def _process_event_batch(
 
                         # Create Under/No outcome if available
                         if len(market.outcome_prices) > 1:
-                            under_prob = market.outcome_prices[1]
+                            under_prob = sub_under_quote
                             under_fallback = "Under" if "o/u" in sub_name.lower() else "No"
                             under_name = _sub_market_side_label(
                                 market,
@@ -3775,6 +3782,7 @@ async def _process_event_batch(
                             if sub_activity.observed:
                                 under_update["volume"] = sub_vol
                             if sub_price_ok:
+                                under_update["probability_change_24h"] = quoted_price_change(under_prob)
                                 under_update["price_changed_at"] = price_changed_at_value(  # #2024
                                     FuturesOutcome.current_probability,
                                     FuturesOutcome.price_changed_at,
@@ -3971,7 +3979,7 @@ async def _process_event_batch(
                         "current_yes_bid": od["yes_bid"],
                         "current_yes_ask": od["yes_ask"],
                         "rank": rank,
-                        "probability_change_24h": prob - FuturesOutcome.current_probability,
+                        "probability_change_24h": quoted_price_change(prob),
                         "rank_change_24h": FuturesOutcome.rank - rank,
                         "last_updated": func.now(),
                         "price_changed_at": price_changed_at_value(  # #2024
@@ -5917,106 +5925,71 @@ def _parent_placeholder_legs(event, priced: list[dict]) -> list[dict]:
 
 
 def _unpriced_leg_external_ids(event) -> list[str]:
-    """Condition ids the venue SERVED this pass but quotes no price for (#4000).
+    """Condition ids actually read without a usable current quote (#12658).
 
-    The counterpart to :func:`_parent_outcome_data`, and it exists because
-    ``continue`` throws away a fact we were told. When Gamma answers a negRisk leg
-    with no price and a dead book, ``_parent_outcome_data`` drops the leg from the
-    write set — correctly, there is no price to write — and the row we already
-    hold keeps whatever number it was last given. **Declining to write is not the
-    same as withdrawing what is written**, and for 2,545 rows across 105 open
-    single-winner Polymarket fields the difference had been standing since
-    2026-05-12: measured on production 2026-09-09, market 112897 (*Presidential
-    Election Winner 2028*) carried 52 legs refreshed that day and 76 frozen at
-    ``current_probability = 1.000000``, ``price_changed_at IS NULL``, untouched for
-    120 days.
-
-    Gamma is unambiguous about them and says so on every pass — for
-    ``Will Person BG win the 2028 US Presidential Election?``::
-
-        active=false  outcomePrices=None  bestBid=0  bestAsk=1
-        lastTradePrice=0  volume=0
-
-    So the leg is not delisted (it is still in ``GET /events/31552``'s 128 markets,
-    beside the live ones) and it is not mispriced. It has no price, and our row
-    claims certainty on its behalf.
-
-    Two safeties are structural rather than heuristic, which is why the retirement
-    is keyed on the payload instead of on a database sweep:
-
-    * **A leg the pass did not cover can never be retired.** Only ids present in
-      ``event.markets`` are returned, so a truncated or partial payload withdraws
-      nothing — it simply names fewer legs.
-    * **A refused price is not an absent price.** ``_resolve_market_probability``
-      also returns ``None`` when it *distrusts* a quote the venue really is making
-      (the #151 evidence gate, the fabricated-midpoint test). Retiring those would
-      un-price live markets, so a leg with any bid or any trade behind it is
-      excluded here even though it is unpriced by us.
-
-    Scoped to negRisk multi-market events: that is the whole measured population
-    (every one of the 84 tier-1/2 markets is ``mutually_exclusive`` + ``field`` +
-    polymarket), and the other two shapes in ``_parent_outcome_data`` price through
-    different gates whose refusals mean different things.
+    Open legs use the same two-sided book as every current-price writer. An
+    undated last trade cannot keep an unsupported price alive. Closed legs
+    retain #4000's narrower empty-book rule; this is not a settlement writer.
+    Missing conditions are never inferred from a partial response.
     """
-    if not (event.neg_risk and len(event.markets) > 1):
-        return []
-
     unpriced: list[str] = []
     for market in event.markets:
         if not market.condition_id:
             continue
+        if not market.closed:
+            if current_polymarket_quote(market.best_bid, market.best_ask) is None:
+                unpriced.append(market.condition_id)
+            continue
+        if not (event.neg_risk and len(event.markets) > 1):
+            continue
         if _resolve_market_probability(market) is not None:
-            continue  # the venue is quoting; nothing to withdraw
-        bid = market.best_bid
-        if bid is not None and float(bid) > 0:
-            continue  # a real bid — we refused it, the venue did not
-        last = market.last_trade_price
-        if last is not None and float(last) > 0:
-            continue  # it has traded — that is evidence, not an absence
+            continue
+        if market.best_bid is not None and float(market.best_bid) > 0:
+            continue
+        if market.last_trade_price is not None and float(market.last_trade_price) > 0:
+            continue
         unpriced.append(market.condition_id)
     return unpriced
 
 
 async def _retire_unpriced_legs(session, futures_market_id: int, external_ids) -> int:
-    """Withdraw our number on legs the venue quotes no price for. Returns the count.
+    """Withdraw unsupported quotes in the read parent and its exact children.
 
-    ``current_probability``/``current_american_odds`` only — the two fields that
-    render. Deliberately NOT touched:
-
-    * ``opening_probability``. These rows carry a frozen ``1.000000`` opening too,
-      which is the permanent half of the damage ``winner_field_coherence`` warns
-      about, but opening is calibration-truth and is graded by a different owner;
-      withdrawing it here would be a curve change wearing an ingest fix's clothes.
-      Filed separately with the numbers.
-    * ``is_winner IS TRUE`` rows. A crowned leg's price is its settlement, not a
-      quote, and nothing about an empty book afterwards makes the grade untrue.
-    * ``last_updated``. Tempting, and wrong: the touch-columns are what freshness
-      consumers read, and ``routes/playoffs.py`` drops an outcome from the grid on
-      a stale stamp. Stamping a retirement fresh would advertise "we have a current
-      price for this leg" at the exact moment we stopped having one, and could
-      promote a blank cell into a grid that was correctly dropping it. The row's
-      old stamp is the honest one — we have nothing newer. The retirement is made
-      observable through the ``legs_retired`` task stat and the log line instead,
-      which is where an ingest event belongs.
+    Condition ids name the sibling child rows; no name or prefix matching is
+    used. Grades, openings and observation stamps stay intact. The transaction
+    timestamp protects a newer writer that committed while this pass fetched.
     """
     ids = list(external_ids)
     if not ids:
         return 0
-    from sqlalchemy import update
-    from app.models import FuturesOutcome
+    from sqlalchemy import or_, select, update
+    from app.models import FuturesMarket, FuturesOutcome
 
+    leg_ids = [suffix for cid in ids for suffix in (cid, f"{cid}_yes", f"{cid}_no", f"{cid}_side1")]
+    covered_markets = select(FuturesMarket.id).where(
+        FuturesMarket.source == "polymarket",
+        FuturesMarket.status == "open",
+        or_(
+            FuturesMarket.id == futures_market_id,
+            FuturesMarket.external_id.in_(ids),
+        ),
+    )
     result = await session.execute(
         update(FuturesOutcome)
         .where(
-            FuturesOutcome.market_id == futures_market_id,
-            FuturesOutcome.external_id.in_(ids),
+            FuturesOutcome.market_id.in_(covered_markets),
+            FuturesOutcome.external_id.in_(leg_ids),
             FuturesOutcome.current_probability.isnot(None),
             FuturesOutcome.is_winner.isnot(True),
+            FuturesOutcome.resolution_source.is_(None),
+            or_(FuturesOutcome.last_updated.is_(None), FuturesOutcome.last_updated <= func.now()),
         )
         .values(
             current_probability=None,
             current_american_odds=None,
+            probability_change_24h=None,
         )
+        .execution_options(synchronize_session=False)
     )
     return int(result.rowcount or 0)
 
@@ -6209,26 +6182,10 @@ def _parent_outcome_data(event) -> list[dict]:
     dark-market refresh below cannot drift into two different ideas of what a
     Polymarket event's parent price is. Both call this and nothing else.
 
-    The three shapes are the poll's own, unchanged, and the difference between
-    them is deliberate — folding them together would be a pricing change wearing
-    a refactor's clothes:
-
-    * **negRisk multi-market** — a single-winner partition, so each sub-market IS
-      one leg. Priced through :func:`_resolve_market_probability`, which applies
-      the placeholder filter and the #151 evidence gate.
-    * **non-negRisk multi-market** (a game: moneyline + spread + O/U + props) —
-      the parent keeps a leg per sub-market for the moneyline matching task, and
-      it takes Gamma's precomputed ``outcome_prices[0]`` RAW, bypassing those two
-      gates. #1578 recorded that as the least-guarded of the five write paths and
-      deliberately added only the phantom-midpoint test to it. #10298 tightened it
-      once, on purpose: a raw value that its own same-payload book prices out
-      (``book_refutes_price``, epsilon 0.005) is now dropped, never substituted, and
-      :func:`_refused_leg_books` reads this branch's output to name it.
-    * **single-market** — priced through the gated resolver and named "Yes"
-      unless the venue named a side (#6739). TWO legs when the venue named
-      BOTH sides — a sole-moneyline game, which never reaches the
-      decomposition branch — and one otherwise, which keeps every genuine
-      Yes/No question byte-identical (#7505; see the branch's own note).
+    All three shapes use the same open-market quote policy. A negRisk field
+    has a leg per sub-market, a non-negRisk parent keeps one anchor per
+    sub-market, and a single named binary keeps both complementary sides.
+    Closed markets retain their existing settlement interpretation.
 
     Returns the rows unsorted and unranked; the caller sorts, ranks and writes.
     """
@@ -6261,28 +6218,9 @@ def _parent_outcome_data(event) -> list[dict]:
 
     if len(event.markets) > 1:
         for market in event.markets:
-            prob = market.outcome_prices[0] if market.outcome_prices else None
-            # #6676: the same pair, for the same reason, as in
-            # `_resolve_market_probability_with_source` — read the long comment
-            # there. This is the least-guarded of the five write paths (#1578), and
-            # outcome 61246705 reached a /sports card through THIS branch, not the
-            # resolver, so guarding only the resolver would have fixed two of the
-            # three named rows and left the parent anchor printing 50%.
-            if is_fabricated_midpoint(
-                prob, market.best_bid, market.best_ask
-            ) or is_empty_book_midpoint(prob, market.best_bid, market.best_ask):
-                # #7548: ...and only a trade the leg's own book has not priced out.
-                prob = _last_trade_survives_own_book(market)
-            elif prob is not None and prob > 0 and book_refutes_price(
-                market.best_bid, market.best_ask, float(prob)
-            ):
-                # #10298 C2: anyone can buy at this ask or sell into this bid right
-                # now, so a raw number the book prices out is not a current price,
-                # whatever produced it (Lions–Packers: 0.53 over a 0.52 ask). SKIP, never substitute: no
-                # last trade, no ask, no midpoint. This can remove a number and can
-                # never add one. An ask of None or 1.0 cannot be exceeded and a
-                # 0-bid refutes nothing, so gotcha #19's blowout still prices.
-                continue
+            # #12658: parent and child use the same current book. Gamma's raw
+            # value can switch to an undated trade without the book moving.
+            prob = _resolve_market_probability(market)
             if prob is None or prob <= 0:
                 continue
             # Q492: this is the parent anchor of a game-level event, and its
@@ -6434,7 +6372,7 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
     """
     Resolve the Yes-side probability for a Polymarket market, and name its source.
 
-    Priority: outcomePrices[0] → bid/ask midpoint → lastTradePrice.
+    Open markets: a usable two-sided book. Closed markets: the legacy resolver.
 
     THE SOURCE IS RETURNED BECAUSE THE PAIR WRITER NEEDS IT. Only
     ``outcome_prices`` is a leg of the same upstream-normalised pair as
@@ -6461,6 +6399,24 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
     # Reject known placeholder markets before examining prices
     if _is_placeholder_outcome(market):
         return None, None
+
+    # #12658: a current open-market number is the midpoint of a usable book.
+    # Neither outcomePrices nor lastTradePrice carries the time of a trade.
+    # Even positive 24-hour volume cannot date that print to this quote. Closed
+    # markets retain the existing settlement path below.
+    if not getattr(market, "closed", False):
+        quote = current_polymarket_quote(market.best_bid, market.best_ask)
+        if quote is None:
+            return None, None
+        raw = market.outcome_prices[0] if market.outcome_prices else None
+        # Preserve opening provenance when Gamma's own pair is this same quote;
+        # a replacement of its old trade must not masquerade as that raw pair.
+        source = (
+            "outcome_prices"
+            if raw is not None and round(float(raw), 6) == round(quote, 6)
+            else "bid_ask_midpoint"
+        )
+        return quote, source
 
     # #151 cp-capture guard: real price discovery leaves orderbook/trade evidence.
     # A live bid, a real (sub-max) ask, or a last trade all count. Gamma's

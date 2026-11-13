@@ -10901,6 +10901,42 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
 # =============================================================================
 
 
+def _live_polymarket_quote(market: dict, outcome_name: str | None):
+    """Price the named binary side from the same book as the hourly writer."""
+    import json
+
+    from app.utils.polymarket_quote import current_polymarket_quote
+
+    if market.get("closed"):
+        return None
+    probability = current_polymarket_quote(market.get("bestBid"), market.get("bestAsk"))
+    if probability is None:
+        return None
+    names = market.get("outcomes", [])
+    try:
+        names = json.loads(names) if isinstance(names, str) else names
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(names, list) or len(names) != 2 or not all(isinstance(n, str) for n in names):
+        return None
+    names = [name.strip() for name in names]
+    side = 0
+    if names[0].lower() not in ("yes", "no", ""):
+        matches = [i for i, name in enumerate(names) if outcome_name and _fuzzy_team_match(outcome_name, name)]
+        if len(matches) != 1:
+            return None
+        side = matches[0]
+    elif outcome_name and outcome_name.strip().lower() in ("yes", "no"):
+        matches = [i for i, name in enumerate(names) if name.lower() == outcome_name.strip().lower()]
+        if len(matches) != 1:
+            return None
+        side = matches[0]
+    bid, ask = float(market["bestBid"]), float(market["bestAsk"])
+    if side == 1:
+        return 1 - probability, 1 - ask, 1 - bid, side
+    return probability, bid, ask, side
+
+
 def _clear_outcome_price(outcome, now) -> bool:
     """Take the price off one leg, or decline to. The shared body of the two
     clears below; it owns the CONDITIONS and the writes, never the reason.
@@ -12262,18 +12298,6 @@ async def _poll_live_prediction_market_prices():
                         for pm in poly_markets:
                             condition_id = pm.get("conditionId", "")
 
-                            # Parse outcomePrices and outcomes (both stringified JSON arrays)
-                            prices_raw = pm.get("outcomePrices", "[]")
-                            outcomes_raw = pm.get("outcomes", "[]")
-                            try:
-                                prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
-                                outcomes_names = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
-                            except (json.JSONDecodeError, TypeError):
-                                continue
-
-                            if not prices:
-                                continue
-
                             # Find matching outcome by condition_id (batch-loaded)
                             outcome = pop.outcome_lookup.get((market_id, condition_id))
                             if not outcome:
@@ -12295,152 +12319,25 @@ async def _poll_live_prediction_market_prices():
                             # back (CERT-3652).
                             polymarket_unpriced_reads.add(outcome.id)
 
-                            # Determine the correct price for this outcome.
-                            #
-                            # Polymarket outcomePrices is parallel to outcomes:
-                            #   outcomes: ["Team A", "Team B"]  →  prices: [0.6, 0.4]
-                            #
-                            # For NegRisk events, each sub-market has outcomes
-                            # ["Yes", "No"] where prices[0] = "Yes" probability
-                            # for that specific team. prices[0] is always correct.
-                            #
-                            # For non-NegRisk binary markets with team-name outcomes
-                            # (e.g., outcomes: ["Warriors", "Celtics"]), prices[0]
-                            # corresponds to the FIRST listed team, not necessarily
-                            # the team our outcome record represents. We must match
-                            # by name to get the right price.
+                            # #12658: raw outcomePrices can alternate between the
+                            # book and an undated trade. Use the hourly writer's
+                            # book policy, preserving the named side's orientation.
+                            quote = _live_polymarket_quote(pm, outcome.name)
+                            if quote is None:
+                                stats["polymarket_quotes_refused"] = stats.get("polymarket_quotes_refused", 0) + 1
+                                continue
+                            prob, best_bid, best_ask, side = quote
+                            polymarket_fresh_books[outcome.id] = (best_bid, best_ask)
                             ltp = pm.get("lastTradePrice")
-                            best_bid = pm.get("bestBid")
-                            best_ask = pm.get("bestAsk")
-
-                            # Skip entirely if no trading activity — stale price from
-                            # hours/days ago is worse than no data.
-                            if ltp is None and (best_bid is None or float(best_bid) == 0):
-                                continue
-
-                            prob = float(prices[0])  # default: outcomePrices midpoint
-
-                            # Prefer lastTradePrice when bid/ask spread is wide (>15pp).
-                            # During blowouts, the order book becomes illiquid and the
-                            # midpoint is meaningless (e.g., bid=0.34 ask=0.43 → mid=0.385
-                            # but the game is effectively over).
-                            if (ltp is not None
-                                and best_bid is not None and best_ask is not None):
-                                spread = abs(float(best_ask) - float(best_bid))
-                                if spread > 0.15 and 0 < float(ltp) < 1:
-                                    prob = float(ltp)
-
-                            if (
-                                len(outcomes_names) >= 2
-                                and len(prices) >= 2
-                                and outcome.name
-                                and outcomes_names[0].lower().strip() not in ("yes", "no", "")
-                            ):
-                                # Non-generic outcome names — find which price
-                                # index corresponds to this outcome's team
-                                outcome_name_lower = outcome.name.lower().strip()
-                                for idx, oname in enumerate(outcomes_names):
-                                    if idx < len(prices) and _fuzzy_team_match(
-                                        outcome_name_lower, oname
-                                    ):
-                                        prob = float(prices[idx])
-                                        break
-
-                            if prob <= 0 or prob >= 1:
-                                continue
-
-                            # #6676 — THE THIRD WRITER. The Kalshi arm of this
-                            # same beat states the principle at its own price
-                            # call ("One price policy per venue: the same spread
-                            # guard the 2-hour poll uses ... so a wide one-sided
-                            # book cannot fabricate a ~0.50 quote here that the
-                            # full poll would have refused"). It keeps that
-                            # promise by DELEGATING to `_kalshi_yes_probability`.
-                            # This arm reimplements a price policy inline
-                            # instead, so it never picked up the two midpoint
-                            # predicates the Polymarket ingest writer applies in
-                            # `_resolve_market_probability_with_source` and
-                            # `_parent_outcome_data`, and it runs every two
-                            # minutes rather than hourly.
-                            #
-                            # Measured on production 2026-09-17 16:45Z, at the
-                            # LIVE bound (`EMPTY_BOOK_MAX_BID` is 0.05 since
-                            # #5333, not the 0.02 this class was first sized on):
-                            # 21 legs / 16 markets / 14 events stamped in 40
-                            # minutes. NINETEEN of the 21 carry this beat's
-                            # fingerprint — a strict 2-minute cadence with a
-                            # shared sub-second (…:19:22.842264, :23:22.844279,
-                            # :31:22.846291, :33:22.842150, :43:22.846327,
-                            # :45:22.850504), one batch writer per stamp — not
-                            # the hourly poll's (`last_success_at` 16:16:03Z).
-                            # The honest remainder: 2 legs (16:15:14.937991 and
-                            # 16:42:03.951022) sit off that cadence with a
-                            # different sub-second and are SOMEBODY ELSE'S write.
-                            # This guard does not claim them and they are still
-                            # open on #6676.
-                            #
-                            # Rows kept appearing AFTER the 16:27:33Z release
-                            # that carries the ingest guards, which is why
-                            # #6676's residual survived it. They reach a reader:
-                            # `/api/futures/61246736` served outcomes 230621538 /
-                            # 230492518 / 230621548 at `probability: 0.5` —
-                            # three Sao Paulo Open set lines on a live match —
-                            # each with a 1c bid / 99c ask behind it.
-                            #
-                            # DECLINE, DO NOT WITHDRAW, and that is the house
-                            # answer rather than a preference:
-                            # `_unpriced_leg_external_ids` retires only legs with
-                            # no bid AND no trade, excluding this exact class by
-                            # name ("a real bid — we refused it, the venue did
-                            # not"), because retiring a refused quote would
-                            # un-price live markets. Declining also leaves the
-                            # stored bid/ask/probability triple intact, so the
-                            # read-side predicate (#5247) can still recognise the
-                            # row; writing a NULL would destroy the evidence that
-                            # identifies it. `is_empty_book_midpoint`'s own
-                            # docstring is explicit that nothing may mutate a
-                            # stored price on its account.
-                            #
-                            # NOT DONE HERE, deliberately: delegating this arm to
-                            # `_resolve_market_probability_with_source` outright.
-                            # That resolver takes a Gamma dataclass and this loop
-                            # holds raw dicts, and its #151 evidence gate and
-                            # volume-gated last-trade exception would re-price
-                            # honest legs this beat prices correctly today. One
-                            # class, not a pricing rewrite.
-                            #
-                            # Both predicates are imported, not restated — no
-                            # threshold is introduced here.
-                            #
-                            # 🪤 ORDERING, AND WHAT IT DOES **NOT** BUY. A genuine
-                            # blowout survives because the VENUE's own
-                            # `outcomePrices` tracks the trade and so sits far
-                            # from the book's midpoint (0.93 against a 1c/99c book
-                            # is 0.43 away) — not because the wide-spread
-                            # `lastTradePrice` preference above protects it. It
-                            # does not: the name-index block between that
-                            # preference and this test reassigns
-                            # `prob = float(prices[idx])` unconditionally, so for
-                            # any leg whose outcome names are not yes/no — every
-                            # Over/Under prop — the midpoint is put back and the
-                            # trade is discarded. An earlier draft of this comment
-                            # claimed the opposite; the guard test's own
-                            # `test_the_name_index_match_clobbers_the_last_trade_preference`
-                            # falsified it, and pins today's behaviour.
-                            #
-                            # On that leg this guard turns "published 0.5 while the
-                            # book last traded 0.93" into "published nothing" —
-                            # better, but 0.93 was available and is now dropped.
-                            # Recovering it is a reordering of a pricing policy
-                            # over legs this class never measured, so it is recorded on
-                            # #6676 as a known limit rather than fixed here.
-                            if is_fabricated_midpoint(
-                                prob, best_bid, best_ask
-                            ) or is_empty_book_midpoint(prob, best_bid, best_ask):
-                                stats["polymarket_phantom_midpoints_refused"] = (
-                                    stats.get("polymarket_phantom_midpoints_refused", 0) + 1
-                                )
-                                continue
+                            if ltp is not None and side == 1:
+                                ltp = 1 - float(ltp)
+                            from app.utils.polymarket_quote import quoted_price_change_value
+                            outcome.probability_change_24h = quoted_price_change_value(
+                                outcome.current_probability,
+                                outcome.current_yes_bid,
+                                outcome.current_yes_ask,
+                                prob,
+                            )
 
                             # Update outcome probability
                             outcome.current_probability = prob
@@ -12449,13 +12346,8 @@ async def _poll_live_prediction_market_prices():
                             american = probability_to_american(prob) if 0 < prob < 1 else None
                             outcome.current_american_odds = american
 
-                            # Parse bid/ask if available
-                            best_bid = pm.get("bestBid")
-                            best_ask = pm.get("bestAsk")
-                            if best_bid is not None:
-                                outcome.current_yes_bid = float(best_bid)
-                            if best_ask is not None:
-                                outcome.current_yes_ask = float(best_ask)
+                            outcome.current_yes_bid = best_bid
+                            outcome.current_yes_ask = best_ask
 
                             outcome.last_updated = now
                             stats["outcomes_updated"] += 1

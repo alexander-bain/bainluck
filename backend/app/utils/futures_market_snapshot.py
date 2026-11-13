@@ -1306,19 +1306,21 @@ def reader_change_24h(
 ) -> Any:
     """The value a reader of the RAW `probability_change_24h` may use (#10248, D5).
 
-    Every source but DataGolf: `stored_change`, untouched, so each caller keeps
+    Sources other than DataGolf and Polymarket: `stored_change`, so each caller keeps
     its own formatting and its exact current behaviour.
 
-    DataGolf: `dated_movement_points`. DataGolf rows now carry the shared
+    DataGolf and Polymarket: `dated_movement_points`. These rows carry the shared
     per-write delta (D1), which on a 90 s in-play poll is a 90 s move; a reader
     that printed it under a "24h" label would be printing the wrong day. The
-    dated move is the same answer the detail ladder serves, or `None`.
+    dated move is the same answer the detail ladder serves, or `None`. #12658:
+    the Polymarket change from an old trade to a current quote must not become
+    a claimed daily move. The existing dated bank excludes wide-book bases.
 
     `source` is read through `__dict__` for this module's usual reason (gotcha
     #42); a row with no instance dict or no loaded source keeps the stored value.
     """
     state = _instance_dict(market)
-    if state is not None and state.get("source") == DATAGOLF_MARKET_SOURCE:
+    if state is not None and state.get("source") in (DATAGOLF_MARKET_SOURCE, "polymarket"):
         return dated_movement_points(
             market, outcome_id, current_probability, stored_change, now
         )
