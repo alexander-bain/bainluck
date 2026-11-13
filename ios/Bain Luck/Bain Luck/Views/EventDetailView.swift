@@ -1619,6 +1619,38 @@ struct EventDetailView: View {
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
             : AnyLayout(HStackLayout(spacing: 8))
 
+        if let sportHeadline12472 = EventSportHeadlines12472.resolve(
+            event: event,
+            awayFullName: event.awayTeam,
+            homeFullName: event.homeTeam,
+            liveStatusText: PeriodLabel.liveStatusText(
+                period: event.espn?.period,
+                gameClock: event.espn?.gameClock
+            ),
+            hasScore: hasScore,
+            numberStreams: vm.streamDelivering && (vm.streamHasPushedPrice || vm.displaysPreview(event)),
+            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
+            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            now: displayNow()
+        ) {
+            return stackBoundary12278 {
+                EventSportHeadlineCard12472(
+                    model: sportHeadline12472,
+                    colors: colors,
+                    ekgTracker: ekgTracker,
+                    liveUpdateStatus: vm.liveUpdateStatus,
+                    displayAsOf: displayAsOf,
+                    updateStream: vm.updateStream,
+                    showUpdateStream: $showUpdateStream,
+                    showProbabilityDetails: $showProbabilityDetails,
+                    priceStreamingEligible: priceStreamingEligible,
+                    lastReceivedAt: vm.priceActivity?.receivedAt,
+                    confirmedAt: vm.event.flatMap { vm.displayedConfirmation($0) },
+                    revealForecast: revealForecast11296
+                )
+            }
+        }
+
         // #9483 v476 phone fit — the adopted header's rows sit closer: its
         // overhanging disclosure fills exactly this gap (see below).
         let topMetaRow = stackBoundary12278 {
@@ -3321,7 +3353,8 @@ struct EventDetailView: View {
     }
 
     private func usesApprovedHeadlinePresentation9483(_ event: EventDetail) -> Bool {
-        MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
+        !EventSportHeadlines12472.applies(to: event, now: displayNow())
+            && MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
             && nflPairedHeadline(event, hasScore: Self.showsScore(
                 status: event.status, away: event.awayScore, home: event.homeScore)) != nil
     }
@@ -3584,16 +3617,17 @@ struct EventDetailView: View {
         // in any state, so Game Info holds them; it carries the projection, so
         // Game Info does not repeat it.
         let nflHeadline = nflPairedHeadline(event, hasScore: gameInfoHasScore) != nil
+        let sportHeadline12472 = EventSportHeadlines12472.applies(to: event, now: displayNow())
         // #11296 — nor when the generic hero printed the admitted live pair.
         let heroLiveForecast = genericLiveForecast11296(event, hasScore: gameInfoHasScore) != nil
-        let nflHandedOver: [(icon: String, text: String)] = nflHeadline ? [
+        let nflHandedOver: [(icon: String, text: String)] = nflHeadline && !sportHeadline12472 ? [
             recordsText(event).map { ("list.number", $0) },
             openedText(event).map { ("flag", $0) },
         ].compactMap { $0 } : []
         let heroHandedOver: [(icon: String, text: String)] =
             EventDetailView.heroCarriesGameContext(status: event.status) ? [] : [
                 recordsText(event).map { ("list.number", $0) },
-                openedText(event).map { ("flag", $0) },
+                sportHeadline12472 ? nil : openedText(event).map { ("flag", $0) },
                 nflHeadline || heroLiveForecast ? nil : projectionText(
                     event,
                     hasScore: gameInfoHasScore

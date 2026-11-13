@@ -904,6 +904,8 @@ final class EventDetailViewModel: ObservableObject {
                 fetched.heroProbabilityObservedAt = held.heroProbabilityObservedAt
                 fetched.winProbabilitySources = held.winProbabilitySources
                 fetched.blendFoldRevision = held.blendFoldRevision
+                fetched.sourceMark = held.sourceMark
+                fetched.awaySourceMark = held.awaySourceMark
             }
             adopt(fetched, recordsPriceActivity: !pricePairRefreshFailed)
             error = nil
