@@ -11,16 +11,24 @@ struct EventCardView: View {
     /// `FinishedCardAccessibility11325`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    /// #12616 (161-B) — Dynamic-Type-scaled compact column metrics (`17pt` name,
-    /// `19pt` medium context number, `28pt` large primary number at `.large`).
+    /// #12616 — Atlas Column Type Spec: one tabular SF Pro digit family at three
+    /// gentle optical steps (`20pt Bold` primary `Now`/`Chance`/`Final`, `17pt Semibold`
+    /// live `Score` / scheduled `Projected`, `15pt Regular` `Pregame` across all states,
+    /// and `10.5pt Semibold` uppercase headers), locked to `.firstTextBaseline` with an
+    /// `18pt` breathing gutter after `Score` and a `10pt` pair gap between `Pregame` and `Now`.
     @ScaledMetric(relativeTo: .body) private var compactNameSize: CGFloat = 17
-    @ScaledMetric(relativeTo: .title3) private var compactMediumSize: CGFloat = 19
-    @ScaledMetric(relativeTo: .title) private var compactLargeSize: CGFloat = 28
+    @ScaledMetric(relativeTo: .caption2) private var compactHeaderSize: CGFloat = 10.5
+    @ScaledMetric(relativeTo: .body) private var compactScoreSize: CGFloat = 17
     @ScaledMetric(relativeTo: .subheadline) private var compactPregameSize: CGFloat = 15
-    @ScaledMetric(relativeTo: .title3) private var compactMediumWidth: CGFloat = 52
-    @ScaledMetric(relativeTo: .caption2) private var compactLivePregameWidth: CGFloat = 48
-    @ScaledMetric(relativeTo: .title) private var compactLargeChanceWidth: CGFloat = 84
-    @ScaledMetric(relativeTo: .title) private var compactLargeFinalWidth: CGFloat = 52
+    @ScaledMetric(relativeTo: .title3) private var compactLargeSize: CGFloat = 20
+    @ScaledMetric(relativeTo: .body) private var compactLiveScoreWidth: CGFloat = 44
+    @ScaledMetric(relativeTo: .body) private var compactProjectedWidth: CGFloat = 78
+    @ScaledMetric(relativeTo: .subheadline) private var compactPregameWidth: CGFloat = 58
+    @ScaledMetric(relativeTo: .title3) private var compactLargeChanceWidth: CGFloat = 66
+    @ScaledMetric(relativeTo: .title3) private var compactLargeFinalWidth: CGFloat = 46
+
+    private let scoreToPregameGutter: CGFloat = 18
+    private let pregameToNowGap: CGFloat = 10
 
     private var isLive: Bool { event.status == "live" }
     private var isFinished: Bool { EventState.isFinished(event.status) }
@@ -484,44 +492,86 @@ struct EventCardView: View {
         )
     }
 
+    private var showsMediumColumn12616: Bool {
+        if isSuspended {
+            return event.awayScore != nil || event.homeScore != nil
+        }
+        return compactHeaders12616.medium != nil
+    }
+
+    private var showsLargeColumn12616: Bool {
+        if isSuspended {
+            return prematch != nil
+        }
+        return compactHeaders12616.large != nil
+    }
+
     private var effectiveMediumColWidth: CGFloat {
-        showsInlineLivePregame12616 ? min(compactMediumWidth, 40) : min(compactMediumWidth, 58)
+        if isScheduled {
+            return min(compactProjectedWidth, 92)
+        }
+        if isFinished {
+            return min(compactPregameWidth, 66)
+        }
+        return min(compactLiveScoreWidth, 52)
     }
+
     private var effectiveLivePregameColWidth: CGFloat {
-        min(compactLivePregameWidth, 54)
+        min(compactPregameWidth, 66)
     }
+
     private var effectiveLargeColWidth: CGFloat {
-        if isFinished { return min(compactLargeFinalWidth, 58) }
-        return showsInlineLivePregame12616
-            ? min(compactLargeChanceWidth, 82)
-            : min(compactLargeChanceWidth, 92)
+        if isFinished { return min(compactLargeFinalWidth, 54) }
+        if isSuspended { return min(compactPregameWidth, 66) }
+        return min(compactLargeChanceWidth, 76)
+    }
+
+    private var pregameColumnLeadingGap12616: CGFloat {
+        showsMediumColumn12616 ? scoreToPregameGutter : 0
+    }
+
+    private var largeColumnLeadingGap12616: CGFloat {
+        if showsInlineLivePregame12616 {
+            return pregameToNowGap
+        }
+        return showsMediumColumn12616 ? scoreToPregameGutter : 0
+    }
+
+    private var compactHeaderFont12616: Font {
+        .system(size: min(compactHeaderSize, 13), weight: .semibold).monospacedDigit()
     }
 
     private var compactHeaderRow: some View {
         let headers = compactHeaders12616
         return VStack(spacing: 4) {
-            HStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Spacer(minLength: 0)
-                Text(headers.medium ?? "")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                    .frame(width: effectiveMediumColWidth, alignment: .trailing)
-                if showsInlineLivePregame12616 {
-                    Text(headers.pregame ?? "")
-                        .font(.caption2.weight(.medium))
+                if showsMediumColumn12616 {
+                    Text((headers.medium ?? "").uppercased())
+                        .font(compactHeaderFont12616)
+                        .tracking(0.45)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                        .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
+                        .frame(width: effectiveMediumColWidth, alignment: .trailing)
                 }
-                Text(headers.large ?? "")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                    .frame(width: effectiveLargeColWidth, alignment: .trailing)
+                if showsInlineLivePregame12616 {
+                    Text((headers.pregame ?? "").uppercased())
+                        .font(compactHeaderFont12616)
+                        .tracking(0.45)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
+                        .padding(.leading, pregameColumnLeadingGap12616)
+                }
+                if showsLargeColumn12616 {
+                    Text((headers.large ?? "").uppercased())
+                        .font(compactHeaderFont12616)
+                        .tracking(0.45)
+                        .foregroundStyle(isLive || isFinished ? Color.primary.opacity(0.78) : DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .frame(width: effectiveLargeColWidth, alignment: .trailing)
+                        .padding(.leading, largeColumnLeadingGap12616)
+                }
             }
             Rectangle()
                 .fill(Color.primary.opacity(0.08))
@@ -597,15 +647,23 @@ struct EventCardView: View {
                         .accessibilityHidden(true)
                 }
             }
-            Spacer(minLength: 0)
-            mediumSlotView(score: score, won: won, side: side)
-                .frame(width: effectiveMediumColWidth, alignment: .trailing)
-            if showsInlineLivePregame12616 {
-                liveInlinePregameSlotView(for: side)
-                    .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
+            Spacer(minLength: 8)
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                if showsMediumColumn12616 {
+                    mediumSlotView(score: score, won: won, side: side)
+                        .frame(width: effectiveMediumColWidth, alignment: .trailing)
+                }
+                if showsInlineLivePregame12616 {
+                    liveInlinePregameSlotView(for: side)
+                        .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
+                        .padding(.leading, pregameColumnLeadingGap12616)
+                }
+                if showsLargeColumn12616 {
+                    largeSlotView(score: score, won: won, side: side)
+                        .frame(width: effectiveLargeColWidth, alignment: .trailing)
+                        .padding(.leading, largeColumnLeadingGap12616)
+                }
             }
-            largeSlotView(score: score, won: won, side: side)
-                .frame(width: effectiveLargeColWidth, alignment: .trailing)
         }
     }
 
@@ -614,10 +672,9 @@ struct EventCardView: View {
         let label = side == .home ? liveSidePregame12616.home : liveSidePregame12616.away
         if let label {
             Text(label)
-                .font(.system(size: min(compactPregameSize, 17), weight: .medium).monospacedDigit())
+                .font(.system(size: min(compactPregameSize, 18), weight: .regular).monospacedDigit())
                 .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
-                .minimumScaleFactor(0.85)
         }
     }
 
@@ -627,7 +684,7 @@ struct EventCardView: View {
             if let pair = scheduledProjection12616 {
                 let value = side == .home ? pair.home : pair.away
                 Text("\(value)")
-                    .font(.system(size: min(compactMediumSize, 22), weight: .medium).monospacedDigit())
+                    .font(.system(size: min(compactScoreSize, 20), weight: .medium).monospacedDigit())
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
             }
@@ -636,8 +693,8 @@ struct EventCardView: View {
         } else if let score {
             Text("\(score)")
                 .font((isLive
-                    ? Font.system(size: min(compactMediumSize, 22), weight: .semibold)
-                    : Font.subheadline).monospacedDigit())
+                    ? Font.system(size: min(compactScoreSize, 20), weight: .semibold)
+                    : Font.system(size: min(compactScoreSize, 20), weight: .regular)).monospacedDigit())
                 // #4915 — a SUSPENDED row's scores keep their dim; the draw is
                 // the one settled arm that moves.
                 .foregroundStyle(isLive ? .primary : (won || outcome == .draw ? .primary : .secondary))
@@ -654,10 +711,9 @@ struct EventCardView: View {
         if isFinished {
             if let score {
                 Text("\(score)")
-                    .font(.system(size: min(compactLargeSize, 30), weight: .bold).monospacedDigit())
+                    .font(.system(size: min(compactLargeSize, 24), weight: .bold).monospacedDigit())
                     .foregroundStyle(won || outcome == .draw ? .primary : .secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
             }
         } else {
             chanceSlotView(for: side)
@@ -699,42 +755,47 @@ struct EventCardView: View {
                 }
             }
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
 
-            Group {
-                if isFinished {
-                    Text(drawChance)
-                        .font(.system(size: min(compactMediumSize, 22), weight: .medium).monospacedDigit())
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                }
-            }
-            .frame(width: effectiveMediumColWidth, alignment: .trailing)
-
-            if showsInlineLivePregame12616 {
-                Group {
-                    if let drawPre = liveSidePregame12616.draw {
-                        Text(drawPre)
-                            .font(.system(size: min(compactPregameSize, 17), weight: .medium).monospacedDigit())
-                            .foregroundStyle(DS.textSecondaryReadable)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                if showsMediumColumn12616 {
+                    Group {
+                        if isFinished {
+                            Text(drawChance)
+                                .font(.system(size: min(compactPregameSize, 18), weight: .regular).monospacedDigit())
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .lineLimit(1)
+                        }
                     }
+                    .frame(width: effectiveMediumColWidth, alignment: .trailing)
                 }
-                .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
-            }
 
-            Group {
-                if !isFinished {
-                    Text(drawChance)
-                        .font(.system(size: min(compactLargeSize, 30), weight: .bold).monospacedDigit())
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                if showsInlineLivePregame12616 {
+                    Group {
+                        if let drawPre = liveSidePregame12616.draw {
+                            Text(drawPre)
+                                .font(.system(size: min(compactPregameSize, 18), weight: .regular).monospacedDigit())
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
+                    .padding(.leading, pregameColumnLeadingGap12616)
+                }
+
+                if showsLargeColumn12616 {
+                    Group {
+                        if !isFinished {
+                            Text(drawChance)
+                                .font(.system(size: min(compactLargeSize, 24), weight: .bold).monospacedDigit())
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(width: effectiveLargeColWidth, alignment: .trailing)
+                    .padding(.leading, largeColumnLeadingGap12616)
                 }
             }
-            .frame(width: effectiveLargeColWidth, alignment: .trailing)
         }
     }
 
@@ -1070,16 +1131,14 @@ struct EventCardView: View {
         if let prob {
             if isLive, let tenths = (side == .home ? liveTenthsPair12616.home : liveTenthsPair12616.away) {
                 Text(tenths)
-                    .font(.system(size: min(compactLargeSize, 30), weight: .bold).monospacedDigit())
+                    .font(.system(size: min(compactLargeSize, 24), weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
             } else {
                 Text(formatProbability(prob, renderedPercent: side == .home ? livePercents[1] : livePercents[0]))
-                    .font(.system(size: min(compactLargeSize, 30), weight: .bold).monospacedDigit())
+                    .font(.system(size: min(compactLargeSize, 24), weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
             }
         }
     }
@@ -1147,16 +1206,15 @@ struct EventCardView: View {
                 }
             } else if isFinished {
                 Text(text)
-                    .font(.system(size: min(compactMediumSize, 22), weight: .medium).monospacedDigit())
+                    .font(.system(size: min(compactPregameSize, 18), weight: .regular).monospacedDigit())
                     .foregroundStyle(isUpset ? Color.orange : DS.textSecondaryReadable)
                     .lineLimit(1)
                     .fixedSize()
             } else {
                 Text(text)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
+                    .font(.system(size: min(compactPregameSize, 18), weight: .regular).monospacedDigit())
                     .foregroundStyle(.secondary.opacity(0.7))
+                    .lineLimit(1)
             }
         }
     }
