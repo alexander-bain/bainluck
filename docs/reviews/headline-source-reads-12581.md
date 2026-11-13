@@ -38,15 +38,18 @@ and `blend`, with `blended` a negative control (6831193152).
 
 ## Validation and remaining delivery
 
-Local validation after wiring: 96 focused source-read, real-poll, source-mark
-and startup checks; 186 related writer/commit/rollback/trace checks; 25 real
-PostgreSQL 17 checks including concurrent JSONB writes, unchanged observations,
-changed input versions and rollback. The PostgreSQL gate caught and fixed
+Local validation after merging current master: 496 backend checks spanning
+source reads, real polling, marks, startup, writer/commit/rollback/trace behavior,
+folding and game-market contracts; 25 real PostgreSQL 17 checks including
+concurrent JSONB writes, unchanged observations, changed input versions and
+rollback. Both new test files pass all 12 clock points (35 tests per point).
+The 35 web grouping/render checks, frontend build and typecheck also pass.
+The PostgreSQL gate caught and fixed
 parentheses around a CASE expression before JSONB subscripting; its failed
 receipt is retained. Assertions were not relaxed.
 
-Final clocks, frontend build/typecheck and hosted CI remain publication gates.
-Merge needs the bot, Fable's exact-head ACCEPT and the current NOW turn. Served
+Hosted CI, the bot, Fable's exact-head ACCEPT and the current NOW turn remain
+merge gates. Served
 proof must show a live game's headline marks, both axes and cache/Refresh
 behavior. Builder C owns opening a single and blended mark on the installed
 phone build. Governor's after-deploy proof and #12658 keep their assigned
