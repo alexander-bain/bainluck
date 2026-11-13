@@ -73,14 +73,26 @@ def require_activation_paths(source):
         "XCTAssertTrue(face.isHittable)",
     )
 
+    # #4933: the mounted rectangular slot shows the published probability reading and
+    # its age/As-of clock (never the launcher, never "Saved" or "stale") inside the slot before the same real tap.
     launcher = function(source, "testActualRectangularLauncherAndTap")
     ordered(
         launcher,
         "try activateConfiguredModularFace(in: host)",
         "let center =",
-        "let launcher =",
-        'XCTAssertEqual(launcher.label, "Open your selected game in Bain Luck, or choose a game")',
-        "try requireReadingWithinWidgetContent(launcher, center: center, host: host)",
+        'let reading = host.descendants(matching: .any)["watch.complication.rectangular.reading"].firstMatch',
+        "XCTAssertTrue(reading.waitForExistence(timeout: 20)",
+        'spoken.hasPrefix("Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64%. ")',
+        'spoken.hasSuffix(" Open your game in Bain Luck.")',
+        'XCTAssertFalse(spoken.localizedCaseInsensitiveContains("stale"), spoken)',
+        'XCTAssertFalse(spoken.localizedCaseInsensitiveContains("saved"), spoken)',
+        "XCTAssertTrue(freshSpoken || agedSpoken, spoken)",
+        'XCTAssertEqual(header.label, "LA at SF · 2–3")',
+        'XCTAssertEqual(primary.label, "SF 64%")',
+        'metadata.label.hasPrefix("Live · ") && metadata.label.hasSuffix(" ago")',
+        'metadata.label.hasPrefix("As of ")',
+        "try requireNamedReadingInsideSlot(reading, center: center, host: host)",
+        'XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)',
         "center.tap()",
         "XCTAssertTrue(app.wait(for: .runningForeground, timeout: 45))",
         'probability.label.contains("San Francisco Giants") && probability.label.contains("64%")',
@@ -90,6 +102,24 @@ def require_activation_paths(source):
     )
     assert "CGRect(origin: .zero" not in launcher
     assert "center.isHittable" in launcher
+
+    # The reading's slot check measures the system margins instead of assuming one.
+    slot = function(source, "requireNamedReadingInsideSlot")
+    ordered(
+        slot,
+        "let remoteRoot = try XCTUnwrap(center.descendants(matching: .any)",
+        "$0.frame.origin == .zero && $0.frame.size == centerFrame.size",
+        "remoteRoot.descendants(matching: .any).matching(identifier: reading.identifier)",
+        "XCTAssertEqual(localReadings.count, 1",
+        "XCTAssertEqual(localReadings.firstMatch.frame, card)",
+        "card.minX > root.minX && card.minY > root.minY && card.maxX < root.maxX && card.maxY < root.maxY",
+        "XCTAssertEqual(card.minX - root.minX, root.maxX - card.maxX, accuracy: 0.5",
+        '"watch.complication.rectangular.metadata"',
+        "XCTAssertEqual(lines.count, 1, id)",
+        "card.contains(line)",
+        'XCTAssertFalse(remoteRoot.descendants(matching: .any)["watch.complication.detail"].firstMatch.exists)',
+    )
+    assert "CGRect(origin: .zero" not in slot
 
     mount = function(source, "mountScoreFixtureOnModular")
     ordered(
@@ -171,6 +201,17 @@ def test_rectangular_host_activates_named_face_before_accepting_widget_content()
         (
             "requireReadingWithinWidgetContent",
             "XCTAssertTrue(contentFrame.contains(readingFrame)",
+        ),
+        (
+            "testActualRectangularLauncherAndTap",
+            "try requireNamedReadingInsideSlot(reading, center: center, host: host)",
+        ),
+        ("testActualRectangularLauncherAndTap", 'XCTAssertEqual(header.label, "LA at SF · 2–3")'),
+        ("requireNamedReadingInsideSlot", "let remoteRoot = try XCTUnwrap"),
+        ("requireNamedReadingInsideSlot", "card.contains(line)"),
+        (
+            "requireNamedReadingInsideSlot",
+            "XCTAssertEqual(card.minX - root.minX, root.maxX - card.maxX, accuracy: 0.5",
         ),
         ("reveal", "if usedRecoveryDrag"),
         ("reveal", "dy: 0.90"),

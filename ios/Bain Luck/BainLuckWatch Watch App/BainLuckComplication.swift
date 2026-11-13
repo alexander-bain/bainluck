@@ -15,10 +15,15 @@ nonisolated struct BainLuckProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<BainLuckEntry>) -> Void) {
-        completion(Timeline(entries: [entry()], policy: .never))
+        let current = entry()
+        let dates = WatchRectangularReading.timelineDates(for: current.snapshot, now: current.date)
+        let entries = dates.map { BainLuckEntry(date: $0, snapshot: current.snapshot) }
+        completion(Timeline(entries: entries, policy: dates.count > 1 ? .atEnd : .never))
     }
     private func entry() -> BainLuckEntry {
-        BainLuckEntry(date: Date(), snapshot: nil)
+        let now = Date()
+        let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.bainluck.watch")
+        return BainLuckEntry(date: now, snapshot: WatchComplicationSnapshot.read(from: directory, now: now))
     }
 }
 
@@ -29,7 +34,7 @@ struct BainLuckComplicationView: View {
     var body: some View {
         Group {
             if family == .accessoryRectangular {
-                WatchSavedComplicationContent(snapshot: entry.snapshot)
+                WatchSavedComplicationContent(snapshot: entry.snapshot, now: entry.date)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(accessibilityDescription)
             } else if family == .accessoryCorner {
@@ -45,7 +50,11 @@ struct BainLuckComplicationView: View {
         .widgetURL(WatchLaunchRoute.url)
     }
     private var accessibilityDescription: String {
-        "Open your selected game in Bain Luck, or choose a game"
+        if family == .accessoryRectangular,
+           let rectangular = entry.snapshot?.validatedRectangularReading(now: entry.date) {
+            return rectangular.accessibilityDescription(at: entry.date)
+        }
+        return "Open your selected game in Bain Luck, or choose a game"
     }
 }
 

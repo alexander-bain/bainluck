@@ -354,4 +354,210 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     }
     print("PASS: corner forecast-only, capability fallback, bounded canonical identity, original clock and independent circular/rectangular contracts")
     print("PASS: circular canonical identity, original clocks, rounding/draw, final/score, old/malformed/wrong compact payload, offline and one-time enrichment")
+    try runRectangularComplicationChecks()
+}
+
+/// Deterministic #4933 checks for the large-rectangular (`accessoryRectangular`) probability/final states,
+/// omitted odds-less states, and Alex's wording contract (never "Saved", never "stale").
+@MainActor func runRectangularComplicationChecks() throws {
+    let now = ISO8601DateFormatter().date(from: "2026-10-04T18:00:00Z")!
+    let pacific = TimeZone(identifier: "America/Los_Angeles")!
+    let home = "\"home_team_data\":{\"team_id\":1,\"abbreviation\":\"SF\"}"
+    let away = "\"away_team_data\":{\"team_id\":2,\"abbreviation\":\"LA\"}"
+    func decodeGame(_ fields: String) throws -> WatchSelectedGame {
+        let data = Data("{\"id\":101,\"home_team\":\"San Francisco Giants\",\"away_team\":\"Los Angeles Dodgers\",\(fields)}".utf8)
+        return try JSONDecoder().decode(WatchSelectedGame.self, from: data)
+    }
+
+    // 1. Live probability state (with and without verified live score)
+    let liveWithScore = try decodeGame(
+        "\"status\":\"live\",\"sport\":\"baseball_mlb\",\"hero_probability\":0.64,\"hero_probability_away\":0.36,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\",\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\",\(home),\(away)"
+    )
+    let snapLiveScore = WatchComplicationProjection.snapshot(game: liveWithScore, savedAt: now)!
+    let rectLiveScore = snapLiveScore.validatedRectangularReading(now: now)!
+    precondition(rectLiveScore.kind == .liveForecast)
+    precondition(rectLiveScore.headerLine() == "LA at SF · 2–3",
+                 "Long matchup automatically uses canonical abbreviations + verified live score within the 26-char header budget")
+    precondition(rectLiveScore.primaryLine(at: now) == "SF 64%")
+    precondition(rectLiveScore.primaryLine(preferCompact: true, at: now) == "SF 64%")
+    let oneMinuteAfter = rectLiveScore.observedAt.addingTimeInterval(60)
+    precondition(rectLiveScore.metadataLine(at: oneMinuteAfter, timeZone: pacific) == "Live · 1m ago")
+    precondition(rectLiveScore.metadataLine(at: now, timeZone: pacific) == "Live · 2m ago" && !rectLiveScore.isAgedLive(at: now))
+    let liveSpoken = rectLiveScore.accessibilityDescription(at: oneMinuteAfter, timeZone: pacific)
+    precondition(liveSpoken == "Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64%. Live, 1 minute ago. Open your game in Bain Luck.",
+                 "Unexpected live spoken copy: \(liveSpoken)")
+    let liveDates = WatchRectangularReading.timelineDates(for: snapLiveScore, now: now)
+    let ageSwitch = rectLiveScore.observedAt.addingTimeInterval(121)
+    precondition(liveDates.first == now && liveDates == liveDates.sorted())
+    precondition(liveDates.contains(ageSwitch) && rectLiveScore.isAgedLive(at: ageSwitch))
+    precondition(rectLiveScore.metadataLine(at: ageSwitch, timeZone: pacific) == "As of 10:58 AM")
+    precondition(rectLiveScore.metadataLine(at: rectLiveScore.observedAt.addingTimeInterval(59 * 60), timeZone: pacific) == "As of 10:58 AM")
+    precondition(rectLiveScore.accessibilityDescription(at: ageSwitch, timeZone: pacific).contains("As of 10:58 AM."))
+
+    // Verify exact "As of 1:29 PM" specimen in Pacific time (20:29Z in PDT = 1:29 PM).
+    let specimenClock = ISO8601DateFormatter().date(from: "2026-10-04T21:28:00Z")!
+    let specimenGame = try decodeGame(
+        "\"status\":\"live\",\"sport\":\"baseball_mlb\",\"hero_probability\":0.64,\"hero_probability_away\":0.36,\"hero_probability_observed_at\":\"2026-10-04T20:29:00Z\",\(home),\(away)"
+    )
+    let rectSpecimen = WatchComplicationProjection.snapshot(game: specimenGame, savedAt: specimenClock)!.validatedRectangularReading(now: specimenClock)!
+    precondition(rectSpecimen.metadataLine(at: specimenClock, timeZone: pacific) == "As of 1:29 PM")
+    precondition(rectSpecimen.accessibilityDescription(at: specimenClock, timeZone: pacific).contains("As of 1:29 PM."))
+
+    // A changed score under the same probability clock must replace shared bytes and request a reload.
+    let changedScore = try decodeGame(
+        "\"status\":\"live\",\"sport\":\"baseball_mlb\",\"hero_probability\":0.64,\"hero_probability_away\":0.36,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\",\"home_score\":4,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\",\(home),\(away)"
+    )
+    let changedSnapshot = WatchComplicationProjection.snapshot(game: changedScore, savedAt: now)!
+    precondition(changedSnapshot.title == snapLiveScore.title && changedSnapshot.detail == snapLiveScore.detail)
+    precondition(changedSnapshot.observedAt == snapLiveScore.observedAt && changedSnapshot.rectangularReading != snapLiveScore.rectangularReading)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    precondition(WatchComplicationPublisher.write(snapLiveScore, to: directory, now: now))
+    precondition(WatchComplicationPublisher.write(changedSnapshot, to: directory, now: now))
+    precondition(WatchComplicationSnapshot.read(from: directory, now: now)?.rectangularReading?.homeScore == 4)
+    precondition(!WatchComplicationPublisher.write(changedSnapshot, to: directory, now: now))
+
+    // A structured percent must agree with the parent title/detail; tampered display data falls back.
+    var tampered = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapLiveScore)) as! [String: Any]
+    var tamperedRectangular = tampered["rectangularReading"] as! [String: Any]
+    tamperedRectangular["homePercent"] = 90
+    tampered["rectangularReading"] = tamperedRectangular
+    let tamperedFile = directory.appendingPathComponent(WatchComplicationSnapshot.filename)
+    try JSONSerialization.data(withJSONObject: tampered).write(to: tamperedFile)
+    let restoredTampered = WatchComplicationSnapshot.read(from: directory, now: now)!
+    precondition(restoredTampered.title == snapLiveScore.title && restoredTampered.detail == snapLiveScore.detail)
+    precondition(restoredTampered.validatedRectangularReading(now: now) == nil)
+
+    // Unverified live score (missing score_observed_at) is omitted from the live forecast header rather than shown untruthfully.
+    let liveUnverifiedScore = try decodeGame(
+        "\"status\":\"live\",\"sport\":\"baseball_mlb\",\"hero_probability\":0.64,\"hero_probability_away\":0.36,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\",\"home_score\":3,\"away_score\":2,\(home),\(away)"
+    )
+    let rectLiveNoScore = WatchComplicationProjection.snapshot(game: liveUnverifiedScore, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectLiveNoScore.kind == .liveForecast && rectLiveNoScore.homeScore == nil && rectLiveNoScore.awayScore == nil)
+    precondition(rectLiveNoScore.headerLine() == "LA at SF")
+    let laggedScore = try decodeGame(
+        "\"status\":\"live\",\"sport\":\"baseball_mlb\",\"hero_probability\":0.64,\"hero_probability_away\":0.36,\"hero_probability_observed_at\":\"2026-10-04T17:59:50Z\",\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:34:50Z\",\(home),\(away)"
+    )
+    let rectLagged = WatchComplicationProjection.snapshot(game: laggedScore, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectLagged.kind == .liveForecast && rectLagged.homeScore == nil && rectLagged.awayScore == nil)
+    precondition(rectLagged.headerLine() == "LA at SF" && rectLagged.metadataLine(at: now, timeZone: pacific) == "Live · <1m ago")
+
+    // Exact 120s score lag is kept (`<=`); 121s lag is omitted (`A3`/`D15` guard); forged lagged score in stored JSON is rejected by validation (`A1`/`D7` guard).
+    let exactBoundaryScore = try decodeGame(
+        "\"status\":\"live\",\"sport\":\"baseball_mlb\",\"hero_probability\":0.64,\"hero_probability_away\":0.36,\"hero_probability_observed_at\":\"2026-10-04T17:59:50Z\",\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:57:50Z\",\(home),\(away)"
+    )
+    let rectBoundaryKept = WatchComplicationProjection.snapshot(game: exactBoundaryScore, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectBoundaryKept.homeScore == 3 && rectBoundaryKept.awayScore == 2 && rectBoundaryKept.headerLine() == "LA at SF · 2–3")
+    let overBoundaryScore = try decodeGame(
+        "\"status\":\"live\",\"sport\":\"baseball_mlb\",\"hero_probability\":0.64,\"hero_probability_away\":0.36,\"hero_probability_observed_at\":\"2026-10-04T17:59:50Z\",\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:57:49Z\",\(home),\(away)"
+    )
+    let rectBoundaryDropped = WatchComplicationProjection.snapshot(game: overBoundaryScore, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectBoundaryDropped.homeScore == nil && rectBoundaryDropped.awayScore == nil && rectBoundaryDropped.headerLine() == "LA at SF")
+    var forgedLagObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapLiveScore)) as! [String: Any]
+    var forgedLagRect = forgedLagObject["rectangularReading"] as! [String: Any]
+    forgedLagRect["scoreObservedAt"] = rectLiveScore.observedAt.addingTimeInterval(-1500).timeIntervalSinceReferenceDate
+    forgedLagObject["rectangularReading"] = forgedLagRect
+    let forgedLagSnapshot = try JSONDecoder().decode(WatchComplicationSnapshot.self, from: JSONSerialization.data(withJSONObject: forgedLagObject))
+    precondition(forgedLagSnapshot.rectangularReading?.scoreObservedAt != nil && forgedLagSnapshot.validatedRectangularReading(now: now) == nil,
+                 "Forged lagged scoreObservedAt in stored JSON must be refused by validatedRectangularReading")
+
+    // 2. Live score-only state: omitted from the rectangular face (falls back to launcher; parent/circular score retained).
+    let liveScoreOnly = try decodeGame(
+        "\"status\":\"live\",\"home_score\":3,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:59:00Z\",\(home),\(away)"
+    )
+    let snapScoreOnly = WatchComplicationProjection.snapshot(game: liveScoreOnly, savedAt: now)!
+    precondition(snapScoreOnly.validatedCircularReading(now: now)?.value == "Score 2–3")
+    precondition(snapScoreOnly.rectangularReading == nil && snapScoreOnly.validatedRectangularReading(now: now) == nil,
+                 "Live score without probability must not appear on the rectangular face")
+    for retiredKind in ["liveScoreOnly", "scheduledStart"] {
+        var retiredObj = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapLiveScore)) as! [String: Any]
+        var retiredRect = retiredObj["rectangularReading"] as! [String: Any]
+        retiredRect["kind"] = retiredKind
+        retiredObj["rectangularReading"] = retiredRect
+        let decodedRetired = try JSONDecoder().decode(WatchComplicationSnapshot.self, from: JSONSerialization.data(withJSONObject: retiredObj))
+        precondition(decodedRetired.rectangularReading == nil && decodedRetired.validatedRectangularReading(now: now) == nil,
+                     "Retired odds-less kind \(retiredKind) must decode nil and fall back to launcher")
+    }
+
+    // 3a. Scheduled state with pregame probability (never shows fake 0–0; shows "Open to update" once start passes)
+    let scheduledForecast = try decodeGame(
+        "\"status\":\"scheduled\",\"commence_time\":\"2026-10-04T23:00:00Z\",\"home_score\":0,\"away_score\":0,\"score_observed_at\":\"2026-10-04T17:59:00Z\",\"hero_probability\":0.55,\"hero_probability_away\":0.45,\"hero_probability_observed_at\":\"2026-10-04T17:57:00Z\",\(home),\(away)"
+    )
+    let snapSchedForecast = WatchComplicationProjection.snapshot(game: scheduledForecast, savedAt: now)!
+    let rectSchedForecast = snapSchedForecast.validatedRectangularReading(now: now)!
+    precondition(rectSchedForecast.kind == .scheduledForecast && rectSchedForecast.homeScore == nil && rectSchedForecast.awayScore == nil)
+    precondition(rectSchedForecast.headerLine() == "LA at SF" && !rectSchedForecast.headerLine().contains("0–0"))
+    precondition(rectSchedForecast.primaryLine(at: now) == "SF 55%")
+    precondition(rectSchedForecast.metadataLine(at: now, timeZone: pacific) == "Scheduled · 3m ago" && !rectSchedForecast.isAgedLive(at: now))
+    let forecastStart = rectSchedForecast.commenceTime!
+    precondition(WatchRectangularReading.timelineDates(for: snapSchedForecast, now: now).contains(forecastStart))
+    precondition(rectSchedForecast.metadataLine(at: forecastStart, timeZone: pacific) == "Open to update")
+    precondition(rectSchedForecast.metadataLine(at: rectSchedForecast.observedAt.addingTimeInterval(23 * 3600), timeZone: pacific) == "Open to update")
+    precondition(rectSchedForecast.accessibilityDescription(at: forecastStart, timeZone: pacific).contains("Open to update."))
+
+    // 3b. Scheduled state without pregame probability: omitted completely (falls back to launcher)
+    let scheduledStartOnly = try decodeGame(
+        "\"status\":\"scheduled\",\"commence_time\":\"2026-10-04T23:00:00Z\",\"home_score\":0,\"away_score\":0,\"score_observed_at\":\"2026-10-04T17:59:00Z\",\(home),\(away)"
+    )
+    precondition(WatchComplicationProjection.snapshot(game: scheduledStartOnly, savedAt: now) == nil,
+                 "Scheduled game without probability must not publish a snapshot")
+
+    // 4. Final state ("Final · SF 4, LA 2", winner first, without stale pre-final probability)
+    let finalGame = try decodeGame(
+        "\"status\":\"completed\",\"home_score\":4,\"away_score\":2,\"hero_probability\":0.99,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\",\"score_observed_at\":\"2026-10-04T17:58:00Z\",\(home),\(away)"
+    )
+    let snapFinal = WatchComplicationProjection.snapshot(game: finalGame, savedAt: now)!
+    let rectFinal = snapFinal.validatedRectangularReading(now: now)!
+    precondition(rectFinal.kind == .finalResult && rectFinal.homePercent == nil)
+    precondition(rectFinal.headerLine() == "LA at SF")
+    precondition(rectFinal.primaryLine(at: now) == "Final · SF 4, LA 2" && !rectFinal.primaryLine(at: now).contains("%"))
+    precondition(rectFinal.primaryLine(preferCompact: true, at: now) == "Final · SF 4, LA 2")
+    precondition(rectFinal.metadataLine(at: now, timeZone: pacific) == "2m ago" && !rectFinal.isAgedLive(at: now.addingTimeInterval(3600)))
+    let finalDates = WatchRectangularReading.timelineDates(for: snapFinal, now: now)
+    let oneHour = rectFinal.observedAt.addingTimeInterval(3600)
+    let oneDay = rectFinal.observedAt.addingTimeInterval(86400)
+    precondition(finalDates.contains(oneHour) && finalDates.contains(oneDay))
+    precondition(rectFinal.metadataLine(at: oneHour, timeZone: pacific) == "1h ago")
+    precondition(rectFinal.metadataLine(at: oneDay, timeZone: pacific) == "1d ago")
+
+    let awayFinalGame = try decodeGame(
+        "\"status\":\"completed\",\"home_score\":2,\"away_score\":4,\"score_observed_at\":\"2026-10-04T17:58:00Z\",\(home),\(away)"
+    )
+    let rectAwayFinal = WatchComplicationProjection.snapshot(game: awayFinalGame, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectAwayFinal.primaryLine(at: now) == "Final · LA 4, SF 2")
+
+    let tieFinalGame = try decodeGame(
+        "\"status\":\"completed\",\"home_score\":2,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:58:00Z\",\(home),\(away)"
+    )
+    let rectTieFinal = WatchComplicationProjection.snapshot(game: tieFinalGame, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectTieFinal.primaryLine(at: now) == "Final · LA 2, SF 2")
+
+    // 5. Standing-rule guard across all timeline entries and worst-case ages: never "Saved", never "Stale", and fits budget.
+    for snap in [snapLiveScore, snapSchedForecast, snapFinal] {
+        let reading = snap.validatedRectangularReading(now: now)!
+        for date in WatchRectangularReading.timelineDates(for: snap, now: now) + [
+            reading.observedAt.addingTimeInterval(30),
+            reading.observedAt.addingTimeInterval(59 * 60),
+            reading.observedAt.addingTimeInterval(23 * 3600),
+            reading.observedAt.addingTimeInterval(7 * 86400),
+        ] {
+            let primary = reading.primaryLine(at: date)
+            let meta = reading.metadataLine(at: date, timeZone: pacific)
+            let spoken = reading.accessibilityDescription(at: date, timeZone: pacific)
+            for text in [primary, meta, spoken] {
+                precondition(!text.localizedCaseInsensitiveContains("stale"), "Standing rule: never say stale anywhere: \(text)")
+                precondition(!text.localizedCaseInsensitiveContains("saved"), "Standing rule: never say saved on rectangular face: \(text)")
+            }
+            precondition(meta.count <= WatchRectangularReading.maxSingleLineMetadataCharacters,
+                         "Metadata exceeds \(WatchRectangularReading.maxSingleLineMetadataCharacters)-char narrow-face budget (\(meta.count)): \(meta)")
+            if reading.isAgedLive(at: date) {
+                precondition(meta.hasPrefix("As of "), "Aged live reading must show As of clock time: \(meta)")
+            }
+            if reading.kind == .scheduledForecast, let kickoff = reading.commenceTime, date >= kickoff {
+                precondition(meta == "Open to update", "Passed scheduled start must show Open to update: \(meta)")
+            }
+        }
+    }
+    print("PASS: rectangular complication probability/final wording, As of clock, Open to update, Final · SF 4 LA 2, omitted odds-less states, and zero Saved/stale strings")
 }
