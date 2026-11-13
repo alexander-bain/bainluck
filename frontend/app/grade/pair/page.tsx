@@ -71,6 +71,7 @@ function PairSession() {
   // On a phone the two tens take turns at full size; both must be opened once.
   const [tab, setTab] = useState<"left" | "right">("left");
   const [seenRight, setSeenRight] = useState(false);
+  const [alreadyPicked, setAlreadyPicked] = useState(false);
 
   useEffect(() => {
     setRef(pairFromSearch(window.location.search));
@@ -94,7 +95,7 @@ function PairSession() {
 
   const pick = async (choice: PairChoice) => {
     const name = normalizeGraderName(grader);
-    if (!deck || !name || saving || opened === null || saved) return;
+    if (!deck || !name || saving || opened === null || saved || alreadyPicked) return;
     setSaving(true);
     setError(null);
     try {
@@ -115,8 +116,8 @@ function PairSession() {
         (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       );
       if (res.status === 409) {
-        setError("Already picked for this morning. The first pick stands.");
-        setSaved(choice);
+        // The refused choice is not what was saved; say only that the first stands.
+        setAlreadyPicked(true);
         return;
       }
       if (!res.ok) {
@@ -137,7 +138,7 @@ function PairSession() {
   if (error && !deck) return <Shell><p className="text-sm text-text-secondary">{error}</p></Shell>;
   if (!deck) return <Shell><p className="text-sm text-text-muted animate-pulse">Loading the two first tens…</p></Shell>;
 
-  const canPick = !!normalizeGraderName(grader) && opened !== null && !saved && !saving;
+  const canPick = !!normalizeGraderName(grader) && opened !== null && !saved && !alreadyPicked && !saving;
   return (
     <Shell>
       <h1 className="text-base font-semibold text-text-primary">Which first ten would you rather open Discover to?</h1>
@@ -182,6 +183,7 @@ function PairSession() {
           </button>
         ))}
       </div>
+      {!seenRight && <p className="mt-1 text-xs text-text-muted md:hidden">Open both tens before picking.</p>}
       <div className="mt-3 md:hidden">
         <Column side={tab === "left" ? deck.left : deck.right} label={tab === "left" ? "Left ten" : "Right ten"} />
       </div>
@@ -206,7 +208,14 @@ function PairSession() {
           </button>
         ))}
       </div>
-      {!seenRight && <p className="text-xs text-text-muted md:hidden">Open both tens before picking.</p>}
+      {alreadyPicked && (
+        <p className="mt-1 text-sm text-text-secondary" role="status">
+          Already picked for this morning. The first pick stands.{" "}
+          <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id)}>
+            Now grade this morning&apos;s deck →
+          </a>
+        </p>
+      )}
       {saved && (
         <p className="mt-1 text-sm text-text-secondary" role="status">
           Saved: {PAIR_CHOICE_LABELS[saved]}.{" "}
