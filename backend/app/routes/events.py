@@ -28570,7 +28570,7 @@ async def _build_game_markets(
                 best["source_mark"] = quote_source_mark(
                     source for entry in entries
                     for source in entry.get("source_mark", {}).get("sources", [])
-                ) if all(entry.get("source_mark", {}).get("state") == "blend"
+                ) if all(entry.get("source_mark", {}).get("state") in {"single", "blend"}
                          for entry in entries) else no_source_mark("source_evidence_incomplete")
 
                 # 🔴 #4970 / CERT-2647: READ EVERY CONTRIBUTOR'S CLOCK BEFORE

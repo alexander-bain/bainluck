@@ -48,6 +48,18 @@ The PostgreSQL gate caught and fixed
 parentheses around a CASE expression before JSONB subscripting; its failed
 receipt is retained. Assertions were not relaxed.
 
+Hosted CI found two further cases, and both failing receipts are retained. The
+prop-folding route still admitted only `blend` inputs; it now keeps `single`
+inputs too, preserving two markets on one venue as one source. The existing
+matrix test keeps every price/contributor assertion and now also pins `single`.
+The PostgreSQL lock-race control searched for `jsonb_each` beyond PostgreSQL's
+1,023-character activity-text prefix (now at character 2,130). It now identifies
+the blocking poll's backend PID and the stamp UPDATE prefix; the requirement
+that the socket really waited and refused its old reading is unchanged. All
+43 observation-order/concurrent-stamp PostgreSQL checks pass after this correction.
+The corrected route/source-mark/startup band passes 195 checks; the frontend
+build and typecheck also pass (65 existing errors, matching its baseline).
+
 Hosted CI, the bot, Fable's exact-head ACCEPT and the current NOW turn remain
 merge gates. Served
 proof must show a live game's headline marks, both axes and cache/Refresh
