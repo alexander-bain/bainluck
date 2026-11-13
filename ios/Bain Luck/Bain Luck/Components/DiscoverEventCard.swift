@@ -460,6 +460,11 @@ struct NativeEventDiscoverCard: View {
                                         .fixedSize(horizontal: true, vertical: false)
                                 }
                                 Spacer()
+                                Text("Pregame")
+                                    .font(.caption2)
+                                    .foregroundStyle(DS.textSecondaryReadable)
+                                    .lineLimit(1)
+                                Spacer()
                                 if let homePre = discoverLiveSidePregame12616.home {
                                     Text(homePre)
                                         .font(.caption2.monospacedDigit())
@@ -559,7 +564,7 @@ struct NativeEventDiscoverCard: View {
     @ViewBuilder
     private func discoverInlinePregameLabel(_ text: String?) -> some View {
         if showsDiscoverInlinePregame12616, let text {
-            Text(text)
+            Text("\(text) pregame")
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
@@ -896,15 +901,16 @@ struct NativeEventDiscoverCard: View {
         return GeometryReader { geo in
             HStack(spacing: 0) {
                 if let shares = threeWayShares, shares.draw > 0 {
+                    // #12616 (187-A) — Draw goes in the middle (`away · draw · home`).
                     Rectangle()
                         .fill(awayColor)
                         .frame(width: max(3, geo.size.width * shares.away))
                     Rectangle()
-                        .fill(homeColor)
-                        .frame(width: max(3, geo.size.width * shares.home))
-                    Rectangle()
                         .fill(Color.secondary.opacity(0.28))
                         .frame(width: max(3, geo.size.width * shares.draw))
+                    Rectangle()
+                        .fill(homeColor)
+                        .frame(width: max(3, geo.size.width * shares.home))
                 } else {
                     Rectangle()
                         .fill(awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor)

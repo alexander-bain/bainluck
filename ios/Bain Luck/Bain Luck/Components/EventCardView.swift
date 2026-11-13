@@ -16,9 +16,9 @@ struct EventCardView: View {
     @ScaledMetric(relativeTo: .body) private var compactNameSize: CGFloat = 17
     @ScaledMetric(relativeTo: .title3) private var compactMediumSize: CGFloat = 19
     @ScaledMetric(relativeTo: .title) private var compactLargeSize: CGFloat = 28
-    @ScaledMetric(relativeTo: .caption2) private var compactPregameSize: CGFloat = 11.5
+    @ScaledMetric(relativeTo: .subheadline) private var compactPregameSize: CGFloat = 15
     @ScaledMetric(relativeTo: .title3) private var compactMediumWidth: CGFloat = 52
-    @ScaledMetric(relativeTo: .caption2) private var compactLivePregameWidth: CGFloat = 68
+    @ScaledMetric(relativeTo: .caption2) private var compactLivePregameWidth: CGFloat = 48
     @ScaledMetric(relativeTo: .title) private var compactLargeChanceWidth: CGFloat = 84
     @ScaledMetric(relativeTo: .title) private var compactLargeFinalWidth: CGFloat = 52
 
@@ -361,7 +361,8 @@ struct EventCardView: View {
             hasProjectedBefore: scheduledProjection12616 != nil,
             hasCurrentChance: hasCurrent,
             hasPrematchChance: hasPrematch,
-            hasScore: hasScore
+            hasScore: hasScore,
+            showsLivePregameColumn: showsInlineLivePregame12616
         )
     }
 
@@ -487,7 +488,7 @@ struct EventCardView: View {
         showsInlineLivePregame12616 ? min(compactMediumWidth, 40) : min(compactMediumWidth, 58)
     }
     private var effectiveLivePregameColWidth: CGFloat {
-        min(compactLivePregameWidth, 72)
+        min(compactLivePregameWidth, 54)
     }
     private var effectiveLargeColWidth: CGFloat {
         if isFinished { return min(compactLargeFinalWidth, 58) }
@@ -508,8 +509,12 @@ struct EventCardView: View {
                     .minimumScaleFactor(0.85)
                     .frame(width: effectiveMediumColWidth, alignment: .trailing)
                 if showsInlineLivePregame12616 {
-                    Color.clear
-                        .frame(width: effectiveLivePregameColWidth, height: 1)
+                    Text(headers.pregame ?? "")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
                 }
                 Text(headers.large ?? "")
                     .font(.caption2.weight(.medium))
@@ -609,7 +614,7 @@ struct EventCardView: View {
         let label = side == .home ? liveSidePregame12616.home : liveSidePregame12616.away
         if let label {
             Text(label)
-                .font(.system(size: min(compactPregameSize, 14), weight: .regular).monospacedDigit())
+                .font(.system(size: min(compactPregameSize, 17), weight: .medium).monospacedDigit())
                 .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
@@ -711,7 +716,7 @@ struct EventCardView: View {
                 Group {
                     if let drawPre = liveSidePregame12616.draw {
                         Text(drawPre)
-                            .font(.system(size: min(compactPregameSize, 14), weight: .regular).monospacedDigit())
+                            .font(.system(size: min(compactPregameSize, 17), weight: .medium).monospacedDigit())
                             .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(1)
                             .minimumScaleFactor(0.85)
