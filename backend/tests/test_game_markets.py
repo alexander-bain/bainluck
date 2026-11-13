@@ -498,7 +498,7 @@ class TestGetGameMarketsFormatting:
                 "is_winner": None,
                 "resolution_source": None,
                 "contributor_outcome_ids": [201],
-                "source_mark": {"state": "blend", "sources": [{
+                "source_mark": {"state": "single", "sources": [{
                     "key": "kalshi", "name": "Kalshi", "probability": 0.52,
                     "observed_at": None, "reason": "observation_unknown",
                 }]},
@@ -560,7 +560,7 @@ class TestGetGameMarketsFormatting:
                 "is_winner": None,
                 "resolution_source": None,
                 "contributor_outcome_ids": [202],
-                "source_mark": {"state": "blend", "sources": [{
+                "source_mark": {"state": "single", "sources": [{
                     "key": "kalshi", "name": "Kalshi", "probability": 0.54,
                     "observed_at": None, "reason": "observation_unknown",
                 }]},
@@ -750,7 +750,7 @@ class TestGetGameMarketsFormatting:
                 "is_winner": None,
                 "resolution_source": None,
                 "contributor_outcome_ids": [203],
-                "source_mark": {"state": "blend", "sources": [{
+                "source_mark": {"state": "single", "sources": [{
                     "key": "kalshi", "name": "Kalshi", "probability": 0.49,
                     "observed_at": None, "reason": "observation_unknown",
                 }]},

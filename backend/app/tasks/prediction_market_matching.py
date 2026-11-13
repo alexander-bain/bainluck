@@ -11628,6 +11628,12 @@ async def _poll_live_prediction_market_prices():
     # the older price and puts these legs back, so the pin cannot take the
     # restored number as this poll's.
     polymarket_cleared_since_commit: set[int] = set()
+    # #12581: only successful price writes may date a headline input. Keep
+    # immutable witnesses with this already bounded pass, not on ORM objects.
+    from app.utils.aggregation import PricedOutcomeRead, priced_outcome_read_time
+
+    committed_price_reads: dict[int, PricedOutcomeRead] = {}
+    pending_price_reads: dict[int, PricedOutcomeRead] = {}
 
     now = datetime.now(timezone.utc)
 
@@ -11892,6 +11898,8 @@ async def _poll_live_prediction_market_prices():
             """
             await session.commit()
             stats["commits"] += 1
+            committed_price_reads.update(pending_price_reads)
+            pending_price_reads.clear()
             committed_counts.update({k: stats[k] for k in _durable_counters})
             polymarket_cleared_since_commit.clear()
             # #10090 item 4: a stamp's frame goes out now that it is durable.
@@ -11915,6 +11923,7 @@ async def _poll_live_prediction_market_prices():
             # CERT-3652: the rollback restores each such leg's older price, so
             # the leg is unpriced again.
             polymarket_unpriced_reads.update(polymarket_cleared_since_commit)
+            pending_price_reads.clear()
             polymarket_cleared_since_commit.clear()
             if "deadlock" in str(exc).lower():
                 stats["deadlocks"] += 1
@@ -12007,6 +12016,7 @@ async def _poll_live_prediction_market_prices():
                             ),
                             timeout=_LIVE_POLL_VENUE_CALL_TIMEOUT_SECONDS,
                         )
+                        kalshi_read_at = datetime.now(timezone.utc)
                         stats["kalshi_fetched"] += 1
 
                         # Update outcomes with fresh prices.
@@ -12163,6 +12173,10 @@ async def _poll_live_prediction_market_prices():
                             outcome.last_updated = now
                             stats["outcomes_updated"] += 1
                             stats["kalshi_outcomes_updated"] += 1
+                            pending_price_reads[outcome.id] = PricedOutcomeRead(
+                                market_id=outcome.market_id, external_id=outcome.external_id,
+                                probability=prob, row_time=now, received_at=kalshi_read_at,
+                            )
 
                             # Write FuturesOddsSnapshot for chart history
                             await session.execute(
@@ -12261,6 +12275,7 @@ async def _poll_live_prediction_market_prices():
                 #   genuinely dead event would be re-requested once per row it
                 #   owns, which is the same waste arriving by the other road.
                 seen_events: dict = {}
+                seen_event_times: dict[str, datetime] = {}
                 for _seen, market_id in enumerate(polymarket_ids):
                     if _out_of_budget(
                         "polymarket_fetch",
@@ -12282,6 +12297,7 @@ async def _poll_live_prediction_market_prices():
                             event_data = await poly_service.get_event_by_id(
                                 poly_event_id
                             )
+                            seen_event_times[poly_event_id] = datetime.now(timezone.utc)
                             stats["polymarket_fetched"] += 1
                             seen_events[poly_event_id] = event_data
                         else:
@@ -12351,6 +12367,11 @@ async def _poll_live_prediction_market_prices():
 
                             outcome.last_updated = now
                             stats["outcomes_updated"] += 1
+                            pending_price_reads[outcome.id] = PricedOutcomeRead(
+                                market_id=outcome.market_id, external_id=outcome.external_id,
+                                probability=prob, row_time=now,
+                                received_at=seen_event_times[poly_event_id],
+                            )
 
                             # Write FuturesOddsSnapshot for chart history
                             best_bid_val = float(best_bid) if best_bid is not None else None
@@ -12646,6 +12667,10 @@ async def _poll_live_prediction_market_prices():
                         reading.contributing_outcomes or (reading.outcome,)
                     ),
                     observed_basis=_basis_of_reading2,
+                    price_read_at=priced_outcome_read_time(
+                        reading.contributing_outcomes or (reading.outcome,),
+                        committed_price_reads,
+                    ),
                 )
                 # #10090 item 4: this commit published nothing, so the move
                 # reached an open page only when another writer next published

@@ -279,6 +279,7 @@ def stamp_source_reading(
     now: Optional[datetime] = None,
     eligibility: Optional[EligibilityRecord] = None,
     observed_basis: Optional[dict] = None,
+    price_read_at: Optional[datetime] = None,
 ) -> dict:
     """Write one source into ``win_probability_sources`` WITH its write time.
 
@@ -338,6 +339,15 @@ def stamp_source_reading(
     else:
         entry.pop(OBSERVED_BASIS_KEY, None)
         entry.pop(OBSERVED_VALUE_KEY, None)
+    # #12581: publication and generic outcome-touch clocks are not upstream
+    # reads. A recompute may retain an existing read only for the exact same
+    # value AND contributor versions; it cannot give that read a newer date.
+    read = make_price_read(value, price_read_at, observed_basis)
+    if price_read_at is None and observed_basis:
+        read = retained_price_read(existing, value, observed_basis)
+    entry.pop(PRICE_READ_KEY, None)
+    if read is not None:
+        entry[PRICE_READ_KEY] = read
     updated[source] = entry
     return updated
 
@@ -427,6 +437,128 @@ OBSERVED_BASIS_KEY = "observed_basis"
 #: The value the basis dates. A basis is trusted only while this still equals
 #: the entry's ``value`` — see `stored_observation_basis`.
 OBSERVED_VALUE_KEY = "observed_value"
+
+# Explicit upstream-read provenance, independent of ordering/publication clocks.
+# This additive JSONB member needs no schema change and never affects pricing.
+PRICE_READ_KEY = "price_read"
+
+
+def make_price_read(
+    value: Any, read_at: Optional[datetime], basis: Optional[dict] = None,
+) -> Optional[dict]:
+    """Bind a successful upstream read to its selected price and contributors.
+
+    Only the producer which received the price may pass ``read_at``. A later
+    row read, keepalive or calculation is not a new observation. Nonvenue
+    producers can date a complete freshly received consensus without an
+    outcome basis; such evidence cannot be retained by a database recompute.
+    """
+    if not _finite_number(value) or not 0 <= value <= 1:
+        return None
+    if not isinstance(read_at, datetime) or read_at.tzinfo is None:
+        return None
+    if basis is not None and (
+        not isinstance(basis, dict) or not basis
+        or any(not isinstance(k, str) or not _finite_number(v) or v <= 0
+               for k, v in basis.items())
+    ):
+        return None
+    return {
+        "value": value,
+        "observed_at": read_at.astimezone(timezone.utc).isoformat(),
+        "basis": dict(basis) if basis is not None else None,
+    }
+
+
+def stored_price_read(entry: Any, value: Any) -> Optional[dict]:
+    """Read only evidence bound to this entry's exact value and row versions."""
+    if not isinstance(entry, dict) or not _finite_number(value):
+        return None
+    read = entry.get(PRICE_READ_KEY)
+    if not isinstance(read, dict):
+        return None
+    if any(not _finite_number(v) or v != value
+           for v in (entry.get("value"), read.get("value"))):
+        return None
+    basis = read.get("basis")
+    if basis is not None and (
+        basis != entry.get(OBSERVED_BASIS_KEY)
+        or not _finite_number(entry.get(OBSERVED_VALUE_KEY))
+        or entry[OBSERVED_VALUE_KEY] != value
+    ):
+        return None
+    raw_at = read.get("observed_at")
+    if not isinstance(raw_at, str):
+        return None
+    try:
+        at = datetime.fromisoformat(raw_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return make_price_read(value, at, basis)
+
+
+def retained_price_read(entry: Any, value: Any, basis: Optional[dict]) -> Optional[dict]:
+    """A recompute retains an identical input read, never dates it anew."""
+    read = stored_price_read(entry, value)
+    return read if read is not None and basis and read["basis"] == basis else None
+
+
+def source_price_read_time(
+    sources: Optional[dict], source: str, value: float, *, now: Optional[datetime] = None,
+) -> Optional[datetime]:
+    """A served age may date only the price which the hero actually admitted."""
+    if not isinstance(sources, dict):
+        return None
+    read = stored_price_read(sources.get(source), value)
+    if read is None:
+        return None
+    at = _coerce_timestamp(read["observed_at"])
+    reference = now if now is not None else datetime.now(timezone.utc)
+    # Clock skew must not become a fresh-looking age or a page-time clamp.
+    return at if at is not None and at <= reference else None
+
+
+@dataclass(frozen=True)
+class PricedOutcomeRead:
+    """One successful upstream price and the exact outcome version it wrote.
+
+    Kept only for the existing bounded poll pass. Commit/recovery owns whether
+    a witness is admitted; a later row read must still match all these fields.
+    """
+
+    market_id: int
+    external_id: str
+    probability: float
+    row_time: datetime
+    received_at: datetime
+
+
+def priced_outcome_read_time(
+    rows: Any, witnessed: dict[int, PricedOutcomeRead],
+) -> Optional[datetime]:
+    """Oldest actual read of every input, or unknown for any unmatched input."""
+    times = []
+    for row in rows:
+        read = witnessed.get(getattr(row, "id", None))
+        probability = getattr(row, "current_probability", None)
+        try:
+            probability = None if isinstance(probability, bool) else float(probability)
+        except (TypeError, ValueError, OverflowError):
+            probability = None
+        if (
+            not isinstance(read, PricedOutcomeRead)
+            or not _finite_number(probability)
+            or not _finite_number(read.probability)
+            or round(probability, 6) != round(read.probability, 6)
+            or getattr(row, "market_id", None) != read.market_id
+            or getattr(row, "external_id", None) != read.external_id
+            or _coerce_timestamp(getattr(row, "last_updated", None)) != read.row_time
+            or not isinstance(read.received_at, datetime)
+            or read.received_at.tzinfo is None
+        ):
+            return None
+        times.append(read.received_at)
+    return min(times) if times else None
 
 
 def observation_basis(rows: Any, now: Optional[datetime] = None) -> Optional[dict]:
@@ -1721,6 +1853,7 @@ def compute_aggregate_probability(
 def compute_aggregate_probability_tiered(
     event, event_status: Optional[str] = None, *,
     source_inputs: Optional[list[tuple[str, float]]] = None,
+    source_method: Optional[list[str]] = None,
 ) -> tuple[Optional[float], Optional[str]]:
     """``(probability, tier)`` — the number AND which tier answered.
 
@@ -1783,6 +1916,8 @@ def compute_aggregate_probability_tiered(
             )
         )
         if divergence is not None:
+            if source_method is not None:
+                source_method.append("One source")
             if source_inputs is not None:
                 source_inputs.append(
                     (divergence.primary_source, divergence.primary_value)
@@ -1800,6 +1935,14 @@ def compute_aggregate_probability_tiered(
                 if live_inputs is not None
                 else _weighted_median(values, weights)
             )
+            if source_method is not None:
+                used_weights = live_inputs[1] if live_inputs is not None else weights
+                source_method.append(
+                    "One source" if sum(weight > 0 for weight in used_weights) == 1
+                    else "Bain Luck blend · a weighted average of these sources"
+                    if live_inputs is not None
+                    else "Bain Luck blend · the weighted middle of these sources"
+                )
             if source_inputs is not None:
                 used_keys = live_keys if live_inputs is not None else keys
                 used_values, used_weights = (
@@ -1817,6 +1960,8 @@ def compute_aggregate_probability_tiered(
     # Tier 2: ESPN win probability (live games, single source)
     espn_prob = getattr(event, "espn_win_prob_home", None)
     if espn_prob is not None:
+        if source_method is not None:
+            source_method.append("One source")
         if source_inputs is not None:
             source_inputs.append(("espn", float(espn_prob)))
         return round(float(espn_prob), 6), TIER_ESPN

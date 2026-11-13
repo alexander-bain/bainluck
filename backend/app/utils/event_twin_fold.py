@@ -3276,7 +3276,7 @@ def _combat_sport(members: list) -> Optional[str]:
 #: `betting` object carries. A key outside this set is a shape nobody has
 #: checked, so the reading is refused rather than guessed at.
 _FLIPPABLE_READING_KEYS = frozenset(
-    {"value", "observed_value", "updated_at", "eligibility", "observed_basis"}
+    {"value", "observed_value", "updated_at", "eligibility", "observed_basis", "price_read"}
 )
 _ORIENTED_READING_KEYS = ("value", "observed_value")
 
@@ -3314,6 +3314,15 @@ def _flipped_reading(name: str, reading: Any) -> tuple[bool, Any]:
             if flipped is None:
                 return False, None
             out[key] = flipped
+    if "price_read" in reading:
+        from app.utils.aggregation import stored_price_read
+
+        # #12581: the exact upstream observation follows the same number onto
+        # the other axis. Invalid age evidence cannot make a valid price vanish.
+        read = stored_price_read(reading, reading["value"])
+        out.pop("price_read", None)
+        if read is not None:
+            out["price_read"] = {**read, "value": _flipped_chance(read["value"])}
     return True, out
 
 
