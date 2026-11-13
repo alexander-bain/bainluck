@@ -521,21 +521,21 @@ d("a draw is not the away team on iOS", () => {
    * and is not on any other. A `hasContent` that ignored the sport would leave
    * the 8pt dead strip #4094 removed, on soccer only.
    */
-  it("the footer's caption and its emptiness gate move together", () => {
+  it("the live pregame context clause goes through the rule and names its survivor", () => {
     const code = stripComments(eventCard());
 
-    expect(code).toMatch(/sport: String\?\s*\)\s*-> Bool/);
+    expect(code).toMatch(/sport: String\? = nil\s*\)\s*-> Bool/);
+    // #12616 + #11422 + #5363 — `livePregameContext12616` steps aside when the
+    // reason already states the opening, routes two-way soccer through
+    // `DrawPricedWinner.printablePair`, and names the surviving home side.
     expect(code).toMatch(
-      /return awayOpening != nil \|\| DrawPricedWinner\.sportPricesADraw\(sport\)/
-    );
-    // The caption itself goes through the rule and names its survivor.
-    // #11422 — it also steps aside when the reason already states the
-    // opening; that clause sits between the live test and the pair.
-    expect(code).toMatch(
-      /if isLive,\s*!EventCardFooter\.reasonStatesTheOpening\(reason\),\s*let opened = DrawPricedWinner\.printablePair\(/
+      /guard isLive,\s*!isSuspended,\s*!EventCardFooter\.reasonStatesTheOpening\(reason\),\s*let reading = prematch else \{ return nil \}/
     );
     expect(code).toMatch(
-      /Text\("Opened \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"\)/
+      /guard let opened = DrawPricedWinner\.printablePair\(/
+    );
+    expect(code).toMatch(
+      /visible: "Pregame \\\(named\.home\) \\\(homeText\)"/
     );
   });
 

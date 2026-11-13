@@ -118,6 +118,56 @@ final class CompactGameCard12616Tests: XCTestCase {
                 event: threeWaySoccer, isScheduled: true, isLive: false, isFinished: false, isSuspended: false),
             "25%"
         )
+
+        // Three-way bar shares: 41% Arsenal (away), 34% Chelsea (home), 25% Draw.
+        let shares = ProbabilityBar.normalizedShares(awayProb: 0.41, homeProb: 0.34, drawProb: 0.25)
+        XCTAssertEqual(shares.away, 0.41, accuracy: 0.0001)
+        XCTAssertEqual(shares.home, 0.34, accuracy: 0.0001)
+        XCTAssertEqual(shares.draw, 0.25, accuracy: 0.0001)
+
+        // Three-way pregame notch divides by (away + home + draw), not (away + home).
+        let prematchSoccer = try decodeEvent("""
+        {"id": 12, "sport": "soccer_epl", "home_team": "Chelsea", "away_team": "Arsenal",
+         "status": "live",
+         "prematch_odds": {"away_probability": 0.41, "home_probability": 0.34, "draw_probability": 0.25, "source": "kalshi"}}
+        """)
+        let soccerReading = PrematchReading.resolve(prematch: prematchSoccer.prematchOdds, opening: nil)
+        let notch3Way = try XCTUnwrap(CompactGameCard12616.pregameBarNotch(
+            prematch: soccerReading, prematchDraw: 0.25, isLive: true, isFinished: false, isSuspended: false))
+        XCTAssertEqual(notch3Way, 0.41, accuracy: 0.0001)
+    }
+
+    // MARK: - 4b. Live single quiet context line (Projected + Pregame)
+
+    func testLiveCombinedContextLineJoinsProjectedAndPregameInReadableGrey() {
+        let t = Date(timeIntervalSince1970: 1_792_700_000)
+        let printed = LiveProjectedFinalAdmission2920.Printed(
+            label: "Projected final", home: 109, away: 118,
+            admitted: .init(
+                home: 109, away: 118,
+                provenance: .init(
+                    bookmakerCount: 4, scheduledStart: t, earliestConfirmedAt: t,
+                    latestCapturedAt: t, unit: .points, period: .fullGame)))
+        let joined = CompactGameCard12616.combinedLiveContextText(
+            projected: printed,
+            pregameClause: "Pregame 54%\u{2013}46%"
+        )
+        XCTAssertEqual(joined, "Projected 118\u{2013}109 \u{00B7} Pregame 54%\u{2013}46%")
+
+        // Pregame alone (when live projection is withheld, e.g. tennis) still renders.
+        let pregameOnly = CompactGameCard12616.combinedLiveContextText(
+            projected: nil,
+            pregameClause: "Pregame 54%\u{2013}46%"
+        )
+        XCTAssertEqual(pregameOnly, "Pregame 54%\u{2013}46%")
+
+        // Projected alone (when reason already states the opening under #11422) omits Pregame.
+        let projectedOnly = CompactGameCard12616.combinedLiveContextText(
+            projected: printed,
+            pregameClause: nil
+        )
+        XCTAssertEqual(projectedOnly, "Projected 118\u{2013}109")
+        XCTAssertNil(CompactGameCard12616.combinedLiveContextText(projected: nil, pregameClause: nil))
     }
 
     // MARK: - 5. 390pt native renders for PR review (when BUILDERC_EXPORT_12616=1)
@@ -268,8 +318,7 @@ final class CompactGameCard12616Tests: XCTestCase {
                 .background(Color(white: 0.965))
                 .environmentObject(pins)
                 .environment(\.colorScheme, .light)
-                .environment(\.dynamicTypeSize, typeSize)
-            let host = UIHostingController(rootView: wrapped)
+            let host = hostForMeasurement(wrapped, at: typeSize)
             let fitting = host.sizeThatFits(in: CGSize(width: 390, height: 3000))
             let bounds = CGRect(x: 0, y: 0, width: 390, height: ceil(fitting.height))
             let window = UIWindow(frame: bounds)
@@ -337,8 +386,9 @@ final class CompactGameCard12616Tests: XCTestCase {
         func legacyFinishedCardBox(_ e: FeedEventData, reason: String? = nil) -> some View {
             let awayWon = (e.awayScore ?? 0) > (e.homeScore ?? 0)
             let homeWon = (e.homeScore ?? 0) > (e.awayScore ?? 0)
-            let awayPre = e.prematchOdds?.awayRenderedPercent ?? 50
-            let homePre = e.prematchOdds?.homeRenderedPercent ?? 50
+            let reading = PrematchReading.resolve(prematch: e.prematchOdds, opening: e.openingOdds)
+            let awayPre = reading?.percents[0] ?? 50
+            let homePre = reading?.percents[1] ?? 50
             let upsetAway = awayWon && awayPre < homePre
             return VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {

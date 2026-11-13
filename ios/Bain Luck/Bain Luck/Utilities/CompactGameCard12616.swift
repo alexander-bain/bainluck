@@ -183,15 +183,19 @@ enum CompactGameCard12616 {
     // MARK: - Pregame notch on ProbabilityBar
 
     /// The pregame away share in `(0, 1)` for the 6pt bar's notch on live and
-    /// finished cards when a pre-match reading exists.
+    /// finished cards when a pre-match reading exists. When the card draws a
+    /// three-way Draw row (`prematchDraw != nil`), the denominator includes the
+    /// draw so the notch sits on the same three-way footing as the bar.
     nonisolated static func pregameBarNotch(
         prematch: PrematchReading?,
+        prematchDraw: Double? = nil,
         isLive: Bool,
         isFinished: Bool,
         isSuspended: Bool
     ) -> Double? {
         guard !isSuspended, isLive || isFinished, let prematch else { return nil }
-        let sum = prematch.awayProbability + prematch.homeProbability
+        let draw = usableProbability(prematchDraw) ?? 0
+        let sum = prematch.awayProbability + prematch.homeProbability + draw
         guard sum.isFinite, sum > 0 else { return nil }
         let share = prematch.awayProbability / sum
         guard share > 0, share < 1 else { return nil }
@@ -207,6 +211,24 @@ enum CompactGameCard12616 {
             ? "Projected (90 min)"
             : "Projected"
         return "\(prefix) \(printed.away)\u{2013}\(printed.home)"
+    }
+
+    /// Combines the optional live projected final and optional pregame starting
+    /// chance (`"Projected 118–109 · Pregame 54%–46%"`) into one quiet grey
+    /// context line on live cards (#12616, Decision 161-B).
+    nonisolated static func combinedLiveContextText(
+        projected: LiveProjectedFinalAdmission2920.Printed?,
+        pregameClause: String?
+    ) -> String? {
+        var parts: [String] = []
+        if let projected {
+            parts.append(liveContextText(projected))
+        }
+        if let pregameClause, !pregameClause.isEmpty {
+            parts.append(pregameClause)
+        }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     /// Compact single-line finished pregame projected score (`"Projected 21–24"`,
@@ -250,7 +272,8 @@ enum ScheduledCardProjectedFinal12616 {
 }
 
 /// Quiet `12.5pt` grey context line (`DS.textSecondaryReadable`) under the 6pt
-/// bar on compact game cards (#12616, Decision 161-B).
+/// bar on compact game cards (#12616, Decision 161-B). Single line whenever it
+/// fits; stacks cleanly at large Dynamic Type instead of clipping digits.
 struct CompactProjectedContextLine12616: View {
     let text: String
     let spokenText: String
@@ -258,14 +281,38 @@ struct CompactProjectedContextLine12616: View {
 
     @ScaledMetric(relativeTo: .caption) private var fontSize: CGFloat = 12.5
 
+    private var font: Font {
+        .system(size: min(fontSize, 20), weight: .regular).monospacedDigit()
+    }
+
     var body: some View {
-        Text(text)
-            .font(.system(size: min(fontSize, 20), weight: .regular).monospacedDigit())
-            .foregroundStyle(DS.textSecondaryReadable)
-            .lineLimit(1)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(spokenText)
-            .accessibilityIdentifier(accessibilityId)
+        let clauses = text.components(separatedBy: " \u{00B7} ")
+        Group {
+            if clauses.count == 2 {
+                ViewThatFits(in: .horizontal) {
+                    Text(text)
+                        .font(font)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(clauses[0])
+                        Text(clauses[1])
+                    }
+                    .font(font)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text(text)
+                    .font(font)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenText)
+        .accessibilityIdentifier(accessibilityId)
     }
 }

@@ -1,11 +1,14 @@
 import SwiftUI
 
-/// Team-colored segmented probability bar, with an optional pregame notch (#12616).
+/// Team-colored segmented probability bar, with an optional neutral third segment
+/// for explicit three-way draw sports and an optional pregame notch (#12616).
 struct ProbabilityBar: View {
     let awayProb: Double
     let homeProb: Double
+    var drawProb: Double? = nil
     var awayColor: Color = .gray
     var homeColor: Color = .gray
+    var drawColor: Color = Color.secondary.opacity(0.28)
     var height: CGFloat = 8
     var animated: Bool = false
     var glowing: Bool = false
@@ -14,16 +17,24 @@ struct ProbabilityBar: View {
     /// against where the bar sits now.
     var notchProb: Double? = nil
 
-    private var normalizedShares: (away: Double, home: Double) {
+    nonisolated static func normalizedShares(
+        awayProb: Double,
+        homeProb: Double,
+        drawProb: Double? = nil
+    ) -> (away: Double, home: Double, draw: Double) {
         let a = max(0, awayProb.isFinite ? awayProb : 0)
         let h = max(0, homeProb.isFinite ? homeProb : 0)
-        let sum = a + h
-        guard sum > 0 else { return (0.5, 0.5) }
-        return (a / sum, h / sum)
+        let d: Double = {
+            guard let drawProb, drawProb.isFinite, drawProb > 0 else { return 0 }
+            return drawProb
+        }()
+        let sum = a + h + d
+        guard sum > 0 else { return (0.5, 0.5, 0) }
+        return (a / sum, h / sum, d / sum)
     }
 
     var body: some View {
-        let shares = normalizedShares
+        let shares = Self.normalizedShares(awayProb: awayProb, homeProb: homeProb, drawProb: drawProb)
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 HStack(spacing: 0) {
@@ -33,6 +44,11 @@ struct ProbabilityBar: View {
                     Rectangle()
                         .fill(homeColor)
                         .frame(width: max(geo.size.width * shares.home, 2))
+                    if shares.draw > 0 {
+                        Rectangle()
+                            .fill(drawColor)
+                            .frame(width: max(geo.size.width * shares.draw, 2))
+                    }
                 }
                 .frame(width: geo.size.width, height: height)
                 .clipShape(Capsule())

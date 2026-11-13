@@ -519,18 +519,39 @@ struct EventCardView: View {
                 }
             }
 
-            if let liveProjection = liveProjectedFinal2920 {
+            if isLive, !isSuspended {
+                let pregameContext = livePregameContext12616
                 if dynamicTypeSize.isAccessibilitySize {
-                    LiveProjectedFinalLine2920(
-                        printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam,
-                        sportKey: event.sport)
-                        .padding(.leading, 32)
-                } else {
+                    if let liveProjection = liveProjectedFinal2920 {
+                        LiveProjectedFinalLine2920(
+                            printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam,
+                            sportKey: event.sport)
+                            .padding(.leading, 32)
+                    }
+                    if let pregameContext {
+                        CompactProjectedContextLine12616(
+                            text: pregameContext.visible,
+                            spokenText: pregameContext.spoken,
+                            accessibilityId: "eventCard.livePregameContext"
+                        )
+                    }
+                } else if let combinedText = CompactGameCard12616.combinedLiveContextText(
+                    projected: liveProjectedFinal2920,
+                    pregameClause: pregameContext?.visible
+                ) {
+                    let spokenParts = [
+                        liveProjectedFinal2920.map {
+                            LiveProjectedFinal2920.spokenText(
+                                $0, awayName: event.awayTeam, homeName: event.homeTeam)
+                        },
+                        pregameContext?.spoken,
+                    ].compactMap { $0 }
                     CompactProjectedContextLine12616(
-                        text: CompactGameCard12616.liveContextText(liveProjection),
-                        spokenText: LiveProjectedFinal2920.spokenText(
-                            liveProjection, awayName: event.awayTeam, homeName: event.homeTeam),
-                        accessibilityId: LiveProjectedFinalLine2920.accessibilityIdentifier
+                        text: combinedText,
+                        spokenText: spokenParts.joined(separator: ". "),
+                        accessibilityId: liveProjectedFinal2920 != nil
+                            ? LiveProjectedFinalLine2920.accessibilityIdentifier
+                            : "eventCard.livePregameContext"
                     )
                 }
             }
@@ -823,38 +844,25 @@ struct EventCardView: View {
             reason: String?,
             isLive: Bool,
             isFinished: Bool = false,
-            awayOpening: Double?,
-            homeOpening: Double?,
-            sport: String?
+            awayOpening: Double? = nil,
+            homeOpening: Double? = nil,
+            sport: String? = nil
         ) -> Bool {
             // #12616 — finished game cards never draw the reason banner; an
             // upset already reads as a low Pregame % beside a winning Final.
-            guard !isFinished else { return false }
-            if let reason, !reason.isEmpty { return true }
-            // #5363 — a draw-priced sport draws the named single-sided caption
-            // ("Opened Boca 68%"), so HOME alone is content there. Taking the
-            // sport rather than a pre-computed Bool keeps this function's
-            // agreement with `footerRow` decidable from the same inputs the
-            // view has; the guard test pins both arms in both directions.
-            guard isLive, homeOpening != nil else { return false }
-            // Mirrors `footerRow`'s two branches: the "Opened X/Y" pair needs
-            // BOTH sides priced, and the named single-sided caption needs the
-            // rule to fire. Home alone on a two-way sport still renders
-            // nothing, so it is still not content.
-            return awayOpening != nil || DrawPricedWinner.sportPricesADraw(sport)
+            // Live cards now place their pregame starting chance in the single
+            // quiet grey context line (`Projected 118–109 · Pregame 54%–46%`),
+            // so `footerRow` draws only a non-finished served `reason`.
+            guard !isFinished, let reason, !reason.isEmpty else { return false }
+            return true
         }
 
         /// #11422 — whether the served reason already says where the game
         /// STARTED. Every live claim `feed_reasons.py` writes carries the
         /// kickoff price ("New Orleans Pelicans leading after starting at 44%",
-        /// "… chance rose from 46% to 87%", "… chance fell from …"), and the
-        /// footer then printed "Opened 56%/44%" beside it: the same fact twice,
-        /// one of them as a pair the reader has to map back onto the sentence.
-        /// When the reason says it, the caption steps aside.
-        ///
-        /// Pinned to the TEMPLATE's words around the number, never a bare
-        /// keyword, for the reason `reasonStyle` gives: the sentence has a team
-        /// name in it, and "after starting at 44%" is the part no name can forge.
+        /// "… chance rose from 46% to 87%", "… chance fell from …"). When the
+        /// reason says it, the live `Pregame` context pair steps aside so the
+        /// card never states the start twice.
         static func reasonStatesTheOpening(_ reason: String?) -> Bool {
             guard let reason, !reason.isEmpty else { return false }
             return reason.range(
@@ -882,45 +890,7 @@ struct EventCardView: View {
             if !isFinished, let reason, !reason.isEmpty {
                 reasonBadge(reason)
             }
-            Spacer()
-            // UX-P166 — both sides of one question in fixed positions is a DUEL,
-            // and rounding the two independently printed 101. Measured on
-            // production 2026-08-29: all 24,117 events carrying an opening line
-            // are complement pairs and 207 of them print 101, none 99.
-            //
-            // This line claimed "same rule and same helper as the `currentOdds`
-            // strip" while that strip was still rounding per side (#3049) — it was
-            // the only site on the card that HAD the rule. It now reads the shared
-            // `openingPercents`, so the claim is true and there is one derivation
-            // per odds source rather than a third copy.
-            //
-            // #5363 — `opening_odds` is a complement pair too
-            // (`opening_away_probability or round(1 - home, 4)`), so on a
-            // draw-priced sport this caption told the same lie the strip did.
-            // The withheld arm is the event page's, word for word: a caption
-            // that has lost one of its pair has lost the positional attribution
-            // that let the other go unnamed, so it NAMES the side (#3430 —
-            // via the pair, because "Tigers" is not a name when both shorten
-            // to it).
-            if isLive, !EventCardFooter.reasonStatesTheOpening(reason),
-               let opened = DrawPricedWinner.printablePair(
-                away: event.openingOdds?.awayProbability,
-                home: event.openingOdds?.homeProbability,
-                sport: event.sport) {
-                if let awayOpen = opened.away {
-                    Text("Opened \(formatProbability(awayOpen, renderedPercent: openingPercents[0]))/\(formatProbability(opened.home, renderedPercent: openingPercents[1]))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                } else {
-                    let named = TeamShortName.shortPair(
-                        away: event.awayTeam, home: event.homeTeam,
-                        sportKey: event.sport
-                    )
-                    Text("Opened \(named.home) \(formatProbability(opened.home))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
+            Spacer(minLength: 0)
         }
     }
 
@@ -1049,25 +1019,52 @@ struct EventCardView: View {
         )
     }
 
-    /// The two percents the OPENING line prints, `[away, home]`.
-    ///
-    /// No served values: `current_odds.{away,home}_rendered_percent` describes
-    /// `current_odds` and nothing else, and handing that rounding to another
-    /// source's probability prints a mismatched pair that still sums to 100 — the
-    /// one error a sum guard cannot see (`RenderedPercent.swift`).
-    private var openingPercents: [Int?] {
-        renderedDuelPercents(
-            away: event.openingOdds?.awayProbability,
-            home: event.openingOdds?.homeProbability
-        )
-    }
-
-    /// #8622 — the pre-match reading a finished row prints: the server's
-    /// ladder rung (`prematch_odds`), which its reason line is written from,
-    /// with `opening_odds` only as the fallback. The live footer's "Opened"
-    /// caption keeps `openingPercents`: that one IS the opening line.
+    /// #8622 / #12616 — the pre-match reading that BOTH the finished `Pregame`
+    /// column AND the live `Pregame` context line + bar notch read: the server's
+    /// ladder rung (`prematch_odds`), with `opening_odds` as the fallback.
     private var prematch: PrematchReading? {
         PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
+    }
+
+    /// #12616 (161-B) — the live card's starting-chance clause in the one quiet
+    /// grey context line (`"Pregame 54%–46%"`, away then home like the rows, or
+    /// `"Pregame Boca 68%"` when away is a two-way soccer complement under #5363),
+    /// derived from `prematch` so it always agrees with the bar's pregame notch.
+    /// Steps aside when the served `reason` already states the opening (#11422).
+    private var livePregameContext12616: (visible: String, spoken: String)? {
+        guard isLive, !isSuspended,
+              !EventCardFooter.reasonStatesTheOpening(reason),
+              let reading = prematch else { return nil }
+        if CompactGameCard12616.hasExplicitThreeWayPrematch(event) {
+            let awayText = formatProbability(reading.awayProbability, renderedPercent: reading.percents[0])
+            let homeText = formatProbability(reading.homeProbability, renderedPercent: reading.percents[1])
+            return (
+                visible: "Pregame \(awayText)\u{2013}\(homeText)",
+                spoken: "Pregame \(event.awayTeam) \(awayText), \(event.homeTeam) \(homeText)"
+            )
+        }
+        guard let opened = DrawPricedWinner.printablePair(
+            away: reading.awayProbability,
+            home: reading.homeProbability,
+            sport: event.sport
+        ) else { return nil }
+        if let awayOpen = opened.away {
+            let awayText = formatProbability(awayOpen, renderedPercent: reading.percents[0])
+            let homeText = formatProbability(opened.home, renderedPercent: reading.percents[1])
+            return (
+                visible: "Pregame \(awayText)\u{2013}\(homeText)",
+                spoken: "Pregame \(event.awayTeam) \(awayText), \(event.homeTeam) \(homeText)"
+            )
+        }
+        let named = TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam,
+            sportKey: event.sport
+        )
+        let homeText = formatProbability(opened.home)
+        return (
+            visible: "Pregame \(named.home) \(homeText)",
+            spoken: "Pregame \(event.homeTeam) \(homeText)"
+        )
     }
 
     /// #5363 — whether this card may print an AWAY probability at all.
@@ -1202,8 +1199,15 @@ struct EventCardView: View {
     @ViewBuilder
     private var probabilityBar: some View {
         let reading = prematch
+        let prematchThreeWayDraw = CompactGameCard12616.hasExplicitThreeWayPrematch(event)
+            ? event.prematchOdds?.drawProbability
+            : nil
+        let currentThreeWayDraw = CompactGameCard12616.hasExplicitThreeWayCurrent(event)
+            ? event.currentOdds?.drawProbability
+            : nil
         let notch = CompactGameCard12616.pregameBarNotch(
             prematch: reading,
+            prematchDraw: prematchThreeWayDraw,
             isLive: isLive,
             isFinished: isFinished,
             isSuspended: isSuspended
@@ -1213,6 +1217,7 @@ struct EventCardView: View {
                 ProbabilityBar(
                     awayProb: reading.awayProbability,
                     homeProb: reading.homeProbability,
+                    drawProb: usesFinishedAccessibilityLayout ? nil : prematchThreeWayDraw,
                     // #5363 — the bar KEEPS its remainder, because the two
                     // segments are a partition and "not the home team" is a
                     // true quantity. What it is not is the away team, so it
@@ -1239,6 +1244,7 @@ struct EventCardView: View {
             ProbabilityBar(
                 awayProb: away,
                 homeProb: home,
+                drawProb: currentThreeWayDraw,
                 // #5363 — see the settled bar above: the remainder survives, the
                 // away team's colour does not.
                 awayColor: awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor,

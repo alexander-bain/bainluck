@@ -57,9 +57,9 @@ final class LiveSportsCardTidy11422Tests: XCTestCase {
 
     func testTheCaptionIsGatedOnTheReasonInTheView() throws {
         let code = try source("Components/EventCardView.swift")
-        XCTAssertTrue(code.contains("privatevarfooterRow:someView{"), "anti-vacuity")
+        XCTAssertTrue(code.contains("privatevarlivePregameContext12616:(visible:String,spoken:String)?{"), "anti-vacuity")
         XCTAssertEqual(
-            occurrences("ifisLive,!EventCardFooter.reasonStatesTheOpening(reason),letopened=DrawPricedWinner.printablePair(", in: code), 1)
+            occurrences("guardisLive,!isSuspended,!EventCardFooter.reasonStatesTheOpening(reason),letreading=prematchelse{returnnil}", in: code), 1)
     }
 
     // MARK: - 2. The reason pill keeps every letter
