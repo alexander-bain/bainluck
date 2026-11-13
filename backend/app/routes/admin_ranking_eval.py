@@ -440,6 +440,7 @@ SURFACE_GROUPING = "grouping"
 DEFAULT_GROUPING_SLATE_ID = "grouping-candidates-2026-11"
 EXAM_TEST_GROUPING_SLATE_ID = "sibling-family-exam-test-2026-11"
 VISUAL_FORMS_LOOK_SHEET_SLATE_ID = "visual-forms-look-sheet-2026-11"
+NFL_PLAYOFFS_LOOK_SHEET_SLATE_ID = "nfl-playoffs-look-sheet-2026-11"
 GROUPING_GRADES = ("amazing", "fine", "no")
 # Lossless 1-to-1 bijection scoped to RankingGrade.surface == "grouping" so
 # writes satisfy Postgres ck_ranking_grades_grade ("grade IN ('shareable',
@@ -1043,6 +1044,27 @@ def load_grouping_grade_deck(
         return {
             **raw_sheet,
             "items": active_items,
+        }
+    if slate_id == NFL_PLAYOFFS_LOOK_SHEET_SLATE_ID:
+        nfl_sheet_path = (
+            Path(__file__).resolve().parents[2]
+            / "data"
+            / "groupings"
+            / "nfl-playoffs-look-sheet.json"
+        )
+        if not nfl_sheet_path.exists():
+            raise HTTPException(
+                status_code=404, detail="nfl playoffs look sheet file not found"
+            )
+        raw_nfl_sheet = json.loads(nfl_sheet_path.read_text(encoding="utf-8"))
+        active_nfl_items = [
+            item
+            for item in raw_nfl_sheet.get("items", [])
+            if not item.get("retired")
+        ]
+        return {
+            **raw_nfl_sheet,
+            "items": active_nfl_items,
         }
 
     target_path = candidates_path

@@ -18,6 +18,11 @@ import {
   VisualFormLookSheetGallery,
   renderVisualLookSheetDeckItem,
 } from "@/components/discover/forms/VisualFormLookSheet";
+import {
+  NflPlayoffsLookSheetGallery,
+  renderNflPlayoffsLookSheetDeckItem,
+} from "@/components/discover/forms/NflPlayoffsLookSheet";
+import { NFL_PLAYOFFS_LOOK_SHEET_SLATE_ID } from "@/lib/discover/nflPlayoffsLookSheet";
 import { RoundupCard } from "@/components/discover/roundup/RoundupCard";
 import { buildRoundupCardModel } from "@/lib/discover/roundupCard";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
@@ -81,6 +86,9 @@ function GroupingGradeSession() {
       const sp = new URLSearchParams(window.location.search);
       if (sp.get("view") === "look-sheet") {
         return "visual-forms-look-sheet-2026-11";
+      }
+      if (sp.get("view") === "nfl-look-sheet") {
+        return NFL_PLAYOFFS_LOOK_SHEET_SLATE_ID;
       }
       return sp.get("slate") || sp.get("slate_id") || "grouping-candidates-2026-11";
     }
@@ -209,7 +217,9 @@ function GroupingGradeSession() {
   };
 
   const tallyLine = formatTally(tally);
-  const isLookSheetSlate = selectedSlate === "visual-forms-look-sheet-2026-11";
+  const isVisualFormsLookSheet = selectedSlate === "visual-forms-look-sheet-2026-11";
+  const isNflPlayoffsLookSheet = selectedSlate === NFL_PLAYOFFS_LOOK_SHEET_SLATE_ID;
+  const isLookSheetSlate = isVisualFormsLookSheet || isNflPlayoffsLookSheet;
   const activeGraderForLookSheet = grader || resolvedGrader || null;
   const existingGradesByItemKey: Record<string, GroupingGrade> = {};
   if (activeGraderForLookSheet) {
@@ -228,6 +238,9 @@ function GroupingGradeSession() {
     itemNote: string,
   ) => {
     const targetGrader = grader || resolvedGrader;
+    const targetSlateId = isNflPlayoffsLookSheet
+      ? NFL_PLAYOFFS_LOOK_SHEET_SLATE_ID
+      : "visual-forms-look-sheet-2026-11";
     if (!targetGrader || savingItemKey) return;
     setSavingItemKey(itemKey);
     setError(null);
@@ -236,7 +249,7 @@ function GroupingGradeSession() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          slate_id: "visual-forms-look-sheet-2026-11",
+          slate_id: targetSlateId,
           grader: targetGrader,
           kid,
           position,
@@ -260,7 +273,7 @@ function GroupingGradeSession() {
         ),
         { grader: targetGrader, item_key: itemKey, grade },
       ]);
-      void loadTallyAndSummary("visual-forms-look-sheet-2026-11");
+      void loadTallyAndSummary(targetSlateId);
     } catch {
       setError("Not saved: the network dropped. Try that card again.");
     } finally {
@@ -284,7 +297,11 @@ function GroupingGradeSession() {
   }
 
   if (!grader) {
-    const cardCount = isLookSheetSlate ? 15 : (deck?.items.length ?? 0);
+    const cardCount = isVisualFormsLookSheet
+      ? 15
+      : isNflPlayoffsLookSheet
+        ? 7
+        : (deck?.items.length ?? 0);
     return (
       <Shell tally={tallyLine} summary={summary}>
         <h1 className="text-xl font-semibold text-text-primary">Who&apos;s grading proposed cards?</h1>
@@ -299,6 +316,7 @@ function GroupingGradeSession() {
             { id: "sibling-family-exam-test-2026-11", label: "Sibling-family exam (20)" },
             { id: "new-kinds-exam-test-2026-11", label: "New-kinds exam (20)" },
             { id: "visual-forms-look-sheet-2026-11", label: "Visual forms look sheet (15)" },
+            { id: NFL_PLAYOFFS_LOOK_SHEET_SLATE_ID, label: "NFL Playoffs & Super Bowl look sheet (7)" },
           ].map((opt) => (
             <button
               key={opt.id}
@@ -370,9 +388,20 @@ function GroupingGradeSession() {
           Start ({cardCount} cards)
         </button>
 
-        {isLookSheetSlate && (
+        {isVisualFormsLookSheet && (
           <div className="mt-6 border-t border-surface-border pt-6">
             <VisualFormLookSheetGallery
+              kidSurface={kid}
+              grader={activeGraderForLookSheet}
+              existingGradesByItemKey={existingGradesByItemKey}
+              onGradeItem={submitLookSheetItemGrade}
+              savingItemKey={savingItemKey}
+            />
+          </div>
+        )}
+        {isNflPlayoffsLookSheet && (
+          <div className="mt-6 border-t border-surface-border pt-6">
+            <NflPlayoffsLookSheetGallery
               kidSurface={kid}
               grader={activeGraderForLookSheet}
               existingGradesByItemKey={existingGradesByItemKey}
@@ -388,13 +417,23 @@ function GroupingGradeSession() {
   if (!deck) {
     return (
       <Shell tally={tallyLine} summary={summary}>
-        <VisualFormLookSheetGallery
-          kidSurface={kid}
-          grader={activeGraderForLookSheet}
-          existingGradesByItemKey={existingGradesByItemKey}
-          onGradeItem={submitLookSheetItemGrade}
-          savingItemKey={savingItemKey}
-        />
+        {isNflPlayoffsLookSheet ? (
+          <NflPlayoffsLookSheetGallery
+            kidSurface={kid}
+            grader={activeGraderForLookSheet}
+            existingGradesByItemKey={existingGradesByItemKey}
+            onGradeItem={submitLookSheetItemGrade}
+            savingItemKey={savingItemKey}
+          />
+        ) : (
+          <VisualFormLookSheetGallery
+            kidSurface={kid}
+            grader={activeGraderForLookSheet}
+            existingGradesByItemKey={existingGradesByItemKey}
+            onGradeItem={submitLookSheetItemGrade}
+            savingItemKey={savingItemKey}
+          />
+        )}
       </Shell>
     );
   }
@@ -418,9 +457,13 @@ function GroupingGradeSession() {
   const item = deck.items[index];
   const card = item.proposed_card;
   const single = item.best_single;
-  const lookSheetCustomNode = renderVisualLookSheetDeckItem(item.item_key, {
-    kidSurface: kid,
-  });
+  const lookSheetCustomNode =
+    renderNflPlayoffsLookSheetDeckItem(item.item_key, {
+      kidSurface: kid,
+    }) ||
+    renderVisualLookSheetDeckItem(item.item_key, {
+      kidSurface: kid,
+    });
   const roundupContract = buildRoundupContractForProposedCard(card);
   const canRenderRoundupCard =
     buildRoundupCardModel(card.title, roundupContract).model !== null;
@@ -466,7 +509,7 @@ function GroupingGradeSession() {
             </div>
           )}
           {lookSheetCustomNode ? (
-            <div className="pointer-events-none">{lookSheetCustomNode}</div>
+            <div>{lookSheetCustomNode}</div>
           ) : canRenderRoundupCard ? (
             <div className="pointer-events-none">
               <RoundupCard
