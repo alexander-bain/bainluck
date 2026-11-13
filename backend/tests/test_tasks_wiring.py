@@ -190,6 +190,8 @@ class TestBeatScheduleCompleteness:
         "run-freshness-watchdog",
         "poll-polymarket-hourly",
         "refresh-stale-futures-prices-hourly",
+        # Decision 170 / 188: the 15-minute re-read of the markets pages can show.
+        "refresh-shown-futures-prices",
         # #3879: the served Polymarket long tail — the population that is
         # neither newly-started (the discovery scan's newest-first window), nor
         # high-volume/tier-1 (the sweep above), nor register-pinned (the

@@ -1027,6 +1027,10 @@ HEAVY_TASKS = {
     # placing it there would close the queue rather than share it. It cannot
     # collide with the :15 precompute, and it is the only heavy beat at :50.
     "app.tasks.refresh_stale_futures_prices",
+    # Decision 170 / 188 (Nov 13): the 15-minute re-read of the markets pages can
+    # show. The same writer as the entry above in identity-only mode, so it goes
+    # where that one goes, for the same reason.
+    "app.tasks.refresh_shown_futures_prices",
     # #3879, hourly :08. Here for the same plain reading as the entry above and
     # for no wider grant: its wall budget is 200s, which is precisely the
     # multi-minute beat the background note forbids on a queue with ~one
@@ -1608,6 +1612,53 @@ def refresh_stale_futures_prices(self, budget: int = 0):
     )
     return _tracked_run(
         "futures_price_refresh", _refresh_stale_futures_prices(**kwargs)
+    )
+
+
+#: Decision 170 / 188 (Alex, Nov 13): "We should be ensuring that we DON'T have
+#: stale numbers." Every market a page can show is re-read from its venue at
+#: least every 30 minutes. The hourly writer above cannot: it runs once an hour
+#: and reached 895 of 2,568 candidates on Nov 13 at 8:50 AM PT, and on that
+#: morning's Discover slate 70 of 95 Polymarket and 17 of 38 Kalshi cards were
+#: over 30 minutes old (#12633). This pass re-reads ONLY the identity rows (what
+#: Discover's page one, the category pages and the tournament register show,
+#: plus in-play markets) whose last read is older than this many minutes.
+SHOWN_REFRESH_MINUTES = 15
+#: Beside the hourly :50 pass these give a re-read every 14-16 minutes, on
+#: minutes no other hourly heavy beat uses, and never beside :50.
+SHOWN_REFRESH_BEAT_MINUTES = (4, 19, 34)
+
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.refresh_shown_futures_prices",
+    soft_time_limit=420,
+    time_limit=480,
+)
+def refresh_shown_futures_prices(self):
+    """Decision 170 / 188: re-read the futures markets pages can show, every ~15 min.
+
+    The same writer as ``refresh_stale_futures_prices`` with both class budgets
+    at 0, so ``_take_for_source`` takes every identity row and nothing else, and
+    with the served, registered and category-page clocks at
+    :data:`SHOWN_REFRESH_MINUTES`. Every price rule, refusal, retirement and the
+    venue-closed stamp are the writer's own; this adds no second writer. A market
+    the venue reports closed is stamped here and leaves Discover's candidate
+    pool on the next base build. Threshold-label work is the hourly pass's.
+    Recorded under its own name so the hourly pass's history stays its own.
+    """
+    from app.tasks.futures_price_refresh import _refresh_stale_futures_prices
+
+    return _tracked_run(
+        "shown_futures_refresh",
+        _refresh_stale_futures_prices(
+            kalshi_budget=0,
+            polymarket_budget=0,
+            served_refresh_minutes=SHOWN_REFRESH_MINUTES,
+            registered_refresh_minutes=SHOWN_REFRESH_MINUTES,
+            category_page_refresh_minutes=SHOWN_REFRESH_MINUTES,
+            threshold_label_per_run=0,
+        ),
     )
 
 
@@ -7954,6 +8005,14 @@ celery_app.conf.beat_schedule = {
         # precompute there fires at :15 and cannot collide with :50.
         "task": "app.tasks.refresh_stale_futures_prices",
         "schedule": crontab(minute=50),
+        "options": {"queue": "heavy"},
+    },
+    "refresh-shown-futures-prices": {
+        # Decision 170 / 188: the markets pages can show, re-read every ~15 min
+        # (see `SHOWN_REFRESH_BEAT_MINUTES`). `heavy`, literally, for the hourly
+        # entry's reason: same writer, same venue reads.
+        "task": "app.tasks.refresh_shown_futures_prices",
+        "schedule": crontab(minute=",".join(str(m) for m in SHOWN_REFRESH_BEAT_MINUTES)),
         "options": {"queue": "heavy"},
     },
     # #3879. Hourly at :08, the served long tail the three other price rails

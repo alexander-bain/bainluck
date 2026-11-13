@@ -14167,10 +14167,18 @@ def _discover_candidate_pool_specs(
         ),
     ]
     if not category_filter:
+        from app.utils.futures_liveness import VENUE_SETTLED_KEY
+
         base_filters.extend(
             [
                 ~FuturesMarket.name.like("% vs %"),
                 ~FuturesMarket.name.like("% vs. %"),
+                # Decision 170 / 188 (Nov 13): a market its venue reports closed
+                # leaves Discover on the next build. The price writer stamps the
+                # report (and clears it if a price comes back); the 48-hour wait
+                # in `market_reads_settled` is for grading a market settled, not
+                # for featuring it. Category pages keep that rule.
+                FuturesMarket.market_metadata[VENUE_SETTLED_KEY].astext.is_(None),
             ]
         )
 
