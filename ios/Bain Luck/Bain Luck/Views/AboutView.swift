@@ -29,18 +29,40 @@ struct AboutView: View {
     /// as one site regardless, so the apex form would still render in place.
     private static let aboutURL = URL(string: "https://www.bainluck.com/about?embed=1")!
 
+    @EnvironmentObject private var navCoordinator: NavigationCoordinator
+
     var body: some View {
         // `.handOffToTheSystem` (the default, named here because it is load-
         // bearing rather than incidental): the About copy links to
         // /calibration, /privacy, /discover and mailto:bugs@bainluck.com. Left
         // to follow in place, one tap turns a screen titled "About" into a
         // second copy of the website — which is the defect #5914 is about,
-        // arriving a moment later. Those links now open in Safari and Mail.
+        // arriving a moment later.
+        //
+        // #12671 — handed off, but to the app's own router first. A link to a
+        // screen the app has ("Start Exploring" → /discover, /calibration)
+        // opens that screen; only what the app can't show (/privacy, Mail)
+        // leaves for Safari or Mail. Handing /discover to Safari took a reader
+        // out of the app to the website.
         InAppWebView(url: Self.aboutURL, linkPolicy: .handOffToTheSystem)
+            .environment(\.openURL, OpenURLAction { url in
+                Self.opensInApp(url, router: navCoordinator.handleURL) ? .handled : .systemAction
+            })
             .navigationTitle("About")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .onAppear { AnalyticsService.trackScreen(name: "about", type: "about") }
+    }
+
+    /// `true` ⇒ the app showed it; `false` ⇒ hand it to the system. Only our
+    /// own site goes to the router: a venue or source link named in the copy is
+    /// never ours to open, even if a path happened to match a route.
+    static func opensInApp(_ url: URL, router: (URL) -> Bool) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = url.host?.lowercased(),
+              host == "bainluck.com" || host == "www.bainluck.com"
+        else { return false }
+        return router(url)
     }
 }
