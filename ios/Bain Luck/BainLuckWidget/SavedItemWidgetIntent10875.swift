@@ -205,6 +205,9 @@ struct SelectSavedItemIntent10875: WidgetConfigurationIntent {
 
     init() {}
 
+    /// The look this widget draws over a reading (#12466: Matchup, look A).
+    var look12466: SavedWidgetLook12466 { .shipping }
+
     /// The plain-value selection the timeline reads.
     var selection: SavedWidgetSelection10875? {
         guard let item, let parsed = SavedWidgetSelection10875.parse(entityID: item.id) else { return nil }

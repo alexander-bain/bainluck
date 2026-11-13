@@ -9,6 +9,11 @@ struct SavedItemWidgetEntry10875: TimelineEntry {
     let date: Date
     let selection: SavedWidgetSelection10875?
     let content: SavedWidgetContent10875
+    /// #12466 — the look this widget draws, and for a game in a new look its
+    /// colours and crests.
+    var art: SavedWidgetArt12466? = nil
+    var logos = SavedWidgetLogos12466.Pair()
+    var look: SavedWidgetLook12466 = .shipping
 
     /// The reading at this entry's own date, when there is a detail.
     var reading: SavedWidgetReading10875? {
@@ -41,28 +46,38 @@ struct SavedItemWidgetProvider10875: AppIntentTimelineProvider {
 
     func snapshot(for configuration: SelectSavedItemIntent10875, in context: Context) async -> SavedItemWidgetEntry10875 {
         if context.isPreview && configuration.selection == nil {
-            return SavedItemWidgetEntry10875(date: Date(), selection: nil, content: .notConfigured)
+            return SavedItemWidgetEntry10875(date: Date(), selection: nil, content: .notConfigured,
+                                             look: configuration.look12466)
         }
-        return await entry(for: configuration.selection, at: Date())
+        return await entry(for: configuration.selection, look: configuration.look12466, at: Date())
     }
 
     func timeline(for configuration: SelectSavedItemIntent10875, in context: Context) async -> Timeline<SavedItemWidgetEntry10875> {
         let now = Date()
         let selection = configuration.selection
-        let first = await entry(for: selection, at: now)
+        let first = await entry(for: selection, look: configuration.look12466, at: now)
         let entries = SavedWidgetTimeline10875.entryDates(first.content, selection: selection, now: now)
-            .map { SavedItemWidgetEntry10875(date: $0, selection: selection, content: first.content) }
+            .map { SavedItemWidgetEntry10875(date: $0, selection: selection, content: first.content,
+                                             art: first.art, logos: first.logos, look: first.look) }
         let next = SavedWidgetTimeline10875.nextRequest(first.content, selection: selection, now: now)
         return Timeline(entries: entries, policy: .after(next))
     }
 
-    private func entry(for selection: SavedWidgetSelection10875?, at date: Date) async -> SavedItemWidgetEntry10875 {
+    private func entry(for selection: SavedWidgetSelection10875?, look: SavedWidgetLook12466,
+                       at date: Date) async -> SavedItemWidgetEntry10875 {
         let content = await SavedWidgetTimeline10875.resolve(
             selection,
             readBridge: { SavedItemWidgetFetch10875.bridge },
             fetch: { try await SavedItemWidgetFetch10875.data(for: $0) },
             cache: SavedItemWidgetFetch10875.cache)
-        return SavedItemWidgetEntry10875(date: date, selection: selection, content: content)
+        var entry = SavedItemWidgetEntry10875(date: date, selection: selection, content: content, look: look)
+        // #12466: only a new look draws crests, so today's look fetches nothing new.
+        if look != .today, case .detail(.game(let event), _) = content {
+            let art = SavedWidgetArt12466.game(event)
+            entry.art = art
+            entry.logos = await SavedWidgetLogos12466.load(away: art.away.logoURL, home: art.home.logoURL)
+        }
+        return entry
     }
 }
 
@@ -72,7 +87,6 @@ struct SavedItemWidget10875: Widget {
                                intent: SelectSavedItemIntent10875.self,
                                provider: SavedItemWidgetProvider10875()) { entry in
             SavedItemWidgetView10875(entry: entry)
-                .containerBackground(.fill.tertiary, for: .widget)
                 .widgetURL(entry.url)
         }
         .configurationDisplayName("Saved game or market")
@@ -96,26 +110,83 @@ struct SavedItemWidgetView10875: View {
     @Environment(\.widgetFamily) private var family
     let entry: SavedItemWidgetEntry10875
 
+    /// #12466: a new look draws over a reading; every message keeps today's.
+    private var drawnLook: SavedWidgetLook12466 { entry.reading == nil ? .today : entry.look }
+    private var lookModel: SavedLookModel12466? {
+        entry.reading.map { SavedLookModel12466(reading: $0, entry: entry) }
+    }
+
     var body: some View {
+        if drawnLook == .today {
+            content.containerBackground(.fill.tertiary, for: .widget)
+        } else {
+            content.containerBackground(for: .widget) {
+                SavedLookBackground12466(look: drawnLook, model: lookModel)
+            }
+        }
+    }
+
+    private var content: some View {
         Group {
-            if let reading = entry.reading {
+            if let reading = entry.reading, let model = lookModel {
                 switch family {
                 #if os(iOS)
-                case .accessoryCircular: SavedCircular10875(reading: reading)
-                case .accessoryRectangular: SavedRectangular10875(reading: reading, entry: entry)
+                case .accessoryCircular:
+                    if entry.look == .today {
+                        SavedCircular10875(reading: reading)
+                    } else {
+                        SavedLockCircle12466(model: model)
+                    }
+                case .accessoryRectangular:
+                    if entry.look == .today || reading.shares == nil {
+                        SavedRectangular10875(reading: reading, entry: entry)
+                    } else {
+                        SavedLockRectangle12466(model: model)
+                    }
                 #endif
-                case .systemMedium: SavedMedium10875(reading: reading, entry: entry)
-                default: SavedSmall10875(reading: reading, entry: entry)
+                case .systemMedium:
+                    if entry.look == .today {
+                        SavedMedium10875(reading: reading, entry: entry)
+                    } else {
+                        SavedLookView12466(look: entry.look, model: model, family: family)
+                    }
+                default:
+                    if entry.look == .today {
+                        SavedSmall10875(reading: reading, entry: entry)
+                    } else {
+                        SavedLookView12466(look: entry.look, model: model, family: family)
+                    }
                 }
             } else {
-                SavedMessage10875(message: SavedWidgetMessage10875(entry.content), family: family)
+                message
             }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
         // #12305 — ↻ outside the combined reading, so it is its own element.
         .overlay(alignment: .bottomTrailing) {
-            if showsRefresh { SavedRefreshButton12305() }
+            if showsRefresh { refreshButton }
+        }
+    }
+
+    @ViewBuilder private var message: some View {
+        #if os(iOS)
+        if family == .accessoryCircular, entry.look != .today {
+            SavedLockCircleMessage12466(content: entry.content)
+        } else {
+            SavedMessage10875(message: SavedWidgetMessage10875(entry.content), family: family)
+        }
+        #else
+        SavedMessage10875(message: SavedWidgetMessage10875(entry.content), family: family)
+        #endif
+    }
+
+    /// The ↻ in the ink of the look's background.
+    @ViewBuilder private var refreshButton: some View {
+        if let ink = SavedLookView12466.ink(drawnLook, model: lookModel) {
+            SavedRefreshButton12305().foregroundStyle(ink)
+        } else {
+            SavedRefreshButton12305()
         }
     }
 
