@@ -125,8 +125,8 @@ struct ProjectedFinalPointsChartView: View {
     /// names a dashed line the chart does not draw.
     static func legend(for full: ProjectedFinalPointsSeries) -> String {
         full.actualSteps.isEmpty
-            ? "Solid: projected final points. Gaps mean no usable capture; forecasts are not results."
-            : "Solid: projected final points. Dashed: points actually scored. Gaps mean no usable capture; forecasts are not results."
+            ? "Solid: projected final points. Forecasts are not results."
+            : "Solid: projected final points. Dashed: points actually scored. Forecasts are not results."
     }
 
     /// #10549 — the one sportsbook, named where it is explained. True
@@ -282,6 +282,16 @@ struct ProjectedFinalPointsChartView: View {
         }.joined(separator: ", ") + "."
     }
 
+    /// #12639 — thins drawn point symbols on dense runs (>36 points) using the
+    /// same stride as `OddsChartView` (`EventAtlasChartMarks11666.solidMarkStride`),
+    /// always keeping the first and last reading marks while the connected line
+    /// still passes through every vertex.
+    static func showsReadingMark(at index: Int, count: Int) -> Bool {
+        guard index >= 0, index < count else { return false }
+        let stride = EventAtlasChartMarks11666.solidMarkStride(pointCount: count)
+        return index == 0 || index == count - 1 || index % stride == 0
+    }
+
     // MARK: - Plot
 
     private func plot(_ series: ProjectedFinalPointsSeries, markers: [GameStateMarker]) -> some View {
@@ -292,19 +302,22 @@ struct ProjectedFinalPointsChartView: View {
                     .foregroundStyle(.secondary.opacity(0.5))
             }
             ForEach(Array(Self.drawnSegments(series).enumerated()), id: \.offset) { segment in
+                let segmentPoints = segment.element
                 ForEach([0, 1], id: \.self) { side in
-                    ForEach(Array(segment.element.enumerated()), id: \.offset) { entry in
+                    ForEach(Array(segmentPoints.enumerated()), id: \.offset) { entry in
                         let point = entry.element
                         let value = side == 0 ? point.home : point.away
                         LineMark(x: .value("Recorded", point.at), y: .value("Projected points", value),
                                  series: .value("Line", "forecast-\(segment.offset)-\(side)"))
-                            .interpolationMethod(.stepEnd)
+                            .interpolationMethod(.linear)
                             .foregroundStyle(side == 0 ? homeColor : awayColor)
                             .lineStyle(StrokeStyle(lineWidth: 2.5))
-                        PointMark(x: .value("Recorded", point.at), y: .value("Projected points", value))
-                            .foregroundStyle(side == 0 ? homeColor : awayColor)
-                            .symbol(side == 0 ? .circle : .diamond)
-                            .symbolSize(22)
+                        if Self.showsReadingMark(at: entry.offset, count: segmentPoints.count) {
+                            PointMark(x: .value("Recorded", point.at), y: .value("Projected points", value))
+                                .foregroundStyle(side == 0 ? homeColor : awayColor)
+                                .symbol(side == 0 ? .circle : .diamond)
+                                .symbolSize(22)
+                        }
                     }
                 }
             }

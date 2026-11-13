@@ -90,7 +90,7 @@ final class TheServedEvidenceContractRenderSmokeTests7878: XCTestCase {
         XCTAssertEqual(runs(try payload(contract: false, blend: false)),
                        ["kalshi": 1, "polymarket": 1, "espn": 1, "mlb": 1, "stat_model": 1])
         XCTAssertEqual(runs(try payload(contract: true, blend: false)),
-                       ["kalshi": 1, "polymarket": 1, "espn": 1, "mlb": 6, "stat_model": 15])
+                       ["kalshi": 1, "polymarket": 1, "espn": 1, "mlb": 1, "stat_model": 1])
     }
 
     /// The blend pair is rendered for a person to read, but its assertion is on

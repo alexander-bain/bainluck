@@ -77,14 +77,13 @@ final class TheServedEvidenceContractDecidesWhereTheLineBreaks7878Tests: XCTestC
     // MARK: - The real specimen
 
     /// MLB's feed goes quiet five times in-game for 6–8 minutes (19:03, 19:11,
-    /// 19:21, 19:45, 20:19 UTC). Under the contract each of those is wider than
-    /// G and the line lifts there — six runs, the same breaks the web draws.
+    /// 19:21, 19:45, 20:19 UTC). Under Decision 164 (#12639) those interior
+    /// gaps bridge with straight segments into one connected 53-point series.
     func testMLBLiftsAtEachOfItsFiveInGameHoles() throws {
-        XCTAssertEqual(Self.runs("mlb", in: try Self.specimen()), [11, 2, 3, 9, 13, 15])
+        XCTAssertEqual(Self.runs("mlb", in: try Self.specimen()), [53])
     }
 
-    /// The cadence heuristic joined all five (none is over 600s), which is the
-    /// before picture: one unbroken line through five stretches nobody read.
+    /// Without the contract, the same 53 real points also draw one connected line.
     func testWithoutTheContractTheSameBytesDrawOneLine() throws {
         XCTAssertEqual(Self.runs("mlb", in: try Self.specimenWithoutContract()), [53])
     }
@@ -99,13 +98,12 @@ final class TheServedEvidenceContractDecidesWhereTheLineBreaks7878Tests: XCTestC
         XCTAssertEqual(Self.runs("kalshi", in: try Self.specimenWithoutContract()), [723])
     }
 
-    /// The stat model recomputes every 5–12 minutes, so under G it is mostly
-    /// short runs and lone marks. Pinned so the count is a decision, not an
-    /// accident; every one of its 36 points is still drawn.
+    /// The stat model recomputes every 5–12 minutes; under Decision 164 (#12639)
+    /// all 36 real observations join into one connected straight-segment series.
     func testTheStatModelIsJudgedByTheSameResolution() throws {
         let runs = Self.runs("stat_model", in: try Self.specimen())
-        XCTAssertEqual(runs, [1, 3, 3, 2, 2, 4, 2, 4, 1, 3, 2, 4, 2, 2, 1])
-        XCTAssertEqual(runs.reduce(0, +), 36, "a break never drops a point")
+        XCTAssertEqual(runs, [36])
+        XCTAssertEqual(runs.reduce(0, +), 36, "every point stays in the connected series")
     }
 
     /// The blend and the sportsbook consensus are not classified by the
@@ -210,38 +208,47 @@ final class TheServedEvidenceContractDecidesWhereTheLineBreaks7878Tests: XCTestC
 
     func testExactlyTheResolutionStaysJoinedAndOneSecondMoreBreaks() {
         XCTAssertEqual(runs([point(0), point(300)]), [2])
-        XCTAssertEqual(runs([point(0), point(301)]), [1, 1])
+        XCTAssertEqual(runs([point(0), point(301)]), [2], "Decision 164 (#12639): interior real readings stay connected")
+        XCTAssertEqual(runs([point(0), point(300, liveEdge: true)]), [2])
+        XCTAssertEqual(runs([point(0), point(301, liveEdge: true)]), [1], "trailing live_edge still drops past resolution_s")
     }
 
     func testObservedCoverageExtendsTheReading() {
         XCTAssertEqual(runs([point(0, "observed", coveredThrough: 1_000), point(1_200)]), [2])
-        XCTAssertEqual(runs([point(0, "observed", coveredThrough: 800), point(1_200)]), [1, 1])
+        XCTAssertEqual(runs([point(0, "observed", coveredThrough: 800), point(1_200)]), [2])
+        XCTAssertEqual(runs([point(0, "observed", coveredThrough: 1_000), point(1_200, liveEdge: true)]), [2])
+        XCTAssertEqual(runs([point(0, "observed", coveredThrough: 800), point(1_200, liveEdge: true)]), [1])
     }
 
     /// A backwards span proves nothing beyond the reading itself — and must not
     /// pull the hole's start back before the reading either (250s after it is
-    /// covered; measured from the bogus 100 it would be 650s and break).
+    /// covered; measured from the bogus 100 it would be 650s and drop live_edge).
     func testABackwardsCoverageSpanIsIgnored() {
         XCTAssertEqual(runs([point(500, "observed", coveredThrough: 100), point(750)]), [2])
-        XCTAssertEqual(runs([point(500, "observed", coveredThrough: 100), point(900)]), [1, 1])
+        XCTAssertEqual(runs([point(500, "observed", coveredThrough: 100), point(900)]), [2])
+        XCTAssertEqual(runs([point(500, "observed", coveredThrough: 100), point(750, liveEdge: true)]), [2])
+        XCTAssertEqual(runs([point(500, "observed", coveredThrough: 100), point(900, liveEdge: true)]), [1])
     }
 
-    /// Backfill and the result are drawn, but cover nothing past themselves —
-    /// even a `covered_through` on one is not coverage.
+    /// Backfill and the result are drawn in the connected series, and cover
+    /// nothing past themselves when judging a trailing `live_edge`.
     func testNonEvidencePointsCoverNothing() {
         for kind in ["candle", "price_history", "terminal_row", "final", "mystery"] {
-            XCTAssertEqual(runs([point(0, kind, coveredThrough: 2_000), point(900)]), [1, 1], kind)
-            XCTAssertEqual(runs([point(0), point(200, kind), point(400)]), [3], "\(kind) still ends and starts intervals")
+            XCTAssertEqual(runs([point(0, kind, coveredThrough: 2_000), point(900)]), [2], kind)
+            XCTAssertEqual(runs([point(0, kind, coveredThrough: 2_000), point(900, liveEdge: true)]), [1], kind)
+            XCTAssertEqual(runs([point(0), point(200, kind), point(400)]), [3], "\(kind) stays in the connected series")
         }
     }
 
-    /// Pre-match is never judged, and an interval straddling the start is judged
-    /// from the start: 4h of pre-match silence ending 4 minutes after first
-    /// pitch is joined; ending 6 minutes after, it breaks.
+    /// Pre-match is never judged, and a trailing `live_edge` straddling the
+    /// start is judged from the start: 4 minutes after first pitch is supported;
+    /// 6 minutes after is dropped.
     func testPreMatchIsUnjudgedAndAStraddleIsJudgedFromTheStart() {
         XCTAssertEqual(runs([point(-14_400), point(-3_600)]), [2])
         XCTAssertEqual(runs([point(-14_400), point(240)]), [2])
-        XCTAssertEqual(runs([point(-14_400), point(360)]), [1, 1])
+        XCTAssertEqual(runs([point(-14_400), point(360)]), [2])
+        XCTAssertEqual(runs([point(-14_400), point(240, liveEdge: true)]), [2])
+        XCTAssertEqual(runs([point(-14_400), point(360, liveEdge: true)]), [1])
     }
 
     func testNoStartTimeJudgesNothing() {
@@ -273,7 +280,7 @@ final class TheServedEvidenceContractDecidesWhereTheLineBreaks7878Tests: XCTestC
             EventHistoryResponse.self, from: JSONSerialization.data(withJSONObject: object))
         let points = OddsChartView.chartPoints(from: history).filter { $0.source == "mlb" }
         XCTAssertEqual(points.filter(\.isLiveEdge).count, 1)
-        XCTAssertEqual(Self.runs("mlb", in: history), [11, 2, 3, 9, 13, 15],
-                       "an edge 2h51m after the last reading is dropped, not drawn")
+        XCTAssertEqual(Self.runs("mlb", in: history), [53],
+                       "an edge 2h51m after the last reading is dropped while the 53 real points stay connected")
     }
 }
