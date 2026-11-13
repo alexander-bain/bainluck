@@ -221,7 +221,7 @@ final class CompactGameCard12616Tests: XCTestCase {
         )
         XCTAssertEqual(pregameOnly, "Pregame 54%\u{2013}46%")
 
-        // Projected alone (when reason already states the opening under #11422) omits Pregame.
+        // Projected alone (when inline pregame fits or reason already states the opening) omits Pregame.
         let projectedOnly = CompactGameCard12616.combinedLiveContextText(
             projected: printed,
             pregameClause: nil
@@ -230,8 +230,86 @@ final class CompactGameCard12616Tests: XCTestCase {
         XCTAssertNil(CompactGameCard12616.combinedLiveContextText(projected: nil, pregameClause: nil))
     }
 
+    // MARK: - 4c. Ruling 182-A + inline "pregame" placement beside win chance
+
+    func testRuling182ATimeRecordsAndInlinePregame() throws {
+        var cal = Calendar(identifier: .gregorian)
+        let tz = TimeZone(identifier: "America/Los_Angeles")!
+        cal.timeZone = tz
+        // Fri Nov 13, 2026 10:00 AM PT = 18:00:00Z
+        let now = ISO8601DateFormatter().date(from: "2026-11-13T18:00:00Z")!
+
+        // Inside the last hour -> plain countdown ("In 42m").
+        XCTAssertEqual(
+            StatusBadge.scheduledGameCardTimeText(
+                commenceTime: "2026-11-13T18:42:00Z", startIsTbd: false, now: now,
+                calendar: cal, timeZone: tz),
+            "In 42m"
+        )
+        // Today >= 1h away -> "Today 7:00 PM".
+        XCTAssertEqual(
+            StatusBadge.scheduledGameCardTimeText(
+                commenceTime: "2026-11-14T03:00:00Z", startIsTbd: false, now: now,
+                calendar: cal, timeZone: tz),
+            "Today 7:00 PM"
+        )
+        // Tomorrow -> "Tomorrow 3:30 PM".
+        XCTAssertEqual(
+            StatusBadge.scheduledGameCardTimeText(
+                commenceTime: "2026-11-14T23:30:00Z", startIsTbd: false, now: now,
+                calendar: cal, timeZone: tz),
+            "Tomorrow 3:30 PM"
+        )
+        // Days away -> plain date ("Sun, Nov 15"), never duplicate countdown + clock.
+        XCTAssertEqual(
+            StatusBadge.scheduledGameCardTimeText(
+                commenceTime: "2026-11-15T21:25:00Z", startIsTbd: false, now: now,
+                calendar: cal, timeZone: tz),
+            "Sun, Nov 15"
+        )
+
+        // Records bubble strings are suppressed; real reasons survive.
+        XCTAssertTrue(CompactGameCard12616.isRecordsCaption("TOR 77-80 · BAL 76-81"))
+        XCTAssertTrue(CompactGameCard12616.isRecordsCaption("FLA 12-4-3 • CAR 10-5-2"))
+        XCTAssertNil(CompactGameCard12616.sanitizedReason("TOR 77-80 · BAL 76-81"))
+        XCTAssertEqual(
+            CompactGameCard12616.sanitizedReason("Starting soon — close matchup"),
+            "Starting soon — close matchup"
+        )
+
+        // Inline pregame labels say "pregame" (never "opened"), respect #5363 away
+        // withholding, and include 3-way draw when present.
+        let liveNBA = try decodeEvent("""
+        {"id": 201, "sport": "basketball_nba", "away_team": "Boston Celtics", "home_team": "Philadelphia 76ers",
+         "status": "live", "prematch_odds": {"away_probability": 0.54, "home_probability": 0.46,
+         "away_rendered_percent": 54, "home_rendered_percent": 46, "source": "kalshi"}}
+        """)
+        let nbaReading = PrematchReading.resolve(prematch: liveNBA.prematchOdds, opening: nil)
+        let nbaLabels = CompactGameCard12616.liveSidePregameLabels(event: liveNBA, prematch: nbaReading)
+        XCTAssertEqual(nbaLabels.away, "54% pregame")
+        XCTAssertEqual(nbaLabels.home, "46% pregame")
+        XCTAssertNil(nbaLabels.draw)
+        XCTAssertFalse(nbaLabels.away?.localizedCaseInsensitiveContains("opened") ?? true)
+        XCTAssertTrue(CompactGameCard12616.liveInlinePregameFits(
+            awayShortName: "Celtics", homeShortName: "76ers", typeSize: .large))
+        XCTAssertFalse(CompactGameCard12616.liveInlinePregameFits(
+            awayShortName: "Timberwolves", homeShortName: "Trail Blazers", typeSize: .xxxLarge))
+
+        let liveSoccer3Way = try decodeEvent("""
+        {"id": 202, "sport": "soccer_epl", "away_team": "Arsenal", "home_team": "Chelsea",
+         "status": "live", "prematch_odds": {"away_probability": 0.41, "home_probability": 0.34,
+         "draw_probability": 0.25, "away_rendered_percent": 41, "home_rendered_percent": 34, "source": "kalshi"}}
+        """)
+        let sReading = PrematchReading.resolve(prematch: liveSoccer3Way.prematchOdds, opening: nil)
+        let sLabels = CompactGameCard12616.liveSidePregameLabels(event: liveSoccer3Way, prematch: sReading)
+        XCTAssertEqual(sLabels.away, "41% pregame")
+        XCTAssertEqual(sLabels.home, "34% pregame")
+        XCTAssertEqual(sLabels.draw, "25% pregame")
+    }
+
     // MARK: - 5. 390pt native renders for PR review (when BUILDERC_EXPORT_12616=1)
 
+    @MainActor
     func testExport390PtRendersWhenRequested() throws {
         guard ProcessInfo.processInfo.environment["BUILDERC_EXPORT_12616"] == "1" else { return }
         let outDir = URL(fileURLWithPath: "/tmp/builderc-12616-renders", isDirectory: true)
@@ -342,10 +420,23 @@ final class CompactGameCard12616Tests: XCTestCase {
                           "projected_away_score": 1.6, "projected_home_score": 1.3}}
         """)
 
-        let tennisBlankProj = try decodeEvent("""
+        let soccerLiveThreeWay = try decodeEvent("""
+        {"id": 109, "sport": "soccer_epl", "sport_name": "Premier League",
+         "away_team": "Arsenal", "home_team": "Chelsea",
+         "commence_time": "2026-11-13T12:30:00Z", "status": "live",
+         "away_score": 1, "home_score": 0,
+         "espn": {"period": "64'"},
+         "away_team_data": {"primary_color": "#EF0107"}, "home_team_data": {"primary_color": "#034694"},
+         "prematch_odds": {"away_probability": 0.41, "home_probability": 0.34, "draw_probability": 0.25,
+                           "away_rendered_percent": 41, "home_rendered_percent": 34, "source": "kalshi"},
+         "current_odds": {"away_probability": 0.524, "home_probability": 0.241, "draw_probability": 0.235}}
+        """)
+
+        let countdown42mISO = ISO8601DateFormatter().string(from: Date().addingTimeInterval(42 * 60 + 20))
+        let tennisStartingSoon = try decodeEvent("""
         {"id": 107, "sport": "tennis_atp_finals", "sport_name": "ATP Finals",
          "away_team": "Jannik Sinner", "home_team": "Carlos Alcaraz",
-         "commence_time": "2026-11-14T19:00:00Z", "status": "scheduled",
+         "commence_time": "\(countdown42mISO)", "status": "scheduled",
          "current_odds": {"away_probability": 0.56, "home_probability": 0.44,
                           "away_rendered_percent": 56, "home_rendered_percent": 44}}
         """)
@@ -432,10 +523,41 @@ final class CompactGameCard12616Tests: XCTestCase {
         try saveRender(
             VStack(spacing: 12) {
                 cardBox(soccerThreeWay)
-                cardBox(tennisBlankProj)
+                cardBox(soccerLiveThreeWay)
+                cardBox(tennisStartingSoon, reason: "Starting soon — close matchup")
             },
             fileName: "12616-soccer-draw-and-tennis-390.png"
         )
+
+        let discoverStack = VStack(spacing: 12) {
+            NativeEventDiscoverCard(
+                event: beforeNFL,
+                feedContext: "TOR 77-80 · BAL 76-81",
+                expandedContext: nil,
+                navigationPath: .constant(NavigationPath())
+            )
+            NativeEventDiscoverCard(
+                event: duringNBA,
+                feedContext: "Close fourth-quarter pace",
+                expandedContext: nil,
+                navigationPath: .constant(NavigationPath())
+            )
+            NativeEventDiscoverCard(
+                event: afterPackersUpset,
+                feedContext: nil,
+                expandedContext: nil,
+                navigationPath: .constant(NavigationPath())
+            )
+        }
+        .padding(16)
+        .frame(width: 390)
+        .background(Color(white: 0.965))
+        .environmentObject(pins)
+        .environment(\.colorScheme, .light)
+        let discoverRenderer = rendererForMeasurement(discoverStack, at: .large)
+        discoverRenderer.scale = 3.0
+        try XCTUnwrap(discoverRenderer.uiImage?.pngData())
+            .write(to: outDir.appendingPathComponent("12616-discover-cards-182a-390.png"))
 
         try saveRender(
             cardBox(longNamesLargeText),

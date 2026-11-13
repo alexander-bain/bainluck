@@ -271,6 +271,90 @@ enum CompactGameCard12616 {
             : "Projected"
         return "\(prefix) \(comparison.away)\u{2013}\(comparison.home)"
     }
+
+    // MARK: - Ruling 182-A + inline "pregame" beside live win chance
+
+    /// Matches `pregame_records_caption` strings (`"TOR 77-80 · BAL 76-81"`,
+    /// `"FLA 12-4-3 · CAR 10-5-2"`) so game cards never print the records bubble.
+    nonisolated static func isRecordsCaption(_ text: String?) -> Bool {
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return false }
+        let pattern = #"^[A-Za-z0-9.\- ]+\s+\d{1,3}-\d{1,3}(?:-\d{1,3})?\s*[\u{00B7}•|]\s*[A-Za-z0-9.\- ]+\s+\d{1,3}-\d{1,3}(?:-\d{1,3})?$"#
+        return trimmed.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// Returns a cleaned reason string when `text` is non-empty and not a team
+    /// records caption (`182-A`).
+    nonisolated static func sanitizedReason(_ text: String?) -> String? {
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty,
+              !isRecordsCaption(trimmed) else { return nil }
+        return trimmed
+    }
+
+    /// Per-row `"54% pregame"` labels (lowercase `"pregame"`, never `"opened"`)
+    /// placed beside the live win chance where horizontal room permits. Withholds
+    /// the away label on two-way soccer complements (#5363) and includes `draw`
+    /// when a three-way pre-match reading is present.
+    nonisolated static func liveSidePregameLabels(
+        event: FeedEventData,
+        prematch: PrematchReading?
+    ) -> (away: String?, home: String?, draw: String?) {
+        guard let reading = prematch else { return (nil, nil, nil) }
+        let awayWithheld = prematchAwayIsWithheld(event)
+        let awayText: String? = awayWithheld
+            ? nil
+            : formatProbability(reading.awayProbability, renderedPercent: reading.percents[0])
+                .map { "\($0) pregame" }
+        let homeText = "\(formatProbability(reading.homeProbability, renderedPercent: reading.percents[1])) pregame"
+        let drawText: String?
+        if hasExplicitThreeWayPrematch(event),
+           let draw = usableProbability(event.prematchOdds?.drawProbability) {
+            drawText = "\(formatProbability(draw, renderedPercent: nil)) pregame"
+        } else {
+            drawText = nil
+        }
+        return (away: awayText, home: homeText, draw: drawText)
+    }
+
+    /// Whether `"54% pregame"` fits inline beside the live win chance without
+    /// squeezing or breaking a single-word team name (`"Timberwolves"`, `.xxxLarge`).
+    nonisolated static func liveInlinePregameFits(
+        awayShortName: String,
+        homeShortName: String,
+        typeSize: DynamicTypeSize,
+        availableRowWidth: CGFloat = 330
+    ) -> Bool {
+        guard !typeSize.isAccessibilitySize else { return false }
+        let scale: CGFloat
+        switch typeSize {
+        case .xSmall: scale = 0.88
+        case .small: scale = 0.94
+        case .medium: scale = 0.97
+        case .large: scale = 1.0
+        case .xLarge: scale = 1.08
+        default: return false // .xxLarge / .xxxLarge drop inline pregame to context fallback
+        }
+        // Crest (28) + Score (42) + inline pregame (68) + Now (84) + 4 gaps (24) = 246pt at .large.
+        let nonNameBudget: CGFloat = 28 + (42 + 68 + 84) * scale + 24
+        let availableNameWidth = availableRowWidth - nonNameBudget
+        guard availableNameWidth >= 56 else { return false }
+        let approxCharWidth = 9.4 * scale
+        for shortName in [awayShortName, homeShortName] {
+            for word in shortName.split(separator: " ") {
+                if CGFloat(word.count) * approxCharWidth > availableNameWidth {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+}
+
+private extension String {
+    nonisolated func map<T>(_ transform: (String) -> T) -> T {
+        transform(self)
+    }
 }
 
 /// #12616 / #9034 — Web's `cardProjectedFinal` (`frontend/lib/projectedFinalPair.ts`)

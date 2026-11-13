@@ -37,6 +37,7 @@ struct NativeEventDiscoverCard: View {
     /// THIS card draws at THIS text size, so both of these are inputs to a layout
     /// decision rather than decoration. See `GameCardStatusColumn`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ObservedObject var clock = MinuteClock.shared
     @State private var heroContentWidth: Double = 0
 
     /// This card's slate/blue defaults are where `ProbabilityBarPalette`'s came
@@ -205,13 +206,34 @@ struct NativeEventDiscoverCard: View {
     }
 
     private var contextText: String? {
-        if let feedContext, !feedContext.isEmpty { return feedContext }
-        if let label = event.highlight?.label, !label.isEmpty { return label }
+        if let cleaned = CompactGameCard12616.sanitizedReason(feedContext) { return cleaned }
+        if let cleaned = CompactGameCard12616.sanitizedReason(event.highlight?.label) { return cleaned }
         if let ei = event.ei, let score = ei.score, score >= 60, let label = ei.label {
             return "Excitement Index \(score): \(label)"
         }
-        if isLive { return "Live probability is moving now" }
         return nil
+    }
+
+    private var prematch: PrematchReading? {
+        PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
+    }
+
+    private var discoverLiveSidePregame12616: (away: String?, home: String?, draw: String?) {
+        guard isLive, !isSuspended,
+              !EventCardView.EventCardFooter.reasonStatesTheOpening(contextText) else {
+            return (nil, nil, nil)
+        }
+        return CompactGameCard12616.liveSidePregameLabels(event: event, prematch: prematch)
+    }
+
+    private var showsDiscoverInlinePregame12616: Bool {
+        let labels = discoverLiveSidePregame12616
+        guard labels.away != nil || labels.home != nil else { return false }
+        return CompactGameCard12616.liveInlinePregameFits(
+            awayShortName: cardSides.away,
+            homeShortName: cardSides.home,
+            typeSize: dynamicTypeSize
+        )
     }
 
     private var shareURL: URL {
@@ -424,11 +446,35 @@ struct NativeEventDiscoverCard: View {
                                     .lineLimit(1)
                                     .fixedSize()
                                     .foregroundStyle(homeColor)
+                                discoverInlinePregameLabel(discoverLiveSidePregame12616.home)
+                            }
+                        }
+                        if printable.away != nil,
+                           discoverLiveSidePregame12616.away != nil || discoverLiveSidePregame12616.home != nil {
+                            HStack {
+                                if let awayPre = discoverLiveSidePregame12616.away {
+                                    Text(awayPre)
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(DS.textSecondaryReadable)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                                Spacer()
+                                if let homePre = discoverLiveSidePregame12616.home {
+                                    Text(homePre)
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(DS.textSecondaryReadable)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
                             }
                         }
                         probabilityBar(
                             awayProbability: printable.away ?? (1 - homeProbability),
                             homeProbability: homeProbability,
+                            drawProbability: CompactGameCard12616.hasExplicitThreeWayCurrent(event)
+                                ? event.currentOdds?.drawProbability
+                                : nil,
                             awayIsWithheld: printable.away == nil
                         )
                     }
@@ -510,25 +556,31 @@ struct NativeEventDiscoverCard: View {
     /// How a tap-driven test finds this card. See the `onTapGesture` above.
     static let tapTargetIdentifier = "discover-card-event"
 
+    @ViewBuilder
+    private func discoverInlinePregameLabel(_ text: String?) -> some View {
+        if showsDiscoverInlinePregame12616, let text {
+            Text(text)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(DS.textSecondaryReadable)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
     private func contextCaption(_ text: String) -> some View {
         ExpandableNativeContextText(
             text: text,
-            expandedText: expandedContext,
+            expandedText: CompactGameCard12616.sanitizedReason(expandedContext),
             font: .caption,
             onExpand: onContextExpand,
             onCollapse: onContextCollapse
         )
     }
 
-    /// The signal bars and the share button — one view so the caption row and
-    /// the own-row fallback (#10373) cannot draw two different footers.
+    /// Ruling 182-A — game cards remove signal bars; `footerMarks` holds the
+    /// share button and still rides the caption's row (#10373).
     private var footerMarks: some View {
         HStack {
-            // #490 / L2-184: confidence signal (1-3 bars) — renders nothing
-            // when absent. Same tier map + placement as the native
-            // multi-candidate kernels (Comparison/Distribution/HeatMap).
-            SignalBarsView(tier: event.confidenceTier)
-
             ShareLink(
                 item: shareURL,
                 subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
@@ -639,15 +691,14 @@ struct NativeEventDiscoverCard: View {
     /// to its minimum and the hero grows instead of cutting the chip off.
     private var heroContent: some View {
         VStack(spacing: 0) {
-            // Top row: sport label + live badge
+            // Top row: Ruling 182-A — plain text for league, scheduled time
+            // (date when days away, countdown inside the last hour), finished
+            // date, and stoppage; a capsule is ONLY for live status.
             HStack {
                 Text(sportLabel)
                     .font(.caption2.weight(.heavy))
                     .tracking(0.8)
-                    .foregroundStyle(.white.opacity(0.78))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.black.opacity(0.24), in: Capsule())
+                    .foregroundStyle(.white.opacity(0.85))
 
                 Spacer()
 
@@ -664,23 +715,23 @@ struct NativeEventDiscoverCard: View {
                     .padding(.vertical, 4)
                     .background(Color.red.opacity(0.85), in: Capsule())
                 } else if isDone {
-                    Text("FINAL")
-                        .font(.caption2.weight(.heavy))
-                        .foregroundStyle(.white.opacity(0.78))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.black.opacity(0.24), in: Capsule())
+                    Text(StatusBadge.finishedGameCardTimeText(
+                        commenceTime: event.commenceTime,
+                        now: clock.now))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
                 } else if isSuspended {
-                    // The corner that says FINAL or LIVE has to say something
-                    // here too — leaving it empty is how the state stayed
-                    // invisible (live/048). #9208 — a game its authority
-                    // called off is not paused: it says POSTPONED / CANCELED.
                     Text(closedNoWinner ? "ENDED" : suspendedCornerWord)
                         .font(.caption2.weight(.heavy))
-                        .foregroundStyle(.white.opacity(0.78))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.black.opacity(0.24), in: Capsule())
+                        .foregroundStyle(.white.opacity(0.85))
+                } else if let scheduledWhen = StatusBadge.scheduledGameCardTimeText(
+                    commenceTime: event.commenceTime,
+                    startIsTbd: event.startIsTbd == true,
+                    now: clock.now) {
+                    Text(scheduledWhen)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(1)
                 }
             }
 
@@ -831,16 +882,37 @@ struct NativeEventDiscoverCard: View {
     private func probabilityBar(
         awayProbability: Double,
         homeProbability: Double,
+        drawProbability: Double? = nil,
         awayIsWithheld: Bool
     ) -> some View {
-        GeometryReader { geo in
+        let explicitAway = event.currentOdds?.awayProbability ?? awayProbability
+        let threeWayShares = drawProbability.map {
+            ProbabilityBar.normalizedShares(
+                awayProb: explicitAway,
+                homeProb: homeProbability,
+                drawProb: $0
+            )
+        }
+        return GeometryReader { geo in
             HStack(spacing: 0) {
-                Rectangle()
-                    .fill(awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor)
-                    .frame(width: max(3, geo.size.width * awayProbability))
-                Rectangle()
-                    .fill(homeColor)
-                    .frame(width: max(3, geo.size.width * homeProbability))
+                if let shares = threeWayShares, shares.draw > 0 {
+                    Rectangle()
+                        .fill(awayColor)
+                        .frame(width: max(3, geo.size.width * shares.away))
+                    Rectangle()
+                        .fill(homeColor)
+                        .frame(width: max(3, geo.size.width * shares.home))
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.28))
+                        .frame(width: max(3, geo.size.width * shares.draw))
+                } else {
+                    Rectangle()
+                        .fill(awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor)
+                        .frame(width: max(3, geo.size.width * awayProbability))
+                    Rectangle()
+                        .fill(homeColor)
+                        .frame(width: max(3, geo.size.width * homeProbability))
+                }
             }
             .clipShape(Capsule())
         }

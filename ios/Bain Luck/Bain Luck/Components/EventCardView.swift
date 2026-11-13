@@ -16,7 +16,9 @@ struct EventCardView: View {
     @ScaledMetric(relativeTo: .body) private var compactNameSize: CGFloat = 17
     @ScaledMetric(relativeTo: .title3) private var compactMediumSize: CGFloat = 19
     @ScaledMetric(relativeTo: .title) private var compactLargeSize: CGFloat = 28
+    @ScaledMetric(relativeTo: .caption2) private var compactPregameSize: CGFloat = 11.5
     @ScaledMetric(relativeTo: .title3) private var compactMediumWidth: CGFloat = 52
+    @ScaledMetric(relativeTo: .caption2) private var compactLivePregameWidth: CGFloat = 68
     @ScaledMetric(relativeTo: .title) private var compactLargeChanceWidth: CGFloat = 84
     @ScaledMetric(relativeTo: .title) private var compactLargeFinalWidth: CGFloat = 52
 
@@ -226,8 +228,10 @@ struct EventCardView: View {
     /// the guard has to be able to fail in both directions.
     enum EventCardHeadlinePill {
         static func isDrawn(headline: String?, isLive: Bool) -> Bool {
-            guard let headline, !headline.isEmpty else { return false }
-            return !isLive
+            // Ruling 182-A — game cards remove the records bubble and use a
+            // capsule ONLY for live status; a real reason to care is a plain
+            // grey line in `footerRow`, never a top-bar pill.
+            return false
         }
     }
 
@@ -250,7 +254,9 @@ struct EventCardView: View {
             period: event.espn?.period,
             startIsTbd: event.startIsTbd == true,
             // #5811 — served on `/api/feed`, so the card can say it.
-            venueClosedNoWinner: event.venueClosedNoWinner == true
+            venueClosedNoWinner: event.venueClosedNoWinner == true,
+            gameCardPlain182: true,
+            gameCardLeadingDot: !usesFinishedAccessibilityLayout
         )
     }
 
@@ -269,24 +275,6 @@ struct EventCardView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             statusBadge
-            if !isFinished, let ei = event.ei ?? event.pulse {
-                EIBadgeView(ei: ei, size: .sm)
-            }
-            // #490: confidence signal (1-3 bars) — renders nothing when absent.
-            SignalBarsView(tier: event.confidenceTier)
-            if let badge = personalizationBadge {
-                badge
-            }
-            if EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive), let headline {
-                Text(headline)
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.blue.opacity(0.12))
-                    .foregroundStyle(.blue)
-                    .clipShape(Capsule())
-            }
             Spacer()
             if let broadcast = event.espn?.broadcast?.split(separator: ",").first.map(String.init),
                !broadcast.isEmpty, isScheduled || isLive {
@@ -299,11 +287,8 @@ struct EventCardView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
-            if isScheduled {
-                // Upcoming: Show "Today 7:00 PM" or "Mar 8 7:00 PM"
-                formattedDateTime
-            } else if isFinished {
-                // Finished: Show date only "Mar 5"
+            if isFinished {
+                // Finished: Show date once ("Nov 8") as plain text
                 formattedDate
             } else if isSuspended, let detail = EventState.suspendedCardDetail(
                 away: event.awayScore, home: event.homeScore, date: formattedDateString,
@@ -324,19 +309,6 @@ struct EventCardView: View {
     }
 
     /// #11325 — the finished card's top bar at accessibility sizes.
-    ///
-    /// One row held the league, FINAL, the date and the pin, so at AX5 on a
-    /// 320pt phone the row squeezed the badge until "FINAL" broke as "FI-/NAL"
-    /// and the league broke mid-word beside it. Here the league takes the full
-    /// width and wraps only between words; FINAL sits whole on the row below,
-    /// with the date and pin at trailing, and the date drops to its own line
-    /// when the three cannot share one. The badge itself is the shared
-    /// `StatusBadge`, unchanged — the caller gives it the room.
-    ///
-    /// A finished card draws no EI badge, broadcast or suspended detail (each
-    /// is gated off `isFinished` above), so the only optional pieces are the
-    /// confidence bars, the personalization badge and the headline pill, which
-    /// keep their exact conditions on the rows beneath.
     private var finishedAccessibilityTopBar: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(leagueName)
@@ -360,72 +332,7 @@ struct EventCardView: View {
                     formattedDate
                 }
             }
-            if hasTopBarMetadata {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 6) { topBarMetadata }
-                    VStack(alignment: .leading, spacing: 4) { topBarMetadata }
-                }
-            }
         }
-    }
-
-    private var hasTopBarMetadata: Bool {
-        Confidence.normalize(event.confidenceTier) != nil
-            || personalizationBadge != nil
-            || EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive)
-    }
-
-    @ViewBuilder
-    private var topBarMetadata: some View {
-        SignalBarsView(tier: event.confidenceTier)
-        if let badge = personalizationBadge {
-            badge
-        }
-        if EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive), let headline {
-            Text(headline)
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(.blue.opacity(0.12))
-                .foregroundStyle(.blue)
-                .clipShape(Capsule())
-        }
-    }
-
-    // MARK: - Personalization Badge
-
-    private var personalizationBadge: AnyView? {
-        guard let reasons = personalizationReasons, !reasons.isEmpty else { return nil }
-        // Parse first matching reason from "your_team:0.80" format
-        for reason in reasons {
-            let key = reason.split(separator: ":").first.map(String.init) ?? reason
-            switch key {
-            case "your_team":
-                return AnyView(badgeCapsule(text: "Your Team", color: .blue))
-            case "local":
-                return AnyView(badgeCapsule(text: "Local", color: .green))
-            case "alma_mater":
-                return AnyView(badgeCapsule(text: "Alma Mater", color: .purple))
-            case "rival_losing":
-                return AnyView(badgeCapsule(text: "Rival Losing", color: .orange))
-            default:
-                continue
-            }
-        }
-        return nil
-    }
-
-    private func badgeCapsule(text: String, color: Color) -> some View {
-        Text(text)
-            .font(.caption2)
-            .fontWeight(.semibold)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.12))
-            .foregroundStyle(color)
-            .clipShape(Capsule())
     }
 
     // MARK: - Teams + Odds (161-B compact two-column card)
@@ -520,7 +427,7 @@ struct EventCardView: View {
             }
 
             if isLive, !isSuspended {
-                let pregameContext = livePregameContext12616
+                let pregameContext = showsInlineLivePregame12616 ? nil : livePregameContext12616
                 if dynamicTypeSize.isAccessibilitySize {
                     if let liveProjection = liveProjectedFinal2920 {
                         LiveProjectedFinalLine2920(
@@ -558,9 +465,35 @@ struct EventCardView: View {
         }
     }
 
-    private var effectiveMediumColWidth: CGFloat { min(compactMediumWidth, 58) }
+    private var liveSidePregame12616: (away: String?, home: String?, draw: String?) {
+        guard isLive, !isSuspended,
+              !EventCardFooter.reasonStatesTheOpening(CompactGameCard12616.sanitizedReason(reason)) else {
+            return (nil, nil, nil)
+        }
+        return CompactGameCard12616.liveSidePregameLabels(event: event, prematch: prematch)
+    }
+
+    private var showsInlineLivePregame12616: Bool {
+        let labels = liveSidePregame12616
+        guard labels.away != nil || labels.home != nil else { return false }
+        return CompactGameCard12616.liveInlinePregameFits(
+            awayShortName: shortTeamNames.away,
+            homeShortName: shortTeamNames.home,
+            typeSize: dynamicTypeSize
+        )
+    }
+
+    private var effectiveMediumColWidth: CGFloat {
+        showsInlineLivePregame12616 ? min(compactMediumWidth, 40) : min(compactMediumWidth, 58)
+    }
+    private var effectiveLivePregameColWidth: CGFloat {
+        min(compactLivePregameWidth, 72)
+    }
     private var effectiveLargeColWidth: CGFloat {
-        isFinished ? min(compactLargeFinalWidth, 58) : min(compactLargeChanceWidth, 92)
+        if isFinished { return min(compactLargeFinalWidth, 58) }
+        return showsInlineLivePregame12616
+            ? min(compactLargeChanceWidth, 82)
+            : min(compactLargeChanceWidth, 92)
     }
 
     private var compactHeaderRow: some View {
@@ -574,6 +507,10 @@ struct EventCardView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                     .frame(width: effectiveMediumColWidth, alignment: .trailing)
+                if showsInlineLivePregame12616 {
+                    Color.clear
+                        .frame(width: effectiveLivePregameColWidth, height: 1)
+                }
                 Text(headers.large ?? "")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(DS.textSecondaryReadable)
@@ -658,8 +595,24 @@ struct EventCardView: View {
             Spacer(minLength: 0)
             mediumSlotView(score: score, won: won, side: side)
                 .frame(width: effectiveMediumColWidth, alignment: .trailing)
+            if showsInlineLivePregame12616 {
+                liveInlinePregameSlotView(for: side)
+                    .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
+            }
             largeSlotView(score: score, won: won, side: side)
                 .frame(width: effectiveLargeColWidth, alignment: .trailing)
+        }
+    }
+
+    @ViewBuilder
+    private func liveInlinePregameSlotView(for side: TeamSide) -> some View {
+        let label = side == .home ? liveSidePregame12616.home : liveSidePregame12616.away
+        if let label {
+            Text(label)
+                .font(.system(size: min(compactPregameSize, 14), weight: .regular).monospacedDigit())
+                .foregroundStyle(DS.textSecondaryReadable)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
     }
 
@@ -749,9 +702,23 @@ struct EventCardView: View {
                         .font(.system(size: min(compactMediumSize, 22), weight: .medium).monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
             }
             .frame(width: effectiveMediumColWidth, alignment: .trailing)
+
+            if showsInlineLivePregame12616 {
+                Group {
+                    if let drawPre = liveSidePregame12616.draw {
+                        Text(drawPre)
+                            .font(.system(size: min(compactPregameSize, 14), weight: .regular).monospacedDigit())
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                    }
+                }
+                .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
+            }
 
             Group {
                 if !isFinished {
@@ -759,6 +726,7 @@ struct EventCardView: View {
                         .font(.system(size: min(compactLargeSize, 30), weight: .bold).monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
             }
             .frame(width: effectiveLargeColWidth, alignment: .trailing)
@@ -848,12 +816,11 @@ struct EventCardView: View {
             homeOpening: Double? = nil,
             sport: String? = nil
         ) -> Bool {
-            // #12616 — finished game cards never draw the reason banner; an
-            // upset already reads as a low Pregame % beside a winning Final.
-            // Live cards now place their pregame starting chance in the single
-            // quiet grey context line (`Projected 118–109 · Pregame 54%–46%`),
-            // so `footerRow` draws only a non-finished served `reason`.
+            // #12616 / Ruling 182-A — finished game cards never draw the reason
+            // line, and records captions ("TOR 77-80 · BAL 76-81") are dropped
+            // so `footerRow` draws only a real non-finished reason to care.
             guard !isFinished, let reason, !reason.isEmpty else { return false }
+            guard !CompactGameCard12616.isRecordsCaption(reason) else { return false }
             return true
         }
 
@@ -861,7 +828,7 @@ struct EventCardView: View {
         /// STARTED. Every live claim `feed_reasons.py` writes carries the
         /// kickoff price ("New Orleans Pelicans leading after starting at 44%",
         /// "… chance rose from 46% to 87%", "… chance fell from …"). When the
-        /// reason says it, the live `Pregame` context pair steps aside so the
+        /// reason says it, the live `pregame` label steps aside so the
         /// card never states the start twice.
         static func reasonStatesTheOpening(_ reason: String?) -> Bool {
             guard let reason, !reason.isEmpty else { return false }
@@ -887,37 +854,22 @@ struct EventCardView: View {
 
     private var footerRow: some View {
         HStack(spacing: 6) {
-            if !isFinished, let reason, !reason.isEmpty {
-                reasonBadge(reason)
+            if !isFinished, let cleaned = CompactGameCard12616.sanitizedReason(reason), !cleaned.isEmpty {
+                reasonBadge(cleaned)
             }
             Spacer(minLength: 0)
         }
     }
 
     private func reasonBadge(_ text: String) -> some View {
-        let (icon, color) = reasonStyle(text)
-        return HStack(spacing: 3) {
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            Text(text)
-                .font(.caption2)
-                .fontWeight(.medium)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .foregroundStyle(color)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(color.opacity(0.1))
-        // #11422 — a Capsule's radius is half its height, so a sentence that
-        // wrapped to three lines had its first and last letters cut off by its
-        // own ends. A fixed radius reads as the same pill on one line and
-        // leaves every letter of a wrapped one inside the shape.
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        // The sentence outranks the "Opened" caption beside it for the width.
-        .layoutPriority(1)
+        // Ruling 182-A — a capsule is ONLY for live status; a real reason to
+        // care is a plain readable-grey line, never a coloured icon pill.
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(DS.textSecondaryReadable)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
     }
 
     /// Which badge family a served reason belongs to. (#5749)

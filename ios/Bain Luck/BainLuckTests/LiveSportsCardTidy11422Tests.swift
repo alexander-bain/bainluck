@@ -67,11 +67,12 @@ final class LiveSportsCardTidy11422Tests: XCTestCase {
     func testTheReasonPillIsNotClippedToACapsule() throws {
         let code = try source("Components/EventCardView.swift")
         guard let start = code.range(of: "privatefuncreasonBadge("),
-              let end = code.range(of: "privatefuncreasonStyle(", range: start.upperBound..<code.endIndex)
+              let end = code.range(of: "enumReasonBadge{", range: start.upperBound..<code.endIndex)
         else { return XCTFail("reasonBadge not found") }
         let badge = String(code[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(badge.contains(".clipShape(RoundedRectangle(cornerRadius:8,style:.continuous))"), badge)
-        XCTAssertFalse(badge.contains("Capsule()"), "a wrapped sentence loses its end letters to a Capsule")
+        XCTAssertTrue(badge.contains(".foregroundStyle(DS.textSecondaryReadable)"), badge)
+        XCTAssertFalse(badge.contains("Capsule()"), "Ruling 182-A: a capsule is only for live status")
+        XCTAssertFalse(badge.contains("RoundedRectangle("), "Ruling 182-A: a real reason is a plain grey line, not a pill")
     }
 
     // MARK: - 1. The projected final on one line
