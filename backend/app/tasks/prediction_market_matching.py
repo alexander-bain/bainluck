@@ -10931,7 +10931,8 @@ def _live_polymarket_quote(market: dict, outcome_name: str | None):
         if len(matches) != 1:
             return None
         side = matches[0]
-    bid, ask = float(market["bestBid"]), float(market["bestAsk"])
+    bid = 0.0 if market.get("bestBid") is None else float(market["bestBid"])
+    ask = 1.0 if market.get("bestAsk") is None else float(market["bestAsk"])
     if side == 1:
         return 1 - probability, 1 - ask, 1 - bid, side
     return probability, bid, ask, side

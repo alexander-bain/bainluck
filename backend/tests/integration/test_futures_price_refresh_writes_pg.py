@@ -3057,11 +3057,16 @@ async def test_12658_sql_move_does_not_compare_an_old_trade_with_a_quote(db):
         ("wide old trade", "0.71", "0.10", "0.78", None),
         ("supported quote", "0.15", "0.13", "0.17", Decimal("0.01")),
         ("unchanged quote", "0.16", "0.15", "0.17", Decimal("0")),
+        ("empty bid quote", "0.0005", None, "0.001", Decimal("0.1595")),
+        ("empty ask quote", "0.999", "0.998", None, Decimal("-0.839")),
+        ("old trade at empty bid", "0.71", None, "0.001", None),
+        ("empty book", "0.71", None, None, None),
     ]
     for name, probability, bid, ask, _ in cases:
         db.add(FuturesOutcome(market_id=market.id, external_id=name, name=name,
-                              current_probability=Decimal(probability), current_yes_bid=Decimal(bid),
-                              current_yes_ask=Decimal(ask), is_winner=False))
+                              current_probability=Decimal(probability),
+                              current_yes_bid=None if bid is None else Decimal(bid),
+                              current_yes_ask=None if ask is None else Decimal(ask), is_winner=False))
     await db.commit()
     await db.execute(update(FuturesOutcome).where(FuturesOutcome.market_id == market.id).values(
         current_probability=Decimal("0.16"), current_yes_bid=Decimal("0.14"),

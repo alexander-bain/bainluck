@@ -68,12 +68,13 @@ def test_closed_market_keeps_its_settlement_value():
 
 @pytest.mark.parametrize(
     "bid,ask",
-    [(None, 0.17), (0.13, None), (0.0, 0.17), (0.13, 1.0),
+    [(None, 0.20), (0.80, None), (0.0, 0.20), (0.80, 1.0),
+     (None, None), (0.0, 1.0),
      (0.18, 0.17), (float("nan"), 0.17), (0.13, float("inf")),
      (-0.1, 0.1), (0.9, 1.1), ("bad", 0.17), (0.1, 0.3),
      (0.2, 0.4), (True, 0.17)],
 )
-def test_invalid_or_one_sided_book_cannot_invent_a_quote(bid, ask):
+def test_invalid_empty_or_wide_book_cannot_invent_a_quote(bid, ask):
     assert current_polymarket_quote(bid, ask) is None
 
 
@@ -83,6 +84,9 @@ def test_invalid_or_one_sided_book_cannot_invent_a_quote(bid, ask):
     (0.15, 0.13, 0.17, 0.01),
     (0.15, None, None, None),
     (None, 0.13, 0.17, None),
+    (0.0005, None, 0.001, 0.1595),
+    (0.999, 0.998, None, -0.839),
+    (0.71, None, 0.001, None),
 ])
 def test_a_change_of_price_basis_is_not_a_market_move(old, bid, ask, expected):
     value = quoted_price_change_value(old, bid, ask, 0.16)
@@ -101,7 +105,7 @@ def test_live_writer_uses_the_same_quote_and_complement(raw):
 
 
 @pytest.mark.parametrize("change", [
-    {"bestAsk": 0.78}, {"bestBid": None}, {"closed": True},
+    {"bestAsk": 0.78}, {"bestBid": None, "bestAsk": 0.20}, {"closed": True},
     {"outcomes": "not JSON"}, {"outcomes": '["Colts", "Colts"]'},
 ])
 def test_live_writer_refuses_an_unusable_or_unidentified_quote(change):
@@ -110,6 +114,33 @@ def test_live_writer_refuses_an_unusable_or_unidentified_quote(change):
     market = {"outcomes": '["Colts", "Titans"]', "bestBid": 0.13,
               "bestAsk": 0.17, "lastTradePrice": 0.71, **change}
     assert _live_polymarket_quote(market, "Colts") is None
+
+
+@pytest.mark.parametrize("bid,ask,expected", [
+    (None, 0.001, 0.0005), (0.0, 0.001, 0.0005),
+    (0.998, None, 0.999), (0.998, 1.0, 0.999),
+    (None, 0.17, 0.085), (0.83, None, 0.915),
+])
+def test_tight_one_sided_books_price_consistently_without_following_old_trades(bid, ask, expected):
+    from app.tasks.prediction_market_matching import _live_polymarket_quote
+
+    assert current_polymarket_quote(bid, ask) == pytest.approx(expected)
+    leg = _leg(0.71, bid=bid, ask=ask, last=0.71)
+    assert _resolve_market_probability_with_source(leg)[0] == pytest.approx(expected)
+    sibling = _leg(0.345, bid=0.32, ask=0.37).model_copy(
+        update={"condition_id": "0xcolts55", "group_item_title": "5.5+ Wins"}
+    )
+    event = PolymarketEvent(id="912423", title="Colts Win Total", markets=[leg, sibling])
+    rows = {row["external_id"]: row for row in _parent_outcome_data(event)}
+    assert rows[leg.condition_id]["prob"] == pytest.approx(expected)
+    market = {"outcomes": '["Colts", "Titans"]', "bestBid": bid,
+              "bestAsk": ask, "outcomePrices": "[0.71,0.29]", "lastTradePrice": 0.71}
+    yes = _live_polymarket_quote(market, "Colts")
+    no = _live_polymarket_quote(market, "Titans")
+    assert yes[0] == pytest.approx(expected)
+    assert no[0] == pytest.approx(1 - expected)
+    assert yes[1:3] == pytest.approx((0 if bid is None else bid, 1 if ask is None else ask))
+    assert no[1:3] == pytest.approx((1 - yes[2], 1 - yes[1]))
 
 
 def test_a_refused_but_quoted_leg_keeps_the_existing_withdrawal_safeguard():

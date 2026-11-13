@@ -22,7 +22,7 @@ THE TWO CLAUSES (Authority contract C1 + Live's C2 decision, 2026-10-03):
   output, so it means exactly "the branch that writes it dropped it".
 
 #12658 supersedes C2's raw-price policy: every open-market writer now uses a
-usable two-sided book, never an undated trade. The 37-point-wide specimen is
+usable bounded book, never an undated trade. The 37-point-wide specimen is
 still refused. C1's exact refusal set and partial-payload safeguards remain.
 """
 
@@ -190,11 +190,17 @@ class TestWhatSurvives:
         assert ML not in _emitted(_game(m))
         assert ML in _refused_leg_books(_game(m))
 
-    @pytest.mark.parametrize("bid, ask", [(0.96, None), (0.96, 1.0), (0, 1)])
+    @pytest.mark.parametrize("bid, ask", [(0.80, None), (0.80, 1.0), (0, 1)])
     def test_an_undated_trade_does_not_price_an_unbounded_book(self, bid, ask):
         m = _moneyline(prices=(0.97, 0.03), bid=bid, ask=ask, last=0.97)
         assert ML not in _emitted(_game(m))
         assert not polymarket.book_refutes_price(bid, ask, 0.97)
+
+    @pytest.mark.parametrize("ask", [None, 1.0])
+    def test_a_tight_no_ask_book_prices_at_the_midpoint_not_the_trade(self, ask):
+        m = _moneyline(prices=(0.97, 0.03), bid=0.96, ask=ask, last=0.97)
+        assert _emitted(_game(m))[ML] == pytest.approx(0.98)
+        assert ML not in _refused_leg_books(_game(m))
 
     def test_a_wide_book_does_not_date_a_blowout_trade(self):
         m = _moneyline(prices=(0.50, 0.50), bid=0.02, ask=0.98, last=0.97)

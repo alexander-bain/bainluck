@@ -763,8 +763,8 @@ class TestResolveMarketProbability:
         m.group_item_title = "Player S"
         assert _resolve_market_probability(m) is None
 
-    def test_real_100pct_with_trading_not_rejected(self):
-        """#12658: an undated print without a usable two-sided book is declined."""
+    def test_near_certain_book_uses_midpoint_instead_of_100pct_print(self):
+        """#12658: the 99%/100% boundary book still prices, without grading."""
         m = self._make_market(
             question="Will Team A win?",
             outcome_prices=[1.0, 0.0],
@@ -772,7 +772,7 @@ class TestResolveMarketProbability:
             best_ask=1.0,
             last_trade_price=0.99,
         )
-        assert _resolve_market_probability(m) is None
+        assert _resolve_market_probability(m) == 0.995
 
 
 class TestIsPlaceholderOutcome:
