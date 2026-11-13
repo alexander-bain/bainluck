@@ -236,6 +236,7 @@ from app.utils.futures_liveness import (
     venue_answered,
 )
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598 / CERT-3182
+from app.utils.futures_quote_freshness import price_refresh_due_sql
 from app.utils.kalshi_resolution_window import derive_resolution_window  # #8871
 from app.utils.kalshi_threshold_label import (  # #9543
     THRESHOLD_LABEL_KEY,
@@ -931,14 +932,7 @@ _CANDIDATE_SQL = text(
            (SELECT count(*) FROM liquid_pool) AS liquid_pool_size
       FROM futures_markets fm
       JOIN pool ON pool.id = fm.id
-     WHERE NOT EXISTS (
-             SELECT 1
-               FROM futures_outcomes fo
-               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
-              WHERE fo.market_id = fm.id
-                AND s.captured_at > NOW() - make_interval(hours => :stale_hours)
-                AND fo.last_updated > NOW() - make_interval(hours => :stale_hours)
-           )
+     WHERE {price_refresh_due_sql("NOW() - make_interval(hours => :stale_hours)")}
      ORDER BY fm.volume DESC NULLS LAST, fm.liquidity DESC NULLS LAST, fm.id
     """
 )
@@ -961,14 +955,7 @@ _BY_ID_CANDIDATE_SQL = f"""
       FROM futures_markets fm
      WHERE fm.id = ANY(:market_ids)
        AND {LIVE_MARKET_SQL}
-       AND NOT EXISTS (
-             SELECT 1
-               FROM futures_outcomes fo
-               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
-              WHERE fo.market_id = fm.id
-                AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
-                AND fo.last_updated > NOW() - make_interval(mins => :stale_minutes)
-           )
+       AND {price_refresh_due_sql("NOW() - make_interval(mins => :stale_minutes)")}
      ORDER BY fm.id
 """
 
@@ -1033,14 +1020,7 @@ _IN_PLAY_CANDIDATE_SQL = text(
        AND {VALUE_TIER1_SQL}
        AND fm.resolution_date IS NOT NULL
        AND fm.resolution_date <= NOW() + make_interval(hours => :in_play_hours)
-       AND NOT EXISTS (
-             SELECT 1
-               FROM futures_outcomes fo
-               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
-              WHERE fo.market_id = fm.id
-                AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
-                AND fo.last_updated > NOW() - make_interval(mins => :stale_minutes)
-           )
+       AND {price_refresh_due_sql("NOW() - make_interval(mins => :stale_minutes)")}
      ORDER BY fm.resolution_date, fm.id
      LIMIT :in_play_limit
     """
@@ -1062,14 +1042,7 @@ _SERIES_CARD_CANDIDATE_SQL = text(
        AND fm.source = 'kalshi'
        AND (fm.external_id ~ :series_ticker_re
             OR fm.external_id ~ :title_ticker_re)
-       AND NOT EXISTS (
-             SELECT 1
-               FROM futures_outcomes fo
-               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
-              WHERE fo.market_id = fm.id
-                AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
-                AND fo.last_updated > NOW() - make_interval(mins => :stale_minutes)
-           )
+       AND {price_refresh_due_sql("NOW() - make_interval(mins => :stale_minutes)")}
      ORDER BY fm.resolution_date, fm.id
      LIMIT :series_card_limit
     """
@@ -4495,15 +4468,7 @@ async def _refresh_stale_futures_prices(
                         {ELIGIBLE_POOL_SQL}
                         SELECT COUNT(*) FROM futures_markets fm
                           JOIN pool ON pool.id = fm.id
-                         WHERE NOT EXISTS (
-                                 SELECT 1 FROM futures_outcomes fo
-                                   JOIN futures_odds_snapshots s
-                                     ON s.outcome_id = fo.id
-                                  WHERE fo.market_id = fm.id
-                                    AND s.captured_at
-                                        > NOW() - make_interval(hours => :stale_hours)
-                                    AND fo.last_updated > NOW() - make_interval(hours => :stale_hours)
-                               )
+                         WHERE {price_refresh_due_sql("NOW() - make_interval(hours => :stale_hours)")}
                         """
                     ),
                     {
