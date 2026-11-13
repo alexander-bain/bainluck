@@ -72,7 +72,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -82,7 +82,9 @@ from app.tasks.live_blend_refresh import atomic_stamp_expression
 from tests.test_live_blend_refresh import (
     is_normal_publication_intent, is_normal_recovery_owner, is_stamp_statement,
 )
-from app.utils.aggregation import stamp_source_reading
+from app.utils.aggregation import (
+    PRICE_READ_KEY, source_price_read_time, stamp_source_reading,
+)
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 
@@ -795,3 +797,90 @@ async def test_newer_committed_blend_has_newer_frame_clock(
         ) > datetime.fromisoformat(accepted["updated_at"]):
             accepted = frame
     assert accepted["p"] == (0.55 if prelock_control else 0.60)
+
+
+# #12581: upstream read ages travel with the exact committed price.
+async def _write_source_read_12581(session, eid, source, value, **kwargs):
+    from app.models.models import Event
+
+    return (await session.execute(
+        update(Event).where(Event.id == eid)
+        .values(win_probability_sources=atomic_stamp_expression(source, value, **kwargs))
+        .returning(Event.win_probability_sources)
+    )).scalar_one()
+
+
+@pytest.mark.parametrize("change", ["identical", "price", "clock", "membership", "no_basis"])
+@needs_postgres
+async def test_atomic_recompute_retains_only_the_same_input_read(pg_engine, change):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    at = datetime.now(timezone.utc) - timedelta(hours=3)
+    basis = {"42": at.timestamp(), "43": at.timestamp()}
+    original = stamp_source_reading(
+        {"betting": {"value": 0.65, "opaque": "keep"}}, "kalshi", 0.61,
+        now=at, observed_basis=basis, price_read_at=at,
+    )
+    eid = await _seed_event(pg_engine, original)
+    changed_basis = dict(basis)
+    value = 0.61
+    if change == "price":
+        value = 0.62
+    elif change == "clock":
+        changed_basis["42"] += 10
+    elif change == "membership":
+        changed_basis["44"] = changed_basis.pop("43")
+    elif change == "no_basis":
+        changed_basis = None
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        after = await _write_source_read_12581(session, eid, "kalshi", value, observed_basis=changed_basis)
+        await session.commit()
+    assert after["betting"] == original["betting"]
+    expected = at if change == "identical" else None
+    assert source_price_read_time(after, "kalshi", value) == expected
+    if expected is None:
+        assert PRICE_READ_KEY not in after["kalshi"]
+    assert after["kalshi"]["updated_at"] != original["kalshi"]["updated_at"]
+
+
+@needs_postgres
+async def test_atomic_fresh_read_and_rollback_keep_price_clock_together(pg_engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    basis = {"42": at.timestamp()}
+    eid = await _seed_event(pg_engine, {"polymarket": 0.6})
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        await _write_source_read_12581(session, eid, "kalshi", 0.61, observed_basis=basis, price_read_at=at)
+        await session.commit()
+        await _write_source_read_12581(
+            session, eid, "kalshi", 0.62,
+            observed_basis={"42": at.timestamp() + 60},
+            price_read_at=at + timedelta(minutes=1),
+        )
+        await session.rollback()
+    after = await _stored(pg_engine, eid)
+    assert after["kalshi"]["value"] == 0.61
+    assert source_price_read_time(after, "kalshi", 0.61) == at
+    assert after["polymarket"] == 0.6
+
+
+@pytest.mark.parametrize("received", [True, False])
+@needs_postgres
+async def test_sportsbook_writer_carries_only_the_producers_receive_time(pg_engine, received):
+    from app.models.models import Event
+    from app.utils.nonvenue_live_push import write_nonvenue_probability
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    eid = await _seed_event(pg_engine, {"kalshi": 0.6})
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, eid)
+        await write_nonvenue_probability(
+            session, event, "betting", 0.61,
+            received_at=at.timestamp() if received else None,
+        )
+        await session.commit()
+    after = await _stored(pg_engine, eid)
+    assert source_price_read_time(after, "betting", 0.61) == (at if received else None)
+    assert after["kalshi"] == 0.6

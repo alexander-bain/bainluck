@@ -3667,7 +3667,9 @@ export interface EventTournamentResponse {
 }
 /** #12581: the server's selected contributors; clients do not reconstruct them. */
 export interface SourceMark {
-  state: "blend" | "settled" | "none";
+  state: "single" | "blend" | "settled" | "none";
+  /** The actual server calculation, without inferred weights or depth. */
+  method?: string;
   sources: {
     key: string;
     name: string;
