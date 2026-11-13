@@ -287,3 +287,33 @@ async def test_a_section_that_never_lands_reads_not_attempted_next_hour(monkeypa
     assert all(hour2["sections"][n] == {"outcome": "not_attempted"} for n in names if n != "politics")
     assert hour2["started_at"] == opened["started_at"]
     assert hour2["started_at"] >= hour1["started_at"]
+
+
+@pytest.mark.asyncio
+async def test_the_admin_force_refresh_sends_every_section(monkeypatch, rc):
+    """The bot's review (Nov 13): the endpoint still sent only the :25 task,
+    which now just opens the report, so a force-refresh refreshed nothing and
+    reset the report. It must open the report and send all seven sections."""
+    from app.routes import admin_data_quality as route
+
+    sent = []
+
+    class _Result:
+        def __init__(self, n):
+            self.id = f"id-{n}"
+
+    def _send(name, *a, **k):
+        sent.append((name, k.get("kwargs"), k.get("queue")))
+        return _Result(len(sent))
+
+    monkeypatch.setattr(route, "_safe_send_task", _send)
+    monkeypatch.setattr(route, "_check_admin_secret", lambda *a, **k: True)
+    out = await route.trigger_precompute_category_pages(request=None, secret="x")
+
+    names = pcp.category_section_names()
+    assert [n for n, _, _ in sent] == ["app.tasks.precompute_category_section"] * len(names)
+    assert [kw["section"] for _, kw, _ in sent] == names
+    assert {q for _, _, q in sent} == {"background"}
+    assert out["status"] == "queued" and list(out["task_ids"]) == names
+    # the report it opened reads every section not_attempted until each lands
+    assert _report(rc)["sections"] == {n: {"outcome": "not_attempted"} for n in names}
