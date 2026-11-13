@@ -1091,6 +1091,86 @@ def resolve_event_category(
 # Polling implementation
 # =========================================================================
 
+#: #219E / decision 170-188: the keyset walk's saved position and its share of
+#: the poll's time budget. It runs after the newest-first offset scan and stops
+#: here, leaving the rest of the 420 s budget to the settled-sports pass.
+POLYMARKET_KEYSET_CURSOR_KEY = "bainluck:polymarket_keyset_cursor"
+POLYMARKET_KEYSET_CURSOR_TTL_S = 2 * 86400
+POLYMARKET_KEYSET_STOP_AT_S = 300
+
+
+async def _keyset_walk_active_events(
+    service,
+    rc,
+    *,
+    seen_ids: set,
+    process_batch,
+    started: float,
+    stop_at_s: float = POLYMARKET_KEYSET_STOP_AT_S,
+    clock=None,
+) -> dict:
+    """#219E: re-read active Polymarket events the offset scan cannot reach.
+
+    The hourly poll's offset scan reaches only the 2,000 newest active events
+    (Gamma's offset cap), so an active market in an older event was never re-read
+    by it. That is most of what Discover features ("AI bubble burst in 2026?").
+    This walks ALL active events by keyset, in id order, from a saved cursor, a
+    page at a time until ``stop_at_s`` of the poll has elapsed. Each page goes
+    through the poll's own batch writer (``process_batch``), and the cursor is
+    saved only after its page is written, so a killed run re-reads, never skips.
+    The end of the active set clears the cursor, so the next run starts over.
+    Events the offset scan already handled this run are skipped. Never raises.
+    """
+    import time as _time
+
+    clock = clock or _time.monotonic
+    out = {"keyset_pages": 0, "keyset_events": 0, "keyset_complete": False, "keyset_error": None}
+    try:
+        raw = rc.get(POLYMARKET_KEYSET_CURSOR_KEY) if rc is not None else None
+        cursor = (raw.decode() if isinstance(raw, bytes) else raw) or None
+    except Exception:
+        cursor = None
+    while clock() - started < stop_at_s:
+        try:
+            events, next_cursor = await service.get_events_keyset(
+                active=True, closed=False, limit=100, after_cursor=cursor
+            )
+        except Exception as exc:  # the offset scan's work stands; next run resumes
+            out["keyset_error"] = str(exc)[:200]
+            logger.warning("Polymarket keyset walk: page read failed: %s", exc)
+            break
+        batch = []
+        for event_data in events:
+            event_id = str(event_data.get("id", ""))
+            if not event_id or event_id in seen_ids:
+                continue
+            seen_ids.add(event_id)
+            parsed = service._parse_event(event_data)
+            if parsed and parsed.markets:
+                batch.append(parsed)
+        if batch:
+            try:
+                await process_batch(batch)
+            except Exception as exc:  # cursor not advanced: this page is re-read next run
+                out["keyset_error"] = str(exc)[:200]
+                logger.warning("Polymarket keyset walk: page write failed: %s", exc)
+                break
+            out["keyset_events"] += len(batch)
+        out["keyset_pages"] += 1
+        try:
+            if next_cursor:
+                rc.setex(POLYMARKET_KEYSET_CURSOR_KEY, POLYMARKET_KEYSET_CURSOR_TTL_S, next_cursor)
+            else:
+                rc.delete(POLYMARKET_KEYSET_CURSOR_KEY)
+        except Exception:
+            pass  # a lost cursor only means the walk starts over
+        if not next_cursor:
+            out["keyset_complete"] = True
+            break
+        cursor = next_cursor
+    return out
+
+
 async def _poll_polymarket_markets():
     """Async implementation of Polymarket polling."""
     import asyncio
@@ -1329,6 +1409,22 @@ async def _poll_polymarket_markets():
         stats["pages_fetched"] = pages_fetched
         stats["unique_events_seen"] = len(seen_ids)
         stats["hit_page_cap"] = pages_fetched >= max_pages
+
+        # #219E / decision 170-188: the offset scan above stops at the 2,000
+        # newest events; walk the rest by keyset, inside the same time budget.
+        async def _process_keyset_batch(events):
+            await _process_event_batch(
+                events, stats, FuturesMarket, FuturesOutcome,
+                FuturesOddsSnapshot, pg_insert, probability_to_american,
+                compute_market_tier,
+            )
+
+        stats.update(
+            await _keyset_walk_active_events(
+                service, _rc, seen_ids=seen_ids,
+                process_batch=_process_keyset_batch, started=_start,
+            )
+        )
 
         # Supplementary pass: fetch settled sports game events by tag.
         # The main scan (active=True, closed=False) only gets open events.
