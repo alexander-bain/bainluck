@@ -37,6 +37,7 @@ struct InAppWebView: View {
 
     let url: URL
     var linkPolicy: LinkPolicy = .handOffToTheSystem
+    var interceptHandOff: ((URL) -> Bool)? = nil
 
     #if canImport(WebKit)
     @Environment(\.openURL) private var openURL
@@ -48,7 +49,12 @@ struct InAppWebView: View {
                 url: url,
                 linkPolicy: linkPolicy,
                 isLoading: $isLoading,
-                handOff: { openURL($0) }
+                handOff: { candidate in
+                    if interceptHandOff?(candidate) == true {
+                        return
+                    }
+                    openURL(candidate)
+                }
             )
             if isLoading {
                 ProgressView()
@@ -61,8 +67,13 @@ struct InAppWebView: View {
     var body: some View {
         VStack(spacing: 16) {
             Text("Open in your browser").font(.headline)
-            Button("Open \(url.host ?? "page")") { openURL(url) }
-                .buttonStyle(.borderedProminent)
+            Button("Open \(url.host ?? "page")") {
+                if interceptHandOff?(url) == true {
+                    return
+                }
+                openURL(url)
+            }
+            .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -90,6 +101,14 @@ enum InAppWebViewNavigation {
         case .handOffToTheSystem:
             return isTheSamePage(candidate, embedded)
         }
+    }
+
+    /// `true` when an outgoing link points to Bain Luck's own `/discover` feed
+    /// (such as the "Start exploring" button at the bottom of `/about`), which
+    /// the app opens natively on the Discover tab instead of ejecting to Safari.
+    static func opensDiscoverInApp(_ candidate: URL) -> Bool {
+        guard isWeb(candidate), siteHost(candidate) == "bainluck.com" else { return false }
+        return normalizedPath(candidate) == "/discover"
     }
 
     /// Same site, same path. Query and fragment are deliberately ignored.

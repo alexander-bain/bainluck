@@ -9,6 +9,9 @@ import SwiftUI
 /// human line) — there is no separate native copy to drift. Reachable from the
 /// My Stuff profile hub and the Preferences settings screen.
 struct AboutView: View {
+    @EnvironmentObject private var navCoordinator: NavigationCoordinator
+    @Environment(\.dismiss) private var dismiss
+
     /// `?embed=1` is the native half of the #5914 embed contract, agreed with
     /// ux 2026-09-14: on `/about`, and only on `/about`, it tells the page it is
     /// being rendered inside the app, so the site drops the chrome that has no
@@ -29,14 +32,42 @@ struct AboutView: View {
     /// as one site regardless, so the apex form would still render in place.
     private static let aboutURL = URL(string: "https://www.bainluck.com/about?embed=1")!
 
+    /// Intercepts the "Start exploring" CTA (`/discover`) at the bottom of `/about`
+    /// so tapping it switches natively to the Discover tab instead of leaving the
+    /// app for Safari, while `/calibration`, `/privacy`, and `mailto:` still hand
+    /// off to the system.
+    static func handleOutgoingLink(
+        _ candidate: URL,
+        navigation: NavigationCoordinator,
+        dismiss: () -> Void
+    ) -> Bool {
+        guard InAppWebViewNavigation.opensDiscoverInApp(candidate) else {
+            return false
+        }
+        dismiss()
+        navigation.selectedTab = .discover
+        return true
+    }
+
     var body: some View {
         // `.handOffToTheSystem` (the default, named here because it is load-
         // bearing rather than incidental): the About copy links to
         // /calibration, /privacy, /discover and mailto:bugs@bainluck.com. Left
         // to follow in place, one tap turns a screen titled "About" into a
         // second copy of the website — which is the defect #5914 is about,
-        // arriving a moment later. Those links now open in Safari and Mail.
-        InAppWebView(url: Self.aboutURL, linkPolicy: .handOffToTheSystem)
+        // arriving a moment later. /discover switches natively to the Discover
+        // tab; the remaining outgoing links open in Safari and Mail.
+        InAppWebView(
+            url: Self.aboutURL,
+            linkPolicy: .handOffToTheSystem,
+            interceptHandOff: { candidate in
+                Self.handleOutgoingLink(
+                    candidate,
+                    navigation: navCoordinator,
+                    dismiss: { dismiss() }
+                )
+            }
+        )
             .navigationTitle("About")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
