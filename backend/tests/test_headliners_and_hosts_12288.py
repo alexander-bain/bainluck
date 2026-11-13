@@ -67,7 +67,14 @@ def _live_halftime_fixture() -> list[dict]:
             "status": "open",
             "mutually_exclusive": False,
             "name": "What songs will be played at the 2027 Big Game halftime show?",
-            "outcomes": [{"name": "99 Problems", "probability": 0.85}],
+            "outcomes": [
+                {"name": "99 Problems", "probability": 0.85},
+                {"name": "Crazy in Love", "probability": 0.78},
+                {"name": "Happy", "probability": 0.62},
+                {"name": "Empire State of Mind", "probability": 0.55},
+                {"name": "Halo", "probability": 0.48},
+                {"name": "Party in the U.S.A.", "probability": 0.35},
+            ],
         },
     ]
 
@@ -108,7 +115,61 @@ async def test_halftime_performers_preserve_independent_chances_and_explain_non_
     assert grading["best_single"]["subject"] == "Pharrell Williams"
 
 
-def test_single_host_family_switches_to_single_winner_context() -> None:
+def test_song_markets_excluded_even_when_larger_than_performer_market_or_alone() -> None:
+    """Regression for blocking review: song markets with 'songs' before 'halftime show' must never match."""
+    # Case 1: lone Polymarket song market with 3 outcomes -> must refuse!
+    lone_song = [
+        {
+            "id": 69851901,
+            "source": "polymarket",
+            "status": "open",
+            "mutually_exclusive": False,
+            "name": "What songs will be played at the 2027 Big Game halftime show?",
+            "outcomes": [
+                {"name": "99 Problems", "probability": 0.85},
+                {"name": "Crazy in Love", "probability": 0.72},
+                {"name": "Happy", "probability": 0.61},
+            ],
+        }
+    ]
+    res_lone = select_headliners_and_hosts(lone_song, family="big_game_halftime_performers")
+    assert isinstance(res_lone, RoundupRefusal)
+    assert list(res_lone.reasons) == [("no_matching_stage_family", "big_game_halftime_performers")]
+
+    # Case 2: 3-outcome performer market + 4-outcome song market from same source -> ONLY performers!
+    mixed = [
+        {
+            "id": 68313448,
+            "source": "polymarket",
+            "status": "open",
+            "mutually_exclusive": False,
+            "name": "Who will be in the 2027 Big Game halftime show?",
+            "outcomes": [
+                {"name": "JAY-Z", "probability": 0.97},
+                {"name": "Beyoncé", "probability": 0.71},
+                {"name": "Pharrell Williams", "probability": 0.42},
+            ],
+        },
+        {
+            "id": 69851902,
+            "source": "polymarket",
+            "status": "open",
+            "mutually_exclusive": False,
+            "name": "What songs will be played at the 2027 Big Game halftime show?",
+            "outcomes": [
+                {"name": "99 Problems", "probability": 0.85},
+                {"name": "Crazy in Love", "probability": 0.72},
+                {"name": "Happy", "probability": 0.61},
+                {"name": "Halo", "probability": 0.49},
+            ],
+        },
+    ]
+    res_mixed = select_headliners_and_hosts(mixed, family="big_game_halftime_performers", min_contenders=3)
+    assert isinstance(res_mixed, RoundupMembers)
+    assert [r["artist"] for r in res_mixed.rows] == ["JAY-Z", "Beyoncé", "Pharrell Williams"]
+
+
+def test_single_host_family_switches_to_single_winner_context_without_false_100_sum_claim() -> None:
     host_markets = [
         {
             "id": 880001,
@@ -128,3 +189,93 @@ def test_single_host_family_switches_to_single_winner_context() -> None:
     ctx = res.sections[0]["context_line"]
     assert "one choice settles Yes" in ctx
     assert "Conan O'Brien leads at 44%" in ctx
+    assert "sum to 100%" not in (res.footer or "")
+    assert "mutually exclusive" in (res.footer or "")
+
+
+@pytest.mark.asyncio
+async def test_divergence_gate_forbidden_labels_and_refusal_reasons() -> None:
+    # 1. >= 40 pt cross-source disagreement refuses with explicit contender_divergence_gate reason
+    divergent = [
+        {
+            "id": 710001,
+            "source": "polymarket",
+            "status": "open",
+            "mutually_exclusive": False,
+            "name": "Who will be in the 2027 Big Game halftime show?",
+            "outcomes": [
+                {"name": "JAY-Z", "probability": 0.90},
+                {"name": "Beyoncé", "probability": 0.70},
+                {"name": "Miley Cyrus", "probability": 0.25},
+            ],
+        },
+        {
+            "id": 710002,
+            "source": "kalshi",
+            "status": "open",
+            "mutually_exclusive": False,
+            "name": "Pro Football Championship Halftime Show: Performers",
+            "outcomes": [
+                {"name": "JAY-Z", "probability": 0.30},
+                {"name": "Beyoncé", "probability": 0.72},
+                {"name": "Miley Cyrus", "probability": 0.24},
+            ],
+        },
+    ]
+    div_res = select_headliners_and_hosts(divergent)
+    assert isinstance(div_res, RoundupRefusal)
+    assert list(div_res.reasons) == [("contender_divergence_gate", "big_game_halftime_performers", "JAY-Z")]
+
+    # 2. Forbidden word in upstream contender label ("Stale" / "Opened") is skipped, never raises ValueError
+    banned_label = [
+        {
+            "id": 710003,
+            "source": "kalshi",
+            "status": "open",
+            "mutually_exclusive": False,
+            "name": "Pro Football Championship Halftime Show: Performers",
+            "outcomes": [
+                {"name": "JAY-Z", "probability": 0.92},
+                {"name": "Beyoncé", "probability": 0.71},
+                {"name": "Pharrell Williams", "probability": 0.40},
+                {"name": "Stale Mate", "probability": 0.55},
+                {"name": "Opened Eyes", "probability": 0.50},
+            ],
+        }
+    ]
+    clean_res = select_headliners_and_hosts(banned_label, min_contenders=3)
+    assert isinstance(clean_res, RoundupMembers)
+    assert [r["artist"] for r in clean_res.rows] == ["JAY-Z", "Beyoncé", "Pharrell Williams"]
+
+    # 3. no_priced_contenders & insufficient_contenders & unsupported_session
+    unpriced = [
+        {
+            "id": 710004,
+            "source": "kalshi",
+            "status": "open",
+            "name": "Pro Football Championship Halftime Show: Performers",
+            "outcomes": [{"name": "JAY-Z", "probability": None}],
+        }
+    ]
+    assert select_headliners_and_hosts(unpriced) == RoundupRefusal(
+        [("no_priced_contenders", "big_game_halftime_performers")]
+    )
+
+    too_few = [
+        {
+            "id": 710005,
+            "source": "kalshi",
+            "status": "open",
+            "name": "Pro Football Championship Halftime Show: Performers",
+            "outcomes": [
+                {"name": "JAY-Z", "probability": 0.90},
+                {"name": "Beyoncé", "probability": 0.70},
+            ],
+        }
+    ]
+    assert select_headliners_and_hosts(too_few, min_contenders=3) == RoundupRefusal(
+        [("insufficient_contenders", 2, 3)]
+    )
+
+    bad_session = await produce_headliners_and_hosts(object())
+    assert bad_session == RoundupRefusal([("unsupported_session", "object")])

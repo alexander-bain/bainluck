@@ -2,12 +2,13 @@
 
 PILLAR: DISCOVER · MATCHING · TRUTH
 SHIP: Stage, halftime, festival, and casting contender container (e.g., 2027 Big
-Game Halftime Show performers, festival headliners, ceremony hosts, major film
-casting) that preserves non-normalized independent probabilities whenever
-multiple performers/guests can appear (outcome sum > 1.15 or
-``mutually_exclusive is False``), blends cross-source performer twins via
-``futures_source_merge.blend_with_verdict``, and states explicitly in
-``context_line`` whether multiple artists can appear or one choice settles Yes.
+Game Halftime Show performers, festival headliners, ceremony hosts) that
+excludes song/setlist/prop sub-markets across the full market title, preserves
+non-normalized independent probabilities whenever multiple performers/guests can
+appear (outcome sum > 1.15 or ``mutually_exclusive is False``), blends
+cross-source performer twins via ``futures_source_merge.blend_with_verdict``
+(refusing 40+ pt divergence explicitly), and states clearly in ``context_line``
+whether multiple artists can appear or one choice settles Yes.
 
 Publication gate: candidate definition lives in ``backend/data/discover/candidates/``
 and is NOT registered in ``ROUNDUP_PRODUCERS`` until licensed via the Discover
@@ -19,7 +20,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -61,12 +62,20 @@ _FORBIDDEN_COPY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Full-title negative guard so song, setlist, anthem, length, or wardrobe prop markets
+# never match performer/host stage families regardless of word order or outcome count.
+_EXCLUDED_STAGE_PROP_RE = re.compile(
+    r"\b(?:songs?|setlist|national\s+anthem|how\s+many|length|duration|"
+    r"viewers|ratings|wardrobe|outfit|commercials?)\b",
+    re.IGNORECASE,
+)
+
 _STAGE_FAMILY_PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     (
         "big_game_halftime_performers",
         "2027 Big Game halftime stage",
         re.compile(
-            r"(?:big\s+game\s+halftime\s+show|championship\s+halftime\s+show)(?!.*song)",
+            r"^(?!.*\bsongs?\b).*(?:big\s+game\s+halftime\s+show|championship\s+halftime\s+show)",
             re.IGNORECASE,
         ),
     ),
@@ -119,7 +128,11 @@ def _canonical_artist(raw: Any) -> Optional[str]:
     low = cleaned.lower()
     if not low or low in {"other", "none", "field", "yes", "no"}:
         return None
-    return _ARTIST_ALIASES.get(low, cleaned)
+    resolved = _ARTIST_ALIASES.get(low, cleaned)
+    # Skip upstream contender labels carrying banned words rather than raising ValueError (hot-list #42)
+    if _FORBIDDEN_COPY_RE.search(resolved):
+        return None
+    return resolved
 
 
 def _match_stage_family(
@@ -127,7 +140,7 @@ def _match_stage_family(
     family_key: str,
 ) -> Optional[str]:
     title = str(market.get("name") or market.get("title") or "").strip()
-    if not title:
+    if not title or _EXCLUDED_STAGE_PROP_RE.search(title):
         return None
     for key, card_title, pat in _STAGE_FAMILY_PATTERNS:
         if key == family_key and pat.search(title):
@@ -205,6 +218,7 @@ def select_headliners_and_hosts(
         all_artists.update(art_map.keys())
 
     contenders: list[StageContender] = []
+    divergence_reasons: list[tuple[Any, ...]] = []
     for artist in sorted(all_artists):
         rows_for_blend = [
             {"source": s, "probability": by_source[s][1][artist]}
@@ -214,18 +228,25 @@ def select_headliners_and_hosts(
         if len(rows_for_blend) >= 2:
             val, divergence, rule_name = blend_with_verdict(rows_for_blend)
             if divergence is not None or rule_name == "divergence_gate" or val is None:
+                divergence_reasons.append(("contender_divergence_gate", family, artist))
                 continue
             prob = float(val)
+            if min_prob <= prob <= max_prob:
+                contenders.append(
+                    StageContender(artist=artist, probability=prob, primary_market_id=primary_id)
+                )
         else:
             src_only = rows_for_blend[0]["source"]
             prob = float(rows_for_blend[0]["probability"])
             mkt_id = int(by_source[src_only][0]["id"])
             if min_prob <= prob <= max_prob:
-                contenders.append(StageContender(artist=artist, probability=prob, primary_market_id=mkt_id))
-            continue
+                contenders.append(
+                    StageContender(artist=artist, probability=prob, primary_market_id=mkt_id)
+                )
 
-        if min_prob <= prob <= max_prob:
-            contenders.append(StageContender(artist=artist, probability=prob, primary_market_id=primary_id))
+    # Never silently drop a 40+ pt cross-source disagreement without an explicit refusal reason
+    if divergence_reasons:
+        return RoundupRefusal(divergence_reasons)
 
     if len(contenders) < max(2, int(min_contenders)):
         return RoundupRefusal([("insufficient_contenders", len(contenders), int(min_contenders))])
@@ -241,14 +262,18 @@ def select_headliners_and_hosts(
             f"and do not add to 100%."
         )
         footer = _assert_clean_copy(
-            f"Independent appearance chances · multiple performers can settle Yes"
+            "Independent appearance chances · multiple performers can settle Yes"
         )
     else:
         context_line = _assert_clean_copy(
             f"Leading contenders for {card_title}, ordered by current chance — "
             f"{top.artist} leads at {int(round(top.probability * 100))}% and one choice settles Yes."
         )
-        footer = _assert_clean_copy("Single-winner market · chances sum to 100%")
+        # Displayed rows are filtered by min_prob and capped at max_card_rows, so never
+        # claim the displayed subset itself sums to 100%.
+        footer = _assert_clean_copy(
+            "Single-winner market · mutually exclusive contenders"
+        )
 
     rows = [
         {
@@ -290,7 +315,7 @@ async def produce_headliners_and_hosts(
     rule: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
-    _ = now or datetime.now(timezone.utc)
+    del now
     cfg_rule = dict(rule or {})
     if isinstance(db, (list, tuple)):
         return select_headliners_and_hosts(
