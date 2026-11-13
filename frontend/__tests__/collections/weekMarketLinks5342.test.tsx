@@ -232,7 +232,7 @@ describe("the compact NFL page accounts for its long linked lists (#12337)", () 
     const { hub, html } = draw({ ...compactWeek(), related_summary: summary }, "nfl-2026-week-4");
     expect(hub.members).toHaveLength(4);
     expect(hub.relatedSummary).toBeUndefined();
-    expect(hub.note).toBe("Some games or questions aren't available right now.");
+    expect(hub.note).toBe("Some games or markets aren't available right now.");
     expect(html).toContain('data-collection-member="event:7"');
     expect(html).not.toContain("data-related-market-summary");
   });
@@ -245,7 +245,7 @@ describe("the compact NFL page accounts for its long linked lists (#12337)", () 
 
     expect(hub.members).toHaveLength(3);
     expect(hub.relatedSummary).toBeUndefined();
-    expect(hub.note).toBe("Some games or questions aren't available right now.");
+    expect(hub.note).toBe("Some games or markets aren't available right now.");
     expect(html).toContain('data-collection-member="event:8"');
     expect(html).toContain('data-collection-member="market:72"');
     expect(html).not.toContain('data-collection-member="event:7"');
@@ -383,7 +383,7 @@ describe("destination validation is unchanged: only a served, matching route is 
     const named = raw.sections.flatMap((s) => s.members).find((m) => m.id === 63294747)!;
     Object.assign(named.destination, patch);
     const { hub, html } = draw(raw, W5);
-    expect(hub.note).toBe("Some games or questions aren't available right now.");
+    expect(hub.note).toBe("Some games or markets aren't available right now.");
     expect(html).not.toContain(NAMED);
     expect(html).not.toContain("63294747");
     expect(routes(list(html, BUCS) ?? "")).toHaveLength(8);

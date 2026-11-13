@@ -92,7 +92,7 @@ function visibleText(html: string): string {
 // fine: what this suite pins is the CHANNEL — a title reaches the page, a
 // paragraph does not — not the wording, which the backend suite owns.
 // ---------------------------------------------------------------------------
-const D112_TITLE = "The one-question markets we were throwing away are now scored";
+const D112_TITLE = "The yes-or-no markets we were throwing away are now scored";
 
 const D112_DESCRIPTION_OPENING =
   "We only score ourselves against an answer that came from somewhere other than " +

@@ -153,7 +153,7 @@ export default function RainForecast() {
                   {rainCardHeading(rain?.length ?? 0)}
                 </h3>
                 <p className="text-text-secondary text-sm mt-0.5">
-                  Daily &ldquo;Will it rain?&rdquo; questions, one per day
+                  Daily &ldquo;Will it rain?&rdquo; markets, one per day
                 </p>
               </div>
               <SourceBadge src="kalshi" />
@@ -166,7 +166,7 @@ export default function RainForecast() {
             ) : loaded && !rain ? (
               <div className="py-12 text-center">
                 <p className="text-text-secondary text-sm">No live rain markets right now</p>
-                <p className="text-text-muted text-xs mt-1.5">This card tracks daily &ldquo;will it rain?&rdquo; questions.</p>
+                <p className="text-text-muted text-xs mt-1.5">This card tracks daily &ldquo;will it rain?&rdquo; markets.</p>
               </div>
             ) : !rain ? (
               <RainDaySkeleton />

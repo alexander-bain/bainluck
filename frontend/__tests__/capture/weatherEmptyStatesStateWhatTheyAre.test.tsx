@@ -108,7 +108,7 @@ const SITES: {
     Component: RainForecast,
     payload: { daily: [], monthly: [] },
     headline: "No live rain markets right now",
-    description: 'This card tracks daily "will it rain?" questions.',
+    description: 'This card tracks daily "will it rain?" markets.',
     retired: 'Daily "will it rain?" questions appear here when they reopen.',
   },
   {

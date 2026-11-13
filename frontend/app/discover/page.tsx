@@ -1482,6 +1482,7 @@ export default function DiscoverPage() {
   }, []);
 
   const startChallenge = useCallback(() => {
+    if (!CHALLENGE_SURFACES_ENABLED) return;
     // Queue 309 Item 1 — playing the challenge is engagement: it spends the
     // orientation UI permanently, exactly as a tap or a like does.
     setEngagedThisSession(true);
@@ -2011,7 +2012,7 @@ export default function DiscoverPage() {
         </div>
       )}
 
-      {challengeOpen && (
+      {CHALLENGE_SURFACES_ENABLED && challengeOpen && (
         <ChallengeModal
           items={challengeItems}
           currentIndex={challengeIndex}

@@ -119,7 +119,7 @@ const READER_READY_TITLES: ReadonlyArray<readonly [string, string]> = [
     "Written for a reader when the ladder collapse shipped (2026-09-12).",
   ],
   [
-    "The one-question markets we were throwing away are now scored",
+    "The yes-or-no markets we were throwing away are now scored",
     "Written for a reader, and deliberately a whole sentence (D112 — the title is the whole disclosure on web).",
   ],
   [
@@ -252,7 +252,7 @@ describe("what the eight specimens now say", () => {
     ],
     [
       "Esports match-bundle exclusion",
-      "Esports markets that pack a whole match into one question are no longer scored",
+      "Esports markets that bundle a whole match together are no longer scored",
     ],
   ];
 

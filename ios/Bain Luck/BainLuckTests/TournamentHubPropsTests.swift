@@ -232,7 +232,7 @@ final class TournamentHubPropsTests: XCTestCase {
         XCTAssertEqual(
             row.incompleteNote,
             "We have no number for Carlos Alcaraz, so this comparison is not complete "
-            + "and the question has closed.")
+            + "and the market has closed.")
         XCTAssertEqual(row.settledLine, "Settled · last reading")
     }
 
@@ -335,7 +335,7 @@ final class TournamentHubPropsTests: XCTestCase {
         XCTAssertTrue(p.props.isEmpty)
         XCTAssertEqual(
             p.propsEmptyNote,
-            "No curated questions on this tournament yet — they appear here as "
+            "No curated markets on this tournament yet — they appear here as "
             + "Kalshi and Polymarket open them.")
         XCTAssertNil(p.propsTrimNote)
         XCTAssertNil(
@@ -351,7 +351,7 @@ final class TournamentHubPropsTests: XCTestCase {
         """ }
         let p = try present(props: (1...9).map(one).joined(separator: ","))
         XCTAssertEqual(p.props.count, TournamentHubPresentation.propsLimit)
-        XCTAssertEqual(p.propsTrimNote, "Showing 6 of 9 questions")
+        XCTAssertEqual(p.propsTrimNote, "Showing 6 of 9 markets")
         XCTAssertEqual(p.props.map(\.id), ["k1", "k2", "k3", "k4", "k5", "k6"])
     }
 }

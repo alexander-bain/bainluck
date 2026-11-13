@@ -200,6 +200,10 @@ nonisolated struct GameMarketPlayerProp: Decodable, Equatable, Identifiable, Sen
     /// Absent on older payloads, decoding to `nil`.
     var observedAt: String? = nil
     var _inverted: Bool? = nil
+    /// #12581 / 137-A — where this prop's number came from, as the server
+    /// says it. Not served yet (Builder B, this week); absent decodes to nil
+    /// and the row draws no mark.
+    var sourceMark: SourceMark? = nil
 }
 
 /// Generic game market outcome used for spreads, totals, team totals, and periods.

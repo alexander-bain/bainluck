@@ -34,6 +34,10 @@ struct PlayerPropsCardView: View {
     /// and accessibility sizes put each row's track under its words.
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .subheadline) private var figureColumn: CGFloat = 40
+    /// #12581 — the type sizes of the two numbers a source mark follows, so the
+    /// ring stays 0.7 of its number at every text size.
+    @ScaledMetric(relativeTo: .title3) private var targetNumberSize: CGFloat = 20
+    @ScaledMetric(relativeTo: .subheadline) private var rungNumberSize: CGFloat = 15
 
     /// #3430 — both competitors of one matchup, so the pair rule decides. A
     /// prop attributed to a team the other side shares a label with is
@@ -131,6 +135,8 @@ struct PlayerPropsCardView: View {
         /// #10830 — did a venue price this rung at all? `probability` is 0 as
         /// geometry for one that did not, and a target chip must not print it.
         var priced: Bool = true
+        /// #12581 — the server's source mark for this rung's prop, drawn as served.
+        var sourceMark: SourceMark? = nil
     }
 
     /// #10830 — one player's one ladder, as a row of the props browser.
@@ -245,7 +251,8 @@ struct PlayerPropsCardView: View {
                     actual: prop.actual,
                     hit: prop.hit,
                     pregameMark: prop.pregameMark,
-                    priced: prop.overProbability != nil
+                    priced: prop.overProbability != nil,
+                    sourceMark: prop.sourceMark
                 )
                 statGroups[statType, default: []].append(rung)
             }
@@ -293,10 +300,6 @@ struct PlayerPropsCardView: View {
         return allPlayerCards.filter { $0.team == teamFilter }
     }
 
-    private var sources: [String] {
-        Array(Set(playerProps.compactMap(\.source))).sorted()
-    }
-
     var body: some View {
         let cards = filteredCards
         // #5176 — a page whose only props are fields still draws the card.
@@ -304,23 +307,12 @@ struct PlayerPropsCardView: View {
         if allPlayerCards.isEmpty && fields.isEmpty { EmptyView() }
         else {
             VStack(alignment: .leading, spacing: 10) {
-                // Header: title + source badge + controls
+                // Header: the title alone. 137-A (Alex, Nov 10): no venue name
+                // here; where each number comes from is its row's source mark.
                 HStack {
                     Text("Player Props")
                         .font(.headline)
                         .accessibilityAddTraits(.isHeader)
-
-                    // Source badge — #4351: named, or not drawn.
-                    if let src = SourceLabels.label(for: sources.first) {
-                        Text(src)
-                            .font(.caption2.weight(.heavy))
-                            .foregroundStyle(.blue)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.blue.opacity(0.1))
-                            .clipShape(Capsule())
-                    }
-
                     Spacer()
                 }
 
@@ -337,13 +329,14 @@ struct PlayerPropsCardView: View {
                 }
 
                 if !allPlayerCards.isEmpty {
-                    // Team filter — full width
+                    // Team filter — full width. #12578: away first, the page
+                    // title's order ("NE vs DET" → All / Patriots / Lions).
                     HStack(spacing: 0) {
                         filterButton("All", value: "all")
                             .frame(maxWidth: .infinity)
-                        filterButton(homeAbbr, value: "home")
-                            .frame(maxWidth: .infinity)
                         filterButton(awayAbbr, value: "away")
+                            .frame(maxWidth: .infinity)
+                        filterButton(homeAbbr, value: "home")
                             .frame(maxWidth: .infinity)
                     }
                     .padding(2)
@@ -412,6 +405,7 @@ struct PlayerPropsCardView: View {
     private func propRow(_ item: PropItem) -> some View {
         let target = item.group.isPriced && browsesByTarget ? selectedTarget(item) : nil
         return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 0) {
             HStack(alignment: .center, spacing: 10) {
                 playerAvatar(item.card, size: 32)
                 VStack(alignment: .leading, spacing: 1) {
@@ -432,6 +426,11 @@ struct PlayerPropsCardView: View {
                 }
             }
             .accessibilityElement(children: .combine)
+                // #12581 — outside the combined element, so it stays its own button.
+                if let target, let mark = SourceMarkButton(target.rung.sourceMark, number: target.rung.probability, numberSize: targetNumberSize) {
+                    mark
+                }
+            }
 
             // The rule control sits at the end of the target row where it has
             // room, so a page of protected ladders is not a page of rule lines.
@@ -973,6 +972,8 @@ struct PlayerPropsCardView: View {
                     .foregroundStyle(isHit ? .green : .secondary)
             }
         }
+        // #12581 — the same quiet ring after every rung's number, as served.
+        let sourceMark = SourceMarkButton(rung.sourceMark, number: rung.probability, numberSize: rungNumberSize)
         let track = GeometryReader { geo in
             Capsule()
                 .fill(Color.secondary.opacity(0.08))
@@ -1014,6 +1015,7 @@ struct PlayerPropsCardView: View {
                         Spacer(minLength: 8)
                         mark
                         percent
+                        sourceMark
                     }
                     track
                 }
@@ -1023,6 +1025,7 @@ struct PlayerPropsCardView: View {
                     track
                     mark
                     percent
+                    sourceMark
                 }
             }
         }

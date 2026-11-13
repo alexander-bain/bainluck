@@ -428,7 +428,7 @@ final class DiscoverLabelingViewModel: ObservableObject {
     nonisolated static func driftRefusalMessage(_ body: String?) -> String {
         let text = body ?? ""
         if text.contains("card_drifted") {
-            return "This question re-priced while you were reading it — nothing was recorded. Reload to grade the current card."
+            return "This market re-priced while you were reading it — nothing was recorded. Reload to grade the current card."
         }
         if text.contains("card_fingerprint_missing") {
             return "This card was loaded before its current price — nothing was recorded. Reload to grade the current card."

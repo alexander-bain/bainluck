@@ -35,7 +35,7 @@ final class SearchRelatedGameListing10298Tests: XCTestCase {
         XCTAssertEqual(flat.topOutcomes?.first?.name, "Packers")
 
         let family = try XCTUnwrap(body.futuresFamilies?.first { $0.headline.id == Self.listingId })
-        XCTAssertEqual(family.headline.relatedGameListing?.label, "2 questions on this game")
+        XCTAssertEqual(family.headline.relatedGameListing?.label, "2 markets on this game")
         XCTAssertTrue(family.members.allSatisfy { $0.relatedGameListing == nil }, "only the listing itself changes")
         XCTAssertEqual(body.futures.filter { $0.relatedGameListing != nil }.map(\.id), [Self.listingId])
     }
@@ -56,8 +56,8 @@ final class SearchRelatedGameListing10298Tests: XCTestCase {
     }
 
     func testTheLabelCountsQuestions() {
-        XCTAssertEqual(RelatedGameListing(eventId: 1, questionCount: 1).label, "1 question on this game")
-        XCTAssertEqual(RelatedGameListing(eventId: 1, questionCount: 14).label, "14 questions on this game")
+        XCTAssertEqual(RelatedGameListing(eventId: 1, questionCount: 1).label, "1 market on this game")
+        XCTAssertEqual(RelatedGameListing(eventId: 1, questionCount: 14).label, "14 markets on this game")
     }
 
     /// Both search rows and the dropdown row ask for the listing BEFORE any

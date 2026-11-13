@@ -115,8 +115,8 @@ function member(value: unknown, quiet = false): CollectionMember | null {
 }
 
 const sectionTitles: Record<string, string> = {
-  match_winner: "Games and winners", prop: "Player and game questions", title: "Championship",
-  advancement: "Advancement", side_question: "More questions", doubles: "Doubles", unclassified: "More",
+  match_winner: "Games and winners", prop: "Player and game props", title: "Championship",
+  advancement: "Advancement", side_question: "Other markets", doubles: "Doubles", unclassified: "More",
 };
 
 // #9925: the theme registry's own slugs — `ai` (continuing) and `oscars-<year>`
@@ -147,7 +147,7 @@ const familyDek: Record<string, string> = {
 };
 const isTheme = (value: unknown): boolean => { const edition = object(value); return edition?.kind === "theme_continuing" || edition?.kind === "theme_edition"; };
 const themeSectionTitles: Record<string, Record<string, string>> = {
-  oscars: { title: "Award winners", advancement: "Nominations", side_question: "More questions" },
+  oscars: { title: "Award winners", advancement: "Nominations", side_question: "Other markets" },
   ai: { side_question: "Markets" },
 };
 const cursorText = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
@@ -189,7 +189,7 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
     dek: null, family: null };
   if (state !== "published") {
     const notes = { unpublished: "This collection isn't available yet.", withdrawn: "This collection is no longer available.",
-      empty: isRoundup ? "There are no markets in this collection right now." : "There are no games or questions in this collection right now.", unavailable: "This collection isn't available right now." };
+      empty: isRoundup ? "There are no markets in this collection right now." : "There are no games or markets in this collection right now.", unavailable: "This collection isn't available right now." };
     return { ...base, note: notes[state] };
   }
   if (!base.revision || (!base.edition && !isRoundup) || !title || !Array.isArray(row.sections)) throw new Error("This collection isn't available right now.");
@@ -301,7 +301,7 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
   return { ...base, members, related, children, parent: admittedParent, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
     subtitle: text(row.subtitle) ? row.subtitle : null, caption: admittedCaption, pin: admittedPin,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
-    note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or questions aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
+    note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or markets aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
 }
 
 function relate(members: CollectionMember[]): Record<string, CollectionMember[]> {

@@ -150,7 +150,7 @@ export default function LeagueBinaryBoard({ binaries }: LeagueBinaryBoardProps) 
             onClick={() => setExpanded(true)}
             className="w-full py-2.5 text-[12px] font-semibold text-accent-brand hover:underline"
           >
-            Show {hidden} more question{hidden === 1 ? "" : "s"}
+            Show {hidden} more market{hidden === 1 ? "" : "s"}
           </button>
         )}
       </div>
