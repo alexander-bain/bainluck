@@ -97,13 +97,16 @@ export function AtlasChartMarkKey({
 
 /**
  * Shared mark-capping rule across web game charts (`OddsChart` via
- * `AtlasSeriesReadingMarks` and `ProjectedFinalPointsChart`, #11974 / #12615):
+ * `AtlasSeriesReadingMarks` and `ProjectedFinalPointsChart`, #12639 / #12538
+ * Decision 164, matching iOS PR #12650 at `a816095cf6` and Fable's review in
+ * https://github.com/alexander-bain/bainluck/pull/12648#issuecomment-6827762047):
  * - Up to `ATLAS_READING_MARKS_CEILING` (36) readings per series, every reading
  *   gets a visible mark (`stride = 1`).
  * - Above `ATLAS_READING_MARKS_CEILING`, visible marks thin by
  *   `Math.ceil(pointCount / ATLAS_READING_MARKS_TARGET)` (~26–36 marks across
  *   the plot, always keeping the first and last reading) so dense in-play series
- *   never fuse into a beaded rope.
+ *   never fuse into a beaded rope while the continuous straight-segment line
+ *   still passes through every admitted reading's vertex.
  */
 export const ATLAS_READING_MARKS_CEILING = 36;
 export const ATLAS_READING_MARKS_TARGET = 28;

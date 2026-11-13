@@ -17,6 +17,19 @@
  * taller, the source sits in "How to read this" instead of an unexplained
  * name in the heading, and the game's evidenced period boundaries are marked
  * where they were observed.
+ *
+ * Decision 164 (Alex, 10:03 PM PT Wed Nov 11, recorded in #12538 and #12639;
+ * iOS twin merged in PR #12650 at `a816095cf6`):
+ *   "I like in your screenshot for web how the line is continuous for win
+ *   probability. I'd like the dots to be connected on web and native for both
+ *   win probability and projected final. We need the consistency."
+ * Per #12538 / #12639, the web projected-final chart drops "Gaps are not joined"
+ * and joins admitted readings with straight `L` segments across unobserved or
+ * withheld stretches (never smoothed, never joined to the final score), while
+ * capping visible reading marks via `shouldShowChartReadingMark` (`<=36` stride 1,
+ * `>36` stride `ceil(n/28)`) per Fable's review in #12648#issuecomment-6827762047
+ * (accepted in #12648#issuecomment-6829161693) so dense games do not form a
+ * beaded band.
  */
 
 import { useMemo } from "react";
@@ -430,9 +443,10 @@ export default function ProjectedFinalPointsChart({
           average of sources.
         </p>
         <p className="mt-1">
-          The solid lines connect each recorded projection; the dashed steps are the score so far. Readings that were
-          missing or could not be right, such as a projection below points already scored, are omitted. The last projection
-          is never joined to the final score.
+          The solid lines connect each recorded projection with straight segments; the dashed steps are the score so far.
+          Readings that were missing or could not be right, such as a projection below points already scored, are omitted and
+          bridged directly between adjacent valid readings without smoothing. The last projection is never joined to the final
+          score.
           {markers.length > 0 &&
             ` The thin vertical rules mark each ${firstPeriodWord}, halftime or overtime where it was first seen in progress, which can be a little after it began.`}
         </p>
