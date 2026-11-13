@@ -228,6 +228,8 @@ nonisolated struct BainLuckShortcuts10873: AppShortcutsProvider {
                 "Open My Stuff in \(.applicationName)",
                 "Show My Stuff in \(.applicationName)",
                 "Show my saved markets in \(.applicationName)",
+                "Go to My Stuff in \(.applicationName)",
+                "\(.applicationName) My Stuff",
             ],
             shortTitle: "My Stuff",
             systemImageName: "person.fill"

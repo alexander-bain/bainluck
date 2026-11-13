@@ -403,10 +403,15 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
         XCTAssertTrue(IntentLinks10873.isIntentLink(IntentLinks10873.myStuff))
         XCTAssertTrue(IntentLinks10873.isIntentLink(IntentLinks10873.event(id: 5)!))
         XCTAssertTrue(IntentLinks10873.isIntentLink(IntentLinks10873.market(id: 6)!))
+        XCTAssertTrue(IntentLinks10873.isIntentLink(IntentLinks10873.search(query: "Chiefs")!))
         XCTAssertNil(IntentLinks10873.event(id: 0))
+        XCTAssertNil(IntentLinks10873.search(query: "   "))
         for bad in ["bainluck://events/5?x=1", "bainluck://events/05x", "https://bainluck.com/events/5",
                     "bainluck://team/boston-red-sox-mlb", "bainluck://bug-report", "bainluck://events",
-                    "bainluck://futures/5/6", "bainluck://my-stuff/x"] {
+                    "bainluck://futures/5/6", "bainluck://my-stuff/x",
+                    "bainluck://search", "bainluck://search?q=", "bainluck://search?q=%20",
+                    "bainluck://search/extra?q=Chiefs", "bainluck://search?q=Chiefs&x=1",
+                    "bainluck://search?q=Chiefs#top"] {
             XCTAssertFalse(IntentLinks10873.isIntentLink(URL(string: bad)!), bad)
         }
         let handoff = IntentRouteHandoff10873()
