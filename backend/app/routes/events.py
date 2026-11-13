@@ -20867,7 +20867,10 @@ async def get_event(
     # settled and opening arms are unaffected: the view changes only
     # `win_probability_sources`.
     _hero_source_inputs: list[tuple[str, float]] = []
-    _hero = resolve_hero(blend_view, source_inputs=_hero_source_inputs)
+    _hero_source_method: list[str] = []
+    _hero = resolve_hero(
+        blend_view, source_inputs=_hero_source_inputs, source_method=_hero_source_method,
+    )
     # #8749: cache the observation clock WITH the value it dates. History can
     # serve this cached probability while reading a newer event row; borrowing
     # that row's clock would falsely promote an older cached price to new truth.
@@ -20923,6 +20926,7 @@ async def get_event(
 
     response["source_mark"], response["away_source_mark"] = headline_source_marks(
         blend_view, _hero, _hero_source_inputs,
+        method=_hero_source_method[0] if _hero_source_method else None,
         away_available=response.get("hero_probability_away") is not None,
     )
 
@@ -28566,7 +28570,7 @@ async def _build_game_markets(
                 best["source_mark"] = quote_source_mark(
                     source for entry in entries
                     for source in entry.get("source_mark", {}).get("sources", [])
-                ) if all(entry.get("source_mark", {}).get("state") == "blend"
+                ) if all(entry.get("source_mark", {}).get("state") in {"single", "blend"}
                          for entry in entries) else no_source_mark("source_evidence_incomplete")
 
                 # 🔴 #4970 / CERT-2647: READ EVERY CONTRIBUTOR'S CLOCK BEFORE

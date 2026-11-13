@@ -51,7 +51,9 @@ def no_source_mark(reason: str) -> dict:
     return {"state": "none", "sources": [], "reason": reason}
 
 
-def quote_source_mark(inputs: Iterable[Mapping[str, Any]]) -> dict:
+def quote_source_mark(
+    inputs: Iterable[Mapping[str, Any]], *, method: str | None = None,
+) -> dict:
     """Describe admitted prices in stable venue order, once per venue.
 
     Multiple admitted legs from one venue are represented by that venue's mean
@@ -96,7 +98,10 @@ def quote_source_mark(inputs: Iterable[Mapping[str, Any]]) -> dict:
             if len(set(counts)) == 1:
                 source["count"] = counts[0]
         sources.append(source)
-    return {"state": "blend", "sources": sources}
+    mark = {"state": "single" if len(sources) == 1 else "blend", "sources": sources}
+    if len(sources) > 1 and method is not None:
+        mark["method"] = method
+    return mark
 
 
 def settled_source_mark(source: str | None, result: str, at: Any = None) -> dict:
@@ -115,7 +120,7 @@ def source_mark_on_axis(mark: dict | None, *, inverted: bool) -> dict:
     """Reorient already selected prices when a reader prints the other side."""
     if not mark:
         return no_source_mark("source_evidence_incomplete")
-    if not inverted or mark.get("state") != "blend":
+    if not inverted or mark.get("state") not in {"single", "blend"}:
         return mark
     return {
         **mark,
@@ -139,6 +144,7 @@ def headline_source_marks(
     selected_inputs: Iterable[tuple[str, float]],
     *,
     observations: Mapping[str, Any] | None = None,
+    method: str | None = None,
     away_available: bool = True,
 ) -> tuple[dict, dict]:
     """Both axes from the hero's trace; no client complements or source guesses.
@@ -168,17 +174,26 @@ def headline_source_marks(
     selected = list(selected_inputs)
     bag = getattr(event, "win_probability_sources", None)
     count = bag.get("betting_book_count") if isinstance(bag, dict) else None
-    clocks = observations or {}
+    if observations is None:
+        from app.utils.aggregation import source_price_read_time
+
+        clocks = {
+            key: source_price_read_time(bag, key, value)
+            for key, value in selected
+        }
+    else:
+        clocks = observations
 
     def mark(away: bool) -> dict:
         return quote_source_mark(
-            {
+            ({
                 "key": key,
                 "probability": 1 - probability if away else probability,
                 "observed_at": clocks.get(key),
                 "count": count if key == "betting" else None,
             }
-            for key, probability in selected
+            for key, probability in selected),
+            method=method,
         )
 
     return mark(False), (
