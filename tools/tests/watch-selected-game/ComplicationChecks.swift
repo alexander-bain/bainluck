@@ -489,7 +489,17 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     precondition(rectSchedForecast.kind == .scheduledForecast && rectSchedForecast.homeScore == nil && rectSchedForecast.awayScore == nil)
     precondition(rectSchedForecast.headerLine() == "LA at SF" && !rectSchedForecast.headerLine().contains("0–0"))
     precondition(rectSchedForecast.primaryLine(at: now) == "SF 55%")
-    precondition(rectSchedForecast.metadataLine(at: now, timeZone: pacific) == "Scheduled · 3m ago" && !rectSchedForecast.isAgedLive(at: now))
+    precondition(rectSchedForecast.metadataLine(at: now, timeZone: pacific) == "Today 4:00 PM" && !rectSchedForecast.isAgedLive(at: now))
+    let daysAwayForecast = try decodeGame(
+        "\"status\":\"scheduled\",\"commence_time\":\"2026-10-06T20:25:00Z\",\"hero_probability\":0.55,\"hero_probability_away\":0.45,\"hero_probability_observed_at\":\"2026-10-04T17:57:00Z\",\(home),\(away)"
+    )
+    let rectDaysAway = WatchComplicationProjection.snapshot(game: daysAwayForecast, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectDaysAway.metadataLine(at: now, timeZone: pacific) == "Tue 1:25 PM")
+    let scheduledNoTime = try decodeGame(
+        "\"status\":\"scheduled\",\"hero_probability\":0.55,\"hero_probability_away\":0.45,\"hero_probability_observed_at\":\"2026-10-04T17:57:00Z\",\(home),\(away)"
+    )
+    let rectSchedNoTime = WatchComplicationProjection.snapshot(game: scheduledNoTime, savedAt: now)!.validatedRectangularReading(now: now)!
+    precondition(rectSchedNoTime.metadataLine(at: now, timeZone: pacific) == "Scheduled · 3m ago")
     let forecastStart = rectSchedForecast.commenceTime!
     precondition(WatchRectangularReading.timelineDates(for: snapSchedForecast, now: now).contains(forecastStart))
     precondition(rectSchedForecast.metadataLine(at: forecastStart, timeZone: pacific) == "Open to update")
