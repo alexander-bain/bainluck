@@ -92,10 +92,10 @@ def _sql(clauses):
 
 
 def test_discover_drops_a_market_its_venue_reports_closed():
-    id_filters, _ = _discover_candidate_pool_specs(NOW)
+    id_filters, _ = _discover_candidate_pool_specs(now=NOW)
     assert VENUE_SETTLED_KEY in _sql(id_filters)
 
 
 def test_category_pages_keep_their_own_settled_rule():
-    id_filters, _ = _discover_candidate_pool_specs(NOW, category_filter="politics")
+    id_filters, _ = _discover_candidate_pool_specs(now=NOW, category_filter="politics")
     assert VENUE_SETTLED_KEY not in _sql(id_filters)
