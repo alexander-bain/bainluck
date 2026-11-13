@@ -478,6 +478,14 @@ final class DiscoverFeedReconcileTests: XCTestCase {
             "Pull-to-refresh is the sole DiscoverView caller using the pull default (mayReorder == true)"
         )
         XCTAssertTrue(
+            viewSource.contains("await Task { @MainActor in await model.load(mayReorder: false) }.value"),
+            "#11984 Path 1: loadForInitialAppearance must pass mayReorder: false so seeded launches do not reshuffle"
+        )
+        XCTAssertTrue(
+            vmSource.contains("_ = await load(mayReorder: false)"),
+            "#11984 Path 2: replaceRetiredEdition must pass mayReorder: false so mid-scroll expiry does not reshuffle"
+        )
+        XCTAssertTrue(
             vmSource.contains("await self.load(isRecoveryAttempt: true, mayReorder: false)"),
             "Recovery ladder must pass isRecoveryAttempt: true, mayReorder: false"
         )
@@ -547,5 +555,162 @@ final class DiscoverFeedReconcileTests: XCTestCase {
             now: now
         )
         XCTAssertEqual(afterPull.map(DiscoverView.feedItemId), ["futures-200"])
+    }
+
+    // MARK: - #11984 Paths 1, 2 & 3 end-to-end stability proofs
+
+    /// Path 1 (`DiscoverView.loadForInitialAppearance`): when the last-good cache
+    /// seeds `[10, 20]` and `/api/feed` returns a newer `edition` (`[30, 10]` with
+    /// updated probability on `10` plus `has_more: true`), painted `[10, 20]` keep
+    /// their exact seats, `10` takes the fresh probability in place, `30` appends,
+    /// `loadMoreIfNeeded()` paginates the new edition cleanly (`40` appends), and
+    /// pull-to-refresh (`mayReorder: true`) repaints to the server's order!
+    @MainActor
+    func testPath1SeededInitialAppearanceKeepsPaintedSeatsPaginatesAndPullRepaints11984() async throws {
+        nonisolated final class ScriptedClient: DiscoverFeedProviding, @unchecked Sendable {
+            private let lock = NSLock()
+            private var pages: [FeedResponse]
+            init(_ pages: [FeedResponse]) { self.pages = pages }
+            nonisolated func fetchDiscoverFeed(
+                limit: Int, offset: Int, eventPct: Double?, cacheTTL: TimeInterval?
+            ) async throws -> FeedResponse {
+                lock.withLock { pages.removeFirst() }
+            }
+        }
+        nonisolated final class SeedCache: DiscoverLastGoodReading, @unchecked Sendable {
+            let payload: CachedDiscoverFeed
+            init(_ response: FeedResponse) {
+                payload = CachedDiscoverFeed(response: response, storedAt: Date(), ttlSeconds: 30, identity: "anon:s1")
+            }
+            func loadLastGoodFeed() async -> CachedDiscoverFeed? { payload }
+        }
+        func makePage(items: [(id: Int, prob: Double)], edition: String, offset: Int = 0, hasMore: Bool = false) throws -> FeedResponse {
+            let encoded = items.map { entry in
+                """
+                {"type":"futures","score":90,"data":{"id":\(entry.id),"name":"Market \(entry.id)?","llm_sport_category":"economics","source":"kalshi","status":"open","top_outcomes":[{"id":\(entry.id * 10),"name":"Yes","probability":\(entry.prob),"rank":1}],"outcome_count":1}}
+                """
+            }.joined(separator: ",")
+            let json = """
+            {"items":[\(encoded)],"total":4,"limit":2,"offset":\(offset),"has_more":\(hasMore),"edition":"\(edition)"}
+            """
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(FeedResponse.self, from: Data(json.utf8))
+        }
+
+        let cachedSeed = try makePage(items: [(10, 0.40), (20, 0.55)], edition: "ed-cached", hasMore: false)
+        let freshPage0 = try makePage(items: [(30, 0.70), (10, 0.62)], edition: "ed-fresh", offset: 0, hasMore: true)
+        let freshPage1 = try makePage(items: [(40, 0.81)], edition: "ed-fresh", offset: 2, hasMore: false)
+        let pullPage0 = try makePage(items: [(30, 0.70), (10, 0.62)], edition: "ed-fresh", offset: 0, hasMore: false)
+
+        let vm = DiscoverViewModel(
+            client: ScriptedClient([freshPage0, freshPage1, pullPage0]),
+            lastGood: SeedCache(cachedSeed),
+            telemetry: nil
+        )
+        vm.openingEditionEnabled = false
+
+        let outcome = await DiscoverView.loadForInitialAppearance(vm)
+        XCTAssertEqual(outcome, .published)
+        XCTAssertEqual(vm.items.compactMap(\.futures?.id), [10, 20, 30], "seeded [10, 20] hold their seats; unseen 30 appends")
+        let updatedProb = vm.items.first(where: { $0.futures?.id == 10 })?.futures?.topOutcomes?.first?.probability ?? 0
+        XCTAssertEqual(updatedProb, 0.62, accuracy: 0.0001, "painted card 10 updates its probability in place")
+
+        // Page 2 (`ed-fresh`) splices cleanly rather than being dropped for mismatched edition.
+        await vm.loadMoreIfNeeded()
+        XCTAssertEqual(vm.items.compactMap(\.futures?.id), [10, 20, 30, 40])
+
+        // Pull-to-refresh (`mayReorder: true`) repaints to `ed-fresh` order even though `paintedEdition` was already `ed-fresh`.
+        await vm.load(mayReorder: true)
+        XCTAssertEqual(vm.items.compactMap(\.futures?.id), [30, 10])
+    }
+
+    /// Path 3 (`DiscoverView.resolveGroupedPresentation`): once page 1 is drawn,
+    /// appending page 2 at the same `pullEpoch` and `dismissVersion` NEVER
+    /// collapses page-1 floor-expanded singles back into groups, NEVER mutates an
+    /// already-drawn page-1 group card when a sibling market arrives on page 2,
+    /// refreshes page-1 live scores in place, and resets cleanly on `pullEpoch` bump!
+    func testPath3GroupedPresentationFreezesPrefixAcrossPaginationAndLiveTicksUntilPull11984() throws {
+        let now = ISO8601DateFormatter().date(from: "2026-11-06T20:00:00Z")!
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        func makeFutures(id: Int, name: String, category: String = "economics", prob: Double = 0.55) throws -> FeedItem {
+            let json = """
+            {"type":"futures","score":90,"data":{"id":\(id),"name":"\(name)","llm_sport_category":"\(category)","source":"kalshi","status":"open","top_outcomes":[{"id":\(id * 10),"name":"Yes","probability":\(prob),"rank":1}],"outcome_count":1}}
+            """
+            return try decoder.decode(FeedItem.self, from: Data(json.utf8))
+        }
+        func makeLiveEvent(id: Int, homeScore: Int) throws -> FeedItem {
+            let json = """
+            {"type":"event","score":92,"data":{"id":\(id),"sport":"basketball_nba","home_team":"Celtics","away_team":"Lakers","status":"live","commence_time":"2026-11-06T19:00:00Z","home_score":\(homeScore),"away_score":95}}
+            """
+            return try decoder.decode(FeedItem.self, from: Data(json.utf8))
+        }
+
+        // Page 1 has 1 live game + 2 "Fed Rate:" markets (under `groupExpansionFloor = 8`,
+        // so `enforceGroupFloor` expands the "Fed Rate" pair into 2 singles on page 1!).
+        let page1: [FeedItem] = [
+            try makeLiveEvent(id: 1, homeScore: 98),
+            try makeFutures(id: 2, name: "Fed Rate: Cut in Dec", category: "economics"),
+            try makeFutures(id: 3, name: "Fed Rate: Hold in Dec", category: "economics"),
+        ]
+        let firstPass = DiscoverView.resolveGroupedPresentation(
+            rawItems: page1,
+            cached: nil,
+            pullEpoch: 0,
+            dismissVersion: 0,
+            dismissedAt: [:],
+            profile: nil,
+            now: now
+        )
+        let initialIds = firstPass.items.map(\.id)
+        XCTAssertEqual(initialIds.count, 3, "under groupExpansionFloor, Fed Rate pair expands into 2 singles")
+
+        // Page 2 arrives with 12 distinct markets (pushing total well past `groupExpansionFloor = 8`)
+        // PLUS a 3rd "Fed Rate:" market AND an updated live score on event 1 (`homeScore: 102`).
+        var page1UpdatedPlusPage2: [FeedItem] = [
+            try makeLiveEvent(id: 1, homeScore: 102),
+            page1[1],
+            page1[2],
+            try makeFutures(id: 4, name: "Fed Rate: Hike in Dec", category: "economics"),
+        ]
+        for i in 5...15 {
+            page1UpdatedPlusPage2.append(
+                try makeFutures(id: i, name: "Standalone Market \(i)?", category: i % 2 == 0 ? "politics" : "tech")
+            )
+        }
+
+        let afterPage2 = DiscoverView.resolveGroupedPresentation(
+            rawItems: page1UpdatedPlusPage2,
+            cached: firstPass,
+            pullEpoch: 0,
+            dismissVersion: 0,
+            dismissedAt: [:],
+            profile: nil,
+            now: now
+        )
+
+        // Every page-1 card stayed in its exact seat (never collapsed into a group!),
+        // event 1 updated its live score in place to 102, and no duplicate SwiftUI IDs exist.
+        XCTAssertEqual(Array(afterPage2.items.prefix(initialIds.count)).map(\.id), initialIds)
+        let refreshedLeadScore = afterPage2.items.first.flatMap(DiscoverView.primaryFeedItem)?.event?.homeScore
+        XCTAssertEqual(refreshedLeadScore, 102, "frozen page-1 card updates its live score in place")
+        XCTAssertEqual(afterPage2.items.count, Set(afterPage2.items.map(\.id)).count, "no duplicate Identifiable IDs")
+
+        // On pull-to-refresh (`pullEpoch` bumps to 1), the full deck re-evaluates fresh and groups the 3 Fed Rate items!
+        let afterPull = DiscoverView.resolveGroupedPresentation(
+            rawItems: page1UpdatedPlusPage2,
+            cached: afterPage2,
+            pullEpoch: 1,
+            dismissVersion: 0,
+            dismissedAt: [:],
+            profile: nil,
+            now: now
+        )
+        XCTAssertTrue(
+            afterPull.items.contains(where: { $0.id == "group-related-Fed Rate" }),
+            "after pull-to-refresh, all 3 Fed Rate markets collapse into one grouped card"
+        )
     }
 }

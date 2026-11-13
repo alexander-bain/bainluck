@@ -297,6 +297,13 @@ final class DiscoverViewModel: ObservableObject {
     /// cached body, or an empty refusal), which `DiscoverFeedReconcile.decision`
     /// treats as "not equal".
     private(set) var paintedEdition: String?
+    /// #11984: true only when the current `items` order actually came from
+    /// `paintedEdition` (cache seed with edition, `.repaint`, or same-edition
+    /// `.reconcile`). False when a non-reordering load (`mayReorder: false`)
+    /// merged a newer `staged.edition` behind an already-painted prefix, so
+    /// `loadMoreIfNeeded()` can paginate `paintedEdition` seamlessly while the
+    /// next pull-to-refresh (`mayReorder: true`) still takes `.repaint`.
+    private var paintedOrderMatchesEdition = true
 
     /// #5105: whether this view model consumes the seated opening at all. The
     /// shipping value is `DiscoverOpeningEditionOption.enabled`; tests set it.
@@ -909,6 +916,7 @@ final class DiscoverViewModel: ObservableObject {
                     // same one. A pre-`edition` cached body leaves this nil, which
                     // the decision reads as "not equal" — the safe direction.
                     paintedEdition = cached.response.edition
+                    paintedOrderMatchesEdition = cached.response.edition != nil
                     // #5105: a saved preview is never an accepted seated edition.
                     acceptedSeatedEdition = nil
                     acceptedSeatedStart = nil
@@ -1121,17 +1129,32 @@ final class DiscoverViewModel: ObservableObject {
                 let seating = Self.acceptedSeating(
                     response, paintedEdition: staged.edition, enabled: openingEditionEnabled)
                 let allowReorder = (mayReorder && !isRecoveryAttempt) || items.isEmpty
+                let hadAcceptedSeatedEdition = acceptedSeatedEdition != nil
                 if allowReorder {
                     acceptedSeatedEdition = seating?.edition
                     acceptedSeatedStart = seating?.start
                     if let seating { acceptedSeatedLimit = seating.limit }
                     seatedSections = seating?.sections ?? [:]
-                } else if let seating {
-                    for (k, v) in seating.sections where seatedSections[k] == nil {
-                        seatedSections[k] = v
+                } else if hadAcceptedSeatedEdition {
+                    // #11984 Path 2 (`replaceRetiredEdition`): keep painted cards'
+                    // sections in place so no painted card crosses the heading,
+                    // adopt the replacement edition token/cursor for subsequent
+                    // pages, and assign newly appended cards `.continuation` once
+                    // continuation has already begun.
+                    acceptedSeatedEdition = seating?.edition
+                    acceptedSeatedStart = seating?.start
+                    if let seating {
+                        acceptedSeatedLimit = seating.limit
+                        let continuationBegun = seatedSections.values.contains(.continuation)
+                        for (k, v) in seating.sections where seatedSections[k] == nil {
+                            seatedSections[k] = continuationBegun ? .continuation : v
+                        }
+                    } else {
+                        seatedSections = [:]
                     }
                 }
                 awaitingEditionReplacement = false
+                let decisionPaintedEdition = paintedOrderMatchesEdition ? paintedEdition : nil
                 // #4110 / #11984: THE FIX. This used to be an unconditional
                 // `items = Self.interleave(renderable)`, which re-derived the
                 // whole order from a different input than the boot seed had — so
@@ -1141,7 +1164,7 @@ final class DiscoverViewModel: ObservableObject {
                 switch DiscoverFeedReconcile.decision(
                     paintedCount: items.count,
                     mayReorder: allowReorder,
-                    paintedEdition: paintedEdition,
+                    paintedEdition: decisionPaintedEdition,
                     incomingEdition: staged.edition
                 ) {
                 case .repaint:
@@ -1150,9 +1173,21 @@ final class DiscoverViewModel: ObservableObject {
                     items = DiscoverPriceRefresh.retainingPrices(DiscoverFeedReconcile.merge(
                         painted: items, incoming: renderable, preservePainted: !allowReorder, key: Self.itemKey), accepted: &acceptedPriceCards, fences: &priceFences)
                 }
-                if allowReorder {
-                    paintedEdition = staged.edition
+                if !allowReorder, hadAcceptedSeatedEdition, seating != nil {
+                    let continuationBegun = seatedSections.values.contains(.continuation)
+                    for item in items {
+                        let k = Self.itemKey(item)
+                        if seatedSections[k] == nil {
+                            seatedSections[k] = continuationBegun ? .continuation : .opening
+                        }
+                    }
                 }
+                if allowReorder {
+                    paintedOrderMatchesEdition = staged.edition != nil
+                } else if !paintedOrderMatchesEdition || paintedEdition != staged.edition || staged.edition == nil {
+                    paintedOrderMatchesEdition = false
+                }
+                paintedEdition = staged.edition
                 // First paint provenance: only stamp network when the cache seed
                 // did NOT already produce first paint this load — a background
                 // revalidation behind a served cache must not relabel the render
@@ -1487,6 +1522,7 @@ final class DiscoverViewModel: ObservableObject {
         // the previous identity's ordering — and an accidental match would
         // reconcile one account's feed into another's.
         paintedEdition = nil
+        paintedOrderMatchesEdition = true
         acceptedSeatedEdition = nil
         acceptedSeatedStart = nil
         seatedSections = [:]
@@ -2030,10 +2066,12 @@ final class DiscoverViewModel: ObservableObject {
         ) else { return }
         awaitingEditionReplacement = true
         // Only a network publication clears the flag (at the same terminal that
-        // swaps the deck). A refusal, failure or cancellation leaves it set, so the
-        // existing Retry asks for page 0 again; a newer load that publishes clears
-        // it there instead.
-        _ = await load()
+        // reconciles the replacement deck). A refusal, failure or cancellation
+        // leaves it set, so the existing Retry asks for page 0 again; a newer
+        // load that publishes clears it there instead.
+        // #11984 Path 2: pagination is never a pull-to-refresh — keep already
+        // painted cards in their seats and append unseen replacement cards below.
+        _ = await load(mayReorder: false)
     }
 
     /// Page-merge spacing: delegates to the shared pass (#8415), which keeps
