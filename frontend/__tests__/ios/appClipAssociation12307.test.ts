@@ -27,17 +27,20 @@ function plistArray(xml: string, key: string): string[] {
   return Array.from(block[1].matchAll(/<string>([^<]+)<\/string>/g), (m) => m[1]);
 }
 
-function clipBuildSetting(name: string): string[] {
+function buildSetting(entitlements: string, name: string): string[] {
   const pbx = read(IOS, "Bain Luck.xcodeproj", "project.pbxproj");
-  // The clip's two configurations are the ones whose entitlements are the clip's.
+  // A target's two configurations are the ones that sign with its entitlements file.
   const configs = pbx
     .split(/\n\t\t[0-9A-F]{24} \/\* (?:Debug|Release) \*\/ = \{/)
-    .filter((block) => block.includes('CODE_SIGN_ENTITLEMENTS = "BainLuckClip/BainLuckClip.entitlements";'));
+    .filter((block) => block.includes(`CODE_SIGN_ENTITLEMENTS = "${entitlements}";`));
   return configs.map((block) => {
     const m = block.match(new RegExp(`\\n\\t+${name} = "?([^";]+)"?;`));
     return m ? m[1] : "";
   });
 }
+
+const clipBuildSetting = (name: string) => buildSetting("BainLuckClip/BainLuckClip.entitlements", name);
+const appBuildSetting = (name: string) => buildSetting("Bain Luck/Bain Luck.entitlements", name);
 
 describe("#12307 — the website, the App Clip and the app agree on the clip", () => {
   const clipIDs = clipBuildSetting("PRODUCT_BUNDLE_IDENTIFIER");
@@ -49,6 +52,15 @@ describe("#12307 — the website, the App Clip and the app agree on the clip", (
     expect(read(IOS, "Bain Luck.xcodeproj", "project.pbxproj")).toContain(
       'productType = "com.apple.product-type.application.on-demand-install-capable";',
     );
+  });
+
+  test("the clip carries the app's version, so App Store Connect accepts the pair", () => {
+    // App Store Connect refuses an upload whose App Clip version differs from the
+    // app's. The clip was still 1.0.6 after #12644 moved every other target to 1.0.7.
+    const appVersions = appBuildSetting("MARKETING_VERSION");
+    expect(appVersions).toHaveLength(2);
+    expect(new Set(appVersions).size).toBe(1);
+    expect(clipBuildSetting("MARKETING_VERSION")).toEqual(appVersions);
   });
 
   test("the website's association file lists exactly that clip", () => {
