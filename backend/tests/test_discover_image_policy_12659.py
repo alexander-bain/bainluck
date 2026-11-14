@@ -275,7 +275,7 @@ def test_nameless_routing_stubs_pass_through_unchanged():
 
     for stub in (
         {"type": "futures", "score": 70.0, "data": {"id": 0, "probability": 0.5}},
-        {"type": "tournament", "score": 60.0, "data": {"key": "t-open", "start_date": "2026-11-13"}},
+        {"type": "tournament", "score": 60.0, "data": {"key": "t-open", "start_date": "2025-05-15"}},
         {"type": "concept", "score": 55.0, "data": {"slug": "stub-concept"}},
         {"type": "bundle", "score": 50.0, "data": {"bundle_type": "stub"}},
     ):
