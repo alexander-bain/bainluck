@@ -70,13 +70,13 @@ def _cat5():
 
 
 def _cat4():
-    """The control: a leg the resolver prices (its last trade survives its book)."""
+    """#12658: a tight-book control priced at .72 despite the old raw .785."""
     return _market(
         condition_id=CAT4,
         question="Will Hurricane Nolo reach Category 4?",
         outcome_prices=[0.785, 0.215],
-        best_bid=0.65,
-        best_ask=0.92,
+        best_bid=0.71,
+        best_ask=0.73,
         last_trade_price=0.72,
     )
 

@@ -1092,6 +1092,15 @@ async def build_and_cache_movers(
 
 def _movers_payload(outcomes, hours: int) -> dict:
     """Shape the response. The ONLY place this dict is spelled."""
+    # #12658: a per-write Polymarket delta only nominates a candidate. A dated
+    # basis must support the move before it may appear in the public list.
+    outcomes = [
+        o for o in outcomes
+        if getattr(o.market, "source", None) != "polymarket"
+        or reader_change_24h(
+            o.market, o.id, o.current_probability, o.probability_change_24h
+        ) not in (None, 0)
+    ]
     return {
         "movers": [
             {

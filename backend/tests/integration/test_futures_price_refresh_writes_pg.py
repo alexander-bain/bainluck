@@ -3003,6 +3003,82 @@ async def test_real_governor_read_dates_the_quote_without_inventing_movement_126
     assert selected == []
 
 
+@pytest.mark.parametrize("source", ["polymarket", "kalshi"])
+async def test_12658_hourly_quote_writer_clears_only_unsupported_polymarket_moves(db, source):
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.tasks import futures_price_refresh as fpr
+
+    market = FuturesMarket(source=source, external_id="12658-hourly",
+                           name="Colts wins", category="futures", status="open")
+    db.add(market)
+    await db.flush()
+    market_id = market.id
+    cases = [
+        ("tight old trade", "0.71", "0.13", "0.17", None),
+        ("wide old trade", "0.71", "0.10", "0.78", None),
+        ("supported quote", "0.15", "0.13", "0.17", Decimal("0.01")),
+        ("unchanged quote", "0.16", "0.15", "0.17", Decimal("0")),
+    ]
+    for name, price, bid, ask, _ in cases:
+        db.add(FuturesOutcome(market_id=market.id, external_id=name, name=name,
+                              current_probability=Decimal(price),
+                              current_yes_bid=Decimal(bid), current_yes_ask=Decimal(ask),
+                              probability_change_24h=Decimal("0.10"), is_winner=False))
+    await db.commit()
+    quotes = [{"external_id": name, "probability": 0.16,
+               "yes_bid": 0.14, "yes_ask": 0.18, "last_price": 0.71}
+              for name, *_ in cases]
+    assert await fpr._write_prices(db, market_id, source, quotes, _stats()) == 4
+    await db.commit()
+    db.expire_all()
+    stored = (await db.execute(select(FuturesOutcome).where(
+        FuturesOutcome.market_id == market_id))).scalars().all()
+    assert {row.current_probability for row in stored} == {Decimal("0.16")}
+    assert {row.name: row.probability_change_24h for row in stored} == {
+        name: expected if source == "polymarket" else Decimal("0.10")
+        for name, _, _, _, expected in cases
+    }
+
+
+async def test_12658_sql_move_does_not_compare_an_old_trade_with_a_quote(db):
+    from decimal import Decimal
+    from sqlalchemy import select, update
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.polymarket_quote import quoted_price_change
+
+    market = FuturesMarket(source="polymarket", external_id="12658-moves",
+                           name="Quote movements", category="futures", status="open")
+    db.add(market)
+    await db.flush()
+    cases = [
+        ("tight old trade", "0.71", "0.13", "0.17", None),
+        ("wide old trade", "0.71", "0.10", "0.78", None),
+        ("supported quote", "0.15", "0.13", "0.17", Decimal("0.01")),
+        ("unchanged quote", "0.16", "0.15", "0.17", Decimal("0")),
+        ("empty bid quote", "0.0005", None, "0.001", Decimal("0.1595")),
+        ("empty ask quote", "0.999", "0.998", None, Decimal("-0.839")),
+        ("old trade at empty bid", "0.71", None, "0.001", None),
+        ("empty book", "0.71", None, None, None),
+    ]
+    for name, probability, bid, ask, _ in cases:
+        db.add(FuturesOutcome(market_id=market.id, external_id=name, name=name,
+                              current_probability=Decimal(probability),
+                              current_yes_bid=None if bid is None else Decimal(bid),
+                              current_yes_ask=None if ask is None else Decimal(ask), is_winner=False))
+    await db.commit()
+    await db.execute(update(FuturesOutcome).where(FuturesOutcome.market_id == market.id).values(
+        current_probability=Decimal("0.16"), current_yes_bid=Decimal("0.14"),
+        current_yes_ask=Decimal("0.18"), probability_change_24h=quoted_price_change(Decimal("0.16")),
+    ).execution_options(synchronize_session=False))
+    await db.commit()
+    db.expire_all()
+    result = (await db.execute(select(FuturesOutcome))).scalars().all()
+    changes = {row.name: row.probability_change_24h for row in result}
+    assert changes == {name: expected for name, _, _, _, expected in cases}
+
+
 async def _mixed_age_governor_field_12633(db, *, series=False, old_leg="quoted"):
     """Fresh siblings beside Kansas's older real price, as on build 5708."""
     from sqlalchemy import text

@@ -219,6 +219,11 @@ def _make_related_futures_session(event):
         source="polymarket",
         bookmaker_count=4,
     )
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+    polymarket_champ.market_metadata = {DATED_BASIS_METADATA_KEY: {
+        "202": [0.42, (datetime.now(timezone.utc) - timedelta(hours=18)).isoformat()],
+    }}
     away_champ = _make_market(
         id=103,
         name="NBA Champion",
@@ -559,7 +564,7 @@ class TestRelatedFuturesPopulatedContract:
         item = body["home_team_futures"][0]
 
         assert item["probability"] == 0.44
-        assert item["probability_change_24h"] == 0.02
+        assert item["probability_change_24h"] == pytest.approx(0.02)
         assert item["opening_probability"] == 0.42
         assert item["market_tier"] == 1
         assert item["category"] == "championship"

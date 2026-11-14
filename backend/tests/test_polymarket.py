@@ -626,21 +626,21 @@ class TestResolveMarketProbability:
         assert _resolve_market_probability(m2) is None
 
     def test_midrange_outcome_price_with_trade_kept(self):
-        """A mid-range outcomePrice backed by a last trade IS trusted."""
+        """#12658: an undated print without a usable two-sided book is declined."""
         m = self._make_market(outcome_prices=[0.50, 0.50], last_trade_price=0.49)
-        assert _resolve_market_probability(m) == 0.50
+        assert _resolve_market_probability(m) is None
 
     def test_midrange_outcome_price_with_real_ask_kept(self):
-        """A mid-range outcomePrice backed by a real (sub-max) ask IS trusted."""
+        """#12658: an undated print without a usable two-sided book is declined."""
         m = self._make_market(outcome_prices=[0.50, 0.50], best_ask=0.52)
-        assert _resolve_market_probability(m) == 0.50
+        assert _resolve_market_probability(m) is None
 
     def test_extreme_outcome_price_no_orderbook_kept(self):
-        """Extreme prices (near-certain) may have a cleared book — stay permissive."""
+        """#12658: an undated print without a usable two-sided book is declined."""
         m = self._make_market(outcome_prices=[0.97, 0.03])
-        assert _resolve_market_probability(m) == 0.97
+        assert _resolve_market_probability(m) is None
         m2 = self._make_market(outcome_prices=[0.02, 0.98])
-        assert _resolve_market_probability(m2) == 0.02
+        assert _resolve_market_probability(m2) is None
 
     def test_zero_outcome_price_falls_through(self):
         """outcomePrices[0] = 0 should fall through to fallbacks."""
@@ -657,9 +657,9 @@ class TestResolveMarketProbability:
         assert _resolve_market_probability(m) == pytest.approx(0.125)
 
     def test_empty_prices_with_last_trade(self):
-        """Empty outcomePrices, no bid, should use lastTradePrice."""
+        """#12658: an undated print without a usable two-sided book is declined."""
         m = self._make_market(last_trade_price=0.08)
-        assert _resolve_market_probability(m) == 0.08
+        assert _resolve_market_probability(m) is None
 
     def test_empty_prices_with_reasonable_ask(self):
         """Empty outcomePrices, no bid/trade, ask < 0.99: skipped (#9157, gotcha #19).
@@ -731,7 +731,7 @@ class TestResolveMarketProbability:
     def test_real_low_probability_market(self):
         """A real long-shot market (1%) with valid pricing should work."""
         m = self._make_market(
-            outcome_prices=[0.01, 0.99],
+            outcome_prices=[0.01, 0.99], best_bid=0.009, best_ask=0.011,
         )
         assert _resolve_market_probability(m) == 0.01
 
@@ -763,8 +763,8 @@ class TestResolveMarketProbability:
         m.group_item_title = "Player S"
         assert _resolve_market_probability(m) is None
 
-    def test_real_100pct_with_trading_not_rejected(self):
-        """A real market that reached 100% with trading activity passes."""
+    def test_near_certain_book_uses_midpoint_instead_of_100pct_print(self):
+        """#12658: the 99%/100% boundary book still prices, without grading."""
         m = self._make_market(
             question="Will Team A win?",
             outcome_prices=[1.0, 0.0],
@@ -772,7 +772,7 @@ class TestResolveMarketProbability:
             best_ask=1.0,
             last_trade_price=0.99,
         )
-        assert _resolve_market_probability(m) == 1.0
+        assert _resolve_market_probability(m) == 0.995
 
 
 class TestIsPlaceholderOutcome:
