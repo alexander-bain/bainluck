@@ -35,12 +35,14 @@ from app.utils.window_events_closest import resolve_window
 
 __all__ = [
     "CANDIDATE_UPSETS_BREWING_PATH",
+    "CANDIDATE_UPSETS_BREWING_ROWS_PATH",
     "PRODUCER_KIND_WINDOW_EVENTS_UPSETS",
     "UpsetStanding",
     "build_upsets_brewing_grading_candidate",
     "build_window_events_upsets_producer",
     "compose_upsets_brewing_card_and_container",
     "load_candidate_definition",
+    "load_candidate_eval_rows",
     "produce_window_events_upsets",
     "select_window_events_upsets",
 ]
@@ -53,6 +55,14 @@ CANDIDATE_UPSETS_BREWING_PATH = (
     / "discover"
     / "candidates"
     / "roundup-upsets-brewing.json"
+)
+
+CANDIDATE_UPSETS_BREWING_ROWS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "discover"
+    / "candidates"
+    / "roundup-upsets-brewing-rows.json"
 )
 
 _FORBIDDEN_COPY_RE = re.compile(
@@ -197,10 +207,15 @@ def select_window_events_upsets(
 
     pre_cap_pct = int(round(max_pregame_prob * 100))
     top = shown[0]
+    top_pre_pct = int(round(top.pregame_prob * 100))
+    top_live_pct = int(round(top.live_prob * 100))
+    card_title = _assert_clean_copy(
+        f"{len(candidates)} live underdogs flipping pregame odds"
+    )
     context_line = _assert_clean_copy(
         f"{len(candidates)} live games where an underdog at {pre_cap_pct}% or lower pregame "
         f"now leads or holds at least a 50% win chance — {top.underdog_team} leads the slate "
-        f"at +{top.swing_points} pts from pregame."
+        f"at +{top.swing_points} pts from pregame ({top_pre_pct}% to {top_live_pct}%)."
     )
     footer = _assert_clean_copy(
         f"Live win chance · swings in points from pregame · {len(shown)} of {len(candidates)} live upsets"
@@ -219,7 +234,9 @@ def select_window_events_upsets(
         live_pct = int(round(c.live_prob * 100))
         row: dict[str, Any] = {
             "event_id": c.event_id,
-            "label": _assert_clean_copy(f"{c.underdog_team}{score_part} vs {c.favorite_team}"),
+            "label": _assert_clean_copy(
+                f"{c.underdog_team}{score_part} vs {c.favorite_team} (+{c.swing_points} pts from {pre_pct}% pregame)"
+            ),
             "underdog": c.underdog_team,
             "favorite": c.favorite_team,
             "pregame_percent": pre_pct,
@@ -242,7 +259,7 @@ def select_window_events_upsets(
         rows=rows,
         footer=footer,
         count_line=f"{len(candidates)} live upsets",
-        title="Upsets brewing right now",
+        title=card_title,
         kicker="LIVE · UPSET WATCH",
         revision_ids=[c.event_id for c in candidates],
         sections=(
@@ -278,13 +295,44 @@ async def produce_window_events_upsets(
             max_card_rows=max_r,
         )
 
-    return RoundupRefusal([("live_session_requires_feed_hydration", type(db).__name__)])
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    if not isinstance(db, AsyncSession):
+        return RoundupRefusal([("live_session_requires_feed_hydration", type(db).__name__)])
+
+    from app.models.models import Event
+    from app.routes.containers import _hydrate_event_cards
+
+    ev_res = await db.execute(
+        select(Event.id)
+        .where(Event.status == "live")
+        .order_by(Event.commence_time.asc(), Event.id.asc())
+    )
+    live_ids = [int(r[0]) for r in ev_res.all()]
+    if len(live_ids) < min_m:
+        return RoundupRefusal([("insufficient_live_upsets", len(live_ids), min_m)])
+    cards_by_id, _ = await _hydrate_event_cards(db, live_ids)
+    hydrated = [dict(cards_by_id[eid]) for eid in live_ids if eid in cards_by_id]
+    return select_window_events_upsets(
+        hydrated,
+        max_pregame_prob=max_pre,
+        min_live_prob=min_live,
+        min_members=min_m,
+        max_card_rows=max_r,
+    )
 
 
 def load_candidate_definition(path: Path = CANDIDATE_UPSETS_BREWING_PATH) -> dict[str, Any]:
     defn = json.loads(path.read_text(encoding="utf-8"))
     validate_roundup_definition(defn)
     return defn
+
+
+def load_candidate_eval_rows(
+    path: Path = CANDIDATE_UPSETS_BREWING_ROWS_PATH,
+) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_window_events_upsets_producer(
@@ -311,7 +359,9 @@ def build_window_events_upsets_producer(
         rule=rule,
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "LIVE · UPSET WATCH"),
+        order=str(resolved.get("order") or "sequence"),
         score=float(resolved.get("score") or 96.0),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -326,6 +376,8 @@ def compose_upsets_brewing_card_and_container(
     context_line = _assert_clean_copy(str(members.sections[0].get("context_line") or ""))
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
+    feed_item["data"]["roundup"]["order"] = "sequence"
     container["context_line"] = context_line
     return feed_item, container
 

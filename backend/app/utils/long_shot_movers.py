@@ -38,12 +38,14 @@ from app.utils.tonights_games import _parse_dt
 
 __all__ = [
     "CANDIDATE_LONG_SHOT_MOVERS_PATH",
+    "CANDIDATE_LONG_SHOT_MOVERS_ROWS_PATH",
     "PRODUCER_KIND_LONG_SHOT_MOVERS",
     "LongShotMover",
     "build_long_shot_movers_grading_candidate",
     "build_long_shot_movers_producer",
     "compose_long_shot_movers_card_and_container",
     "load_candidate_definition",
+    "load_candidate_eval_rows",
     "produce_long_shot_movers",
     "select_long_shot_movers",
 ]
@@ -56,6 +58,14 @@ CANDIDATE_LONG_SHOT_MOVERS_PATH = (
     / "discover"
     / "candidates"
     / "roundup-long-shot-movers.json"
+)
+
+CANDIDATE_LONG_SHOT_MOVERS_ROWS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "discover"
+    / "candidates"
+    / "roundup-long-shot-movers-rows.json"
 )
 
 _FORBIDDEN_COPY_RE = re.compile(
@@ -177,6 +187,11 @@ def _extract_best_mover_from_market(
             if out.get("prior_24h_probability") is not None
             else out.get("probability_24h_ago")
         )
+        if prior_raw is None and cur_raw is not None and out.get("probability_change_24h") is not None:
+            try:
+                prior_raw = float(cur_raw) - float(out["probability_change_24h"])
+            except (TypeError, ValueError):
+                prior_raw = None
         if cur_raw is None or prior_raw is None:
             continue
         try:
@@ -351,9 +366,16 @@ def select_long_shot_movers(
     shown = movers[: max(2, int(max_card_rows))]
     cap_pct = int(round(max_prior_prob * 100))
     top = shown[0]
+    jump_summaries = ", ".join(
+        f"{mv.outcome_name} +{mv.gain_points} pts ({mv.prior_pct}% to {mv.current_pct}%)"
+        for mv in shown[:3]
+    )
+    card_title = _assert_clean_copy(
+        f"Long shots waking up — up to +{top.gain_points} pts today"
+    )
     context_line = _assert_clean_copy(
         f"Markets that sat at {cap_pct}% or lower a day ago and climbed at least "
-        f"{min_gain_points} points on recent trading — led by +{top.gain_points} pts today."
+        f"{min_gain_points} points on recent trading — {jump_summaries}."
     )
     footer = _assert_clean_copy(
         f"24h change in points · started at {cap_pct}% or lower · recent trading verified"
@@ -390,7 +412,7 @@ def select_long_shot_movers(
         rows=rows,
         footer=footer,
         count_line=f"{len(movers)} movers",
-        title="Long shots that moved",
+        title=card_title,
         kicker="MOVERS · LAST 24 HOURS",
         revision_ids=rev_ids,
         sections=(
@@ -410,35 +432,95 @@ async def produce_long_shot_movers(
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
     cfg_rule = dict(rule or {})
+    max_prior = float(cfg_rule["max_prior_prob"] if "max_prior_prob" in cfg_rule else 0.12)
+    min_curr = float(cfg_rule["min_current_prob"] if "min_current_prob" in cfg_rule else 0.08)
+    min_gain = int(cfg_rule["min_gain_points"] if "min_gain_points" in cfg_rule else 6)
+    max_q = float(cfg_rule["max_quote_age_hours"] if "max_quote_age_hours" in cfg_rule else 6.0)
+    min_vol = float(cfg_rule["min_volume"] if "min_volume" in cfg_rule else 1000.0)
+    min_m = int(cfg_rule.get("min_members") or 3)
+    max_r = int(cfg_rule.get("max_card_rows") or 4)
     if isinstance(db, (list, tuple)):
         return select_long_shot_movers(
             db,
             now=now,
-            max_prior_prob=float(
-                cfg_rule["max_prior_prob"] if "max_prior_prob" in cfg_rule else 0.12
-            ),
-            min_current_prob=float(
-                cfg_rule["min_current_prob"] if "min_current_prob" in cfg_rule else 0.08
-            ),
-            min_gain_points=int(
-                cfg_rule["min_gain_points"] if "min_gain_points" in cfg_rule else 6
-            ),
-            max_quote_age_hours=float(
-                cfg_rule["max_quote_age_hours"] if "max_quote_age_hours" in cfg_rule else 6.0
-            ),
-            min_volume=float(
-                cfg_rule["min_volume"] if "min_volume" in cfg_rule else 1000.0
-            ),
-            min_members=int(cfg_rule.get("min_members") or 3),
-            max_card_rows=int(cfg_rule.get("max_card_rows") or 4),
+            max_prior_prob=max_prior,
+            min_current_prob=min_curr,
+            min_gain_points=min_gain,
+            max_quote_age_hours=max_q,
+            min_volume=min_vol,
+            min_members=min_m,
+            max_card_rows=max_r,
         )
-    return RoundupRefusal([("live_session_requires_history_bank", type(db).__name__)])
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import selectinload
+
+    if not isinstance(db, AsyncSession):
+        return RoundupRefusal([("live_session_requires_history_bank", type(db).__name__)])
+
+    from app.models.models import FuturesMarket
+
+    effective_now = now or datetime.now(timezone.utc)
+    stmt = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            FuturesMarket.volume >= min_vol,
+            FuturesMarket.max_movement_24h >= (min_gain / 100.0),
+        )
+        .order_by(FuturesMarket.max_movement_24h.desc().nullslast())
+        .limit(80)
+    )
+    res = await db.execute(stmt)
+    orm_rows = res.scalars().all()
+    serialized = [
+        {
+            "id": int(m.id),
+            "name": m.name,
+            "status": m.status,
+            "source": m.source,
+            "category": m.category,
+            "group_id": m.group_id,
+            "volume": m.volume,
+            "volume_24h": m.volume_24h,
+            "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+            "outcomes": [
+                {
+                    "id": int(o.id),
+                    "name": o.name,
+                    "probability": o.current_probability,
+                    "probability_change_24h": o.probability_change_24h,
+                    "price_changed_at": o.price_changed_at.isoformat() if o.price_changed_at else None,
+                }
+                for o in (m.outcomes or [])
+            ],
+        }
+        for m in orm_rows
+    ]
+    return select_long_shot_movers(
+        serialized,
+        now=effective_now,
+        max_prior_prob=max_prior,
+        min_current_prob=min_curr,
+        min_gain_points=min_gain,
+        max_quote_age_hours=max_q,
+        min_volume=min_vol,
+        min_members=min_m,
+        max_card_rows=max_r,
+    )
 
 
 def load_candidate_definition(path: Path = CANDIDATE_LONG_SHOT_MOVERS_PATH) -> dict[str, Any]:
     defn = json.loads(path.read_text(encoding="utf-8"))
     validate_roundup_definition(defn)
     return defn
+
+
+def load_candidate_eval_rows(
+    path: Path = CANDIDATE_LONG_SHOT_MOVERS_ROWS_PATH,
+) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_long_shot_movers_producer(
@@ -465,7 +547,9 @@ def build_long_shot_movers_producer(
         rule=rule,
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "MOVERS · LAST 24 HOURS"),
+        order=str(resolved.get("order") or "sequence"),
         score=float(resolved.get("score") or 91.0),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -480,6 +564,8 @@ def compose_long_shot_movers_card_and_container(
     context_line = _assert_clean_copy(str(members.sections[0].get("context_line") or ""))
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
+    feed_item["data"]["roundup"]["order"] = "sequence"
     container["context_line"] = context_line
     return feed_item, container
 
