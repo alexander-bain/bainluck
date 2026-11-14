@@ -4,6 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { act } from "react-dom/test-utils";
 import CollectionHub from "@/components/collections/CollectionHub";
 import { CollectionMemberCard } from "@/components/collections/CollectionMemberCard";
+import { MidtermsAtlasMemberCard } from "@/components/collections/MidtermsAtlasSection";
+import EntityImage from "@/components/EntityImage";
 import { forgetAcceptedCollections, parseCollection, settleCollectionRead } from "@/lib/collections";
 import { cleanPersonOutcomeName, isPersonOutcomeName } from "@/lib/eventConceptDisplay";
 import * as images from "@/lib/images";
@@ -240,6 +242,44 @@ describe("Midterms 2026 candidate headshots & hero history chart (#11877)", () =
     act(() => root.unmount());
     container.remove();
     jest.restoreAllMocks();
+  });
+
+  test.each(["open", "settled", "atlas-open", "atlas-settled"])(
+    "the %s card requests the registered identity and keeps the person's displayed name", async (state) => {
+      const wikiSpy = jest.spyOn(images, "getWikipediaImage").mockImplementation(async (name) =>
+        name === "Mike Rogers (Michigan politician)" ? "https://upload.wikimedia.org/wikipedia/commons/roger-michigan.jpg" : null);
+      const raw = midtermsFixture();
+      const row = raw.sections[2].members[0];
+      Object.assign(row.card, { name: "Michigan Senate winner?", top_outcomes: [
+        { name: "Mike Rogers", probability: .7, image_title: "Mike Rogers (Michigan politician)" },
+        { name: "Abdul El-Sayed", probability: .3, image_title: "Abdul El-Sayed" },
+      ] });
+      if (state.endsWith("settled")) Object.assign(row.card, { status: "resolved", settled_winner: "Mike Rogers" });
+      const member = parseCollection(raw, raw.slug).sections[2].members[0];
+      await act(async () => {
+        root.render(state.startsWith("atlas")
+          ? <MidtermsAtlasMemberCard member={member} />
+          : <CollectionMemberCard member={member} presentation="duel" />);
+        await Promise.resolve();
+      });
+      expect(wikiSpy).toHaveBeenCalledWith("Mike Rogers (Michigan politician)");
+      expect(wikiSpy).not.toHaveBeenCalledWith("Mike Rogers");
+      expect(container.querySelector('img[alt="Mike Rogers"]')?.getAttribute("src")).toContain("roger-michigan.jpg");
+      expect(container.textContent).not.toContain("Michigan politician");
+    },
+  );
+
+  test("a changed article identity with the same label starts a fresh lookup", async () => {
+    const lookup = jest.spyOn(images, "getWikipediaImage").mockResolvedValue(null);
+    await act(async () => {
+      root.render(<EntityImage type="wikipedia" name="Mike Rogers" showFallback={false} />);
+    });
+    await act(async () => {
+      root.render(<EntityImage type="wikipedia" name="Mike Rogers" imageTitle="Mike Rogers (Michigan politician)" showFallback={false} />);
+    });
+    expect(lookup.mock.calls.map(call => call[0])).toEqual(["Mike Rogers", "Mike Rogers (Michigan politician)"]);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector('[data-testid="entity-image-placeholder"]')).toBeNull();
   });
 
   test("isPersonOutcomeName identifies candidate names and excludes parties, states, teams, and binary labels", () => {
