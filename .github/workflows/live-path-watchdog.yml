@@ -294,8 +294,8 @@ jobs:
           echo "::error::#12534 identity gate skipped"
           exit 1
         fi
-        grep -qE "[^0-9]5 passed([,[:space:]]|$)" /tmp/identity12534.txt || {
-          echo "::error::#12534 identity gate did not run all five cases"
+        grep -qE "[^0-9]13 passed([,[:space:]]|$)" /tmp/identity12534.txt || {
+          echo "::error::#12534/#12555 identity gate did not run all thirteen cases"
           exit 1
         }
     - id: db_010_typeahead_next_fixture_contracts_or_next
