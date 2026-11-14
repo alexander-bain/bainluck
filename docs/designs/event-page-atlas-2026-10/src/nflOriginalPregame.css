@@ -1,9 +1,0 @@
-/* App scroll views own reading. Focusing catalog search must not scroll the clipped device root. */
-.device-screen:has(.nfl-original-detail-host){overflow:clip}
-.nfl-original-pregame{padding:16px;border:1px solid var(--surface-border);border-radius:16px;margin:12px 0;color:var(--text-primary);background:var(--surface-card)}
-.nfl-original-pregame details{margin-top:16px;font-size:12px;line-height:1.5;color:var(--text-secondary)}
-.nfl-original-pregame summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--text-primary);font-size:13px}
-.nfl-original-pregame summary svg{margin-right:8px;flex:none;transform:rotate(0);transition:transform .12s}
-.nfl-original-pregame details[open]>summary svg{transform:rotate(90deg)}
-.nfl-original-pregame p{font-size:12px;line-height:1.5}
-.large-text .nfl-original-pregame p,.large-text .nfl-original-pregame summary{font-size:16px}

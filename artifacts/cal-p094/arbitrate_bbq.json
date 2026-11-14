@@ -1,7 +1,0 @@
-{
-  "label": "arbitrate_bbq",
-  "measured": false,
-  "status": "failed",
-  "reason": "statement_timeout",
-  "elapsed_s": 10.5
-}
