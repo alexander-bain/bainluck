@@ -433,7 +433,13 @@ NULL_RATE = 0.23
 #: where the sample had 12 of 87 (13.8%). That is this seed drawing slightly
 #: heavy, and it is left alone because it errs toward a HEAVIER artifact, which
 #: is the safe direction for a budget guard.
-MEASURED_NODES = 191_443
+#: 2026-11-13, #11937: 191,443 -> 191,516, +73. `quiet_since` joins
+#: `MARKET_COLUMNS`. Decomposed, not asserted: +700 is one node per market row
+#: for the new scalar, and -627 is the RNG-stream term — the column is nullable,
+#: so its null verdict takes one more draw per row and `withheld_outcome_ids`
+#: lands on 99 boards instead of 104. Nothing else moved; the budget below is
+#: unchanged and still has room.
+MEASURED_NODES = 191_516
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
@@ -1250,8 +1256,17 @@ async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatc
 #: it, where #7808 left it at 92.1%. The 94 B of envelope margin is thinner than
 #: #7808's 612 B; that is a statement about the bisect's granularity at this
 #: scale, not spare room, and the guard below is what keeps it honest.
-DECODE_BUDGET_OUTCOMES = 28_686
-DECODE_BUDGET_NODES = 461_737
+#: 2026-11-13, #11937, `quiet_since`: 28,686 -> 28,533 outcomes and
+#: 461,737 -> 460,958 nodes. Re-bisected by the documented method and NOT scaled
+#: — 32,000 proven over the cap, then one-outcome granularity: 28,533 encodes to
+#: 6,289,766 B against the 6,291,456 B cap (1,690 B of margin) and 28,534 to
+#: 6,293,552 B, which does not fit. A scalar again, so #7808's direction: rows
+#: heavier, fewer outcomes fit, fewer nodes at the crossing. The extra null
+#: draw also reshuffles the fixture's text, which is why the step is 153 outcomes
+#: and not #7808's 63. The ordering invariant holds — 460,958 against a 500,000
+#: cap, 92.2% of it.
+DECODE_BUDGET_OUTCOMES = 28_533
+DECODE_BUDGET_NODES = 460_958
 
 def test_the_decode_budget_scale_is_what_it_says():
     """Control for the two constants above.

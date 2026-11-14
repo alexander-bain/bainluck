@@ -115,6 +115,8 @@ def _fake_market(market_id: int, name: str):
         # #7808. The model default, which is what the overwhelming majority of
         # rows carry; this fixture's two-leg Yes/No field is exclusive.
         "mutually_exclusive": True,
+        # #11937. Never seen quiet, the trigger's value for a market that trades.
+        "quiet_since": None,
     }
     # Keyed, then ordered by `OUTCOME_COLUMNS` — the same idiom as the market
     # values above, and for the same reason. A positional literal here would

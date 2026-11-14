@@ -48,6 +48,9 @@ from app.models.models import Base
 #: the discovery arm below fails if such a gate grows an INSERT and is not
 #: listed, so this list cannot silently fall behind.
 COVERED = (
+    # #11937: seeds a TEMP copy of `futures_markets` by raw INSERT to prove the
+    # production `quiet_since` trigger keeps the first quiet moment.
+    "test_quiet_since_trigger_11937_pg.py",
     # #10090: seeds `sports` (naming `active`) and `events` by raw INSERT to
     # prove the enrich task's count no longer holds an enriched row's lock.
     "test_enrich_events_metadata_row_locks_10090_pg.py",
