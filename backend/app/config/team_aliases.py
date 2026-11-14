@@ -17,6 +17,8 @@ UNAMBIGUOUS: an alias that matches two franchises makes search worse, not better
 """
 
 # (sport_key, canonical_team_name) -> list of lowercase colloquial aliases.
+from app.config.major_team_search import normalize_major_team_query
+
 CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     # #12290: Alex's observed transposition, scoped to the NFL franchise.
     ("americanfootball_nfl", "New England Patriots"): ["pats", "patroits"],
@@ -440,6 +442,9 @@ CLUB_QUERY_SHORT_FORMS: dict[tuple[str, ...], str] = {
 }
 
 _SHORT_FORM_MAX_WIDTH = max(len(key) for key in CLUB_QUERY_SHORT_FORMS)
+_CURATED_QUERY_ALIASES = frozenset(
+    alias.casefold() for aliases in CURATED_TEAM_ALIASES.values() for alias in aliases
+)
 
 
 def expand_club_short_forms(query: str) -> str:
@@ -453,6 +458,10 @@ def expand_club_short_forms(query: str) -> str:
     Returns `query` itself — the same string, whitespace and all — when nothing
     matches, which is every query but these few. Pure, so the guards pin it.
     """
+    # Existing aliases already carry sport-scoped recall. Rewriting `patroits`
+    # to the bare `patriots` would also admit the cricket namesake.
+    if query.strip().casefold() not in _CURATED_QUERY_ALIASES:
+        query = normalize_major_team_query(query)
     words = query.split()
     lowered = [word.lower() for word in words]
     out: list[str] = []

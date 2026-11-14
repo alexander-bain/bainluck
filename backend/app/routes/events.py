@@ -235,6 +235,8 @@ from app.utils.search_intent import (
     parse_intent,
     promote_answering_rows,
 )
+from app.utils.explicit_search import explicit_search
+from app.config.major_team_search import MAJOR_TEAM_QUERY_ALIASES
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
     search_response_cache_enabled,
@@ -3402,6 +3404,10 @@ def _team_card_keyed(
         }
         for row in rows
     ]
+    for card in cards:
+        card["_aliases"].extend(MAJOR_TEAM_QUERY_ALIASES.get(
+            (card["sport_key"], card["name"]), ()
+        ))
     if not restated_aliases:
         for card in cards:
             card["_aliases"] = [
@@ -10270,6 +10276,8 @@ async def search_events(
     #
     # The read is guarded on `debug_timing` alone, and the write below adds
     # `degraded` — see each site for why the two conditions are not the same.
+    _explicit_search = explicit_search(q)
+    _next_games = _explicit_search.next_games if _explicit_search else None
     _search_cache_key = search_response_cache_key(
         q=q,
         sport=sport,
@@ -10279,6 +10287,8 @@ async def search_events(
         days_back=days_back,
         include_upcoming=include_upcoming,
     )
+    if _explicit_search:
+        _search_cache_key += ":explicit-v1"
     # #3526: `_force_search_cache_rebuild` joins the READ condition and ONLY the
     # read. The warmer sets it so this call skips the cached body and rebuilds,
     # while the write below still fires — which is what lets the warmer refresh
@@ -10401,6 +10411,8 @@ async def search_events(
         if _intent is not None and _intent.kind in _IDENTITY_SUBSTITUTED_KINDS
         else q
     )
+    if _explicit_search:
+        _q_identity = _explicit_search.subject
     # #9834: a club's short form identifies the club — `man utd` and `bvb` share
     # no word with any name a rail matches, so the page answered them with
     # nothing. An identity site, so it rewrites the subject and never `q`; the
@@ -10762,6 +10774,34 @@ async def search_events(
     # #9040: ...except among finished games, where the newest day leads first.
     _settled_day_key = _settled_day_order_key(_team_card_lead_sports)
     _mark("team_evidence")
+
+    _set_team = None
+    if _next_games:
+        # Identity remains the existing owned-name resolver's job. A literal
+        # set request narrows the fixture selector; it never guesses a club.
+        _set_candidates = [
+            card for _, card in _team_card_keyed(_early_team_rows, _q_identity, cap=None)
+            if _query_names_team_card(card, _q_identity)
+            and _is_marquee_team_sport_key(card["sport_key"])
+        ]
+        if len(_set_candidates) == 1:
+            _set_team = _set_candidates[0]
+        else:
+            # No unique club means no fixture selector. Keep the subject's
+            # ordinary search (including every matching team card) and echo
+            # the original query; do not invent an empty "next N games" set.
+            _next_games = None
+
+    if _next_games:
+        _set_scope = [
+            Event.status == "scheduled",
+            Event.commence_time > now,
+            or_(Event.home_team_id == _set_team["id"], Event.away_team_id == _set_team["id"]),
+        ]
+        # Rescue queries also consume event_scope_conditions. They may not
+        # fill an empty requested set with past games or a namesake's games.
+        event_conditions.extend(_set_scope)
+        event_scope_conditions.extend(_set_scope)
 
     # Build base query - search both home and away team names
     query = (
@@ -11492,6 +11532,11 @@ async def search_events(
     _mark("bye_finals_probe")
 
     offset, _page_limit = _search_games_page_window(page, per_page, _bye_finals_capped)
+    if _next_games:
+        # Fold through the existing canonical-game machinery before cutting
+        # the requested set. The bounded overfetch leaves room for twins.
+        offset, _page_limit = 0, 100
+        query = query.order_by(None).order_by(Event.commence_time.asc(), Event.id.asc())
     query = query.offset(offset).limit(_page_limit)
 
     # Execute
@@ -11958,6 +12003,40 @@ async def search_events(
     for _formatted in formatted_results:
         attach_pregame_projection(_formatted, _projections.get(_formatted.get("id")))
     _mark("pregame_projection")
+
+    # #1619: empty means no futures statement ran, including a game-set response.
+    _futures_arm_ms: dict[str, int] = {}
+    if _next_games:
+        _set_results = formatted_results[:_next_games]
+        _set_count = len(_set_results)
+        _set_name = _set_team["name"]
+        _set_title = (
+            f"{_set_name}: next {_set_count} game{'s' if _set_count != 1 else ''}"
+            if _set_count else f"{_set_name}: no upcoming games"
+        )
+        _set_pages = max(1, (_set_count + per_page - 1) // per_page)
+        _set_offset = (page - 1) * per_page
+        _set_payload = {
+            "query": q, "teams": [], "event_concepts": [], "futures": [],
+            "futures_families": [], "collections": [],
+            "results": _set_results[_set_offset:_set_offset + per_page],
+            "game_set": {
+                "title": _set_title,
+                "selector": {"team_id": _set_team["id"],
+                             "count": _next_games, "state": "scheduled"},
+            },
+            "pagination": {"page": page, "per_page": per_page,
+                           "total_results": _set_count, "total_pages": _set_pages,
+                           "has_next": page < _set_pages, "has_prev": page > 1},
+            "sports": [],
+            "filters": {"sport": sport, "days_back": 0, "include_upcoming": True},
+            **({"degraded": degraded} if degraded else {}),
+            **({"debug_timing": {**_stage_ms, "total_ms": sum(_stage_ms.values()),
+                                 "futures_arm_ms": _futures_arm_ms}}
+               if debug_timing else {}),
+        }
+        _record_search_query(_set_payload, q=q, request=request, current_user=current_user)
+        return _set_payload
 
     # Calculate pagination metadata
     total_count = total_count or 0
@@ -12669,8 +12748,6 @@ async def search_events(
     _futures_outcome_arm = "not_reached"
     # #10024: the split arms' state, beside the outcome arm's (gotcha #53).
     _futures_split_report: dict = {"state": "not_reached"}
-    # #1619: each futures statement's own ms; see `_fetch_futures_window`.
-    _futures_arm_ms: dict[str, int] = {}
     # #8704: tier<=1 rows ranked 21-60, fetched by the window's own statement.
     # See `_futures_refill_in_hand` for when they ARE the collapse refill.
     _futures_spare_rows: list = []
@@ -16562,6 +16639,13 @@ async def typeahead_search(
     # strings would be two rules, so both read `_q_identity` — connector
     # dropped (`_q_matchup`, #9527), else `red sox vs yankees` scores the game
     # below every market whose name says "vs.".
+    # Ranking-only names: add them after fixture selection so identifying the
+    # team card does not open the recent-final or next-game rescue arms.
+    for item in team_pool:
+        item["_aliases"] = [
+            *(item.get("_aliases") or ()),
+            *MAJOR_TEAM_QUERY_ALIASES.get((item.get("sport_key"), item.get("text")), ()),
+        ]
     _ta_candidates = [
         (_typeahead_evidence(item, _q_matchup), item)
         for item in (*hub_pool, *team_pool, *event_pool,
@@ -40411,6 +40495,9 @@ def _query_names_team_card(row: dict, query: str) -> bool:
         (
             row.get("name") or row.get("text") or "",
             *(row.get("_aliases") or ()),
+            *MAJOR_TEAM_QUERY_ALIASES.get(
+                (row.get("sport_key"), row.get("name") or row.get("text")), ()
+            ),
             row.get("abbreviation"),
         ),
     )

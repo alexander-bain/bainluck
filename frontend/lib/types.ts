@@ -1651,7 +1651,13 @@ export interface SearchEventConcept {
   market_id: number;
 }
 
+export interface SearchGameSet {
+  title: string;
+  selector: { team_id: number | null; count: number; state: "scheduled" };
+}
+
 export interface SearchResponse {
+  game_set?: SearchGameSet;
   results: Event[];
   futures: FuturesMarket[];
   futures_families?: FuturesFamily[]; // #993: composed topical families (additive)
