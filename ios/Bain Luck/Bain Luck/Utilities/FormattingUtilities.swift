@@ -109,10 +109,10 @@ func deltaPointsNumber(_ points: Double) -> String {
 /// pinned rather than fixed.
 ///
 /// Returns `nil` when the badge draws nothing. The arrow carries the direction, so
-/// the string is an unsigned magnitude.
+/// the string is an unsigned magnitude in percentage points (`"1.2 pts"`, never `"1.2%"`).
 func futuresHeroMoveText(_ change: Double?) -> String? {
     guard let m = change, abs(m) >= 0.005 else { return nil }
-    return "\(deltaPointsNumber(m * 100))%"
+    return "\(deltaPointsNumber(m * 100)) pts"
 }
 
 /// The absent-value marker for a number we do not have. `ladderPercent` already

@@ -87,13 +87,32 @@ final class FuturesAgeAndCanonicalHistory12633Tests: XCTestCase {
         XCTAssertEqual(page.header.selectedOutcomeId, 1594085)
         XCTAssertEqual(page.header.selectedOutcomeName, "Kansas")
         XCTAssertEqual(page.header.primaryDisplay.primaryLabel, "89%")
+        if case .chance(_, _, _, let moveText, let isUp, _) = page.header.primaryDisplay {
+            XCTAssertEqual(moveText, "1.2 pts", "move chip prints points (`1.2 pts`), never `1.2%`")
+            XCTAssertEqual(isUp, true)
+        } else {
+            XCTFail("Expected .chance on Kansas headline")
+        }
         XCTAssertEqual(page.header.primaryDisplay.asOfText, "As of 4:10 AM")
         XCTAssertNil(page.header.recordedAtText)
         XCTAssertEqual(page.detailsSheet.currentOrSettlementNote, "As of 4:10 AM")
 
         // Top 3 contender rows: Kansas (> 30m) gets "As of 4:10 AM"; Georgia (1m) and Alaska (13m) stay clean.
+        // Movement labels state points ("1.2 pts", "0.8 pts"), never "%".
         XCTAssertEqual(page.body.primaryRows.map(\.name), ["Kansas", "Georgia", "Alaska"])
         XCTAssertEqual(page.body.primaryRows.map { $0.displayValue.primaryLabel }, ["89%", "4%", "2%"])
+        if case .chance(_, _, _, let kansasMove, let kansasUp, _) = page.body.primaryRows[0].displayValue {
+            XCTAssertEqual(kansasMove, "1.2 pts")
+            XCTAssertEqual(kansasUp, true)
+        } else {
+            XCTFail("Expected .chance on Kansas row")
+        }
+        if case .chance(_, _, _, let georgiaMove, let georgiaUp, _) = page.body.primaryRows[1].displayValue {
+            XCTAssertEqual(georgiaMove, "0.8 pts")
+            XCTAssertEqual(georgiaUp, false)
+        } else {
+            XCTFail("Expected .chance on Georgia row")
+        }
         XCTAssertEqual(page.body.primaryRows[0].displayValue.asOfText, "As of 4:10 AM")
         XCTAssertNil(page.body.primaryRows[1].displayValue.asOfText)
         XCTAssertNil(page.body.primaryRows[2].displayValue.asOfText)
