@@ -149,7 +149,7 @@ final class BookmarkPinEverywhereTests: XCTestCase {
                 .background(Color(white: 0.965))
                 .environmentObject(pins)
                 .environment(\.colorScheme, .light)
-            let renderer = ImageRenderer(content: canvas)
+            let renderer = rendererForMeasurement(canvas)
             renderer.scale = 3.0
             renderer.proposedSize = ProposedViewSize(width: 390, height: nil)
             let image = try XCTUnwrap(renderer.uiImage)
