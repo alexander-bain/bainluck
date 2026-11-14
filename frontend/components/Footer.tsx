@@ -34,6 +34,7 @@ const FOOTER_LINKS: { heading: string; links: { label: string; href: string }[] 
     heading: "Bain Luck",
     links: [
       { label: "About", href: "/about" },
+      { label: "Picture credits", href: "/picture-credits" },
       { label: "Privacy", href: "/privacy" },
       // The one reachable way back to the telemetry choice after the banner is
       // gone — the banner only ever shows when nothing is stored (L2-220).
