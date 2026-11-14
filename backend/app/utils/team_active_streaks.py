@@ -81,11 +81,33 @@ class StreakEntry:
     card: Mapping[str, Any]
 
 
-def _assert_clean_copy(text: str) -> str:
+def _clean_copy_or_none(text: Any) -> Optional[str]:
     cleaned = " ".join(str(text or "").split())
-    if _FORBIDDEN_COPY_RE.search(cleaned):
-        raise ValueError(f"Forbidden copy token in reader text: {cleaned!r}")
+    if not cleaned or _FORBIDDEN_COPY_RE.search(cleaned):
+        return None
     return cleaned
+
+
+def _assert_clean_copy(text: str) -> str:
+    cleaned = _clean_copy_or_none(text)
+    if cleaned is None:
+        raise ValueError(f"Forbidden or empty copy token in reader text: {text!r}")
+    return cleaned
+
+
+def _safe_positive_int(raw: Any) -> int:
+    if isinstance(raw, bool):
+        return 0
+    if isinstance(raw, int):
+        return raw if raw > 0 else 0
+    if isinstance(raw, float) and raw.is_integer() and raw > 0:
+        return int(raw)
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if stripped.isdigit():
+            val = int(stripped)
+            return val if val > 0 else 0
+    return 0
 
 
 def _parse_iso_utc(raw: Any) -> Optional[datetime]:
@@ -197,6 +219,19 @@ def select_team_active_streaks(
     max_card_rows: int = 5,
     max_quote_age_hours: float = 24.0,
 ) -> RoundupMembers | RoundupRefusal:
+    """Select active streaking teams whose earliest scheduled game is priced.
+
+    Streak source precedence for ``(sport, team)``:
+    1. Explicit ``team_streaks`` rows (authoritative standings/streak feed),
+    2. Streaks derived chronologically from ``completed_events``,
+    3. Inline ``home_streak`` / ``away_streak`` tokens on upcoming event dicts.
+
+    Next-game invariant: each team's earliest ``scheduled``/``upcoming`` game is
+    bound first regardless of price, and only afterwards checked with
+    ``_is_priced_trading_game``. If a team's actual next game is unpriced, has
+    withheld prices, or exceeds ``max_quote_age_hours``, the team is excluded
+    rather than paired with a later game.
+    """
     target_kind = streak_kind.strip().upper()
     streaks_map: dict[tuple[str, str], tuple[str, int]] = {}
     upcoming_games: Sequence[Mapping[str, Any]] = ()
@@ -211,7 +246,7 @@ def select_team_active_streaks(
             sp = str(row.get("sport") or "").strip()
             tm = str(row.get("team") or "").strip()
             sk = str(row.get("streak_kind") or "").strip().upper()
-            slen = int(row.get("streak_length") or 0)
+            slen = _safe_positive_int(row.get("streak_length"))
             if sp and tm and sk in {"W", "L"} and slen > 0:
                 streaks_map[(sp, tm)] = (sk, slen)
         upcoming_games = payload.get("upcoming_events") or ()
@@ -219,26 +254,23 @@ def select_team_active_streaks(
         # Support flat list of pre-enriched upcoming event dicts carrying home_streak / away_streak
         upcoming_games = payload
 
-    next_game_by_team: dict[tuple[str, str], tuple[Mapping[str, Any], str, float]] = {}
+    earliest_game_by_team: dict[tuple[str, str], tuple[Mapping[str, Any], str, str]] = {}
     ordered_upcoming = sorted(
         (e for e in upcoming_games if isinstance(e, Mapping) and isinstance(e.get("id"), int)),
-        key=lambda e: str(e.get("commence_time") or ""),
+        key=lambda e: (str(e.get("commence_time") or ""), int(e["id"])),
     )
 
     for ev in ordered_upcoming:
-        probs = _is_priced_trading_game(ev, now=now, max_quote_age_hours=max_quote_age_hours)
-        if probs is None:
+        status = str(ev.get("status") or "").strip().lower()
+        if status not in {"scheduled", "upcoming"}:
             continue
-        hp_f, ap_f = probs
         sp = str(ev.get("sport") or "").strip()
         ht = str(ev.get("home_team") or "").strip()
         at = str(ev.get("away_team") or "").strip()
         if not sp or not ht or not at:
             continue
-        if _FORBIDDEN_COPY_RE.search(ht) or _FORBIDDEN_COPY_RE.search(at):
-            continue
 
-        # Allow inline streak metadata on event dicts too
+        # Inline streak fallback (lowest precedence via setdefault)
         for side_team, inline_key in ((ht, "home_streak"), (at, "away_streak")):
             raw_st = ev.get(inline_key)
             if (
@@ -249,29 +281,42 @@ def select_team_active_streaks(
             ):
                 streaks_map.setdefault((sp, side_team), (raw_st[0].upper(), int(raw_st[1:])))
 
-        if (sp, ht) not in next_game_by_team:
-            next_game_by_team[(sp, ht)] = (ev, f"vs {at}", hp_f)
-        if (sp, at) not in next_game_by_team:
-            next_game_by_team[(sp, at)] = (ev, f"at {ht}", ap_f)
+        if (sp, ht) not in earliest_game_by_team:
+            earliest_game_by_team[(sp, ht)] = (ev, f"vs {at}", "home")
+        if (sp, at) not in earliest_game_by_team:
+            earliest_game_by_team[(sp, at)] = (ev, f"at {ht}", "away")
 
     candidates: list[StreakEntry] = []
     for (sp, team), (sk, slen) in streaks_map.items():
         if sk != target_kind or slen < int(min_streak):
             continue
-        nxt = next_game_by_team.get((sp, team))
+        clean_team = _clean_copy_or_none(team)
+        if clean_team is None:
+            continue
+        nxt = earliest_game_by_team.get((sp, team))
         if nxt is None:
             continue
-        ev, opp_phrase, team_win_prob = nxt
+        ev, opp_phrase, side = nxt
+        clean_opp = _clean_copy_or_none(opp_phrase)
+        if clean_opp is None:
+            continue
+        probs = _is_priced_trading_game(ev, now=now, max_quote_age_hours=max_quote_age_hours)
+        if probs is None:
+            continue
+        hp_f, ap_f = probs
+        team_win_prob = hp_f if side == "home" else ap_f
         # For a winning streak ("W"), survival = team wins next game; for losing ("L"), survival = 1 - win
         survival = team_win_prob if target_kind == "W" else (1.0 - team_win_prob)
-        league_label = _LEAGUE_BADGE.get(sp, sp.upper())
+        league_label = _clean_copy_or_none(_LEAGUE_BADGE.get(sp, sp.upper()))
+        if league_label is None:
+            continue
         candidates.append(
             StreakEntry(
                 event_id=int(ev["id"]),
                 sport=sp,
                 league_label=league_label,
-                team=team,
-                opponent_phrase=opp_phrase,
+                team=clean_team,
+                opponent_phrase=clean_opp,
                 streak_kind=sk,
                 streak_length=slen,
                 survival_probability=survival,
