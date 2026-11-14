@@ -83,7 +83,8 @@
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
       },
       "retired": true,
-      "retired_note": "graded as sheet 1 stood on Nov 10"
+      "retired_note": "graded as sheet 1 stood on Nov 10",
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 2,
@@ -163,7 +164,8 @@
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
       },
       "retired": true,
-      "retired_note": "graded as sheet 1 stood on Nov 10"
+      "retired_note": "graded as sheet 1 stood on Nov 10",
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 3,
@@ -243,7 +245,8 @@
         "rule_quote": "Resolves Yes if Wild Horse Nine is nominated for Best Picture."
       },
       "retired": true,
-      "retired_note": "graded as sheet 1 stood on Nov 10"
+      "retired_note": "graded as sheet 1 stood on Nov 10",
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 4,
@@ -323,7 +326,8 @@
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
       },
       "retired": true,
-      "retired_note": "graded as sheet 1 stood on Nov 10"
+      "retired_note": "graded as sheet 1 stood on Nov 10",
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 5,
@@ -403,7 +407,8 @@
         "rule_quote": "Resolves Yes if the Carolina Hurricanes win the 2026-27 Stanley Cup."
       },
       "retired": true,
-      "retired_note": "graded as sheet 1 stood on Nov 10"
+      "retired_note": "graded as sheet 1 stood on Nov 10",
+      "set_id": "nhl-2026-27-playoffs-and-cup"
     },
     {
       "position": 6,
@@ -497,7 +502,8 @@
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
       },
       "retired": true,
-      "retired_note": "graded as sheet 1 stood on Nov 10"
+      "retired_note": "graded as sheet 1 stood on Nov 10",
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 7,
@@ -570,7 +576,8 @@
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
       },
       "retired": true,
-      "retired_note": "graded as sheet 1 stood on Nov 10"
+      "retired_note": "graded as sheet 1 stood on Nov 10",
+      "set_id": null
     },
     {
       "position": 8,
@@ -643,7 +650,8 @@
         "rule_quote": "Resolves Yes if John Malkovich wins Best Actor at the 99th Academy Awards."
       },
       "retired": true,
-      "retired_note": "graded as sheet 1 stood on Nov 10"
+      "retired_note": "graded as sheet 1 stood on Nov 10",
+      "set_id": null
     },
     {
       "position": 9,
@@ -709,7 +717,8 @@
         "rule_quote": "Resolves Yes if Christopher Nolan is nominated for Best Director."
       },
       "retired": true,
-      "retired_note": "graded as sheet 1 stood on Nov 10"
+      "retired_note": "graded as sheet 1 stood on Nov 10",
+      "set_id": null
     },
     {
       "position": 1,
@@ -787,7 +796,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 2,
@@ -865,7 +875,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 3,
@@ -943,7 +954,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 4,
@@ -1021,7 +1033,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 5,
@@ -1099,7 +1112,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 6,
@@ -1170,7 +1184,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 7,
@@ -1248,7 +1263,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 8,
@@ -1326,7 +1342,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 9,
@@ -1404,7 +1421,8 @@
         "rendered_percent": 93,
         "resolution_date": "2027-01-23T00:00:00Z",
         "rule_quote": "Resolves Yes if Wild Horse Nine is nominated for Best Picture."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 10,
@@ -1482,7 +1500,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 11,
@@ -1560,7 +1579,8 @@
         "rendered_percent": 13,
         "resolution_date": "2027-06-30T00:00:00Z",
         "rule_quote": "Resolves Yes if the Carolina Hurricanes win the 2026-27 Stanley Cup."
-      }
+      },
+      "set_id": "nhl-2026-27-playoffs-and-cup"
     },
     {
       "position": 12,
@@ -1652,7 +1672,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": "oscars-2027-best-picture"
     },
     {
       "position": 13,
@@ -1723,7 +1744,8 @@
         "rendered_percent": 57,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if The Odyssey wins Best Picture at the 99th Academy Awards."
-      }
+      },
+      "set_id": null
     },
     {
       "position": 14,
@@ -1794,7 +1816,8 @@
         "rendered_percent": 42,
         "resolution_date": "2027-03-15T00:00:00Z",
         "rule_quote": "Resolves Yes if John Malkovich wins Best Actor at the 99th Academy Awards."
-      }
+      },
+      "set_id": null
     },
     {
       "position": 15,
@@ -1858,7 +1881,8 @@
         "rendered_percent": 99,
         "resolution_date": "2027-01-23T00:00:00Z",
         "rule_quote": "Resolves Yes if Christopher Nolan is nominated for Best Director."
-      }
+      },
+      "set_id": null
     }
   ]
 }

@@ -402,6 +402,7 @@ function GroupingGradeSession() {
               kidSurface={kid}
               grader={activeGraderForLookSheet}
               existingGradesByItemKey={existingGradesByItemKey}
+              pairedMetricSets={deck?.paired_metric_sets ?? null}
               onGradeItem={submitLookSheetItemGrade}
               savingItemKey={savingItemKey}
             />
@@ -419,6 +420,7 @@ function GroupingGradeSession() {
           kidSurface={kid}
           grader={activeGraderForLookSheet}
           existingGradesByItemKey={existingGradesByItemKey}
+          pairedMetricSets={null}
           onGradeItem={submitLookSheetItemGrade}
           savingItemKey={savingItemKey}
         />
@@ -448,6 +450,8 @@ function GroupingGradeSession() {
   const single = item.best_single;
   const lookSheetCustomNode = renderVisualLookSheetDeckItem(item.item_key, {
     kidSurface: kid,
+    pairedMetricSet: item.paired_metric_set ?? null,
+    pairedMetricSets: deck.paired_metric_sets ?? null,
   });
   const roundupContract = buildRoundupContractForProposedCard(card);
   const canRenderRoundupCard =

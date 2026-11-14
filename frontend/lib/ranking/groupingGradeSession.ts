@@ -13,6 +13,7 @@ import {
   normalizeGraderName,
   type TallyEntry,
 } from "@/lib/ranking/gradeSession";
+import type { PairedMetricSet } from "@/lib/discover/visualForms";
 import type { FeedRoundupContract, FeedRoundupRow } from "@/lib/types";
 
 export const GROUPING_GRADES = ["amazing", "fine", "no"] as const;
@@ -125,6 +126,7 @@ export interface GroupingDeckItem {
   as_of_label?: string | null;
   proposed_card: ProposedCardPreview;
   best_single: BestSingleMember;
+  paired_metric_set?: PairedMetricSet | null;
 }
 
 export interface GroupingGradeDeck {
@@ -133,6 +135,8 @@ export interface GroupingGradeDeck {
   generated_at: string | null;
   model: string | null;
   question: string;
+  blend_authority?: string | null;
+  paired_metric_sets?: Record<string, PairedMetricSet> | null;
   items: GroupingDeckItem[];
 }
 

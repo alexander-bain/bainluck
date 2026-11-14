@@ -9,6 +9,11 @@ from app.routes.admin_ranking_eval import (
     VISUAL_FORMS_LOOK_SHEET_SLATE_ID,
     load_grouping_grade_deck,
 )
+from app.services.paired_metric_register import (
+    SERVER_BLEND_AUTHORITY,
+    compute_server_venue_blend,
+    load_paired_metric_register,
+)
 
 
 def test_paired_metric_register_is_valid_and_never_blends():
@@ -19,12 +24,18 @@ def test_paired_metric_register_is_valid_and_never_blends():
         / "paired_metric_register.json"
     )
     assert reg_path.exists()
-    data = json.loads(reg_path.read_text(encoding="utf-8"))
+    data = load_paired_metric_register(reg_path)
     assert data["rules"]["never_blend_propositions"] is True
     assert data["rules"]["blend_equivalent_venue_legs"] is True
+    assert (
+        data["rules"]["blend_authority"]
+        == "server:futures_source_merge.blend_with_verdict"
+    )
     assert data["rules"]["pairing_authority"] == "hand_kept_register"
     assert data["rules"]["rounding_helper"] == "renderedPercent"
     assert data["rules"]["kid_safe_gate_issue"] == 7461
+    assert data["rules"]["tmdb_logo_required"] is True
+    assert data["rules"]["tmdb_attribution_url"] == "https://www.themoviedb.org/"
 
     sets = data["sets"]
     for expected_set_id in (
@@ -48,15 +59,27 @@ def test_paired_metric_register_is_valid_and_never_blends():
     assert rocky["stage_1_kalshi_probability"] == 0.475
     assert rocky["stage_1_polymarket_probability"] == 0.5
     assert rocky["stage_1_probability"] == 0.4875
+    assert rocky["stage_1_blend_rule"] == "equal_weight_midpoint"
+    assert rocky["stage_1_divergence"] is None
+    assert rocky["stage_1_blend_authority"] == SERVER_BLEND_AUTHORITY
     assert rocky["stage_2_probability"] is None
+    assert rocky["stage_2_blend_rule"] is None
+    assert rocky["stage_2_divergence"] is None
+    assert rocky["stage_2_blend_authority"] is None
     assert rocky["missing_stage_2_reason"] == "Not listed to win"
 
     debut = next(e for e in bp["entries"] if e["subject"] == "The Debut")
     assert debut["detail"] == "Jesse Eisenberg · Topic Studios"
     assert debut["credit_source"] == "tmdb:movie:1391239"
+    # Stored single-venue number with no per-venue prices serves blend_rule=None
+    assert debut["stage_2_probability"] == 0.01
+    assert debut["stage_2_blend_rule"] is None
+    assert debut["stage_2_blend_authority"] == "single_venue"
 
     dir_set = sets["oscars-2027-best-director"]
     fielder = next(e for e in dir_set["entries"] if e["subject"] == "Nathan Fielder")
+    assert fielder["stage_1_blend_rule"] is None
+    assert fielder["stage_2_blend_rule"] is None
     assert fielder["art"]["tmdb_id"] == 1212667
     assert (
         fielder["art"]["url"]
@@ -98,6 +121,10 @@ def test_load_visual_forms_look_sheet_deck():
     for it in retired_items:
         assert it["retired_note"] == "graded as sheet 1 stood on Nov 10"
 
+    # Every item in visual-forms-look-sheet.json carries an explicit set_id field
+    for it in raw["items"]:
+        assert "set_id" in it
+
     # The deck dealt for this slate holds 15 items (positions 1..15), none with a v1 key
     deck = load_grouping_grade_deck(slate_id=VISUAL_FORMS_LOOK_SHEET_SLATE_ID)
     assert deck["slate_id"] == "visual-forms-look-sheet-2026-11"
@@ -120,6 +147,52 @@ def test_load_visual_forms_look_sheet_deck():
     assert items[6]["item_key"] == "form-1-v2-paired-bars-with-art-best-picture"
     assert items[10]["item_key"] == "form-5-v2-sports-playoffs-to-title-nhl"
     assert items[10]["category"] == "hockey"
+    assert items[10]["set_id"] == "nhl-2026-27-playoffs-and-cup"
     assert items[12]["item_key"] == "container-a-v2-alternating-form-magazine"
+    assert items[12]["set_id"] is None
     assert items[13]["item_key"] == "container-b-v2-shape-driven-contrast"
     assert items[14]["item_key"] == "container-c-v2-two-act-ballot"
+
+    # Server-hydrated paired_metric_sets are attached via explicit set_id (None when set_id is missing/None)
+    assert deck["blend_authority"] == SERVER_BLEND_AUTHORITY
+    assert "oscars-2027-best-picture" in deck["paired_metric_sets"]
+    assert items[0]["paired_metric_set"]["set_id"] == "oscars-2027-best-picture"
+    assert (
+        items[0]["paired_metric_set"]["blend_authority"] == SERVER_BLEND_AUTHORITY
+    )
+    assert items[10]["paired_metric_set"]["set_id"] == "nhl-2026-27-playoffs-and-cup"
+    assert items[12]["paired_metric_set"] is None
+
+
+def test_server_venue_blend_delegates_to_futures_source_merge_blend_with_verdict():
+    # Equal-weight pair below divergence gate -> midpoint via blend_with_verdict
+    assert compute_server_venue_blend(0.475, 0.500) == (
+        0.4875,
+        "equal_weight_midpoint",
+        None,
+        SERVER_BLEND_AUTHORITY,
+    )
+    assert compute_server_venue_blend(0.575, None) == (
+        0.575,
+        "weighted_median",
+        None,
+        "single_venue",
+    )
+    assert compute_server_venue_blend(None, 0.72) == (
+        0.72,
+        "weighted_median",
+        None,
+        "single_venue",
+    )
+    assert compute_server_venue_blend(None, None) == (None, None, None, None)
+
+    # Wide divergence (0.30 vs 0.80, spread = 0.50 > 0.40): divergence_gate fires first,
+    # returning primary_value (0.30) and the structured divergence evidence dict
+    blended, rule, div_evidence, auth = compute_server_venue_blend(0.30, 0.80)
+    assert blended == 0.3
+    assert rule == "divergence_gate"
+    assert auth == SERVER_BLEND_AUTHORITY
+    assert div_evidence is not None
+    assert div_evidence["primary_source"] == "kalshi"
+    assert div_evidence["primary_value"] == 0.3
+    assert div_evidence["spread"] == 0.5
