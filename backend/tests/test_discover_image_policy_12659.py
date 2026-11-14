@@ -42,7 +42,7 @@ def test_person_never_receives_stock_photo_and_uses_verified_portrait_or_monogra
 
 
 def test_song_never_wears_tmdb_film_backdrop_or_stock_photo():
-    # Grammy Song of the Year led by Ella Langley gets Cover Art Archive sleeve
+    # Grammy Song of the Year led by Ella Langley gets stable Cover Art Archive sleeve
     res_grammy = resolve_discover_market_image(
         name="69th Annual Grammy Awards: Song of the Year?",
         category="entertainment",
@@ -50,8 +50,10 @@ def test_song_never_wears_tmdb_film_backdrop_or_stock_photo():
         image_url="https://images.pexels.com/photos/8044086/pexels-photo-8044086.jpeg?h=350",
     )
     assert res_grammy["image_url"] is not None
-    assert "archive.org" in res_grammy["image_url"]
+    assert res_grammy["image_url"].startswith("https://coverartarchive.org/release/")
     assert res_grammy["image_presentation"] == "cover"
+    assert res_grammy["image_author"] == "Ella Langley / Columbia Records"
+    assert res_grammy["image_source_page"].startswith("https://musicbrainz.org/release/")
 
     # Unregistered music market wearing a TMDB movie backdrop drops it for song monogram
     res_gta_album = resolve_discover_market_image(
@@ -224,3 +226,44 @@ def test_publish_feed_item_and_response_sanitizer_enforce_image_truth():
     assert sanitized is not None
     assert sanitized["items"][0]["data"]["image_url"] == "https://a.espncdn.com/i/headshots/golf/players/full/11183.png"
     assert sanitized["items"][0]["data"]["image_presentation"] == "portrait"
+
+
+def test_every_commons_and_archive_entry_records_author_license_and_source_page_with_no_machine_nodes():
+    import json
+    from pathlib import Path
+    from urllib.parse import urlparse
+    from app.utils.discover_image_policy import normalize_archive_image_url
+
+    reg_path = Path(__file__).resolve().parents[1] / "data" / "discover" / "verified_discover_art.json"
+    doc = json.loads(reg_path.read_text(encoding="utf-8"))
+
+    for host in doc["allowed_hosts"]:
+        assert not host.endswith(".ca.archive.org"), f"Storage node host pinned in allowed_hosts: {host}"
+        assert not host.endswith(".us.archive.org"), f"Storage node host pinned in allowed_hosts: {host}"
+
+    commons_or_archive_count = 0
+    for entry in doc["entries"]:
+        host = (urlparse(entry["url"]).hostname or "").lower()
+        assert not (host.endswith(".archive.org") and host != "archive.org"), (
+            f"Storage node address pinned for {entry['entity_key']}: {entry['url']}"
+        )
+        if host in {"upload.wikimedia.org", "thumb.wikimedia.org", "coverartarchive.org", "archive.org"}:
+            commons_or_archive_count += 1
+            for field in ("author", "license", "source_page"):
+                val = str(entry.get(field) or "").strip()
+                assert val, f"{entry['entity_key']} missing required attribution field {field!r}"
+            assert str(entry["source_page"]).startswith("https://")
+
+    assert commons_or_archive_count >= 27
+
+    # DB-stored Internet Archive machine URLs rewrite cleanly to stable CAA / archive.org URLs
+    assert (
+        normalize_archive_image_url(
+            "https://dn721500.ca.archive.org/0/items/mbid-9cd8ebb9-935f-4963-8e36-568e9da9d4ff/mbid-9cd8ebb9-935f-4963-8e36-568e9da9d4ff-43318692472_thumb250.jpg"
+        )
+        == "https://coverartarchive.org/release/9cd8ebb9-935f-4963-8e36-568e9da9d4ff/43318692472-250.jpg"
+    )
+    assert (
+        normalize_archive_image_url("https://ia601402.us.archive.org/12/items/example-item/cover.jpg")
+        == "https://archive.org/download/example-item/cover.jpg"
+    )

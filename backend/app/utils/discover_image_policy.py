@@ -358,6 +358,35 @@ def _url_host_matches(url: str | None, *domains: str) -> bool:
     return any(host == d or host.endswith(f".{d}") for d in domains)
 
 
+_ARCHIVE_MBID_THUMB_RE = re.compile(
+    r"^/\d+/items/mbid-([0-9a-f-]+)/mbid-[0-9a-f-]+-(\d+)_thumb(250|500|1200)\.jpg$",
+    re.IGNORECASE,
+)
+_ARCHIVE_ITEMS_RE = re.compile(r"^/\d+/items/([^/]+/.+)$")
+
+
+def normalize_archive_image_url(url: str | None) -> str | None:
+    """Rewrite Internet Archive storage-node URLs (`dn7*.ca.archive.org`, `ia*.us.archive.org`)
+    to stable Cover Art Archive or `archive.org/download/...` addresses (#12659).
+    """
+    if not url:
+        return url
+    raw = url.strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    if host.endswith(".archive.org") and host != "archive.org":
+        mbid_match = _ARCHIVE_MBID_THUMB_RE.match(parsed.path or "")
+        if mbid_match:
+            mbid, imgid, size = mbid_match.group(1), mbid_match.group(2), mbid_match.group(3)
+            return f"https://coverartarchive.org/release/{mbid}/{imgid}-{size}.jpg"
+        item_match = _ARCHIVE_ITEMS_RE.match(parsed.path or "")
+        if item_match:
+            return f"https://archive.org/download/{item_match.group(1)}"
+    return raw
+
+
 def _load_verified_register() -> dict[str, dict[str, str]]:
     if _REGISTER_CACHE:
         return _REGISTER_CACHE[0]
@@ -386,6 +415,9 @@ def _load_verified_register() -> dict[str, dict[str, str]]:
             "kind": str(entry.get("kind") or "person"),
             "presentation": str(entry.get("presentation") or "photo"),
             "credit": str(entry.get("credit") or ""),
+            "author": str(entry.get("author") or ""),
+            "license": str(entry.get("license") or ""),
+            "source_page": str(entry.get("source_page") or ""),
             "verified_subject": verified,
         }
         for alias in entry.get("aliases") or []:
@@ -662,7 +694,7 @@ def resolve_discover_market_image(
 ) -> dict[str, Any]:
     """Return resolved `{image_url, image_width, image_height, image_presentation, image_monogram, image_credit}`."""
     subject = classify_market_visual_subject(name, category, top_outcomes)
-    existing = (image_url or "").strip() or None
+    existing = normalize_archive_image_url((image_url or "").strip() or None)
 
     # 1. Keep existing real non-stock art if valid for this subject
     if existing and not is_pexels_url(existing):
@@ -670,7 +702,13 @@ def resolve_discover_market_image(
             existing = None
         else:
             pres = _presentation_for_url(existing, "photo")
-            credit = "TMDB" if is_tmdb_url(existing) else None
+            credit = (
+                "TMDB"
+                if is_tmdb_url(existing)
+                else "Cover Art Archive"
+                if _url_host_matches(existing, "coverartarchive.org", "archive.org")
+                else None
+            )
             return {
                 "image_url": existing,
                 "image_width": image_width,
@@ -683,7 +721,7 @@ def resolve_discover_market_image(
     # 2. Check verified entity/landmark register
     verified = _lookup_verified_entry(name, subject, top_outcomes)
     if verified:
-        url = verified["url"]
+        url = normalize_archive_image_url(verified["url"]) or verified["url"]
         return {
             "image_url": url,
             "image_width": None,
@@ -693,6 +731,21 @@ def resolve_discover_market_image(
             **(
                 {"image_credit": verified["credit"]}
                 if verified.get("credit")
+                else {}
+            ),
+            **(
+                {"image_author": verified["author"]}
+                if verified.get("author")
+                else {}
+            ),
+            **(
+                {"image_license": verified["license"]}
+                if verified.get("license")
+                else {}
+            ),
+            **(
+                {"image_source_page": verified["source_page"]}
+                if verified.get("source_page")
                 else {}
             ),
         }
@@ -767,6 +820,9 @@ def dedup_discover_tournament_items(items: list[dict[str, Any]]) -> list[dict[st
     by_sig: dict[str, int] = {}
 
     for item in items:
+        if not isinstance(item, dict) or item.get("type") != "tournament":
+            kept.append(item)
+            continue
         data = item.get("data") or {}
         raw_name = str(data.get("name") or "").strip().lower()
         base_name = _normalize_golf_tournament_base_name(data.get("name"))
@@ -800,11 +856,11 @@ def dedup_discover_tournament_items(items: list[dict[str, Any]]) -> list[dict[st
             1 if data.get("venue") else 0,
             len(str(data.get("name") or "")),
         )
-        merged_blended = frozenset(prev.get("_blended_market_ids") or ()) | frozenset(
-            item.get("_blended_market_ids") or ()
-        )
         winner = dict(item if curr_richness > prev_richness else prev)
-        winner["_blended_market_ids"] = merged_blended
+        if "_blended_market_ids" in prev or "_blended_market_ids" in item:
+            winner["_blended_market_ids"] = frozenset(
+                prev.get("_blended_market_ids") or ()
+            ) | frozenset(item.get("_blended_market_ids") or ())
         winner["score"] = max(float(prev.get("score") or 0), float(item.get("score") or 0))
         kept[existing_idx] = winner
     return kept
@@ -899,6 +955,10 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
         bundle_img: str | None = None
         bundle_pres: str | None = None
         bundle_mono: dict[str, Any] | None = None
+        bundle_credit: str | None = None
+        bundle_author: str | None = None
+        bundle_license: str | None = None
+        bundle_source_page: str | None = None
         for sub in sub_items:
             if not isinstance(sub, dict):
                 continue
@@ -906,6 +966,10 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
             if sd.get("image_url"):
                 bundle_img = sd["image_url"]
                 bundle_pres = sd.get("image_presentation")
+                bundle_credit = sd.get("image_credit")
+                bundle_author = sd.get("image_author")
+                bundle_license = sd.get("image_license")
+                bundle_source_page = sd.get("image_source_page")
                 break
             if bundle_mono is None and sd.get("image_monogram"):
                 bundle_mono = sd["image_monogram"]
@@ -925,6 +989,7 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
             if team_logo:
                 bundle_img = team_logo
                 bundle_pres = "logo"
+                bundle_credit = "ESPN CDN official crest"
             else:
                 fallback_res = resolve_discover_market_image(
                     name=title_str,
@@ -935,6 +1000,10 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
                 bundle_img = fallback_res["image_url"]
                 bundle_pres = fallback_res["image_presentation"]
                 bundle_mono = bundle_mono or fallback_res["image_monogram"]
+                bundle_credit = fallback_res.get("image_credit")
+                bundle_author = fallback_res.get("image_author")
+                bundle_license = fallback_res.get("image_license")
+                bundle_source_page = fallback_res.get("image_source_page")
 
         new_data = {
             **raw_data,
@@ -942,6 +1011,10 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
             "image_url": bundle_img,
             "image_presentation": bundle_pres,
             "image_monogram": None if bundle_img else bundle_mono,
+            "image_credit": bundle_credit,
+            "image_author": bundle_author,
+            "image_license": bundle_license,
+            "image_source_page": bundle_source_page,
         }
         return {**item, "data": new_data}
 
@@ -967,7 +1040,8 @@ def sanitize_feed_response_images(payload: dict[str, Any] | None) -> dict[str, A
     items = payload.get("items")
     if not isinstance(items, list):
         return payload
+    deduped = dedup_discover_tournament_items(items)
     return {
         **payload,
-        "items": [sanitize_discover_feed_item(it) for it in items],
+        "items": [sanitize_discover_feed_item(it) for it in deduped],
     }

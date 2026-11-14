@@ -3,184 +3,268 @@
   "description": "Verified non-stock entity and landmark artwork for Discover cards (#12659). A person, team, film, or song never gets a stock photo.",
   "allowed_hosts": [
     "upload.wikimedia.org",
+    "thumb.wikimedia.org",
     "a.espncdn.com",
     "image.tmdb.org",
     "flagcdn.com",
-    "dn710909.ca.archive.org",
-    "dn721806.ca.archive.org",
-    "dn721500.ca.archive.org",
-    "dn710100.ca.archive.org",
-    "dn721709.ca.archive.org",
-    "ia601402.us.archive.org",
-    "dn721900.ca.archive.org",
-    "dn711103.ca.archive.org",
-    "dn711505.ca.archive.org",
-    "ia800800.us.archive.org",
-    "ia600804.us.archive.org",
-    "dn711309.ca.archive.org",
-    "dn711409.ca.archive.org",
-    "dn721804.ca.archive.org",
-    "dn710306.ca.archive.org",
-    "dn721008.ca.archive.org",
+    "coverartarchive.org",
+    "archive.org",
     "static.tvmaze.com"
   ],
   "entries": [
     {
       "entity_key": "jensen-huang",
-      "aliases": ["Jensen Huang"],
+      "aliases": [
+        "Jensen Huang"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Jensen Huang, Taiwanese-American businessman and NVIDIA CEO",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/Jensen_Huang_Stanford_2026-04-30_010_%28cropped%29.jpg/330px-Jensen_Huang_Stanford_2026-04-30_010_%28cropped%29.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c8/Jensen_Huang_Stanford_2026-04-30_010_%28cropped%29.jpg/500px-Jensen_Huang_Stanford_2026-04-30_010_%28cropped%29.jpg",
+      "credit": "Anderseidesvik (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Anderseidesvik",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jensen_Huang_Stanford_2026-04-30_010_(cropped).jpg"
     },
     {
       "entity_key": "jared-kushner",
-      "aliases": ["Jared Kushner"],
+      "aliases": [
+        "Jared Kushner"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Jared Kushner, American businessman",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Jared_Kushner_2025.jpg/330px-Jared_Kushner_2025.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://upload.wikimedia.org/wikipedia/commons/3/3e/Jared_Kushner_2025.jpg",
+      "credit": "The White House (Public domain, Wikimedia Commons)",
+      "author": "The White House",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jared_Kushner_2025.jpg"
     },
     {
       "entity_key": "donald-trump",
-      "aliases": ["Donald Trump", "Donald J. Trump", "President Trump", "House impeach Trump", "Trump be impeached"],
+      "aliases": [
+        "Donald Trump",
+        "Donald J. Trump",
+        "President Trump",
+        "House impeach Trump",
+        "Trump be impeached"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Donald Trump, President of the United States official portrait",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/16/Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg/330px-Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg",
-      "credit": "White House / Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/16/Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg/500px-Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg",
+      "credit": "Daniel Torok (Public domain, Wikimedia Commons)",
+      "author": "Daniel Torok",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Official_Presidential_Portrait_of_President_Donald_J._Trump_(2025).jpg"
     },
     {
       "entity_key": "howard-lutnick",
-      "aliases": ["Howard Lutnick"],
+      "aliases": [
+        "Howard Lutnick"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Howard Lutnick, U.S. Secretary of Commerce official portrait",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Howard_Lutnick_2025.jpg/330px-Howard_Lutnick_2025.jpg",
-      "credit": "U.S. Department of Commerce / Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/93/Howard_Lutnick_2025.jpg/500px-Howard_Lutnick_2025.jpg",
+      "credit": "Daniel Torok (Public domain, Wikimedia Commons)",
+      "author": "Daniel Torok",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Howard_Lutnick_2025.jpg"
     },
     {
       "entity_key": "pete-hegseth",
-      "aliases": ["Pete Hegseth"],
+      "aliases": [
+        "Pete Hegseth"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Pete Hegseth, U.S. Secretary of Defense official portrait",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/Pete_Hegseth_Official_Portrait.jpg/330px-Pete_Hegseth_Official_Portrait.jpg",
-      "credit": "U.S. Department of Defense / Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2f/Pete_Hegseth_Official_Portrait.jpg/500px-Pete_Hegseth_Official_Portrait.jpg",
+      "credit": "U.S. Department of Defense (Public domain, Wikimedia Commons)",
+      "author": "U.S. Department of Defense",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Pete_Hegseth_Official_Portrait.jpg"
     },
     {
       "entity_key": "justin-bieber",
-      "aliases": ["Justin Bieber"],
+      "aliases": [
+        "Justin Bieber"
+      ],
       "kind": "person",
       "presentation": "portrait",
-      "verified_subject": "Justin Bieber performing live in 2026",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6c/P20260719DT-1213_President_Donald_J._Trump_and_First_Lady_Melania_Trump_attend_the_FIFA_World_Cup_Final_%28cropped_2%29.jpg/330px-P20260719DT-1213_President_Donald_J._Trump_and_First_Lady_Melania_Trump_attend_the_FIFA_World_Cup_Final_%28cropped_2%29.jpg",
-      "credit": "White House / Public Domain"
+      "verified_subject": "Justin Bieber performing on stage with microphone",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/02/Justin_Bieber_Q_%26_A_%2826577668795%29.jpg/500px-Justin_Bieber_Q_%26_A_%2826577668795%29.jpg",
+      "credit": "Lou Stejskal (CC BY 2.0, Wikimedia Commons)",
+      "author": "Lou Stejskal",
+      "license": "CC BY 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Justin_Bieber_Q_%26_A_(26577668795).jpg"
     },
     {
       "entity_key": "robert-pattinson",
-      "aliases": ["Robert Pattinson"],
+      "aliases": [
+        "Robert Pattinson"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Robert Pattinson, English actor",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d6/Robert_Pattinson_Venice_Film_Festival_%28cropped%29.jpg/330px-Robert_Pattinson_Venice_Film_Festival_%28cropped%29.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Robert_Pattinson_Venice_Film_Festival_%28cropped%29.jpg/500px-Robert_Pattinson_Venice_Film_Festival_%28cropped%29.jpg",
+      "credit": "Colleen Sturtevant (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Colleen Sturtevant",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Robert_Pattinson_Venice_Film_Festival_(cropped).jpg"
     },
     {
       "entity_key": "marine-le-pen",
-      "aliases": ["Marine Le Pen"],
+      "aliases": [
+        "Marine Le Pen"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Marine Le Pen, French politician",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f0/Marine_Le_Pen_2025_%283x4_cropped%29.jpg/330px-Marine_Le_Pen_2025_%283x4_cropped%29.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/Marine_Le_Pen_2025_%283x4_cropped%29.jpg/500px-Marine_Le_Pen_2025_%283x4_cropped%29.jpg",
+      "credit": "Vox España (CC0, Wikimedia Commons)",
+      "author": "Vox España",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Marine_Le_Pen_2025_(3x4_cropped).jpg"
     },
     {
       "entity_key": "jon-ossoff",
-      "aliases": ["Jon Ossoff"],
+      "aliases": [
+        "Jon Ossoff"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Jon Ossoff, U.S. Senator official portrait",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/Jon_Ossoff_Senate_Portrait_2021.jpg/330px-Jon_Ossoff_Senate_Portrait_2021.jpg",
-      "credit": "U.S. Senate / Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/97/Jon_Ossoff_Senate_Portrait_2021.jpg/500px-Jon_Ossoff_Senate_Portrait_2021.jpg",
+      "credit": "U.S. Senate Photographic Studio (Public domain, Wikimedia Commons)",
+      "author": "U.S. Senate Photographic Studio",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jon_Ossoff_Senate_Portrait_2021.jpg"
     },
     {
       "entity_key": "nicolas-maduro",
-      "aliases": ["Nicolás Maduro", "Nicolas Maduro"],
+      "aliases": [
+        "Nicolás Maduro",
+        "Nicolas Maduro"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Nicolás Maduro official portrait",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/Nicol%C3%A1s_Maduro_official_portrait_%28cropped_2%29.png/330px-Nicol%C3%A1s_Maduro_official_portrait_%28cropped_2%29.png",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f4/Nicol%C3%A1s_Maduro_official_portrait_%28cropped_2%29.png/500px-Nicol%C3%A1s_Maduro_official_portrait_%28cropped_2%29.png",
+      "credit": "Presidency of Bolivarian Republic of Venezuela (Public domain, Wikimedia Commons)",
+      "author": "Presidency of Bolivarian Republic of Venezuela",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Nicol%C3%A1s_Maduro_official_portrait_(cropped_2).png"
     },
     {
       "entity_key": "adama-barrow",
-      "aliases": ["Adama Barrow"],
+      "aliases": [
+        "Adama Barrow"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Adama Barrow, President of the Gambia",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/71/Adama_Barrow_at_the_15th_OIC_Summit.jpg/330px-Adama_Barrow_at_the_15th_OIC_Summit.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/71/Adama_Barrow_at_the_15th_OIC_Summit.jpg/500px-Adama_Barrow_at_the_15th_OIC_Summit.jpg",
+      "credit": "Марсель Бадышкин (CC BY 4.0, Wikimedia Commons)",
+      "author": "Марсель Бадышкин",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Adama_Barrow_at_the_15th_OIC_Summit.jpg"
     },
     {
       "entity_key": "christopher-luxon",
-      "aliases": ["Christopher Luxon"],
+      "aliases": [
+        "Christopher Luxon"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Christopher Luxon, Prime Minister of New Zealand",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ed/LUXON%2C_Christopher_-_Botany_%28cropped%29.png/330px-LUXON%2C_Christopher_-_Botany_%28cropped%29.png",
-      "credit": "New Zealand Parliament / Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ed/LUXON%2C_Christopher_-_Botany_%28cropped%29.png/500px-LUXON%2C_Christopher_-_Botany_%28cropped%29.png",
+      "credit": "New Zealand National Party (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "New Zealand National Party",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:LUXON,_Christopher_-_Botany_(cropped).png"
     },
     {
       "entity_key": "miguel-diaz-canel",
-      "aliases": ["Miguel Díaz-Canel", "Miguel Diaz-Canel"],
+      "aliases": [
+        "Miguel Díaz-Canel",
+        "Miguel Diaz-Canel"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Miguel Díaz-Canel, President of Cuba",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/Miguel_Diaz-Canel_on_July_7%2C_2025_%28cropped%29.jpg/330px-Miguel_Diaz-Canel_on_July_7%2C_2025_%28cropped%29.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b7/Miguel_Diaz-Canel_on_July_7%2C_2025_%28cropped%29.jpg/500px-Miguel_Diaz-Canel_on_July_7%2C_2025_%28cropped%29.jpg",
+      "credit": "El divo de placetas (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "El divo de placetas",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Miguel_Diaz-Canel_on_July_7,_2025_(cropped).jpg"
     },
     {
       "entity_key": "vladimir-putin",
-      "aliases": ["Vladimir Putin", "Putin out as President of Russia"],
+      "aliases": [
+        "Vladimir Putin",
+        "Putin out as President of Russia"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Vladimir Putin, President of Russia",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/Vladimir_Putin_%282026_02_23%29_%28cropped%29.jpg/330px-Vladimir_Putin_%282026_02_23%29_%28cropped%29.jpg",
-      "credit": "Kremlin.ru / Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1c/Vladimir_Putin_%282026_02_23%29_%28cropped%29.jpg/500px-Vladimir_Putin_%282026_02_23%29_%28cropped%29.jpg",
+      "credit": "Kremlin.ru (CC BY 4.0, Wikimedia Commons)",
+      "author": "Kremlin.ru",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Vladimir_Putin_(2026_02_23)_(cropped).jpg"
     },
     {
       "entity_key": "rene-haas",
-      "aliases": ["Rene Haas"],
+      "aliases": [
+        "Rene Haas"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Rene Haas, CEO of Arm Holdings",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/08/Rene_Haas_at_SXSW_2025.jpg/330px-Rene_Haas_at_SXSW_2025.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/08/Rene_Haas_at_SXSW_2025.jpg/500px-Rene_Haas_at_SXSW_2025.jpg",
+      "credit": "Rosiestep (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Rosiestep",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Rene_Haas_at_SXSW_2025.jpg"
     },
     {
       "entity_key": "ruben-blades",
-      "aliases": ["Rubén Blades", "Ruben Blades", "Pais Portatil - Ruben Blades, Roberto Delgado & Orquesta", "Pais Portatil"],
+      "aliases": [
+        "Rubén Blades",
+        "Ruben Blades",
+        "Pais Portatil - Ruben Blades, Roberto Delgado & Orquesta",
+        "Pais Portatil"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Rubén Blades, Panamanian musician",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/Ruben_Blades_%2848403756251%29_%28cropped%29.jpg/330px-Ruben_Blades_%2848403756251%29_%28cropped%29.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/97/Ruben_Blades_%2848403756251%29_%28cropped%29.jpg/500px-Ruben_Blades_%2848403756251%29_%28cropped%29.jpg",
+      "credit": "Gage Skidmore from Peoria, AZ, United States of America (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Gage Skidmore from Peoria, AZ, United States of America",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Ruben_Blades_(48403756251)_(cropped).jpg"
     },
     {
       "entity_key": "don-toliver",
-      "aliases": ["Don Toliver"],
+      "aliases": [
+        "Don Toliver"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Don Toliver, American rapper and singer",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Don_Toliver_by_Sanchez_Productions.jpg/330px-Don_Toliver_by_Sanchez_Productions.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/Don_Toliver_by_Sanchez_Productions.jpg/500px-Don_Toliver_by_Sanchez_Productions.jpg",
+      "credit": "Sanchez Productions (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Sanchez Productions",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Don_Toliver_by_Sanchez_Productions.jpg"
     },
     {
       "entity_key": "trace-crowe",
-      "aliases": ["Trace Crowe"],
+      "aliases": [
+        "Trace Crowe"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Trace Crowe, professional golfer",
@@ -189,7 +273,10 @@
     },
     {
       "entity_key": "hye-jin-choi",
-      "aliases": ["Hye-Jin Choi", "Hye Jin Choi"],
+      "aliases": [
+        "Hye-Jin Choi",
+        "Hye Jin Choi"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Hye-Jin Choi, LPGA golfer",
@@ -198,7 +285,9 @@
     },
     {
       "entity_key": "nelly-korda",
-      "aliases": ["Nelly Korda"],
+      "aliases": [
+        "Nelly Korda"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Nelly Korda, LPGA golfer",
@@ -207,7 +296,9 @@
     },
     {
       "entity_key": "brian-harman",
-      "aliases": ["Brian Harman"],
+      "aliases": [
+        "Brian Harman"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Brian Harman, PGA golfer",
@@ -216,7 +307,9 @@
     },
     {
       "entity_key": "ciryl-gane",
-      "aliases": ["Ciryl Gane"],
+      "aliases": [
+        "Ciryl Gane"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Ciryl Gane, UFC Heavyweight contender",
@@ -225,7 +318,12 @@
     },
     {
       "entity_key": "jiri-prochazka",
-      "aliases": ["Jiří Procházka", "Jiri Prochazka", "Procházka vs. Stirling", "Prochazka vs. Stirling"],
+      "aliases": [
+        "Jiří Procházka",
+        "Jiri Prochazka",
+        "Procházka vs. Stirling",
+        "Prochazka vs. Stirling"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Jiří Procházka, UFC Light Heavyweight fighter",
@@ -234,7 +332,9 @@
     },
     {
       "entity_key": "islam-makhachev",
-      "aliases": ["Islam Makhachev"],
+      "aliases": [
+        "Islam Makhachev"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Islam Makhachev, UFC Lightweight fighter",
@@ -243,7 +343,9 @@
     },
     {
       "entity_key": "ilia-topuria",
-      "aliases": ["Ilia Topuria"],
+      "aliases": [
+        "Ilia Topuria"
+      ],
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Ilia Topuria, UFC Featherweight fighter",
@@ -252,61 +354,112 @@
     },
     {
       "entity_key": "choosin-texas-ella-langley",
-      "aliases": ["Choosin' Texas - Ella Langley", "Choosin' Texas", "Ella Langley"],
+      "aliases": [
+        "Choosin' Texas - Ella Langley",
+        "Choosin' Texas",
+        "Ella Langley"
+      ],
       "kind": "song",
       "presentation": "cover",
       "verified_subject": "Ella Langley — Choosin' Texas single artwork",
-      "url": "https://dn721500.ca.archive.org/0/items/mbid-9cd8ebb9-935f-4963-8e36-568e9da9d4ff/mbid-9cd8ebb9-935f-4963-8e36-568e9da9d4ff-43318692472_thumb250.jpg",
-      "credit": "Cover Art Archive (MusicBrainz)"
+      "url": "https://coverartarchive.org/release/9cd8ebb9-935f-4963-8e36-568e9da9d4ff/43318692472-250.jpg",
+      "credit": "Ella Langley / Columbia Records / Cover Art Archive",
+      "author": "Ella Langley / Columbia Records",
+      "license": "Album cover art via Cover Art Archive (MusicBrainz)",
+      "source_page": "https://musicbrainz.org/release/9cd8ebb9-935f-4963-8e36-568e9da9d4ff/cover-art"
     },
     {
       "entity_key": "man-i-need-olivia-dean",
-      "aliases": ["Man I Need - Olivia Dean", "Man I Need", "Olivia Dean", "The Art of Loving"],
+      "aliases": [
+        "Man I Need - Olivia Dean",
+        "Man I Need",
+        "Olivia Dean",
+        "The Art of Loving"
+      ],
       "kind": "song",
       "presentation": "cover",
       "verified_subject": "Olivia Dean — Man I Need / The Art of Loving cover artwork",
-      "url": "https://dn721806.ca.archive.org/0/items/mbid-02bc9a53-e810-4777-94aa-1b3372f95961/mbid-02bc9a53-e810-4777-94aa-1b3372f95961-46516165548_thumb250.jpg",
-      "credit": "Cover Art Archive (MusicBrainz)"
+      "url": "https://coverartarchive.org/release/02bc9a53-e810-4777-94aa-1b3372f95961/46516165548-250.jpg",
+      "credit": "Olivia Dean / Capitol Records / Cover Art Archive",
+      "author": "Olivia Dean / Capitol Records",
+      "license": "Album cover art via Cover Art Archive (MusicBrainz)",
+      "source_page": "https://musicbrainz.org/release/02bc9a53-e810-4777-94aa-1b3372f95961/cover-art"
     },
     {
       "entity_key": "lux-rosalia",
-      "aliases": ["Porcelana - Rosalia", "Porcelana", "La Perla - Rosalia & Yahritza Y Su Esencia", "Sauvignon Blanc (Rosalia)", "Rosalía", "Rosalia", "LUX"],
+      "aliases": [
+        "Porcelana - Rosalia",
+        "Porcelana",
+        "La Perla - Rosalia & Yahritza Y Su Esencia",
+        "Sauvignon Blanc (Rosalia)",
+        "Rosalía",
+        "Rosalia",
+        "LUX"
+      ],
       "kind": "song",
       "presentation": "cover",
       "verified_subject": "Rosalía — LUX release cover artwork",
-      "url": "https://dn721500.ca.archive.org/0/items/mbid-e5913eac-3d74-47af-a3f2-7aa6618f140a/mbid-e5913eac-3d74-47af-a3f2-7aa6618f140a-43405280844_thumb250.jpg",
-      "credit": "Cover Art Archive (MusicBrainz)"
+      "url": "https://coverartarchive.org/release/e5913eac-3d74-47af-a3f2-7aa6618f140a/43405280844-250.jpg",
+      "credit": "Rosalía / Columbia Records / Cover Art Archive",
+      "author": "Rosalía / Columbia Records",
+      "license": "Album cover art via Cover Art Archive (MusicBrainz)",
+      "source_page": "https://musicbrainz.org/release/e5913eac-3d74-47af-a3f2-7aa6618f140a/cover-art"
     },
     {
       "entity_key": "fate-of-ophelia-taylor-swift",
-      "aliases": ["The Fate of Ophelia - Taylor Swift", "The Fate of Ophelia", "The Life of a Showgirl", "Taylor Swift"],
+      "aliases": [
+        "The Fate of Ophelia - Taylor Swift",
+        "The Fate of Ophelia",
+        "The Life of a Showgirl",
+        "Taylor Swift"
+      ],
       "kind": "song",
       "presentation": "cover",
       "verified_subject": "Taylor Swift — The Life of a Showgirl / The Fate of Ophelia cover artwork",
-      "url": "https://dn710100.ca.archive.org/0/items/mbid-c6f36737-e382-4754-960d-fcc746e973a1/mbid-c6f36737-e382-4754-960d-fcc746e973a1-43009973169_thumb250.jpg",
-      "credit": "Cover Art Archive (MusicBrainz)"
+      "url": "https://coverartarchive.org/release/c6f36737-e382-4754-960d-fcc746e973a1/43009973169-250.jpg",
+      "credit": "Taylor Swift / Republic Records / Cover Art Archive",
+      "author": "Taylor Swift / Republic Records",
+      "license": "Album cover art via Cover Art Archive (MusicBrainz)",
+      "source_page": "https://musicbrainz.org/release/c6f36737-e382-4754-960d-fcc746e973a1/cover-art"
     },
     {
       "entity_key": "i-just-might-bruno-mars",
-      "aliases": ["I Just Might - Bruno Mars", "Risk It All - Bruno Mars", "Bruno Mars"],
+      "aliases": [
+        "I Just Might - Bruno Mars",
+        "Risk It All - Bruno Mars",
+        "Bruno Mars"
+      ],
       "kind": "song",
       "presentation": "cover",
       "verified_subject": "Bruno Mars release cover artwork",
-      "url": "https://dn711505.ca.archive.org/0/items/mbid-bcc7f74a-41c0-4fc9-aea7-9d0e801d6cb2/mbid-bcc7f74a-41c0-4fc9-aea7-9d0e801d6cb2-44459911326_thumb250.jpg",
-      "credit": "Cover Art Archive (MusicBrainz)"
+      "url": "https://coverartarchive.org/release/bcc7f74a-41c0-4fc9-aea7-9d0e801d6cb2/44459911326-250.jpg",
+      "credit": "Bruno Mars / Atlantic Records / Cover Art Archive",
+      "author": "Bruno Mars / Atlantic Records",
+      "license": "Album cover art via Cover Art Archive (MusicBrainz)",
+      "source_page": "https://musicbrainz.org/release/bcc7f74a-41c0-4fc9-aea7-9d0e801d6cb2/cover-art"
     },
     {
       "entity_key": "where-is-my-husband-raye",
-      "aliases": ["WHERE IS MY HUSBAND! - RAYE", "RAYE"],
+      "aliases": [
+        "WHERE IS MY HUSBAND! - RAYE",
+        "RAYE"
+      ],
       "kind": "song",
       "presentation": "cover",
       "verified_subject": "RAYE release cover artwork",
-      "url": "https://ia800800.us.archive.org/10/items/mbid-06348de9-a1be-4996-88fd-9bbceb6d779a/mbid-06348de9-a1be-4996-88fd-9bbceb6d779a-44454116000_thumb250.jpg",
-      "credit": "Cover Art Archive (MusicBrainz)"
+      "url": "https://coverartarchive.org/release/06348de9-a1be-4996-88fd-9bbceb6d779a/44454116000-250.jpg",
+      "credit": "RAYE / Human Re Sources / Cover Art Archive",
+      "author": "RAYE / Human Re Sources",
+      "license": "Album cover art via Cover Art Archive (MusicBrainz)",
+      "source_page": "https://musicbrainz.org/release/06348de9-a1be-4996-88fd-9bbceb6d779a/cover-art"
     },
     {
       "entity_key": "dune-part-three",
-      "aliases": ["Dune: Part Three", "Dune Part Three", "Dune 3"],
+      "aliases": [
+        "Dune: Part Three",
+        "Dune Part Three",
+        "Dune 3"
+      ],
       "kind": "film",
       "presentation": "photo",
       "verified_subject": "Dune: Part Three official poster",
@@ -315,7 +468,10 @@
     },
     {
       "entity_key": "the-hunger-games-sunrise-on-the-reaping",
-      "aliases": ["The Hunger Games: Sunrise on the Reaping", "Sunrise on the Reaping"],
+      "aliases": [
+        "The Hunger Games: Sunrise on the Reaping",
+        "Sunrise on the Reaping"
+      ],
       "kind": "film",
       "presentation": "photo",
       "verified_subject": "The Hunger Games: Sunrise on the Reaping official poster",
@@ -324,7 +480,9 @@
     },
     {
       "entity_key": "avengers-doomsday",
-      "aliases": ["Avengers: Doomsday"],
+      "aliases": [
+        "Avengers: Doomsday"
+      ],
       "kind": "film",
       "presentation": "photo",
       "verified_subject": "Avengers: Doomsday official poster",
@@ -333,7 +491,10 @@
     },
     {
       "entity_key": "ebenezer-a-christmas-carol",
-      "aliases": ["Ebenezer: A Christmas Carol", "Ebenezer"],
+      "aliases": [
+        "Ebenezer: A Christmas Carol",
+        "Ebenezer"
+      ],
       "kind": "film",
       "presentation": "photo",
       "verified_subject": "Ebenezer: A Christmas Carol official poster",
@@ -342,7 +503,9 @@
     },
     {
       "entity_key": "how-to-rob-a-bank",
-      "aliases": ["How to Rob a Bank"],
+      "aliases": [
+        "How to Rob a Bank"
+      ],
       "kind": "film",
       "presentation": "photo",
       "verified_subject": "How to Rob a Bank official poster",
@@ -351,39 +514,69 @@
     },
     {
       "entity_key": "bloomberg-lp",
-      "aliases": ["Bloomberg IPO", "Bloomberg L.P.", "Bloomberg"],
+      "aliases": [
+        "Bloomberg IPO",
+        "Bloomberg L.P.",
+        "Bloomberg"
+      ],
       "kind": "organization",
       "presentation": "photo",
       "verified_subject": "Bloomberg Tower headquarters in Manhattan, New York",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0b/Bloomberg_Tower_%2855273671683%29.jpg/330px-Bloomberg_Tower_%2855273671683%29.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0b/Bloomberg_Tower_%2855273671683%29.jpg/500px-Bloomberg_Tower_%2855273671683%29.jpg",
+      "credit": "ajay_suresh (CC BY 4.0, Wikimedia Commons)",
+      "author": "ajay_suresh",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Bloomberg_Tower_(55273671683).jpg"
     },
     {
       "entity_key": "federal-reserve-eccles-building",
-      "aliases": ["Fed Decision in December", "Fed Decision", "Federal Reserve", "Fed & Rates", "FOMC"],
+      "aliases": [
+        "Fed Decision in December",
+        "Fed Decision",
+        "Federal Reserve",
+        "Fed & Rates",
+        "FOMC"
+      ],
       "kind": "topic",
       "presentation": "photo",
       "verified_subject": "Marriner S. Eccles Federal Reserve Board Building in Washington, D.C.",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/89/Eccles_Building_%2826088200676%29.jpg/330px-Eccles_Building_%2826088200676%29.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/89/Eccles_Building_%2826088200676%29.jpg/500px-Eccles_Building_%2826088200676%29.jpg",
+      "credit": "Federalreserve (Public domain, Wikimedia Commons)",
+      "author": "Federalreserve",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Eccles_Building_(26088200676).jpg"
     },
     {
       "entity_key": "us-uap-observatory",
-      "aliases": ["Will the U.S. confirm that aliens exist", "confirm that aliens exist", "extraterrestrial life"],
+      "aliases": [
+        "Will the U.S. confirm that aliens exist",
+        "confirm that aliens exist",
+        "extraterrestrial life"
+      ],
       "kind": "topic",
       "presentation": "photo",
       "verified_subject": "Very Large Array radio astronomy observatory in New Mexico",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/USA.NM.VeryLargeArray.02.jpg/330px-USA.NM.VeryLargeArray.02.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/63/USA.NM.VeryLargeArray.02.jpg/500px-USA.NM.VeryLargeArray.02.jpg",
+      "credit": "user:Hajor (CC BY-SA 3.0, Wikimedia Commons)",
+      "author": "user:Hajor",
+      "license": "CC BY-SA 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:USA.NM.VeryLargeArray.02.jpg"
     },
     {
       "entity_key": "nj-transit-rail",
-      "aliases": ["NJ Transit rail on-time performance", "NJ Transit rail", "NJ Transit"],
+      "aliases": [
+        "NJ Transit rail on-time performance",
+        "NJ Transit rail",
+        "NJ Transit"
+      ],
       "kind": "topic",
       "presentation": "photo",
       "verified_subject": "NJ Transit commuter rail operations",
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/57/New_Jersey_Transit_rail_operations_sampler.jpg/330px-New_Jersey_Transit_rail_operations_sampler.jpg",
-      "credit": "Wikimedia Commons"
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/57/New_Jersey_Transit_rail_operations_sampler.jpg/500px-New_Jersey_Transit_rail_operations_sampler.jpg",
+      "credit": "AEMoreira042281 (CC BY-SA 3.0, Wikimedia Commons)",
+      "author": "AEMoreira042281",
+      "license": "CC BY-SA 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:New_Jersey_Transit_rail_operations_sampler.jpg"
     }
   ]
 }

@@ -271,6 +271,32 @@ function hostMatches(host: string, domain: string): boolean {
   return host === domain || host.endsWith(`.${domain}`);
 }
 
+const ARCHIVE_MBID_THUMB_RE =
+  /^\/\d+\/items\/mbid-([0-9a-f-]+)\/mbid-[0-9a-f-]+-(\d+)_thumb(250|500|1200)\.jpg$/i;
+const ARCHIVE_ITEMS_RE = /^\/\d+\/items\/([^/]+\/.+)$/;
+
+export function normalizeArchiveImageUrl(url: string | null | undefined): string {
+  const raw = (url ?? "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname.toLowerCase();
+    if (host.endsWith(".archive.org") && host !== "archive.org") {
+      const mbidMatch = ARCHIVE_MBID_THUMB_RE.exec(parsed.pathname);
+      if (mbidMatch) {
+        return `https://coverartarchive.org/release/${mbidMatch[1]}/${mbidMatch[2]}-${mbidMatch[3]}.jpg`;
+      }
+      const itemMatch = ARCHIVE_ITEMS_RE.exec(parsed.pathname);
+      if (itemMatch) {
+        return `https://archive.org/download/${itemMatch[1]}`;
+      }
+    }
+  } catch {
+    return raw;
+  }
+  return raw;
+}
+
 function inferPresentation(
   url: string,
   kind: DiscoverVisualKind,
@@ -336,7 +362,7 @@ export function resolveDiscoverFuturesVisual(data: {
     accentHex,
   };
 
-  let url = typeof data.image_url === "string" ? data.image_url.trim() : "";
+  let url = normalizeArchiveImageUrl(typeof data.image_url === "string" ? data.image_url : "");
   if (url) {
     if (isBlockedPexelsPhoto(url)) {
       url = "";
@@ -378,7 +404,7 @@ export function resolveDiscoverAuxiliaryVisual(
     bgHex,
     accentHex,
   };
-  let url = typeof data.image_url === "string" ? data.image_url.trim() : "";
+  let url = normalizeArchiveImageUrl(typeof data.image_url === "string" ? data.image_url : "");
   if (url && (isBlockedPexelsPhoto(url) || (fallbackKind !== "topic" && isPexelsStockUrl(url)))) {
     url = "";
   }
