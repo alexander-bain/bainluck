@@ -1,6 +1,6 @@
 "use client";
 
-import { discoverCrestBadge, teamShortNames } from "@/lib/teamShortName";
+import { discoverCrestBadge, isCollegeSport, teamShortNames } from "@/lib/teamShortName";
 import { useState } from "react";
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
@@ -74,6 +74,14 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // colour: they sit on the coloured header, not on the card, so the card
   // surface this module measures against is not their background.
   const barPair = probabilityBarPair(awayColor, homeColor, PROBABILITY_BAR_OPACITY);
+  const shortPair = teamShortNames(
+    { name: data.home_team },
+    { name: data.away_team },
+    data.sport,
+  );
+  const collegeMatchup = isCollegeSport(data.sport);
+  const homeLabel = collegeMatchup ? shortPair.home : data.home_team;
+  const awayLabel = collegeMatchup ? shortPair.away : data.away_team;
   const isLive = data.status === "live";
   const isDone = isFinishedStatus(data.status);
   // live/048 + CERT-786. This card had the worst fall-through of the three,
@@ -267,11 +275,11 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // the strip, still open in the text beside it, and a number the reader cannot
   // find on the card it came from (the rule `buildBundleShareText` states).
   const shareText = homePct != null && awayPct != null
-    ? `${data.home_team} ${homePct}%, ${data.away_team} ${awayPct}% on Bain Luck.`
-    : `Track ${data.away_team} vs ${data.home_team} on Bain Luck.`;
+    ? `${homeLabel} ${homePct}%, ${awayLabel} ${awayPct}% on Bain Luck.`
+    : `Track ${awayLabel} vs ${homeLabel} on Bain Luck.`;
 
   return (
-    <article className="relative rounded-[10px] overflow-hidden border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.away_team} vs ${data.home_team}${isLive ? " - Live" : isDone ? " - Final" : isSuspended ? ` - ${stoppageLabel ?? SUSPENDED_LABEL}` : ""}`} data-card-format="event">
+    <article className="relative rounded-[10px] overflow-hidden border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${awayLabel} vs ${homeLabel}${isLive ? " - Live" : isDone ? " - Final" : isSuspended ? ` - ${stoppageLabel ?? SUSPENDED_LABEL}` : ""}`} data-card-format="event">
       <DismissBtn onDismiss={onDismiss} />
       {trending && <TrendBadge />}
 
@@ -298,12 +306,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
         </div>
 
         <div className="flex flex-col items-center gap-2">
-          {data.away_team_data?.logo_small ? (awayCrestPlate ? <div data-crest-plate="away" className="w-16 h-16 rounded-full bg-white/90 shadow-lg grid place-items-center"><img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-12 h-12 object-contain" /></div> : <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" />) : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{discoverCrestBadge(data.away_team, data.sport)}</div>}
+          {data.away_team_data?.logo_small ? (awayCrestPlate ? <div data-crest-plate="away" className="w-16 h-16 rounded-full bg-white/90 shadow-lg grid place-items-center"><img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-12 h-12 object-contain" /></div> : <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" />) : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{discoverCrestBadge(data.away_team, data.sport, data.away_team_data?.abbreviation)}</div>}
           {heroScores && data.away_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>}
         </div>
         <span className="text-white/70 text-sm font-semibold">{timeLabel}</span>
         <div className="flex flex-col items-center gap-2">
-          {data.home_team_data?.logo_small ? (homeCrestPlate ? <div data-crest-plate="home" className="w-16 h-16 rounded-full bg-white/90 shadow-lg grid place-items-center"><img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-12 h-12 object-contain" /></div> : <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" />) : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{discoverCrestBadge(data.home_team, data.sport)}</div>}
+          {data.home_team_data?.logo_small ? (homeCrestPlate ? <div data-crest-plate="home" className="w-16 h-16 rounded-full bg-white/90 shadow-lg grid place-items-center"><img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-12 h-12 object-contain" /></div> : <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" />) : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{discoverCrestBadge(data.home_team, data.sport, data.home_team_data?.abbreviation)}</div>}
           {heroScores && data.home_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>}
         </div>
       </div>
@@ -317,8 +325,11 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               empty separator — no test, no ruling — and the card disagreed with
               itself in two places: the pre-match row's comment below calls this
               heading `Away @ Home`, and the article's own aria-label says "vs"
-              for a final. This is the restore, not a redesign. */}
-          <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.away_team} @ {data.home_team}</h3>
+              for a final. This is the restore, not a redesign.
+              Ruling 194-A: college teams print the school, not the mascot. */}
+          <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">
+            {awayLabel} @ {homeLabel}
+          </h3>
         </Link>
 
         {/* UX-P248 / Alex D-D — why this card is in front of THIS reader. Sits
@@ -368,7 +379,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                     className="text-text-muted text-[10px] truncate max-w-[10rem]"
                     data-testid="event-card-probability-owner"
                   >
-                    {data.home_team}
+                    {homeLabel}
                   </span>
                 )}
                 <span
@@ -435,14 +446,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                     sees two sides shortening to one word (Real Madrid v
                     Atlético Madrid), and with no code in hand that branch
                     returns both FULL names, which is the reading we want. */}
-                {(() => {
-                  const pair = teamShortNames(
-                    { name: data.home_team },
-                    { name: data.away_team },
-                    data.sport,
-                  );
-                  return data.home_score > data.away_score ? pair.home : pair.away;
-                })()} won
+                {data.home_score > data.away_score ? shortPair.home : shortPair.away} won
               </span>
             )}
             <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent-live/15 text-accent-live">Final</span>

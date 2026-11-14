@@ -47,6 +47,8 @@ export interface UnifiedGameCardData {
   away_color: string;
   home_logo?: string | null;
   away_logo?: string | null;
+  home_abbrev?: string | null;
+  away_abbrev?: string | null;
   home_prob: number | null;
   away_prob: number | null;
   draw_prob?: number | null;
@@ -121,10 +123,14 @@ function formatPregameKickoff(commenceTime: string, startIsTbd?: boolean | null)
 
 function CrestBadge({
   teamName,
+  sport,
+  abbreviation,
   logoUrl,
   color,
 }: {
   teamName: string;
+  sport?: string | null;
+  abbreviation?: string | null;
   logoUrl?: string | null;
   color: string;
 }) {
@@ -138,10 +144,16 @@ function CrestBadge({
       />
     );
   }
-  const initials = teamCrestInitials(teamName);
+  const initials = teamCrestInitials(teamName, sport, abbreviation);
   return (
     <span
-      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+      className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-bold leading-none text-white ${
+        initials.length >= 4
+          ? "text-[7px] tracking-tighter"
+          : initials.length === 3
+            ? "text-[9px] tracking-tight"
+            : "text-[10px]"
+      }`}
       style={{ backgroundColor: color }}
       aria-hidden="true"
     >
@@ -338,6 +350,8 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
       event.away_team_data?.logo_large ??
       event.away_image_url ??
       null,
+    home_abbrev: event.home_team_data?.abbreviation ?? null,
+    away_abbrev: event.away_team_data?.abbreviation ?? null,
     home_prob: rawHome,
     away_prob: rawAway,
     pregame_home_pct: openHome,
@@ -403,6 +417,8 @@ export function buildUnifiedCardFromFeed(
       data.away_team_data?.logo_large ??
       data.away_image_url ??
       null,
+    home_abbrev: data.home_team_data?.abbreviation ?? null,
+    away_abbrev: data.away_team_data?.abbreviation ?? null,
     home_prob: rawHome,
     away_prob: rawAway,
     served_home_pct: probWithheld ? null : data.current_odds?.home_rendered_percent,
@@ -584,6 +600,8 @@ export default function EventCard183A({
           <div className="flex min-w-0 items-center gap-2.5">
             <CrestBadge
               teamName={card.away_team}
+              sport={card.sport}
+              abbreviation={card.away_abbrev}
               logoUrl={card.away_logo}
               color={card.away_color}
             />
@@ -661,6 +679,8 @@ export default function EventCard183A({
           <div className="flex min-w-0 items-center gap-2.5">
             <CrestBadge
               teamName={card.home_team}
+              sport={card.sport}
+              abbreviation={card.home_abbrev}
               logoUrl={card.home_logo}
               color={card.home_color}
             />
