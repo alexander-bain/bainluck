@@ -40,6 +40,11 @@ test("the complete served collection has distinct control, balance, race and gov
   expect(html).not.toContain("Probability unavailable");
   expect(html).not.toMatch(/>[^<]*\d+\.\d+%/);
   expect(JSON.stringify(input)).toBe(before);
+  expect(html).toContain('data-collection-sections="true" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3');
+  expect(html).not.toContain("max-w-4xl");
+  expect([...html.matchAll(/<h2[^>]*>(.*?)<\/h2>/g)].map(match => match[1])).toEqual([
+    "Congress control", "Balance of power", "The closest Senate races", "Governors",
+  ]);
 });
 
 // These are public provider facts captured before implementation: the -D/-R
