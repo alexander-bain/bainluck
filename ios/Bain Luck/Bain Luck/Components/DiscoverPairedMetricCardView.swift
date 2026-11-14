@@ -149,32 +149,48 @@ struct PairedArtThumbnailView: View {
 /// paired with the required attribution sentence whenever any contender uses TMDB art.
 struct PairedTMDBAttributionFooter: View {
     let metricSet: PairedMetricSet
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .caption2) private var attributionSize: CGFloat = 11
 
     init(set: PairedMetricSet) {
         self.metricSet = set
     }
 
+    private var attributionBadge: some View {
+        Link(destination: PairedMetricPresentation.tmdbAttributionURL) {
+            Image("TMDBLogoShort")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 85, height: 11)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(DS.trackBg)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("The Movie Database (TMDB)")
+    }
+
+    private var attributionText: some View {
+        Text(PairedMetricPresentation.tmdbAttributionLine)
+            .font(.system(size: min(attributionSize, 17)))
+            .foregroundStyle(DS.textSecondaryReadable)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
     var body: some View {
         if metricSet.usesTMDBArt {
-            HStack(alignment: .center, spacing: 6) {
-                Link(destination: PairedMetricPresentation.tmdbAttributionURL) {
-                    Image("TMDBLogoShort")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 85, height: 11)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(DS.trackBg)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    attributionBadge
+                    attributionText
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("The Movie Database (TMDB)")
-
-                Text(PairedMetricPresentation.tmdbAttributionLine)
-                    .font(.system(size: 11))
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(alignment: .center, spacing: 6) {
+                    attributionBadge
+                    attributionText
+                }
             }
         }
     }
@@ -250,6 +266,13 @@ struct DiscoverPairedMetricCardView: View {
     @State private var expanded: Bool
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    @ScaledMetric(relativeTo: .caption2) private var badgeSize: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption2) private var kickerSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .caption) private var detailSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .subheadline) private var subjectSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .callout) private var podiumValueSize: CGFloat = 16
+    @ScaledMetric(relativeTo: .headline) private var titleSize: CGFloat = 17
+
     init(
         set: PairedMetricSet,
         form: PairedVisualFormId? = nil,
@@ -264,6 +287,13 @@ struct DiscoverPairedMetricCardView: View {
         self.onOpenMarket = onOpenMarket
         self._expanded = State(initialValue: initialExpanded)
     }
+
+    private var effectiveBadgeSize: CGFloat { min(badgeSize, 16) }
+    private var effectiveKickerSize: CGFloat { min(kickerSize, 17) }
+    private var effectiveDetailSize: CGFloat { min(detailSize, 20) }
+    private var effectiveSubjectSize: CGFloat { min(subjectSize, 24) }
+    private var effectivePodiumValueSize: CGFloat { min(podiumValueSize, 26) }
+    private var effectiveTitleSize: CGFloat { min(titleSize, 28) }
 
     private var effectiveForm: PairedVisualFormId {
         if form == .podiumAndTiers && metricSet.entries.count < 3 {
@@ -306,23 +336,42 @@ struct DiscoverPairedMetricCardView: View {
     // MARK: - Shared Header & Footer
 
     private var headerBlock: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(metricSet.kicker.uppercased())
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(0.4)
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                Text("\(metricSet.stage1Label) · \(metricSet.stage2Label)".uppercased())
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(0.4)
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .multilineTextAlignment(.trailing)
+        let kickerText = metricSet.kicker.uppercased()
+        let stageHeaderText = "\(metricSet.stage1Label) · \(metricSet.stage2Label)".uppercased()
+        return VStack(alignment: .leading, spacing: 0) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(kickerText)
+                        .font(.system(size: effectiveKickerSize, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 8)
+                    Text(stageHeaderText)
+                        .font(.system(size: effectiveKickerSize, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(kickerText)
+                        .font(.system(size: effectiveKickerSize, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(stageHeaderText)
+                        .font(.system(size: effectiveKickerSize, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Text(metricSet.title)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: effectiveTitleSize, weight: .semibold))
                 .lineSpacing(2)
                 .foregroundStyle(DS.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -330,7 +379,7 @@ struct DiscoverPairedMetricCardView: View {
 
             if !cleanSubtitle.isEmpty {
                 Text(cleanSubtitle)
-                    .font(.system(size: 12, weight: .regular))
+                    .font(.system(size: effectiveDetailSize, weight: .regular))
                     .foregroundStyle(DS.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 2)
@@ -351,7 +400,7 @@ struct DiscoverPairedMetricCardView: View {
 
                     if showsOrderingFooter {
                         Text("Sorted by \(metricSet.stage2Label.lowercased()) %, ties broken by \(metricSet.stage1Label.lowercased()) %")
-                            .font(.system(size: 11, weight: .regular))
+                            .font(.system(size: effectiveKickerSize, weight: .regular))
                             .foregroundStyle(DS.textSecondaryReadable)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -371,31 +420,51 @@ struct DiscoverPairedMetricCardView: View {
 
     private var stageLabelWidth: CGFloat {
         let maxChars = max(metricSet.stage1Label.count, metricSet.stage2Label.count)
-        return maxChars > 10 ? 86 : 76
+        let base: CGFloat = maxChars > 10 ? 86 : 76
+        let scale = max(1.0, min(effectiveDetailSize / 12.0, 1.3))
+        return (base * scale).rounded()
+    }
+
+    private var stage1LegendItem: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(DS.textSecondary)
+                .frame(width: 10, height: 10)
+            Text(anyStage1Settled ? "\(metricSet.stage1Label) (✓ / ✗ settled)" : "\(metricSet.stage1Label) %")
+                .font(.system(size: effectiveDetailSize, weight: .medium))
+                .foregroundStyle(DS.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var stage2LegendItem: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(DS.emerald)
+                .frame(width: 10, height: 10)
+            Text("\(metricSet.stage2Label) %")
+                .font(.system(size: effectiveDetailSize, weight: .medium))
+                .foregroundStyle(DS.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var pairedBarsBody: some View {
         let visible = expanded ? sortedEntries : Array(sortedEntries.prefix(5))
         return VStack(alignment: .leading, spacing: 0) {
             // Legend strip
-            HStack(spacing: 16) {
-                HStack(spacing: 6) {
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(DS.textSecondary)
-                        .frame(width: 10, height: 10)
-                    Text(anyStage1Settled ? "\(metricSet.stage1Label) (✓ / ✗ settled)" : "\(metricSet.stage1Label) %")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(DS.textPrimary)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) {
+                    stage1LegendItem.fixedSize(horizontal: true, vertical: false)
+                    stage2LegendItem.fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 0)
                 }
-                HStack(spacing: 6) {
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(DS.emerald)
-                        .frame(width: 10, height: 10)
-                    Text("\(metricSet.stage2Label) %")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(DS.textPrimary)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    stage1LegendItem
+                    stage2LegendItem
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.top, 12)
             .padding(.bottom, 8)
@@ -425,12 +494,12 @@ struct DiscoverPairedMetricCardView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(copy.primary)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: effectiveDetailSize, weight: .semibold))
                             .foregroundStyle(DS.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let notice = copy.unpricedNotice {
                             Text(notice)
-                                .font(.system(size: 12, weight: .regular))
+                                .font(.system(size: effectiveDetailSize, weight: .regular))
                                 .foregroundStyle(DS.textSecondaryReadable)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -454,30 +523,61 @@ struct DiscoverPairedMetricCardView: View {
     private func dualBarRow(entry: PairedSubjectEntry) -> some View {
         let s1 = PairedMetricPresentation.formatStage1Display(entry: entry, set: metricSet)
         let s2 = PairedMetricPresentation.formatStage2Display(entry: entry, set: metricSet)
-        let rowContent = HStack(alignment: .center, spacing: 12) {
-            PairedArtThumbnailView(entry: entry, size: .md, preloadedImages: preloadedImages)
+        let rowContent: some View = Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 10) {
+                        PairedArtThumbnailView(entry: entry, size: .md, preloadedImages: preloadedImages)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.subject)
+                                .font(.system(size: effectiveSubjectSize, weight: .semibold))
+                                .foregroundStyle(DS.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text(entry.subject)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(DS.textPrimary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                            if !entry.detail.isEmpty {
+                                Text(entry.detail)
+                                    .font(.system(size: effectiveDetailSize, weight: .regular))
+                                    .foregroundStyle(DS.textSecondaryReadable)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
-                if !entry.detail.isEmpty {
-                    Text(entry.detail)
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 8) {
+                        stage1BarLine(s1: s1)
+                        stage2BarLine(s2: s2)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    PairedArtThumbnailView(entry: entry, size: .md, preloadedImages: preloadedImages)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    stage1BarLine(s1: s1)
-                    stage2BarLine(s2: s2)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(entry.subject)
+                            .font(.system(size: effectiveSubjectSize, weight: .semibold))
+                            .foregroundStyle(DS.textPrimary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if !entry.detail.isEmpty {
+                            Text(entry.detail)
+                                .font(.system(size: effectiveDetailSize, weight: .regular))
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            stage1BarLine(s1: s1)
+                            stage2BarLine(s2: s2)
+                        }
+                        .padding(.top, 6)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.top, 6)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
 
         if let onOpenMarket {
@@ -497,134 +597,271 @@ struct DiscoverPairedMetricCardView: View {
 
     @ViewBuilder
     private func stage1BarLine(s1: FormattedPairedStageDisplay) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text(metricSet.stage1Label)
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(DS.textSecondary)
-                .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : stageLabelWidth, alignment: .leading)
-                .lineLimit(1)
-
-            switch s1.kind {
-            case .percent:
-                let pct = CGFloat(s1.percent ?? 1)
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(DS.trackBg)
-                        Capsule()
-                            .fill(DS.textSecondary)
-                            .frame(width: max(geo.size.width * 0.04, geo.size.width * min(pct / 100.0, 1.0)))
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(metricSet.stage1Label)
+                        .font(.system(size: effectiveDetailSize, weight: .regular))
+                        .foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 6)
+                    switch s1.kind {
+                    case .percent:
+                        PairedQuietNumberBox(
+                            fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
+                            isPrimaryStage: false,
+                            trackColor: DS.trackBg,
+                            fixedWidth: 48,
+                            contentAlignment: .trailing,
+                            horizontalPadding: 6,
+                            verticalPadding: 2.5
+                        ) {
+                            Text(s1.label)
+                                .font(.system(size: effectiveDetailSize, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(DS.textPrimary)
+                                .lineLimit(1)
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+                    case .tick:
+                        Text(s1.label)
+                            .font(.system(size: effectiveDetailSize, weight: .semibold))
+                            .foregroundStyle(DS.greenReadable)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(DS.trackBg)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .fixedSize(horizontal: true, vertical: false)
+                    case .cross:
+                        HStack(spacing: 4) {
+                            Text(s1.label)
+                                .font(.system(size: effectiveDetailSize, weight: .medium))
+                                .strikethrough()
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(DS.trackBg)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                            if let sublabel = s1.sublabel {
+                                Text(sublabel)
+                                    .font(.system(size: effectiveDetailSize, weight: .regular).monospacedDigit())
+                                    .foregroundStyle(DS.textSecondaryReadable)
+                            }
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+                    case .missing:
+                        Text(s1.label)
+                            .font(.system(size: effectiveDetailSize, weight: .medium))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(DS.trackBg)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                 }
-                .frame(height: 8)
+                if s1.kind == .percent {
+                    let pct = CGFloat(s1.percent ?? 1)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(DS.trackBg)
+                            Capsule()
+                                .fill(DS.textSecondary)
+                                .frame(width: max(geo.size.width * 0.04, geo.size.width * min(pct / 100.0, 1.0)))
+                        }
+                    }
+                    .frame(height: 9)
+                }
+            }
+        } else {
+            HStack(alignment: .center, spacing: 8) {
+                Text(metricSet.stage1Label)
+                    .font(.system(size: effectiveDetailSize, weight: .regular))
+                    .foregroundStyle(DS.textSecondary)
+                    .frame(width: stageLabelWidth, alignment: .leading)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
 
-                PairedQuietNumberBox(
-                    fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
-                    isPrimaryStage: false,
-                    trackColor: DS.trackBg,
-                    fixedWidth: 48,
-                    contentAlignment: .trailing,
-                    horizontalPadding: 6,
-                    verticalPadding: 2.5
-                ) {
+                switch s1.kind {
+                case .percent:
+                    let pct = CGFloat(s1.percent ?? 1)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(DS.trackBg)
+                            Capsule()
+                                .fill(DS.textSecondary)
+                                .frame(width: max(geo.size.width * 0.04, geo.size.width * min(pct / 100.0, 1.0)))
+                        }
+                    }
+                    .frame(height: 8)
+
+                    PairedQuietNumberBox(
+                        fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
+                        isPrimaryStage: false,
+                        trackColor: DS.trackBg,
+                        fixedWidth: 48,
+                        contentAlignment: .trailing,
+                        horizontalPadding: 6,
+                        verticalPadding: 2.5
+                    ) {
+                        Text(s1.label)
+                            .font(.system(size: effectiveDetailSize, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(DS.textPrimary)
+                            .lineLimit(1)
+                    }
+
+                case .tick:
                     Text(s1.label)
-                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(DS.textPrimary)
-                        .lineLimit(1)
-                }
+                        .font(.system(size: effectiveDetailSize, weight: .semibold))
+                        .foregroundStyle(DS.greenReadable)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(DS.trackBg)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    Spacer(minLength: 0)
 
-            case .tick:
-                Text(s1.label)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(DS.greenReadable)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(DS.trackBg)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                Spacer(minLength: 0)
-
-            case .cross:
-                Text(s1.label)
-                    .font(.system(size: 12, weight: .medium))
-                    .strikethrough()
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(DS.trackBg)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                Spacer(minLength: 4)
-                if let sublabel = s1.sublabel {
-                    Text(sublabel)
-                        .font(.system(size: 12, weight: .regular).monospacedDigit())
+                case .cross:
+                    Text(s1.label)
+                        .font(.system(size: effectiveDetailSize, weight: .medium))
+                        .strikethrough()
                         .foregroundStyle(DS.textSecondaryReadable)
-                }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(DS.trackBg)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    Spacer(minLength: 4)
+                    if let sublabel = s1.sublabel {
+                        Text(sublabel)
+                            .font(.system(size: effectiveDetailSize, weight: .regular).monospacedDigit())
+                            .foregroundStyle(DS.textSecondaryReadable)
+                    }
 
-            case .missing:
-                Text(s1.label)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(DS.trackBg)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
-                Spacer(minLength: 0)
+                case .missing:
+                    Text(s1.label)
+                        .font(.system(size: effectiveDetailSize, weight: .medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(DS.trackBg)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+                    Spacer(minLength: 0)
+                }
             }
         }
     }
 
     @ViewBuilder
     private func stage2BarLine(s2: FormattedPairedStageDisplay) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text(metricSet.stage2Label)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.textPrimary)
-                .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : stageLabelWidth, alignment: .leading)
-                .lineLimit(1)
-
-            switch s2.kind {
-            case .percent:
-                let pct = CGFloat(s2.percent ?? 1)
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(DS.trackBg)
-                        Capsule()
-                            .fill(DS.emerald)
-                            .frame(width: max(geo.size.width * 0.04, geo.size.width * min(pct / 100.0, 1.0)))
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(metricSet.stage2Label)
+                        .font(.system(size: effectiveDetailSize, weight: .medium))
+                        .foregroundStyle(DS.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 6)
+                    switch s2.kind {
+                    case .percent:
+                        PairedQuietNumberBox(
+                            fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
+                            isPrimaryStage: true,
+                            trackColor: DS.trackBg,
+                            fixedWidth: 48,
+                            contentAlignment: .trailing,
+                            horizontalPadding: 6,
+                            verticalPadding: 2.5
+                        ) {
+                            Text(s2.label)
+                                .font(.system(size: effectiveSubjectSize, weight: .bold).monospacedDigit())
+                                .foregroundStyle(DS.textPrimary)
+                                .lineLimit(1)
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+                    case .cross:
+                        Text(s2.label)
+                            .font(.system(size: effectiveDetailSize, weight: .medium))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .fixedSize(horizontal: true, vertical: false)
+                    case .missing, .tick:
+                        Text(s2.label)
+                            .font(.system(size: effectiveDetailSize, weight: .medium))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(DS.trackBg)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                 }
-                .frame(height: 10)
-
-                PairedQuietNumberBox(
-                    fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
-                    isPrimaryStage: true,
-                    trackColor: DS.trackBg,
-                    fixedWidth: 48,
-                    contentAlignment: .trailing,
-                    horizontalPadding: 6,
-                    verticalPadding: 2.5
-                ) {
-                    Text(s2.label)
-                        .font(.system(size: 13, weight: .bold).monospacedDigit())
-                        .foregroundStyle(DS.textPrimary)
-                        .lineLimit(1)
+                if s2.kind == .percent {
+                    let pct = CGFloat(s2.percent ?? 1)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(DS.trackBg)
+                            Capsule()
+                                .fill(DS.emerald)
+                                .frame(width: max(geo.size.width * 0.04, geo.size.width * min(pct / 100.0, 1.0)))
+                        }
+                    }
+                    .frame(height: 11)
                 }
+            }
+        } else {
+            HStack(alignment: .center, spacing: 8) {
+                Text(metricSet.stage2Label)
+                    .font(.system(size: effectiveDetailSize, weight: .medium))
+                    .foregroundStyle(DS.textPrimary)
+                    .frame(width: stageLabelWidth, alignment: .leading)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
 
-            case .cross:
-                Text(s2.label)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.textSecondaryReadable)
-                Spacer(minLength: 0)
+                switch s2.kind {
+                case .percent:
+                    let pct = CGFloat(s2.percent ?? 1)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(DS.trackBg)
+                            Capsule()
+                                .fill(DS.emerald)
+                                .frame(width: max(geo.size.width * 0.04, geo.size.width * min(pct / 100.0, 1.0)))
+                        }
+                    }
+                    .frame(height: 10)
 
-            case .missing, .tick:
-                Text(s2.label)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(DS.trackBg)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
-                Spacer(minLength: 0)
+                    PairedQuietNumberBox(
+                        fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
+                        isPrimaryStage: true,
+                        trackColor: DS.trackBg,
+                        fixedWidth: 48,
+                        contentAlignment: .trailing,
+                        horizontalPadding: 6,
+                        verticalPadding: 2.5
+                    ) {
+                        Text(s2.label)
+                            .font(.system(size: effectiveSubjectSize, weight: .bold).monospacedDigit())
+                            .foregroundStyle(DS.textPrimary)
+                            .lineLimit(1)
+                    }
+
+                case .cross:
+                    Text(s2.label)
+                        .font(.system(size: effectiveDetailSize, weight: .medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                    Spacer(minLength: 0)
+
+                case .missing, .tick:
+                    Text(s2.label)
+                        .font(.system(size: effectiveDetailSize, weight: .medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(DS.trackBg)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+                    Spacer(minLength: 0)
+                }
             }
         }
     }
@@ -675,15 +912,15 @@ struct DiscoverPairedMetricCardView: View {
 
         let cardBody = VStack(alignment: .center, spacing: 0) {
             Text(spot.badge)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: effectiveBadgeSize, weight: .bold))
                 .tracking(0.2)
                 .foregroundStyle(spot.elevated ? Color.white : DS.textSecondaryReadable)
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 4)
                 .padding(.vertical, 2)
                 .background(spot.elevated ? DS.emeraldDark : DS.cardBg)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.58)
 
             PairedArtThumbnailView(
                 entry: spot.entry,
@@ -693,7 +930,7 @@ struct DiscoverPairedMetricCardView: View {
             .padding(.top, 8)
 
             Text(spot.entry.subject)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: effectiveDetailSize, weight: .bold))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(DS.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -711,22 +948,37 @@ struct DiscoverPairedMetricCardView: View {
                         horizontalPadding: 6,
                         verticalPadding: 3.5
                     ) {
-                        HStack(alignment: .firstTextBaseline, spacing: 2) {
-                            Text(s2.label)
-                                .font(.system(size: 15, weight: .bold).monospacedDigit())
-                                .foregroundStyle(DS.textPrimary)
-                            Text(s2Short)
-                                .font(.system(size: 10.5, weight: .medium))
-                                .foregroundStyle(DS.textSecondaryReadable)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                Text(s2.label)
+                                    .font(.system(size: effectivePodiumValueSize, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(DS.textPrimary)
+                                Text(s2Short)
+                                    .font(.system(size: effectiveKickerSize, weight: .medium))
+                                    .foregroundStyle(DS.textSecondaryReadable)
+                            }
+                            .fixedSize(horizontal: true, vertical: false)
+
+                            VStack(spacing: 1) {
+                                Text(s2.label)
+                                    .font(.system(size: effectivePodiumValueSize, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(DS.textPrimary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                                Text(s2Short)
+                                    .font(.system(size: effectiveKickerSize, weight: .medium))
+                                    .foregroundStyle(DS.textSecondaryReadable)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                            }
                         }
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
                     }
                 } else {
                     Text(s2.label)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: effectiveKickerSize, weight: .medium))
                         .multilineTextAlignment(.center)
                         .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.top, 6)
@@ -744,31 +996,45 @@ struct DiscoverPairedMetricCardView: View {
                         horizontalPadding: 6,
                         verticalPadding: 3
                     ) {
-                        Text("\(s1.label) \(s1Short)")
-                            .font(.system(size: 11.5, weight: .medium).monospacedDigit())
-                            .foregroundStyle(DS.textPrimary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
+                        ViewThatFits(in: .horizontal) {
+                            Text("\(s1.label) \(s1Short)")
+                                .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
+                                .foregroundStyle(DS.textPrimary)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+
+                            VStack(spacing: 0) {
+                                Text(s1.label)
+                                    .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
+                                    .foregroundStyle(DS.textPrimary)
+                                    .lineLimit(1)
+                                Text(s1Short)
+                                    .font(.system(size: effectiveKickerSize, weight: .regular))
+                                    .foregroundStyle(DS.textSecondaryReadable)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                            }
+                        }
                     }
                 case .tick:
                     Text(s1.label)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: effectiveKickerSize, weight: .semibold))
                         .foregroundStyle(DS.greenReadable)
                 case .cross:
                     Text(s1.label)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: effectiveKickerSize, weight: .medium))
                         .strikethrough()
                         .foregroundStyle(DS.textSecondaryReadable)
                 case .missing:
                     Text(s1.label)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: effectiveKickerSize, weight: .medium))
                         .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
             .multilineTextAlignment(.center)
             .padding(.top, 4)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 8)
         .padding(.top, spot.elevated ? 12 : 10)
         .padding(.bottom, spot.elevated ? 14 : 10)
         .frame(maxWidth: .infinity)
@@ -799,18 +1065,35 @@ struct DiscoverPairedMetricCardView: View {
     private func tierContainer(entries: [PairedSubjectEntry], isLockTier: Bool) -> some View {
         let header = PairedMetricPresentation.tierHeaderCopy(for: metricSet, isLockTier: isLockTier)
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(header.left)
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(0.4)
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 6)
-                Text(header.right)
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(0.4)
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .fixedSize()
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(header.left)
+                        .font(.system(size: effectiveKickerSize, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 6)
+                    Text(header.right)
+                        .font(.system(size: effectiveKickerSize, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(header.left)
+                        .font(.system(size: effectiveKickerSize, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(header.right)
+                        .font(.system(size: effectiveKickerSize, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             VStack(spacing: 6) {
@@ -827,59 +1110,10 @@ struct DiscoverPairedMetricCardView: View {
     }
 
     @ViewBuilder
-    private func tierRow(entry: PairedSubjectEntry) -> some View {
-        let s1 = PairedMetricPresentation.formatStage1Display(entry: entry, set: metricSet)
-        let s2 = PairedMetricPresentation.formatStage2Display(entry: entry, set: metricSet)
-        let rowBody = HStack(alignment: .center, spacing: 8) {
-            PairedArtThumbnailView(entry: entry, size: .xs, preloadedImages: preloadedImages)
-
-            Text(entry.subject)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(DS.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if s2.kind == .percent {
-                HStack(spacing: 5) {
-                    if s1.kind == .percent, let frac1 = PairedMetricPresentation.quietFillFraction(for: s1) {
-                        PairedQuietNumberBox(
-                            fraction: frac1,
-                            isPrimaryStage: false,
-                            trackColor: DS.trackBg,
-                            fixedWidth: 46,
-                            contentAlignment: .trailing,
-                            horizontalPadding: 6,
-                            verticalPadding: 2.5
-                        ) {
-                            Text(s1.label)
-                                .font(.system(size: 12, weight: .medium).monospacedDigit())
-                                .foregroundStyle(DS.textPrimary)
-                                .lineLimit(1)
-                        }
-                    } else {
-                        Text(s1.label)
-                            .font(.system(size: 11, weight: .medium).monospacedDigit())
-                            .foregroundStyle(DS.textSecondaryReadable)
-                    }
-
-                    PairedQuietNumberBox(
-                        fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
-                        isPrimaryStage: true,
-                        trackColor: DS.trackBg,
-                        fixedWidth: 46,
-                        contentAlignment: .trailing,
-                        horizontalPadding: 6,
-                        verticalPadding: 2.5
-                    ) {
-                        Text(s2.label)
-                            .font(.system(size: 12, weight: .bold).monospacedDigit())
-                            .foregroundStyle(DS.textPrimary)
-                            .lineLimit(1)
-                    }
-                }
-                .fixedSize()
-            } else if s1.kind == .percent, let frac1 = PairedMetricPresentation.quietFillFraction(for: s1) {
-                HStack(spacing: 6) {
+    private func tierRowValues(s1: FormattedPairedStageDisplay, s2: FormattedPairedStageDisplay) -> some View {
+        if s2.kind == .percent {
+            HStack(spacing: 5) {
+                if s1.kind == .percent, let frac1 = PairedMetricPresentation.quietFillFraction(for: s1) {
                     PairedQuietNumberBox(
                         fraction: frac1,
                         isPrimaryStage: false,
@@ -890,20 +1124,95 @@ struct DiscoverPairedMetricCardView: View {
                         verticalPadding: 2.5
                     ) {
                         Text(s1.label)
-                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
                             .foregroundStyle(DS.textPrimary)
                             .lineLimit(1)
                     }
-                    Text(s2.label)
-                        .font(.system(size: 11, weight: .medium))
+                } else {
+                    Text(s1.label)
+                        .font(.system(size: effectiveKickerSize, weight: .medium).monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
-                        .multilineTextAlignment(.trailing)
                 }
-            } else {
-                Text("\(s1.label) · \(s2.label)")
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+
+                PairedQuietNumberBox(
+                    fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
+                    isPrimaryStage: true,
+                    trackColor: DS.trackBg,
+                    fixedWidth: 46,
+                    contentAlignment: .trailing,
+                    horizontalPadding: 6,
+                    verticalPadding: 2.5
+                ) {
+                    Text(s2.label)
+                        .font(.system(size: effectiveDetailSize, weight: .bold).monospacedDigit())
+                        .foregroundStyle(DS.textPrimary)
+                        .lineLimit(1)
+                }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        } else if s1.kind == .percent, let frac1 = PairedMetricPresentation.quietFillFraction(for: s1) {
+            HStack(spacing: 6) {
+                PairedQuietNumberBox(
+                    fraction: frac1,
+                    isPrimaryStage: false,
+                    trackColor: DS.trackBg,
+                    fixedWidth: 46,
+                    contentAlignment: .trailing,
+                    horizontalPadding: 6,
+                    verticalPadding: 2.5
+                ) {
+                    Text(s1.label)
+                        .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
+                        .foregroundStyle(DS.textPrimary)
+                        .lineLimit(1)
+                }
+                Text(s2.label)
+                    .font(.system(size: effectiveKickerSize, weight: .medium))
                     .foregroundStyle(DS.textSecondaryReadable)
                     .multilineTextAlignment(.trailing)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        } else {
+            Text("\(s1.label) · \(s2.label)")
+                .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
+                .foregroundStyle(DS.textSecondaryReadable)
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private func tierRow(entry: PairedSubjectEntry) -> some View {
+        let s1 = PairedMetricPresentation.formatStage1Display(entry: entry, set: metricSet)
+        let s2 = PairedMetricPresentation.formatStage2Display(entry: entry, set: metricSet)
+        let rowBody: some View = Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .center, spacing: 8) {
+                        PairedArtThumbnailView(entry: entry, size: .xs, preloadedImages: preloadedImages)
+                        Text(entry.subject)
+                            .font(.system(size: effectiveDetailSize, weight: .semibold))
+                            .foregroundStyle(DS.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    HStack {
+                        Spacer(minLength: 0)
+                        tierRowValues(s1: s1, s2: s2)
+                    }
+                }
+            } else {
+                HStack(alignment: .center, spacing: 8) {
+                    PairedArtThumbnailView(entry: entry, size: .xs, preloadedImages: preloadedImages)
+
+                    Text(entry.subject)
+                        .font(.system(size: effectiveDetailSize, weight: .semibold))
+                        .foregroundStyle(DS.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    tierRowValues(s1: s1, s2: s2)
+                }
             }
         }
         .padding(.horizontal, 8)

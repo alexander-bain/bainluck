@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -37,12 +37,14 @@ from app.utils.roundup_containers import (
 
 __all__ = [
     "CANDIDATE_HEADLINERS_AND_HOSTS_PATH",
+    "CANDIDATE_HEADLINERS_AND_HOSTS_ROWS_PATH",
     "PRODUCER_KIND_HEADLINERS_AND_HOSTS",
     "StageContender",
     "build_headliners_and_hosts_grading_candidate",
     "build_headliners_and_hosts_producer",
     "compose_headliners_card_and_container",
     "load_candidate_definition",
+    "load_candidate_eval_rows",
     "produce_headliners_and_hosts",
     "select_headliners_and_hosts",
 ]
@@ -55,6 +57,14 @@ CANDIDATE_HEADLINERS_AND_HOSTS_PATH = (
     / "discover"
     / "candidates"
     / "roundup-headliners-and-hosts.json"
+)
+
+CANDIDATE_HEADLINERS_AND_HOSTS_ROWS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "discover"
+    / "candidates"
+    / "roundup-headliners-and-hosts-rows.json"
 )
 
 _FORBIDDEN_COPY_RE = re.compile(
@@ -114,6 +124,7 @@ class StageContender:
     artist: str
     probability: float
     primary_market_id: int
+    outcome_id: Optional[int] = None
 
 
 def _assert_clean_copy(text: str) -> str:
@@ -148,14 +159,59 @@ def _match_stage_family(
     return None
 
 
+def _is_trading_stage_market(
+    market: Mapping[str, Any],
+    *,
+    now: Optional[datetime] = None,
+    max_quote_age_hours: float = 36.0,
+    min_volume_24h: float = 100.0,
+) -> bool:
+    if str(market.get("status") or "open").strip().lower() != "open":
+        return False
+    if market.get("is_trading") is False:
+        return False
+    quiet_days = market.get("quiet_days")
+    if quiet_days is not None:
+        try:
+            if float(quiet_days) > 7.0:
+                return False
+        except (TypeError, ValueError):
+            return False
+    vol_24h = market.get("volume_24h")
+    if vol_24h is None:
+        vol_24h = market.get("volume24hr")
+    if vol_24h is not None:
+        try:
+            if float(vol_24h) < float(min_volume_24h):
+                return False
+        except (TypeError, ValueError):
+            return False
+    if now is not None:
+        raw_ts = market.get("price_observed_at") or market.get("updated_at")
+        if isinstance(raw_ts, str) and raw_ts.strip():
+            try:
+                parsed = datetime.fromisoformat(raw_ts.strip().replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                ref = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+                if (ref - parsed).total_seconds() / 3600.0 > float(max_quote_age_hours):
+                    return False
+            except ValueError:
+                return False
+    return True
+
+
 def select_headliners_and_hosts(
     markets: Sequence[Mapping[str, Any]],
     *,
+    now: Optional[datetime] = None,
     family: str = "big_game_halftime_performers",
     min_contenders: int = 3,
     max_card_rows: int = 5,
     min_prob: float = 0.05,
     max_prob: float = 0.995,
+    max_quote_age_hours: float = 36.0,
+    min_volume_24h: float = 100.0,
 ) -> RoundupMembers | RoundupRefusal:
     matched_markets: list[Mapping[str, Any]] = []
     card_title = "Headliners & hosts"
@@ -167,17 +223,24 @@ def select_headliners_and_hosts(
         matched_title = _match_stage_family(m, family)
         if matched_title is not None:
             card_title = matched_title
-            matched_markets.append(m)
+            if _is_trading_stage_market(
+                m,
+                now=now,
+                max_quote_age_hours=max_quote_age_hours,
+                min_volume_24h=min_volume_24h,
+            ):
+                matched_markets.append(m)
 
     if not matched_markets:
         return RoundupRefusal([("no_matching_stage_family", family)])
 
-    by_source: dict[str, tuple[Mapping[str, Any], dict[str, float], bool]] = {}
+    by_source: dict[str, tuple[Mapping[str, Any], dict[str, float], dict[str, int], bool]] = {}
     for m in matched_markets:
         src = str(m.get("source") or "").strip().lower()
         if not src:
             continue
         artists: dict[str, float] = {}
+        outcome_ids: dict[str, int] = {}
         raw_sum = 0.0
         for out in m.get("outcomes") or ():
             if not isinstance(out, Mapping):
@@ -197,28 +260,32 @@ def select_headliners_and_hosts(
             raw_sum += p
             if art not in artists or p > artists[art]:
                 artists[art] = p
+                raw_oid = out.get("id")
+                if isinstance(raw_oid, int) and not isinstance(raw_oid, bool) and raw_oid > 0:
+                    outcome_ids[art] = raw_oid
         if not artists:
             continue
         multi_appear = (m.get("mutually_exclusive") is False) or (raw_sum > 1.15)
         if src not in by_source or len(artists) > len(by_source[src][1]):
-            by_source[src] = (m, artists, multi_appear)
+            by_source[src] = (m, artists, outcome_ids, multi_appear)
 
     if not by_source:
         return RoundupRefusal([("no_priced_contenders", family)])
 
     sources_sorted = sorted(by_source.keys())
-    multi_appearance = any(info[2] for info in by_source.values())
+    multi_appearance = any(info[3] for info in by_source.values())
     primary_src = "kalshi" if "kalshi" in by_source else sources_sorted[0]
     primary_market = dict(by_source[primary_src][0])
     primary_id = int(primary_market["id"])
     contrib_ids = [int(by_source[s][0]["id"]) for s in sources_sorted]
 
     all_artists: set[str] = set()
-    for _, art_map, _ in by_source.values():
+    for _, art_map, _, _ in by_source.values():
         all_artists.update(art_map.keys())
 
     contenders: list[StageContender] = []
     divergence_reasons: list[tuple[Any, ...]] = []
+    full_field_sum = 0.0
     for artist in sorted(all_artists):
         rows_for_blend = [
             {"source": s, "probability": by_source[s][1][artist]}
@@ -231,17 +298,36 @@ def select_headliners_and_hosts(
                 divergence_reasons.append(("contender_divergence_gate", family, artist))
                 continue
             prob = float(val)
+            full_field_sum += prob
+            oid = by_source[primary_src][2].get(artist)
+            if oid is None:
+                for s in sources_sorted:
+                    if artist in by_source[s][2]:
+                        oid = by_source[s][2][artist]
+                        break
             if min_prob <= prob <= max_prob:
                 contenders.append(
-                    StageContender(artist=artist, probability=prob, primary_market_id=primary_id)
+                    StageContender(
+                        artist=artist,
+                        probability=prob,
+                        primary_market_id=primary_id,
+                        outcome_id=oid,
+                    )
                 )
         else:
             src_only = rows_for_blend[0]["source"]
             prob = float(rows_for_blend[0]["probability"])
+            full_field_sum += prob
             mkt_id = int(by_source[src_only][0]["id"])
+            oid = by_source[src_only][2].get(artist)
             if min_prob <= prob <= max_prob:
                 contenders.append(
-                    StageContender(artist=artist, probability=prob, primary_market_id=mkt_id)
+                    StageContender(
+                        artist=artist,
+                        probability=prob,
+                        primary_market_id=mkt_id,
+                        outcome_id=oid,
+                    )
                 )
 
     # Never silently drop a 40+ pt cross-source disagreement without an explicit refusal reason
@@ -255,19 +341,29 @@ def select_headliners_and_hosts(
     contenders.sort(key=lambda c: (-c.probability, c.artist))
     shown = contenders[: max(2, int(max_card_rows))]
     top = shown[0]
+    field_sum_pct = int(round(full_field_sum * 100))
     if multi_appearance:
+        dynamic_title = _assert_clean_copy(
+            f"{card_title} — {len(contenders)} contenders sum to {field_sum_pct}%"
+        )
         context_line = _assert_clean_copy(
-            f"Artists priced at {int(round(min_prob * 100))}% or higher to appear on the "
-            f"{card_title} — multiple guests can share the stage, so chances are independent "
-            f"and do not add to 100%."
+            f"{len(contenders)} artists priced at {int(round(min_prob * 100))}% or higher to appear on the "
+            f"{card_title} sum to {field_sum_pct}% combined — multiple guests can share the stage, "
+            f"so chances are independent and do not add to 100%."
         )
         footer = _assert_clean_copy(
             "Independent appearance chances · multiple performers can settle Yes"
         )
     else:
+        runner = shown[1]
+        gap_pts = int(round((top.probability - runner.probability) * 100))
+        dynamic_title = _assert_clean_copy(
+            f"{card_title} — {top.artist} leads at {int(round(top.probability * 100))}%"
+        )
         context_line = _assert_clean_copy(
-            f"Leading contenders for {card_title}, ordered by current chance — "
-            f"{top.artist} leads at {int(round(top.probability * 100))}% and one choice settles Yes."
+            f"Leading contenders for {card_title} — {top.artist} leads at "
+            f"{int(round(top.probability * 100))}% ({gap_pts} pts ahead of {runner.artist}), "
+            f"and one choice settles Yes."
         )
         # Displayed rows are filtered by min_prob and capped at max_card_rows, so never
         # claim the displayed subset itself sums to 100%.
@@ -275,18 +371,23 @@ def select_headliners_and_hosts(
             "Single-winner market · mutually exclusive contenders"
         )
 
-    rows = [
-        {
-            "market_id": c.primary_market_id,
-            "label": _assert_clean_copy(c.artist),
-            "artist": c.artist,
-            "probability": round(c.probability, 4),
-            "rendered_percent": int(round(c.probability * 100)),
-            "independent": multi_appearance,
-            "destination": market_destination(c.primary_market_id),
-        }
-        for c in shown
-    ]
+    rows = []
+    used_oids: set[int] = set()
+    for idx, c in enumerate(shown, start=1):
+        oid = c.outcome_id if c.outcome_id is not None and c.outcome_id not in used_oids else (c.primary_market_id * 100 + idx)
+        used_oids.add(oid)
+        rows.append(
+            {
+                "market_id": c.primary_market_id,
+                "outcome_id": oid,
+                "label": _assert_clean_copy(c.artist),
+                "artist": c.artist,
+                "probability": round(c.probability, 4),
+                "rendered_percent": int(round(c.probability * 100)),
+                "independent": multi_appearance,
+                "destination": market_destination(c.primary_market_id),
+            }
+        )
     members = [
         {"id": int(by_source[s][0]["id"]), "type": "futures", "card": dict(by_source[s][0])}
         for s in sources_sorted
@@ -296,7 +397,7 @@ def select_headliners_and_hosts(
         rows=rows,
         footer=footer,
         count_line=f"{len(contenders)} contenders",
-        title=_assert_clean_copy(card_title),
+        title=dynamic_title,
         kicker="CULTURE · STAGE & CASTING",
         revision_ids=contrib_ids,
         sections=(
@@ -315,18 +416,77 @@ async def produce_headliners_and_hosts(
     rule: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
-    del now
     cfg_rule = dict(rule or {})
+    fam = str(cfg_rule.get("family") or "big_game_halftime_performers")
+    min_c = int(cfg_rule.get("min_contenders") or 3)
+    max_r = int(cfg_rule.get("max_card_rows") or 5)
+    min_p = float(cfg_rule.get("min_prob") or 0.05)
+    max_p = float(cfg_rule.get("max_prob") or 0.995)
+    max_q = float(cfg_rule.get("max_quote_age_hours") or 36.0)
+    min_v = float(cfg_rule.get("min_volume_24h") or 100.0)
     if isinstance(db, (list, tuple)):
         return select_headliners_and_hosts(
             db,
-            family=str(cfg_rule.get("family") or "big_game_halftime_performers"),
-            min_contenders=int(cfg_rule.get("min_contenders") or 3),
-            max_card_rows=int(cfg_rule.get("max_card_rows") or 5),
-            min_prob=float(cfg_rule.get("min_prob") or 0.05),
-            max_prob=float(cfg_rule.get("max_prob") or 0.995),
+            now=now,
+            family=fam,
+            min_contenders=min_c,
+            max_card_rows=max_r,
+            min_prob=min_p,
+            max_prob=max_p,
+            max_quote_age_hours=max_q,
+            min_volume_24h=min_v,
         )
-    return RoundupRefusal([("unsupported_session", type(db).__name__)])
+    from sqlalchemy import or_, select
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import selectinload
+
+    if not isinstance(db, AsyncSession):
+        return RoundupRefusal([("unsupported_session", type(db).__name__)])
+
+    from app.models.models import FuturesMarket
+
+    effective_now = now or datetime.now(timezone.utc)
+    stmt = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            or_(
+                FuturesMarket.name.ilike("%halftime%"),
+                FuturesMarket.name.ilike("%host%"),
+                FuturesMarket.name.ilike("%headlin%"),
+            ),
+        )
+    )
+    res = await db.execute(stmt)
+    orm_rows = res.scalars().all()
+    serialized = [
+        {
+            "id": int(m.id),
+            "name": m.name,
+            "status": m.status,
+            "source": m.source,
+            "mutually_exclusive": m.mutually_exclusive,
+            "volume_24h": m.volume_24h,
+            "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+            "outcomes": [
+                {"id": int(o.id), "name": o.name, "probability": o.current_probability}
+                for o in (m.outcomes or [])
+            ],
+        }
+        for m in orm_rows
+    ]
+    return select_headliners_and_hosts(
+        serialized,
+        now=effective_now,
+        family=fam,
+        min_contenders=min_c,
+        max_card_rows=max_r,
+        min_prob=min_p,
+        max_prob=max_p,
+        max_quote_age_hours=max_q,
+        min_volume_24h=min_v,
+    )
 
 
 def load_candidate_definition(
@@ -335,6 +495,12 @@ def load_candidate_definition(
     defn = json.loads(path.read_text(encoding="utf-8"))
     validate_roundup_definition(defn)
     return defn
+
+
+def load_candidate_eval_rows(
+    path: Path = CANDIDATE_HEADLINERS_AND_HOSTS_ROWS_PATH,
+) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_headliners_and_hosts_producer(
@@ -362,6 +528,7 @@ def build_headliners_and_hosts_producer(
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "CULTURE · STAGE & CASTING"),
         score=float(resolved.get("score") or 91.0),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -376,6 +543,7 @@ def compose_headliners_card_and_container(
     context_line = _assert_clean_copy(str(members.sections[0].get("context_line") or ""))
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
     container["context_line"] = context_line
     return feed_item, container
 

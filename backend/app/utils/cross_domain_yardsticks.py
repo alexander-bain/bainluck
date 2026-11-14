@@ -318,12 +318,17 @@ def select_cross_domain_yardsticks(
     domains_str = ", ".join(c.domain_badge for c in best_band[:-1]) + f", and {best_band[-1].domain_badge}"
     half_pts = round(band_half_width * 100, 1)
     half_txt = str(int(half_pts)) if half_pts.is_integer() else f"{half_pts:.1f}"
+    spread_pts = round(
+        (max(c.probability for c in best_band) - min(c.probability for c in best_band)) * 100,
+        1,
+    )
+    spread_txt = str(int(spread_pts)) if spread_pts.is_integer() else f"{spread_pts:.1f}"
 
     card_title = f"Around a {best_center}% chance right now"
     context_line = _assert_clean_copy(
-        f"Actively trading events from {domains_str} that sit within ±{half_txt} points "
-        f"of {best_center}% right now — one per domain so you can compare unrelated "
-        f"chances side by side."
+        f"{len(best_band)} unrelated events across {domains_str} trading within ±{half_txt} points "
+        f"of {best_center}% ({spread_txt}-pt spread across all {len(best_band)} boards) — "
+        f"pairing familiar game odds with unfamiliar forecasts."
     )
     footer = _assert_clean_copy(
         f"Independent markets across {len(best_band)} domains · matched within ±{half_txt} points"
@@ -332,6 +337,7 @@ def select_cross_domain_yardsticks(
     rows = [
         {
             "id": c.item_id,
+            **({"event_id": c.item_id} if c.member_type == "event" else {"market_id": c.item_id}),
             "member_type": c.member_type,
             "domain": c.domain_badge,
             "label": _assert_clean_copy(f"{c.domain_badge}: {c.label}"),
@@ -380,20 +386,101 @@ async def produce_cross_domain_yardsticks(
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
     cfg = dict(rule or {})
+    band_hw = float(cfg.get("band_half_width") or 0.015)
+    min_d = int(cfg.get("min_domains") or 3)
+    max_r = int(cfg.get("max_card_rows") or 4)
+    min_p = float(cfg.get("min_prob") or 0.22)
+    max_p = float(cfg.get("max_prob") or 0.78)
+    max_q = float(cfg.get("max_quote_age_hours") or 24.0)
+    max_t = float(cfg.get("max_trade_age_days") or 7.0)
+    min_v = float(cfg.get("min_volume_24h") or 100.0)
     if isinstance(db, (list, tuple)):
         return select_cross_domain_yardsticks(
             db,
             now=now,
-            band_half_width=float(cfg.get("band_half_width") or 0.015),
-            min_domains=int(cfg.get("min_domains") or 3),
-            max_card_rows=int(cfg.get("max_card_rows") or 4),
-            min_prob=float(cfg.get("min_prob") or 0.22),
-            max_prob=float(cfg.get("max_prob") or 0.78),
-            max_quote_age_hours=float(cfg.get("max_quote_age_hours") or 24.0),
-            max_trade_age_days=float(cfg.get("max_trade_age_days") or 7.0),
-            min_volume_24h=float(cfg.get("min_volume_24h") or 100.0),
+            band_half_width=band_hw,
+            min_domains=min_d,
+            max_card_rows=max_r,
+            min_prob=min_p,
+            max_prob=max_p,
+            max_quote_age_hours=max_q,
+            max_trade_age_days=max_t,
+            min_volume_24h=min_v,
         )
-    return RoundupRefusal([("unsupported_session", type(db).__name__)])
+    from datetime import timedelta, timezone
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import selectinload
+
+    if not isinstance(db, AsyncSession):
+        return RoundupRefusal([("unsupported_session", type(db).__name__)])
+
+    from app.models.models import Event, FuturesMarket
+    from app.routes.containers import _hydrate_event_cards
+
+    effective_now = now or datetime.now(timezone.utc)
+    pool_items: list[dict[str, Any]] = []
+
+    ev_res = await db.execute(
+        select(Event.id)
+        .where(
+            Event.status.in_(("scheduled", "upcoming")),
+            Event.commence_time >= effective_now,
+            Event.commence_time <= effective_now + timedelta(days=5),
+        )
+        .order_by(Event.commence_time.asc())
+        .limit(40)
+    )
+    ev_ids = [int(r[0]) for r in ev_res.all()]
+    cards_by_id, _ = await _hydrate_event_cards(db, ev_ids) if ev_ids else ({}, set())
+    for eid in ev_ids:
+        if eid in cards_by_id:
+            card_d = dict(cards_by_id[eid])
+            card_d["item_type"] = "event"
+            pool_items.append(card_d)
+
+    mkt_res = await db.execute(
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            FuturesMarket.sport_id.is_(None),
+            FuturesMarket.volume_24h >= min_v,
+        )
+        .order_by(FuturesMarket.volume_24h.desc().nullslast())
+        .limit(60)
+    )
+    for m in mkt_res.scalars().all():
+        pool_items.append(
+            {
+                "id": int(m.id),
+                "item_type": "market",
+                "source": m.source,
+                "category": m.category,
+                "status": m.status,
+                "name": m.name,
+                "volume": m.volume,
+                "volume_24h": m.volume_24h,
+                "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+                "outcomes": [
+                    {"id": int(o.id), "name": o.name, "probability": o.current_probability}
+                    for o in (m.outcomes or [])
+                ],
+            }
+        )
+
+    return select_cross_domain_yardsticks(
+        pool_items,
+        now=effective_now,
+        band_half_width=band_hw,
+        min_domains=min_d,
+        max_card_rows=max_r,
+        min_prob=min_p,
+        max_prob=max_p,
+        max_quote_age_hours=max_q,
+        max_trade_age_days=max_t,
+        min_volume_24h=min_v,
+    )
 
 
 def load_candidate_definition(
@@ -434,7 +521,9 @@ def build_cross_domain_yardsticks_producer(
         rule=rule,
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "PERSPECTIVE · AS LIKELY AS"),
+        order=str(resolved.get("order") or "sequence"),
         score=float(resolved.get("score") or 92.5),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -449,6 +538,8 @@ def compose_yardsticks_card_and_container(
     context_line = _assert_clean_copy(str(members.sections[0].get("context_line") or ""))
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
+    feed_item["data"]["roundup"]["order"] = "sequence"
     container["context_line"] = context_line
     return feed_item, container
 

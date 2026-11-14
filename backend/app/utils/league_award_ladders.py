@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -37,6 +37,7 @@ from app.utils.roundup_containers import (
 
 __all__ = [
     "CANDIDATE_NBA_AWARD_LADDERS_PATH",
+    "CANDIDATE_NBA_AWARD_LADDERS_ROWS_PATH",
     "LEAGUE_AWARD_SLOTS",
     "PRODUCER_KIND_LEAGUE_AWARD_LADDERS",
     "AwardStanding",
@@ -44,6 +45,7 @@ __all__ = [
     "build_league_award_ladders_producer",
     "compose_award_ladders_card_and_container",
     "load_candidate_definition",
+    "load_candidate_eval_rows",
     "produce_league_award_ladders",
     "select_league_award_ladders",
 ]
@@ -56,6 +58,14 @@ CANDIDATE_NBA_AWARD_LADDERS_PATH = (
     / "discover"
     / "candidates"
     / "roundup-nba-award-ladders.json"
+)
+
+CANDIDATE_NBA_AWARD_LADDERS_ROWS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "discover"
+    / "candidates"
+    / "roundup-nba-award-ladders-rows.json"
 )
 
 _FORBIDDEN_COPY_RE = re.compile(
@@ -171,9 +181,45 @@ def _classify_award(market: Mapping[str, Any], sport: str) -> Optional[tuple[str
     return None
 
 
-def _extract_candidates(market: Mapping[str, Any]) -> dict[str, float]:
+def _extract_candidates(
+    market: Mapping[str, Any],
+    *,
+    now: Optional[datetime] = None,
+    max_quote_age_hours: float = 48.0,
+    min_volume_24h: float = 100.0,
+) -> dict[str, float]:
     if str(market.get("status") or "open").strip().lower() != "open":
         return {}
+    if market.get("is_trading") is False:
+        return {}
+    quiet_days = market.get("quiet_days")
+    if quiet_days is not None:
+        try:
+            if float(quiet_days) > 7.0:
+                return {}
+        except (TypeError, ValueError):
+            return {}
+    vol_24h = market.get("volume_24h")
+    if vol_24h is None:
+        vol_24h = market.get("volume24hr")
+    if vol_24h is not None:
+        try:
+            if float(vol_24h) < float(min_volume_24h):
+                return {}
+        except (TypeError, ValueError):
+            return {}
+    if now is not None:
+        raw_ts = market.get("price_observed_at") or market.get("updated_at")
+        if isinstance(raw_ts, str) and raw_ts.strip():
+            try:
+                parsed = datetime.fromisoformat(raw_ts.strip().replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                ref = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+                if (ref - parsed).total_seconds() / 3600.0 > float(max_quote_age_hours):
+                    return {}
+            except ValueError:
+                return {}
     people: dict[str, float] = {}
     for out in market.get("outcomes") or ():
         if not isinstance(out, Mapping):
@@ -199,13 +245,22 @@ def _resolve_award_slot(
     slot_key: str,
     award_label: str,
     slot_markets: Sequence[Mapping[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+    max_quote_age_hours: float = 48.0,
+    min_volume_24h: float = 100.0,
 ) -> tuple[Optional[AwardStanding], Optional[tuple[Any, ...]]]:
     by_source: dict[str, tuple[Mapping[str, Any], dict[str, float]]] = {}
     for m in slot_markets:
         src = str(m.get("source") or "").strip().lower()
         if not src:
             continue
-        cands = _extract_candidates(m)
+        cands = _extract_candidates(
+            m,
+            now=now,
+            max_quote_age_hours=max_quote_age_hours,
+            min_volume_24h=min_volume_24h,
+        )
         if len(cands) < 2:
             continue
         if src not in by_source or len(cands) > len(by_source[src][1]):
@@ -273,9 +328,12 @@ def _resolve_award_slot(
 def select_league_award_ladders(
     markets: Sequence[Mapping[str, Any]],
     *,
+    now: Optional[datetime] = None,
     sport: str = "basketball_nba",
     min_awards: int = 3,
     max_card_rows: int = 4,
+    max_quote_age_hours: float = 48.0,
+    min_volume_24h: float = 100.0,
 ) -> RoundupMembers | RoundupRefusal:
     cfg = LEAGUE_AWARD_SLOTS.get(sport)
     if cfg is None:
@@ -298,7 +356,14 @@ def select_league_award_ladders(
     for slot_key, label, _ in cfg["slots"]:
         if slot_key not in buckets:
             continue
-        resolved, drop_reason = _resolve_award_slot(slot_key, label, buckets[slot_key][1])
+        resolved, drop_reason = _resolve_award_slot(
+            slot_key,
+            label,
+            buckets[slot_key][1],
+            now=now,
+            max_quote_age_hours=max_quote_age_hours,
+            min_volume_24h=min_volume_24h,
+        )
         if resolved is not None:
             standings.append(resolved)
         elif drop_reason is not None:
@@ -317,11 +382,49 @@ def select_league_award_ladders(
     league_label = str(cfg["label"])
     first = shown[0]
     last = shown[-1]
-    context_line = _assert_clean_copy(
-        f"Front-runner in {len(shown)} major {league_label} season awards, ordered from "
-        f"closest race ({first.award_label}: {first.leader_name} {int(round(first.leader_probability * 100))}%) "
-        f"to clearest favorite ({last.award_label}: {last.leader_name} {int(round(last.leader_probability * 100))}%)."
-    )
+    first_pct = int(round(first.leader_probability * 100))
+    last_pct = int(round(last.leader_probability * 100))
+    first_gap = int(round(first.gap_points))
+    last_gap = int(round(last.gap_points))
+
+    awards_by_leader: dict[str, list[AwardStanding]] = {}
+    for s in shown:
+        awards_by_leader.setdefault(s.leader_name, []).append(s)
+    multi_leader = next((item for item in awards_by_leader.items() if len(item[1]) >= 2), None)
+
+    if multi_leader is not None:
+        m_name, m_awards = multi_leader
+        card_title = _assert_clean_copy(
+            f"{m_name} leads {len(m_awards)} {league_label} trophies at once"
+        )
+        m_parts = [
+            f"{a.award_label}: {a.leader_name} {int(round(a.leader_probability * 100))}%"
+            + (f", +{int(round(a.gap_points))} pts over {a.runner_up_name}" if a.runner_up_name else "")
+            for a in m_awards
+        ]
+        if first.award_label not in {a.award_label for a in m_awards}:
+            first_runner = f" vs {first.runner_up_name}" if first.runner_up_name else ""
+            context_line = _assert_clean_copy(
+                f"{m_name} leads {len(m_awards)} {league_label} trophies ({' · '.join(m_parts)}), "
+                f"while {first.award_label} sits within {first_gap} pts "
+                f"({first.award_label}: {first.leader_name} {first_pct}%{first_runner})."
+            )
+        else:
+            context_line = _assert_clean_copy(
+                f"{m_name} leads {len(m_awards)} {league_label} trophies across {len(shown)} "
+                f"season boards ({' · '.join(m_parts)})."
+            )
+    else:
+        card_title = _assert_clean_copy(
+            f"{league_label} award races — tightest within {first_gap} pts"
+        )
+        first_runner = f", +{first_gap} pts over {first.runner_up_name}" if first.runner_up_name else ""
+        last_runner = f", +{last_gap} pts over {last.runner_up_name}" if last.runner_up_name else ""
+        context_line = _assert_clean_copy(
+            f"Front-runner in {len(shown)} major {league_label} season awards, ordered from "
+            f"closest race ({first.award_label}: {first.leader_name} {first_pct}%{first_runner}) "
+            f"to clearest favorite ({last.award_label}: {last.leader_name} {last_pct}%{last_runner})."
+        )
     footer = _assert_clean_copy(
         f"One winner per trophy · {len(shown)} major {league_label} awards"
     )
@@ -361,7 +464,7 @@ def select_league_award_ladders(
         rows=rows,
         footer=footer,
         count_line=f"{len(standings)} awards",
-        title=f"{league_label} award races",
+        title=card_title,
         kicker=f"{league_label} · SEASON AWARDS",
         revision_ids=rev_ids,
         sections=(
@@ -380,22 +483,96 @@ async def produce_league_award_ladders(
     rule: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
-    del now
     cfg_rule = dict(rule or {})
     sport = str(cfg_rule.get("sport") or "basketball_nba")
     min_a = int(cfg_rule.get("min_awards") or 3)
     max_r = int(cfg_rule.get("max_card_rows") or 4)
+    max_q = float(cfg_rule.get("max_quote_age_hours") or 48.0)
+    min_v = float(cfg_rule.get("min_volume_24h") or 100.0)
     if isinstance(db, (list, tuple)):
         return select_league_award_ladders(
-            db, sport=sport, min_awards=min_a, max_card_rows=max_r
+            db,
+            now=now,
+            sport=sport,
+            min_awards=min_a,
+            max_card_rows=max_r,
+            max_quote_age_hours=max_q,
+            min_volume_24h=min_v,
         )
-    return RoundupRefusal([("unsupported_session", type(db).__name__)])
+    from sqlalchemy import or_, select
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import selectinload
+
+    if not isinstance(db, AsyncSession):
+        return RoundupRefusal([("unsupported_session", type(db).__name__)])
+
+    from app.models.models import FuturesMarket
+
+    effective_now = now or datetime.now(timezone.utc)
+    stmt = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            or_(
+                FuturesMarket.name.ilike("%MVP%"),
+                FuturesMarket.name.ilike("%Defensive Player%"),
+                FuturesMarket.name.ilike("%Rookie of the Year%"),
+                FuturesMarket.name.ilike("%Coach of the Year%"),
+            ),
+        )
+    )
+    res = await db.execute(stmt)
+    orm_rows = res.scalars().all()
+    serialized = [
+        {
+            "id": int(m.id),
+            "name": m.name,
+            "status": m.status,
+            "source": m.source,
+            "category": m.category,
+            "llm_sport_category": getattr(m, "llm_sport_category", None),
+            "volume_24h": getattr(m, "volume_24h", None),
+            "updated_at": (
+                m.updated_at.isoformat()
+                if getattr(m, "updated_at", None) is not None
+                else None
+            ),
+            "outcomes": [
+                {
+                    "name": o.name,
+                    "probability": (
+                        getattr(o, "current_probability", None)
+                        if getattr(o, "current_probability", None) is not None
+                        else getattr(o, "probability", None)
+                    ),
+                }
+                for o in (m.outcomes or [])
+            ],
+        }
+        for m in orm_rows
+    ]
+    return select_league_award_ladders(
+        serialized,
+        now=effective_now,
+        sport=sport,
+        min_awards=min_a,
+        max_card_rows=max_r,
+        max_quote_age_hours=max_q,
+        min_volume_24h=min_v,
+    )
 
 
 def load_candidate_definition(path: Path = CANDIDATE_NBA_AWARD_LADDERS_PATH) -> dict[str, Any]:
     defn = json.loads(path.read_text(encoding="utf-8"))
     validate_roundup_definition(defn)
     return defn
+
+
+def load_candidate_eval_rows(
+    path: Path = CANDIDATE_NBA_AWARD_LADDERS_ROWS_PATH,
+) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_league_award_ladders_producer(
@@ -422,7 +599,9 @@ def build_league_award_ladders_producer(
         rule=rule,
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "NBA · SEASON AWARDS"),
+        order=str(resolved.get("order") or "sequence"),
         score=float(resolved.get("score") or 91.5),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -437,6 +616,8 @@ def compose_award_ladders_card_and_container(
     context_line = _assert_clean_copy(str(members.sections[0].get("context_line") or ""))
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
+    feed_item["data"]["roundup"]["order"] = "sequence"
     container["context_line"] = context_line
     return feed_item, container
 

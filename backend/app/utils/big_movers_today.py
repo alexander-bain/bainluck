@@ -329,11 +329,28 @@ def select_big_movers_today(
     top = shown[0]
     top_sign = f"+{top.signed_delta_pts}" if top.signed_delta_pts > 0 else f"{top.signed_delta_pts}"
     min_pts_int = int(round(min_abs_delta * 100))
+    top_now_pct = int(round(top.probability * 100))
+    top_prior_pct = max(1, min(99, top_now_pct - top.signed_delta_pts))
+    up_count = sum(1 for c in shown if c.signed_delta_pts > 0)
+    down_count = len(shown) - up_count
+    balance_note = (
+        f" ({up_count} climbing, {down_count} sliding)"
+        if up_count > 0 and down_count > 0
+        else ""
+    )
+    biggest_drop = next((c for c in shown[1:] if c.signed_delta_pts < 0), None)
+    drop_tail = (
+        f" while {biggest_drop.display_label} slipped {abs(biggest_drop.signed_delta_pts)} pts "
+        f"to {int(round(biggest_drop.probability * 100))}%"
+        if biggest_drop is not None and top.signed_delta_pts > 0
+        else ""
+    )
 
+    card_title = _assert_clean_copy(f"Biggest 24-hour swings — led by {top_sign} pts")
     context_line = _assert_clean_copy(
-        f"Actively trading markets with the sharpest 24-hour shifts ({min_pts_int}+ points), "
-        f"ordered by size of move — led by {top.display_label} "
-        f"({top_sign} pts to {int(round(top.probability * 100))}%)."
+        f"Actively trading markets with {min_pts_int}+ points of 24-hour movement"
+        f"{balance_note} — led by {top.display_label} "
+        f"({top_sign} pts to {top_now_pct}% from {top_prior_pct}% yesterday){drop_tail}."
     )
     footer = _assert_clean_copy(
         "24-hour shift in percentage points · actively trading markets only"
@@ -345,7 +362,8 @@ def select_big_movers_today(
         rows.append(
             {
                 "market_id": c.market_id,
-                "label": _assert_clean_copy(c.display_label),
+                "label": _assert_clean_copy(f"{c.display_label} ({pts_text})"),
+                "subject": _assert_clean_copy(c.display_label),
                 "outcome": c.outcome_name,
                 "category": c.category,
                 "probability": round(c.probability, 4),
@@ -364,7 +382,7 @@ def select_big_movers_today(
         rows=rows,
         footer=footer,
         count_line=f"{len(ordered)} active movers",
-        title="Big movers today",
+        title=card_title,
         kicker="PULSE · BIGGEST 24H SHIFTS",
         revision_ids=contrib_ids,
         sections=(
@@ -383,29 +401,89 @@ async def produce_big_movers_today(
     rule: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
-    """Evaluate a sequence of market dicts for ``big_movers_today``.
-
-    Defaults ``now`` to ``datetime.now(timezone.utc)`` so calls via
-    ``RoundupProducer.produce(db)`` enforce 24-hour quote and 7-day trade
-    freshness guards. Returns ``unsupported_session`` for live DB sessions until
-    wired to a DB query at promotion time.
-    """
+    """Evaluate active non-sports 24-hour market movers."""
     cfg = dict(rule or {})
     effective_now = datetime.now(timezone.utc) if now is None else now
+    min_delta = float(cfg.get("min_abs_delta") or 0.06)
+    min_m = int(cfg.get("min_members") or 3)
+    max_r = int(cfg.get("max_card_rows") or 5)
+    min_p = float(cfg.get("min_prob") or 0.03)
+    max_p = float(cfg.get("max_prob") or 0.97)
+    max_q = float(cfg.get("max_quote_age_hours") or 24.0)
+    max_t = float(cfg.get("max_trade_age_days") or 7.0)
+    min_v = float(cfg.get("min_volume_24h") or 100.0)
     if isinstance(db, (list, tuple)):
         return select_big_movers_today(
             db,
             now=effective_now,
-            min_abs_delta=float(cfg.get("min_abs_delta") or 0.06),
-            min_members=int(cfg.get("min_members") or 3),
-            max_card_rows=int(cfg.get("max_card_rows") or 5),
-            min_prob=float(cfg.get("min_prob") or 0.03),
-            max_prob=float(cfg.get("max_prob") or 0.97),
-            max_quote_age_hours=float(cfg.get("max_quote_age_hours") or 24.0),
-            max_trade_age_days=float(cfg.get("max_trade_age_days") or 7.0),
-            min_volume_24h=float(cfg.get("min_volume_24h") or 100.0),
+            min_abs_delta=min_delta,
+            min_members=min_m,
+            max_card_rows=max_r,
+            min_prob=min_p,
+            max_prob=max_p,
+            max_quote_age_hours=max_q,
+            max_trade_age_days=max_t,
+            min_volume_24h=min_v,
         )
-    return RoundupRefusal([("unsupported_session", type(db).__name__)])
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import selectinload
+
+    if not isinstance(db, AsyncSession):
+        return RoundupRefusal([("unsupported_session", type(db).__name__)])
+
+    from app.models.models import FuturesMarket
+
+    stmt = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            FuturesMarket.sport_id.is_(None),
+            FuturesMarket.volume_24h >= min_v,
+            FuturesMarket.max_movement_24h >= min_delta,
+        )
+        .order_by(FuturesMarket.max_movement_24h.desc().nullslast())
+        .limit(80)
+    )
+    res = await db.execute(stmt)
+    orm_rows = res.scalars().all()
+    serialized = [
+        {
+            "id": int(m.id),
+            "source": m.source,
+            "status": m.status,
+            "category": m.category,
+            "group_id": m.group_id,
+            "canonical_market_key": m.canonical_market_key,
+            "name": m.name,
+            "volume": m.volume,
+            "volume_24h": m.volume_24h,
+            "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+            "outcomes": [
+                {
+                    "id": int(o.id),
+                    "name": o.name,
+                    "probability": o.current_probability,
+                    "movement": o.probability_change_24h,
+                }
+                for o in (m.outcomes or [])
+            ],
+        }
+        for m in orm_rows
+    ]
+    return select_big_movers_today(
+        serialized,
+        now=effective_now,
+        min_abs_delta=min_delta,
+        min_members=min_m,
+        max_card_rows=max_r,
+        min_prob=min_p,
+        max_prob=max_p,
+        max_quote_age_hours=max_q,
+        max_trade_age_days=max_t,
+        min_volume_24h=min_v,
+    )
 
 
 def load_candidate_definition(
@@ -446,7 +524,9 @@ def build_big_movers_today_producer(
         rule=rule,
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "PULSE · BIGGEST 24H SHIFTS"),
+        order=str(resolved.get("order") or "sequence"),
         score=float(resolved.get("score") or 93.0),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -461,6 +541,8 @@ def compose_big_movers_card_and_container(
     context_line = _assert_clean_copy(str(members.sections[0].get("context_line") or ""))
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
+    feed_item["data"]["roundup"]["order"] = "sequence"
     container["context_line"] = context_line
     return feed_item, container
 

@@ -376,13 +376,23 @@ def select_ceremony_award_categories(
     category_rows.sort(key=lambda r: (r.priority, -abs(0.5 - abs(r.probability - 0.5)), r.category_label))
     shown = category_rows[: max(2, int(max_card_rows))]
     lead = shown[0]
+    most_open = min(shown, key=lambda r: r.probability)
+    widest = max(shown, key=lambda r: r.probability)
 
     stage_word = "Winner" if target_stage == "winner" else "Nomination"
-    card_title = f"{ceremony_title} — active categories"
+    card_title = f"{ceremony_title} — {len(category_rows)} categories actively trading"
+    if most_open.category_key != lead.category_key and widest.probability - most_open.probability >= 0.25:
+        tail_clause = (
+            f", while {most_open.category_label} is wide open at "
+            f"{int(round(most_open.probability * 100))}% and {widest.category_label} "
+            f"reaches {int(round(widest.probability * 100))}%"
+        )
+    else:
+        tail_clause = ""
     context_line = _assert_clean_copy(
-        f"Actively trading {ceremony_title} {stage_word} categories (quiet and untraded "
-        f"categories excluded), showing each category's frontrunner — led by "
-        f"{lead.category_label} ({lead.leader_name}, {int(round(lead.probability * 100))}%)."
+        f"Only {len(category_rows)} {ceremony_title} {stage_word} categories have active "
+        f"trading today ($0-volume categories excluded) — led by "
+        f"{lead.category_label} ({lead.leader_name}, {int(round(lead.probability * 100))}%){tail_clause}."
     )
     footer = _assert_clean_copy(
         f"Single-winner {ceremony_title} categories · frontrunner chance per category"
@@ -434,20 +444,82 @@ async def produce_ceremony_award_categories(
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
     cfg = dict(rule or {})
+    ceremony = str(cfg.get("ceremony") or "grammys")
+    stage = str(cfg.get("stage") or "winner")
+    min_cat = int(cfg.get("min_categories") or 3)
+    max_r = int(cfg.get("max_card_rows") or 5)
+    min_cont = int(cfg.get("min_contenders_per_category") or 3)
+    max_q = float(cfg.get("max_quote_age_hours") or 36.0)
+    max_t = float(cfg.get("max_trade_age_days") or 7.0)
+    min_v = float(cfg.get("min_volume_24h") or 100.0)
     if isinstance(db, (list, tuple)):
         return select_ceremony_award_categories(
             db,
             now=now,
-            ceremony=str(cfg.get("ceremony") or "grammys"),
-            stage=str(cfg.get("stage") or "winner"),
-            min_categories=int(cfg.get("min_categories") or 3),
-            max_card_rows=int(cfg.get("max_card_rows") or 5),
-            min_contenders_per_category=int(cfg.get("min_contenders_per_category") or 3),
-            max_quote_age_hours=float(cfg.get("max_quote_age_hours") or 36.0),
-            max_trade_age_days=float(cfg.get("max_trade_age_days") or 7.0),
-            min_volume_24h=float(cfg.get("min_volume_24h") or 100.0),
+            ceremony=ceremony,
+            stage=stage,
+            min_categories=min_cat,
+            max_card_rows=max_r,
+            min_contenders_per_category=min_cont,
+            max_quote_age_hours=max_q,
+            max_trade_age_days=max_t,
+            min_volume_24h=min_v,
         )
-    return RoundupRefusal([("unsupported_session", type(db).__name__)])
+    from datetime import timezone
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import selectinload
+
+    if not isinstance(db, AsyncSession):
+        return RoundupRefusal([("unsupported_session", type(db).__name__)])
+
+    from app.models.models import FuturesMarket
+
+    effective_now = now or datetime.now(timezone.utc)
+    like_tok = {
+        "grammys": "%Grammy%",
+        "oscars": "%Oscar%",
+        "golden_globes": "%Golden Globe%",
+        "emmys": "%Emmy%",
+    }.get(ceremony.lower(), "%Award%")
+    stmt = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            FuturesMarket.name.ilike(like_tok),
+        )
+    )
+    res = await db.execute(stmt)
+    orm_rows = res.scalars().all()
+    serialized = [
+        {
+            "id": int(m.id),
+            "source": m.source,
+            "status": m.status,
+            "name": m.name,
+            "volume": m.volume,
+            "volume_24h": m.volume_24h,
+            "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+            "outcomes": [
+                {"id": int(o.id), "name": o.name, "probability": o.current_probability}
+                for o in (m.outcomes or [])
+            ],
+        }
+        for m in orm_rows
+    ]
+    return select_ceremony_award_categories(
+        serialized,
+        now=effective_now,
+        ceremony=ceremony,
+        stage=stage,
+        min_categories=min_cat,
+        max_card_rows=max_r,
+        min_contenders_per_category=min_cont,
+        max_quote_age_hours=max_q,
+        max_trade_age_days=max_t,
+        min_volume_24h=min_v,
+    )
 
 
 def load_candidate_definition(
@@ -488,7 +560,9 @@ def build_ceremony_award_categories_producer(
         rule=rule,
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "CULTURE · AWARDS SLATE"),
+        order=str(resolved.get("order") or "sequence"),
         score=float(resolved.get("score") or 92.0),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -503,6 +577,8 @@ def compose_ceremony_award_card_and_container(
     context_line = _assert_clean_copy(str(members.sections[0].get("context_line") or ""))
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
+    feed_item["data"]["roundup"]["order"] = "sequence"
     container["context_line"] = context_line
     return feed_item, container
 

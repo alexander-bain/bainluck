@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -35,6 +35,7 @@ from app.utils.roundup_containers import (
 
 __all__ = [
     "CANDIDATE_NBA_DIVISION_RACES_PATH",
+    "CANDIDATE_NBA_DIVISION_RACES_ROWS_PATH",
     "LEAGUE_DIVISIONS",
     "PRODUCER_KIND_LEAGUE_DIVISION_RACES",
     "DivisionStanding",
@@ -42,6 +43,7 @@ __all__ = [
     "build_league_division_races_producer",
     "compose_division_races_card_and_container",
     "load_candidate_definition",
+    "load_candidate_eval_rows",
     "produce_league_division_races",
     "select_league_division_races",
 ]
@@ -54,6 +56,14 @@ CANDIDATE_NBA_DIVISION_RACES_PATH = (
     / "discover"
     / "candidates"
     / "roundup-nba-division-races.json"
+)
+
+CANDIDATE_NBA_DIVISION_RACES_ROWS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "discover"
+    / "candidates"
+    / "roundup-nba-division-races-rows.json"
 )
 
 _FORBIDDEN_COPY_RE = re.compile(
@@ -332,10 +342,44 @@ def _match_league_and_division(
 def _extract_priced_clubs(
     market: Mapping[str, Any],
     aliases: Mapping[str, str],
+    *,
+    now: Optional[datetime] = None,
+    max_quote_age_hours: float = 48.0,
+    min_volume_24h: float = 100.0,
 ) -> dict[str, float]:
     status = str(market.get("status") or "open").strip().lower()
     if status != "open":
         return {}
+    if market.get("is_trading") is False:
+        return {}
+    quiet_days = market.get("quiet_days")
+    if quiet_days is not None:
+        try:
+            if float(quiet_days) > 7.0:
+                return {}
+        except (TypeError, ValueError):
+            return {}
+    vol_24h = market.get("volume_24h")
+    if vol_24h is None:
+        vol_24h = market.get("volume24hr")
+    if vol_24h is not None:
+        try:
+            if float(vol_24h) < float(min_volume_24h):
+                return {}
+        except (TypeError, ValueError):
+            return {}
+    if now is not None:
+        raw_ts = market.get("price_observed_at") or market.get("updated_at")
+        if isinstance(raw_ts, str) and raw_ts.strip():
+            try:
+                parsed = datetime.fromisoformat(raw_ts.strip().replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                ref = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+                if (ref - parsed).total_seconds() / 3600.0 > float(max_quote_age_hours):
+                    return {}
+            except ValueError:
+                return {}
     clubs: dict[str, float] = {}
     for out in market.get("outcomes") or ():
         if not isinstance(out, Mapping):
@@ -361,13 +405,23 @@ def _resolve_single_division(
     division: str,
     source_markets: Sequence[Mapping[str, Any]],
     aliases: Mapping[str, str],
+    *,
+    now: Optional[datetime] = None,
+    max_quote_age_hours: float = 48.0,
+    min_volume_24h: float = 100.0,
 ) -> tuple[Optional[DivisionStanding], Optional[tuple[Any, ...]]]:
     by_source: dict[str, tuple[Mapping[str, Any], dict[str, float]]] = {}
     for m in source_markets:
         src = str(m.get("source") or "").strip().lower()
         if not src:
             continue
-        clubs = _extract_priced_clubs(m, aliases)
+        clubs = _extract_priced_clubs(
+            m,
+            aliases,
+            now=now,
+            max_quote_age_hours=max_quote_age_hours,
+            min_volume_24h=min_volume_24h,
+        )
         if len(clubs) < 2:
             continue
         # Keep the richest market per source
@@ -437,6 +491,11 @@ def _resolve_single_division(
     )
 
 
+def _format_gap_pts(gap_points: float) -> str:
+    rounded = round(gap_points, 1)
+    return str(int(rounded)) if rounded >= 2.0 or rounded.is_integer() else f"{rounded:.1f}"
+
+
 def _compose_context_line(
     league_label: str,
     card_standings: Sequence[DivisionStanding],
@@ -446,20 +505,32 @@ def _compose_context_line(
     shown_n = len(card_standings)
     first = card_standings[0]
     first_pct = int(round(first.leader_probability * 100))
+    first_gap_txt = _format_gap_pts(first.gap_points)
+    runner_note = (
+        f", {first_gap_txt} pts ahead of {first.runner_up_club}"
+        if first.runner_up_club
+        else ""
+    )
     if shown_n < total_n:
         second = card_standings[1]
         second_pct = int(round(second.leader_probability * 100))
+        omitted = all_standings[shown_n:]
+        omitted_txt = " and ".join(
+            f"{o.division} ({o.leader_club} {int(round(o.leader_probability * 100))}%)"
+            for o in omitted
+        )
         text = (
-            f"{shown_n} tightest of {total_n} {league_label} division races, ordered by "
-            f"closest lead — {first.leader_club} ({first_pct}% in {first.division}) and "
-            f"{second.leader_club} ({second_pct}% in {second.division}) sit tightest."
+            f"The {shown_n} tightest of {total_n} {league_label} division races — "
+            f"{first.leader_club} ({first_pct}% in {first.division}){runner_note} and "
+            f"{second.leader_club} ({second_pct}% in {second.division}) lead the closest boards, "
+            f"while runaway {omitted_txt} {'is' if len(omitted) == 1 else 'are'} omitted."
         )
     else:
         last = card_standings[-1]
         last_pct = int(round(last.leader_probability * 100))
         text = (
             f"All {total_n} {league_label} division front-runners, ordered from closest "
-            f"race ({first.leader_club} {first_pct}% in {first.division}) to clearest "
+            f"race ({first.leader_club} {first_pct}% in {first.division}{runner_note}) to clearest "
             f"favorite ({last.leader_club} {last_pct}% in {last.division})."
         )
     return _assert_clean_copy(text)
@@ -468,9 +539,12 @@ def _compose_context_line(
 def select_league_division_races(
     markets: Sequence[Mapping[str, Any]],
     *,
+    now: Optional[datetime] = None,
     sport: str = "basketball_nba",
     min_divisions: int = 4,
     max_card_rows: int = 4,
+    max_quote_age_hours: float = 48.0,
+    min_volume_24h: float = 100.0,
 ) -> RoundupMembers | RoundupRefusal:
     cfg = LEAGUE_DIVISIONS.get(sport)
     if cfg is None:
@@ -489,7 +563,14 @@ def select_league_division_races(
     for div in cfg["divisions"]:
         if not grouped[div]:
             continue
-        resolved, drop_reason = _resolve_single_division(div, grouped[div], cfg["club_aliases"])
+        resolved, drop_reason = _resolve_single_division(
+            div,
+            grouped[div],
+            cfg["club_aliases"],
+            now=now,
+            max_quote_age_hours=max_quote_age_hours,
+            min_volume_24h=min_volume_24h,
+        )
         if resolved is not None:
             standings.append(resolved)
         elif drop_reason is not None:
@@ -554,7 +635,12 @@ def select_league_division_races(
             if mid not in rev_ids:
                 rev_ids.append(mid)
 
-    title = _assert_clean_copy(f"{league_label} division races")
+    tightest_gap_txt = _format_gap_pts(card_standings[0].gap_points)
+    title = _assert_clean_copy(
+        f"{league_label}'s {len(card_standings)} tightest division races — led by a {tightest_gap_txt}-pt margin"
+        if len(card_standings) < len(standings)
+        else f"{league_label} division races — tightest within {tightest_gap_txt} pts"
+    )
     kicker = _assert_clean_copy(f"{league_label} · DIVISIONS")
     return RoundupMembers(
         members=members,
@@ -581,15 +667,22 @@ async def produce_league_division_races(
     rule: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
-    del now
     cfg_rule = dict(rule or {})
     sport = str(cfg_rule.get("sport") or "basketball_nba")
     min_divs = int(cfg_rule.get("min_divisions") or 4)
     max_rows = int(cfg_rule.get("max_card_rows") or 4)
+    max_q = float(cfg_rule.get("max_quote_age_hours") or 48.0)
+    min_v = float(cfg_rule.get("min_volume_24h") or 100.0)
 
     if isinstance(db, (list, tuple)):
         return select_league_division_races(
-            db, sport=sport, min_divisions=min_divs, max_card_rows=max_rows
+            db,
+            now=now,
+            sport=sport,
+            min_divisions=min_divs,
+            max_card_rows=max_rows,
+            max_quote_age_hours=max_q,
+            min_volume_24h=min_v,
         )
 
     from sqlalchemy import select
@@ -601,6 +694,7 @@ async def produce_league_division_races(
 
     from app.models.models import FuturesMarket
 
+    effective_now = now or datetime.now(timezone.utc)
     stmt = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -618,16 +712,35 @@ async def produce_league_division_races(
             "status": m.status,
             "source": m.source,
             "category": m.category,
-            "llm_sport_category": m.llm_sport_category,
+            "llm_sport_category": getattr(m, "llm_sport_category", None),
+            "volume_24h": getattr(m, "volume_24h", None),
+            "updated_at": (
+                m.updated_at.isoformat()
+                if getattr(m, "updated_at", None) is not None
+                else None
+            ),
             "outcomes": [
-                {"name": o.name, "probability": o.probability}
+                {
+                    "name": o.name,
+                    "probability": (
+                        getattr(o, "current_probability", None)
+                        if getattr(o, "current_probability", None) is not None
+                        else getattr(o, "probability", None)
+                    ),
+                }
                 for o in (m.outcomes or [])
             ],
         }
         for m in orm_rows
     ]
     return select_league_division_races(
-        serialized, sport=sport, min_divisions=min_divs, max_card_rows=max_rows
+        serialized,
+        now=effective_now,
+        sport=sport,
+        min_divisions=min_divs,
+        max_card_rows=max_rows,
+        max_quote_age_hours=max_q,
+        min_volume_24h=min_v,
     )
 
 
@@ -637,6 +750,12 @@ def load_candidate_definition(
     defn = json.loads(path.read_text(encoding="utf-8"))
     validate_roundup_definition(defn)
     return defn
+
+
+def load_candidate_eval_rows(
+    path: Path = CANDIDATE_NBA_DIVISION_RACES_ROWS_PATH,
+) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_league_division_races_producer(
@@ -663,7 +782,9 @@ def build_league_division_races_producer(
         rule=rule,
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "DIVISIONS"),
+        order=str(resolved.get("order") or "sequence"),
         score=float(resolved.get("score") or 92.0),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -681,6 +802,8 @@ def compose_division_races_card_and_container(
     context_line = _assert_clean_copy(context_line)
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
+    feed_item["data"]["roundup"]["order"] = "sequence"
     container["context_line"] = context_line
     return feed_item, container
 

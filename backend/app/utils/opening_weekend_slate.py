@@ -302,12 +302,29 @@ def select_opening_weekend_slate(
     )
     shown = ordered[: max(2, int(max_card_rows))]
     lead = shown[0]
-
-    context_line = _assert_clean_copy(
-        f"Actively trading domestic opening-weekend box office brackets across {len(shown)} "
-        f"upcoming releases, showing each film's likeliest gross range — led by "
-        f"{lead.film_title} ({lead.bracket_label} at {int(round(lead.probability * 100))}%)."
+    blockbuster = next(
+        (f for f in shown if "$400M+" in f.bracket_label or "$360M" in f.bracket_label),
+        None,
     )
+    if blockbuster is not None and blockbuster.market_id != lead.market_id:
+        card_title = _assert_clean_copy(
+            f"Box office openings — {lead.bracket_label} to {blockbuster.bracket_label}"
+        )
+        context_line = _assert_clean_copy(
+            f"{len(shown)} upcoming wide releases with active opening-weekend brackets "
+            f"(2nd-weekend holdovers excluded) — led by {lead.film_title} "
+            f"({lead.bracket_label} at {int(round(lead.probability * 100))}%) up to "
+            f"{blockbuster.film_title} ({blockbuster.bracket_label} at "
+            f"{int(round(blockbuster.probability * 100))}%, above the $357M all-time domestic opening record)."
+        )
+    else:
+        card_title = "Opening-weekend box office forecasts"
+        context_line = _assert_clean_copy(
+            f"Actively trading domestic opening-weekend box office brackets across {len(shown)} "
+            f"upcoming releases (2nd-weekend holdovers excluded), showing each film's likeliest "
+            f"gross range — led by {lead.film_title} ({lead.bracket_label} at "
+            f"{int(round(lead.probability * 100))}%)."
+        )
     footer = _assert_clean_copy(
         "Most likely domestic opening-weekend bracket · actively trading film markets"
     )
@@ -333,7 +350,7 @@ def select_opening_weekend_slate(
         rows=rows,
         footer=footer,
         count_line=f"{len(ordered)} upcoming releases",
-        title="Opening-weekend box office forecasts",
+        title=card_title,
         kicker="CULTURE · BOX OFFICE",
         revision_ids=contrib_ids,
         sections=(
@@ -353,18 +370,70 @@ async def produce_opening_weekend_slate(
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
     cfg = dict(rule or {})
+    opening_only = bool(cfg.get("opening_only", True))
+    min_f = int(cfg.get("min_films") or 3)
+    max_r = int(cfg.get("max_card_rows") or 5)
+    max_q = float(cfg.get("max_quote_age_hours") or 36.0)
+    max_t = float(cfg.get("max_trade_age_days") or 7.0)
+    min_v = float(cfg.get("min_volume_24h") or 100.0)
     if isinstance(db, (list, tuple)):
         return select_opening_weekend_slate(
             db,
             now=now,
-            opening_only=bool(cfg.get("opening_only", True)),
-            min_films=int(cfg.get("min_films") or 3),
-            max_card_rows=int(cfg.get("max_card_rows") or 5),
-            max_quote_age_hours=float(cfg.get("max_quote_age_hours") or 36.0),
-            max_trade_age_days=float(cfg.get("max_trade_age_days") or 7.0),
-            min_volume_24h=float(cfg.get("min_volume_24h") or 100.0),
+            opening_only=opening_only,
+            min_films=min_f,
+            max_card_rows=max_r,
+            max_quote_age_hours=max_q,
+            max_trade_age_days=max_t,
+            min_volume_24h=min_v,
         )
-    return RoundupRefusal([("unsupported_session", type(db).__name__)])
+    from datetime import timezone
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import selectinload
+
+    if not isinstance(db, AsyncSession):
+        return RoundupRefusal([("unsupported_session", type(db).__name__)])
+
+    from app.models.models import FuturesMarket
+
+    effective_now = now or datetime.now(timezone.utc)
+    stmt = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            FuturesMarket.name.ilike("%box office%"),
+        )
+    )
+    res = await db.execute(stmt)
+    orm_rows = res.scalars().all()
+    serialized = [
+        {
+            "id": int(m.id),
+            "source": m.source,
+            "status": m.status,
+            "name": m.name,
+            "volume": m.volume,
+            "volume_24h": m.volume_24h,
+            "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+            "outcomes": [
+                {"id": int(o.id), "name": o.name, "probability": o.current_probability}
+                for o in (m.outcomes or [])
+            ],
+        }
+        for m in orm_rows
+    ]
+    return select_opening_weekend_slate(
+        serialized,
+        now=effective_now,
+        opening_only=opening_only,
+        min_films=min_f,
+        max_card_rows=max_r,
+        max_quote_age_hours=max_q,
+        max_trade_age_days=max_t,
+        min_volume_24h=min_v,
+    )
 
 
 def load_candidate_definition(
@@ -405,7 +474,9 @@ def build_opening_weekend_slate_producer(
         rule=rule,
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "CULTURE · BOX OFFICE"),
+        order=str(resolved.get("order") or "sequence"),
         score=float(resolved.get("score") or 91.5),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -420,6 +491,8 @@ def compose_opening_weekend_card_and_container(
     context_line = _assert_clean_copy(str(members.sections[0].get("context_line") or ""))
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
+    feed_item["data"]["roundup"]["order"] = "sequence"
     container["context_line"] = context_line
     return feed_item, container
 

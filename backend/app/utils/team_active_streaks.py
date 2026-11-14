@@ -345,13 +345,35 @@ def select_team_active_streaks(
     shown = deduped[: max(2, int(max_card_rows))]
     lead = shown[0]
     next_target = lead.streak_length + 1
+    joint_prob = 1.0
+    for item in shown:
+        joint_prob *= item.survival_probability
+    joint_pct = max(1, int(round(joint_prob * 100)))
+    most_vulnerable = min(shown, key=lambda c: (c.survival_probability, c.streak_length))
+    vuln_pct = int(round(most_vulnerable.survival_probability * 100))
 
-    context_line = _assert_clean_copy(
-        f"Teams on active {min_streak}+ game winning streaks with a priced next game, "
-        f"showing each streak's chance to survive — led by {lead.team} "
-        f"({lead.streak_kind}{lead.streak_length}, {int(round(lead.survival_probability * 100))}% "
-        f"to reach {lead.streak_kind}{next_target} {lead.opponent_phrase})."
-    )
+    if target_kind == "W" and all(c.survival_probability > 0.5 for c in shown):
+        card_title = _assert_clean_copy(
+            f"{len(shown)} longest win streaks — {joint_pct}% chance all {len(shown)} survive"
+        )
+        context_line = _assert_clean_copy(
+            f"Every {min_streak}+ game winning streak is favored next out — led by "
+            f"{lead.team} ({lead.streak_kind}{lead.streak_length}, "
+            f"{int(round(lead.survival_probability * 100))}% to reach "
+            f"{lead.streak_kind}{next_target} {lead.opponent_phrase}) — yet all "
+            f"{len(shown)} surviving together is just {joint_pct}%, with "
+            f"{most_vulnerable.team} ({most_vulnerable.streak_kind}{most_vulnerable.streak_length}, "
+            f"{vuln_pct}%) most at risk."
+        )
+    else:
+        card_title = "Longest active winning streaks on the line"
+        context_line = _assert_clean_copy(
+            f"Teams on active {min_streak}+ game winning streaks with a priced next game, "
+            f"showing each streak's chance to survive — led by {lead.team} "
+            f"({lead.streak_kind}{lead.streak_length}, {int(round(lead.survival_probability * 100))}% "
+            f"to reach {lead.streak_kind}{next_target} {lead.opponent_phrase}) — "
+            f"{joint_pct}% chance all {len(shown)} survive."
+        )
     footer = _assert_clean_copy(
         f"Active {min_streak}+ game winning streaks · next-game win chance"
     )
@@ -390,7 +412,7 @@ def select_team_active_streaks(
         rows=rows,
         footer=footer,
         count_line=f"{len(deduped)} active streaks",
-        title="Longest active winning streaks on the line",
+        title=card_title,
         kicker="SPORTS · THE STREAK",
         revision_ids=contrib_ids,
         sections=(
@@ -411,17 +433,89 @@ async def produce_team_active_streaks(
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
     cfg = dict(rule or {})
+    streak_k = str(cfg.get("streak_kind") or "W")
+    min_s = int(cfg.get("min_streak") or 4)
+    min_m = int(cfg.get("min_members") or 3)
+    max_r = int(cfg.get("max_card_rows") or 5)
+    max_q = float(cfg.get("max_quote_age_hours") or 24.0)
     if isinstance(db, (Mapping, list, tuple)):
         return select_team_active_streaks(
             db,
             now=now,
-            streak_kind=str(cfg.get("streak_kind") or "W"),
-            min_streak=int(cfg.get("min_streak") or 4),
-            min_members=int(cfg.get("min_members") or 3),
-            max_card_rows=int(cfg.get("max_card_rows") or 5),
-            max_quote_age_hours=float(cfg.get("max_quote_age_hours") or 24.0),
+            streak_kind=streak_k,
+            min_streak=min_s,
+            min_members=min_m,
+            max_card_rows=max_r,
+            max_quote_age_hours=max_q,
         )
-    return RoundupRefusal([("unsupported_session", type(db).__name__)])
+    from datetime import timedelta, timezone
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    if not isinstance(db, AsyncSession):
+        return RoundupRefusal([("unsupported_session", type(db).__name__)])
+
+    from app.models.models import Event, Sport
+    from app.routes.containers import _hydrate_event_cards
+
+    effective_now = now or datetime.now(timezone.utc)
+    recent_cutoff = effective_now - timedelta(days=45)
+    upcoming_end = effective_now + timedelta(days=10)
+    target_sports = tuple(
+        cfg.get("sports")
+        or ("basketball_nba", "icehockey_nhl", "americanfootball_nfl", "baseball_mlb")
+    )
+
+    done_res = await db.execute(
+        select(Event, Sport.key)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(
+            Sport.key.in_(target_sports),
+            Event.status.in_(("completed", "final", "closed")),
+            Event.commence_time >= recent_cutoff,
+            Event.home_score.isnot(None),
+            Event.away_score.isnot(None),
+        )
+        .order_by(Event.commence_time.asc(), Event.id.asc())
+    )
+    completed_events = [
+        {
+            "id": int(ev.id),
+            "sport": str(sp_key),
+            "status": "completed",
+            "home_team": ev.home_team_name,
+            "away_team": ev.away_team_name,
+            "home_score": ev.home_score,
+            "away_score": ev.away_score,
+            "commence_time": ev.commence_time.isoformat() if ev.commence_time else "",
+        }
+        for ev, sp_key in done_res.all()
+    ]
+
+    up_res = await db.execute(
+        select(Event.id)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(
+            Sport.key.in_(target_sports),
+            Event.status.in_(("scheduled", "upcoming")),
+            Event.commence_time >= effective_now,
+            Event.commence_time <= upcoming_end,
+        )
+        .order_by(Event.commence_time.asc(), Event.id.asc())
+    )
+    up_ids = [int(r[0]) for r in up_res.all()]
+    cards_by_id, _ = await _hydrate_event_cards(db, up_ids) if up_ids else ({}, set())
+    upcoming_events = [dict(cards_by_id[eid]) for eid in up_ids if eid in cards_by_id]
+
+    return select_team_active_streaks(
+        {"completed_events": completed_events, "upcoming_events": upcoming_events},
+        now=effective_now,
+        streak_kind=streak_k,
+        min_streak=min_s,
+        min_members=min_m,
+        max_card_rows=max_r,
+        max_quote_age_hours=max_q,
+    )
 
 
 def load_candidate_definition(
@@ -462,7 +556,9 @@ def build_team_active_streaks_producer(
         rule=rule,
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "SPORTS · THE STREAK"),
+        order=str(resolved.get("order") or "sequence"),
         score=float(resolved.get("score") or 92.0),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -477,6 +573,8 @@ def compose_team_streaks_card_and_container(
     context_line = _assert_clean_copy(str(members.sections[0].get("context_line") or ""))
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
+    feed_item["data"]["roundup"]["order"] = "sequence"
     container["context_line"] = context_line
     return feed_item, container
 
