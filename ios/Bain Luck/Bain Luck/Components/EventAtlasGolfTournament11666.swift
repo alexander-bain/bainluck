@@ -61,6 +61,7 @@ enum EventAtlasGolfTournament11666 {
         var top20Market: FuturesMarketDetail? = nil
         var makeCutMarket: FuturesMarketDetail? = nil
         var closingRound: ClosingRoundCard? = nil
+        var liveLeaderboard: LiveLeaderboardCard? = nil
         var hasMakeCutMarket: Bool = false
         var failedMarketSlots: Set<String> = []
         var winnerTimelineFailed: Bool = false
@@ -75,9 +76,52 @@ enum EventAtlasGolfTournament11666 {
                 && lhs.top20Market?.id == rhs.top20Market?.id
                 && lhs.makeCutMarket?.id == rhs.makeCutMarket?.id
                 && lhs.closingRound == rhs.closingRound
+                && lhs.liveLeaderboard == rhs.liveLeaderboard
                 && lhs.hasMakeCutMarket == rhs.hasMakeCutMarket
                 && lhs.failedMarketSlots == rhs.failedMarketSlots
                 && lhs.winnerTimelineFailed == rhs.winnerTimelineFailed
+        }
+    }
+
+    // MARK: - Live Leaderboard Overlay Model (Pass 4 Sheet 4)
+
+    nonisolated struct LiveLeaderboardRow: Equatable, Identifiable, Sendable {
+        var id: String { golferName }
+        let golferName: String
+        let position: String
+        let parDisplay: String
+        let totalScoreRaw: Int?
+    }
+
+    nonisolated struct LiveLeaderboardCard: Equatable, Sendable {
+        let eventName: String
+        let currentRound: Int?
+        let rows: [LiveLeaderboardRow]
+
+        func selectedRow(named golferName: String?) -> LiveLeaderboardRow? {
+            guard let golferName else { return rows.first }
+            let target = EventAtlasGolfTournament11666.normalizeGolferName(golferName)
+            guard !target.isEmpty else { return nil }
+            let matches = rows.filter { EventAtlasGolfTournament11666.normalizeGolferName($0.golferName) == target }
+            return matches.count == 1 ? matches[0] : nil
+        }
+
+        static func formatParDisplay(score: String, totalScoreRaw: Int?) -> String {
+            let trimmed = score.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                if trimmed.uppercased() == "E" || trimmed == "0" || trimmed == "+0" || trimmed == "-0" {
+                    return "E"
+                }
+                if trimmed.hasPrefix("-") {
+                    return "−" + trimmed.dropFirst()
+                }
+                return trimmed
+            }
+            if let raw = totalScoreRaw {
+                if raw == 0 { return "E" }
+                return raw > 0 ? "+\(raw)" : "−\(abs(raw))"
+            }
+            return "—"
         }
     }
 
@@ -138,6 +182,109 @@ enum EventAtlasGolfTournament11666 {
         return String(String.UnicodeScalarView(scalars))
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
+    }
+
+    private nonisolated static let tournamentStopwords: Set<String> = [
+        "the", "presented", "by", "at", "in", "of", "for", "and", "golf",
+        "tournament", "pga", "tour", "dp", "world", "lpga", "liv",
+        "2024", "2025", "2026", "2027",
+    ]
+
+    private nonisolated static let genericTournamentWords: Set<String> = [
+        "open", "championship", "classic", "invitational", "cup", "challenge", "masters",
+    ]
+
+    private nonisolated static func tournamentTokens(_ raw: String?) -> [String] {
+        guard let raw else { return [] }
+        return normalizeGolferName(raw.replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " "))
+            .lowercased()
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+            .filter { !tournamentStopwords.contains($0) }
+    }
+
+    /// Ensures `/api/golf/leaderboard` only attaches to the matching tournament page.
+    nonisolated static func matchesTournamentIdentity(
+        tournamentName: String,
+        slug: String?,
+        leaderboardEventName: String?
+    ) -> Bool {
+        let lbTokens = tournamentTokens(leaderboardEventName)
+        guard !lbTokens.isEmpty else { return false }
+
+        let candidates = [tournamentTokens(tournamentName), tournamentTokens(slug)].filter { !$0.isEmpty }
+        guard !candidates.isEmpty else { return false }
+
+        let lbJoined = lbTokens.joined(separator: " ")
+        for candTokens in candidates {
+            let candJoined = candTokens.joined(separator: " ")
+            if candJoined == lbJoined {
+                return true
+            }
+            let shorter = candTokens.count <= lbTokens.count ? candTokens : lbTokens
+            let longerSet = Set(candTokens.count <= lbTokens.count ? lbTokens : candTokens)
+            let specificShorter = shorter.filter { !genericTournamentWords.contains($0) }
+            if !specificShorter.isEmpty, shorter.allSatisfy({ longerSet.contains($0) }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    nonisolated static func buildLiveLeaderboardCard(
+        for tournament: GolfTournamentData,
+        from response: GolfLeaderboardResponse
+    ) -> LiveLeaderboardCard? {
+        guard response.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "live",
+              !response.players.isEmpty,
+              matchesTournamentIdentity(
+                  tournamentName: tournament.name,
+                  slug: tournament.slug,
+                  leaderboardEventName: response.eventName
+              )
+        else {
+            return nil
+        }
+
+        let resolvedRound = response.currentRound ?? response.players.compactMap(\.currentRound).max()
+        let rows: [LiveLeaderboardRow] = response.players.compactMap { player in
+            let name = player.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            let pos = player.position.trimmingCharacters(in: .whitespacesAndNewlines)
+            return LiveLeaderboardRow(
+                golferName: name,
+                position: pos.isEmpty ? "—" : pos,
+                parDisplay: LiveLeaderboardCard.formatParDisplay(
+                    score: player.score,
+                    totalScoreRaw: player.totalScoreRaw
+                ),
+                totalScoreRaw: player.totalScoreRaw
+            )
+        }
+        guard !rows.isEmpty else { return nil }
+        return LiveLeaderboardCard(
+            eventName: response.eventName ?? tournament.name,
+            currentRound: resolvedRound,
+            rows: rows
+        )
+    }
+
+    nonisolated static func wholePercentProbabilityText(_ p: Double) -> String {
+        let clamped = max(0.0, min(1.0, p))
+        let pct = clamped * 100.0
+        if pct > 0 && pct < 0.5 {
+            return "<1%"
+        }
+        return "\(Int(pct.rounded()))%"
+    }
+
+    nonisolated static func liveStreamingProbabilityText(_ p: Double) -> String {
+        let clamped = max(0.0, min(1.0, p))
+        let pct = clamped * 100.0
+        if pct > 0 && pct < 0.05 {
+            return "<0.1%"
+        }
+        return String(format: "%.1f%%", pct)
     }
 
     nonisolated static func surnameSortKey(_ name: String) -> String {
@@ -644,7 +791,7 @@ enum EventAtlasGolfTournament11666 {
         } else {
             core = last
         }
-        return core.count > 10 ? String(core.prefix(9)) + "…" : core
+        return core.count > 9 ? String(core.prefix(8)) + "…" : core
     }
 
     nonisolated static func shortChartEndLabel(
@@ -657,13 +804,13 @@ enum EventAtlasGolfTournament11666 {
             case .won: return "\(surname) ✓"
             case .lost, nil:
                 if let last = contender.points.last?.probability {
-                    return "\(surname) \(formatProbability(last))"
+                    return "\(surname) \(wholePercentProbabilityText(last))"
                 }
                 return surname
             }
         }
         if let cur = contender.currentProbability ?? contender.points.last?.probability {
-            return "\(surname) \(formatProbability(cur))"
+            return "\(surname) \(wholePercentProbabilityText(cur))"
         }
         return surname
     }
@@ -941,6 +1088,7 @@ struct EventAtlasGolfTournamentSection11666: View {
                 presentation: presentation,
                 contenders: headlineContenders,
                 closingRound: atlasData.closingRound,
+                liveLeaderboard: atlasData.liveLeaderboard,
                 phase: finishInput.phase,
                 onOpenFullField: { showFullFieldSheet = true },
                 onOpenDetails: {
@@ -957,6 +1105,7 @@ struct EventAtlasGolfTournamentSection11666: View {
                 contenders: headlineContenders,
                 phase: finishInput.phase,
                 fieldCount: presentation.field.count,
+                liveRound: atlasData.liveLeaderboard?.currentRound,
                 timelineLoadFailed: atlasData.winnerTimelineFailed,
                 onOpenFullscreenChart: { showFullscreenChartSheet = true },
                 onOpenFullField: { showFullFieldSheet = true }
@@ -1047,6 +1196,7 @@ struct EventAtlasGolfHeadlineCardView192A: View {
     let presentation: GolfTournamentPresentation
     let contenders: [EventAtlasGolfTournament11666.JourneyContender]
     let closingRound: EventAtlasGolfTournament11666.ClosingRoundCard?
+    var liveLeaderboard: EventAtlasGolfTournament11666.LiveLeaderboardCard? = nil
     let phase: GolfFinishPhase10868
     let onOpenFullField: () -> Void
     let onOpenDetails: () -> Void
@@ -1058,6 +1208,11 @@ struct EventAtlasGolfHeadlineCardView192A: View {
     }
 
     private var showsParColumn: Bool {
+        if phase == .recorded, let liveLeaderboard {
+            if contenders.contains(where: { liveLeaderboard.selectedRow(named: $0.name) != nil }) {
+                return true
+            }
+        }
         guard let closingRound else { return false }
         return contenders.contains { closingRound.selectedRow(named: $0.name) != nil }
     }
@@ -1070,7 +1225,20 @@ struct EventAtlasGolfHeadlineCardView192A: View {
         }
     }
 
-    private var tourAndVenueLine: String {
+    private var tournamentLiveRoundCapsuleText: String {
+        if let round = liveLeaderboard?.currentRound, round >= 1 {
+            return "LIVE · R\(round)"
+        }
+        return "LIVE"
+    }
+
+    private var eyebrowContextLine: String {
+        if phase == .recorded, liveLeaderboard != nil {
+            if let tour = presentation.tourLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !tour.isEmpty {
+                return tour
+            }
+            return "Golf"
+        }
         let parts = [presentation.tourLabel, presentation.venue ?? presentation.dateRange]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
@@ -1107,22 +1275,22 @@ struct EventAtlasGolfHeadlineCardView192A: View {
             if phase == .recorded {
                 HStack(spacing: 4) {
                     Circle()
-                        .fill(Color.white)
+                        .fill(DS.cardBg)
                         .frame(width: 5, height: 5)
-                    Text("LIVE")
+                    Text(tournamentLiveRoundCapsuleText)
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(DS.cardBg)
                 }
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
-                .background(Capsule().fill(Color.red))
+                .background(Capsule().fill(DS.danger))
             } else if phase == .final {
                 Text("FINAL")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(DS.textSecondaryReadable)
             }
 
-            Text(tourAndVenueLine)
+            Text(eyebrowContextLine)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
@@ -1132,7 +1300,7 @@ struct EventAtlasGolfHeadlineCardView192A: View {
             if phase != .final {
                 EkgTraceShape(beating: phase == .recorded)
                     .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                    .foregroundStyle(phase == .recorded ? Color.green : Color.secondary)
+                    .foregroundStyle(phase == .recorded ? DS.emerald : DS.textSecondaryReadable)
                     .frame(width: 26, height: 9)
                     .accessibilityHidden(true)
             }
@@ -1161,7 +1329,7 @@ struct EventAtlasGolfHeadlineCardView192A: View {
                     Button(action: onOpenFullField) {
                         Text("All \(presentation.field.count) golfers ›")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.blue)
+                            .foregroundStyle(DS.blueReadable)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("golf.atlas.allGolfersHeaderButton")
@@ -1178,7 +1346,7 @@ struct EventAtlasGolfHeadlineCardView192A: View {
                     Button(action: onOpenFullField) {
                         Text("All \(presentation.field.count) golfers ›")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.blue)
+                            .foregroundStyle(DS.blueReadable)
                             .fixedSize(horizontal: true, vertical: false)
                     }
                     .buttonStyle(.plain)
@@ -1192,25 +1360,25 @@ struct EventAtlasGolfHeadlineCardView192A: View {
         HStack(spacing: 4) {
             Text("POS")
                 .lineLimit(1)
-                .frame(width: 22, alignment: .leading)
+                .frame(width: 24, alignment: .leading)
             Text("GOLFER")
                 .lineLimit(1)
             Spacer(minLength: 4)
             if showsParColumn {
                 Text("PAR")
                     .lineLimit(1)
-                    .frame(width: 28, alignment: .trailing)
+                    .frame(width: 32, alignment: .trailing)
             }
             if showsPregameColumn {
                 Text("PREGAME")
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
-                    .frame(width: 54, alignment: .trailing)
+                    .frame(width: 52, alignment: .trailing)
             }
             Text(trailingColumnHeader)
                 .lineLimit(1)
                 .foregroundStyle(.primary)
-                .frame(width: 46, alignment: .trailing)
+                .frame(width: 50, alignment: .trailing)
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundStyle(DS.textSecondaryReadable)
@@ -1222,8 +1390,14 @@ struct EventAtlasGolfHeadlineCardView192A: View {
         rank: Int
     ) -> some View {
         let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
+        let liveRow = phase == .recorded ? liveLeaderboard?.selectedRow(named: contender.name) : nil
         let closingRow = closingRound?.selectedRow(named: contender.name)
-        let posLabel = closingRow?.finishLabel ?? "\(rank)"
+        let posLabel = liveRow?.position ?? closingRow?.finishLabel ?? "\(rank)"
+        let parLabel: String? = {
+            if let liveRow { return liveRow.parDisplay }
+            if let closingRow { return EventAtlasGolfTournament11666.ClosingRoundCard.formatStrokes(closingRow.strokesToPar) }
+            return nil
+        }()
 
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 3) {
@@ -1240,12 +1414,12 @@ struct EventAtlasGolfHeadlineCardView192A: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 10) {
-                    if let row = closingRow {
-                        Text(EventAtlasGolfTournament11666.ClosingRoundCard.formatStrokes(row.strokesToPar))
+                    if let parLabel {
+                        Text(parLabel)
                             .font(.subheadline.weight(.semibold).monospacedDigit())
                     }
                     if showsPregameColumn, let open = contender.openingProbability {
-                        Text(formatProbability(open))
+                        Text(EventAtlasGolfTournament11666.wholePercentProbabilityText(open))
                             .font(.subheadline.monospacedDigit())
                             .foregroundStyle(DS.textSecondaryReadable)
                     }
@@ -1259,7 +1433,7 @@ struct EventAtlasGolfHeadlineCardView192A: View {
                 Text(posLabel)
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(DS.textSecondaryReadable)
-                    .frame(width: 22, alignment: .leading)
+                    .frame(width: 24, alignment: .leading)
 
                 HStack(spacing: 5) {
                     Circle()
@@ -1275,21 +1449,21 @@ struct EventAtlasGolfHeadlineCardView192A: View {
                 Spacer(minLength: 4)
 
                 if showsParColumn {
-                    Text(closingRow.map { EventAtlasGolfTournament11666.ClosingRoundCard.formatStrokes($0.strokesToPar) } ?? "—")
+                    Text(parLabel ?? "—")
                         .font(.subheadline.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.primary)
-                        .frame(width: 28, alignment: .trailing)
+                        .frame(width: 32, alignment: .trailing)
                 }
 
                 if showsPregameColumn {
-                    Text(contender.openingProbability.map { formatProbability($0) } ?? "—")
+                    Text(contender.openingProbability.map { EventAtlasGolfTournament11666.wholePercentProbabilityText($0) } ?? "—")
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
-                        .frame(width: 54, alignment: .trailing)
+                        .frame(width: 52, alignment: .trailing)
                 }
 
                 golferTrailingValue(contender, color: color)
-                    .frame(minWidth: 46, alignment: .trailing)
+                    .frame(minWidth: 50, alignment: .trailing)
             }
             .padding(.vertical, 1)
         }
@@ -1320,7 +1494,10 @@ struct EventAtlasGolfHeadlineCardView192A: View {
                     .foregroundStyle(DS.textSecondaryReadable)
             }
         } else if let current = contender.currentProbability {
-            Text(formatProbability(current))
+            let formatted = phase == .recorded
+                ? EventAtlasGolfTournament11666.liveStreamingProbabilityText(current)
+                : EventAtlasGolfTournament11666.wholePercentProbabilityText(current)
+            Text(formatted)
                 .font(.callout.weight(.bold).monospacedDigit())
                 .foregroundStyle(color)
         } else {
@@ -1337,6 +1514,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
     let contenders: [EventAtlasGolfTournament11666.JourneyContender]
     let phase: GolfFinishPhase10868
     var fieldCount: Int = 0
+    var liveRound: Int? = nil
     var timelineLoadFailed: Bool = false
     let onOpenFullscreenChart: () -> Void
     let onOpenFullField: () -> Void
@@ -1353,9 +1531,15 @@ struct EventAtlasGolfJourneyCardView11666: View {
 
     private var footerJourneyCaption: String {
         switch phase {
-        case .before: return "Pre-tournament win history"
-        case .recorded: return "Opening to live"
-        case .final: return "Opening to final"
+        case .before:
+            return "Pre-tournament win history"
+        case .recorded:
+            if let round = liveRound, round >= 1 {
+                return "Round 1 tee-off → Round \(round) live"
+            }
+            return "Opening to live"
+        case .final:
+            return "Opening to final"
         }
     }
 
