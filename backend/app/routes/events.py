@@ -6633,8 +6633,8 @@ def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
     for zero rows. Contiguous cuts only, and only up to
     `_SPLIT_FUTURES_MAX_TERMS`, so 3 terms cost 4 arms rather than every subset.
 
-    The outcome test is a correlated EXISTS, NOT `_market_has_outcome`'s ARRAY
-    InitPlan, because here the NAME run is the selective side. The InitPlan
+    Without a maintained open-outcome copy, the outcome test is a correlated
+    EXISTS, because the NAME run is the selective side. An archive-wide InitPlan
     resolves every outcome spelling `series` before it looks at a single name;
     the EXISTS probes only the markets the name run returned, by `market_id`.
     Production 2026-10-01, the union of a query's arms, two reads each:
@@ -6659,6 +6659,16 @@ def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
     measured and is worse: `dodgers world series` 0.2 -> 5.6 s and `lakers
     championship` past 8 s, driven from the broad name side.
 
+    #11933: while #4437's open-outcome copy is maintained, use its name-only
+    lookup plus the direct recent-outcome overlay. The split arm had bypassed
+    that existing search path and still searched the full historical table;
+    82 of 174 public diagnostic reads on Nov 14 exhausted its one-second bound.
+    ARRAY fixes the match-set read as an InitPlan over the smaller copy. An
+    absent/stale/incomplete state or disabled reader keeps the original EXISTS,
+    rather than bringing back the archive-wide InitPlan measured above. The
+    whole-word and single-outcome predicates, market filters, tier and budgets
+    remain the same. The copy retains #4437's existing rename/reopen lag bound.
+
     UNION arms like the alias and nickname arms, so recall can only grow and a
     one-term query (returns ``[]``) compiles byte-identical SQL.
     """
@@ -6672,15 +6682,22 @@ def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
     for cut in range(1, len(expanded)):
         head, tail = expanded[:cut], expanded[cut:]
         for name_run, outcome_run in ((head, tail), (tail, head)):
+            outcome_where = [_outcome_whole_word(t) for t, _e in outcome_run]
+            open_ids = market_ids_with_outcome(*outcome_where)
+            outcome_match = (
+                FuturesMarket.id == any_(func.array(open_ids.scalar_subquery()))
+                if open_ids is not None
+                else select(FuturesOutcome.id)
+                .where(
+                    FuturesOutcome.market_id == FuturesMarket.id,
+                    *outcome_where,
+                )
+                .exists()
+            )
             arms.append(
                 and_(
                     *[_futures_name_match_term(t, e) for t, e in name_run],
-                    select(FuturesOutcome.id)
-                    .where(
-                        FuturesOutcome.market_id == FuturesMarket.id,
-                        *[_outcome_whole_word(t) for t, _e in outcome_run],
-                    )
-                    .exists(),
+                    outcome_match,
                 )
             )
     return arms
@@ -13085,6 +13102,12 @@ async def search_events(
     # between them is a DB lane with its own clock (`futures_containers`).
     _mark("futures_refill")
 
+    # #11933: start the first title composition while the independent container
+    # and headline reads run. It already owns a separate session and single-flight
+    # task. Keep the handle even if it finishes without a cached verdict, so this
+    # request never starts that same read twice.
+    _title_started = _prime_search_verified_title(db, deduped_futures, _deadline)
+
     # #8375: a Polymarket game CONTAINER is not a market. It is the game's event
     # row, and its "outcomes" are copies of its own sub-markets' lead legs, so
     # `q=falcons packers` answered "Falcons vs. Packers · O/U 24.5 95%". The game
@@ -13506,7 +13529,8 @@ async def search_events(
     # prints — the verified-title blend, not the one venue this row came from.
     _verified_missed: list = []
     _verified_by_id = await _search_verified_titles(
-        db, (*deduped_futures, *futures_markets), _deadline, missed=_verified_missed
+        db, (*deduped_futures, *futures_markets), _deadline, missed=_verified_missed,
+        started=_title_started,
     )
     if _verified_missed:
         # #12335 step 4: the card printed its own venue's prices because the
@@ -40807,8 +40831,39 @@ def _verified_title_in_background(engine, market_id: int):
     return task
 
 
+def _verified_title_pool_available(engine) -> bool:
+    try:
+        return engine.pool.checkedout() < engine.pool.size()
+    except Exception:  # noqa: BLE001 — no counters means no spare connection proved
+        return False
+
+
+def _prime_search_verified_title(db, markets, deadline: float | None) -> dict:
+    """Start at most one already-required composition; never wait or use ``db``."""
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from app.routes.futures import _held_verified_title, _verified_title_facts
+    from app.utils.futures_verified_title import question_for
+
+    engine = getattr(db, "bind", None)
+    if not isinstance(db, AsyncSession) or not isinstance(engine, AsyncEngine):
+        return {}
+    if deadline is not None and deadline - _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S <= time.monotonic():
+        return {}
+    for market in markets:
+        if (question_for(_verified_title_facts(market)) is None
+                or _held_verified_title(market.id) is not None):
+            continue
+        task = _VERIFIED_TITLE_BACKGROUND.get(market.id)
+        if task is None and not _verified_title_pool_available(engine):
+            return {}
+        return {market.id: task if task is not None else _verified_title_in_background(engine, market.id)}
+    return {}
+
+
 async def _search_verified_titles(
-    db, markets, deadline: float | None, *, missed: list | None = None
+    db, markets, deadline: float | None, *, missed: list | None = None,
+    started: dict | None = None,
 ) -> dict:
     """``{market id: Composition}`` for the title questions among ``markets``.
 
@@ -40840,6 +40895,11 @@ async def _search_verified_titles(
     ``missed`` collects the ids of title markets that got no verdict in time
     (the bound, the deadline floor, or a full pool), so the caller can cache
     that page briefly rather than pin the card's own prices for 180 s.
+
+    ``started`` holds the first composition overlapped with earlier route work
+    (#11933), including a completed refusal. Reuse it even if its own connection
+    fills the pool; waiting on it needs no new checkout. All waits retain the
+    existing shared budget and deadline floor.
     """
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -40865,14 +40925,6 @@ async def _search_verified_titles(
             out[m.id] = held
     if not pending:
         return out
-    try:
-        pool_full = engine.pool.checkedout() >= engine.pool.size()
-    except Exception:  # noqa: BLE001 — a pool without counters keeps the cards as they are
-        pool_full = True
-    if pool_full:
-        if missed is not None:
-            missed.extend(m.id for m in pending)
-        return out
     import asyncio
 
     budget_ends = time.monotonic() + _search_verified_title_wait_s()
@@ -40893,7 +40945,13 @@ async def _search_verified_titles(
             if missed is not None:
                 missed.append(m.id)
             continue
-        task = _verified_title_in_background(engine, m.id)
+        task = (started or {}).get(m.id) or _VERIFIED_TITLE_BACKGROUND.get(m.id)
+        if task is None:
+            if not _verified_title_pool_available(engine):
+                if missed is not None:
+                    missed.append(m.id)
+                continue
+            task = _verified_title_in_background(engine, m.id)
         left = min(budget_ends, floor_ends if floor_ends is not None else budget_ends) - now
         if left <= 0:
             if missed is not None:
