@@ -130,8 +130,10 @@ def test_one_winner_detail_matches_the_midterms_priced_mass_with_bound_tail(
     card_prices = {o["name"]: o["probability"] for o in cards[108629]["top_outcomes"]}
     detail_prices = {o["name"]: o["probability"] for o in detail["outcomes"]}
 
-    assert all("rendered_percent" not in o for o in detail["outcomes"])
-    assert all("rendered_percent" not in o for o in cards[108629]["top_outcomes"])
+    assert sum(o["rendered_percent"] for o in detail["outcomes"]) == 100
+    assert {o["name"]: o["rendered_percent"] for o in detail["outcomes"]} == {
+        o["name"]: o["rendered_percent"] for o in cards[108629]["top_outcomes"]
+    }
     assert sum(card_prices.values()) == pytest.approx(1.185 / 1.125)
     assert len(detail_prices) == 24
     assert detail_prices == card_prices
@@ -200,7 +202,7 @@ def test_complete_floor_field_keeps_its_normalized_opening_and_dated_move(monkey
         0.948 / 1.125 - 0.90 / 1.077, abs=1e-8
     )
     assert detail["openings_withheld"] is False
-    assert all("rendered_percent" not in o for o in detail["outcomes"])
+    assert sum(o["rendered_percent"] for o in detail["outcomes"]) == 100
 
 
 def test_raw_field_still_withholds_an_unsupported_price():

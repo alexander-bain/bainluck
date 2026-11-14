@@ -413,17 +413,19 @@ def normalize_display_probs(
     if divisor is None:
         return False
     before = [o[key] for o in outcomes]
-    if any(is_venue_floor_price(p) for p in before):
-        # Preserve the prior upper-bound scale without claiming this is a full
-        # distribution. Healthy complete fields, including under-rounds, use
-        # the whole-percent allocation below.
-        for o, p in zip(outcomes, before):
-            o[key] = round(float(p) / divisor, 8)
-        return any(p != o[key] for p, o in zip(before, outcomes))
-    exact = [float(p) / divisor * 100 for p in before]
+    # A one-cent no-bid quote is an upper bound, not another point of mass.
+    # Keep its existing numeric bound for charts, but allocate it zero whole
+    # points: the shared formatters print a positive value allocated zero as
+    # "<1%". Otherwise Israel's 17 bounds print as 17 extra percentage points
+    # beside a priced field that already totals 100 (#11995).
+    floors = [is_venue_floor_price(p) for p in before]
+    exact = [
+        0.0 if floor else float(p) / divisor * 100
+        for p, floor in zip(before, floors)
+    ]
     whole = [math.floor(p + 1e-10) for p in exact]
     order = sorted(
-        range(len(outcomes)),
+        (i for i in range(len(outcomes)) if not floors[i]),
         key=lambda i: (
             -round(exact[i] - whole[i], 10),
             str(outcomes[i].get("name", outcomes[i].get("outcome_name", outcomes[i].get("label", "")))).casefold(),
