@@ -102,6 +102,8 @@ enum EventSportHeadlines12472 {
         case soccerDuringGame
         case soccerAfterGame
         case nhlDuringGame
+        case mlbBeforeGame
+        case mlbDuringGame
         case mlbAfterGame
         case mmaBeforeGame
         case mmaDuringGame
@@ -110,9 +112,9 @@ enum EventSportHeadlines12472 {
 
         nonisolated var phase: Phase {
             switch self {
-            case .nflBeforeGame, .nbaBeforeGame, .ncaafBeforeGame, .ncaabBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
+            case .nflBeforeGame, .nbaBeforeGame, .ncaafBeforeGame, .ncaabBeforeGame, .mlbBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
                 return .before
-            case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .soccerDuringGame, .nhlDuringGame, .mmaDuringGame, .tennisDuringGame:
+            case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .mlbDuringGame, .soccerDuringGame, .nhlDuringGame, .mmaDuringGame, .tennisDuringGame:
                 return .during
             case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .soccerAfterGame, .mlbAfterGame, .mmaAfterGame:
                 return .after
@@ -136,6 +138,8 @@ enum EventSportHeadlines12472 {
             case .soccerDuringGame: return "event-headline-12472-soccer-during"
             case .soccerAfterGame: return "event-headline-12472-soccer-after"
             case .nhlDuringGame: return "event-headline-12472-nhl-during"
+            case .mlbBeforeGame: return "event-headline-12472-mlb-before"
+            case .mlbDuringGame: return "event-headline-12472-mlb-during"
             case .mlbAfterGame: return "event-headline-12472-mlb-after"
             case .mmaBeforeGame: return "event-headline-12472-mma-before"
             case .mmaDuringGame: return "event-headline-12472-mma-during"
@@ -487,6 +491,9 @@ enum EventSportHeadlines12472 {
         if isNCAABSport(event.sport) {
             return event.status == "live" ? .ncaabDuringGame : .ncaabBeforeGame
         }
+        if event.sport == "baseball_mlb" {
+            return event.status == "live" ? .mlbDuringGame : .mlbBeforeGame
+        }
         if event.sport == "icehockey_nhl" && event.status == "live" {
             return .nhlDuringGame
         }
@@ -572,6 +579,7 @@ enum EventSportHeadlines12472 {
         case .nflBeforeGame, .nbaBeforeGame, .nbaDuringGame,
              .ncaafBeforeGame, .ncaafDuringGame,
              .ncaabBeforeGame, .ncaabDuringGame,
+             .mlbBeforeGame, .mlbDuringGame,
              .nhlDuringGame, .mmaBeforeGame, .mmaDuringGame, .tennisDuringGame:
             return resolveOpenTwoWay(
                 resolvedKind: resolvedKind,
@@ -1473,7 +1481,29 @@ enum EventSportHeadlines12472 {
                 confidenceTier: confidenceTier,
                 now: now
             )
-        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .nhlDuringGame, .mmaDuringGame:
+        case .mlbBeforeGame:
+            return resolveStandardBefore(
+                kind: .mlbBeforeGame,
+                sportKey: "baseball_mlb",
+                league: "MLB",
+                allowsStreamingTenths: false,
+                showsChanceHeaderWithoutProjection: true,
+                showsRowDivider: true,
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                shown: shown,
+                awayProb: awayProb,
+                homeProb: homeProb,
+                hasScore: hasScore,
+                numberStreams: numberStreams,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                confidenceTier: confidenceTier,
+                now: now
+            )
+        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .mlbDuringGame, .nhlDuringGame, .mmaDuringGame:
             return resolveLiveStandard(
                 resolvedKind: resolvedKind,
                 event: event,
@@ -1619,6 +1649,7 @@ enum EventSportHeadlines12472 {
         league: String,
         allowsStreamingTenths: Bool,
         showsChanceHeaderWithoutProjection: Bool,
+        showsRowDivider: Bool = false,
         event: EventDetail,
         awayFullName: String,
         homeFullName: String,
@@ -1699,6 +1730,7 @@ enum EventSportHeadlines12472 {
             soccerThreeWay: nil,
             showsEkg: true,
             stacksRecordUnderName: pregameHeaders != nil,
+            showsRowDivider: showsRowDivider,
             sourceMark: event.sourceMark,
             confidenceTier: confidenceTier
         )
@@ -1730,11 +1762,12 @@ enum EventSportHeadlines12472 {
         let liveBadge = periodStatus.map { "LIVE · \($0)" } ?? "LIVE"
 
         switch resolvedKind {
-        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame:
+        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .mlbDuringGame:
             let liveSportKey: String = {
                 switch resolvedKind {
                 case .ncaafDuringGame: return event.sport ?? "americanfootball_ncaaf"
                 case .ncaabDuringGame: return event.sport ?? "basketball_ncaab"
+                case .mlbDuringGame: return "baseball_mlb"
                 default: return "basketball_nba"
                 }
             }()
@@ -1742,6 +1775,7 @@ enum EventSportHeadlines12472 {
                 switch resolvedKind {
                 case .ncaafDuringGame: return ncaafLeagueLabel(for: event.sport)
                 case .ncaabDuringGame: return ncaabLeagueLabel(for: event.sport)
+                case .mlbDuringGame: return "MLB"
                 default: return "NBA"
                 }
             }()
@@ -1802,6 +1836,7 @@ enum EventSportHeadlines12472 {
                 soccerThreeWay: nil,
                 showsEkg: true,
                 stacksRecordUnderName: showsStackedRecordWhenProjectionAbsent,
+                showsRowDivider: resolvedKind == .mlbDuringGame,
                 sourceMark: event.sourceMark,
                 confidenceTier: confidenceTier
             )
