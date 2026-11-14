@@ -1,0 +1,221 @@
+{
+ "slate_id": "c5a077361cd9e2dc",
+ "surface": "discover",
+ "grader": "Alex Bain",
+ "expert": true,
+ "source": "grade-page",
+ "date": "2026-11-11",
+ "graded_on": "0be58ff1",
+ "items": [
+  {
+   "position": 1,
+   "item_key": "bundle:theme:story:major_entertainment_events:6173044-58492238-65814225-65814226-58492234",
+   "grade": "interesting",
+   "note": "Grouping Oscars markets is great. But this feels like 3 random markets (Costume design?!?!). If we're choosing from a list of +400 markets, it might be good to clarify why we chose the 3 we're showing. Alternatively, clicking a link to +400 markets is intimidating, and we could say what's there",
+   "graded_at": "2026-11-11T15:55:44.264127+00:00"
+  },
+  {
+   "position": 2,
+   "item_key": "futures:58492245",
+   "grade": "shareable",
+   "note": "Would be good for this card to clarify when the Grammys happen",
+   "graded_at": "2026-11-11T15:56:21.142541+00:00"
+  },
+  {
+   "position": 3,
+   "item_key": "bundle:comparison:ipo_valuation:67722906-59225467-68829293-68829322",
+   "grade": "neither",
+   "note": "We don't really have a story here. Just four financial markets",
+   "graded_at": "2026-11-11T15:56:56.178821+00:00"
+  },
+  {
+   "position": 4,
+   "item_key": "futures:5455924",
+   "grade": "interesting",
+   "note": "This is inherently interesting. Any commentary we can generate as to why it's down would be helpful, or if we could surface seemingly correlated markets",
+   "graded_at": "2026-11-11T15:57:40.213675+00:00"
+  },
+  {
+   "position": 5,
+   "item_key": "bundle:theme:story:ipo_markets:67751802-67722879-30691373-16623139",
+   "grade": "neither",
+   "note": "Random selection. Can't just choose middle bracket and drop it in here.",
+   "graded_at": "2026-11-11T15:58:04.270394+00:00"
+  },
+  {
+   "position": 6,
+   "item_key": "futures:115608",
+   "grade": "shareable",
+   "note": "Perfect!",
+   "graded_at": "2026-11-11T15:58:15.069401+00:00"
+  },
+  {
+   "position": 7,
+   "item_key": "futures:60626093",
+   "grade": "shareable",
+   "note": "",
+   "graded_at": "2026-11-11T15:58:24.090381+00:00"
+  },
+  {
+   "position": 8,
+   "item_key": "bundle:theme:story:macro_rates:57574250-61234824-56995847",
+   "grade": "interesting",
+   "note": "",
+   "graded_at": "2026-11-11T15:58:36.793380+00:00"
+  },
+  {
+   "position": 9,
+   "item_key": "futures:13792423",
+   "grade": "shareable",
+   "note": "",
+   "graded_at": "2026-11-11T15:58:47.168060+00:00"
+  },
+  {
+   "position": 10,
+   "item_key": "futures:68788272",
+   "grade": "neither",
+   "note": "I don't know enough about esports to have an opinion here. Doesn't seem interesting, but that might be personal bias",
+   "graded_at": "2026-11-11T15:59:13.209949+00:00"
+  },
+  {
+   "position": 11,
+   "item_key": "bundle:roundup:cfp-picture",
+   "grade": "interesting",
+   "note": "How were these four chosen? No logos or team colors? No commentary about how these bars have moved?",
+   "graded_at": "2026-11-11T15:59:48.841925+00:00"
+  },
+  {
+   "position": 12,
+   "item_key": "concept:event:f1:motogp-grand-prix-of-qatar-race-winner",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-11T15:59:50.940483+00:00"
+  },
+  {
+   "position": 13,
+   "item_key": "bundle:theme:story:middle_east_conflict:113232-69603905-3484764-63720627-60627569-61998668",
+   "grade": "interesting",
+   "note": "",
+   "graded_at": "2026-11-11T15:59:55.907629+00:00"
+  },
+  {
+   "position": 14,
+   "item_key": "futures:68376368",
+   "grade": "shareable",
+   "note": "",
+   "graded_at": "2026-11-11T16:00:01.488929+00:00"
+  },
+  {
+   "position": 15,
+   "item_key": "bundle:roundup:by-november-30",
+   "grade": "interesting",
+   "note": "Very cool. I don't know what Valve or Bilytske are, and it might be good to have a way to get quick context",
+   "graded_at": "2026-11-11T16:00:49.438806+00:00"
+  },
+  {
+   "position": 16,
+   "item_key": "event:15345301",
+   "grade": "neither",
+   "note": "Individual sporting events with no context and low stakes are not good cards",
+   "graded_at": "2026-11-11T16:01:03.382626+00:00"
+  },
+  {
+   "position": 17,
+   "item_key": "bundle:roundup:liga-profesional-relegation-2026",
+   "grade": "neither",
+   "note": "how were these chosen? I also just personally don't care about soccer",
+   "graded_at": "2026-11-11T16:01:19.229164+00:00"
+  },
+  {
+   "position": 18,
+   "item_key": "event:15345499",
+   "grade": "neither",
+   "note": "Individual event. No context. Low stakes",
+   "graded_at": "2026-11-11T16:01:31.499325+00:00"
+  },
+  {
+   "position": 19,
+   "item_key": "bundle:theme:story:ufc_events:114171-114173-114169-114175",
+   "grade": "shareable",
+   "note": "",
+   "graded_at": "2026-11-11T16:01:38.997009+00:00"
+  },
+  {
+   "position": 20,
+   "item_key": "futures:52755659",
+   "grade": "shareable",
+   "note": "",
+   "graded_at": "2026-11-11T16:01:41.977140+00:00"
+  },
+  {
+   "position": 21,
+   "item_key": "bundle:roundup:nhl-playoffs-2026-27",
+   "grade": "interesting",
+   "note": "Are these the top 5? No logos or team colors?",
+   "graded_at": "2026-11-11T16:01:55.501155+00:00"
+  },
+  {
+   "position": 36,
+   "item_key": "futures:68948432",
+   "grade": "shareable",
+   "note": "Would love logos or team colors",
+   "graded_at": "2026-11-11T16:02:11.011388+00:00"
+  },
+  {
+   "position": 51,
+   "item_key": "futures:22915076",
+   "grade": "interesting",
+   "note": "Need actor headshots",
+   "graded_at": "2026-11-11T16:02:21.239370+00:00"
+  },
+  {
+   "position": 67,
+   "item_key": "futures:60542255",
+   "grade": "neither",
+   "note": "Terrible",
+   "graded_at": "2026-11-11T16:02:27.145901+00:00"
+  },
+  {
+   "position": 82,
+   "item_key": "futures:60495674",
+   "grade": "interesting",
+   "note": "Don't know who that is. Need context and a picture",
+   "graded_at": "2026-11-11T16:02:41.399182+00:00"
+  },
+  {
+   "position": 97,
+   "item_key": "futures:69746855",
+   "grade": "neither",
+   "note": "",
+   "graded_at": "2026-11-11T16:02:44.111712+00:00"
+  },
+  {
+   "position": 112,
+   "item_key": "futures:69096403",
+   "grade": "neither",
+   "note": "I just don't personally care about esports",
+   "graded_at": "2026-11-11T16:13:29.540604+00:00"
+  },
+  {
+   "position": 128,
+   "item_key": "futures:67722906",
+   "grade": "shareable",
+   "note": "This is great, although I'd love to see it sorted by monetary value, not by probability",
+   "graded_at": "2026-11-11T16:14:05.022785+00:00"
+  },
+  {
+   "position": 143,
+   "item_key": "futures:57574250",
+   "grade": "interesting",
+   "note": "This is great, although I'd love to see it sorted by bps, not by probability",
+   "graded_at": "2026-11-11T16:14:28.902061+00:00"
+  },
+  {
+   "position": 158,
+   "item_key": "futures:69713905",
+   "grade": "neither",
+   "note": "Single event. No context. VERY low stakes",
+   "graded_at": "2026-11-11T16:14:46.526604+00:00"
+  }
+ ]
+}
