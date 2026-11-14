@@ -1005,12 +1005,14 @@ async def _compute_unlinked_held(db: AsyncSession) -> dict:
     a blend source with no market; THIS finds a market with no link. Catchable today.
 
     Bounded + high-precision: scans only unlinked open Kalshi/Poly markets resolving
-    near now, requires a game-level shape AND a both-teams match to an imminent event.
+    near now, requires a game-level shape AND both teams, compatible sport/gender
+    and the venue fixture window. Missing scope/time evidence is unassessed.
     Read-only."""
     from app.utils.prediction_market_matching import (
         extract_matchup,
         is_game_level_market,
     )
+    from app.utils.unlinked_held_fixture import FIXTURE_RULE, fixture_refusal
 
     await db.execute(text("SET LOCAL statement_timeout = '15s'"))
     # Imminent events (same window as matured-linkage).
@@ -1046,6 +1048,7 @@ async def _compute_unlinked_held(db: AsyncSession) -> dict:
     ]
     if not imm:
         return {
+            "fixture_rule": FIXTURE_RULE,
             "headline_unlinked_held": 0,
             "status": "insufficient_slate",
             "events_checked": 0,
@@ -1054,7 +1057,8 @@ async def _compute_unlinked_held(db: AsyncSession) -> dict:
             "by_source": {},
             "definition": (
                 "Unlinked-but-held: a Kalshi/Polymarket game-winner market we hold "
-                "(status open, event_id NULL) whose both teams match an imminent event "
+                "(status open, event_id NULL) whose teams, sport/gender and fixture "
+                "window match an imminent event "
                 "— the matcher missed a link it could have made. 0 = clean."
             ),
         }
@@ -1068,6 +1072,10 @@ async def _compute_unlinked_held(db: AsyncSession) -> dict:
                 FuturesMarket.external_id,
                 FuturesMarket.source,
                 FuturesMarket.llm_sport_category,
+                func.jsonb_build_object(
+                    "polymarket_event_slug", FuturesMarket.market_metadata["polymarket_event_slug"],
+                    "venue_game_start", FuturesMarket.market_metadata["venue_game_start"],
+                ).label("market_metadata"),
             ).where(
                 FuturesMarket.event_id.is_(None),
                 FuturesMarket.source.in_(["kalshi", "polymarket"]),
@@ -1082,6 +1090,7 @@ async def _compute_unlinked_held(db: AsyncSession) -> dict:
     misses: list[dict] = []
     seen: set[tuple] = set()
     derivatives_excluded = 0
+    fixture_pair_refusals: dict[str, int] = {}
     for m in cand:
         if not is_game_level_market(m.name or "", m.llm_sport_category, external_id=m.external_id):
             continue
@@ -1097,6 +1106,10 @@ async def _compute_unlinked_held(db: AsyncSession) -> dict:
             continue
         for ev in imm:
             if _matchup_matches_event(matchup, ev["home"], ev["away"], m.external_id):
+                refusal = fixture_refusal(m, ev)
+                if refusal:
+                    fixture_pair_refusals[refusal] = fixture_pair_refusals.get(refusal, 0) + 1
+                    continue
                 key = (ev["id"], m.source, m.id)
                 if key in seen:
                     break
@@ -1121,20 +1134,26 @@ async def _compute_unlinked_held(db: AsyncSession) -> dict:
         by_source[miss["source"]] = by_source.get(miss["source"], 0) + 1
 
     return {
+        "fixture_rule": FIXTURE_RULE,
         "headline_unlinked_held": len(misses),
         "status": "ok",
         "events_checked": len(imm),
         "candidates_scanned": len(cand),
         "derivatives_excluded": derivatives_excluded,
+        "fixture_pair_refusals": fixture_pair_refusals,
+        "unassessed_pairs": sum(n for reason, n in fixture_pair_refusals.items() if reason.startswith("unknown_")),
         "misses": misses,
         "by_source": by_source,
         "definition": (
             "Unlinked-but-held: a Kalshi/Polymarket game-WINNER (moneyline) market "
             "we hold (status open, event_id NULL) whose both teams match an imminent "
-            "event — the matcher missed a link it could have made. Derivative/prop "
+            "event of compatible sport/gender within the venue fixture window "
+            "— the matcher missed a link it could have made. Unknown fixture "
+            "evidence is unassessed, not a confirmed miss. Derivative/prop "
             "sub-markets (First N Innings Winner, Player Props, halves, totals, run "
             "line, ...) are EXCLUDED (they are not blend-critical; their link comes "
-            "from group_id propagation, not a name match). 0 = clean; >0 = real "
+            "from group_id propagation, not a name match). 0 = no confirmed misses "
+            "(check unassessed pairs separately); >0 = real "
             "game-winner match-failures (distinct from blend-integrity phantoms)."
         ),
     }
