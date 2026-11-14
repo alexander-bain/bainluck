@@ -95,6 +95,81 @@ def test_ci_names_every_pg_gated_integration_test():
     )
 
 
+TESTS_DIR = Path(__file__).resolve().parent
+
+#: #12612: files directly under ``tests/`` were invisible to the sweep above,
+#: which reads ``tests/integration/`` only. That is how #12519's nine
+#: real-Postgres tests went unrun in CI while being quoted as the proof. A
+#: root-level file is PG-gated when it READS a gate variable from the
+#: environment and makes a skip CALL: mentioning a gate in prose, or asserting
+#: on its name the way the CI meta-tests do, is not a gate.
+GATE_READ_RE = re.compile(
+    r"""os\.(?:environ\.get|getenv)\(\s*["'][A-Z][A-Z0-9_]*_DATABASE_URL["']"""
+    r"""|os\.environ\[\s*["'][A-Z][A-Z0-9_]*_DATABASE_URL["']"""
+)
+SKIP_CALL_RE = re.compile(r"pytest\.mark\.skipif\(|pytest\.skip\(")
+
+#: #12612's debt list for ``tests/``: gated files no ci.yml step names, read
+#: one by one on Nov 11. Wiring each is its owner's change (a first CI run can
+#: go red), so the list can only shrink. The calibration files' gate,
+#: ``CALIBRATION_TEST_DATABASE_URL``, is set by no CI job at all (the four
+#: start-placeholder files were wired with their own step, #12612). Nothing in
+#: these files is evidence while listed.
+KNOWN_UNWIRED_ROOT = {
+    "test_calibration_canonical_pg.py",
+    "test_calibration_examples_canonical_262.py",
+    "test_calibration_horizon_honest_263.py",
+    "test_calibration_horizon_population_262.py",
+    "test_polymarket_container_sibling_5821.py",
+    "test_repair_10520_keeper_current_anchor.py",
+}
+
+
+def _root_pg_gated_files() -> set[str]:
+    found = set()
+    for path in sorted(TESTS_DIR.glob("test_*.py")):
+        if path.name == Path(__file__).name:
+            continue  # this guard spells gate reads and skip calls in its own checks
+        text = path.read_text(encoding="utf-8")
+        if GATE_READ_RE.search(text) and SKIP_CALL_RE.search(text):
+            found.add(path.name)
+    return found
+
+
+def test_ci_names_every_pg_gated_test_directly_under_tests():
+    """#12612: the same invariant for ``tests/`` itself."""
+    ci_text = CI_YML.read_text(encoding="utf-8")
+    gated = _root_pg_gated_files()
+    # Not vacuous: the two wired files and the debt list are all gated.
+    assert {"test_team_merge_keeps_distinct_names_12519.py",
+            "test_blend_preview_ledger_tsp1_10090.py"} <= gated, (
+        "the root-level detector has stopped matching known gated files"
+    )
+    unnamed = {name for name in gated if name not in ci_text}
+    assert unnamed <= KNOWN_UNWIRED_ROOT, (
+        "these Postgres-gated tests directly under tests/ are not named by any "
+        "ci.yml step, so they skip everywhere and pytest still exits 0: "
+        f"{sorted(unnamed - KNOWN_UNWIRED_ROOT)}"
+    )
+
+
+def test_root_debt_list_does_not_outlive_its_entries():
+    ci_text = CI_YML.read_text(encoding="utf-8")
+    gated = _root_pg_gated_files()
+    for name in sorted(KNOWN_UNWIRED_ROOT):
+        assert name in gated, f"{name} is on the debt list but no longer gated: drop it"
+        assert name not in ci_text, f"{name} is on the debt list but ci.yml names it: drop it"
+
+
+def test_root_detector_reads_gates_not_prose():
+    assert GATE_READ_RE.search('DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")')
+    assert GATE_READ_RE.search("url = os.getenv('START_PLACEHOLDER_DATABASE_URL')")
+    assert not GATE_READ_RE.search("skipif-gated on `SEARCH_TEST_DATABASE_URL`, so it skips")
+    assert not GATE_READ_RE.search('os.environ.get("DATABASE_URL")')
+    assert SKIP_CALL_RE.search("pytestmark = pytest.mark.skipif(not DB_URL, reason='x')")
+    assert not SKIP_CALL_RE.search("a `skipif`-gated class in this file")
+
+
 def test_detector_sees_gates_not_spelled_test_database_url():
     """#9602 follow-up: a gate named without ``TEST`` is still a gate.
 

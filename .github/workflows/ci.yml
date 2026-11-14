@@ -711,6 +711,50 @@ jobs:
             echo "::error::#12534 identity gate did not run all five cases"
             exit 1
           }
+      - name: "#12519 team-merge dedup keeps distinct names (real Postgres)"
+        id: db_12519_team_merge_dedup
+        if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
+        run: |
+          python -m pytest tests/test_team_merge_keeps_distinct_names_12519.py \
+            -v -rs > /tmp/dedup12519.txt 2>&1 || {
+            cat /tmp/dedup12519.txt
+            exit 1
+          }
+          cat /tmp/dedup12519.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/dedup12519.txt; then
+            echo "::error::#12519 dedup gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9][1-9][0-9]* passed([,[:space:]]|$)" /tmp/dedup12519.txt || {
+            echo "::error::#12519 dedup gate ran no tests"
+            exit 1
+          }
+      - name: "#8841 start-placeholder tag rewrites (real Postgres)"
+        id: db_8841_start_placeholder_rewrites
+        if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
+        env:
+          # #12612: these four files gate on their own variable, which no job set,
+          # so their database tests had never run. Each uses a TEMP table only.
+          START_PLACEHOLDER_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
+        run: |
+          python -m pytest \
+            tests/test_espn_announced_start_retires_placeholder_8841.py \
+            tests/test_espn_start_placeholder_is_tbd_8981.py \
+            tests/test_placeholder_equal_instant_statpal_mark_retired_8841.py \
+            tests/test_start_placeholder_is_tbd_8841.py \
+            -v -rs > /tmp/placeholder8841.txt 2>&1 || {
+            cat /tmp/placeholder8841.txt
+            exit 1
+          }
+          cat /tmp/placeholder8841.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/placeholder8841.txt; then
+            echo "::error::#8841 start-placeholder gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9][1-9][0-9]* passed([,[:space:]]|$)" /tmp/placeholder8841.txt || {
+            echo "::error::#8841 start-placeholder gate ran no tests"
+            exit 1
+          }
       - name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
         id: db_010_typeahead_next_fixture_contracts_or_next
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}

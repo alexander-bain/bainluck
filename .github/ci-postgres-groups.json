@@ -5,6 +5,8 @@
     "#10305 one-row anchor-schedule move: lock, fence and reach (real Postgres)",
     "#10305 D2 participant fill: fences, rollback, restore and the code denylist (real Postgres)",
     "#12534 wrong-club venue identities are refused (real Postgres)",
+    "#12519 team-merge dedup keeps distinct names (real Postgres)",
+    "#8841 start-placeholder tag rewrites (real Postgres)",
     "Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)",
     "Did-you-mean withdrawn contract (real Postgres)",
     "Matchup last-meeting typeahead contract (real Postgres)",
