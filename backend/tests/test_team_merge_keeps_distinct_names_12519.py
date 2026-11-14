@@ -70,6 +70,14 @@ class TestOneStatementForBothPaths:
     def test_the_statement_is_scoped_to_one_team(self):
         assert "a.team_id = :tid" in team_merge.MAPPING_DEDUP_SQL
 
+    def test_the_source_id_branch_also_matches_the_sport(self):
+        # Fable, Nov 10 (from Builder B's read on #12534): the resolver's key and
+        # the production unique index both include the sport key, so one source
+        # id under two sports is two rows, not a duplicate.
+        sql = team_merge.MAPPING_DEDUP_SQL
+        id_branch = sql[sql.index("(a.source_id IS NOT NULL"):sql.index(" OR (a.source_id IS NULL")]
+        assert "a.sport_key IS NOT DISTINCT FROM b.sport_key" in id_branch
+
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 
@@ -87,6 +95,7 @@ ROWS = [
     (9, 1, "odds_api", None, None, "icehockey_nhl"),                 # exact repeat (NULL name)
     (10, 2, "polymarket", None, "Lightning", "icehockey_nhl"),
     (11, 2, "polymarket", None, "Lightning", "icehockey_nhl"),       # repeat, but team 2
+    (12, 1, "kalshi", "MTL", "Montreal", "icehockey_ahl"),           # 5's id, other sport
 ]
 
 
@@ -144,6 +153,10 @@ class TestTheDedupOnARealDatabase:
     async def test_a_repeated_source_id_still_collapses(self, mapping):
         left = await mapping(team_merge.MAPPING_DEDUP_SQL)
         assert 5 in left and 6 not in left
+
+    async def test_the_same_source_id_in_another_sport_is_not_a_twin(self, mapping):
+        left = await mapping(team_merge.MAPPING_DEDUP_SQL)
+        assert 12 in left
 
     async def test_a_row_without_an_id_is_not_an_id_rows_twin(self, mapping):
         left = await mapping(team_merge.MAPPING_DEDUP_SQL)
