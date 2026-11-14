@@ -20,11 +20,16 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             return try decoder.decode(
                 RelatedFuturesResponse.self,
-                from: Data(#"{"event_id":\#(eventId),"markets":[]}"#.utf8)
+                from: Data(#"{"event_id":\#(eventId),"home_team":"Arsenal","away_team":"Chelsea","markets":[]}"#.utf8)
             )
         }
         func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse {
-            try JSONDecoder().decode(TeamProgressionResponse.self, from: Data(#"{"home":null,"away":null}"#.utf8))
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(
+                TeamProgressionResponse.self,
+                from: Data(#"{"event_id":\#(eventId),"home":null,"away":null}"#.utf8)
+            )
         }
         func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse {
             if let markets { return markets }
@@ -395,6 +400,167 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
         XCTAssertEqual(drawThreeWay.homeBox.mainText, "\u{2014}")
         XCTAssertEqual(drawThreeWay.drawBox.mainText, "\u{2713} Draw")
         XCTAssertEqual(drawThreeWay.awayBox.mainText, "\u{2014}")
+    }
+
+    func testSoccerGameMarketsOnlyAndNonRegulationEdgeCasesAndNoOpenedRow() async throws {
+        // 1. Two-way-only soccer with no draw share and no 3-way gameMarkets returns nil
+        let twoWayOnly = try soccerBeforeFixture(homeProb: 0.52, drawProb: nil, awayProb: 0.48)
+        XCTAssertNil(EventSportHeadlines12472.kind(for: twoWayOnly, now: fixedNow))
+        XCTAssertFalse(EventSportHeadlines12472.applies(to: twoWayOnly, now: fixedNow))
+        XCTAssertNil(resolveHeadline(twoWayOnly, hasScore: false, numberStreams: false))
+
+        // 2. Same match with 3-way gameMarkets resolves ONLY when gameMarkets is passed
+        let preMatchGM = try decodeGameMarkets("""
+        {
+          "event_id": 9127041,
+          "player_props": [],
+          "period_markets": [],
+          "other": [
+            { "_market_id": 701, "market_name": "Match Winner", "outcome_name": "Arsenal", "probability": 0.52, "source": "blend", "observed_at": "2026-11-14T07:55:00Z" },
+            { "_market_id": 701, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.25, "source": "blend", "observed_at": "2026-11-14T07:55:00Z" },
+            { "_market_id": 701, "market_name": "Match Winner", "outcome_name": "Chelsea", "probability": 0.23, "source": "blend", "observed_at": "2026-11-14T07:55:00Z" }
+          ]
+        }
+        """)
+        XCTAssertEqual(EventSportHeadlines12472.kind(for: twoWayOnly, gameMarkets: preMatchGM, now: fixedNow), .soccerBeforeGame)
+        XCTAssertTrue(EventSportHeadlines12472.applies(to: twoWayOnly, gameMarkets: preMatchGM, now: fixedNow))
+
+        // 3. Extra-time and penalties without confirmedWinner return nil
+        for nonRegPeriod in ["extra_time", "penalties"] {
+            let nonReg = try decodeEvent("""
+            {
+              "id": 9127099,
+              "sport": "soccer_uefa_champs_league",
+              "sport_name": "Champions League",
+              "home_team": "Arsenal",
+              "away_team": "Chelsea",
+              "commence_time": "2026-11-10T19:00:00Z",
+              "completed_at": "2026-11-10T21:35:00Z",
+              "status": "completed",
+              "home_score": 2,
+              "away_score": 1,
+              "final_score_period": "\(nonRegPeriod)",
+              "hero_settled_result": "home",
+              "prematch_odds": {
+                "home_probability": 0.52,
+                "draw_probability": 0.25,
+                "away_probability": 0.23,
+                "source": "polymarket"
+              }
+            }
+            """)
+            XCTAssertNil(
+                EventSportHeadlines12472.kind(for: nonReg, now: fixedNow),
+                "\(nonRegPeriod) without confirmed 90-minute 3-way winner must return nil"
+            )
+            XCTAssertFalse(EventSportHeadlines12472.applies(to: nonReg, now: fixedNow))
+        }
+
+        // 4. Finished match qualifying ONLY via gameMarkets (no prematch_odds, no regulation period, no hero_settled_result)
+        let marketsOnlyFinished = try decodeEvent("""
+        {
+          "id": 9127100,
+          "sport": "soccer_epl",
+          "sport_name": "Premier League",
+          "home_team": "Arsenal",
+          "away_team": "Chelsea",
+          "commence_time": "2026-11-10T19:00:00Z",
+          "completed_at": "2026-11-10T20:55:00Z",
+          "status": "completed",
+          "home_score": 2,
+          "away_score": 1,
+          "opening_odds": {
+            "home_probability": 0.50,
+            "away_probability": 0.24
+          }
+        }
+        """)
+        let settledThreeWayGM = try decodeGameMarkets("""
+        {
+          "event_id": 9127100,
+          "player_props": [],
+          "period_markets": [],
+          "other": [
+            { "_market_id": 801, "market_name": "Match Winner", "outcome_name": "Arsenal", "probability": 0.99, "pregame_mark": 0.52, "is_winner": true, "resolution_source": "kalshi", "source": "kalshi" },
+            { "_market_id": 801, "market_name": "Match Winner", "outcome_name": "Draw", "probability": 0.005, "pregame_mark": 0.25, "is_winner": false, "resolution_source": "kalshi", "source": "kalshi" },
+            { "_market_id": 801, "market_name": "Match Winner", "outcome_name": "Chelsea", "probability": 0.005, "pregame_mark": 0.23, "is_winner": false, "resolution_source": "kalshi", "source": "kalshi" }
+          ]
+        }
+        """)
+        XCTAssertFalse(EventSportHeadlines12472.applies(to: marketsOnlyFinished, now: fixedNow))
+        XCTAssertTrue(EventSportHeadlines12472.applies(to: marketsOnlyFinished, gameMarkets: settledThreeWayGM, now: fixedNow))
+
+        // 5. Hosted page + source check: every EventDetailView call site passes gameMarkets, and a
+        // gameMarkets-only soccer page renders no "Opened" line anywhere (hero or Game Info).
+        let detailSourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Views/EventDetailView.swift")
+        let detailSource = try String(contentsOf: detailSourceURL, encoding: .utf8)
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+        XCTAssertFalse(
+            detailSource.contains("EventSportHeadlines12472.applies(to:event,now:"),
+            "every EventDetailView call to EventSportHeadlines12472.applies must pass gameMarkets"
+        )
+
+        let emptyHistory = try decodeHistory("""
+        {
+          "event_id": 9127041,
+          "home_team": "Arsenal",
+          "away_team": "Chelsea",
+          "history": []
+        }
+        """)
+        let vm = EventDetailViewModel(
+            eventId: twoWayOnly.id,
+            client: StubEventDetailProvider(detail: twoWayOnly, history: emptyHistory, markets: preMatchGM)
+        )
+        await vm.load()
+        vm.stopRefresh()
+
+        let page = NavigationStack {
+            EventDetailView(eventId: twoWayOnly.id)
+                .withLoadedEventForTest12278(twoWayOnly, viewModel: vm)
+        }
+        .environmentObject(PinManager())
+        .environmentObject(NavigationCoordinator())
+        .frame(width: 390, height: 2200)
+
+        let host = hostForMeasurement(page.environment(\.colorScheme, .light), at: .large)
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 2200)
+        let window: UIWindow
+        if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+            window = UIWindow(windowScene: scene)
+        } else {
+            window = UIWindow(frame: host.view.frame)
+        }
+        window.frame = host.view.frame
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        host.view.layoutIfNeeded()
+
+        func collectStrings(from view: UIView) -> [String] {
+            var out: [String] = []
+            if let label = view.accessibilityLabel, !label.isEmpty { out.append(label) }
+            if let value = view.accessibilityValue, !value.isEmpty { out.append(value) }
+            if let uil = view as? UILabel, let t = uil.text, !t.isEmpty { out.append(t) }
+            for sub in view.subviews { out.append(contentsOf: collectStrings(from: sub)) }
+            return out
+        }
+
+        let renderedStrings = collectStrings(from: host.view)
+        XCTAssertFalse(
+            renderedStrings.contains(where: { $0.localizedCaseInsensitiveContains("opened") }),
+            "gameMarkets-only soccer page must never show Opened: \(renderedStrings)"
+        )
     }
 
     // MARK: - 3. NHL During a Game Rules

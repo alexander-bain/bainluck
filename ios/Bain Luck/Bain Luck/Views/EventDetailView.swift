@@ -3634,6 +3634,7 @@ struct EventDetailView: View {
         let nflHeadline = nflPairedHeadline(event, hasScore: gameInfoHasScore) != nil
         let sportHeadline12472 = EventSportHeadlines12472.applies(
             to: event,
+            gameMarkets: vm.gameMarkets?.eventId == event.id ? vm.gameMarkets : nil,
             now: displayNow()
         )
         // #11296 — nor when the generic hero printed the admitted live pair.
