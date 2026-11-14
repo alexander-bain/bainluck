@@ -1631,6 +1631,7 @@ struct EventDetailView: View {
             numberStreams: vm.streamDelivering && (vm.streamHasPushedPrice || vm.displaysPreview(event)),
             ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
             ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            gameMarkets: vm.gameMarkets?.eventId == event.id ? vm.gameMarkets : nil,
             now: displayNow()
         ) {
             return stackBoundary12278 {
@@ -2733,7 +2734,8 @@ struct EventDetailView: View {
         let hasScore = EventDetailView.showsScore(
             status: event.status, away: event.awayScore, home: event.homeScore)
         let names = nflNames(event)
-        return EventAtlasSoccerCards11666.cards(
+        let now = displayNow()
+        let cards = EventAtlasSoccerCards11666.cards(
             sportKey: event.sport,
             status: event.status,
             commenceTime: event.commenceTime?.asDate,
@@ -2746,8 +2748,12 @@ struct EventDetailView: View {
             gameMarkets: gm,
             boxScoreData: event.boxScoreData,
             scoreHistory: vm.history?.eventId == event.id ? vm.history?.scoreHistory : nil,
-            now: displayNow()
+            now: now
         )
+        if EventSportHeadlines12472.applies(to: event, gameMarkets: gm, now: now) {
+            return cards.filter { $0.id != "soccer:threeWay" }
+        }
+        return cards
     }
 
     /// #11666 Step E6d — Tennis story cards (`tennis_*`) from THIS event's
@@ -3358,7 +3364,11 @@ struct EventDetailView: View {
     }
 
     private func usesApprovedHeadlinePresentation9483(_ event: EventDetail) -> Bool {
-        !EventSportHeadlines12472.applies(to: event, now: displayNow())
+        !EventSportHeadlines12472.applies(
+            to: event,
+            gameMarkets: vm.gameMarkets?.eventId == event.id ? vm.gameMarkets : nil,
+            now: displayNow()
+        )
             && MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
             && nflPairedHeadline(event, hasScore: Self.showsScore(
                 status: event.status, away: event.awayScore, home: event.homeScore)) != nil
@@ -3622,7 +3632,10 @@ struct EventDetailView: View {
         // in any state, so Game Info holds them; it carries the projection, so
         // Game Info does not repeat it.
         let nflHeadline = nflPairedHeadline(event, hasScore: gameInfoHasScore) != nil
-        let sportHeadline12472 = EventSportHeadlines12472.applies(to: event, now: displayNow())
+        let sportHeadline12472 = EventSportHeadlines12472.applies(
+            to: event,
+            now: displayNow()
+        )
         // #11296 — nor when the generic hero printed the admitted live pair.
         let heroLiveForecast = genericLiveForecast11296(event, hasScore: gameInfoHasScore) != nil
         let nflHandedOver: [(icon: String, text: String)] = nflHeadline && !sportHeadline12472 ? [
