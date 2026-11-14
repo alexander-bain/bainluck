@@ -390,7 +390,8 @@ def normalize_display_probs(
     whole percentages over the full field by largest remainder, with stable
     id/name ties, so clients do not round a preview into a different distribution.
     Unknown/withheld prices and non-exclusive or cumulative sets stay raw.
-    Return whether any probability moved, for raw-history comparison suppression.
+    Return whether prices were scaled, for raw-history comparison suppression;
+    the one-ULP encoding of an open bound is not a different historical basis.
     """
     import math
 
@@ -414,10 +415,8 @@ def normalize_display_probs(
         return False
     before = [o[key] for o in outcomes]
     # A one-cent no-bid quote is an upper bound, not another point of mass.
-    # Keep its existing numeric bound for charts, but allocate it zero whole
-    # points: the shared formatters print a positive value allocated zero as
-    # "<1%". Otherwise Israel's 17 bounds print as 17 extra percentage points
-    # beside a priced field that already totals 100 (#11995).
+    # Allocate it zero whole points rather than seventeen extra percentage
+    # points beside Israel's priced field that already totals 100 (#11995).
     floors = [is_venue_floor_price(p) for p in before]
     exact = [
         0.0 if floor else float(p) / divisor * 100
@@ -434,10 +433,20 @@ def normalize_display_probs(
     )
     for i in order[: 100 - sum(whole)]:
         whole[i] += 1
-    for o, p, percent in zip(outcomes, before, whole):
-        o[key] = round(float(p) / divisor, 8)
+    normalized = [round(float(p) / divisor, 8) for p in before]
+    scaled = any(
+        (_VENUE_FLOOR_PRICE if floor else p) != value
+        for p, floor, value in zip(before, floors, normalized)
+    )
+    for o, value, floor, percent in zip(outcomes, normalized, floors, whole):
+        # Installed 1.0.6 checks probability < 0.01 before rendered_percent;
+        # exactly 0.01 plus a zero allocation would print "0%". Encode this
+        # open upper bound one Double step below 0.01, after decimal rounding.
+        # Stored prices, source evidence, grades and the scaling verdict stay
+        # unchanged; repeated formatting must not create a new history basis.
+        o[key] = min(value, math.nextafter(_VENUE_FLOOR_PRICE, 0.0)) if floor else value
         o["rendered_percent"] = percent
-    return any(p != o[key] for p, o in zip(before, outcomes))
+    return scaled
 
 
 def leader_pick_order(

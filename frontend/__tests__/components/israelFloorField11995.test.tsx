@@ -18,9 +18,16 @@ test("the entire Israel field prints 100 points and seventeen <1% bounds", () =>
 
 test("the actual futures row renders the served floor as a bound", () => {
   const row = specimen.outcomes.find(o => o.name === "Naftali Bennett")!;
+  const outcome: FuturesOutcome = {
+    id: row.id, name: row.name, probability: row.probability,
+    rendered_percent: row.rendered_percent, american_odds: null,
+    rank: null, rank_change_24h: null, movement: null,
+    probability_change_24h: null, opening_probability: null,
+    opening_american_odds: null, last_updated: specimen.observed_at,
+    is_winner: false, resolution_source: "ungradeable_result",
+  };
   const html = renderToStaticMarkup(<OutcomeRow
-    outcome={{ ...row, probability_change_24h: null, opening_probability: null,
-      is_winner: false, resolution_source: "ungradeable_result" } as FuturesOutcome}
+    outcome={outcome}
     rank={14} isLeader={false} isSelected={false} onToggleSelect={() => {}}
     hasHistory={false} marketCategory="politics" marketName={specimen.market_name}
     rendered={row.rendered_percent} renderedOpening={null}

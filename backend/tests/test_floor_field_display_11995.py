@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+import math
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +21,8 @@ SPECIMEN = json.loads(
 
 
 def rows():
-    return [{k: r[k] for k in ("id", "name", "probability")} for r in SPECIMEN["outcomes"]]
+    return [{"id": r["id"], "name": r["name"],
+             "probability": r["stored_probability"]} for r in SPECIMEN["outcomes"]]
 
 
 def assert_display(actual):
@@ -30,7 +32,7 @@ def assert_display(actual):
     assert sum(r["rendered_percent"] == 0 for r in actual) == 17
     for r in actual:
         assert r["rendered_percent"] == expected[r["id"]]["rendered_percent"]
-        # Numeric upper bounds retain their meaning; no invented zero prices.
+        # Open bounds are encoded below 1% for the formatter already installed.
         assert r["probability"] == expected[r["id"]]["probability"]
 
 
@@ -64,6 +66,10 @@ def test_full_detail_and_feed_preview_receive_the_same_bound_allocations():
     for r in preview:
         assert r["rendered_percent"] == by_id[r["id"]]["rendered_percent"]
     assert preview[-1]["rendered_percent"] == 0
+    assert _installed_5704_probability(preview[-1]) == "<1%"
+    assert [o.current_probability for o in market.outcomes] == [
+        r["stored_probability"] for r in SPECIMEN["outcomes"]
+    ]
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -84,3 +90,69 @@ def test_a_real_subcent_tail_still_counts_toward_the_field():
     assert sum(r["probability"] for r in actual) == pytest.approx(1, abs=1e-7)
     assert sum(r["rendered_percent"] for r in actual) == 100
     assert actual[0]["probability"] < 0.495
+
+
+def _installed_5704_probability(row):
+    """The shipped ios-1.0.6-5704 formatProbability boundary, before this PR."""
+    pct = row["probability"] * 100
+    if pct < 1:
+        return "<1%"
+    if pct > 99:
+        return ">99%"
+    return f"{row.get('rendered_percent', math.floor(pct + 0.5))}%"
+
+
+def test_installed_5704_prints_all_seventeen_israel_bounds_after_json_transport():
+    actual = rows()
+    normalize_display_probs(actual)
+    wire = json.loads(json.dumps(actual))
+    labels = [_installed_5704_probability(row) for row in wire]
+    assert labels.count("<1%") == 17
+    assert "0%" not in labels
+    assert sum(int(label[:-1]) for label in labels if label != "<1%") == 100
+
+
+@pytest.mark.parametrize("mass", [1.0, 1.02])
+def test_installed_bounds_stay_below_one_percent_at_and_above_unit_mass(mass):
+    actual = [{"id": 1, "name": "A", "probability": 0.6 * mass},
+              {"id": 2, "name": "B", "probability": 0.4 * mass},
+              {"id": 3, "name": "C", "probability": 0.01}]
+    normalize_display_probs(actual)
+    assert 0 < actual[-1]["probability"] < 0.01
+    assert _installed_5704_probability(actual[-1]) == "<1%"
+    assert sum(row["rendered_percent"] for row in actual) == 100
+
+
+def test_installed_underround_field_remains_refused_instead_of_printing_zero():
+    actual = [{"name": "A", "probability": 0.57},
+              {"name": "B", "probability": 0.38},
+              {"name": "C", "probability": 0.01}]
+    before = deepcopy(actual)
+    assert normalize_display_probs(actual) is False
+    assert actual == before
+    assert _installed_5704_probability(actual[-1]) == "1%"
+
+
+def test_bound_encoding_does_not_change_the_historical_scale_or_stored_legs():
+    actual = rows()
+    source = deepcopy(actual)
+    assert normalize_display_probs(actual) is False
+    assert actual[:4] == [dict(row, rendered_percent=expected["rendered_percent"])
+                          for row, expected in zip(source[:4], SPECIMEN["outcomes"][:4])]
+    for row in actual[4:]:
+        assert 0 < 0.01 - row["probability"] <= math.ulp(0.01)
+    # The one-ULP bound encoding is not a new scaling basis or a stored-price edit.
+    assert all(row["probability"] == 0.01 for row in source[4:])
+    encoded = deepcopy(actual)
+    assert normalize_display_probs(actual) is False
+    assert actual == encoded
+
+
+def test_settled_field_does_not_receive_the_open_bound_encoding():
+    actual = [{"name": "Winner", "probability": 1.0, "is_winner": True,
+               "resolution_source": "api_settlement"},
+              {"name": "Loser", "probability": 0.0},
+              {"name": "Unpriced", "probability": 0.01}]
+    before = deepcopy(actual)
+    assert normalize_display_probs(actual) is False
+    assert actual == before
