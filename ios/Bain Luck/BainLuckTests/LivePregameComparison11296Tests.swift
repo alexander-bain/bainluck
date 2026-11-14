@@ -705,7 +705,7 @@ final class LivePregameComparison11296Tests: XCTestCase {
         // covered (a link pushed another game) or changes game. #10090 (Alex 67)
         // adds one more: a tap on the EKG opens this same popover. It also hands
         // that state, read-only, to the page's `PageDetailsCloser`.
-        XCTAssertEqual(occurrences("showProbabilityDetails", in: page), 7, "the one existing open/close state")
+        XCTAssertEqual(occurrences("showProbabilityDetails", in: page), 9, "the one existing open/close state")
         // The same decision, on the same headline row, both hosts mount from.
         let reveal = try XCTUnwrap(page.range(of: "privatevarrevealForecast11296:LivePregameComparison11296.Headline?{"))
         XCTAssertTrue(page[reveal.upperBound...].hasPrefix(

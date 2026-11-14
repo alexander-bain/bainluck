@@ -119,6 +119,10 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     /// without a fresh detail read omit it cleanly.
     var sourceMark: SourceMark? = nil
     var awaySourceMark: SourceMark? = nil
+    /// #12472 — optional served competition name (`sport_name`, e.g. `"Premier League"`,
+    /// `"Liga MX"`) and completion timestamp (`completed_at`) for event-page headlines.
+    var sportName: String? = nil
+    var completedAt: String? = nil
 }
 
 // MARK: - Standings Context
