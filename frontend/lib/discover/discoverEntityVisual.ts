@@ -267,6 +267,10 @@ export function classifyDiscoverSubject(
   return { kind: "topic", label: title || "Discover", tickerOk: false };
 }
 
+function hostMatches(host: string, domain: string): boolean {
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
 function inferPresentation(
   url: string,
   kind: DiscoverVisualKind,
@@ -281,16 +285,16 @@ function inferPresentation(
     return wirePresentation;
   }
   const host = hostOf(url);
-  if ((host.includes("espncdn.com") && url.includes("/teamlogos/")) || host.includes("flagcdn.com")) {
+  if ((hostMatches(host, "espncdn.com") && url.includes("/teamlogos/")) || hostMatches(host, "flagcdn.com")) {
     return "logo";
   }
-  if (host.includes("espncdn.com") && url.includes("/headshots/")) {
+  if (hostMatches(host, "espncdn.com") && url.includes("/headshots/")) {
     return "portrait";
   }
-  if (host.includes("archive.org") || host.includes("coverartarchive.org")) {
+  if (hostMatches(host, "archive.org") || hostMatches(host, "coverartarchive.org")) {
     return "cover";
   }
-  if (kind === "person" && host.includes("wikimedia.org")) {
+  if (kind === "person" && hostMatches(host, "wikimedia.org")) {
     return "portrait";
   }
   return "photo";

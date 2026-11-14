@@ -140,7 +140,7 @@ def test_twin_annika_golf_tournament_dedup_collapses_duplicate_cards():
             "name": "The ANNIKA driven by Gainbridge at Pelican",
             "venue": "Pelican Golf Club",
             "source_count": 2,
-            "start_date": "2026-11-12",
+            "start_date": "2025-05-15",
             "golfers": [{"name": "Hye-Jin Choi", "probability": 0.24}, {"name": "Nelly Korda", "probability": 0.19}],
         },
         "_blended_market_ids": frozenset({101}),
@@ -154,7 +154,7 @@ def test_twin_annika_golf_tournament_dedup_collapses_duplicate_cards():
             "name": "The ANNIKA",
             "venue": None,
             "source_count": 1,
-            "start_date": "2026-11-12",
+            "start_date": "2025-05-15",
             "golfers": [{"name": "Hye-Jin Choi", "probability": 0.24}, {"name": "Nelly Korda", "probability": 0.19}],
         },
         "_blended_market_ids": frozenset({102}),
@@ -163,6 +163,24 @@ def test_twin_annika_golf_tournament_dedup_collapses_duplicate_cards():
     assert len(deduped) == 1
     assert deduped[0]["data"]["name"] == "The ANNIKA driven by Gainbridge at Pelican"
     assert deduped[0]["_blended_market_ids"] == frozenset({101, 102})
+
+
+def test_event_feed_item_data_is_never_cleared_by_publish_feed_item():
+    event_item = {
+        "type": "event",
+        "score": 71.0,
+        "reason": "Close game",
+        "headline": "Tonight",
+        "data": {
+            "id": 777,
+            "sport": "basketball_nba",
+            "home_team": "Boston Celtics",
+            "away_team": "New York Knicks",
+        },
+    }
+    _publish_feed_item(event_item)
+    assert event_item["data"]["id"] == 777
+    assert event_item["data"]["home_team"] == "Boston Celtics"
 
 
 def test_publish_feed_item_and_response_sanitizer_enforce_image_truth():

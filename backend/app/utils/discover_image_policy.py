@@ -346,19 +346,27 @@ def _fold_ascii(value: str | None) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
-_register_cache: dict[str, dict[str, str]] | None = None
+_REGISTER_CACHE: list[dict[str, dict[str, str]]] = []
+
+
+def _url_host_matches(url: str | None, *domains: str) -> bool:
+    if not url:
+        return False
+    host = (urlparse(url).hostname or "").lower()
+    if not host:
+        return False
+    return any(host == d or host.endswith(f".{d}") for d in domains)
 
 
 def _load_verified_register() -> dict[str, dict[str, str]]:
-    global _register_cache
-    if _register_cache is not None:
-        return _register_cache
+    if _REGISTER_CACHE:
+        return _REGISTER_CACHE[0]
     index: dict[str, dict[str, str]] = {}
     try:
         doc = json.loads(_REGISTER_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         logger.warning("verified_discover_art.json unreadable: %s", exc)
-        _register_cache = index
+        _REGISTER_CACHE.append(index)
         return index
 
     allowed = set(doc.get("allowed_hosts") or [])
@@ -370,7 +378,7 @@ def _load_verified_register() -> dict[str, dict[str, str]]:
         if not url or not verified:
             continue
         parsed = urlparse(url)
-        if parsed.scheme != "https" or parsed.netloc not in allowed:
+        if parsed.scheme != "https" or (parsed.hostname or "") not in allowed:
             logger.warning("Refusing unverified host in discover art register: %s", url)
             continue
         record = {
@@ -384,22 +392,16 @@ def _load_verified_register() -> dict[str, dict[str, str]]:
             norm = _fold_ascii(str(alias))
             if norm and norm not in index:
                 index[norm] = record
-    _register_cache = index
+    _REGISTER_CACHE.append(index)
     return index
 
 
 def is_pexels_url(url: str | None) -> bool:
-    if not url:
-        return False
-    host = urlparse(url).netloc.lower()
-    return host.endswith("pexels.com")
+    return _url_host_matches(url, "pexels.com")
 
 
 def is_tmdb_url(url: str | None) -> bool:
-    if not url:
-        return False
-    host = urlparse(url).netloc.lower()
-    return host.endswith("tmdb.org")
+    return _url_host_matches(url, "tmdb.org")
 
 
 def is_blocked_pexels_photo(url: str | None) -> bool:
@@ -632,14 +634,13 @@ def _lookup_verified_entry(
 
 
 def _presentation_for_url(url: str, fallback: str = "photo") -> str:
-    host = urlparse(url).netloc.lower()
-    if "espncdn.com" in host and "/teamlogos/" in url:
+    if _url_host_matches(url, "espncdn.com") and "/teamlogos/" in url:
         return "logo"
-    if "flagcdn.com" in host:
+    if _url_host_matches(url, "flagcdn.com"):
         return "logo"
-    if "espncdn.com" in host and "/headshots/" in url:
+    if _url_host_matches(url, "espncdn.com") and "/headshots/" in url:
         return "portrait"
-    if "archive.org" in host or "coverartarchive.org" in host:
+    if _url_host_matches(url, "archive.org", "coverartarchive.org"):
         return "cover"
     return fallback
 
@@ -706,10 +707,11 @@ def resolve_discover_market_image(
                     if logo_url:
                         break
         if logo_url:
+            is_espn_logo = _url_host_matches(logo_url, "espncdn.com")
             return {
                 "image_url": logo_url,
-                "image_width": 500 if "espncdn.com" in logo_url else 320,
-                "image_height": 500 if "espncdn.com" in logo_url else 213,
+                "image_width": 500 if is_espn_logo else 320,
+                "image_height": 500 if is_espn_logo else 213,
                 "image_presentation": "logo",
                 "image_monogram": None,
             }
@@ -766,33 +768,27 @@ def dedup_discover_tournament_items(items: list[dict[str, Any]]) -> list[dict[st
 
     for item in items:
         data = item.get("data") or {}
+        raw_name = str(data.get("name") or "").strip().lower()
         base_name = _normalize_golf_tournament_base_name(data.get("name"))
-        top_two = tuple(
-            sorted(
-                _fold_ascii(g.get("name"))
-                for g in (data.get("golfers") or [])[:2]
-                if isinstance(g, dict) and g.get("name")
-            )
-        )
-        sig = base_name or ("|".join(top_two) if len(top_two) == 2 else "")
-        # Also detect identical top-2 golfer pair in the same week
-        pair_sig = f"pair:{'|'.join(top_two)}:{data.get('start_date') or ''}" if len(top_two) == 2 else ""
+        if not base_name:
+            kept.append(item)
+            continue
 
-        existing_idx = by_sig.get(sig) if sig else None
-        if existing_idx is None and pair_sig:
-            existing_idx = by_sig.get(pair_sig)
-
+        existing_idx = by_sig.get(base_name)
         if existing_idx is None:
             idx = len(kept)
             kept.append(item)
-            if sig:
-                by_sig[sig] = idx
-            if pair_sig:
-                by_sig[pair_sig] = idx
+            by_sig[base_name] = idx
             continue
 
         prev = kept[existing_idx]
         prev_data = prev.get("data") or {}
+        prev_raw_name = str(prev_data.get("name") or "").strip().lower()
+        # Only collapse sponsor/venue suffix twins whose raw names differ
+        # (e.g. 'The ANNIKA driven by Gainbridge at Pelican' + 'The ANNIKA').
+        if raw_name == prev_raw_name:
+            kept.append(item)
+            continue
         # Prefer the entry with more sources or fuller sponsor/venue metadata, and merge blended market IDs
         prev_richness = (
             int(prev_data.get("source_count") or 0),
@@ -957,6 +953,8 @@ def apply_discover_image_policy_in_place(item: dict[str, Any]) -> None:
     if not isinstance(item, dict) or not isinstance(item.get("data"), dict):
         return
     sanitized = sanitize_discover_feed_item(item)
+    if sanitized is item or sanitized.get("data") is item["data"]:
+        return
     if isinstance(sanitized.get("data"), dict):
         item["data"].clear()
         item["data"].update(sanitized["data"])
