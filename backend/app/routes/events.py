@@ -3404,6 +3404,10 @@ def _team_card_keyed(
         }
         for row in rows
     ]
+    for card in cards:
+        card["_aliases"].extend(MAJOR_TEAM_QUERY_ALIASES.get(
+            (card["sport_key"], card["name"]), ()
+        ))
     if not restated_aliases:
         for card in cards:
             card["_aliases"] = [
@@ -11994,6 +11998,8 @@ async def search_events(
         attach_pregame_projection(_formatted, _projections.get(_formatted.get("id")))
     _mark("pregame_projection")
 
+    # #1619: empty means no futures statement ran, including a game-set response.
+    _futures_arm_ms: dict[str, int] = {}
     if _next_games:
         _set_results = formatted_results[:_next_games]
         _set_count = len(_set_results)
@@ -12012,7 +12018,8 @@ async def search_events(
             "sports": [],
             "filters": {"sport": sport, "days_back": 0, "include_upcoming": True},
             **({"degraded": degraded} if degraded else {}),
-            **({"debug_timing": {**_stage_ms, "total_ms": sum(_stage_ms.values())}}
+            **({"debug_timing": {**_stage_ms, "total_ms": sum(_stage_ms.values()),
+                                 "futures_arm_ms": _futures_arm_ms}}
                if debug_timing else {}),
         }
         if _set_team is None and "teams" in degraded:
@@ -12730,8 +12737,6 @@ async def search_events(
     _futures_outcome_arm = "not_reached"
     # #10024: the split arms' state, beside the outcome arm's (gotcha #53).
     _futures_split_report: dict = {"state": "not_reached"}
-    # #1619: each futures statement's own ms; see `_fetch_futures_window`.
-    _futures_arm_ms: dict[str, int] = {}
     # #8704: tier<=1 rows ranked 21-60, fetched by the window's own statement.
     # See `_futures_refill_in_hand` for when they ARE the collapse refill.
     _futures_spare_rows: list = []
@@ -40496,9 +40501,6 @@ def _search_team_evidence(row: dict, query: str | None = None) -> "_SearchEviden
     same for a non-leading `st` (`ohio st` -> `Ohio St Buckeyes`). Every other
     query builds exactly the evidence it built before."""
     aliases: tuple[str, ...] = tuple(row.get("_aliases") or ())
-    aliases = (*aliases, *MAJOR_TEAM_QUERY_ALIASES.get(
-        (row.get("sport_key"), row.get("name")), ()
-    ))
     if row.get("abbreviation"):
         aliases = (*aliases, row["abbreviation"])
     if city_abbreviation_query(query) is not None:

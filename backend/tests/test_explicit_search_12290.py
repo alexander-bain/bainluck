@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.config.major_team_search import MAJOR_TEAM_SEARCH_CASES
-from app.config.team_aliases import curated_team_aliases, expand_club_short_forms
+from app.config.team_aliases import expand_club_short_forms
 from app.routes import events as route
 from app.utils.explicit_search import explicit_search
 from app.utils.search_match_class import MC0_EXACT, match_class
@@ -26,8 +26,12 @@ def test_the_review_table_covers_every_current_major_league_franchise():
 def test_team_name_evidence_survives_recall_and_ranking(sport, name, nickname, spelling, typed):
     query = nickname if typed == "nickname" else spelling
     identity = expand_club_short_forms(query)
-    card = {"id": 1, "name": name, "sport_key": sport,
-            "_aliases": list(curated_team_aliases(sport, name))}
+    team = SimpleNamespace(
+        id=1, name=name, sport_key=sport, slug="test-team", abbreviation=None,
+        logo_url_small=None, current_record=None, alternate_names=[],
+        standings_updated_at=None, team_rank=1,
+    )
+    card = route._team_card_keyed([team], identity)[0][1]
     assert route._query_names_team_card(card, query)
     assert match_class(identity, route._search_team_evidence(card, identity)) == MC0_EXACT
     # The team recall statement still sees a real name or a sport-scoped alias.
@@ -127,13 +131,14 @@ async def test_next_three_route_scopes_both_fixture_sides_before_the_window(monk
     db.execute.side_effect = execute
     monkeypatch.setattr(route, "search_response_cache_enabled", lambda: False)
     async for client in _client_for(db, monkeypatch):
-        response = await client.get("/api/events/search", params={"q": "celtics next three games"})
+        response = await client.get("/api/events/search", params={"q": "celtics next three games", "debug_timing": True})
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["game_set"]["selector"] == {"team_id": 123, "count": 3, "state": "scheduled"}
     assert data["game_set"]["title"] == "Boston Celtics: next 3 games"
     assert data["futures"] == [] and data["collections"] == []
     assert not data["pagination"]["has_next"]
+    assert data["debug_timing"]["futures_arm_ms"] == {}
     fixture_reads = [(sql, params) for sql, params in recorder.statements
                      if "SELECT events.id," in sql and "LIMIT" in sql]
     assert fixture_reads
