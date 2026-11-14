@@ -29,7 +29,7 @@ struct EventSportHeadlineCard12472: View {
     @ScaledMetric(relativeTo: .body) private var liveScoreColWidth: CGFloat = 42
     @ScaledMetric(relativeTo: .caption2) private var livePregameColWidth: CGFloat = 54
     @ScaledMetric(relativeTo: .title3) private var liveNowColWidth: CGFloat = 80
-    @ScaledMetric(relativeTo: .body) private var pregameProjectedColWidth: CGFloat = 56
+    @ScaledMetric(relativeTo: .body) private var pregameProjectedColWidth: CGFloat = 60
     @ScaledMetric(relativeTo: .title2) private var pregameChanceColWidth: CGFloat = 80
     @ScaledMetric(relativeTo: .title3) private var finalResultColWidth: CGFloat = 58
     @ScaledMetric(relativeTo: .title3) private var finalScoreValueSize: CGFloat = 24
@@ -60,7 +60,7 @@ struct EventSportHeadlineCard12472: View {
     }
 
     private var effectivePregameProjectedColWidth: CGFloat {
-        stacksRowsVertically ? min(max(pregameProjectedColWidth, 84), 104) : min(pregameProjectedColWidth, 62)
+        stacksRowsVertically ? min(max(pregameProjectedColWidth, 84), 104) : min(pregameProjectedColWidth, 66)
     }
 
     private var effectivePregameChanceColWidth: CGFloat {
@@ -88,20 +88,7 @@ struct EventSportHeadlineCard12472: View {
     }
 
     private var cardAccessibilityIdentifier: String {
-        switch model.kind {
-        case .nflBeforeGame: return "event-headline-12472-nfl-before"
-        case .nflAfterGame: return "event-headline-12472-nfl-after"
-        case .nbaDuringGame: return "event-headline-12472-nba-during"
-        case .soccerBeforeGame: return "event-headline-12472-soccer-before"
-        case .soccerDuringGame: return "event-headline-12472-soccer-during"
-        case .soccerAfterGame: return "event-headline-12472-soccer-after"
-        case .nhlDuringGame: return "event-headline-12472-nhl-during"
-        case .mlbAfterGame: return "event-headline-12472-mlb-after"
-        case .mmaBeforeGame: return "event-headline-12472-mma-before"
-        case .mmaDuringGame: return "event-headline-12472-mma-during"
-        case .mmaAfterGame: return "event-headline-12472-mma-after"
-        case .tennisDuringGame: return "event-headline-12472-tennis-during"
-        }
+        model.kind.accessibilityIdentifier
     }
 
     private var hasTrailingControls: Bool {
@@ -210,8 +197,8 @@ struct EventSportHeadlineCard12472: View {
 
     @ViewBuilder
     private var leadingMeta: some View {
-        switch model.kind {
-        case .nflBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
+        switch model.kind.phase {
+        case .before:
             TimelineView(.periodic(from: .now, by: 60)) { tick in
                 let text = displayAsOf != nil
                     ? model.plainMetaText
@@ -223,14 +210,14 @@ struct EventSportHeadlineCard12472: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-        case .soccerAfterGame, .nflAfterGame, .mlbAfterGame, .mmaAfterGame:
+        case .after:
             if let text = model.plainMetaText {
                 Text(text)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        case .nbaDuringGame, .nhlDuringGame, .soccerDuringGame, .mmaDuringGame, .tennisDuringGame:
+        case .during:
             HStack(spacing: 8) {
                 if let liveBadge = model.liveBadgeText {
                     HStack(spacing: 5) {
@@ -667,12 +654,14 @@ struct EventSportHeadlineCard12472: View {
         VStack(spacing: 4) {
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
-                Text(headers.projected)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .frame(width: effectivePregameProjectedColWidth, alignment: .trailing)
+                if let projectedHeader = headers.projected {
+                    Text(projectedHeader)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: effectivePregameProjectedColWidth, alignment: .trailing)
+                }
                 Text(headers.chance)
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(DS.textSecondaryReadable)
@@ -755,12 +744,14 @@ struct EventSportHeadlineCard12472: View {
         color: Color
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Group {
-                if let projectedNumber = side.pregameProjectedNumberText {
-                    pregameProjectedNumberText(projectedNumber)
+            if model.pregameColumnHeaders?.projected != nil {
+                Group {
+                    if let projectedNumber = side.pregameProjectedNumberText {
+                        pregameProjectedNumberText(projectedNumber)
+                    }
                 }
+                .frame(width: effectivePregameProjectedColWidth, alignment: .trailing)
             }
-            .frame(width: effectivePregameProjectedColWidth, alignment: .trailing)
 
             chanceText(side.winChanceText, color: color)
                 .frame(width: effectivePregameChanceColWidth, alignment: .trailing)

@@ -242,11 +242,11 @@ final class EventSportHeadlines12472Tests: XCTestCase {
 
         var nbaBefore = nbaLive
         nbaBefore.status = "scheduled"
-        XCTAssertNil(EventSportHeadlines12472.kind(for: nbaBefore, now: fixedNow), "scheduled NBA is not part of this slice")
+        XCTAssertEqual(EventSportHeadlines12472.kind(for: nbaBefore, now: fixedNow), .nbaBeforeGame)
 
         var nbaFinal = nbaLive
         nbaFinal.status = "completed"
-        XCTAssertNil(EventSportHeadlines12472.kind(for: nbaFinal, now: fixedNow))
+        XCTAssertEqual(EventSportHeadlines12472.kind(for: nbaFinal, now: fixedNow), .nbaAfterGame)
     }
 
     private func resolveHeadline(
