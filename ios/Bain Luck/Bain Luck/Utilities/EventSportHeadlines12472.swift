@@ -30,6 +30,11 @@ enum EventSportHeadlines12472 {
         case nbaDuringGame
     }
 
+    nonisolated struct PregameColumnHeaders: Equatable, Sendable {
+        let projected: String
+        let chance: String
+    }
+
     nonisolated struct LiveColumnHeaders: Equatable, Sendable {
         let score: String?
         let pregame: String?
@@ -47,6 +52,7 @@ enum EventSportHeadlines12472 {
         let logoURL: String?
         let record: String?
         let projectedText: String?
+        let pregameProjectedNumberText: String?
         let liveScore: Int?
         let pregameChanceText: String?
         let winChanceText: String
@@ -67,6 +73,8 @@ enum EventSportHeadlines12472 {
         let liveBadgeText: String?
         /// For `.nbaDuringGame`: plain grey `NBA` beside the live capsule.
         let leagueLabel: String?
+        /// For `.nflBeforeGame` when an admitted pregame projection exists: `Proj. · Chance`.
+        let pregameColumnHeaders: PregameColumnHeaders?
         /// For `.nbaDuringGame`: right-aligned `Score · Pregame · Now` column headers.
         let liveColumnHeaders: LiveColumnHeaders?
         let away: TeamRowModel
@@ -169,6 +177,9 @@ enum EventSportHeadlines12472 {
                 ladderAway: ladderAway,
                 now: now
             )
+            let pregameHeaders = projections != nil
+                ? PregameColumnHeaders(projected: "Proj.", chance: "Chance")
+                : nil
             let meta = nflPregameMetaText(event: event, now: now)
             return Model(
                 eventId: event.id,
@@ -181,6 +192,7 @@ enum EventSportHeadlines12472 {
                 eventStatus: event.status,
                 liveBadgeText: nil,
                 leagueLabel: nil,
+                pregameColumnHeaders: pregameHeaders,
                 liveColumnHeaders: nil,
                 away: TeamRowModel(
                     fullName: awayFullName,
@@ -189,6 +201,7 @@ enum EventSportHeadlines12472 {
                     logoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
                     record: trimmedNonEmpty(event.awayTeamData?.record),
                     projectedText: projections?.away,
+                    pregameProjectedNumberText: projections?.awayNumber,
                     liveScore: nil,
                     pregameChanceText: nil,
                     winChanceText: chances.away,
@@ -201,6 +214,7 @@ enum EventSportHeadlines12472 {
                     logoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
                     record: trimmedNonEmpty(event.homeTeamData?.record),
                     projectedText: projections?.home,
+                    pregameProjectedNumberText: projections?.homeNumber,
                     liveScore: nil,
                     pregameChanceText: nil,
                     winChanceText: chances.home,
@@ -244,6 +258,7 @@ enum EventSportHeadlines12472 {
                 eventStatus: event.status,
                 liveBadgeText: liveBadge,
                 leagueLabel: "NBA",
+                pregameColumnHeaders: nil,
                 liveColumnHeaders: columnHeaders,
                 away: TeamRowModel(
                     fullName: awayFullName,
@@ -252,6 +267,7 @@ enum EventSportHeadlines12472 {
                     logoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
                     record: nil,
                     projectedText: liveProjections?.away,
+                    pregameProjectedNumberText: nil,
                     liveScore: hasScore ? event.awayScore : nil,
                     pregameChanceText: pregameTexts?.away,
                     winChanceText: tenths.away ?? formatProbability(awayProb),
@@ -264,6 +280,7 @@ enum EventSportHeadlines12472 {
                     logoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
                     record: nil,
                     projectedText: liveProjections?.home,
+                    pregameProjectedNumberText: nil,
                     liveScore: hasScore ? event.homeScore : nil,
                     pregameChanceText: pregameTexts?.home,
                     winChanceText: tenths.home,
@@ -361,15 +378,16 @@ enum EventSportHeadlines12472 {
         return (away: awayText, home: homeText)
     }
 
-    /// Admitted pregame projected points per team (`Proj. 20.0` / `Proj. 24.5`),
-    /// honoring `#8617`, `#8156` (no level projection on tie-less sports), and `#5697`.
+    /// Admitted pregame projected points per team (`Proj. 20.0` / `Proj. 24.5` and bare
+    /// column numbers `20.0` / `24.5`), honoring `#8617`, `#8156` (no level projection on
+    /// tie-less sports), and `#5697`.
     nonisolated static func admittedPregameProjectedPair(
         event: EventDetail,
         hasScore: Bool,
         ladderHome: Double?,
         ladderAway: Double?,
         now: Date = Date()
-    ) -> (away: String, home: String)? {
+    ) -> (away: String, home: String, awayNumber: String, homeNumber: String)? {
         let vocab = SportVocab.forSport(event.sport)
         guard EventState.canStillBeGraded(event.status, commenceTime: event.commenceTime?.asDate, now: now) else {
             return nil
@@ -398,7 +416,9 @@ enum EventSportHeadlines12472 {
         guard vocab.canEndInATie || roundedAway != roundedHome else { return nil }
         return (
             away: formatProjectedScore(pair.away),
-            home: formatProjectedScore(pair.home)
+            home: formatProjectedScore(pair.home),
+            awayNumber: formatProjectedNumber(pair.away),
+            homeNumber: formatProjectedNumber(pair.home)
         )
     }
 
@@ -447,6 +467,10 @@ enum EventSportHeadlines12472 {
 
     nonisolated static func formatProjectedScore(_ value: Double) -> String {
         String(format: "Proj. %.1f", value)
+    }
+
+    nonisolated static func formatProjectedNumber(_ value: Double) -> String {
+        String(format: "%.1f", value)
     }
 
     nonisolated private static func trimmedNonEmpty(_ text: String?) -> String? {

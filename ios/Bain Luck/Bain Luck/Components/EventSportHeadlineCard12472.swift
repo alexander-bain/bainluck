@@ -19,11 +19,14 @@ struct EventSportHeadlineCard12472: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .title2) private var winChanceSize: CGFloat = 25
     @ScaledMetric(relativeTo: .title3) private var liveTenthsChanceSize: CGFloat = 22
+    @ScaledMetric(relativeTo: .title3) private var pregameProjectedSize: CGFloat = 20
     @ScaledMetric(relativeTo: .body) private var liveScoreSize: CGFloat = 18
     @ScaledMetric(relativeTo: .subheadline) private var livePregameSize: CGFloat = 15
     @ScaledMetric(relativeTo: .body) private var liveScoreColWidth: CGFloat = 42
     @ScaledMetric(relativeTo: .caption2) private var livePregameColWidth: CGFloat = 54
     @ScaledMetric(relativeTo: .title3) private var liveNowColWidth: CGFloat = 80
+    @ScaledMetric(relativeTo: .body) private var pregameProjectedColWidth: CGFloat = 56
+    @ScaledMetric(relativeTo: .title2) private var pregameChanceColWidth: CGFloat = 80
 
     private var stacksRowsVertically: Bool {
         dynamicTypeSize.isAccessibilitySize
@@ -39,6 +42,14 @@ struct EventSportHeadlineCard12472: View {
 
     private var effectiveNowColWidth: CGFloat {
         stacksRowsVertically ? min(liveNowColWidth, 118) : min(liveNowColWidth, 82)
+    }
+
+    private var effectivePregameProjectedColWidth: CGFloat {
+        stacksRowsVertically ? min(max(pregameProjectedColWidth, 84), 104) : min(pregameProjectedColWidth, 62)
+    }
+
+    private var effectivePregameChanceColWidth: CGFloat {
+        stacksRowsVertically ? min(max(pregameChanceColWidth, 108), 124) : min(pregameChanceColWidth, 84)
     }
 
     private static func livePregameMetaText(
@@ -69,7 +80,9 @@ struct EventSportHeadlineCard12472: View {
         VStack(alignment: .leading, spacing: 10) {
             topBar
             VStack(alignment: .leading, spacing: 8) {
-                if let headers = model.liveColumnHeaders, headers.hasAny {
+                if let pregameHeaders = model.pregameColumnHeaders {
+                    pregameColumnHeaderRow(pregameHeaders)
+                } else if let headers = model.liveColumnHeaders, headers.hasAny {
                     liveColumnHeaderRow(headers)
                 }
                 teamRow(model.away, color: colors.away, isAway: true)
@@ -221,7 +234,31 @@ struct EventSportHeadlineCard12472: View {
         }
     }
 
-    // MARK: - Live Column Headers & Team Rows
+    // MARK: - Pregame & Live Column Headers & Team Rows
+
+    private func pregameColumnHeaderRow(_ headers: EventSportHeadlines12472.PregameColumnHeaders) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Text(headers.projected)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(width: effectivePregameProjectedColWidth, alignment: .trailing)
+                Text(headers.chance)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(width: effectivePregameChanceColWidth, alignment: .trailing)
+            }
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
+        }
+        .accessibilityHidden(true)
+    }
 
     private func liveColumnHeaderRow(_ headers: EventSportHeadlines12472.LiveColumnHeaders) -> some View {
         VStack(spacing: 4) {
@@ -286,12 +323,54 @@ struct EventSportHeadlineCard12472: View {
     }
 
     @ViewBuilder
+    private func pregameValueColumns(
+        _ side: EventSportHeadlines12472.TeamRowModel,
+        color: Color
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Group {
+                if let projectedNumber = side.pregameProjectedNumberText {
+                    pregameProjectedNumberText(projectedNumber)
+                }
+            }
+            .frame(width: effectivePregameProjectedColWidth, alignment: .trailing)
+
+            chanceText(side.winChanceText, color: color)
+                .frame(width: effectivePregameChanceColWidth, alignment: .trailing)
+        }
+    }
+
+    @ViewBuilder
     private func teamRow(
         _ side: EventSportHeadlines12472.TeamRowModel,
         color: Color,
         isAway: Bool
     ) -> some View {
-        if let headers = model.liveColumnHeaders, headers.hasAny {
+        if model.pregameColumnHeaders != nil {
+            if stacksRowsVertically {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        crest(side, color: color)
+                        teamIdentityStack(side, color: color, usesPregameColumns: true)
+                    }
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        pregameValueColumns(side, color: color)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(isAway ? "headline-12472-away-row" : "headline-12472-home-row")
+            } else {
+                HStack(alignment: .center, spacing: 6) {
+                    crest(side, color: color)
+                    teamIdentityStack(side, color: color, usesPregameColumns: true)
+                    Spacer(minLength: 4)
+                    pregameValueColumns(side, color: color)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(isAway ? "headline-12472-away-row" : "headline-12472-home-row")
+            }
+        } else if let headers = model.liveColumnHeaders, headers.hasAny {
             if stacksRowsVertically {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
@@ -355,10 +434,11 @@ struct EventSportHeadlineCard12472: View {
 
     private func teamIdentityStack(
         _ side: EventSportHeadlines12472.TeamRowModel,
-        color: Color
+        color: Color,
+        usesPregameColumns: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 1.5) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
+            if usesPregameColumns {
                 Text(side.shortName)
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(Color.primary)
@@ -369,17 +449,41 @@ struct EventSportHeadlineCard12472: View {
                     Text(record)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .lineLimit(1)
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(side.shortName)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let record = side.record {
+                        Text(record)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                if let projected = side.projectedText {
+                    Text(projected)
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(color)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
             }
-            if let projected = side.projectedText {
-                Text(projected)
-                    .font(.caption2.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(color)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
         }
+    }
+
+    private func pregameProjectedNumberText(_ number: String) -> some View {
+        Text(number)
+            .font(.system(size: min(pregameProjectedSize, 24), weight: .semibold, design: .rounded).monospacedDigit())
+            .foregroundStyle(Color.primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityLabel("Projected \(number)")
     }
 
     private func scoreText(_ score: Int) -> some View {

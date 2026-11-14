@@ -2278,8 +2278,11 @@ struct EventDetailView: View {
                 // of the context; `projectionText` is the one spelling.
                 if carriesContext, let projection = projectionText(event, hasScore: hasScore) {
                     Text(projection)
-                        .font(.caption)
+                        .font(.headline.weight(.bold).monospacedDigit())
                         .foregroundStyle(Color.primary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(DS.trackBg, in: Capsule())
                 }
             }
             let homeColumn = stackBoundary12278 {
@@ -3228,7 +3231,7 @@ struct EventDetailView: View {
         names: (away: String, home: String), colors: (away: Color, home: Color)
     ) -> some View {
         let label = caption
-            .font(.footnote)
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(DS.textSecondaryReadable)
         return Group {
             if let pair = Self.projectedPair11285(figure) {
@@ -3267,6 +3270,7 @@ struct EventDetailView: View {
                     Spacer(minLength: 0)
                     Text(figure)
                         .font(.headline.monospacedDigit())
+                        .fontWeight(.bold)
                         .foregroundStyle(Color.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -3280,7 +3284,7 @@ struct EventDetailView: View {
 
     private func projectedTeam11285(_ name: String, color: Color) -> some View {
         Text(name)
-            .font(.footnote.weight(.semibold))
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(color)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -3288,6 +3292,7 @@ struct EventDetailView: View {
     private func projectedPoints11285(_ points: Int) -> some View {
         Text("\(points)")
             .font(.headline.monospacedDigit())
+            .fontWeight(.bold)
             .foregroundStyle(Color.primary)
             .fixedSize()
     }
