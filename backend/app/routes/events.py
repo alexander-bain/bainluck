@@ -6633,8 +6633,8 @@ def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
     for zero rows. Contiguous cuts only, and only up to
     `_SPLIT_FUTURES_MAX_TERMS`, so 3 terms cost 4 arms rather than every subset.
 
-    The outcome test is a correlated EXISTS, NOT `_market_has_outcome`'s ARRAY
-    InitPlan, because here the NAME run is the selective side. The InitPlan
+    Without a maintained open-outcome copy, the outcome test is a correlated
+    EXISTS, because the NAME run is the selective side. An archive-wide InitPlan
     resolves every outcome spelling `series` before it looks at a single name;
     the EXISTS probes only the markets the name run returned, by `market_id`.
     Production 2026-10-01, the union of a query's arms, two reads each:
@@ -6659,6 +6659,16 @@ def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
     measured and is worse: `dodgers world series` 0.2 -> 5.6 s and `lakers
     championship` past 8 s, driven from the broad name side.
 
+    #11933: while #4437's open-outcome copy is maintained, use its name-only
+    lookup plus the direct recent-outcome overlay. The split arm had bypassed
+    that existing search path and still searched the full historical table;
+    82 of 174 public diagnostic reads on Nov 14 exhausted its one-second bound.
+    ARRAY fixes the match-set read as an InitPlan over the smaller copy. An
+    absent/stale/incomplete state or disabled reader keeps the original EXISTS,
+    rather than bringing back the archive-wide InitPlan measured above. The
+    whole-word and single-outcome predicates, market filters, tier and budgets
+    remain the same. The copy retains #4437's existing rename/reopen lag bound.
+
     UNION arms like the alias and nickname arms, so recall can only grow and a
     one-term query (returns ``[]``) compiles byte-identical SQL.
     """
@@ -6672,15 +6682,22 @@ def _split_futures_arms(expanded: list[tuple[str, str | None]]) -> list:
     for cut in range(1, len(expanded)):
         head, tail = expanded[:cut], expanded[cut:]
         for name_run, outcome_run in ((head, tail), (tail, head)):
+            outcome_where = [_outcome_whole_word(t) for t, _e in outcome_run]
+            open_ids = market_ids_with_outcome(*outcome_where)
+            outcome_match = (
+                FuturesMarket.id == any_(func.array(open_ids.scalar_subquery()))
+                if open_ids is not None
+                else select(FuturesOutcome.id)
+                .where(
+                    FuturesOutcome.market_id == FuturesMarket.id,
+                    *outcome_where,
+                )
+                .exists()
+            )
             arms.append(
                 and_(
                     *[_futures_name_match_term(t, e) for t, e in name_run],
-                    select(FuturesOutcome.id)
-                    .where(
-                        FuturesOutcome.market_id == FuturesMarket.id,
-                        *[_outcome_whole_word(t) for t, _e in outcome_run],
-                    )
-                    .exists(),
+                    outcome_match,
                 )
             )
     return arms
