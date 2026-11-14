@@ -218,6 +218,8 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// #12642: optional paired-metric grouped card payload (`paired_bars_top5_expandable` / `podium_and_tiers`).
     let pairedMetricSet: PairedMetricSet?
     let visualForm: String?
+    /// Discover round-up contract (`data.roundup`) for `kind == "roundup"` containers.
+    let roundupContract: FeedRoundupContract?
 
     private nonisolated struct RoundupPairedEnvelope: Decodable {
         let pairedMetricSet: PairedMetricSet?
@@ -241,6 +243,9 @@ nonisolated struct FeedBundle: Decodable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, title, sharedQuestion, items, kind, comparisonTheme, collectionRef
+        case sharedQuestionSnake = "shared_question"
+        case comparisonThemeSnake = "comparison_theme"
+        case collectionRefSnake = "collection_ref"
         case pairedMetricSet
         case pairedMetricSetSnake = "paired_metric_set"
         case visualForm
@@ -252,13 +257,17 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
-        sharedQuestion = try c.decodeIfPresent(String.self, forKey: .sharedQuestion)
-        items = try c.decodeIfPresent([FeedItem].self, forKey: .items) ?? []
+        sharedQuestion = (try? c.decodeIfPresent(String.self, forKey: .sharedQuestion))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .sharedQuestionSnake))
+        items = (try? c.decodeIfPresent([FeedItem].self, forKey: .items)) ?? []
         kind = try c.decodeIfPresent(String.self, forKey: .kind)
-        comparisonTheme = try c.decodeIfPresent(String.self, forKey: .comparisonTheme)
+        comparisonTheme = (try? c.decodeIfPresent(String.self, forKey: .comparisonTheme))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .comparisonThemeSnake))
         // Optional enrichment: a malformed ref costs the link, never the bundle.
-        collectionRef = (try? c.decodeIfPresent(FeedThemeCollectionRef.self, forKey: .collectionRef)) ?? nil
+        collectionRef = (try? c.decodeIfPresent(FeedThemeCollectionRef.self, forKey: .collectionRef))
+            ?? (try? c.decodeIfPresent(FeedThemeCollectionRef.self, forKey: .collectionRefSnake))
         let nestedRoundup = (try? c.decodeIfPresent(RoundupPairedEnvelope.self, forKey: .roundup)) ?? nil
+        roundupContract = (try? c.decodeIfPresent(FeedRoundupContract.self, forKey: .roundup)) ?? nil
         pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
             ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
             ?? nestedRoundup?.pairedMetricSet
@@ -280,7 +289,8 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         sharedQuestion: String? = nil,
         collectionRef: FeedThemeCollectionRef? = nil,
         pairedMetricSet: PairedMetricSet? = nil,
-        visualForm: String? = nil
+        visualForm: String? = nil,
+        roundupContract: FeedRoundupContract? = nil
     ) {
         self.id = id
         self.title = title
@@ -291,6 +301,7 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         self.collectionRef = collectionRef
         self.pairedMetricSet = pairedMetricSet
         self.visualForm = visualForm
+        self.roundupContract = roundupContract
     }
 
     /// Rebuild the bundle with a new child list, preserving all other metadata
@@ -308,7 +319,8 @@ nonisolated struct FeedBundle: Decodable, Sendable {
             sharedQuestion: sharedQuestion,
             collectionRef: collectionRef,
             pairedMetricSet: pairedMetricSet,
-            visualForm: visualForm
+            visualForm: visualForm,
+            roundupContract: roundupContract
         )
     }
 
@@ -316,6 +328,18 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// (`ThemeBundleCard`); a comparison bundle never links, whatever it carries.
     var themeCollectionRef: FeedThemeCollectionRef? {
         kind == "theme" ? collectionRef : nil
+    }
+
+    /// Verified container link for `kind == "roundup"` cards (`RoundupCard`).
+    var roundupCollectionRef: FeedThemeCollectionRef? {
+        kind == "roundup" ? collectionRef : nil
+    }
+
+    /// True when this `roundup` bundle has both a verified `collection_ref` and a
+    /// readable `FeedRoundupContract` (`RoundupCard`: no container, no card).
+    var admitsRoundupCard: Bool {
+        guard kind == "roundup", roundupCollectionRef != nil else { return false }
+        return DiscoverRoundupCardModel.build(title: title, contract: roundupContract) != nil
     }
 }
 
@@ -333,6 +357,7 @@ nonisolated struct FeedThemeCollectionRef: Decodable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case slug, name, revision, collectionCount
+        case collectionCountSnake = "collection_count"
     }
 
     init?(slug: String, name: String, revision: Int, collectionCount: Int) {
@@ -346,11 +371,17 @@ nonisolated struct FeedThemeCollectionRef: Decodable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let count: Int
+        if let camel = try? c.decode(Int.self, forKey: .collectionCount) {
+            count = camel
+        } else {
+            count = try c.decode(Int.self, forKey: .collectionCountSnake)
+        }
         guard let ref = FeedThemeCollectionRef(
             slug: try c.decode(String.self, forKey: .slug),
             name: try c.decode(String.self, forKey: .name),
             revision: try c.decode(Int.self, forKey: .revision),
-            collectionCount: try c.decode(Int.self, forKey: .collectionCount)
+            collectionCount: count
         ) else {
             throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "collection_ref fails admission"))
         }
@@ -460,7 +491,9 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         type = try c.decode(String.self, forKey: .type)
-        score = try c.decodeIfPresent(Int.self, forKey: .score) ?? 0
+        score = (try? c.decodeIfPresent(Int.self, forKey: .score))
+            ?? (try? c.decodeIfPresent(Double.self, forKey: .score)).map { Int($0.rounded()) }
+            ?? 0
         reason = try c.decodeIfPresent(String.self, forKey: .reason)
         headline = try c.decodeIfPresent(String.self, forKey: .headline)
         contextSummary = try c.decodeIfPresent(String.self, forKey: .contextSummary)
