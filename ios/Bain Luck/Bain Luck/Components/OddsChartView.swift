@@ -645,16 +645,16 @@ struct OddsChartView: View {
     /// #10830 — the phone's inline plot (260 through build 46; Alex: "win
     /// probability needs more V space"). Paid for by the Live Activity row and
     /// the hero's blank band, both reclaimed above the chart.
-    static let phoneChartHeight: CGFloat = 300
+    static let phoneChartHeight: CGFloat = 340
 
     private var chartHeight: CGFloat {
         guard sizeClass == .regular else { return Self.phoneChartHeight }
-        // Medium breakpoint (~320pt) for iPad Air landscape / split-view
+        // Medium breakpoint (~350pt) for iPad Air landscape / split-view
         #if os(iOS)
         let bounds = UIScreen.main.bounds
-        if bounds.width > bounds.height { return 320 }
+        if bounds.width > bounds.height { return 350 }
         #endif
-        return 380
+        return 420
     }
 
     /// #10796 — the full-size plot's height when a finished tennis match is
@@ -682,8 +682,26 @@ struct OddsChartView: View {
         commenceTime?.asDate
     }
 
+    static func gameHasStarted(
+        status: String?,
+        commenceTime: Date?,
+        history: EventHistoryResponse? = nil,
+        now: Date = Date()
+    ) -> Bool {
+        if EventState.isFinished(status) { return true }
+        guard status == "live" else { return false }
+        if let commenceTime, commenceTime > now {
+            let hasObservedPeriod = history?.espnHistory?.contains(where: {
+                guard let period = $0.period?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+                return !period.isEmpty
+            }) ?? false
+            return hasObservedPeriod
+        }
+        return true
+    }
+
     private var isGameStarted: Bool {
-        status == "live" || EventState.isFinished(status)
+        Self.gameHasStarted(status: status, commenceTime: gameStartDate, history: vm.history)
     }
 
     /// The instant "Since Start" cuts at — `nil` when the payload says the
@@ -1664,7 +1682,7 @@ struct OddsChartView: View {
     static func drawnWindow(status: String?, commenceTime: String?, history: EventHistoryResponse?,
                             forcedDomain: ClosedRange<Date>?, legacyDataDomain: ClosedRange<Date>?,
                             selectedRange: OddsTimeRange, playStart: (Date) -> Date?) -> DrawnWindow {
-        let started = status == "live" || EventState.isFinished(status)
+        let started = gameHasStarted(status: status, commenceTime: commenceTime?.asDate, history: history)
         let kickoff = sinceStartCut(commenceTime: commenceTime?.asDate,
                                     commenceTimeIsKickoff: history?.commenceTimeIsKickoff)
         return DrawnWindow(finishedEnd: EventState.isFinished(status) ? gameEndDate(status: status, history: history) : nil,
@@ -1726,11 +1744,12 @@ struct OddsChartView: View {
         return commenceTime
     }
 
-    /// The All / Since Start choice exists only for a started game with a start
-    /// we can cut at. With no cut, "Since Start" and "All" would be the same
-    /// picture under two names.
-    static func offersSinceStart(isGameStarted: Bool, kickoff: Date?) -> Bool {
-        isGameStarted && kickoff != nil
+    /// The All / Since Start choice exists only for a started game whose kickoff
+    /// is at or before `now` and can be cut at. Before a game starts, "Since Start"
+    /// is never offered.
+    static func offersSinceStart(isGameStarted: Bool, kickoff: Date?, now: Date = Date()) -> Bool {
+        guard isGameStarted, let kickoff else { return false }
+        return kickoff <= now
     }
 
     /// The Since Start window over already-clipped points.

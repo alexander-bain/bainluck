@@ -30,7 +30,7 @@ struct ProjectedFinalPointsChartView: View {
     @State private var expandedDetailsShown = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    static let inlinePlotHeight: CGFloat = 260
+    static let inlinePlotHeight: CGFloat = 300
     static let expandedPlotHeight: CGFloat = 400
     /// The strip above the plot that holds the period chips, so a chip never
     /// sits on a line near the top of the scale.
