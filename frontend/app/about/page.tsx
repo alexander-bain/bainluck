@@ -320,6 +320,10 @@ export default function AboutPage() {
               &middot;{" "}
               <EmbedAwareLink href="/privacy" className="text-accent-brand hover:underline">
                 Privacy Policy
+              </EmbedAwareLink>{" "}
+              &middot;{" "}
+              <EmbedAwareLink href="/picture-credits" className="text-accent-brand hover:underline">
+                Picture credits
               </EmbedAwareLink>
             </p>
           </div>
