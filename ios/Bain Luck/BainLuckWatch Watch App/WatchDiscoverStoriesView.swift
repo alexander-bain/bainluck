@@ -208,7 +208,7 @@ struct WatchDiscoverStoriesView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                         .accessibilityLabel(age.spokenText.map { "Observed \($0)" } ?? "Observation time unavailable")
                     if game.isLive && age.isStale {
-                        Text("Stale reading · waiting for a newer observation")
+                        Text(observed.map { "As of \(WatchRectangularReading.asOfClock($0))" } ?? "Waiting for a newer observation")
                             .font(.footnote).foregroundStyle(.orange)
                     }
                 }

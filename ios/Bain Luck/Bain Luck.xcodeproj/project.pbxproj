@@ -153,6 +153,7 @@
 		A7C0000000000000000000EC /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				WatchComplicationSnapshot.swift,
 				WatchFeedModels.swift,
 				WatchGuessPool.swift,
 				WatchGuessBackend.swift,
@@ -161,6 +162,7 @@
 				WatchDiscoveryModels.swift,
 				WatchDiscoveryStore.swift,
 				WatchDiscoveryAPIClient.swift,
+				WatchPinsModels12640.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
