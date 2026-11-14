@@ -1,0 +1,25 @@
+{
+  "slug": "roundup-ai-race",
+  "membership": "tech_ai_race",
+  "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "TECH · AI BENCHMARKS",
+  "name": "The AI model race",
+  "category": "tech",
+  "tag": "AI",
+  "section_title": "Active AI model leaderboards",
+  "subtitle": "Overall and coding AI model leaderboards side by side, each settled on its named benchmark.",
+  "footer": "One winning lab per benchmark · 4 distinct AI leaderboards",
+  "score": 93.0,
+  "rule": {
+    "producer": "tech_ai_race",
+    "domain": "ai_benchmarks",
+    "selector": "single_winner_leaderboard",
+    "min_benchmarks": 3,
+    "max_card_rows": 4
+  }
+}
