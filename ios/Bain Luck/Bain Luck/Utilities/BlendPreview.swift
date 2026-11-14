@@ -1113,6 +1113,10 @@ nonisolated enum BlendPreview {
         shown.heroProbability = p
         shown.heroProbabilityAway = state?.baseFoldRevision != nil
             ? state?.pAway : (event.heroProbabilityAway == nil ? nil : 1 - p)
+        // A provisional preview carries no venue-by-venue source mark; never
+        // attach the committed detail's venue breakdown to a previewed number.
+        shown.sourceMark = nil
+        shown.awaySourceMark = nil
         return shown
     }
 
