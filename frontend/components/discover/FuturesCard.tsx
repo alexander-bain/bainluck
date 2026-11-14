@@ -957,7 +957,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
         {!hasImage && (
           visual.kind !== "topic" ? (
             <div
-              className="absolute right-3.5 top-3 flex h-12 w-12 items-center justify-center rounded-xl font-mono text-sm font-bold tracking-tight text-white shadow-md ring-1 ring-white/20 select-none pointer-events-none"
+              className="absolute right-3.5 bottom-3 z-10 flex h-12 min-w-12 px-2 items-center justify-center rounded-xl font-mono text-xs font-bold tracking-tight text-white shadow-md ring-1 ring-white/25 select-none pointer-events-none"
               style={{ background: `linear-gradient(135deg, ${visual.monogram.bgHex}, ${visual.monogram.accentHex})` }}
               aria-hidden="true"
               data-testid="futures-hero-monogram"
