@@ -1,0 +1,28 @@
+{
+  "slug": "roundup-upsets-brewing",
+  "membership": "window_events_upsets",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "movement"
+  ],
+  "level": "member",
+  "kicker": "LIVE · UPSET WATCH",
+  "name": "Upsets brewing right now",
+  "category": "sports",
+  "tag": "LIVE",
+  "section_title": "Live games on upset watch",
+  "subtitle": "Live games where a pregame underdog leads on the scoreboard or holds at least a 50% win chance.",
+  "footer": "Live win chance · swings in points from pregame",
+  "score": 96.0,
+  "rule": {
+    "producer": "window_events_upsets",
+    "window": "sports-day",
+    "selector": "pregame_underdog_live_lead",
+    "max_pregame_prob": 0.4,
+    "min_live_prob": 0.5,
+    "min_members": 3,
+    "max_card_rows": 4,
+    "cache": "none"
+  }
+}
