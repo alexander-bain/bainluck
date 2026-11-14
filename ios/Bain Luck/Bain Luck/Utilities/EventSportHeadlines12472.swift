@@ -80,10 +80,24 @@ import SwiftUI
 ///      `Pregame · Now` columns + 2-way bar.
 enum EventSportHeadlines12472 {
 
+    nonisolated enum Phase: Equatable, Sendable {
+        case before
+        case during
+        case after
+    }
+
     nonisolated enum Kind: Equatable, Sendable {
         case nflBeforeGame
         case nflAfterGame
+        case nbaBeforeGame
         case nbaDuringGame
+        case nbaAfterGame
+        case ncaafBeforeGame
+        case ncaafDuringGame
+        case ncaafAfterGame
+        case ncaabBeforeGame
+        case ncaabDuringGame
+        case ncaabAfterGame
         case soccerBeforeGame
         case soccerDuringGame
         case soccerAfterGame
@@ -93,10 +107,46 @@ enum EventSportHeadlines12472 {
         case mmaDuringGame
         case mmaAfterGame
         case tennisDuringGame
+
+        nonisolated var phase: Phase {
+            switch self {
+            case .nflBeforeGame, .nbaBeforeGame, .ncaafBeforeGame, .ncaabBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
+                return .before
+            case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .soccerDuringGame, .nhlDuringGame, .mmaDuringGame, .tennisDuringGame:
+                return .during
+            case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .soccerAfterGame, .mlbAfterGame, .mmaAfterGame:
+                return .after
+            }
+        }
+
+        nonisolated var accessibilityIdentifier: String {
+            switch self {
+            case .nflBeforeGame: return "event-headline-12472-nfl-before"
+            case .nflAfterGame: return "event-headline-12472-nfl-after"
+            case .nbaBeforeGame: return "event-headline-12472-nba-before"
+            case .nbaDuringGame: return "event-headline-12472-nba-during"
+            case .nbaAfterGame: return "event-headline-12472-nba-after"
+            case .ncaafBeforeGame: return "event-headline-12472-ncaaf-before"
+            case .ncaafDuringGame: return "event-headline-12472-ncaaf-during"
+            case .ncaafAfterGame: return "event-headline-12472-ncaaf-after"
+            case .ncaabBeforeGame: return "event-headline-12472-ncaab-before"
+            case .ncaabDuringGame: return "event-headline-12472-ncaab-during"
+            case .ncaabAfterGame: return "event-headline-12472-ncaab-after"
+            case .soccerBeforeGame: return "event-headline-12472-soccer-before"
+            case .soccerDuringGame: return "event-headline-12472-soccer-during"
+            case .soccerAfterGame: return "event-headline-12472-soccer-after"
+            case .nhlDuringGame: return "event-headline-12472-nhl-during"
+            case .mlbAfterGame: return "event-headline-12472-mlb-after"
+            case .mmaBeforeGame: return "event-headline-12472-mma-before"
+            case .mmaDuringGame: return "event-headline-12472-mma-during"
+            case .mmaAfterGame: return "event-headline-12472-mma-after"
+            case .tennisDuringGame: return "event-headline-12472-tennis-during"
+            }
+        }
     }
 
     nonisolated struct PregameColumnHeaders: Equatable, Sendable {
-        let projected: String
+        let projected: String?
         let chance: String
     }
 
@@ -220,6 +270,24 @@ enum EventSportHeadlines12472 {
     nonisolated static func isTennisSport(_ sport: String?) -> Bool {
         guard let sport = sport?.lowercased(), !sport.isEmpty else { return false }
         return sport == "tennis" || sport.hasPrefix("tennis_")
+    }
+
+    nonisolated static func isNCAAFSport(_ sport: String?) -> Bool {
+        guard let sport = sport?.lowercased(), !sport.isEmpty else { return false }
+        return sport == "americanfootball_ncaaf" || sport == "americanfootball_ncaaf_fcs"
+    }
+
+    nonisolated static func ncaafLeagueLabel(for sport: String?) -> String {
+        sport?.lowercased() == "americanfootball_ncaaf_fcs" ? "NCAAF FCS" : "NCAAF"
+    }
+
+    nonisolated static func isNCAABSport(_ sport: String?) -> Bool {
+        guard let sport = sport?.lowercased(), !sport.isEmpty else { return false }
+        return sport == "basketball_ncaab" || sport == "basketball_wncaab"
+    }
+
+    nonisolated static func ncaabLeagueLabel(for sport: String?) -> String {
+        sport?.lowercased() == "basketball_wncaab" ? "WNCAAB" : "NCAAB"
     }
 
     nonisolated static func kind(
@@ -354,6 +422,18 @@ enum EventSportHeadlines12472 {
                 guard event.homeScore != nil, event.awayScore != nil else { return nil }
                 return .nflAfterGame
             }
+            if event.sport == "basketball_nba" {
+                guard event.homeScore != nil, event.awayScore != nil else { return nil }
+                return .nbaAfterGame
+            }
+            if isNCAAFSport(event.sport) {
+                guard event.homeScore != nil, event.awayScore != nil else { return nil }
+                return .ncaafAfterGame
+            }
+            if isNCAABSport(event.sport) {
+                guard event.homeScore != nil, event.awayScore != nil else { return nil }
+                return .ncaabAfterGame
+            }
             if event.sport == "baseball_mlb" {
                 guard event.homeScore != nil, event.awayScore != nil else { return nil }
                 return .mlbAfterGame
@@ -398,8 +478,14 @@ enum EventSportHeadlines12472 {
         if event.sport == "americanfootball_nfl" && event.status != "live" {
             return .nflBeforeGame
         }
-        if event.sport == "basketball_nba" && event.status == "live" {
-            return .nbaDuringGame
+        if event.sport == "basketball_nba" {
+            return event.status == "live" ? .nbaDuringGame : .nbaBeforeGame
+        }
+        if isNCAAFSport(event.sport) {
+            return event.status == "live" ? .ncaafDuringGame : .ncaafBeforeGame
+        }
+        if isNCAABSport(event.sport) {
+            return event.status == "live" ? .ncaabDuringGame : .ncaabBeforeGame
         }
         if event.sport == "icehockey_nhl" && event.status == "live" {
             return .nhlDuringGame
@@ -475,7 +561,7 @@ enum EventSportHeadlines12472 {
                 gameMarkets: gameMarkets,
                 now: now
             )
-        case .nflAfterGame, .mlbAfterGame, .mmaAfterGame:
+        case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .mlbAfterGame, .mmaAfterGame:
             return resolveFinishedTwoWay(
                 resolvedKind: resolvedKind,
                 event: event,
@@ -483,8 +569,10 @@ enum EventSportHeadlines12472 {
                 homeFullName: homeFullName,
                 shortNames: shortNames
             )
-        case .nflBeforeGame, .nbaDuringGame, .nhlDuringGame,
-             .mmaBeforeGame, .mmaDuringGame, .tennisDuringGame:
+        case .nflBeforeGame, .nbaBeforeGame, .nbaDuringGame,
+             .ncaafBeforeGame, .ncaafDuringGame,
+             .ncaabBeforeGame, .ncaabDuringGame,
+             .nhlDuringGame, .mmaBeforeGame, .mmaDuringGame, .tennisDuringGame:
             return resolveOpenTwoWay(
                 resolvedKind: resolvedKind,
                 event: event,
@@ -970,75 +1058,70 @@ enum EventSportHeadlines12472 {
 
         switch resolvedKind {
         case .nflAfterGame:
-            guard let awayScore = event.awayScore, let homeScore = event.homeScore else {
-                return nil
-            }
-            let finalProj = qualifiedFinalProjectionPair(event: event)
-            let awaySubline = finishedSubline(
-                record: trimmedNonEmpty(event.awayTeamData?.record),
-                extra: finalProj.map { "Proj. \($0.away)" }
-            )
-            let homeSubline = finishedSubline(
-                record: trimmedNonEmpty(event.homeTeamData?.record),
-                extra: finalProj.map { "Proj. \($0.home)" }
-            )
-            let meta = soccerAfterMetaText(league: "NFL", event: event)
-            return Model(
-                eventId: event.id,
-                sportKey: "americanfootball_nfl",
+            return resolveStandardFinished(
                 kind: .nflAfterGame,
-                plainMetaText: meta,
-                commenceTime: event.commenceTime,
-                startIsTbd: event.startIsTbd,
-                broadcast: nil,
-                eventStatus: event.status,
-                liveBadgeText: nil,
-                leagueLabel: "NFL",
-                pregameColumnHeaders: nil,
-                liveColumnHeaders: nil,
-                finalColumnHeaders: FinalColumnHeaders(
-                    pregame: pregameTexts != nil ? "Pregame" : nil,
-                    finalLabel: "Final"
-                ),
-                away: TeamRowModel(
-                    fullName: awayFullName,
-                    opponentFullName: homeFullName,
-                    shortName: shortNames.away,
-                    logoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
-                    record: nil,
-                    projectedText: nil,
-                    pregameProjectedNumberText: nil,
-                    liveScore: awayScore,
-                    pregameChanceText: pregameTexts?.away,
-                    winChanceText: pregameTexts?.away ?? "—",
-                    rawProbability: markAwayProb,
-                    won: awayWon,
-                    finalResultText: "\(awayScore)",
-                    secondarySublineText: awaySubline
-                ),
-                home: TeamRowModel(
-                    fullName: homeFullName,
-                    opponentFullName: awayFullName,
-                    shortName: shortNames.home,
-                    logoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
-                    record: nil,
-                    projectedText: nil,
-                    pregameProjectedNumberText: nil,
-                    liveScore: homeScore,
-                    pregameChanceText: pregameTexts?.home,
-                    winChanceText: pregameTexts?.home ?? "—",
-                    rawProbability: markHomeProb,
-                    won: homeWon,
-                    finalResultText: "\(homeScore)",
-                    secondarySublineText: homeSubline
-                ),
-                pregameAwayMarker: nil,
-                soccerThreeWay: nil,
-                showsEkg: false,
-                stacksRecordUnderName: true,
-                showsBottomBar: false,
-                showsRowDivider: false,
-                sourceMark: event.sourceMark,
+                sportKey: "americanfootball_nfl",
+                league: "NFL",
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                pregameTexts: pregameTexts,
+                awayWon: awayWon,
+                homeWon: homeWon,
+                markAwayProb: markAwayProb,
+                markHomeProb: markHomeProb,
+                confidenceTier: confidenceTier
+            )
+
+        case .nbaAfterGame:
+            return resolveStandardFinished(
+                kind: .nbaAfterGame,
+                sportKey: "basketball_nba",
+                league: "NBA",
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                pregameTexts: pregameTexts,
+                awayWon: awayWon,
+                homeWon: homeWon,
+                markAwayProb: markAwayProb,
+                markHomeProb: markHomeProb,
+                confidenceTier: confidenceTier
+            )
+
+        case .ncaafAfterGame:
+            return resolveStandardFinished(
+                kind: .ncaafAfterGame,
+                sportKey: event.sport ?? "americanfootball_ncaaf",
+                league: ncaafLeagueLabel(for: event.sport),
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                pregameTexts: pregameTexts,
+                awayWon: awayWon,
+                homeWon: homeWon,
+                markAwayProb: markAwayProb,
+                markHomeProb: markHomeProb,
+                confidenceTier: confidenceTier
+            )
+
+        case .ncaabAfterGame:
+            return resolveStandardFinished(
+                kind: .ncaabAfterGame,
+                sportKey: event.sport ?? "basketball_ncaab",
+                league: ncaabLeagueLabel(for: event.sport),
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                pregameTexts: pregameTexts,
+                awayWon: awayWon,
+                homeWon: homeWon,
+                markAwayProb: markAwayProb,
+                markHomeProb: markHomeProb,
                 confidenceTier: confidenceTier
             )
 
@@ -1184,6 +1267,96 @@ enum EventSportHeadlines12472 {
     }
 
     @inline(never)
+    nonisolated private static func resolveStandardFinished(
+        kind: Kind,
+        sportKey: String,
+        league: String,
+        event: EventDetail,
+        awayFullName: String,
+        homeFullName: String,
+        shortNames: (away: String, home: String),
+        pregameTexts: (away: String, home: String)?,
+        awayWon: Bool?,
+        homeWon: Bool?,
+        markAwayProb: Double,
+        markHomeProb: Double,
+        confidenceTier: String?,
+        showsRowDivider: Bool = false
+    ) -> Model? {
+        guard let awayScore = event.awayScore, let homeScore = event.homeScore else {
+            return nil
+        }
+        let finalProj = qualifiedFinalProjectionPair(event: event)
+        let awaySubline = finishedSubline(
+            record: trimmedNonEmpty(event.awayTeamData?.record),
+            extra: finalProj.map { "Proj. \($0.away)" }
+        )
+        let homeSubline = finishedSubline(
+            record: trimmedNonEmpty(event.homeTeamData?.record),
+            extra: finalProj.map { "Proj. \($0.home)" }
+        )
+        let meta = soccerAfterMetaText(league: league, event: event)
+        return Model(
+            eventId: event.id,
+            sportKey: sportKey,
+            kind: kind,
+            plainMetaText: meta,
+            commenceTime: event.commenceTime,
+            startIsTbd: event.startIsTbd,
+            broadcast: nil,
+            eventStatus: event.status,
+            liveBadgeText: nil,
+            leagueLabel: league,
+            pregameColumnHeaders: nil,
+            liveColumnHeaders: nil,
+            finalColumnHeaders: FinalColumnHeaders(
+                pregame: pregameTexts != nil ? "Pregame" : nil,
+                finalLabel: "Final"
+            ),
+            away: TeamRowModel(
+                fullName: awayFullName,
+                opponentFullName: homeFullName,
+                shortName: shortNames.away,
+                logoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
+                record: nil,
+                projectedText: nil,
+                pregameProjectedNumberText: nil,
+                liveScore: awayScore,
+                pregameChanceText: pregameTexts?.away,
+                winChanceText: pregameTexts?.away ?? "—",
+                rawProbability: markAwayProb,
+                won: awayWon,
+                finalResultText: "\(awayScore)",
+                secondarySublineText: awaySubline
+            ),
+            home: TeamRowModel(
+                fullName: homeFullName,
+                opponentFullName: awayFullName,
+                shortName: shortNames.home,
+                logoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
+                record: nil,
+                projectedText: nil,
+                pregameProjectedNumberText: nil,
+                liveScore: homeScore,
+                pregameChanceText: pregameTexts?.home,
+                winChanceText: pregameTexts?.home ?? "—",
+                rawProbability: markHomeProb,
+                won: homeWon,
+                finalResultText: "\(homeScore)",
+                secondarySublineText: homeSubline
+            ),
+            pregameAwayMarker: nil,
+            soccerThreeWay: nil,
+            showsEkg: false,
+            stacksRecordUnderName: true,
+            showsBottomBar: false,
+            showsRowDivider: showsRowDivider,
+            sourceMark: event.sourceMark,
+            confidenceTier: confidenceTier
+        )
+    }
+
+    @inline(never)
     nonisolated private static func resolveOpenTwoWay(
         resolvedKind: Kind,
         event: EventDetail,
@@ -1217,7 +1390,12 @@ enum EventSportHeadlines12472 {
 
         switch resolvedKind {
         case .nflBeforeGame:
-            return resolveNFLBefore(
+            return resolveStandardBefore(
+                kind: .nflBeforeGame,
+                sportKey: "americanfootball_nfl",
+                league: "NFL",
+                allowsStreamingTenths: true,
+                showsChanceHeaderWithoutProjection: false,
                 event: event,
                 awayFullName: awayFullName,
                 homeFullName: homeFullName,
@@ -1232,7 +1410,70 @@ enum EventSportHeadlines12472 {
                 confidenceTier: confidenceTier,
                 now: now
             )
-        case .nbaDuringGame, .nhlDuringGame, .mmaDuringGame:
+        case .nbaBeforeGame:
+            return resolveStandardBefore(
+                kind: .nbaBeforeGame,
+                sportKey: "basketball_nba",
+                league: "NBA",
+                allowsStreamingTenths: false,
+                showsChanceHeaderWithoutProjection: true,
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                shown: shown,
+                awayProb: awayProb,
+                homeProb: homeProb,
+                hasScore: hasScore,
+                numberStreams: numberStreams,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                confidenceTier: confidenceTier,
+                now: now
+            )
+        case .ncaafBeforeGame:
+            return resolveStandardBefore(
+                kind: .ncaafBeforeGame,
+                sportKey: event.sport ?? "americanfootball_ncaaf",
+                league: ncaafLeagueLabel(for: event.sport),
+                allowsStreamingTenths: false,
+                showsChanceHeaderWithoutProjection: true,
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                shown: shown,
+                awayProb: awayProb,
+                homeProb: homeProb,
+                hasScore: hasScore,
+                numberStreams: numberStreams,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                confidenceTier: confidenceTier,
+                now: now
+            )
+        case .ncaabBeforeGame:
+            return resolveStandardBefore(
+                kind: .ncaabBeforeGame,
+                sportKey: event.sport ?? "basketball_ncaab",
+                league: ncaabLeagueLabel(for: event.sport),
+                allowsStreamingTenths: false,
+                showsChanceHeaderWithoutProjection: true,
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                shown: shown,
+                awayProb: awayProb,
+                homeProb: homeProb,
+                hasScore: hasScore,
+                numberStreams: numberStreams,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                confidenceTier: confidenceTier,
+                now: now
+            )
+        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .nhlDuringGame, .mmaDuringGame:
             return resolveLiveStandard(
                 resolvedKind: resolvedKind,
                 event: event,
@@ -1372,7 +1613,12 @@ enum EventSportHeadlines12472 {
     }
 
     @inline(never)
-    nonisolated private static func resolveNFLBefore(
+    nonisolated private static func resolveStandardBefore(
+        kind: Kind,
+        sportKey: String,
+        league: String,
+        allowsStreamingTenths: Bool,
+        showsChanceHeaderWithoutProjection: Bool,
         event: EventDetail,
         awayFullName: String,
         homeFullName: String,
@@ -1391,7 +1637,7 @@ enum EventSportHeadlines12472 {
             shown: shown,
             away: awayProb,
             home: homeProb,
-            numberStreams: numberStreams
+            numberStreams: allowsStreamingTenths && numberStreams
         )
         let projections = admittedPregameProjectedPair(
             event: event,
@@ -1400,21 +1646,27 @@ enum EventSportHeadlines12472 {
             ladderAway: ladderAway,
             now: now
         )
-        let pregameHeaders = projections != nil
-            ? PregameColumnHeaders(projected: "Proj.", chance: "Chance")
-            : nil
-        let meta = nflPregameMetaText(event: event, now: now)
+        let pregameHeaders: PregameColumnHeaders? = {
+            if projections != nil {
+                return PregameColumnHeaders(projected: "Proj.", chance: "Chance")
+            }
+            if showsChanceHeaderWithoutProjection {
+                return PregameColumnHeaders(projected: nil, chance: "Chance")
+            }
+            return nil
+        }()
+        let meta = pregameMetaText(league: league, event: event, now: now)
         return Model(
             eventId: event.id,
-            sportKey: "americanfootball_nfl",
-            kind: .nflBeforeGame,
+            sportKey: sportKey,
+            kind: kind,
             plainMetaText: meta,
             commenceTime: event.commenceTime,
             startIsTbd: event.startIsTbd,
             broadcast: trimmedNonEmpty(event.espn?.broadcast),
             eventStatus: event.status,
             liveBadgeText: nil,
-            leagueLabel: "NFL",
+            leagueLabel: league,
             pregameColumnHeaders: pregameHeaders,
             liveColumnHeaders: nil,
             away: TeamRowModel(
@@ -1478,7 +1730,21 @@ enum EventSportHeadlines12472 {
         let liveBadge = periodStatus.map { "LIVE · \($0)" } ?? "LIVE"
 
         switch resolvedKind {
-        case .nbaDuringGame:
+        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame:
+            let liveSportKey: String = {
+                switch resolvedKind {
+                case .ncaafDuringGame: return event.sport ?? "americanfootball_ncaaf"
+                case .ncaabDuringGame: return event.sport ?? "basketball_ncaab"
+                default: return "basketball_nba"
+                }
+            }()
+            let liveLeague: String = {
+                switch resolvedKind {
+                case .ncaafDuringGame: return ncaafLeagueLabel(for: event.sport)
+                case .ncaabDuringGame: return ncaabLeagueLabel(for: event.sport)
+                default: return "NBA"
+                }
+            }()
             let liveProjections = admittedLiveProjectedPair(
                 event: event,
                 hasScore: hasScore,
@@ -1486,6 +1752,7 @@ enum EventSportHeadlines12472 {
                 ladderAway: ladderAway,
                 now: now
             )
+            let showsStackedRecordWhenProjectionAbsent = resolvedKind != .nbaDuringGame && liveProjections == nil
             let hasLiveScore = hasScore && (event.awayScore != nil || event.homeScore != nil)
             let columnHeaders = LiveColumnHeaders(
                 score: hasLiveScore ? "Score" : nil,
@@ -1494,15 +1761,15 @@ enum EventSportHeadlines12472 {
             )
             return Model(
                 eventId: event.id,
-                sportKey: "basketball_nba",
-                kind: .nbaDuringGame,
+                sportKey: liveSportKey,
+                kind: resolvedKind,
                 plainMetaText: nil,
                 commenceTime: event.commenceTime,
                 startIsTbd: event.startIsTbd,
                 broadcast: trimmedNonEmpty(event.espn?.broadcast),
                 eventStatus: event.status,
                 liveBadgeText: liveBadge,
-                leagueLabel: "NBA",
+                leagueLabel: liveLeague,
                 pregameColumnHeaders: nil,
                 liveColumnHeaders: columnHeaders,
                 away: TeamRowModel(
@@ -1510,7 +1777,7 @@ enum EventSportHeadlines12472 {
                     opponentFullName: homeFullName,
                     shortName: shortNames.away,
                     logoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
-                    record: nil,
+                    record: showsStackedRecordWhenProjectionAbsent ? trimmedNonEmpty(event.awayTeamData?.record) : nil,
                     projectedText: liveProjections?.away,
                     pregameProjectedNumberText: nil,
                     liveScore: hasScore ? event.awayScore : nil,
@@ -1523,7 +1790,7 @@ enum EventSportHeadlines12472 {
                     opponentFullName: awayFullName,
                     shortName: shortNames.home,
                     logoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
-                    record: nil,
+                    record: showsStackedRecordWhenProjectionAbsent ? trimmedNonEmpty(event.homeTeamData?.record) : nil,
                     projectedText: liveProjections?.home,
                     pregameProjectedNumberText: nil,
                     liveScore: hasScore ? event.homeScore : nil,
@@ -1534,7 +1801,7 @@ enum EventSportHeadlines12472 {
                 pregameAwayMarker: pregame?.awayProbability,
                 soccerThreeWay: nil,
                 showsEkg: true,
-                stacksRecordUnderName: false,
+                stacksRecordUnderName: showsStackedRecordWhenProjectionAbsent,
                 sourceMark: event.sourceMark,
                 confidenceTier: confidenceTier
             )
