@@ -3,7 +3,7 @@ venue in the last 30 minutes, and a market its venue reports closed leaves
 Discover.
 
 * ``refresh_shown_futures_prices`` re-runs the hourly price writer in
-  identity-only mode (both class budgets 0) with 15-minute clocks, at :04, :19
+  identity-only mode (both class budgets 0) with 10-minute age windows, at :04, :19
   and :34 on ``heavy``; with the hourly :50 pass that is a re-read every 14-16
   minutes. The hourly writer alone reached 895 of 2,568 candidates on Nov 13 and
   left 70 of 95 Polymarket Discover cards over 30 minutes old (#12633).
@@ -12,6 +12,9 @@ Discover.
 """
 
 from datetime import datetime, timezone
+import inspect
+
+import pytest
 
 from sqlalchemy.dialects import postgresql
 
@@ -21,6 +24,98 @@ from app.utils.futures_liveness import VENUE_SETTLED_KEY
 
 TASK = "app.tasks.refresh_shown_futures_prices"
 NOW = datetime(2026, 11, 13, 17, 0, tzinfo=timezone.utc)
+
+
+def _scheduled_arguments(monkeypatch, task, **arguments):
+    """Capture the real task boundary without dispatching a worker."""
+    from app.tasks import futures_price_refresh as fpr
+
+    signature = inspect.signature(fpr._refresh_stale_futures_prices)
+    calls = []
+
+    async def writer(**kwargs):
+        pass
+
+    def capture(**kwargs):
+        bound = signature.bind(**kwargs)
+        bound.apply_defaults()
+        calls.append(bound.arguments)
+        return writer()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(fpr, "_refresh_stale_futures_prices", capture)
+        patch.setattr(tasks_mod, "_tracked_run", lambda name, coro: coro.close())
+        tasks_mod.celery_app.tasks[task].run(**arguments)
+    return calls[0]
+
+
+@pytest.mark.parametrize("budget", [0, 7])
+def test_hourly_and_shown_share_the_short_clock_without_changing_budgets(monkeypatch, budget):
+    from app.tasks import futures_price_refresh as fpr
+
+    hourly = _scheduled_arguments(
+        monkeypatch, "app.tasks.refresh_stale_futures_prices", budget=budget,
+    )
+    shown = _scheduled_arguments(monkeypatch, TASK)
+    for key in ("served_refresh_minutes", "registered_refresh_minutes",
+                "category_page_refresh_minutes", "in_play_refresh_minutes"):
+        assert hourly[key] == shown[key] == 10
+    assert hourly["kalshi_budget"] == (budget or fpr.KALSHI_MARKET_BUDGET)
+    assert hourly["polymarket_budget"] == (budget or fpr.POLYMARKET_MARKET_BUDGET)
+    assert shown["kalshi_budget"] == shown["polymarket_budget"] == 0
+    assert hourly["threshold_label_per_run"] == fpr.THRESHOLD_LABEL_PER_RUN
+    assert shown["threshold_label_per_run"] == 0
+
+
+@pytest.mark.asyncio
+async def test_hourly_attempt_no_longer_suppresses_the_next_shown_pass(monkeypatch):
+    from app.tasks import futures_price_refresh as fpr
+    from tests.test_futures_price_refresh import _InPlayHarness
+    from app.utils.feed_served_markets import SERVED_EMPTY
+
+    hourly = _scheduled_arguments(monkeypatch, "app.tasks.refresh_stale_futures_prices")
+    shown = _scheduled_arguments(monkeypatch, TASK)
+    real_writer = fpr._refresh_stale_futures_prices
+
+    class RetryHarness(_InPlayHarness):
+        now = 54 * 60  # the :50 run writes its markers at :54
+
+        def __init__(self):
+            signal = type("S", (), dict(
+                ids=[], state=SERVED_EMPTY, green_allowed=True, shapes=0,
+                stale_shapes=0, unreadable_shapes=0,
+            ))()
+            super().__init__(signal=signal)
+            self.expires = {}
+
+        def _mark(self, ids, ttl_seconds):
+            for mid in ids:
+                self.expires[mid] = self.now + ttl_seconds
+
+        def _attempt_skips(self, ids):
+            return {mid for mid in ids if self.expires.get(mid, 0) > self.now}
+
+    harness = RetryHarness()
+    monkeypatch.setattr(fpr, "_refresh_stale_futures_prices", lambda: real_writer(**hourly))
+    first = await harness.run(monkeypatch)
+    assert first["in_play_attempted"] == 1
+    # Ten minutes later is the next :04 beat. The same field is still due
+    # (the fake venue declined the read), so its retry marker must allow it.
+    # The original hourly 45-minute marker made this return no_work instead.
+    harness.now = 64 * 60
+    monkeypatch.setattr(fpr, "_refresh_stale_futures_prices", lambda: real_writer(**shown))
+    second = await harness.run(monkeypatch)
+    assert second["in_play_attempted"] == 1
+    assert harness.kalshi_fetched == ["KXPRESCUP-26", "KXPRESCUP-26"]
+
+
+def test_age_window_leaves_slack_after_a_late_same_price_read(monkeypatch):
+    settings = _scheduled_arguments(monkeypatch, TASK)
+    # :52 read, :04 next beat: a real, unchanged quote is already due at
+    # twelve minutes. The original fifteen-minute cutoff skipped that beat.
+    age_minutes = 64 - 52
+    assert age_minutes >= settings["served_refresh_minutes"]
+    assert 5 < settings["served_refresh_minutes"]  # no immediate reread
 
 
 def test_the_pass_is_the_hourly_writer_in_identity_only_mode(monkeypatch):
@@ -44,9 +139,10 @@ def test_the_pass_is_the_hourly_writer_in_identity_only_mode(monkeypatch):
 
     (kwargs,) = calls
     assert kwargs["kalshi_budget"] == 0 and kwargs["polymarket_budget"] == 0
-    assert kwargs["served_refresh_minutes"] == tasks_mod.SHOWN_REFRESH_MINUTES == 15
-    assert kwargs["registered_refresh_minutes"] == 15
-    assert kwargs["category_page_refresh_minutes"] == 15
+    assert kwargs["served_refresh_minutes"] == tasks_mod.SHOWN_REFRESH_MINUTES == 10
+    assert kwargs["registered_refresh_minutes"] == 10
+    assert kwargs["category_page_refresh_minutes"] == 10
+    assert kwargs["in_play_refresh_minutes"] == 10
     assert kwargs["threshold_label_per_run"] == 0
     # its own run history, never the hourly pass's
     assert seen["tracked_as"] == "shown_futures_refresh"
