@@ -658,8 +658,9 @@ struct EvolutionChartView: View {
             }
             var lines = try await detailHistory
             if lines == nil, VerifiedTitleHistory.drawsSourceHistory(
-                detail: expectation?.representation, response: result.effectiveRepresentation) {
-                // The response is verified though the detail was not (yet).
+                detail: expectation?.representation, response: result.effectiveRepresentation)
+                || VerifiedTitleHistory.needsCanonicalHistory(for: result) {
+                // The response is verified, or served raw venue-yes points that need `/history`'s canonical basis (#12633).
                 lines = try await Self.verifiedHistoryLines(
                     marketId: marketId, hours: fetchHours, fullRange: fullRange, when: true)
             }

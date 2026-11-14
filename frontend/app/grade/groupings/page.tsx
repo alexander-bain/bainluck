@@ -36,6 +36,8 @@ import {
   type KidPseudonym,
   type TallyEntry,
 } from "@/lib/ranking/groupingGradeSession";
+import { saveWithOneRetry } from "@/lib/ranking/gradeSession";
+import { useRetryNotice } from "@/lib/ranking/useRetryNotice";
 
 const GRADER_KEY = "bainluck_grouping_grader_name";
 const KID_KEY = "bainluck_grouping_grader_kid";
@@ -76,6 +78,7 @@ function GroupingGradeSession() {
     Array<{ grader: string; item_key: string; grade?: GroupingGrade }>
   >([]);
   const [savingItemKey, setSavingItemKey] = useState<string | null>(null);
+  const { notice, startWait, clearNotice } = useRetryNotice();
   const [selectedSlate, setSelectedSlate] = useState<string>(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
@@ -180,19 +183,26 @@ function GroupingGradeSession() {
     setSaving(true);
     setError(null);
     try {
-      const res = await adminFetch("/api/admin/ranking/grouping-grades", secret, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slate_id: deck.slate_id,
-          grader,
-          kid,
-          position: item.position,
-          item_key: item.item_key,
-          grade,
-          note: note.trim() || null,
-        }),
+      const body = JSON.stringify({
+        slate_id: deck.slate_id,
+        grader,
+        kid,
+        position: item.position,
+        item_key: item.item_key,
+        grade,
+        note: note.trim() || null,
       });
+      // #11937: a rate-limited save waits what the server asks and goes again once.
+      const res = await saveWithOneRetry(
+        () => adminFetch("/api/admin/ranking/grouping-grades", secret, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        }),
+        (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        startWait,
+      );
+      clearNotice();
       if (!res.ok) {
         setError(`Not saved (${res.status}): ${(await res.text()).slice(0, 200)}`);
         return;
@@ -202,6 +212,7 @@ function GroupingGradeSession() {
       setIndex((i) => i + 1);
       void loadTallyAndSummary(deck.slate_id);
     } catch {
+      clearNotice();
       setError("Not saved: the network dropped. Try that card again.");
     } finally {
       setSaving(false);
@@ -209,6 +220,14 @@ function GroupingGradeSession() {
   };
 
   const tallyLine = formatTally(tally);
+  // #11937: the wait line and any "Not saved" line, under the deck or the look
+  // sheet (whose saves showed nothing at all when they failed).
+  const saveStatus = (
+    <>
+      {notice && <p className="mt-2 text-sm text-text-muted" role="status">{notice}</p>}
+      {error && <p className="mt-2 text-sm text-text-secondary">{error}</p>}
+    </>
+  );
   const isLookSheetSlate = selectedSlate === "visual-forms-look-sheet-2026-11";
   const activeGraderForLookSheet = grader || resolvedGrader || null;
   const existingGradesByItemKey: Record<string, GroupingGrade> = {};
@@ -232,19 +251,25 @@ function GroupingGradeSession() {
     setSavingItemKey(itemKey);
     setError(null);
     try {
-      const res = await adminFetch("/api/admin/ranking/grouping-grades", secret, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slate_id: "visual-forms-look-sheet-2026-11",
-          grader: targetGrader,
-          kid,
-          position,
-          item_key: itemKey,
-          grade,
-          note: itemNote.trim() || null,
-        }),
+      const body = JSON.stringify({
+        slate_id: "visual-forms-look-sheet-2026-11",
+        grader: targetGrader,
+        kid,
+        position,
+        item_key: itemKey,
+        grade,
+        note: itemNote.trim() || null,
       });
+      const res = await saveWithOneRetry(
+        () => adminFetch("/api/admin/ranking/grouping-grades", secret, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        }),
+        (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        startWait,
+      );
+      clearNotice();
       if (!res.ok) {
         setError(`Not saved (${res.status}): ${(await res.text()).slice(0, 200)}`);
         return;
@@ -262,6 +287,7 @@ function GroupingGradeSession() {
       ]);
       void loadTallyAndSummary("visual-forms-look-sheet-2026-11");
     } catch {
+      clearNotice();
       setError("Not saved: the network dropped. Try that card again.");
     } finally {
       setSavingItemKey(null);
@@ -379,6 +405,7 @@ function GroupingGradeSession() {
               onGradeItem={submitLookSheetItemGrade}
               savingItemKey={savingItemKey}
             />
+            {saveStatus}
           </div>
         )}
       </Shell>
@@ -395,6 +422,7 @@ function GroupingGradeSession() {
           onGradeItem={submitLookSheetItemGrade}
           savingItemKey={savingItemKey}
         />
+        {saveStatus}
       </Shell>
     );
   }
@@ -543,7 +571,7 @@ function GroupingGradeSession() {
           </button>
         ))}
       </div>
-      {error && <p className="mt-2 text-sm text-text-secondary">{error}</p>}
+      {saveStatus}
     </Shell>
   );
 }

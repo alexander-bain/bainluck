@@ -17,6 +17,19 @@ struct ProbabilityBar: View {
     /// against where the bar sits now.
     var notchProb: Double? = nil
 
+    /// #12616 (187-A) — segment order on a three-way soccer bar puts `.draw`
+    /// in the middle (`[.away, .draw, .home]`), on both cards and game pages.
+    nonisolated enum SegmentRole: String, Equatable, Sendable {
+        case away
+        case draw
+        case home
+    }
+
+    nonisolated struct OrderedSegment: Equatable, Sendable {
+        let role: SegmentRole
+        let share: Double
+    }
+
     nonisolated static func normalizedShares(
         awayProb: Double,
         homeProb: Double,
@@ -33,21 +46,41 @@ struct ProbabilityBar: View {
         return (a / sum, h / sum, d / sum)
     }
 
+    nonisolated static func orderedSegments(
+        awayProb: Double,
+        homeProb: Double,
+        drawProb: Double? = nil
+    ) -> [OrderedSegment] {
+        let shares = normalizedShares(awayProb: awayProb, homeProb: homeProb, drawProb: drawProb)
+        if shares.draw > 0 {
+            return [
+                OrderedSegment(role: .away, share: shares.away),
+                OrderedSegment(role: .draw, share: shares.draw),
+                OrderedSegment(role: .home, share: shares.home),
+            ]
+        }
+        return [
+            OrderedSegment(role: .away, share: shares.away),
+            OrderedSegment(role: .home, share: shares.home),
+        ]
+    }
+
     var body: some View {
-        let shares = Self.normalizedShares(awayProb: awayProb, homeProb: homeProb, drawProb: drawProb)
+        let segments = Self.orderedSegments(awayProb: awayProb, homeProb: homeProb, drawProb: drawProb)
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 HStack(spacing: 0) {
-                    Rectangle()
-                        .fill(awayColor)
-                        .frame(width: max(geo.size.width * shares.away, 2))
-                    Rectangle()
-                        .fill(homeColor)
-                        .frame(width: max(geo.size.width * shares.home, 2))
-                    if shares.draw > 0 {
+                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                        let fill: Color = {
+                            switch segment.role {
+                            case .away: return awayColor
+                            case .draw: return drawColor
+                            case .home: return homeColor
+                            }
+                        }()
                         Rectangle()
-                            .fill(drawColor)
-                            .frame(width: max(geo.size.width * shares.draw, 2))
+                            .fill(fill)
+                            .frame(width: max(geo.size.width * segment.share, 2))
                     }
                 }
                 .frame(width: geo.size.width, height: height)

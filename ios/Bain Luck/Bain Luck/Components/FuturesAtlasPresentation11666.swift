@@ -57,10 +57,17 @@ enum FuturesAtlasPresentation11666 {
         case singleLegPredicate
     }
 
-    // MARK: - Row & Header Display Values (Decide 10-C & Decide 80-A)
+    // MARK: - Row & Header Display Values (170-A, 188 & Decide 80-A)
 
     enum RowDisplayValue: Equatable {
-        case chance(percent: Int, formattedText: String, rawProbability: Double, moveText: String?, isUp: Bool?)
+        case chance(
+            percent: Int,
+            formattedText: String,
+            rawProbability: Double,
+            moveText: String?,
+            isUp: Bool?,
+            asOfText: String? = nil
+        )
         case noRecentProbability(lastRecordedText: String?)
         case won
         case lost
@@ -68,7 +75,7 @@ enum FuturesAtlasPresentation11666 {
 
         var primaryLabel: String {
             switch self {
-            case .chance(_, let formattedText, _, _, _):
+            case .chance(_, let formattedText, _, _, _, _):
                 return formattedText
             case .noRecentProbability:
                 return EventAtlasStates11666.noRecentPrice
@@ -79,6 +86,13 @@ enum FuturesAtlasPresentation11666 {
             case .resultUnconfirmed:
                 return EventAtlasStates11666.resultNotConfirmed
             }
+        }
+
+        var asOfText: String? {
+            if case .chance(_, _, _, _, _, let asOf) = self {
+                return asOf
+            }
+            return nil
         }
 
         var isWon: Bool {
@@ -156,24 +170,69 @@ enum FuturesAtlasPresentation11666 {
 
     // MARK: - Public Builder
 
+    /// Decision 170-A & Ruling 188: readings older than 30 minutes keep their number
+    /// and display `"As of 1:29 PM"` (`"As of Nov 12, 4:52 PM"` across calendar days);
+    /// there is no hard hiding limit for old priced numbers.
     nonisolated static let staleThresholdSeconds: TimeInterval = 30 * 60
 
+    nonisolated static func outcomeObservationDate(_ outcome: FuturesOutcome) -> Date? {
+        (outcome.observedAt ?? outcome.lastUpdated)?.asDate
+    }
+
     nonisolated static func isOutcomeStale(_ outcome: FuturesOutcome, now: Date) -> Bool {
-        guard let stamp = outcome.observedAt ?? outcome.lastUpdated,
-              let date = stamp.asDate else {
+        guard let date = outcomeObservationDate(outcome) else {
             return false
         }
         return now.timeIntervalSince(date) > staleThresholdSeconds
     }
 
+    nonisolated static func formatAsOf(
+        _ date: Date,
+        relativeTo now: Date,
+        timeZone: TimeZone = .current
+    ) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        if calendar.isDate(date, inSameDayAs: now) {
+            formatter.dateFormat = "h:mm a"
+        } else if calendar.component(.year, from: date) == calendar.component(.year, from: now) {
+            formatter.dateFormat = "MMM d, h:mm a"
+        } else {
+            formatter.dateFormat = "MMM d, yyyy, h:mm a"
+        }
+        return "As of \(formatter.string(from: date))"
+    }
+
+    nonisolated static func outcomeAsOfText(
+        _ outcome: FuturesOutcome,
+        now: Date,
+        timeZone: TimeZone = .current
+    ) -> String? {
+        guard let date = outcomeObservationDate(outcome),
+              now.timeIntervalSince(date) > staleThresholdSeconds else {
+            return nil
+        }
+        return formatAsOf(date, relativeTo: now, timeZone: timeZone)
+    }
+
     nonisolated static func build(
         market: FuturesMarketDetail,
         selectedOutcomeId: Int? = nil,
-        now: Date = Date()
+        now: Date = Date(),
+        timeZone: TimeZone = .current
     ) -> PagePresentation {
         let shape = classifyShape(market: market)
         let percents = renderedPercentsById(for: market, shape: shape)
-        let allRows = buildContenderRows(market: market, shape: shape, percents: percents, now: now)
+        let allRows = buildContenderRows(
+            market: market,
+            shape: shape,
+            percents: percents,
+            now: now,
+            timeZone: timeZone
+        )
 
         let selectedOutcome = resolveSelectedOutcome(
             market: market,
@@ -194,7 +253,9 @@ enum FuturesAtlasPresentation11666 {
             market: market,
             selectedOutcome: selectedOutcome,
             selectedRow: selectedRow,
-            header: header
+            header: header,
+            now: now,
+            timeZone: timeZone
         )
         let attribution = buildAttribution(market: market)
         let narrative = sanitizeNarrativeCopy(market.hookDescription)
@@ -298,7 +359,8 @@ enum FuturesAtlasPresentation11666 {
         market: FuturesMarketDetail,
         shape: MarketShape,
         percents: [Int: Int],
-        now: Date
+        now: Date,
+        timeZone: TimeZone = .current
     ) -> [ContenderRow] {
         let orderedOutcomes: [FuturesOutcome]
         switch shape {
@@ -342,7 +404,8 @@ enum FuturesAtlasPresentation11666 {
                 market: market,
                 isResolved: isResolved,
                 renderedPercent: percents[outcome.id],
-                now: now
+                now: now,
+                timeZone: timeZone
             )
             return ContenderRow(
                 id: outcome.id,
@@ -360,7 +423,8 @@ enum FuturesAtlasPresentation11666 {
         market: FuturesMarketDetail,
         isResolved: Bool,
         renderedPercent: Int?,
-        now: Date
+        now: Date,
+        timeZone: TimeZone
     ) -> RowDisplayValue {
         let rowValue = FuturesDetailRowValue.of(
             outcome,
@@ -380,22 +444,21 @@ enum FuturesAtlasPresentation11666 {
                 let lastText = formatProbability(prob, renderedPercent: renderedPercent)
                 return .resultUnconfirmed(lastRecordedText: lastText)
             }
-            // Decide 10-C: when `observedAt` or `lastUpdated` is supplied and older than
-            // 30 minutes, age to `"No recent probability"` rather than printing a stale live chance.
-            if isOutcomeStale(outcome, now: now) {
-                let lastText = formatProbability(prob, renderedPercent: renderedPercent)
-                return .noRecentProbability(lastRecordedText: lastText)
-            }
+            // Decision 170-A & Ruling 188 (#12633): an open outcome whose price was last
+            // read more than 30 minutes ago keeps its number and shows `"As of 1:29 PM"`
+            // (never `"checked"`, never `"stale"`, and never hidden by an age cutoff).
             let pct = renderedPercent ?? Int((prob * 1000 / 10).rounded())
             let formatted = "\(percentNumber(prob * 100, renderedPercent: renderedPercent))%"
             let moveText = outcome.probabilityChange24h.flatMap { futuresHeroMoveText($0) }
             let isUp = outcome.probabilityChange24h.map { $0 > 0 }
+            let asOfText = outcomeAsOfText(outcome, now: now, timeZone: timeZone)
             return .chance(
                 percent: pct,
                 formattedText: formatted,
                 rawProbability: prob,
                 moveText: moveText,
-                isUp: isUp
+                isUp: isUp,
+                asOfText: asOfText
             )
         case .none:
             if isResolved {
@@ -441,10 +504,10 @@ enum FuturesAtlasPresentation11666 {
         )
         let openingChanceText = selectedRow?.openingText
 
-        let recordedAtText: String? = FuturesPriceAge.pricesAsOf(market.outcomes).map { date in
-            let prefix = isResolved ? "Settled" : "Recorded"
-            return "\(prefix) \(Self.timestampFormatter.string(from: date))"
-        }
+        // #12633 (170-A): the headline carries its own `"As of …"` tag when the selected
+        // outcome is older than 30 minutes, rather than attributing `FuturesPriceAge.pricesAsOf`
+        // (an unrelated sibling's oldest clock) or printing `"Settled <last_updated>"` in the footer.
+        let recordedAtText: String? = nil
 
         let scheduledResolutionText: String? = CalendarDeadline.format(
             market.resolutionDate,
@@ -579,7 +642,9 @@ enum FuturesAtlasPresentation11666 {
         market: FuturesMarketDetail,
         selectedOutcome: FuturesOutcome?,
         selectedRow: ContenderRow?,
-        header: HeaderModel
+        header: HeaderModel,
+        now: Date,
+        timeZone: TimeZone
     ) -> DetailsSheetModel {
         let outcomeName = selectedOutcome?.name ?? market.name
         let openingValue: String
@@ -599,7 +664,10 @@ enum FuturesAtlasPresentation11666 {
         } else {
             currentLabel = "Current reading"
             currentValue = header.primaryDisplay.primaryLabel
-            currentNote = header.recordedAtText ?? "Recorded observation timestamp not supplied."
+            currentNote = selectedOutcome
+                .flatMap(outcomeObservationDate)
+                .map { formatAsOf($0, relativeTo: now, timeZone: timeZone) }
+                ?? "Observation time not supplied."
         }
 
         let resolutionValue = CalendarDeadline.format(market.resolutionDate, style: .monthDayYear) ?? "Not supplied"
@@ -911,25 +979,99 @@ struct FuturesAtlasHeaderCardView11666: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(header.primaryDisplay.primaryLabel)
-                        .font(primaryValueFont)
-                        .foregroundStyle(primaryValueColor)
-                        .monospacedDigit()
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if case .chance(_, _, _, let moveText?, let isUp?) = header.primaryDisplay {
-                        HStack(spacing: 2) {
-                            Image(systemName: isUp ? "arrow.up" : "arrow.down")
-                                .font(.caption2.weight(.bold))
-                            Text(moveText)
-                                .font(.caption.weight(.semibold))
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(header.primaryDisplay.primaryLabel)
+                                .font(primaryValueFont)
+                                .foregroundStyle(primaryValueColor)
                                 .monospacedDigit()
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            if case .chance(_, _, _, let moveText?, let isUp?, _) = header.primaryDisplay {
+                                HStack(spacing: 2) {
+                                    Image(systemName: isUp ? "arrow.up" : "arrow.down")
+                                        .font(.caption2.weight(.bold))
+                                    Text(moveText)
+                                        .font(.caption.weight(.semibold))
+                                        .monospacedDigit()
+                                }
+                                .foregroundStyle(isUp ? DS.emerald : DS.danger)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background((isUp ? DS.emerald : DS.danger).opacity(0.12), in: Capsule())
+                            }
                         }
-                        .foregroundStyle(isUp ? DS.emerald : DS.danger)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background((isUp ? DS.emerald : DS.danger).opacity(0.12), in: Capsule())
+
+                        if let asOfText = header.primaryDisplay.asOfText {
+                            Text(asOfText)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(DS.textMuted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(header.primaryDisplay.primaryLabel)
+                                .font(primaryValueFont)
+                                .foregroundStyle(primaryValueColor)
+                                .monospacedDigit()
+                                .fixedSize(horizontal: true, vertical: true)
+
+                            if case .chance(_, _, _, let moveText?, let isUp?, _) = header.primaryDisplay {
+                                HStack(spacing: 2) {
+                                    Image(systemName: isUp ? "arrow.up" : "arrow.down")
+                                        .font(.caption2.weight(.bold))
+                                    Text(moveText)
+                                        .font(.caption.weight(.semibold))
+                                        .monospacedDigit()
+                                }
+                                .foregroundStyle(isUp ? DS.emerald : DS.danger)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background((isUp ? DS.emerald : DS.danger).opacity(0.12), in: Capsule())
+                                .fixedSize(horizontal: true, vertical: true)
+                            }
+
+                            if let asOfText = header.primaryDisplay.asOfText {
+                                Text(asOfText)
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(DS.textMuted)
+                                    .fixedSize(horizontal: true, vertical: true)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text(header.primaryDisplay.primaryLabel)
+                                    .font(primaryValueFont)
+                                    .foregroundStyle(primaryValueColor)
+                                    .monospacedDigit()
+                                    .fixedSize(horizontal: false, vertical: true)
+
+                                if case .chance(_, _, _, let moveText?, let isUp?, _) = header.primaryDisplay {
+                                    HStack(spacing: 2) {
+                                        Image(systemName: isUp ? "arrow.up" : "arrow.down")
+                                            .font(.caption2.weight(.bold))
+                                        Text(moveText)
+                                            .font(.caption.weight(.semibold))
+                                            .monospacedDigit()
+                                    }
+                                    .foregroundStyle(isUp ? DS.emerald : DS.danger)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background((isUp ? DS.emerald : DS.danger).opacity(0.12), in: Capsule())
+                                }
+                            }
+
+                            if let asOfText = header.primaryDisplay.asOfText {
+                                Text(asOfText)
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(DS.textMuted)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                     }
                 }
 
@@ -1176,8 +1318,8 @@ struct FuturesAtlasBodyCardView11666: View {
                     }
                 }
 
-                if case .chance(_, _, let lProb, _, _) = left.displayValue,
-                   case .chance(_, _, let rProb, _, _) = right.displayValue,
+                if case .chance(_, _, let lProb, _, _, _) = left.displayValue,
+                   case .chance(_, _, let rProb, _, _, _) = right.displayValue,
                    (lProb + rProb) > 0 {
                     let total = max(lProb + rProb, 0.0001)
                     GeometryReader { geo in
@@ -1217,6 +1359,13 @@ struct FuturesAtlasBodyCardView11666: View {
                     .font(.title3.weight(.bold).monospacedDigit())
                     .foregroundStyle(rowColor(row.displayValue, isLeading: isLeading))
                     .fixedSize(horizontal: false, vertical: true)
+
+                if let asOfText = row.displayValue.asOfText {
+                    Text(asOfText)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(DS.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if let opening = row.openingText {
                     Text(opening)
@@ -1276,6 +1425,12 @@ struct FuturesAtlasBodyCardView11666: View {
                             .font(.subheadline.weight(.bold).monospacedDigit())
                             .foregroundStyle(rowColor(row.displayValue, isLeading: isFirst))
                             .fixedSize(horizontal: false, vertical: true)
+                        if let asOfText = row.displayValue.asOfText {
+                            Text(asOfText)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(DS.textMuted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if let opening = row.openingText {
                             Text(opening)
                                 .font(.caption2.monospacedDigit())
@@ -1302,20 +1457,28 @@ struct FuturesAtlasBodyCardView11666: View {
                             }
                         }
                         Spacer(minLength: 6)
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            if case .chance(_, _, _, let moveText?, let isUp?) = row.displayValue {
-                                Text("\(isUp ? "↑" : "↓")\(moveText)")
-                                    .font(.caption2.weight(.semibold).monospacedDigit())
-                                    .foregroundStyle(isUp ? DS.emerald : DS.danger)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                if case .chance(_, _, _, let moveText?, let isUp?, _) = row.displayValue {
+                                    Text("\(isUp ? "↑" : "↓")\(moveText)")
+                                        .font(.caption2.weight(.semibold).monospacedDigit())
+                                        .foregroundStyle(isUp ? DS.emerald : DS.danger)
+                                }
+                                Text(row.displayValue.primaryLabel)
+                                    .font(.subheadline.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(rowColor(row.displayValue, isLeading: isFirst))
                             }
-                            Text(row.displayValue.primaryLabel)
-                                .font(.subheadline.weight(.bold).monospacedDigit())
-                                .foregroundStyle(rowColor(row.displayValue, isLeading: isFirst))
+                            if let asOfText = row.displayValue.asOfText {
+                                Text(asOfText)
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(DS.textMuted)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
                         }
                     }
                 }
 
-                if case .chance(_, _, let rawProb, _, _) = row.displayValue {
+                if case .chance(_, _, let rawProb, _, _, _) = row.displayValue {
                     DSProbabilityBar(
                         value: rawProb * 100,
                         maxValue: 100,
@@ -1517,9 +1680,16 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                                     }
                                 }
                                 Spacer()
-                                Text(row.displayValue.primaryLabel)
-                                    .font(.subheadline.weight(.bold).monospacedDigit())
-                                    .foregroundStyle(row.displayValue.isWon ? DS.emerald : DS.textPrimary)
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(row.displayValue.primaryLabel)
+                                        .font(.subheadline.weight(.bold).monospacedDigit())
+                                        .foregroundStyle(row.displayValue.isWon ? DS.emerald : DS.textPrimary)
+                                    if let asOfText = row.displayValue.asOfText {
+                                        Text(asOfText)
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(DS.textMuted)
+                                    }
+                                }
                             }
                         }
                         .buttonStyle(.plain)
