@@ -928,6 +928,12 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
         return item
 
     if kind == "futures":
+        if not (
+            raw_data.get("name")
+            or raw_data.get("image_url")
+            or raw_data.get("top_outcomes")
+        ):
+            return item
         resolved = resolve_discover_market_image(
             name=raw_data.get("name"),
             category=raw_data.get("llm_sport_category") or raw_data.get("category"),
@@ -940,12 +946,34 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
         return {**item, "data": new_data}
 
     if kind == "tournament":
+        if not (
+            raw_data.get("name")
+            or raw_data.get("champion")
+            or raw_data.get("golfers")
+            or raw_data.get("image_url")
+        ):
+            return item
         return {**item, "data": resolve_tournament_discover_image(raw_data)}
 
     if kind == "concept":
+        if not (
+            raw_data.get("name")
+            or raw_data.get("winner")
+            or raw_data.get("leader")
+            or raw_data.get("headline_bout")
+            or raw_data.get("image_url")
+        ):
+            return item
         return {**item, "data": resolve_concept_discover_image(raw_data)}
 
     if kind == "bundle":
+        if not (
+            raw_data.get("title")
+            or raw_data.get("items")
+            or raw_data.get("roundup")
+            or raw_data.get("image_url")
+        ):
+            return item
         sub_items = [
             sanitize_discover_feed_item(sub) if isinstance(sub, dict) else sub
             for sub in (raw_data.get("items") or [])

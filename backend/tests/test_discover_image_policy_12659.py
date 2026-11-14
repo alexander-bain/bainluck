@@ -267,3 +267,17 @@ def test_every_commons_and_archive_entry_records_author_license_and_source_page_
         normalize_archive_image_url("https://ia601402.us.archive.org/12/items/example-item/cover.jpg")
         == "https://archive.org/download/example-item/cover.jpg"
     )
+
+
+def test_nameless_routing_stubs_pass_through_unchanged():
+    """Synthetic routing/seating test stubs without name/image/outcomes pass through byte-for-byte."""
+    from app.utils.discover_image_policy import sanitize_discover_feed_item
+
+    for stub in (
+        {"type": "futures", "score": 70.0, "data": {"id": 0, "probability": 0.5}},
+        {"type": "tournament", "score": 60.0, "data": {"key": "t-open", "start_date": "2026-11-13"}},
+        {"type": "concept", "score": 55.0, "data": {"slug": "stub-concept"}},
+        {"type": "bundle", "score": 50.0, "data": {"bundle_type": "stub"}},
+    ):
+        assert sanitize_discover_feed_item(stub) == stub
+
