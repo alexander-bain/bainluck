@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket
 from app.services import get_db
 from app.utils.futures_liveness import market_reads_settled
+from app.utils.discover_image_policy import resolve_discover_market_image
 from app.utils.hook_staleness import is_hook_stale
 from app.utils.ladder_headline import ladder_median_row
 from app.utils.ladder_monotonicity import cumulative_outcome_ladder
@@ -462,6 +463,22 @@ def _market_row(
             )
             for d in outcome_dicts:
                 prob_by_id[d["_obj_id"]] = float(d["probability"])
+    _top_outcomes_payload = [
+        {
+            "name": (o.name or "").strip(),
+            "prob": round(prob_by_id[id(o)] * 100, 1),
+            "delta_24h": round(
+                float(o.probability_change_24h or 0) * 100, 1
+            ),
+        }
+        for o in top
+    ]
+    _resolved_img = resolve_discover_market_image(
+        name=market.name,
+        category=getattr(market, "llm_sport_category", None) or "entertainment",
+        top_outcomes=_top_outcomes_payload,
+        image_url=market.image_url,
+    )
     return {
         **_ladder_headline(market, priced),
         "q": market.name,
@@ -476,16 +493,7 @@ def _market_row(
         "market_id": market.id,
         "external_id": market.external_id,
         "kind": _classify_kind(market, outcome_count),
-        "top_outcomes": [
-            {
-                "name": (o.name or "").strip(),
-                "prob": round(prob_by_id[id(o)] * 100, 1),
-                "delta_24h": round(
-                    float(o.probability_change_24h or 0) * 100, 1
-                ),
-            }
-            for o in top
-        ],
+        "top_outcomes": _top_outcomes_payload,
         "outcome_count": outcome_count,
         "volume_24h": market.volume_24h,
         "resolution_date": (
@@ -502,7 +510,9 @@ def _market_row(
             if (_updated_at := getattr(market, "updated_at", None))
             else None
         ),
-        "image_url": market.image_url,
+        "image_url": _resolved_img["image_url"],
+        "image_presentation": _resolved_img["image_presentation"],
+        "image_monogram": _resolved_img["image_monogram"],
         # #5926: the same gate the Discover card and (since #5906) the futures
         # detail page run. This route served `market.hook_description` raw, so
         # /entertainment was the third and last unconverted call site of a rule

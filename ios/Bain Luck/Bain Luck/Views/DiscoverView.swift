@@ -1747,9 +1747,18 @@ struct DiscoverView: View {
                 )
                 let openingAppended = spaceGrouped(personalizeGrouped(Array(flooredDelta[..<deltaBoundary]), profile: profile))
                 let continuationAppended = spaceGrouped(personalizeGrouped(Array(flooredDelta[deltaBoundary...]), profile: profile))
+                let seatedOpening = DiscoverPageTeamSeat11985.seatItems(
+                    refreshedPrefix + openingAppended,
+                    now: now,
+                    frozenPrefixCount: refreshedPrefix.count
+                )
+                let seatedContinuation = DiscoverPageTeamSeat11985.seatItems(
+                    continuationAppended,
+                    now: now
+                )
                 return GroupedPresentation(
-                    items: refreshedPrefix + openingAppended + continuationAppended,
-                    continuationStart: refreshedPrefix.count + openingAppended.count,
+                    items: seatedOpening + seatedContinuation,
+                    continuationStart: seatedOpening.count,
                     admittedIds: admitted,
                     pullEpoch: pullEpoch,
                     dismissVersion: dismissVersion,
@@ -1772,8 +1781,13 @@ struct DiscoverView: View {
                     profile: profile
                 )
             )
+            let seatedIncremental = DiscoverPageTeamSeat11985.seatItems(
+                refreshedPrefix + deltaGrouped,
+                now: now,
+                frozenPrefixCount: refreshedPrefix.count
+            )
             return GroupedPresentation(
-                items: refreshedPrefix + deltaGrouped,
+                items: seatedIncremental,
                 continuationStart: cached.continuationStart,
                 admittedIds: admitted,
                 pullEpoch: pullEpoch,
@@ -1813,8 +1827,14 @@ struct DiscoverView: View {
                 floor: groupExpansionFloor,
                 boundary: &boundary
             )
-            let openingItems = spaceGrouped(personalizeGrouped(Array(floored[..<boundary]), profile: profile))
-            let continuationItems = spaceGrouped(personalizeGrouped(Array(floored[boundary...]), profile: profile))
+            let openingItems = DiscoverPageTeamSeat11985.seatItems(
+                spaceGrouped(personalizeGrouped(Array(floored[..<boundary]), profile: profile)),
+                now: now
+            )
+            let continuationItems = DiscoverPageTeamSeat11985.seatItems(
+                spaceGrouped(personalizeGrouped(Array(floored[boundary...]), profile: profile)),
+                now: now
+            )
             return GroupedPresentation(
                 items: openingItems + continuationItems,
                 continuationStart: openingItems.count,
@@ -1825,15 +1845,18 @@ struct DiscoverView: View {
             )
         }
         var unused = 0
-        let fullItems = spaceGrouped(
-            personalizeGrouped(
-                enforceGroupFloorTarget(
-                    groupRelatedItems(spaceItems(filtered), retainingIds: retained),
-                    floor: groupExpansionFloor,
-                    boundary: &unused
-                ),
-                profile: profile
-            )
+        let fullItems = DiscoverPageTeamSeat11985.seatItems(
+            spaceGrouped(
+                personalizeGrouped(
+                    enforceGroupFloorTarget(
+                        groupRelatedItems(spaceItems(filtered), retainingIds: retained),
+                        floor: groupExpansionFloor,
+                        boundary: &unused
+                    ),
+                    profile: profile
+                )
+            ),
+            now: now
         )
         return GroupedPresentation(
             items: fullItems,
