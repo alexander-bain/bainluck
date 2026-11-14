@@ -60,9 +60,8 @@ struct GolfTournamentView: View {
     private func loaded(_ presentation: GolfTournamentPresentation) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                header(presentation)
-
                 if presentation.field.isEmpty {
+                    header(presentation)
                     // The tournament is real and the field is not published yet
                     // — a normal state for an event days out, and it is said in
                     // one short line rather than explained (notice 34).
@@ -73,7 +72,9 @@ struct GolfTournamentView: View {
                         .padding(.top, 8)
                 } else if ReleaseSurfaces.isEventPageAtlasEnabled() {
                     atlasSection(presentation)
+                        .padding(.top, 8)
                 } else {
+                    header(presentation)
                     fieldSection(presentation)
                 }
             }
