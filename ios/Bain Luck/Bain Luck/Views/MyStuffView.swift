@@ -71,6 +71,7 @@ struct MyStuffView: View {
                     .padding()
                 }
                 .accessibilityIdentifier("myStuffManagePins")
+                SiriProbabilityTip12315()
                 Group {
                     if authManager.isLoading {
                         ProgressView()
