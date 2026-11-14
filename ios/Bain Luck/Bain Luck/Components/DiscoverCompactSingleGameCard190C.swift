@@ -58,15 +58,15 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     }
 
     private var effectiveScoreWidth: CGFloat {
-        min(scoreColWidth, 54)
+        dynamicTypeSize.isAccessibilitySize ? min(scoreColWidth, 56) : min(scoreColWidth, 54)
     }
 
     private var effectivePregameWidth: CGFloat {
-        min(pregameColWidth, 66)
+        dynamicTypeSize.isAccessibilitySize ? min(pregameColWidth, 74) : min(pregameColWidth, 66)
     }
 
     private var effectivePrimaryWidth: CGFloat {
-        min(primaryColWidth, 78)
+        dynamicTypeSize.isAccessibilitySize ? min(primaryColWidth, 88) : min(primaryColWidth, 78)
     }
 
     private var gapAfterScore: CGFloat {
@@ -121,13 +121,22 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     @ViewBuilder
     private var topHeaderSection: some View {
         if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 leagueAndStatusView
+                if model.headers.hasAny {
+                    HStack {
+                        Spacer(minLength: 0)
+                        columnHeadersCluster
+                    }
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.08))
+                        .frame(height: 0.5)
+                }
             }
         } else {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .center, spacing: 6) {
-                    leagueAndStatusView
+                    leagueAndStatusInlineView
                     Spacer(minLength: 8)
                     if model.headers.hasAny {
                         columnHeadersCluster
@@ -147,28 +156,50 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         }
     }
 
-    private var leagueAndStatusView: some View {
+    private var leagueAndStatusInlineView: some View {
         HStack(spacing: 5) {
             Text(model.leagueName)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(DS.textSecondaryReadable)
-                .fixedSize(horizontal: !dynamicTypeSize.isAccessibilitySize, vertical: true)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
 
-            StatusBadge(
-                status: event.status,
-                commenceTime: event.commenceTime,
-                gameClock: event.espn?.gameClock,
-                period: event.espn?.period,
-                startIsTbd: event.startIsTbd == true,
-                venueClosedNoWinner: event.venueClosedNoWinner == true,
-                gameCardPlain182: true,
-                gameCardLeadingDot: true
-            )
+            statusBadgeView(leadingDot: true)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 
+    private var leagueAndStatusView: some View {
+        ViewThatFits(in: .horizontal) {
+            leagueAndStatusInlineView
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.leagueName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                statusBadgeView(leadingDot: false)
+            }
+        }
+    }
+
+    private func statusBadgeView(leadingDot: Bool) -> some View {
+        StatusBadge(
+            status: event.status,
+            commenceTime: event.commenceTime,
+            gameClock: event.espn?.gameClock,
+            period: event.espn?.period,
+            startIsTbd: event.startIsTbd == true,
+            venueClosedNoWinner: event.venueClosedNoWinner == true,
+            gameCardPlain182: true,
+            gameCardLeadingDot: leadingDot
+        )
+    }
+
     private var headerFont: Font {
-        .system(size: min(headerFontSize, 13), weight: .semibold).monospacedDigit()
+        let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 14.5 : 13
+        return .system(size: min(headerFontSize, cap), weight: .semibold).monospacedDigit()
     }
 
     private var columnHeadersCluster: some View {
@@ -215,7 +246,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .font(.system(size: min(compactNameSize, 20), weight: model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold))
                 .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
                 .lineLimit(singleWord ? 1 : 2)
-                .minimumScaleFactor(singleWord ? 0.82 : 0.88)
+                .minimumScaleFactor(singleWord ? 0.72 : 0.85)
                 .fixedSize(horizontal: false, vertical: !singleWord)
 
             Spacer(minLength: 8)
@@ -251,61 +282,74 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     private func accessibilityRowView(_ row: DiscoverSingleGameCard190C.RowModel) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .top, spacing: 8) {
-                rowBadgeView(row)
-                    .padding(.top, 3)
-                Text(row.fullName)
-                    .font(.body.weight(model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold))
-                    .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(row.fullName)
+                .font(.body.weight(model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold))
+                .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 14) {
-                    accessibilityRowValues(row, singleLine: true)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    accessibilityRowValues(row, singleLine: false)
+            HStack(alignment: .center, spacing: 8) {
+                rowBadgeView(row, size: 24)
+                Spacer(minLength: 0)
+                if model.headers.hasAny {
+                    HStack(alignment: .firstTextBaseline, spacing: 0) {
+                        accessibilityAlignedCells(row)
+                    }
                 }
             }
         }
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
-    private func accessibilityRowValues(
-        _ row: DiscoverSingleGameCard190C.RowModel,
-        singleLine: Bool
+    private func accessibilityAlignedCells(
+        _ row: DiscoverSingleGameCard190C.RowModel
     ) -> some View {
-        if let scoreText = row.scoreText {
-            Text("Score \(scoreText)")
-                .font(.subheadline.weight(.semibold).monospacedDigit())
+        if model.headers.score != nil {
+            Text(row.scoreText ?? "")
+                .font(.system(size: min(compactScoreSize, 22), weight: .semibold).monospacedDigit())
                 .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
-                .fixedSize(horizontal: singleLine, vertical: true)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(width: effectiveScoreWidth, alignment: .trailing)
+                .accessibilityLabel(row.scoreText.map { "Score \($0)" } ?? "")
         }
-        if let pregameText = row.pregameText {
-            Text("Pregame \(pregameText)")
-                .font(.subheadline.monospacedDigit())
+        if model.headers.pregame != nil {
+            Text(row.pregameText ?? "")
+                .font(.system(size: min(compactPregameSize, 19), weight: .regular).monospacedDigit())
                 .foregroundStyle(DS.textSecondaryReadable)
-                .fixedSize(horizontal: singleLine, vertical: true)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(width: effectivePregameWidth, alignment: .trailing)
+                .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
+                .accessibilityLabel(row.pregameText.map { "Pregame \($0)" } ?? "")
         }
+        if let primaryHeader = model.headers.primary {
+            primaryCellView(row)
+                .frame(width: effectivePrimaryWidth, alignment: .trailing)
+                .padding(.leading, model.headers.pregame != nil
+                    ? pregameToPrimaryGap
+                    : (model.headers.score != nil ? gapAfterScore : 0))
+                .accessibilityLabel(accessibilityPrimarySpoken(row, primaryHeader: primaryHeader))
+        }
+    }
+
+    private func accessibilityPrimarySpoken(
+        _ row: DiscoverSingleGameCard190C.RowModel,
+        primaryHeader: String
+    ) -> String {
         switch row.primaryCell {
         case .probability(let text):
-            Text("Now \(text)")
-                .font(.headline.weight(.bold).monospacedDigit())
-                .foregroundStyle(sideAccentColor(for: row.kind))
-                .fixedSize(horizontal: singleLine, vertical: true)
+            return "\(primaryHeader) \(text)"
         case .won(let text):
-            Text(text)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(DS.emerald)
-                .fixedSize(horizontal: singleLine, vertical: true)
+            return text
         case .settledDash, .none:
-            EmptyView()
+            return ""
         }
     }
 
     @ViewBuilder
-    private func rowBadgeView(_ row: DiscoverSingleGameCard190C.RowModel) -> some View {
+    private func rowBadgeView(_ row: DiscoverSingleGameCard190C.RowModel, size: CGFloat = 28) -> some View {
         switch row.kind {
         case .away:
             let avatar = event.avatar(home: false)
@@ -313,7 +357,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 url: avatar.url,
                 teamName: event.awayTeam,
                 color: awayColor,
-                size: 28,
+                size: size,
                 sportKey: event.sport,
                 isPhotograph: avatar.isPhotograph,
                 opponentName: event.homeTeam
@@ -324,7 +368,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 url: avatar.url,
                 teamName: event.homeTeam,
                 color: homeColor,
-                size: 28,
+                size: size,
                 sportKey: event.sport,
                 isPhotograph: avatar.isPhotograph,
                 opponentName: event.awayTeam
@@ -333,7 +377,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             ZStack {
                 Circle()
                     .fill(Color.secondary.opacity(0.15))
-                    .frame(width: 28, height: 28)
+                    .frame(width: size, height: size)
                 Text("\u{2013}")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(DS.textSecondaryReadable)

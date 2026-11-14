@@ -263,6 +263,10 @@ struct EventCardView: View {
     }
 
     private var statusBadge: some View {
+        statusBadgeView(leadingDot: !usesFinishedAccessibilityLayout)
+    }
+
+    private func statusBadgeView(leadingDot: Bool) -> some View {
         StatusBadge(
             status: event.status,
             commenceTime: event.commenceTime,
@@ -272,7 +276,7 @@ struct EventCardView: View {
             // #5811 — served on `/api/feed`, so the card can say it.
             venueClosedNoWinner: event.venueClosedNoWinner == true,
             gameCardPlain182: true,
-            gameCardLeadingDot: !usesFinishedAccessibilityLayout
+            gameCardLeadingDot: leadingDot
         )
     }
 
@@ -285,42 +289,77 @@ struct EventCardView: View {
         }
     }
 
-    private var singleRowTopBar: some View {
-        HStack(spacing: 6) {
-            Text(leagueName)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            statusBadge
-            Spacer()
-            if let broadcast = event.espn?.broadcast?.split(separator: ",").first.map(String.init),
-               !broadcast.isEmpty, isScheduled || isLive {
-                HStack(spacing: 2) {
-                    Image(systemName: "tv")
-                        .font(.system(size: 8))
-                    Text(broadcast.trimmingCharacters(in: .whitespaces))
-                        .font(.caption2)
-                }
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            }
-            if isFinished {
-                // Finished: Show date once ("Nov 8") as plain text
-                formattedDate
-            } else if isSuspended, let detail = EventState.suspendedCardDetail(
-                away: event.awayScore, home: event.homeScore, date: formattedDateString,
-                authorityPeriod: event.espn?.period) {
-                // live/048: no start time, no Final. The words themselves now sit
-                // in the `StatusBadge` six points to the left — this slot carried
-                // a verbatim second copy of them on 1,786 of 1,788 suspended rows
-                // (both scores null ⇒ `suspendedSummary` IS `suspendedLabel`).
-                // `suspendedCardDetail` is where that reasoning lives, along with
-                // why the date arrives here and not from `formattedDateTime`.
-                Text(detail)
+    @ViewBuilder
+    private var trailingTopBarMeta: some View {
+        if let broadcast = event.espn?.broadcast?.split(separator: ",").first.map(String.init),
+           !broadcast.isEmpty, isScheduled || isLive {
+            HStack(spacing: 2) {
+                Image(systemName: "tv")
+                    .font(.system(size: 8))
+                Text(broadcast.trimmingCharacters(in: .whitespaces))
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
             }
-            PinButton(type: "event", id: event.id, compact: true)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        if isFinished {
+            // Finished: Show date once ("Nov 8") as plain text
+            formattedDate
+                .fixedSize(horizontal: true, vertical: false)
+        } else if isSuspended, let detail = EventState.suspendedCardDetail(
+            away: event.awayScore, home: event.homeScore, date: formattedDateString,
+            authorityPeriod: event.espn?.period) {
+            // live/048: no start time, no Final. The words themselves now sit
+            // in the `StatusBadge` six points to the left — this slot carried
+            // a verbatim second copy of them on 1,786 of 1,788 suspended rows
+            // (both scores null ⇒ `suspendedSummary` IS `suspendedLabel`).
+            // `suspendedCardDetail` is where that reasoning lives, along with
+            // why the date arrives here and not from `formattedDateTime`.
+            Text(detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+    }
+
+    private var singleRowTopBar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                Text(leagueName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                statusBadge
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 4)
+                trailingTopBarMeta
+                PinButton(type: "event", id: event.id, compact: true)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top, spacing: 6) {
+                    Text(leagueName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 6)
+                    PinButton(type: "event", id: event.id, compact: true)
+                }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        statusBadgeView(leadingDot: false)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 4)
+                        trailingTopBarMeta
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        statusBadgeView(leadingDot: false)
+                        trailingTopBarMeta
+                    }
+                }
+            }
         }
     }
 
@@ -362,6 +401,22 @@ struct EventCardView: View {
         return ScheduledCardProjectedFinal12616.card(event)
     }
 
+    private var showsScheduledInlineProjectionColumn12616: Bool {
+        scheduledProjection12616 != nil && !dynamicTypeSize.isAccessibilitySize
+    }
+
+    private var scheduledAccessibilityProjectedLine12616: (visible: String, spoken: String)? {
+        guard isScheduled, dynamicTypeSize.isAccessibilitySize, let pair = scheduledProjection12616 else {
+            return nil
+        }
+        let abbrevs = TeamShortName.abbreviationPair(
+            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+        return (
+            visible: "Projected: \(abbrevs.away) \(pair.away) \u{2013} \(abbrevs.home) \(pair.home)",
+            spoken: "Projected final: \(event.awayTeam) \(pair.away), \(event.homeTeam) \(pair.home)"
+        )
+    }
+
     private var compactHeaders12616: CompactGameCard12616.ColumnHeaders {
         let hasCurrent = event.currentOdds?.homeProbability != nil
             || (!currentAwayIsWithheld && event.currentOdds?.awayProbability != nil)
@@ -374,7 +429,7 @@ struct EventCardView: View {
             isLive: isLive,
             isFinished: isFinished,
             isSuspended: isSuspended,
-            hasProjectedBefore: scheduledProjection12616 != nil,
+            hasProjectedBefore: showsScheduledInlineProjectionColumn12616,
             hasCurrentChance: hasCurrent,
             hasPrematchChance: hasPrematch,
             hasScore: hasScore,
@@ -425,6 +480,14 @@ struct EventCardView: View {
 
             if !compactScheduleStyle && !usesFinishedAccessibilityLayout {
                 probabilityBar
+            }
+
+            if !compactScheduleStyle, let scheduledProjectedLine = scheduledAccessibilityProjectedLine12616 {
+                CompactProjectedContextLine12616(
+                    text: scheduledProjectedLine.visible,
+                    spokenText: scheduledProjectedLine.spoken,
+                    accessibilityId: "eventCard.scheduledProjectedLine"
+                )
             }
 
             if !compactScheduleStyle, let finalForecast = finalForecast11296 {
