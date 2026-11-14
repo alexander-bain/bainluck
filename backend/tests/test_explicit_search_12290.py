@@ -1,6 +1,7 @@
 """Alex's named queries, the league table, and explicit-set route boundaries."""
 
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -135,7 +136,7 @@ async def test_next_three_route_scopes_both_fixture_sides_before_the_window(monk
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["game_set"]["selector"] == {"team_id": 123, "count": 3, "state": "scheduled"}
-    assert data["game_set"]["title"] == "Boston Celtics: next 3 games"
+    assert data["game_set"]["title"] == "Boston Celtics: no upcoming games"
     assert data["futures"] == [] and data["collections"] == []
     assert not data["pagination"]["has_next"]
     assert data["debug_timing"]["futures_arm_ms"] == {}
@@ -149,6 +150,126 @@ async def test_next_three_route_scopes_both_fixture_sides_before_the_window(monk
         assert "ORDER BY events.commence_time ASC, events.id ASC" in sql
     assert not any("three" in value or "games" == value
                    for value in recorder.team_values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("available,page,per_page,ids,title,total_pages", [
+    (4, 1, 25, [100, 101, 102], "next 3 games", 1),
+    (4, 2, 1, [101], "next 3 games", 3),
+    (2, 1, 25, [100, 101], "next 2 games", 1),
+    (1, 1, 25, [100], "next 1 game", 1),
+    (0, 1, 25, [], "no upcoming games", 1),
+])
+async def test_resolved_game_set_honors_sport_pages_and_the_available_count(
+    monkeypatch, available, page, per_page, ids, title, total_pages,
+):
+    from app.models.models import Event, Sport
+    from tests.integration.test_route_search_intent_5688 import _Recorder, _empty_result, _client_for
+
+    recorder = _Recorder()
+    sport_key = "americanfootball_nfl"
+    team = SimpleNamespace(
+        id=701, name="New York Giants", slug="new-york-giants", abbreviation="NYG",
+        logo_url_small=None, current_record=None, sport_key=sport_key,
+        standings_updated_at=None, alternate_names=[], team_rank=1,
+    )
+    sport = Sport(id=7, key=sport_key, name="NFL", group="American Football")
+    now = datetime.now(timezone.utc)
+    events = [Event(
+        id=100 + i, sport_id=7, sport=sport, home_team_id=701, away_team_id=800 + i,
+        home_team_name=team.name, away_team_name=f"Opponent {i}",
+        commence_time=now + timedelta(days=i + 1), status="scheduled",
+        espn_id=f"search-fixture-{i}", win_probability_sources={},
+    ) for i in range(available)]
+
+    async def execute(stmt, *args, **kwargs):
+        sql = recorder.record(stmt)
+        result = _empty_result()
+        if " teams" in sql and "AS team_rank" in sql:
+            assert sport_key in stmt.compile().params.values()
+            result.all.return_value = [team]
+        if "count(" in sql.lower() and " events" in sql:
+            result.scalar.return_value = len(events)
+        if "SELECT events.id," in sql and "LIMIT" in sql:
+            assert sport_key in stmt.compile().params.values()
+            result.scalars.return_value.all.return_value = events
+        return result
+
+    db = AsyncMock()
+    db.execute.side_effect = execute
+    monkeypatch.setattr(route, "search_response_cache_enabled", lambda: False)
+    # Keep the route's real selector, folds and pagination; unrelated card
+    # decoration does not change which fixture occupies each page.
+    monkeypatch.setattr(route, "_format_event_with_aggregated_odds",
+                        lambda event, *args, **kwargs: {"id": event.id, "status": event.status})
+    async for client in _client_for(db, monkeypatch):
+        response = await client.get("/api/events/search", params={
+            "q": "giants next three games", "sport": sport_key,
+            "page": page, "per_page": per_page,
+        })
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["filters"]["sport"] == sport_key
+    assert data["game_set"]["selector"]["team_id"] == 701
+    assert data["game_set"]["title"] == f"New York Giants: {title}"
+    assert [row["id"] for row in data["results"]] == ids
+    assert data["pagination"] == {
+        "page": page, "per_page": per_page, "total_results": min(available, 3),
+        "total_pages": total_pages, "has_next": page < total_pages, "has_prev": page > 1,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query,teams", [
+    ("giants next three games", [
+        (701, "New York Giants", "americanfootball_nfl"),
+        (702, "San Francisco Giants", "baseball_mlb"),
+    ]),
+    ("jets next two games", [
+        (703, "New York Jets", "americanfootball_nfl"),
+        (704, "Winnipeg Jets", "icehockey_nhl"),
+    ]),
+    ("cardinals next three games", [
+        (705, "Arizona Cardinals", "americanfootball_nfl"),
+        (706, "St. Louis Cardinals", "baseball_mlb"),
+    ]),
+    ("foo next three games", []),
+])
+async def test_unresolved_next_games_keeps_ordinary_search_and_all_team_choices(
+    monkeypatch, query, teams,
+):
+    from tests.integration.test_route_search_intent_5688 import _Recorder, _empty_result, _client_for
+
+    recorder = _Recorder()
+    rows = [SimpleNamespace(
+        id=team_id, name=name, slug=name.lower().replace(" ", "-"),
+        abbreviation=None, logo_url_small=None, current_record=None,
+        sport_key=sport, standings_updated_at=None, alternate_names=[], team_rank=1,
+    ) for team_id, name, sport in teams]
+
+    async def execute(stmt, *args, **kwargs):
+        sql = recorder.record(stmt)
+        result = _empty_result()
+        if " teams" in sql and "SELECT" in sql.upper():
+            result.all.return_value = rows
+        return result
+
+    db = AsyncMock()
+    db.execute.side_effect = execute
+    monkeypatch.setattr(route, "search_response_cache_enabled", lambda: False)
+    async for client in _client_for(db, monkeypatch):
+        response = await client.get("/api/events/search", params={"q": query})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["query"] == query
+    assert "game_set" not in data
+    assert {team["name"] for team in data["teams"]} == {name for _, name, _ in teams}
+    assert data["pagination"]["per_page"] == 25
+    assert recorder.futures_values(), "the ordinary futures search must still run"
+    fixture_reads = [sql for sql, _ in recorder.statements
+                     if "SELECT events.id," in sql and "LIMIT" in sql]
+    assert fixture_reads
+    assert all("WHERE false" not in sql for sql in fixture_reads)
 
 
 @pytest.mark.asyncio

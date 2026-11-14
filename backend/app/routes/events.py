@@ -10786,11 +10786,17 @@ async def search_events(
         ]
         if len(_set_candidates) == 1:
             _set_team = _set_candidates[0]
+        else:
+            # No unique club means no fixture selector. Keep the subject's
+            # ordinary search (including every matching team card) and echo
+            # the original query; do not invent an empty "next N games" set.
+            _next_games = None
+
+    if _next_games:
         _set_scope = [
             Event.status == "scheduled",
             Event.commence_time > now,
-            or_(Event.home_team_id == _set_team["id"], Event.away_team_id == _set_team["id"])
-            if _set_team else false(),
+            or_(Event.home_team_id == _set_team["id"], Event.away_team_id == _set_team["id"]),
         ]
         # Rescue queries also consume event_scope_conditions. They may not
         # fill an empty requested set with past games or a namesake's games.
@@ -12003,18 +12009,25 @@ async def search_events(
     if _next_games:
         _set_results = formatted_results[:_next_games]
         _set_count = len(_set_results)
-        _set_name = _set_team["name"] if _set_team else _q_identity
+        _set_name = _set_team["name"]
+        _set_title = (
+            f"{_set_name}: next {_set_count} game{'s' if _set_count != 1 else ''}"
+            if _set_count else f"{_set_name}: no upcoming games"
+        )
+        _set_pages = max(1, (_set_count + per_page - 1) // per_page)
+        _set_offset = (page - 1) * per_page
         _set_payload = {
             "query": q, "teams": [], "event_concepts": [], "futures": [],
-            "futures_families": [], "collections": [], "results": _set_results,
+            "futures_families": [], "collections": [],
+            "results": _set_results[_set_offset:_set_offset + per_page],
             "game_set": {
-                "title": f"{_set_name}: next {_next_games} games",
-                "selector": {"team_id": _set_team["id"] if _set_team else None,
+                "title": _set_title,
+                "selector": {"team_id": _set_team["id"],
                              "count": _next_games, "state": "scheduled"},
             },
-            "pagination": {"page": 1, "per_page": _next_games,
-                           "total_results": _set_count, "total_pages": 1,
-                           "has_next": False, "has_prev": False},
+            "pagination": {"page": page, "per_page": per_page,
+                           "total_results": _set_count, "total_pages": _set_pages,
+                           "has_next": page < _set_pages, "has_prev": page > 1},
             "sports": [],
             "filters": {"sport": sport, "days_back": 0, "include_upcoming": True},
             **({"degraded": degraded} if degraded else {}),
@@ -12022,8 +12035,6 @@ async def search_events(
                                  "futures_arm_ms": _futures_arm_ms}}
                if debug_timing else {}),
         }
-        if _set_team is None and "teams" in degraded:
-            _set_payload["degraded"] = degraded
         _record_search_query(_set_payload, q=q, request=request, current_user=current_user)
         return _set_payload
 
