@@ -92,10 +92,20 @@ enum EventSportHeadlines12472 {
         case nbaBeforeGame
         case nbaDuringGame
         case nbaAfterGame
+        case ncaafBeforeGame
+        case ncaafDuringGame
+        case ncaafAfterGame
+        case ncaabBeforeGame
+        case ncaabDuringGame
+        case ncaabAfterGame
         case soccerBeforeGame
         case soccerDuringGame
         case soccerAfterGame
+        case nhlBeforeGame
         case nhlDuringGame
+        case nhlAfterGame
+        case mlbBeforeGame
+        case mlbDuringGame
         case mlbAfterGame
         case mmaBeforeGame
         case mmaDuringGame
@@ -104,11 +114,11 @@ enum EventSportHeadlines12472 {
 
         nonisolated var phase: Phase {
             switch self {
-            case .nflBeforeGame, .nbaBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
+            case .nflBeforeGame, .nbaBeforeGame, .ncaafBeforeGame, .ncaabBeforeGame, .mlbBeforeGame, .nhlBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
                 return .before
-            case .nbaDuringGame, .soccerDuringGame, .nhlDuringGame, .mmaDuringGame, .tennisDuringGame:
+            case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .mlbDuringGame, .soccerDuringGame, .nhlDuringGame, .mmaDuringGame, .tennisDuringGame:
                 return .during
-            case .nflAfterGame, .nbaAfterGame, .soccerAfterGame, .mlbAfterGame, .mmaAfterGame:
+            case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .soccerAfterGame, .mlbAfterGame, .nhlAfterGame, .mmaAfterGame:
                 return .after
             }
         }
@@ -120,10 +130,20 @@ enum EventSportHeadlines12472 {
             case .nbaBeforeGame: return "event-headline-12472-nba-before"
             case .nbaDuringGame: return "event-headline-12472-nba-during"
             case .nbaAfterGame: return "event-headline-12472-nba-after"
+            case .ncaafBeforeGame: return "event-headline-12472-ncaaf-before"
+            case .ncaafDuringGame: return "event-headline-12472-ncaaf-during"
+            case .ncaafAfterGame: return "event-headline-12472-ncaaf-after"
+            case .ncaabBeforeGame: return "event-headline-12472-ncaab-before"
+            case .ncaabDuringGame: return "event-headline-12472-ncaab-during"
+            case .ncaabAfterGame: return "event-headline-12472-ncaab-after"
             case .soccerBeforeGame: return "event-headline-12472-soccer-before"
             case .soccerDuringGame: return "event-headline-12472-soccer-during"
             case .soccerAfterGame: return "event-headline-12472-soccer-after"
+            case .nhlBeforeGame: return "event-headline-12472-nhl-before"
             case .nhlDuringGame: return "event-headline-12472-nhl-during"
+            case .nhlAfterGame: return "event-headline-12472-nhl-after"
+            case .mlbBeforeGame: return "event-headline-12472-mlb-before"
+            case .mlbDuringGame: return "event-headline-12472-mlb-during"
             case .mlbAfterGame: return "event-headline-12472-mlb-after"
             case .mmaBeforeGame: return "event-headline-12472-mma-before"
             case .mmaDuringGame: return "event-headline-12472-mma-during"
@@ -258,6 +278,24 @@ enum EventSportHeadlines12472 {
     nonisolated static func isTennisSport(_ sport: String?) -> Bool {
         guard let sport = sport?.lowercased(), !sport.isEmpty else { return false }
         return sport == "tennis" || sport.hasPrefix("tennis_")
+    }
+
+    nonisolated static func isNCAAFSport(_ sport: String?) -> Bool {
+        guard let sport = sport?.lowercased(), !sport.isEmpty else { return false }
+        return sport == "americanfootball_ncaaf" || sport == "americanfootball_ncaaf_fcs"
+    }
+
+    nonisolated static func ncaafLeagueLabel(for sport: String?) -> String {
+        sport?.lowercased() == "americanfootball_ncaaf_fcs" ? "NCAAF FCS" : "NCAAF"
+    }
+
+    nonisolated static func isNCAABSport(_ sport: String?) -> Bool {
+        guard let sport = sport?.lowercased(), !sport.isEmpty else { return false }
+        return sport == "basketball_ncaab" || sport == "basketball_wncaab"
+    }
+
+    nonisolated static func ncaabLeagueLabel(for sport: String?) -> String {
+        sport?.lowercased() == "basketball_wncaab" ? "WNCAAB" : "NCAAB"
     }
 
     nonisolated static func kind(
@@ -396,9 +434,21 @@ enum EventSportHeadlines12472 {
                 guard event.homeScore != nil, event.awayScore != nil else { return nil }
                 return .nbaAfterGame
             }
+            if isNCAAFSport(event.sport) {
+                guard event.homeScore != nil, event.awayScore != nil else { return nil }
+                return .ncaafAfterGame
+            }
+            if isNCAABSport(event.sport) {
+                guard event.homeScore != nil, event.awayScore != nil else { return nil }
+                return .ncaabAfterGame
+            }
             if event.sport == "baseball_mlb" {
                 guard event.homeScore != nil, event.awayScore != nil else { return nil }
                 return .mlbAfterGame
+            }
+            if event.sport == "icehockey_nhl" {
+                guard event.homeScore != nil, event.awayScore != nil else { return nil }
+                return .nhlAfterGame
             }
             if isMMASport(event.sport) {
                 let outcome = EventOutcome.resolve(
@@ -443,8 +493,17 @@ enum EventSportHeadlines12472 {
         if event.sport == "basketball_nba" {
             return event.status == "live" ? .nbaDuringGame : .nbaBeforeGame
         }
-        if event.sport == "icehockey_nhl" && event.status == "live" {
-            return .nhlDuringGame
+        if isNCAAFSport(event.sport) {
+            return event.status == "live" ? .ncaafDuringGame : .ncaafBeforeGame
+        }
+        if isNCAABSport(event.sport) {
+            return event.status == "live" ? .ncaabDuringGame : .ncaabBeforeGame
+        }
+        if event.sport == "baseball_mlb" {
+            return event.status == "live" ? .mlbDuringGame : .mlbBeforeGame
+        }
+        if event.sport == "icehockey_nhl" {
+            return event.status == "live" ? .nhlDuringGame : .nhlBeforeGame
         }
         if isMMASport(event.sport) {
             return event.status == "live" ? .mmaDuringGame : .mmaBeforeGame
@@ -517,7 +576,7 @@ enum EventSportHeadlines12472 {
                 gameMarkets: gameMarkets,
                 now: now
             )
-        case .nflAfterGame, .nbaAfterGame, .mlbAfterGame, .mmaAfterGame:
+        case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .mlbAfterGame, .nhlAfterGame, .mmaAfterGame:
             return resolveFinishedTwoWay(
                 resolvedKind: resolvedKind,
                 event: event,
@@ -525,8 +584,11 @@ enum EventSportHeadlines12472 {
                 homeFullName: homeFullName,
                 shortNames: shortNames
             )
-        case .nflBeforeGame, .nbaBeforeGame, .nbaDuringGame, .nhlDuringGame,
-             .mmaBeforeGame, .mmaDuringGame, .tennisDuringGame:
+        case .nflBeforeGame, .nbaBeforeGame, .nbaDuringGame,
+             .ncaafBeforeGame, .ncaafDuringGame,
+             .ncaabBeforeGame, .ncaabDuringGame,
+             .mlbBeforeGame, .mlbDuringGame,
+             .nhlBeforeGame, .nhlDuringGame, .mmaBeforeGame, .mmaDuringGame, .tennisDuringGame:
             return resolveOpenTwoWay(
                 resolvedKind: resolvedKind,
                 event: event,
@@ -1045,6 +1107,58 @@ enum EventSportHeadlines12472 {
                 confidenceTier: confidenceTier
             )
 
+        case .ncaafAfterGame:
+            return resolveStandardFinished(
+                kind: .ncaafAfterGame,
+                sportKey: event.sport ?? "americanfootball_ncaaf",
+                league: ncaafLeagueLabel(for: event.sport),
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                pregameTexts: pregameTexts,
+                awayWon: awayWon,
+                homeWon: homeWon,
+                markAwayProb: markAwayProb,
+                markHomeProb: markHomeProb,
+                confidenceTier: confidenceTier
+            )
+
+        case .ncaabAfterGame:
+            return resolveStandardFinished(
+                kind: .ncaabAfterGame,
+                sportKey: event.sport ?? "basketball_ncaab",
+                league: ncaabLeagueLabel(for: event.sport),
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                pregameTexts: pregameTexts,
+                awayWon: awayWon,
+                homeWon: homeWon,
+                markAwayProb: markAwayProb,
+                markHomeProb: markHomeProb,
+                confidenceTier: confidenceTier
+            )
+
+        case .nhlAfterGame:
+            return resolveStandardFinished(
+                kind: .nhlAfterGame,
+                sportKey: "icehockey_nhl",
+                league: "NHL",
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                pregameTexts: pregameTexts,
+                awayWon: awayWon,
+                homeWon: homeWon,
+                markAwayProb: markAwayProb,
+                markHomeProb: markHomeProb,
+                confidenceTier: confidenceTier,
+                showsRowDivider: true
+            )
+
         case .mlbAfterGame:
             guard let awayScore = event.awayScore, let homeScore = event.homeScore else {
                 return nil
@@ -1351,7 +1465,93 @@ enum EventSportHeadlines12472 {
                 confidenceTier: confidenceTier,
                 now: now
             )
-        case .nbaDuringGame, .nhlDuringGame, .mmaDuringGame:
+        case .ncaafBeforeGame:
+            return resolveStandardBefore(
+                kind: .ncaafBeforeGame,
+                sportKey: event.sport ?? "americanfootball_ncaaf",
+                league: ncaafLeagueLabel(for: event.sport),
+                allowsStreamingTenths: false,
+                showsChanceHeaderWithoutProjection: true,
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                shown: shown,
+                awayProb: awayProb,
+                homeProb: homeProb,
+                hasScore: hasScore,
+                numberStreams: numberStreams,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                confidenceTier: confidenceTier,
+                now: now
+            )
+        case .ncaabBeforeGame:
+            return resolveStandardBefore(
+                kind: .ncaabBeforeGame,
+                sportKey: event.sport ?? "basketball_ncaab",
+                league: ncaabLeagueLabel(for: event.sport),
+                allowsStreamingTenths: false,
+                showsChanceHeaderWithoutProjection: true,
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                shown: shown,
+                awayProb: awayProb,
+                homeProb: homeProb,
+                hasScore: hasScore,
+                numberStreams: numberStreams,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                confidenceTier: confidenceTier,
+                now: now
+            )
+        case .mlbBeforeGame:
+            return resolveStandardBefore(
+                kind: .mlbBeforeGame,
+                sportKey: "baseball_mlb",
+                league: "MLB",
+                allowsStreamingTenths: false,
+                showsChanceHeaderWithoutProjection: true,
+                showsRowDivider: true,
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                shown: shown,
+                awayProb: awayProb,
+                homeProb: homeProb,
+                hasScore: hasScore,
+                numberStreams: numberStreams,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                confidenceTier: confidenceTier,
+                now: now
+            )
+        case .nhlBeforeGame:
+            return resolveStandardBefore(
+                kind: .nhlBeforeGame,
+                sportKey: "icehockey_nhl",
+                league: "NHL",
+                allowsStreamingTenths: false,
+                showsChanceHeaderWithoutProjection: true,
+                showsRowDivider: true,
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                shown: shown,
+                awayProb: awayProb,
+                homeProb: homeProb,
+                hasScore: hasScore,
+                numberStreams: numberStreams,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                confidenceTier: confidenceTier,
+                now: now
+            )
+        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .mlbDuringGame, .nhlDuringGame, .mmaDuringGame:
             return resolveLiveStandard(
                 resolvedKind: resolvedKind,
                 event: event,
@@ -1497,6 +1697,7 @@ enum EventSportHeadlines12472 {
         league: String,
         allowsStreamingTenths: Bool,
         showsChanceHeaderWithoutProjection: Bool,
+        showsRowDivider: Bool = false,
         event: EventDetail,
         awayFullName: String,
         homeFullName: String,
@@ -1577,6 +1778,7 @@ enum EventSportHeadlines12472 {
             soccerThreeWay: nil,
             showsEkg: true,
             stacksRecordUnderName: pregameHeaders != nil,
+            showsRowDivider: showsRowDivider,
             sourceMark: event.sourceMark,
             confidenceTier: confidenceTier
         )
@@ -1608,7 +1810,23 @@ enum EventSportHeadlines12472 {
         let liveBadge = periodStatus.map { "LIVE · \($0)" } ?? "LIVE"
 
         switch resolvedKind {
-        case .nbaDuringGame:
+        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .mlbDuringGame:
+            let liveSportKey: String = {
+                switch resolvedKind {
+                case .ncaafDuringGame: return event.sport ?? "americanfootball_ncaaf"
+                case .ncaabDuringGame: return event.sport ?? "basketball_ncaab"
+                case .mlbDuringGame: return "baseball_mlb"
+                default: return "basketball_nba"
+                }
+            }()
+            let liveLeague: String = {
+                switch resolvedKind {
+                case .ncaafDuringGame: return ncaafLeagueLabel(for: event.sport)
+                case .ncaabDuringGame: return ncaabLeagueLabel(for: event.sport)
+                case .mlbDuringGame: return "MLB"
+                default: return "NBA"
+                }
+            }()
             let liveProjections = admittedLiveProjectedPair(
                 event: event,
                 hasScore: hasScore,
@@ -1616,6 +1834,7 @@ enum EventSportHeadlines12472 {
                 ladderAway: ladderAway,
                 now: now
             )
+            let showsStackedRecordWhenProjectionAbsent = resolvedKind != .nbaDuringGame && liveProjections == nil
             let hasLiveScore = hasScore && (event.awayScore != nil || event.homeScore != nil)
             let columnHeaders = LiveColumnHeaders(
                 score: hasLiveScore ? "Score" : nil,
@@ -1624,15 +1843,15 @@ enum EventSportHeadlines12472 {
             )
             return Model(
                 eventId: event.id,
-                sportKey: "basketball_nba",
-                kind: .nbaDuringGame,
+                sportKey: liveSportKey,
+                kind: resolvedKind,
                 plainMetaText: nil,
                 commenceTime: event.commenceTime,
                 startIsTbd: event.startIsTbd,
                 broadcast: trimmedNonEmpty(event.espn?.broadcast),
                 eventStatus: event.status,
                 liveBadgeText: liveBadge,
-                leagueLabel: "NBA",
+                leagueLabel: liveLeague,
                 pregameColumnHeaders: nil,
                 liveColumnHeaders: columnHeaders,
                 away: TeamRowModel(
@@ -1640,7 +1859,7 @@ enum EventSportHeadlines12472 {
                     opponentFullName: homeFullName,
                     shortName: shortNames.away,
                     logoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
-                    record: nil,
+                    record: showsStackedRecordWhenProjectionAbsent ? trimmedNonEmpty(event.awayTeamData?.record) : nil,
                     projectedText: liveProjections?.away,
                     pregameProjectedNumberText: nil,
                     liveScore: hasScore ? event.awayScore : nil,
@@ -1653,7 +1872,7 @@ enum EventSportHeadlines12472 {
                     opponentFullName: awayFullName,
                     shortName: shortNames.home,
                     logoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
-                    record: nil,
+                    record: showsStackedRecordWhenProjectionAbsent ? trimmedNonEmpty(event.homeTeamData?.record) : nil,
                     projectedText: liveProjections?.home,
                     pregameProjectedNumberText: nil,
                     liveScore: hasScore ? event.homeScore : nil,
@@ -1664,7 +1883,8 @@ enum EventSportHeadlines12472 {
                 pregameAwayMarker: pregame?.awayProbability,
                 soccerThreeWay: nil,
                 showsEkg: true,
-                stacksRecordUnderName: false,
+                stacksRecordUnderName: showsStackedRecordWhenProjectionAbsent,
+                showsRowDivider: resolvedKind == .mlbDuringGame,
                 sourceMark: event.sourceMark,
                 confidenceTier: confidenceTier
             )
