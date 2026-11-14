@@ -13,6 +13,7 @@ import type { HeroCandidate } from "@/lib/discover/heroOutcome";
 import { answerIsBareQuantity, answerIsNegative, captionIsAboutAnotherLeg, captionRepeatsAnswer, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
 import { titleNamedChoices } from "@/lib/discover/titleNamedChoices";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
+import { resolveDiscoverFuturesVisual } from "@/lib/discover/discoverEntityVisual";
 import { formatProbabilityPercent, formatMovementPointsLikeSentence, movementPoints } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
@@ -171,7 +172,13 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // the eyebrow alone), so one component-level label is the honest answer here.
   const contextSnippet = feedContextSnippet(item, resolveText);
   const expandedContext = feedExpandedContext(item);
-  const hasImage = !!data.image_url;
+  const [imgErrored, setImgErrored] = useState(false);
+  useEffect(() => {
+    setImgErrored(false);
+  }, [data.image_url]);
+  const visual = resolveDiscoverFuturesVisual(data);
+  const effectiveImageUrl = imgErrored ? null : visual.imageUrl;
+  const hasImage = !!effectiveImageUrl;
   // LAT-P191 (#1636, ruling on latency-022 = option b). Pure function of the
   // url and the measured raster width, so SSR and hydration agree; `null` means
   // "no safe ladder", and the hero then renders exactly as it did before.
@@ -180,9 +187,32 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // has reached it and null until then. Passing it through is the whole ship —
   // with it the ladder is derived from the pixels the photo has, without it
   // from the conservative bound the url can prove, which is today's behaviour.
-  const heroSrcSet = data.image_url
-    ? buildHeroSrcSet(data.image_url, data.image_width)
+  const heroSrcSet = effectiveImageUrl
+    ? buildHeroSrcSet(effectiveImageUrl, data.image_width)
     : null;
+  const headerSubjectBadge = effectiveImageUrl ? (
+    <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-surface-border bg-surface-elevated" aria-hidden="true">
+      <img
+        src={effectiveImageUrl}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        decoding="async"
+        onError={() => setImgErrored(true)}
+        className={visual.presentation === "logo" ? "h-full w-full object-contain p-1" : "h-full w-full object-cover object-top"}
+        data-testid="futures-subject-avatar"
+      />
+    </div>
+  ) : visual.kind !== "topic" ? (
+    <div
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-mono text-[11px] font-bold tracking-tight text-white shadow-sm select-none"
+      style={{ background: `linear-gradient(135deg, ${visual.monogram.bgHex}, ${visual.monogram.accentHex})` }}
+      aria-hidden="true"
+      data-testid="futures-subject-monogram"
+    >
+      {visual.monogram.initials}
+    </div>
+  ) : null;
   const outcomesAreDate = data.top_outcomes?.some((o) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}/i.test(o.name));
   // L2-65: a winner-field market that IS an event concept (e.g. a tennis
   // tournament winner) links into the richer /event/[key] surface; everything
@@ -288,9 +318,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               <SignalBars tier={data.confidence_tier} />
             </span>
           </div>
-          <Link href={detailHref} onClick={onDetailClick} className="block group">
-            <h3 className={`text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors ${cue ? "mb-1.5" : "mb-4"}`}>{data.name}</h3>
-          </Link>
+          <div className={`flex items-start gap-2.5 ${cue ? "mb-1.5" : "mb-4"}`}>
+            {headerSubjectBadge}
+            <Link href={detailHref} onClick={onDetailClick} className="block group min-w-0 flex-1">
+              <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors">{data.name}</h3>
+            </Link>
+          </div>
 
           {/* UX-P248 / Alex D-D — why this card is in front of THIS reader.
               CERT-678: this branch is a separate `<article>` from Variant A and
@@ -471,16 +504,19 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               "Who wins in 2028?" took its anchor count from 2 to 0.
               Cannot double-navigate: `handleTap` returns early on a click that
               lands inside an `a` (`DiscoverCard.tsx:118`). */}
-          <Link href={detailHref} onClick={onDetailClick} className="block group">
-            {/* #10059 — the title is the question and is never clipped, the same as
-                the heatmap, A and B titles above and below. Two lines cut
-                "Which company has #1 AI model end of November? (Style Control
-                On)" to its first half, which is word for word a different
-                market's question, and a trailing qualifier ("(Men's)",
-                "(9/28-10/4)") is where a title carries its scope. Feed titles
-                run to 65 characters, so the cost is at most a third line. */}
-            <h3 className="text-base font-bold leading-tight text-text-primary break-words group-hover:text-accent-brand transition-colors">{data.name}</h3>
-          </Link>
+          <div className="flex items-start gap-2.5">
+            {headerSubjectBadge}
+            <Link href={detailHref} onClick={onDetailClick} className="block group min-w-0 flex-1">
+              {/* #10059 — the title is the question and is never clipped, the same as
+                  the heatmap, A and B titles above and below. Two lines cut
+                  "Which company has #1 AI model end of November? (Style Control
+                  On)" to its first half, which is word for word a different
+                  market's question, and a trailing qualifier ("(Men's)",
+                  "(9/28-10/4)") is where a title carries its scope. Feed titles
+                  run to 65 characters, so the cost is at most a third line. */}
+              <h3 className="text-base font-bold leading-tight text-text-primary break-words group-hover:text-accent-brand transition-colors">{data.name}</h3>
+            </Link>
+          </div>
 
           {/* UX-P248 / Alex D-D — why this card is in front of THIS reader.
               CERT-678: the leaderboard is its own `<article>` and was one of the
@@ -746,9 +782,33 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
 
         <div className="p-4">
           <div className="flex items-center gap-2.5 mb-3.5">
-            <div className="w-[38px] h-[38px] rounded-lg bg-surface-elevated flex items-center justify-center text-lg shrink-0">
-              {catStyle.emoji}
-            </div>
+            {effectiveImageUrl ? (
+              <div className="w-[38px] h-[38px] rounded-lg overflow-hidden border border-surface-border bg-surface-elevated flex items-center justify-center shrink-0" aria-hidden="true">
+                <img
+                  src={effectiveImageUrl}
+                  alt=""
+                  aria-hidden="true"
+                  loading="lazy"
+                  decoding="async"
+                  onError={() => setImgErrored(true)}
+                  className={visual.presentation === "logo" ? "h-full w-full object-contain p-1" : "h-full w-full object-cover object-top"}
+                  data-testid="futures-variant-b-avatar"
+                />
+              </div>
+            ) : visual.kind !== "topic" ? (
+              <div
+                className="w-[38px] h-[38px] rounded-lg flex items-center justify-center font-mono text-xs font-bold tracking-tight text-white shrink-0 select-none"
+                style={{ background: `linear-gradient(135deg, ${visual.monogram.bgHex}, ${visual.monogram.accentHex})` }}
+                aria-hidden="true"
+                data-testid="futures-hero-monogram"
+              >
+                {visual.monogram.initials}
+              </div>
+            ) : (
+              <div className="w-[38px] h-[38px] rounded-lg bg-surface-elevated flex items-center justify-center text-lg shrink-0">
+                {catStyle.emoji}
+              </div>
+            )}
             <div className="leading-tight min-w-0">
               <div className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{category}</div>
               {resolveText && <div className="text-[11px] text-text-muted mt-0.5">{resolveText}</div>}
@@ -862,15 +922,26 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             photo while no device gets a byte heavier than today. Sharpness on
             a retina phone would need rungs ABOVE 940 px and costs mobile bytes
             — deliberately not taken; the reasoning is in `heroSrcSet.ts`. */}
-        {data.image_url && (
+        {effectiveImageUrl && (
           <img
-            src={data.image_url}
+            src={effectiveImageUrl}
             {...(heroSrcSet ? { srcSet: heroSrcSet, sizes: HERO_IMAGE_SIZES } : {})}
             alt=""
             aria-hidden="true"
             loading="lazy"
             decoding="async"
-            className="absolute inset-0 h-full w-full object-cover object-center"
+            onError={() => setImgErrored(true)}
+            className={
+              visual.presentation === "logo"
+                ? "absolute inset-x-0 top-3 bottom-14 mx-auto h-24 w-24 object-contain drop-shadow-md"
+                : visual.presentation === "cover"
+                ? "absolute right-3.5 top-3 h-28 w-28 rounded-lg object-contain shadow-xl ring-1 ring-white/20"
+                : visual.presentation === "portrait" && effectiveImageUrl.includes("espncdn.com/i/headshots/")
+                ? "absolute right-2 bottom-0 h-[88%] w-44 object-contain object-bottom drop-shadow-lg"
+                : visual.presentation === "portrait"
+                ? "absolute inset-0 h-full w-full object-cover object-top"
+                : "absolute inset-0 h-full w-full object-cover object-center"
+            }
             data-testid="futures-hero-image"
           />
         )}
@@ -883,7 +954,20 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           {catStyle.emoji} {category}
         </div>
 
-        {!hasImage && <span className="absolute inset-0 flex items-center justify-center text-[80px] opacity-[0.08] select-none pointer-events-none">{catStyle.emoji}</span>}
+        {!hasImage && (
+          visual.kind !== "topic" ? (
+            <div
+              className="absolute right-3.5 top-3 flex h-12 w-12 items-center justify-center rounded-xl font-mono text-sm font-bold tracking-tight text-white shadow-md ring-1 ring-white/20 select-none pointer-events-none"
+              style={{ background: `linear-gradient(135deg, ${visual.monogram.bgHex}, ${visual.monogram.accentHex})` }}
+              aria-hidden="true"
+              data-testid="futures-hero-monogram"
+            >
+              {visual.monogram.initials}
+            </div>
+          ) : (
+            <span className="absolute inset-0 flex items-center justify-center text-[80px] opacity-[0.08] select-none pointer-events-none">{catStyle.emoji}</span>
+          )
+        )}
 
         {/* Probability hero bottom-left */}
         {leader && (
