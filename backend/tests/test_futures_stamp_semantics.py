@@ -486,6 +486,16 @@ READ_SIDE_CONSUMERS = {
         "price that the API keeps returning would age into this branch and be "
         "zeroed. PRE-EXISTING and unaudited until Q482 widened the scan."
     ),
+    "app/tasks/polymarket.py": (
+        "POLLER ALIVE — current-book withdrawal compares last_updated with "
+        "the start of the venue read. A successful newer read protects the "
+        "row even when its price did not change: an older refusal must not "
+        "erase a quote reread after that refusal began. Under option 1 the "
+        "unchanged quote would retain its old stamp and lose this protection. "
+        "The real PostgreSQL observation-boundary and same-price race cases "
+        "in test_polymarket_refused_leg_withdrawn_9399_real_postgres prove "
+        "that protection; the UPDATE also compares the captured row stamps."
+    ),
     "app/tasks/futures_price_refresh.py": (
         "POLLER ALIVE — #12633's selectors and remaining-stale count now require "
         "the same recent observation beside a recent chart point before "

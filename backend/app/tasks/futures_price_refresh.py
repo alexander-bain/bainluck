@@ -2557,6 +2557,7 @@ async def _write_condition_twins(
     exclude_ids: list[int],
     stats: dict,
     refuted_books: dict | None = None,
+    *, quote_read_started: datetime | None = None,
 ) -> None:
     """Give each condition twin the price its sibling row was just given (#4983).
 
@@ -2571,8 +2572,8 @@ async def _write_condition_twins(
     this pass's book from ``refuted_books``. `_write_prices` skips that bare
     parent row, so without this a parent reached only as a twin kept a stored
     0.53 its own book prices out. Same guarded helper: CAS, crowned and graded
-    exempt, a stored price the book supports stays. A decomposed twin holds no
-    bare key, so the helper matches nothing there.
+    exempt. #12633 also withdraws old points inside refused books and the two
+    token rows of a decomposed twin, preserving writes since the venue request.
     """
     from app.tasks.polymarket import _withdraw_book_refuted_legs
 
@@ -2591,7 +2592,9 @@ async def _write_condition_twins(
         }
         try:
             written = await _write_prices(session, twin_id, "polymarket", items, stats)
-            withdrawn = await _withdraw_book_refuted_legs(session, twin_id, books)
+            withdrawn = await _withdraw_book_refuted_legs(
+                session, twin_id, books, observed_before=quote_read_started,
+            )
             if written or withdrawn:
                 await session.execute(rerank_market_field_stmt(twin_id))
             await session.commit()
@@ -3263,10 +3266,10 @@ async def _fetch_polymarket_prices(
     second is the condition ids this pass was SERVED and the venue quotes no
     price for (#4000) — see :func:`_retire_unpriced_legs` below.
 
-    ``refuted_out``, when given, is filled per priced event with
+    ``refuted_out``, when given, is filled for each present, readable event with
     ``polymarket._refused_leg_books`` — the fresh book of every leg this pass
     REFUSED to price while the venue quoted it (#9399), so the writer can
-    withdraw a stored price that book prices out. An out-parameter rather than a
+    withdraw a stored price that lacks an accepted current quote. An out-parameter rather than a
     third return value so every existing caller keeps its two-tuple.
 
     THE SECOND DICT EXISTS BECAUSE ``continue`` THROWS AWAY A FACT WE WERE TOLD.
@@ -3403,6 +3406,12 @@ async def _fetch_polymarket_prices(
             closed = _venue_closed_unpriced_legs(event)
             if closed:
                 unpriced_out[str(event.id)] = closed
+            # #12633: an actual, refused book is evidence even when no sibling
+            # priced. A missing event or empty payload still withdraws nothing.
+            if refuted_out is not None:
+                refused_books = _refused_leg_books(event)
+                if refused_books:
+                    refuted_out[str(event.id)] = refused_books
             continue
         if field_is_incoherent(
             (p["probability"] for p in priced),
@@ -3501,8 +3510,8 @@ async def _refresh_stale_futures_prices(
         # priced — legs the venue itself closed. Unconditional for the same
         # reason.
         "legs_retired_venue_closed": 0,
-        # #9399. Stored prices withdrawn because the leg's CURRENT book prices
-        # them out while every price the venue offered this pass was refused.
+        # #9399/#12633. Stored prices withdrawn after the CURRENT book is
+        # refused, including an old point still inside its wide range.
         # Unconditional for the reason `legs_retired` is.
         "legs_withdrawn_book_refuted": 0,
         # #6598 / CERT-3182. Rows whose `rank` this pass corrected. Reported
@@ -4024,6 +4033,7 @@ async def _refresh_stale_futures_prices(
                         break
                     chunk = ids[i : i + POLYMARKET_ID_BATCH]
                     refuted_by_event: dict = {}
+                    quote_read_started = datetime.now(timezone.utc)
                     try:
                         priced_by_event, unpriced_by_event = (
                             await _fetch_polymarket_prices(
@@ -4057,11 +4067,16 @@ async def _refresh_stale_futures_prices(
                                 # some legs — withdraw those (only those; see
                                 # `_venue_closed_unpriced_legs`), then re-rank.
                                 closed_legs = unpriced_by_event.get(event_id) or []
-                                if not closed_legs:
+                                refused_books = refuted_by_event.get(event_id) or {}
+                                if not closed_legs and not refused_books:
                                     continue
                                 try:
                                     retired = await _retire_unpriced_legs(
                                         session, market["id"], closed_legs
+                                    )
+                                    withdrawn = await _withdraw_book_refuted_legs(
+                                        session, market["id"], refused_books,
+                                        observed_before=quote_read_started,
                                     )
                                     _reranked = (
                                         await session.execute(
@@ -4077,6 +4092,7 @@ async def _refresh_stale_futures_prices(
                                     continue
                                 if _reranked:
                                     stats["ranks_rederived"] += _reranked
+                                stats["legs_withdrawn_book_refuted"] += withdrawn
                                 if retired:
                                     stats["legs_retired"] += retired
                                     stats["legs_retired_venue_closed"] += retired
@@ -4109,6 +4125,7 @@ async def _refresh_stale_futures_prices(
                                     session,
                                     market["id"],
                                     refuted_by_event.get(event_id) or {},
+                                    observed_before=quote_read_started,
                                 )
                                 # #6598 / CERT-3182, and LAST for the reason
                                 # `_retire_unpriced_legs` runs after the write:
@@ -4177,6 +4194,18 @@ async def _refresh_stale_futures_prices(
                                 [m["id"] for m in by_event[event_id]],
                                 stats,
                                 refuted_books=refuted_by_event.get(event_id) or {},
+                                quote_read_started=quote_read_started,
+                            )
+                        elif priced is None and refuted_by_event.get(event_id):
+                            await _write_condition_twins(
+                                session,
+                                [{"external_id": cid, "probability": None,
+                                  "parent_book_refused": True}
+                                 for cid in refuted_by_event[event_id]],
+                                [m["id"] for m in by_event[event_id]],
+                                stats,
+                                refuted_books=refuted_by_event[event_id],
+                                quote_read_started=quote_read_started,
                             )
                     await asyncio.sleep(0.3)
             finally:

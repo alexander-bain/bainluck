@@ -304,7 +304,7 @@ class TestOtherShapesUntouched:
         event = _game(m, neg_risk=True)
         assert _refused_leg_books(event) == _resolver_strawman(event) == {ML: (0.15, 0.52)}
 
-    def test_single_market_refuses_price_without_expanding_withdrawal_scope(self):
+    def test_single_market_refuses_price_and_reports_its_present_book_12633(self):
         from app.services.polymarket_api import PolymarketEvent
 
         event = PolymarketEvent(
@@ -312,7 +312,7 @@ class TestOtherShapesUntouched:
             markets=[_moneyline()],
         )
         assert _parent_outcome_data(event) == []
-        assert _refused_leg_books(event) == {}
+        assert _refused_leg_books(event) == {ML: (0.15, 0.52)}
 
 
 async def _fetch(event):

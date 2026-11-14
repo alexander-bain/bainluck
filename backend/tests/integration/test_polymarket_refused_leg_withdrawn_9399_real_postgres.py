@@ -8,13 +8,15 @@ withdrawal's SELECT from a fake. This one runs the SQL: two passes of
     pass 2 (16:0xZ, verbatim) Category 5 outcomePrices 0.205 on 0.09/0.32, last 0.92
                               -> both prices refused; before #9399 the row kept 0.92
 
-After pass 2 the 0.92 must be gone, Category 4 must carry this pass's 0.72, and a
-leg whose stored price its current book does NOT refute must keep it.
+After pass 2 the refused point must be gone and a healthy sibling must carry its
+accepted current quote. #12633 also withdraws an old point inside a refused
+wide book, preserving observations, openings, grades and concurrent newer reads.
 """
 
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -136,15 +138,15 @@ async def test_the_refuted_092_is_withdrawn_and_the_field_names_the_venues_favor
     assert max(priced, key=priced.get) == CAT4
 
 
-async def test_a_refused_leg_whose_stored_price_the_book_supports_keeps_it(engine):
-    """Control: same refusal shape, but the stored 0.20 sits inside 0.09/0.32."""
+async def test_a_refused_leg_with_an_inside_old_price_is_withdrawn_12633(engine):
+    """The stored 0.20 lies inside 0.09/0.32, but has no accepted current quote."""
     inside = _leg(CAT5, 5, prices=[0.20, 0.80], bid=0.19, ask=0.21, last=0.20)
     await _poll(_nolo(inside))
     refused = _leg(CAT5, 5, prices=[0.205, 0.795], bid=0.09, ask=0.32, last=0.92)
     stats = await _poll(_nolo(refused))
 
-    assert stats["legs_withdrawn_book_refuted"] == 0
-    assert (await _stored(engine))[CAT5][0] == pytest.approx(0.20)
+    assert stats["legs_withdrawn_book_refuted"] == 1
+    assert (await _stored(engine))[CAT5][0] is None
 
 
 async def test_a_graded_leg_is_never_withdrawn(engine):
@@ -162,6 +164,81 @@ async def test_a_graded_leg_is_never_withdrawn(engine):
 
     assert stats["legs_withdrawn_book_refuted"] == 0
     assert (await _stored(engine))[CAT5][0] == pytest.approx(0.92)
+
+
+@pytest.mark.parametrize("field,expression", [
+    ("last_updated", "last_updated + interval '1 second'"),
+    ("price_changed_at", "now() + interval '1 second'"),
+    ("resolution_source", "'api_settlement'"),
+    ("is_winner", "TRUE"),
+])
+async def test_12633_a_same_price_read_or_grade_wins_the_withdrawal_race(
+    engine, field, expression,
+):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.tasks.polymarket import _withdraw_book_refuted_legs
+
+    await _poll(_nolo(_leg(CAT5, 5, prices=[0.20, 0.80], bid=0.19, ask=0.21, last=0.20)))
+    async with engine.connect() as conn:
+        mid = await conn.scalar(text(
+            "SELECT market_id FROM futures_outcomes WHERE external_id=:cid"
+        ), {"cid": CAT5})
+
+    class ConcurrentWriter:
+        def __init__(self, session):
+            self.session, self.fired = session, False
+
+        async def execute(self, statement, *args, **kwargs):
+            result = await self.session.execute(statement, *args, **kwargs)
+            if not self.fired:
+                self.fired = True
+                async with engine.begin() as other:
+                    await other.execute(text(
+                        f"UPDATE futures_outcomes SET {field}={expression} "
+                        "WHERE external_id=:cid"
+                    ), {"cid": CAT5})
+            return result
+
+    async with AsyncSession(engine) as session:
+        assert await _withdraw_book_refuted_legs(
+            ConcurrentWriter(session), mid, {CAT5: (0.09, 0.32)},
+        ) == 0
+        await session.commit()
+    assert (await _stored(engine))[CAT5][0] == pytest.approx(0.20)
+
+
+async def test_12633_a_write_after_the_venue_request_started_is_preserved(engine):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.tasks.polymarket import _withdraw_book_refuted_legs
+
+    before_request = datetime.now(timezone.utc) - timedelta(minutes=1)
+    await _poll(_nolo(_leg(CAT5, 5, prices=[0.20, 0.80], bid=0.19, ask=0.21, last=0.20)))
+    async with AsyncSession(engine) as session:
+        mid = await session.scalar(text(
+            "SELECT market_id FROM futures_outcomes WHERE external_id=:cid"
+        ), {"cid": CAT5})
+        assert await _withdraw_book_refuted_legs(
+            session, mid, {CAT5: (0.09, 0.32)}, observed_before=before_request,
+        ) == 0
+        await session.commit()
+    assert (await _stored(engine))[CAT5][0] == pytest.approx(0.20)
+
+
+async def test_12633_a_settled_market_is_never_withdrawn(engine):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.tasks.polymarket import _withdraw_book_refuted_legs
+
+    await _poll(_nolo(_leg(CAT5, 5, prices=[0.20, 0.80], bid=0.19, ask=0.21, last=0.20)))
+    async with AsyncSession(engine) as session:
+        mid = await session.scalar(text(
+            "UPDATE futures_markets SET status='resolved' WHERE external_id=:eid RETURNING id"
+        ), {"eid": EVENT_ID})
+        assert await _withdraw_book_refuted_legs(session, mid, {CAT5: (0.09, 0.32)}) == 0
+        await session.commit()
+    assert (await _stored(engine))[CAT5][0] == pytest.approx(0.20)
 
 
 # ---------------------------------------------------------------------------
@@ -288,12 +365,12 @@ async def test_10298_a_raw_price_inside_its_book_is_written_unchanged(engine):
     assert (await _wrapper_rows(engine))[ML]["p"] == pytest.approx(0.40)
 
 
-async def test_10298_a_refused_moneyline_whose_stored_price_the_book_supports_keeps_it(engine):
-    """Stored 0.40 sits inside 0.15/0.52: the raw 0.53 is refused, the 0.40 retained."""
+async def test_12633_a_refused_moneyline_cannot_keep_its_inside_old_price(engine):
+    """Stored 0.40 sits inside 0.15/0.52; neither it nor the raw 0.53 is current."""
     await _poll(_game(_ml(0.40, 0.39, 0.41, last=0.40)))
     stats = await _poll(_game(_ml(0.53, 0.15, 0.52, last=0.53)))
-    assert stats["legs_withdrawn_book_refuted"] == 0
-    assert (await _wrapper_rows(engine))[ML]["p"] == pytest.approx(0.40)
+    assert stats["legs_withdrawn_book_refuted"] == 1
+    assert (await _wrapper_rows(engine))[ML]["p"] is None
 
 
 @pytest.mark.parametrize("column, value", [
@@ -475,8 +552,29 @@ _CHILD_ML_YES = (ML, f"{ML}_yes")
 _PARENT_SPREAD = (GAME_ID, SPREAD)
 
 
-async def test_10298_refresh_keeps_a_supported_040_and_writes_no_053(engine, monkeypatch):
-    """Selected parent. Stored 0.40 is inside 0.15/0.52: it stays, untouched."""
+@pytest.mark.parametrize("omit_last", [False, True])
+async def test_12633_an_all_refused_field_withdraws_only_present_legs(
+    engine, monkeypatch, omit_last,
+):
+    await _poll(_nolo(_leg(CAT5, 5, prices=[0.20, 0.80], bid=0.19, ask=0.21, last=0.20)))
+    before = await _legs(engine)
+    event = _nolo(_leg(CAT5, 5, prices=[0.20, 0.80], bid=0.09, ask=0.32, last=0.20))
+    event.markets = [leg.model_copy(update={"best_bid": 0.02, "best_ask": 0.74})
+                     for leg in event.markets[:2 if omit_last else 3]]
+    stats = await _refresh(engine, monkeypatch, event, registered=[_mid(before, EVENT_ID)])
+    after = await _legs(engine)
+    present = {leg.condition_id for leg in event.markets}
+    assert stats["legs_withdrawn_book_refuted"] == len(present)
+    for key, old in before.items():
+        new = after[key]
+        assert new["p"] == (None if key[1] in present else old["p"])
+        assert new["touched"] == old["touched"]
+        assert new["opening"] == old["opening"]
+        assert new["fresh_snapshots"] == 0
+
+
+async def test_12633_refresh_withdraws_inside_040_without_banking_a_trade(engine, monkeypatch):
+    """Selected parent. Stored 0.40 is inside the refused book; withdraw it without new history."""
     await _poll(_game(_ml(0.40, 0.39, 0.41, last=0.40)))
     before = await _legs(engine)
     stats = await _refresh(
@@ -486,18 +584,18 @@ async def test_10298_refresh_keeps_a_supported_040_and_writes_no_053(engine, mon
     after = await _legs(engine)
 
     p_before, p_after = before[_PARENT_ML], after[_PARENT_ML]
-    assert p_after["p"] == pytest.approx(0.40)
+    assert p_after["p"] is None
     assert p_after["fresh_snapshots"] == 0, "no 0.53 chart point on the parent"
-    for col in ("bid", "ask", "touched", "changed", "opening"):
+    for col in ("bid", "ask", "touched", "opening"):
         assert p_after[col] == p_before[col], col
     assert stats.get("legs_declined_parent_refused", 0) == 1
-    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert stats["legs_withdrawn_book_refuted"] == 3
     # the healthy sibling on the same parent still refreshes
     assert after[_PARENT_SPREAD]["p"] == pytest.approx(0.30)
     assert after[_PARENT_SPREAD]["fresh_snapshots"] == 1
-    # #12658: the child refuses the same wide book, preserving its old number
-    # without a snapshot or a fresh observation stamp.
-    assert after[_CHILD_ML_YES]["p"] == before[_CHILD_ML_YES]["p"]
+    # #12633: both child tokens withdraw too, without a snapshot or fresh stamp.
+    assert after[_CHILD_ML_YES]["p"] is None
+    assert after[(ML, f"{ML}_no")]["p"] is None
     assert after[_CHILD_ML_YES]["touched"] == before[_CHILD_ML_YES]["touched"]
     assert after[_CHILD_ML_YES]["fresh_snapshots"] == 0
 
@@ -517,12 +615,12 @@ async def test_10298_refresh_withdraws_a_stored_053_without_a_new_snapshot(engin
     assert after[_PARENT_ML]["touched"] == before[_PARENT_ML]["touched"]
     assert after[_PARENT_ML]["opening"] == before[_PARENT_ML]["opening"]
     assert stats.get("legs_declined_parent_refused", 0) == 1
-    assert stats["legs_withdrawn_book_refuted"] == 1
+    assert stats["legs_withdrawn_book_refuted"] == 3
 
 
 @pytest.mark.parametrize("stored, withdrawn", [
-    ((0.40, 0.39, 0.41), 0),   # supported by 0.15/0.52: survives untouched
-    ((0.53, 0.52, 0.54), 1),   # priced out by the 0.52 ask: NULL, no new point
+    ((0.40, 0.39, 0.41), 3),   # old inside point and both child tokens withdraw
+    ((0.53, 0.52, 0.54), 3),   # outside point and both child tokens withdraw
 ])
 async def test_10298_a_twin_only_parent_is_withheld_like_a_selected_one(
     engine, monkeypatch, stored, withdrawn
@@ -584,7 +682,9 @@ async def test_10298_twin_path_keeps_the_graded_and_crowned_exemptions(
     after = await _legs(engine)
     assert after[_PARENT_ML]["p"] == pytest.approx(0.53)
     assert after[_PARENT_ML]["fresh_snapshots"] == 0
-    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert stats["legs_withdrawn_book_refuted"] == 2
+    assert after[_CHILD_ML_YES]["p"] is None
+    assert after[(ML, f"{ML}_no")]["p"] is None
 
 
 async def test_10298_twin_path_respects_the_compare_and_set(engine, monkeypatch):
@@ -599,7 +699,7 @@ async def test_10298_twin_path_respects_the_compare_and_set(engine, monkeypatch)
     parent_id = _mid(before, GAME_ID)
     real = pm._withdraw_book_refuted_legs
 
-    async def _underfoot(session, market_id, books):
+    async def _underfoot(session, market_id, books, **kwargs):
         if market_id == parent_id and books:
             real_execute = session.execute
             fired = []
@@ -617,10 +717,10 @@ async def test_10298_twin_path_respects_the_compare_and_set(engine, monkeypatch)
 
             session.execute = _execute
             try:
-                return await real(session, market_id, books)
+                return await real(session, market_id, books, **kwargs)
             finally:
                 del session.execute
-        return await real(session, market_id, books)
+        return await real(session, market_id, books, **kwargs)
 
     monkeypatch.setattr(pm, "_withdraw_book_refuted_legs", _underfoot)
     stats = await _refresh(
@@ -628,7 +728,8 @@ async def test_10298_twin_path_respects_the_compare_and_set(engine, monkeypatch)
         registered=[_mid(before, ML)],
     )
     after = await _legs(engine)
-    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert stats["legs_withdrawn_book_refuted"] == 2
+    assert after[_CHILD_ML_YES]["p"] is None
     assert after[_PARENT_ML]["p"] == pytest.approx(0.20)
 
 
@@ -681,9 +782,9 @@ async def test_10298_refresh_wide_or_missing_book_never_banks_a_trade(
     after = await _legs(engine)
     assert after[_PARENT_ML]["fresh_snapshots"] == 0
     assert after[_PARENT_ML]["touched"] == before[_PARENT_ML]["touched"]
-    assert after[_PARENT_ML]["p"] == pytest.approx(0.40)
+    assert after[_PARENT_ML]["p"] == (None if tagged else pytest.approx(0.40))
     assert stats.get("legs_declined_parent_refused", 0) >= tagged
-    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert stats["legs_withdrawn_book_refuted"] == 3 * tagged
 
 
 async def test_10298_refresh_a_truncated_payload_tags_nothing(engine, monkeypatch):
@@ -715,7 +816,7 @@ async def test_10298_refresh_negrisk_field_is_untouched_by_the_tag(engine, monke
     assert after[(EVENT_ID, CAT4)]["fresh_snapshots"] == 1
 
 
-async def test_12658_refresh_singleton_game_refuses_without_expanding_withdrawal(engine, monkeypatch):
+async def test_12633_singleton_game_withdraws_both_sides_without_an_observation(engine, monkeypatch):
     """Single-market control: unsupported quote adds no price or observation."""
     from app.services.polymarket_api import PolymarketEvent
 
@@ -730,7 +831,8 @@ async def test_12658_refresh_singleton_game_refuses_without_expanding_withdrawal
     )
     after = await _legs(engine)
     assert after[_PARENT_ML]["fresh_snapshots"] == 0
-    assert after[_PARENT_ML]["p"] == before[_PARENT_ML]["p"]
+    assert after[_PARENT_ML]["p"] is None
+    assert after[(GAME_ID, f"{ML}_side1")]["p"] is None
     assert after[_PARENT_ML]["touched"] == before[_PARENT_ML]["touched"]
-    assert stats["legs_withdrawn_book_refuted"] == 0
+    assert stats["legs_withdrawn_book_refuted"] == 2
     assert stats.get("legs_declined_parent_refused", 0) == 0

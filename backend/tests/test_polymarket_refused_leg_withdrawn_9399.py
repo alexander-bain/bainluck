@@ -20,9 +20,10 @@ right. The resolver then returns ``None`` and both writers SKIP the leg, so the 
 kept its 10:50Z 0.92 beside its 10:50Z 0.54/0.92 book — which no serve-time gate
 can see through, because the stored book agrees with the stored price.
 
-THE FIX. The writers now take the fresh book of every refused leg and withdraw the
-stored price when that book prices it out (``book_refutes_price``, #5121's shipped
-predicate). A stored price inside the current book is still left alone.
+THE FIX. The writers take the fresh book of every refused leg and withdraw an
+old point unsupported by the current quote. #12633 extends #9399's outside-book
+rule to old points inside a refused wide book; an accepted current quote, a
+newer read, settlement, or missing book evidence still protects the row.
 """
 
 from __future__ import annotations
@@ -125,8 +126,17 @@ class TestTheSpecimenIsNamed:
                        best_ask=None, last_trade_price=None)
         assert _refused_leg_books(_nolo([_cat4(), bare])) == {}
 
-    def test_single_market_events_are_out_of_scope(self):
-        assert _refused_leg_books(_nolo([_cat5()])) == {}
+    def test_a_single_present_refused_market_is_in_scope(self):
+        assert _refused_leg_books(_nolo([_cat5()])) == {CAT5: (0.09, 0.32)}
+
+    @pytest.mark.parametrize("change", [{"closed": True}, {"archived": True}])
+    def test_a_settled_or_archived_event_is_not_a_quote_refusal(self, change):
+        assert _refused_leg_books(_nolo().model_copy(update=change)) == {}
+
+    def test_a_closed_leg_is_not_a_quote_refusal(self):
+        assert _refused_leg_books(_nolo([
+            _cat4(), _cat5().model_copy(update={"closed": True}),
+        ])) == {}
 
     def test_non_negrisk_is_in_scope_through_the_game_branchs_own_drop_10298(self):
         """#10298 C1: the game arm names what `_parent_outcome_data` dropped.
@@ -157,7 +167,7 @@ class _StoredRowsSession:
     async def execute(self, statement, params=None):
         sql = str(statement).lstrip().upper()
         if sql.startswith("SELECT"):
-            return _Result(self.rows)
+            return _Result([(*row, None, None) for row in self.rows])
         if sql.startswith("UPDATE FUTURES_OUTCOMES"):
             self.updates.append(dict(statement.compile().params))
             return _Result(rowcount=1)
@@ -165,6 +175,12 @@ class _StoredRowsSession:
 
 
 class TestTheWithdrawalDecides:
+    async def test_old_casting_price_inside_a_refused_book_is_not_a_current_quote(self):
+        session = _StoredRowsSession([(901, CAT5, 0.259)])
+        assert await _withdraw_book_refuted_legs(
+            session, 58492238, {CAT5: (0.11, 0.334)}
+        ) == 1
+
     async def test_the_specimen_is_withdrawn(self):
         session = _StoredRowsSession([(901, CAT5, 0.92)])
         n = await _withdraw_book_refuted_legs(session, 62233677, {CAT5: (0.09, 0.32)})
@@ -176,11 +192,18 @@ class TestTheWithdrawalDecides:
         assert params["id_1"] == 901
         assert params["current_probability_1"] == pytest.approx(0.92)
 
-    async def test_a_stored_price_inside_the_current_book_is_kept(self):
-        """A skip is still a skip: 0.20 is supported by a 0.09/0.32 book."""
+    async def test_a_stored_price_inside_a_refused_book_is_withdrawn(self):
+        """#12633: being inside a wide book is not a current accepted quote."""
         session = _StoredRowsSession([(901, CAT5, 0.20)])
         n = await _withdraw_book_refuted_legs(session, 62233677, {CAT5: (0.09, 0.32)})
-        assert n == 0 and session.updates == []
+        assert n == 1
+
+    async def test_a_current_accepted_book_preserves_its_supported_price(self):
+        session = _StoredRowsSession([(901, CAT5, 0.20)])
+        assert await _withdraw_book_refuted_legs(
+            session, 62233677, {CAT5: (0.19, 0.21)}
+        ) == 0
+        assert session.updates == []
 
     async def test_a_price_the_bid_prices_out_from_below_is_withdrawn(self):
         """The predicate's mirror arm: you could sell into a 0.50 bid."""
@@ -188,11 +211,28 @@ class TestTheWithdrawalDecides:
         n = await _withdraw_book_refuted_legs(session, 62233677, {CAT5: (0.50, 0.80)})
         assert n == 1
 
-    async def test_an_empty_book_refutes_nothing(self):
-        """``book_refutes_price``'s carve-out: an ask of 1.0 cannot be exceeded."""
+    async def test_a_present_empty_book_cannot_support_an_old_price(self):
         session = _StoredRowsSession([(901, CAT5, 0.92)])
         n = await _withdraw_book_refuted_legs(session, 62233677, {CAT5: (0, 1)})
-        assert n == 0 and session.updates == []
+        assert n == 1
+
+    async def test_absent_book_evidence_preserves_the_price(self):
+        session = _StoredRowsSession([(901, CAT5, 0.92)])
+        assert await _withdraw_book_refuted_legs(
+            session, 62233677, {CAT5: (None, None)}
+        ) == 0
+        assert session.updates == []
+
+    @pytest.mark.parametrize("bounds", [
+        (float("nan"), 0.3), (0.1, float("inf")), (True, 0.3),
+        (0.7, 0.3), (-0.1, 0.3), (0.1, 1.1), ("bad", 0.3),
+    ])
+    async def test_a_malformed_book_is_not_withdrawal_evidence(self, bounds):
+        session = _StoredRowsSession([(901, CAT5, 0.20)])
+        assert await _withdraw_book_refuted_legs(
+            session, 62233677, {CAT5: bounds}
+        ) == 0
+        assert session.updates == []
 
     async def test_an_empty_set_issues_no_statement(self):
         session = _StoredRowsSession([(901, CAT5, 0.92)])
@@ -212,6 +252,24 @@ class TestTheWithdrawalDecides:
 
 
 class TestBothWritersAskTheQuestion:
+    async def test_a_fully_refused_field_still_returns_its_present_books(self):
+        class _Service:
+            async def get_events_by_ids(self, ids):
+                return [{"id": "1075583"}]
+
+            def _parse_event(self, raw):
+                return _nolo([
+                    _cat5(),
+                    _market(condition_id=CAT4, best_bid=0.02, best_ask=0.74),
+                ])
+
+        refused = {}
+        priced, unpriced = await fpr._fetch_polymarket_prices(
+            _Service(), ["1075583"], {}, refuted_out=refused
+        )
+        assert priced == {} and unpriced == {}
+        assert refused == {"1075583": {CAT5: (0.09, 0.32), CAT4: (0.02, 0.74)}}
+
     def test_the_hourly_poll_withdraws_after_the_write_and_before_the_rerank(self):
         src = inspect.getsource(polymarket._process_event_batch)
         retire = src.index("_retire_unpriced_legs(")
@@ -250,7 +308,7 @@ class TestBothWritersAskTheQuestion:
         src = inspect.getsource(fpr._refresh_stale_futures_prices)
         assert "refuted_out=refuted_by_event" in src
         write = src.index('"polymarket", priced, stats')
-        withdraw = src.index("_withdraw_book_refuted_legs(")
+        withdraw = src.index("_withdraw_book_refuted_legs(", write)
         rerank = src.index("rerank_market_field_stmt(market[\"id\"])", withdraw)
         assert write < withdraw < rerank
         assert "refuted_by_event.get(event_id)" in src[withdraw : withdraw + 300]
