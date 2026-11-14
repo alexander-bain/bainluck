@@ -17,7 +17,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import select, or_, and_, func, delete, case, cast, update, text, bindparam, String
 from sqlalchemy.ext.compiler import compiles
@@ -10901,10 +10901,83 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
 # =============================================================================
 
 
-def _live_polymarket_quote(market: dict, outcome_name: str | None):
-    """Price the named binary side from the same book as the hourly writer."""
+def _live_polymarket_outcome_rows(
+    market: Any, condition_id: str, outcome_lookup: dict[tuple[int, str], Any]
+) -> tuple[list[tuple[Any, int | None]], str | None]:
+    """Reach the existing parent or both binary children, within this market.
+
+    The live poll used only the bare condition key. Decomposed game props are
+    stored as condition_yes/condition_no, so a successful fetch left both
+    visible sides unchanged. No identity is inferred and no outcome is created.
+    """
+    if not isinstance(condition_id, str) or not condition_id:
+        return [], "missing_condition_id"
+    bare = outcome_lookup.get((market.id, condition_id))
+    yes = outcome_lookup.get((market.id, condition_id + "_yes"))
+    no = outcome_lookup.get((market.id, condition_id + "_no"))
+    if bare is not None:
+        if yes is not None or no is not None:
+            return [], "mixed_outcome_keys"
+        return [(bare, None)], None
+    if yes is None and no is None:
+        return [], "outcomes_absent"
+    if market.external_id != condition_id:
+        return [], "condition_mismatch"
+    if yes is None or no is None:
+        return [], "incomplete_binary"
+    return [(yes, 0), (no, 1)], None
+
+
+def _live_polymarket_side(
+    market: dict, outcome_name: str | None, expected_side: int | None = None
+) -> int | None:
+    """Verify a named side against its token position before using its book."""
     import json
 
+    names = market.get("outcomes", [])
+    try:
+        names = json.loads(names) if isinstance(names, str) else names
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if (
+        not isinstance(names, list)
+        or len(names) != 2
+        or not all(isinstance(n, str) for n in names)
+    ):
+        return None
+    names = [name.strip() for name in names]
+    if expected_side is not None and (
+        not all(names) or names[0].casefold() == names[1].casefold()
+    ):
+        return None
+    side = 0 if expected_side is None else expected_side
+    if names[0].lower() not in ("yes", "no", ""):
+        matches = [
+            i
+            for i, name in enumerate(names)
+            if outcome_name and _fuzzy_team_match(outcome_name, name)
+        ]
+        if len(matches) != 1:
+            return None
+        side = matches[0]
+    elif outcome_name and outcome_name.strip().lower() in ("yes", "no"):
+        matches = [
+            i
+            for i, name in enumerate(names)
+            if name.lower() == outcome_name.strip().lower()
+        ]
+        if len(matches) != 1:
+            return None
+        side = matches[0]
+    if expected_side is not None and side != expected_side:
+        return None
+    return side
+
+
+def _live_polymarket_quote(
+    market: dict, outcome_name: str | None, *, expected_side: int | None = None
+) -> tuple[float, float, float, int] | None:
+    """Price the named binary side from the same book as the hourly writer."""
     from app.utils.polymarket_quote import current_polymarket_quote
 
     if market.get("closed"):
@@ -10912,30 +10985,64 @@ def _live_polymarket_quote(market: dict, outcome_name: str | None):
     probability = current_polymarket_quote(market.get("bestBid"), market.get("bestAsk"))
     if probability is None:
         return None
-    names = market.get("outcomes", [])
-    try:
-        names = json.loads(names) if isinstance(names, str) else names
-    except (json.JSONDecodeError, TypeError):
+    side = _live_polymarket_side(market, outcome_name, expected_side)
+    if side is None:
         return None
-    if not isinstance(names, list) or len(names) != 2 or not all(isinstance(n, str) for n in names):
-        return None
-    names = [name.strip() for name in names]
-    side = 0
-    if names[0].lower() not in ("yes", "no", ""):
-        matches = [i for i, name in enumerate(names) if outcome_name and _fuzzy_team_match(outcome_name, name)]
-        if len(matches) != 1:
-            return None
-        side = matches[0]
-    elif outcome_name and outcome_name.strip().lower() in ("yes", "no"):
-        matches = [i for i, name in enumerate(names) if name.lower() == outcome_name.strip().lower()]
-        if len(matches) != 1:
-            return None
-        side = matches[0]
     bid = 0.0 if market.get("bestBid") is None else float(market["bestBid"])
     ask = 1.0 if market.get("bestAsk") is None else float(market["bestAsk"])
     if side == 1:
         return 1 - probability, 1 - ask, 1 - bid, side
     return probability, bid, ask, side
+
+
+async def _write_live_polymarket_child(
+    session: Any, outcome: Any, condition_id: str, values: dict[str, Any]
+) -> bool:
+    """Do not replace a newer quote, grade or changed identity after the read."""
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    statement = (
+        update(FuturesOutcome)
+        .where(
+            FuturesOutcome.id == outcome.id,
+            FuturesOutcome.market_id == outcome.market_id,
+            FuturesOutcome.external_id == outcome.external_id,
+            FuturesOutcome.name.is_not_distinct_from(outcome.name),
+            FuturesOutcome.current_probability.is_not_distinct_from(
+                outcome.current_probability
+            ),
+            FuturesOutcome.current_yes_bid.is_not_distinct_from(
+                outcome.current_yes_bid
+            ),
+            FuturesOutcome.current_yes_ask.is_not_distinct_from(
+                outcome.current_yes_ask
+            ),
+            FuturesOutcome.last_updated.is_not_distinct_from(outcome.last_updated),
+            FuturesOutcome.price_changed_at.is_not_distinct_from(
+                getattr(outcome, "price_changed_at", None)
+            ),
+            FuturesOutcome.is_winner.is_not(True),
+            FuturesOutcome.resolution_source.is_distinct_from("api_settlement"),
+            select(FuturesMarket.id)
+            .where(
+                FuturesMarket.id == outcome.market_id,
+                FuturesMarket.external_id == condition_id,
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.status == "open",
+            )
+            .exists(),
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    result = await session.execute(statement)
+    if result.rowcount != 1:
+        return False
+    # The Core write is authoritative; never flush a second, unguarded ORM
+    # assignment over a socket update before the existing market commit.
+    for key, value in values.items():
+        set_committed_value(outcome, key, value)
+    return True
 
 
 def _clear_outcome_price(outcome, now) -> bool:
@@ -12315,93 +12422,166 @@ async def _poll_live_prediction_market_prices():
                         for pm in poly_markets:
                             condition_id = pm.get("conditionId", "")
 
-                            # Find matching outcome by condition_id (batch-loaded)
-                            outcome = pop.outcome_lookup.get((market_id, condition_id))
-                            if not outcome:
+                            matched, refusal = _live_polymarket_outcome_rows(
+                                market, condition_id, pop.outcome_lookup
+                            )
+                            if refusal:
+                                key = "polymarket_identity_" + refusal
+                                stats[key] = stats.get(key, 0) + 1
                                 continue
-
-                            # #9083 (CERT-3639): record the book as this read
-                            # reports it, BEFORE any refusal below, so an omitted
-                            # side reads as absent here and not as the stale value
-                            # still on the row.
-                            _fresh_bid = pm.get("bestBid")
-                            _fresh_ask = pm.get("bestAsk")
-                            polymarket_fresh_books[outcome.id] = (
-                                None if _fresh_bid is None else float(_fresh_bid),
-                                None if _fresh_ask is None else float(_fresh_ask),
-                            )
-                            # Cleared below only where this read's price is
-                            # written; every `continue` between leaves it set,
-                            # and `_recover` re-adds it if that write is rolled
-                            # back (CERT-3652).
-                            polymarket_unpriced_reads.add(outcome.id)
-
-                            # #12658: raw outcomePrices can alternate between the
-                            # book and an undated trade. Use the hourly writer's
-                            # book policy, preserving the named side's orientation.
-                            quote = _live_polymarket_quote(pm, outcome.name)
-                            if quote is None:
-                                stats["polymarket_quotes_refused"] = stats.get("polymarket_quotes_refused", 0) + 1
-                                continue
-                            prob, best_bid, best_ask, side = quote
-                            polymarket_fresh_books[outcome.id] = (best_bid, best_ask)
-                            ltp = pm.get("lastTradePrice")
-                            if ltp is not None and side == 1:
-                                ltp = 1 - float(ltp)
-                            from app.utils.polymarket_quote import quoted_price_change_value
-                            outcome.probability_change_24h = quoted_price_change_value(
-                                outcome.current_probability,
-                                outcome.current_yes_bid,
-                                outcome.current_yes_ask,
-                                prob,
-                            )
-
-                            # Update outcome probability
-                            outcome.current_probability = prob
-                            polymarket_unpriced_reads.discard(outcome.id)
-                            polymarket_cleared_since_commit.add(outcome.id)
-                            american = probability_to_american(prob) if 0 < prob < 1 else None
-                            outcome.current_american_odds = american
-
-                            outcome.current_yes_bid = best_bid
-                            outcome.current_yes_ask = best_ask
-
-                            outcome.last_updated = now
-                            stats["outcomes_updated"] += 1
-                            pending_price_reads[outcome.id] = PricedOutcomeRead(
-                                market_id=outcome.market_id, external_id=outcome.external_id,
-                                probability=prob, row_time=now,
-                                received_at=seen_event_times[poly_event_id],
-                            )
-
-                            # Write FuturesOddsSnapshot for chart history
-                            best_bid_val = float(best_bid) if best_bid is not None else None
-                            best_ask_val = float(best_ask) if best_ask is not None else None
-                            ltp_val = float(ltp) if ltp is not None else None
-                            await session.execute(
-                                pg_insert(FuturesOddsSnapshot).values(
-                                    outcome_id=outcome.id,
-                                    bookmaker="polymarket",
-                                    probability=prob,
-                                    american_odds=american,
-                                    yes_bid=best_bid_val,
-                                    yes_ask=best_ask_val,
-                                    last_price=ltp_val,
-                                    captured_at=now,
+                            if any(
+                                token_side is not None
+                                and _live_polymarket_side(pm, outcome.name, token_side)
+                                is None
+                                for outcome, token_side in matched
+                            ):
+                                stats["polymarket_identity_side_mismatch"] = (
+                                    stats.get("polymarket_identity_side_mismatch", 0)
+                                    + 1
                                 )
-                            )
-                            stats["futures_snapshots_written"] += 1
+                                continue
+                            for outcome, token_side in matched:
+                                # The new binary-child path must not revive a
+                                # confirmed winner or a venue-graded loser.
+                                if token_side is not None and (
+                                    getattr(market, "status", "open") != "open"
+                                    or outcome.is_winner is True
+                                    or getattr(outcome, "resolution_source", None)
+                                    == "api_settlement"
+                                ):
+                                    stats["polymarket_children_settled"] = (
+                                        stats.get("polymarket_children_settled", 0) + 1
+                                    )
+                                    continue
+                                # #9083 (CERT-3639): record the book as this read
+                                # reports it, BEFORE any refusal below, so an omitted
+                                # side reads as absent here and not as the stale value
+                                # still on the row.
+                                _fresh_bid = pm.get("bestBid")
+                                _fresh_ask = pm.get("bestAsk")
+                                _read_book = (
+                                    None if _fresh_bid is None else float(_fresh_bid),
+                                    None if _fresh_ask is None else float(_fresh_ask),
+                                )
+                                if token_side == 1:
+                                    _read_book = (
+                                        (
+                                            None
+                                            if _read_book[1] is None
+                                            else 1 - _read_book[1]
+                                        ),
+                                        (
+                                            None
+                                            if _read_book[0] is None
+                                            else 1 - _read_book[0]
+                                        ),
+                                    )
+                                polymarket_fresh_books[outcome.id] = _read_book
+                                # Cleared below only where this read's price is
+                                # written; every `continue` between leaves it set,
+                                # and `_recover` re-adds it if that write is rolled
+                                # back (CERT-3652).
+                                polymarket_unpriced_reads.add(outcome.id)
+
+                                # #12658: raw outcomePrices can alternate between the
+                                # book and an undated trade. Use the hourly writer's
+                                # book policy, preserving the named side's orientation.
+                                quote = _live_polymarket_quote(
+                                    pm, outcome.name, expected_side=token_side
+                                )
+                                if quote is None:
+                                    stats["polymarket_quotes_refused"] = (
+                                        stats.get("polymarket_quotes_refused", 0) + 1
+                                    )
+                                    continue
+                                prob, best_bid, best_ask, side = quote
+                                polymarket_fresh_books[outcome.id] = (
+                                    best_bid,
+                                    best_ask,
+                                )
+                                ltp = pm.get("lastTradePrice")
+                                if ltp is not None and side == 1:
+                                    ltp = 1 - float(ltp)
+                                from app.utils.polymarket_quote import (
+                                    quoted_price_change_value,
+                                )
+
+                                american = (
+                                    probability_to_american(prob)
+                                    if 0 < prob < 1
+                                    else None
+                                )
+                                values = {
+                                    "current_probability": prob,
+                                    "current_american_odds": american,
+                                    "current_yes_bid": best_bid,
+                                    "current_yes_ask": best_ask,
+                                    "last_updated": now,
+                                    "probability_change_24h": quoted_price_change_value(
+                                        outcome.current_probability,
+                                        outcome.current_yes_bid,
+                                        outcome.current_yes_ask,
+                                        prob,
+                                    ),
+                                }
+                                if token_side is not None:
+                                    if not await _write_live_polymarket_child(
+                                        session, outcome, condition_id, values
+                                    ):
+                                        stats["polymarket_children_changed_row"] = (
+                                            stats.get(
+                                                "polymarket_children_changed_row", 0
+                                            )
+                                            + 1
+                                        )
+                                        continue
+                                else:
+                                    for key, value in values.items():
+                                        setattr(outcome, key, value)
+                                polymarket_unpriced_reads.discard(outcome.id)
+                                polymarket_cleared_since_commit.add(outcome.id)
+                                stats["outcomes_updated"] += 1
+                                pending_price_reads[outcome.id] = PricedOutcomeRead(
+                                    market_id=outcome.market_id,
+                                    external_id=outcome.external_id,
+                                    probability=prob,
+                                    row_time=now,
+                                    received_at=seen_event_times[poly_event_id],
+                                )
+
+                                # Write FuturesOddsSnapshot for chart history
+                                best_bid_val = (
+                                    float(best_bid) if best_bid is not None else None
+                                )
+                                best_ask_val = (
+                                    float(best_ask) if best_ask is not None else None
+                                )
+                                ltp_val = float(ltp) if ltp is not None else None
+                                await session.execute(
+                                    pg_insert(FuturesOddsSnapshot).values(
+                                        outcome_id=outcome.id,
+                                        bookmaker="polymarket",
+                                        probability=prob,
+                                        american_odds=american,
+                                        yes_bid=best_bid_val,
+                                        yes_ask=best_ask_val,
+                                        last_price=ltp_val,
+                                        captured_at=now,
+                                    )
+                                )
+                                stats["futures_snapshots_written"] += 1
 
                         # #6598 / CERT-3182 — the Polymarket arm's copy of the
                         # Kalshi branch's re-rank, for the same reason and in
                         # the same position.
-                        stats["ranks_rederived"] = stats.get(
-                            "ranks_rederived", 0
-                        ) + (
-                            await session.execute(
-                                rerank_market_field_stmt(market_id)
-                            )
-                        ).rowcount
+                        stats["ranks_rederived"] = (
+                            stats.get("ranks_rederived", 0)
+                            + (
+                                await session.execute(
+                                    rerank_market_field_stmt(market_id)
+                                )
+                            ).rowcount
+                        )
 
                         # #5682: durable before the next fetch, same reason as
                         # the Kalshi branch — one Polymarket event's deadlock
