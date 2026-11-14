@@ -13922,6 +13922,7 @@ async def search_events(
     for _c in event_concepts:
         _c.pop("_derived", None)
     for _t in matched_teams:
+        _t["query_names_team"] = _query_names_team_card(_t, q)
         _t.pop("_aliases", None)
 
     _payload = {
@@ -16612,6 +16613,8 @@ async def typeahead_search(
 
     _typeahead_stamp_related_game_listings(suggestions)  # #10298
     for _s in suggestions:
+        if _s.get("type") == "team":
+            _s["query_names_team"] = _query_names_team_card(_s, q)
         _s.pop("_derived", None)
         _s.pop("_aliases", None)
         # Ranking evidence, never a payload: a 40-outcome market would other-
@@ -40393,6 +40396,23 @@ def _search_concept_evidence(row: dict) -> "_SearchEvidence":
         name=row.get("name") or "",
         kind="concept",
         derived=bool(row.get("_derived")),
+    )
+
+
+def _query_names_team_card(row: dict, query: str) -> bool:
+    """Carry the owned-name verdict to clients before private aliases leave.
+
+    Nicknames and curated misspellings have the same ownership as names. A
+    partial word or a sentence is not a whole team name, so cannot promote an
+    incidental team ahead of the collection or market the reader requested.
+    """
+    return query_is_entity_name(
+        query,
+        (
+            row.get("name") or row.get("text") or "",
+            *(row.get("_aliases") or ()),
+            row.get("abbreviation"),
+        ),
     )
 
 

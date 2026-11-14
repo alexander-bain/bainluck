@@ -73,8 +73,12 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "M5",
         "the private _aliases key is no longer stripped from /search teams",
-        '    for _t in matched_teams:\n        _t.pop("_aliases", None)\n',
-        "    for _t in matched_teams:\n        pass  # MUTANT: no strip\n",
+        '    for _t in matched_teams:\n'
+        '        _t["query_names_team"] = _query_names_team_card(_t, q)\n'
+        '        _t.pop("_aliases", None)\n',
+        '    for _t in matched_teams:\n'
+        '        _t["query_names_team"] = _query_names_team_card(_t, q)\n'
+        '        pass  # MUTANT: no strip\n',
     ),
     (
         "M6",

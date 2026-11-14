@@ -18,7 +18,9 @@ UNAMBIGUOUS: an alias that matches two franchises makes search worse, not better
 
 # (sport_key, canonical_team_name) -> list of lowercase colloquial aliases.
 CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
-    ("americanfootball_nfl", "New England Patriots"): ["pats"],
+    # #12290: Alex's observed transposition, scoped to the NFL franchise.
+    ("americanfootball_nfl", "New England Patriots"): ["pats", "patroits"],
+    ("americanfootball_nfl", "Kansas City Chiefs"): ["chiefs"],
     ("soccer_usa_mls", "New England Revolution"): ["revs"],
     ("americanfootball_nfl", "San Francisco 49ers"): ["niners", "9ers"],
     ("americanfootball_nfl", "Tampa Bay Buccaneers"): ["bucs"],
