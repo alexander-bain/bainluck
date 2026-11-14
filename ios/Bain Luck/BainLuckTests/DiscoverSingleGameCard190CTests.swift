@@ -481,6 +481,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
                 .padding(16)
                 .frame(width: 390)
                 .background(Color(white: 0.965))
+                .environmentObject(PinManager())
                 .environment(\.colorScheme, .light)
             let host = hostForMeasurement(canvas, at: typeSize)
             let fitting = host.sizeThatFits(in: CGSize(width: 390, height: 4500))

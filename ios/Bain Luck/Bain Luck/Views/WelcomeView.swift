@@ -231,7 +231,7 @@ struct WelcomeView: View {
                     Spacer()
                 }
                 HStack(spacing: 12) {
-                    Image(systemName: "star.fill")
+                    Image(systemName: "bookmark.fill")
                         .foregroundStyle(.orange)
                         .frame(width: 24)
                     Text("Follow teams and topics")

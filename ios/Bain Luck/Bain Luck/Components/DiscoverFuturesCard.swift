@@ -423,6 +423,8 @@ struct NativeFuturesDiscoverCard: View {
                     // multi-candidate kernels (Comparison/Distribution/HeatMap).
                     SignalBarsView(tier: data.confidenceTier)
 
+                    PinButton(type: "future", id: data.id)
+
                     ShareLink(
                         item: shareURL,
                         subject: Text(data.name),

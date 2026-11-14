@@ -581,9 +581,11 @@ struct NativeEventDiscoverCard: View {
     }
 
     /// Ruling 182-A — game cards remove signal bars; `footerMarks` holds the
-    /// share button and still rides the caption's row (#10373).
+    /// bookmark pin and share buttons and still rides the caption's row (#10373).
     private var footerMarks: some View {
-        HStack {
+        HStack(spacing: 2) {
+            PinButton(type: "event", id: event.id)
+
             ShareLink(
                 item: shareURL,
                 subject: Text("\(event.awayTeam) vs \(event.homeTeam)"),
