@@ -241,11 +241,13 @@ def select_team_active_streaks(
         # Allow inline streak metadata on event dicts too
         for side_team, inline_key in ((ht, "home_streak"), (at, "away_streak")):
             raw_st = ev.get(inline_key)
-            if isinstance(raw_st, str) and len(raw_st) >= 2 and raw_st[0].upper() in {"W", "L"}:
-                try:
-                    streaks_map.setdefault((sp, side_team), (raw_st[0].upper(), int(raw_st[1:])))
-                except ValueError:
-                    pass
+            if (
+                isinstance(raw_st, str)
+                and len(raw_st) >= 2
+                and raw_st[0].upper() in {"W", "L"}
+                and raw_st[1:].isdigit()
+            ):
+                streaks_map.setdefault((sp, side_team), (raw_st[0].upper(), int(raw_st[1:])))
 
         if (sp, ht) not in next_game_by_team:
             next_game_by_team[(sp, ht)] = (ev, f"vs {at}", hp_f)
