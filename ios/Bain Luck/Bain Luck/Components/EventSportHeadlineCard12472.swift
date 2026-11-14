@@ -31,6 +31,14 @@ struct EventSportHeadlineCard12472: View {
     @ScaledMetric(relativeTo: .title3) private var liveNowColWidth: CGFloat = 80
     @ScaledMetric(relativeTo: .body) private var pregameProjectedColWidth: CGFloat = 56
     @ScaledMetric(relativeTo: .title2) private var pregameChanceColWidth: CGFloat = 80
+    @ScaledMetric(relativeTo: .title3) private var finalResultColWidth: CGFloat = 58
+    @ScaledMetric(relativeTo: .title3) private var finalScoreValueSize: CGFloat = 24
+    @ScaledMetric(relativeTo: .body) private var tennisSetValueSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .subheadline) private var tennisPtsValueSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .body) private var tennisSetColWidth: CGFloat = 23
+    @ScaledMetric(relativeTo: .body) private var tennisPtsColWidth: CGFloat = 31
+    @ScaledMetric(relativeTo: .caption2) private var tennisPregameColWidth: CGFloat = 46
+    @ScaledMetric(relativeTo: .title3) private var tennisNowColWidth: CGFloat = 66
 
     private static let soccerWonGreen = Color(red: 0.09, green: 0.56, blue: 0.30)
     private static let soccerDrawBarSlate = Color(red: 0.58, green: 0.63, blue: 0.70)
@@ -59,13 +67,40 @@ struct EventSportHeadlineCard12472: View {
         stacksRowsVertically ? min(max(pregameChanceColWidth, 108), 124) : min(pregameChanceColWidth, 84)
     }
 
+    private var effectiveFinalResultColWidth: CGFloat {
+        stacksRowsVertically ? min(max(finalResultColWidth, 84), 104) : min(finalResultColWidth, 64)
+    }
+
+    private var effectiveTennisSetColWidth: CGFloat {
+        stacksRowsVertically ? min(max(tennisSetColWidth, 28), 36) : min(tennisSetColWidth, 25)
+    }
+
+    private var effectiveTennisPtsColWidth: CGFloat {
+        stacksRowsVertically ? min(max(tennisPtsColWidth, 36), 44) : min(tennisPtsColWidth, 34)
+    }
+
+    private var effectiveTennisPregameColWidth: CGFloat {
+        stacksRowsVertically ? min(max(tennisPregameColWidth, 84), 104) : min(tennisPregameColWidth, 50)
+    }
+
+    private var effectiveTennisNowColWidth: CGFloat {
+        stacksRowsVertically ? min(max(tennisNowColWidth, 96), 116) : min(tennisNowColWidth, 70)
+    }
+
     private var cardAccessibilityIdentifier: String {
         switch model.kind {
         case .nflBeforeGame: return "event-headline-12472-nfl-before"
+        case .nflAfterGame: return "event-headline-12472-nfl-after"
         case .nbaDuringGame: return "event-headline-12472-nba-during"
         case .soccerBeforeGame: return "event-headline-12472-soccer-before"
+        case .soccerDuringGame: return "event-headline-12472-soccer-during"
         case .soccerAfterGame: return "event-headline-12472-soccer-after"
         case .nhlDuringGame: return "event-headline-12472-nhl-during"
+        case .mlbAfterGame: return "event-headline-12472-mlb-after"
+        case .mmaBeforeGame: return "event-headline-12472-mma-before"
+        case .mmaDuringGame: return "event-headline-12472-mma-during"
+        case .mmaAfterGame: return "event-headline-12472-mma-after"
+        case .tennisDuringGame: return "event-headline-12472-tennis-during"
         }
     }
 
@@ -102,34 +137,58 @@ struct EventSportHeadlineCard12472: View {
         return parts.joined(separator: " · ")
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            topBar
-            if let threeWay = model.soccerThreeWay {
-                soccerThreeWayContent(threeWay)
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let pregameHeaders = model.pregameColumnHeaders {
-                        pregameColumnHeaderRow(pregameHeaders)
-                    } else if let headers = model.liveColumnHeaders, headers.hasAny {
-                        liveColumnHeaderRow(headers)
+    @inline(never)
+    private func cardStackBoundary12278<V: View>(@ViewBuilder _ make: () -> V) -> AnyView {
+        AnyView(make())
+    }
+
+    var body: AnyView {
+        cardStackBoundary12278 {
+            VStack(alignment: .leading, spacing: 10) {
+                cardStackBoundary12278 { topBar }
+                if let threeWay = model.soccerThreeWay {
+                    cardStackBoundary12278 { soccerThreeWayContent(threeWay) }
+                } else if let scoreFirst = model.tennisScoreFirst {
+                    cardStackBoundary12278 { tennisScoreFirstContent(scoreFirst) }
+                    if model.showsBottomBar {
+                        cardStackBoundary12278 { bottomProbabilityBar }
                     }
-                    teamRow(model.away, color: colors.away, isAway: true)
-                    teamRow(model.home, color: colors.home, isAway: false)
+                } else {
+                    cardStackBoundary12278 {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if let pregameHeaders = model.pregameColumnHeaders {
+                                pregameColumnHeaderRow(pregameHeaders)
+                            } else if let headers = model.liveColumnHeaders, headers.hasAny {
+                                liveColumnHeaderRow(headers)
+                            } else if let finalHeaders = model.finalColumnHeaders {
+                                finalColumnHeaderRow(finalHeaders)
+                            }
+                            teamRow(model.away, color: colors.away, isAway: true)
+                            if model.showsRowDivider {
+                                Rectangle()
+                                    .fill(Color.primary.opacity(0.06))
+                                    .frame(height: 0.5)
+                                    .accessibilityHidden(true)
+                            }
+                            teamRow(model.home, color: colors.home, isAway: false)
+                        }
+                    }
+                    if model.showsBottomBar {
+                        cardStackBoundary12278 { bottomProbabilityBar }
+                    }
                 }
-                bottomProbabilityBar
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(cardAccessibilityIdentifier)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(cardAccessibilityIdentifier)
     }
 
     // MARK: - Top Bar
@@ -152,7 +211,7 @@ struct EventSportHeadlineCard12472: View {
     @ViewBuilder
     private var leadingMeta: some View {
         switch model.kind {
-        case .nflBeforeGame, .soccerBeforeGame:
+        case .nflBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
             TimelineView(.periodic(from: .now, by: 60)) { tick in
                 let text = displayAsOf != nil
                     ? model.plainMetaText
@@ -164,14 +223,14 @@ struct EventSportHeadlineCard12472: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-        case .soccerAfterGame:
+        case .soccerAfterGame, .nflAfterGame, .mlbAfterGame, .mmaAfterGame:
             if let text = model.plainMetaText {
                 Text(text)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(DS.textSecondaryReadable)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        case .nbaDuringGame, .nhlDuringGame:
+        case .nbaDuringGame, .nhlDuringGame, .soccerDuringGame, .mmaDuringGame, .tennisDuringGame:
             HStack(spacing: 8) {
                 if let liveBadge = model.liveBadgeText {
                     HStack(spacing: 5) {
@@ -337,6 +396,7 @@ struct EventSportHeadlineCard12472: View {
     @ViewBuilder
     private func soccerCenterTag(_ threeWay: EventSportHeadlines12472.SoccerThreeWayModel) -> some View {
         if threeWay.isScorePill {
+            let spokenPrefix = model.kind == .soccerDuringGame ? "Score" : "Final score"
             Text(threeWay.centerTagText)
                 .font(.system(size: min(soccerScorePillSize, 19), weight: .heavy, design: .rounded).monospacedDigit())
                 .foregroundStyle(Color.white)
@@ -345,7 +405,7 @@ struct EventSportHeadlineCard12472: View {
                 .padding(.vertical, 4)
                 .background(Capsule().fill(Color(red: 0.08, green: 0.11, blue: 0.16)))
                 .fixedSize(horizontal: true, vertical: true)
-                .accessibilityLabel("Final score \(threeWay.centerTagText)")
+                .accessibilityLabel("\(spokenPrefix) \(threeWay.centerTagText)")
         } else {
             Text(threeWay.centerTagText)
                 .font(.caption.weight(.medium))
@@ -707,13 +767,394 @@ struct EventSportHeadlineCard12472: View {
         }
     }
 
+    private func finalColumnHeaderRow(_ headers: EventSportHeadlines12472.FinalColumnHeaders) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                if let pregameHeader = headers.pregame {
+                    Text(pregameHeader)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .frame(width: effectivePregameColWidth, alignment: .trailing)
+                }
+                Text(headers.finalLabel)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(width: effectiveFinalResultColWidth, alignment: .trailing)
+            }
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
+        }
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func finalValueColumns(
+        _ side: EventSportHeadlines12472.TeamRowModel,
+        headers: EventSportHeadlines12472.FinalColumnHeaders
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            if headers.pregame != nil {
+                Group {
+                    if let pregame = side.pregameChanceText {
+                        pregameLabel(pregame)
+                    } else {
+                        Text("—")
+                            .font(.system(size: min(livePregameSize, 17), weight: .medium, design: .rounded))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                    }
+                }
+                .frame(width: effectivePregameColWidth, alignment: .trailing)
+            }
+            if let finalResult = side.finalResultText {
+                finalResultValueText(
+                    finalResult,
+                    won: side.won,
+                    isWordResult: finalResult == "Won" || finalResult == "Lost"
+                )
+                .frame(width: effectiveFinalResultColWidth, alignment: .trailing)
+            }
+        }
+    }
+
+    private func finalResultValueText(
+        _ text: String,
+        won: Bool?,
+        isWordResult: Bool
+    ) -> some View {
+        let maxFont: CGFloat = isWordResult ? 20 : 27
+        let baseFont: CGFloat = isWordResult ? soccerBoxVerdictSize : finalScoreValueSize
+        let weight: Font.Weight = (won == true || won == nil) ? .black : .semibold
+        let foreground: Color = (won == false) ? Color.primary.opacity(0.45) : Color.primary
+        return Text(text)
+            .font(.system(size: min(baseFont, maxFont), weight: weight, design: .rounded).monospacedDigit())
+            .foregroundStyle(foreground)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityLabel("Final \(text)")
+    }
+
+    // MARK: - Score-First Live Tennis Table
+
+    @ViewBuilder
+    private func tennisScoreFirstContent(
+        _ scoreFirst: EventSportHeadlines12472.TennisScoreFirstModel
+    ) -> some View {
+        if stacksRowsVertically {
+            VStack(alignment: .leading, spacing: 8) {
+                if scoreFirst.pregameHeader != nil || !scoreFirst.nowHeader.isEmpty {
+                    HStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        if let pregameHeader = scoreFirst.pregameHeader {
+                            Text(pregameHeader)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .frame(width: effectiveTennisPregameColWidth, alignment: .trailing)
+                        }
+                        Text(scoreFirst.nowHeader)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .frame(width: effectiveTennisNowColWidth, alignment: .trailing)
+                    }
+                    .accessibilityHidden(true)
+                }
+                tennisStackedPlayerRow(
+                    model.away,
+                    color: colors.away,
+                    scoreFirst: scoreFirst,
+                    isAway: true
+                )
+                Rectangle()
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(height: 0.5)
+                    .accessibilityHidden(true)
+                tennisStackedPlayerRow(
+                    model.home,
+                    color: colors.home,
+                    scoreFirst: scoreFirst,
+                    isAway: false
+                )
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                tennisHeaderRow(scoreFirst)
+                tennisInlinePlayerRow(
+                    model.away,
+                    color: colors.away,
+                    scoreFirst: scoreFirst,
+                    isAway: true
+                )
+                Rectangle()
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(height: 0.5)
+                    .accessibilityHidden(true)
+                tennisInlinePlayerRow(
+                    model.home,
+                    color: colors.home,
+                    scoreFirst: scoreFirst,
+                    isAway: false
+                )
+            }
+        }
+    }
+
+    private func tennisSetColumnWidth(for header: String) -> CGFloat {
+        header == "Sets" ? max(effectiveTennisSetColWidth, 30) : effectiveTennisSetColWidth
+    }
+
+    private func tennisHeaderRow(
+        _ scoreFirst: EventSportHeadlines12472.TennisScoreFirstModel
+    ) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 6) {
+                Text("Player")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                HStack(spacing: 4) {
+                    ForEach(Array(scoreFirst.setColumns.enumerated()), id: \.offset) { _, col in
+                        Text(col.header)
+                            .font(.caption2.weight(.medium).monospacedDigit())
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .frame(width: tennisSetColumnWidth(for: col.header), alignment: .center)
+                    }
+                    if scoreFirst.pointsColumn != nil {
+                        Text("Pts")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(DS.greenReadable)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .frame(width: effectiveTennisPtsColWidth, alignment: .center)
+                    }
+                }
+                if !scoreFirst.setColumns.isEmpty || scoreFirst.pointsColumn != nil {
+                    Color.clear
+                        .frame(width: 5, height: 1)
+                }
+                HStack(spacing: 6) {
+                    if let pregameHeader = scoreFirst.pregameHeader {
+                        Text(pregameHeader)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .frame(width: effectiveTennisPregameColWidth, alignment: .trailing)
+                    }
+                    Text(scoreFirst.nowHeader)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: effectiveTennisNowColWidth, alignment: .trailing)
+                }
+            }
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func tennisInlinePlayerRow(
+        _ side: EventSportHeadlines12472.TeamRowModel,
+        color: Color,
+        scoreFirst: EventSportHeadlines12472.TennisScoreFirstModel,
+        isAway: Bool
+    ) -> some View {
+        let ptsText = isAway ? scoreFirst.pointsColumn?.away : scoreFirst.pointsColumn?.home
+
+        return HStack(alignment: .center, spacing: 6) {
+            Text(side.shortName)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 4) {
+                ForEach(Array(scoreFirst.setColumns.enumerated()), id: \.offset) { _, col in
+                    let val = isAway ? col.awayValue : col.homeValue
+                    let emphasized = isAway ? col.awayEmphasized : col.homeEmphasized
+                    Text(val)
+                        .font(.system(size: min(tennisSetValueSize, 20), weight: emphasized ? .bold : .medium, design: .rounded).monospacedDigit())
+                        .foregroundStyle(emphasized ? Color.primary : DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: tennisSetColumnWidth(for: col.header), alignment: .center)
+                }
+                if let ptsText {
+                    Text(ptsText)
+                        .font(.system(size: min(tennisPtsValueSize, 17), weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(DS.greenReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .padding(.vertical, 2)
+                        .frame(width: effectiveTennisPtsColWidth, alignment: .center)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(DS.greenReadable.opacity(0.11))
+                        )
+                }
+            }
+
+            if !scoreFirst.setColumns.isEmpty || scoreFirst.pointsColumn != nil {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.10))
+                    .frame(width: 1, height: 22)
+                    .padding(.horizontal, 2)
+                    .accessibilityHidden(true)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if scoreFirst.pregameHeader != nil {
+                    Group {
+                        if let pregame = side.pregameChanceText {
+                            pregameLabel(pregame)
+                        } else {
+                            Text("—")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(DS.textSecondaryReadable)
+                        }
+                    }
+                    .frame(width: effectiveTennisPregameColWidth, alignment: .trailing)
+                }
+                Text(side.winChanceText)
+                    .font(.system(size: min(liveTenthsChanceSize, 24), weight: .black, design: .rounded).monospacedDigit())
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(width: effectiveTennisNowColWidth, alignment: .trailing)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            tennisPlayerSpokenLabel(
+                side: side,
+                scoreFirst: scoreFirst,
+                isAway: isAway
+            )
+        )
+        .accessibilityIdentifier(isAway ? "headline-12472-away-row" : "headline-12472-home-row")
+    }
+
+    private func tennisStackedPlayerRow(
+        _ side: EventSportHeadlines12472.TeamRowModel,
+        color: Color,
+        scoreFirst: EventSportHeadlines12472.TennisScoreFirstModel,
+        isAway: Bool
+    ) -> some View {
+        let ptsText = isAway ? scoreFirst.pointsColumn?.away : scoreFirst.pointsColumn?.home
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(side.shortName)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                HStack(spacing: 6) {
+                    ForEach(Array(scoreFirst.setColumns.enumerated()), id: \.offset) { _, col in
+                        let val = isAway ? col.awayValue : col.homeValue
+                        let emphasized = isAway ? col.awayEmphasized : col.homeEmphasized
+                        Text(val)
+                            .font(.body.weight(emphasized ? .bold : .regular).monospacedDigit())
+                            .foregroundStyle(emphasized ? Color.primary : DS.textSecondaryReadable)
+                    }
+                    if let ptsText {
+                        Text(ptsText)
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .foregroundStyle(DS.greenReadable)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(DS.greenReadable.opacity(0.11))
+                            )
+                    }
+                }
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Spacer(minLength: 0)
+                if scoreFirst.pregameHeader != nil, let pregame = side.pregameChanceText {
+                    pregameLabel(pregame)
+                        .frame(width: effectiveTennisPregameColWidth, alignment: .trailing)
+                }
+                chanceText(side.winChanceText, color: color, hasInlineColumns: true)
+                    .frame(width: effectiveTennisNowColWidth, alignment: .trailing)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            tennisPlayerSpokenLabel(
+                side: side,
+                scoreFirst: scoreFirst,
+                isAway: isAway
+            )
+        )
+        .accessibilityIdentifier(isAway ? "headline-12472-away-row" : "headline-12472-home-row")
+    }
+
+    private func tennisPlayerSpokenLabel(
+        side: EventSportHeadlines12472.TeamRowModel,
+        scoreFirst: EventSportHeadlines12472.TennisScoreFirstModel,
+        isAway: Bool
+    ) -> String {
+        var parts: [String] = [side.shortName]
+        let setValues = scoreFirst.setColumns.map { col in
+            "\(col.header) \(isAway ? col.awayValue : col.homeValue)"
+        }
+        if !setValues.isEmpty {
+            parts.append(setValues.joined(separator: ", "))
+        }
+        if let pts = isAway ? scoreFirst.pointsColumn?.away : scoreFirst.pointsColumn?.home {
+            parts.append("points \(pts)")
+        }
+        if let pregame = side.pregameChanceText {
+            parts.append("pregame \(pregame)")
+        }
+        parts.append("now \(side.winChanceText)")
+        return parts.joined(separator: ", ")
+    }
+
     @ViewBuilder
     private func teamRow(
         _ side: EventSportHeadlines12472.TeamRowModel,
         color: Color,
         isAway: Bool
     ) -> some View {
-        if model.pregameColumnHeaders != nil {
+        if let finalHeaders = model.finalColumnHeaders {
+            if stacksRowsVertically {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        crest(side, color: color)
+                        teamIdentityStack(side, color: color, stacksRecord: true)
+                    }
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        finalValueColumns(side, headers: finalHeaders)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(isAway ? "headline-12472-away-row" : "headline-12472-home-row")
+            } else {
+                HStack(alignment: .center, spacing: 6) {
+                    crest(side, color: color)
+                    teamIdentityStack(side, color: color, stacksRecord: true)
+                    Spacer(minLength: 4)
+                    finalValueColumns(side, headers: finalHeaders)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(isAway ? "headline-12472-away-row" : "headline-12472-home-row")
+            }
+        } else if model.pregameColumnHeaders != nil {
             if stacksRowsVertically {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
@@ -808,15 +1249,30 @@ struct EventSportHeadlineCard12472: View {
         color: Color,
         stacksRecord: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: 1.5) {
+        let isLoser = side.won == false
+        return VStack(alignment: .leading, spacing: 1.5) {
             if stacksRecord {
-                Text(side.shortName)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.primary)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.85)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let record = side.record {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(side.shortName)
+                        .font(.subheadline.weight(isLoser ? .semibold : .bold))
+                        .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if side.won == true {
+                        Text("\u{2713}")
+                            .font(.subheadline.weight(.heavy))
+                            .foregroundStyle(Self.soccerWonGreen)
+                            .accessibilityLabel("won")
+                    }
+                }
+                if let subline = side.secondarySublineText {
+                    Text(subline)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                } else if let record = side.record {
                     Text(record)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
@@ -832,11 +1288,17 @@ struct EventSportHeadlineCard12472: View {
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(side.shortName)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.primary)
+                        .font(.subheadline.weight(isLoser ? .semibold : .bold))
+                        .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
                         .lineLimit(2)
                         .minimumScaleFactor(0.85)
                         .fixedSize(horizontal: false, vertical: true)
+                    if side.won == true {
+                        Text("\u{2713}")
+                            .font(.subheadline.weight(.heavy))
+                            .foregroundStyle(Self.soccerWonGreen)
+                            .accessibilityLabel("won")
+                    }
                     if let record = side.record {
                         Text(record)
                             .font(.caption.monospacedDigit())
