@@ -1,0 +1,80 @@
+{
+  "candidate_slug": "roundup-as-likely-as",
+  "producer": "cross_domain_yardsticks",
+  "captured_at": "2026-11-14T08:25:00+00:00",
+  "trading_guard_summary": "Pairs 4 verified actively trading items across 4 distinct domains within ±1.5 points of 46%: NBA game #15348566 Mavericks at Cavaliers (46.0%), Economics #30691373 Anthropic IPO $1.25T–$1.5T ($211.8k/24h, 45.6%), Tech #60607595 OpenAI Millennium Prize ($1,299/24h, 46.5%), and Culture #58492244 Grammys Best Rap Album A$AP Rocky ($1,286/24h, 44.7%). Excludes stale/untraded Oscar Supporting Actor #52755611 ($0 volume, Oct 27 quote).",
+  "input_items": [
+    {
+      "id": 15348566,
+      "item_type": "event",
+      "sport": "basketball_nba",
+      "status": "scheduled",
+      "home_team": "Cleveland Cavaliers",
+      "away_team": "Dallas Mavericks",
+      "hero_probability": 0.54,
+      "hero_probability_away": 0.46,
+      "commence_time": "2026-11-15T00:30:00+00:00"
+    },
+    {
+      "id": 30691373,
+      "item_type": "market",
+      "source": "polymarket",
+      "category": "economics",
+      "status": "open",
+      "name": "Anthropic IPO Closing Market Cap",
+      "volume_24h": 211802.05,
+      "updated_at": "2026-11-14T06:32:24+00:00",
+      "outcomes": [
+        {"name": "$1.25–$1.5T", "probability": 0.4561}
+      ]
+    },
+    {
+      "id": 60607595,
+      "item_type": "market",
+      "source": "polymarket",
+      "category": "tech",
+      "status": "open",
+      "name": "OpenAI announces another Millennium Prize solution?",
+      "volume_24h": 1298.56,
+      "updated_at": "2026-11-14T03:29:17+00:00",
+      "outcomes": [
+        {"name": "December 31, 2027", "probability": 0.465}
+      ]
+    },
+    {
+      "id": 58492244,
+      "item_type": "market",
+      "source": "polymarket",
+      "category": "entertainment",
+      "status": "open",
+      "name": "Grammys 2027: Best Rap Album Winner",
+      "volume_24h": 1286.26,
+      "updated_at": "2026-11-13T22:28:43+00:00",
+      "outcomes": [
+        {"name": "Don't Be Dumb - A$AP Rocky", "probability": 0.4465}
+      ]
+    },
+    {
+      "id": 52755611,
+      "item_type": "market",
+      "source": "kalshi",
+      "category": "entertainment",
+      "status": "open",
+      "name": "Oscar winner: Best Supporting Actor",
+      "volume_24h": 0.0,
+      "updated_at": "2026-10-27T06:55:02+00:00",
+      "outcomes": [
+        {"name": "Paul Giamatti", "probability": 0.466}
+      ]
+    }
+  ],
+  "expected_member_ids": [
+    15348566,
+    30691373,
+    60607595,
+    58492244
+  ],
+  "excluded_ids": [
+    52755611
+  ]
+}
