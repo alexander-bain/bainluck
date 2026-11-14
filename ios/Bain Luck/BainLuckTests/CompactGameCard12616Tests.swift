@@ -345,6 +345,26 @@ final class CompactGameCard12616Tests: XCTestCase {
         XCTAssertEqual(sLabels.draw, "25%")
     }
 
+    // MARK: - 4d. Atlas Column Type Spec (20pt / 17pt / 15pt, 18pt gutter, baseline lock)
+
+    func testEventCardColumnTypeSpecUsesThreeGentleStepsGutterAndBaselineLock() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Components/EventCardView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("compactHeaderSize: CGFloat = 10.5"))
+        XCTAssertTrue(source.contains("compactScoreSize: CGFloat = 17"))
+        XCTAssertTrue(source.contains("compactPregameSize: CGFloat = 15"))
+        XCTAssertTrue(source.contains("compactLargeSize: CGFloat = 20"))
+        XCTAssertFalse(source.contains("compactLargeSize: CGFloat = 28"))
+        XCTAssertTrue(source.contains("scoreToPregameGutter: CGFloat = 18"))
+        XCTAssertTrue(source.contains("pregameToNowGap: CGFloat = 10"))
+        XCTAssertTrue(source.contains("HStack(alignment: .firstTextBaseline, spacing: 0)"))
+        XCTAssertFalse(source.contains("minimumScaleFactor(0.85)"))
+    }
+
     // MARK: - 5. 390pt native renders for PR review
 
     @MainActor
