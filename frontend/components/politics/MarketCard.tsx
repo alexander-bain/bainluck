@@ -105,6 +105,7 @@ function BinaryCard({
                 <EntityImage
                   type="wikipedia"
                   name={cleanPersonOutcomeName(first.name)}
+                  imageTitle={market.top_outcomes.find(o => o.name === first.name)?.image_title}
                   size={24}
                   showFallback={false}
                 />
@@ -238,6 +239,7 @@ function MultiCard({
                   <EntityImage
                     type="wikipedia"
                     name={cleanPersonOutcomeName(leader.name)}
+                    imageTitle={leader.image_title}
                     size={24}
                     showFallback={false}
                   />

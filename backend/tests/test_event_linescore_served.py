@@ -28,9 +28,9 @@ def _event(**kwargs):
         home_team_name="Wu Yibing",
         away_team_name="Carlos Alcaraz",
         commence_time=datetime(2026, 9, 4, 18, 16, tzinfo=timezone.utc),
-        status="completed",
-        home_score=0,
-        away_score=3,
+        status=kwargs.pop("status", "completed"),
+        home_score=kwargs.pop("home_score", 0),
+        away_score=kwargs.pop("away_score", 3),
         **kwargs,
     )
 
@@ -128,9 +128,19 @@ IN_PLAY_LINE = {
 
 
 def test_the_freshness_stamp_is_served_to_the_page():
-    data = _format_event(_event(box_score_data={"tennis": IN_PLAY_LINE}))
+    # This in-play first-set line must agree with the score beside it. The old
+    # fixture accidentally attached it to a completed 0-3 match.
+    data = _format_event(_event(
+        status="live", home_score=0, away_score=0,
+        box_score_data={"tennis": IN_PLAY_LINE},
+    ))
 
     assert data["linescore"]["observed_at"] == "2026-09-05T15:22:42+00:00"
+
+
+def test_a_freshness_stamp_cannot_make_a_conflicting_set_line_servable():
+    data = _format_event(_event(box_score_data={"tennis": IN_PLAY_LINE}))
+    assert "linescore" not in data
 
 
 def test_a_settled_line_serves_no_stamp_and_that_is_not_an_error():

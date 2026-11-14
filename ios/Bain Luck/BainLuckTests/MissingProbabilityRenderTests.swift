@@ -86,6 +86,17 @@ final class MissingProbabilityRenderTests: XCTestCase {
         XCTAssertEqual(formatProbabilityOrDash(nil, renderedPercent: 43), absentProbabilityMarker)
     }
 
+    func testOneCentBoundWithZeroAllocatedPointsNeverClaimsZeroChance() {
+        // #11995: Israel's seventeen no-bid bounds are not seventeen extra
+        // percentage points beside its already-complete priced field.
+        XCTAssertEqual(formatProbability(0.01, renderedPercent: 0), "<1%")
+        XCTAssertEqual(formatProbabilityOrDash(0.01, renderedPercent: 0), "<1%")
+        XCTAssertEqual(percentNumber(1, renderedPercent: 0), "<1")
+        XCTAssertEqual(formatProbability(0.01, renderedPercent: 1), "1%")
+        XCTAssertEqual(formatProbability(0.495, renderedPercent: 49), "49%")
+        XCTAssertEqual(percentNumber(0, renderedPercent: 0), "0")
+    }
+
     // MARK: - The shared render helper (3 of the 7 sites call this)
 
     private func future(probability: Double?) throws -> RelatedFuture {

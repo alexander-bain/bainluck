@@ -1,0 +1,124 @@
+{
+  "candidate_slug": "roundup-nba-division-races",
+  "producer": "league_division_races",
+  "captured_at": "2026-11-14T15:10:00+00:00",
+  "trading_guard_summary": "Evaluates all 6 actively trading NBA division-winner boards on Sat Nov 14 and surfaces the 4 tightest races (#52755684 Southeast Hawks 37.0% vs Heat 36.5%, #52755686 Northwest Thunder 42.9% vs Timberwolves 25.9%, #52755689 Atlantic Celtics 50.5% vs 76ers 27.5%, #52755683 Southwest Spurs 65.5% vs Rockets 26.4%) while holding runaway Central (#52755688 Pistons 67.2%) and Pacific (#52755685 Lakers 80.6%) for the full collection page. Excludes untraded exact-order/win-total props (#99527501).",
+  "input_markets": [
+    {
+      "id": 52755684,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "NBA Southeast Division Winner",
+      "volume_24h": 18420.5,
+      "updated_at": "2026-11-14T14:29:00+00:00",
+      "outcomes": [
+        {"name": "Atlanta Hawks", "probability": 0.370},
+        {"name": "Miami Heat", "probability": 0.365},
+        {"name": "Orlando Magic", "probability": 0.245}
+      ]
+    },
+    {
+      "id": 52755686,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "NBA Northwest Division Winner",
+      "volume_24h": 54242.0,
+      "updated_at": "2026-11-14T14:29:00+00:00",
+      "outcomes": [
+        {"name": "Oklahoma City Thunder", "probability": 0.429},
+        {"name": "Minnesota Timberwolves", "probability": 0.259},
+        {"name": "Portland Trail Blazers", "probability": 0.193},
+        {"name": "Denver Nuggets", "probability": 0.119}
+      ]
+    },
+    {
+      "id": 52755689,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "NBA Atlantic Division Winner",
+      "volume_24h": 21940.0,
+      "updated_at": "2026-11-14T14:29:00+00:00",
+      "outcomes": [
+        {"name": "Boston Celtics", "probability": 0.505},
+        {"name": "Philadelphia 76ers", "probability": 0.275},
+        {"name": "New York Knicks", "probability": 0.195}
+      ]
+    },
+    {
+      "id": 52755683,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "NBA Southwest Division Winner",
+      "volume_24h": 19310.0,
+      "updated_at": "2026-11-14T14:29:00+00:00",
+      "outcomes": [
+        {"name": "San Antonio Spurs", "probability": 0.655},
+        {"name": "Houston Rockets", "probability": 0.264},
+        {"name": "Dallas Mavericks", "probability": 0.061}
+      ]
+    },
+    {
+      "id": 52755688,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "NBA Central Division Winner",
+      "volume_24h": 16850.0,
+      "updated_at": "2026-11-14T14:29:00+00:00",
+      "outcomes": [
+        {"name": "Detroit Pistons", "probability": 0.672},
+        {"name": "Cleveland Cavaliers", "probability": 0.248},
+        {"name": "Milwaukee Bucks", "probability": 0.060}
+      ]
+    },
+    {
+      "id": 52755685,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "NBA Pacific Division Winner",
+      "volume_24h": 24180.0,
+      "updated_at": "2026-11-14T14:29:00+00:00",
+      "outcomes": [
+        {"name": "Los Angeles Lakers", "probability": 0.806},
+        {"name": "Golden State Warriors", "probability": 0.112},
+        {"name": "Phoenix Suns", "probability": 0.058}
+      ]
+    },
+    {
+      "id": 99527501,
+      "source": "kalshi",
+      "status": "open",
+      "category": "basketball_nba",
+      "name": "NBA Atlantic Division Winner (stale untraded twin)",
+      "volume_24h": 0.0,
+      "quiet_days": 12.0,
+      "updated_at": "2026-10-29T08:00:00+00:00",
+      "outcomes": [
+        {"name": "Boston Celtics", "probability": 0.52},
+        {"name": "New York Knicks", "probability": 0.31}
+      ]
+    }
+  ],
+  "expected_card_row_ids": [
+    52755684,
+    52755686,
+    52755689,
+    52755683
+  ],
+  "expected_member_ids": [
+    52755684,
+    52755686,
+    52755689,
+    52755683,
+    52755688,
+    52755685
+  ],
+  "excluded_ids": [
+    99527501
+  ]
+}

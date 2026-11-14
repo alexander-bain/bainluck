@@ -80,6 +80,7 @@ from app.utils.series_card_labels import (
     relabel_series_card,
 )
 from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_CATEGORY
+from app.utils.tennis_live_score import attach_tennis_score, tennis_point_cache_expiry
 
 # #6923. The search card's age pip and the futures card's age mark must agree on
 # what "prints a price" means, so both call the one predicate; `routes/feed.py`
@@ -19513,6 +19514,9 @@ def _cached_detail_payload(event_id: int, now: float) -> dict | None:
         ttl = _EVENT_DETAIL_DEFAULT_TTL
     if now - cached_at >= ttl:
         return None
+    point_expiry = tennis_point_cache_expiry(cached_resp)
+    if point_expiry is not None and now >= point_expiry:
+        return None
     return cached_resp
 
 
@@ -20982,6 +20986,9 @@ async def get_event(
         if _periods is not None:
             response["box_score_data"].update(_periods)
 
+    # Tennis's games do not add up to sets won. Its whole source snapshot is
+    # checked separately and maps to the fields the installed headline reads.
+    attach_tennis_score(event, response, datetime.now(timezone.utc))
     response.update(_state_read_window)
 
     # Q050: cache under the id the caller ASKED FOR as well as the one we
@@ -37386,6 +37393,7 @@ def _format_event(
         import logging
         logging.warning(f"Error adding EI data for event {event.id}: {e}")
 
+    attach_tennis_score(event, response, _served_now)
     return response
 
 

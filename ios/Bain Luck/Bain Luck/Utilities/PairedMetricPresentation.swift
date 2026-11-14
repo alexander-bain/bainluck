@@ -230,6 +230,22 @@ nonisolated enum PairedMetricPresentation {
         return FormattedPairedStageDisplay(kind: .percent, percent: pct, label: "\(pct)%")
     }
 
+    /// Proportional `0.0...1.0` fill width behind a percentage readout box (`94%` -> `0.94`,
+    /// `36%` -> `0.36`), or `nil` when the stage is settled (`✓`/`✗`) or unpriced.
+    static func quietFillFraction(for display: FormattedPairedStageDisplay) -> Double? {
+        guard display.kind == .percent, let pct = display.percent else { return nil }
+        return min(1.0, max(0.0, Double(pct) / 100.0))
+    }
+
+    /// True when the sanitized card-face subtitle already explains the sort/tie-break rule,
+    /// avoiding repeating the same ordering sentence in the card footer.
+    static func subtitleStatesOrdering(_ cleanSubtitle: String) -> Bool {
+        let lower = cleanSubtitle.lowercased()
+        return lower.contains("ordered by")
+            || lower.contains("sorted by")
+            || lower.contains("ties broken by")
+    }
+
     /// Short Stage-1 qualifier tag (`"nom"`, `"playoff"`, or lowercased `stage1Label`).
     static func shortStage1Tag(for set: PairedMetricSet) -> String {
         let lower = set.stage1Label.lowercased()
