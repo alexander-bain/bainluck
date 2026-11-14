@@ -101,7 +101,9 @@ enum EventSportHeadlines12472 {
         case soccerBeforeGame
         case soccerDuringGame
         case soccerAfterGame
+        case nhlBeforeGame
         case nhlDuringGame
+        case nhlAfterGame
         case mlbBeforeGame
         case mlbDuringGame
         case mlbAfterGame
@@ -112,11 +114,11 @@ enum EventSportHeadlines12472 {
 
         nonisolated var phase: Phase {
             switch self {
-            case .nflBeforeGame, .nbaBeforeGame, .ncaafBeforeGame, .ncaabBeforeGame, .mlbBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
+            case .nflBeforeGame, .nbaBeforeGame, .ncaafBeforeGame, .ncaabBeforeGame, .mlbBeforeGame, .nhlBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
                 return .before
             case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .mlbDuringGame, .soccerDuringGame, .nhlDuringGame, .mmaDuringGame, .tennisDuringGame:
                 return .during
-            case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .soccerAfterGame, .mlbAfterGame, .mmaAfterGame:
+            case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .soccerAfterGame, .mlbAfterGame, .nhlAfterGame, .mmaAfterGame:
                 return .after
             }
         }
@@ -137,7 +139,9 @@ enum EventSportHeadlines12472 {
             case .soccerBeforeGame: return "event-headline-12472-soccer-before"
             case .soccerDuringGame: return "event-headline-12472-soccer-during"
             case .soccerAfterGame: return "event-headline-12472-soccer-after"
+            case .nhlBeforeGame: return "event-headline-12472-nhl-before"
             case .nhlDuringGame: return "event-headline-12472-nhl-during"
+            case .nhlAfterGame: return "event-headline-12472-nhl-after"
             case .mlbBeforeGame: return "event-headline-12472-mlb-before"
             case .mlbDuringGame: return "event-headline-12472-mlb-during"
             case .mlbAfterGame: return "event-headline-12472-mlb-after"
@@ -442,6 +446,10 @@ enum EventSportHeadlines12472 {
                 guard event.homeScore != nil, event.awayScore != nil else { return nil }
                 return .mlbAfterGame
             }
+            if event.sport == "icehockey_nhl" {
+                guard event.homeScore != nil, event.awayScore != nil else { return nil }
+                return .nhlAfterGame
+            }
             if isMMASport(event.sport) {
                 let outcome = EventOutcome.resolve(
                     status: event.status,
@@ -494,8 +502,8 @@ enum EventSportHeadlines12472 {
         if event.sport == "baseball_mlb" {
             return event.status == "live" ? .mlbDuringGame : .mlbBeforeGame
         }
-        if event.sport == "icehockey_nhl" && event.status == "live" {
-            return .nhlDuringGame
+        if event.sport == "icehockey_nhl" {
+            return event.status == "live" ? .nhlDuringGame : .nhlBeforeGame
         }
         if isMMASport(event.sport) {
             return event.status == "live" ? .mmaDuringGame : .mmaBeforeGame
@@ -568,7 +576,7 @@ enum EventSportHeadlines12472 {
                 gameMarkets: gameMarkets,
                 now: now
             )
-        case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .mlbAfterGame, .mmaAfterGame:
+        case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .mlbAfterGame, .nhlAfterGame, .mmaAfterGame:
             return resolveFinishedTwoWay(
                 resolvedKind: resolvedKind,
                 event: event,
@@ -580,7 +588,7 @@ enum EventSportHeadlines12472 {
              .ncaafBeforeGame, .ncaafDuringGame,
              .ncaabBeforeGame, .ncaabDuringGame,
              .mlbBeforeGame, .mlbDuringGame,
-             .nhlDuringGame, .mmaBeforeGame, .mmaDuringGame, .tennisDuringGame:
+             .nhlBeforeGame, .nhlDuringGame, .mmaBeforeGame, .mmaDuringGame, .tennisDuringGame:
             return resolveOpenTwoWay(
                 resolvedKind: resolvedKind,
                 event: event,
@@ -1133,6 +1141,24 @@ enum EventSportHeadlines12472 {
                 confidenceTier: confidenceTier
             )
 
+        case .nhlAfterGame:
+            return resolveStandardFinished(
+                kind: .nhlAfterGame,
+                sportKey: "icehockey_nhl",
+                league: "NHL",
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                pregameTexts: pregameTexts,
+                awayWon: awayWon,
+                homeWon: homeWon,
+                markAwayProb: markAwayProb,
+                markHomeProb: markHomeProb,
+                confidenceTier: confidenceTier,
+                showsRowDivider: true
+            )
+
         case .mlbAfterGame:
             guard let awayScore = event.awayScore, let homeScore = event.homeScore else {
                 return nil
@@ -1486,6 +1512,28 @@ enum EventSportHeadlines12472 {
                 kind: .mlbBeforeGame,
                 sportKey: "baseball_mlb",
                 league: "MLB",
+                allowsStreamingTenths: false,
+                showsChanceHeaderWithoutProjection: true,
+                showsRowDivider: true,
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                shown: shown,
+                awayProb: awayProb,
+                homeProb: homeProb,
+                hasScore: hasScore,
+                numberStreams: numberStreams,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                confidenceTier: confidenceTier,
+                now: now
+            )
+        case .nhlBeforeGame:
+            return resolveStandardBefore(
+                kind: .nhlBeforeGame,
+                sportKey: "icehockey_nhl",
+                league: "NHL",
                 allowsStreamingTenths: false,
                 showsChanceHeaderWithoutProjection: true,
                 showsRowDivider: true,
