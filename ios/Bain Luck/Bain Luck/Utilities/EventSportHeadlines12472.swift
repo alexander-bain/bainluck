@@ -233,6 +233,8 @@ enum EventSportHeadlines12472 {
         var won: Bool? = nil
         var finalResultText: String? = nil
         var secondarySublineText: String? = nil
+        var abbreviation: String? = nil
+        var opponentAbbreviation: String? = nil
     }
 
     nonisolated struct Model: Equatable, Sendable {
@@ -249,8 +251,8 @@ enum EventSportHeadlines12472 {
         let pregameColumnHeaders: PregameColumnHeaders?
         let liveColumnHeaders: LiveColumnHeaders?
         var finalColumnHeaders: FinalColumnHeaders? = nil
-        let away: TeamRowModel
-        let home: TeamRowModel
+        var away: TeamRowModel
+        var home: TeamRowModel
         let pregameAwayMarker: Double?
         let soccerThreeWay: SoccerThreeWayModel?
         var tennisScoreFirst: TennisScoreFirstModel? = nil
@@ -530,9 +532,10 @@ enum EventSportHeadlines12472 {
             sportKey: event.sport
         )
 
+        let baseModel: Model?
         switch resolvedKind {
         case .soccerBeforeGame:
-            return resolveSoccerBefore(
+            baseModel = resolveSoccerBefore(
                 event: event,
                 awayFullName: awayFullName,
                 homeFullName: homeFullName,
@@ -542,7 +545,7 @@ enum EventSportHeadlines12472 {
                 now: now
             )
         case .soccerAfterGame:
-            return resolveSoccerAfter(
+            baseModel = resolveSoccerAfter(
                 event: event,
                 awayFullName: awayFullName,
                 homeFullName: homeFullName,
@@ -551,7 +554,7 @@ enum EventSportHeadlines12472 {
                 now: now
             )
         case .soccerDuringGame:
-            return resolveSoccerDuring(
+            baseModel = resolveSoccerDuring(
                 event: event,
                 awayFullName: awayFullName,
                 homeFullName: homeFullName,
@@ -562,7 +565,7 @@ enum EventSportHeadlines12472 {
                 now: now
             )
         case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .mlbAfterGame, .mmaAfterGame:
-            return resolveFinishedTwoWay(
+            baseModel = resolveFinishedTwoWay(
                 resolvedKind: resolvedKind,
                 event: event,
                 awayFullName: awayFullName,
@@ -573,7 +576,7 @@ enum EventSportHeadlines12472 {
              .ncaafBeforeGame, .ncaafDuringGame,
              .ncaabBeforeGame, .ncaabDuringGame,
              .nhlDuringGame, .mmaBeforeGame, .mmaDuringGame, .tennisDuringGame:
-            return resolveOpenTwoWay(
+            baseModel = resolveOpenTwoWay(
                 resolvedKind: resolvedKind,
                 event: event,
                 awayFullName: awayFullName,
@@ -587,6 +590,14 @@ enum EventSportHeadlines12472 {
                 now: now
             )
         }
+        guard var model = baseModel else { return nil }
+        let awayAbbr = event.awayTeamData?.abbreviation
+        let homeAbbr = event.homeTeamData?.abbreviation
+        model.away.abbreviation = awayAbbr
+        model.away.opponentAbbreviation = homeAbbr
+        model.home.abbreviation = homeAbbr
+        model.home.opponentAbbreviation = awayAbbr
+        return model
     }
 
     @inline(never)

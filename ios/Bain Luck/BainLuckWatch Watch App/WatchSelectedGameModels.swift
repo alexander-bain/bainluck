@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Bain_Luck)
+@testable import Bain_Luck
+#endif
 
 /// Public event-detail fields only. Missing readings stay missing; an away or draw
 /// probability is never manufactured from a home reading.
@@ -111,11 +114,29 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         guard id > 0 else { throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Invalid event id") }
         // Identity and named sides are essential: {} is an invalid response, not
         // an empty selection or an unnamed game the reader must interpret.
-        homeTeam = try c.decode(String.self, forKey: .homeTeam)
-        awayTeam = try c.decode(String.self, forKey: .awayTeam)
-        guard !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let rawHomeTeam = try c.decode(String.self, forKey: .homeTeam)
+        let rawAwayTeam = try c.decode(String.self, forKey: .awayTeam)
+        guard !rawHomeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !rawAwayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw DecodingError.dataCorruptedError(forKey: .homeTeam, in: c, debugDescription: "Missing team name")
+        }
+        // Public event detail uses `sport`; older snapshots use `sport_key`.
+        let decodedSportKey = (try? c.decode(String.self, forKey: .sport))
+            ?? (try? c.decode(String.self, forKey: .sportKey))
+        sportKey = decodedSportKey
+        // Ruling 194-A — college teams print the school ("Duke", "Alabama",
+        // "Gonzaga", "Ole Miss"), never the mascot.
+        if TeamShortName.isCollegeSport(sportKey: decodedSportKey) {
+            let schools = TeamShortName.shortPair(
+                away: rawAwayTeam,
+                home: rawHomeTeam,
+                sportKey: decodedSportKey
+            )
+            awayTeam = schools.away
+            homeTeam = schools.home
+        } else {
+            homeTeam = rawHomeTeam
+            awayTeam = rawAwayTeam
         }
         // The server attaches canonical identities to their event side; never derive a shorthand.
         homeCompactIdentity = try? c.decode(WatchCompactTeamIdentity.self, forKey: .homeTeamData)
@@ -133,9 +154,6 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         awayProbability = hero != nil ? heroAway.flatMap { (0...1).contains($0) ? $0 : nil } : odds?.awayProbability
         // The producer clock dates the hero, never the sportsbook capture or score.
         probabilityObservedAt = hero != nil ? Self.date(try? c.decode(String.self, forKey: .probabilityObservedAt)) : nil
-        // Public event detail uses `sport`; older snapshots use `sport_key`.
-        sportKey = (try? c.decode(String.self, forKey: .sport))
-            ?? (try? c.decode(String.self, forKey: .sportKey))
         let espn = try? c.decode(GameState.self, forKey: .espn)
         period = espn?.period
         gameClock = espn?.gameClock
