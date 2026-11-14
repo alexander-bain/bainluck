@@ -9,7 +9,8 @@ import {
   sendDiscoverInteraction,
 } from "@/lib/discoverInteractions";
 import { wholePointFraction, type DeadlineFamilyCardModel } from "@/lib/discover/deadlineFamilyCard";
-import type { FeedItem } from "@/lib/types";
+import { resolveDiscoverFuturesVisual } from "@/lib/discover/discoverEntityVisual";
+import type { FeedFuturesData, FeedItem } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
 import { MovementBadge } from "./shared";
@@ -43,7 +44,14 @@ export function DeadlineFamilyCard({
   defaultExpanded = false,
 }: DeadlineFamilyCardProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [imgErrored, setImgErrored] = useState(false);
   const primary = items[0];
+  const primaryFuturesData =
+    primary?.type === "futures" ? (primary.data as FeedFuturesData) : null;
+  const visual = primaryFuturesData
+    ? resolveDiscoverFuturesVisual(primaryFuturesData)
+    : null;
+  const effectiveImageUrl = imgErrored ? null : visual?.imageUrl ?? null;
   const analytics = primary ? getDiscoverItemAnalytics(primary) : null;
   const category = analytics?.category ?? model.category ?? "politics";
   const rep = model.representative;
@@ -196,18 +204,43 @@ export function DeadlineFamilyCard({
           </>
         )}
 
-        <Link
-          href={rep.detailHref}
-          className="block group"
-          data-testid="deadline-family-hero-link"
-        >
-          <h4
-            className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors"
-            data-testid="deadline-family-hero-question"
+        <div className="flex items-start gap-2.5">
+          {effectiveImageUrl ? (
+            <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-surface-border bg-surface-elevated" aria-hidden="true">
+              <img
+                src={effectiveImageUrl}
+                alt=""
+                aria-hidden="true"
+                loading="lazy"
+                decoding="async"
+                onError={() => setImgErrored(true)}
+                className={visual?.presentation === "logo" ? "h-full w-full object-contain p-1" : "h-full w-full object-cover object-top"}
+                data-testid="deadline-family-subject-avatar"
+              />
+            </div>
+          ) : visual && visual.kind !== "topic" ? (
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-mono text-[11px] font-bold tracking-tight text-white shadow-sm select-none"
+              style={{ background: `linear-gradient(135deg, ${visual.monogram.bgHex}, ${visual.monogram.accentHex})` }}
+              aria-hidden="true"
+              data-testid="deadline-family-subject-monogram"
+            >
+              {visual.monogram.initials}
+            </div>
+          ) : null}
+          <Link
+            href={rep.detailHref}
+            className="block group min-w-0 flex-1"
+            data-testid="deadline-family-hero-link"
           >
-            {rep.name}
-          </h4>
-        </Link>
+            <h4
+              className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors"
+              data-testid="deadline-family-hero-question"
+            >
+              {rep.name}
+            </h4>
+          </Link>
+        </div>
 
         <div
           className="text-[13px] leading-relaxed text-text-secondary mt-1"

@@ -238,6 +238,11 @@ from app.utils.feed_quality_debug import (
     load_default_ground_truth_items,
     summarize_missing_ground_truth_db_trace,
 )
+from app.utils.discover_image_policy import (
+    apply_discover_image_policy_in_place,
+    dedup_discover_tournament_items,
+    sanitize_feed_response_images,
+)
 from app.utils.feed_cache import (
     FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS,
     FEED_PREWARM_KEY_SCOPE_KEY,
@@ -4347,7 +4352,7 @@ async def get_feed(
             ),
             **finalize,
         )
-        return page
+        return sanitize_feed_response_images(page)
 
     def _opening_refusal(reason, *, singleflight="none"):
         """#5105: the seated route's truthful availability refusal.
@@ -4607,7 +4612,7 @@ async def get_feed(
                             returned=len(payload.get("items") or []),
                         ),
                     )
-                    return payload
+                    return sanitize_feed_response_images(payload)
                 # Malformed fresh value → typed miss; fall through to stale/build.
             # Stale fallback: serve old data if primary cache expired.
             if _stale.is_ok:
@@ -4649,7 +4654,7 @@ async def get_feed(
                             returned=len(payload.get("items") or []),
                         ),
                     )
-                    return payload
+                    return sanitize_feed_response_images(payload)
             if _fresh.is_failure or _stale.is_failure:
                 # Redis stalled/errored (NOT a clean miss). Serve process-local
                 # last-good before paying a cold compute — a Redis blip must not
@@ -4681,7 +4686,7 @@ async def get_feed(
                             returned=len(out.get("items") or []),
                         ),
                     )
-                    return out
+                    return sanitize_feed_response_images(out)
         except Exception:
             _cache_status = "error"
             _lg = _live_bounded_last_good(_cache_key)
@@ -4707,7 +4712,7 @@ async def get_feed(
                         returned=len(out.get("items") or []),
                     ),
                 )
-                return out
+                return sanitize_feed_response_images(out)
     elif debug:
         _cache_status = "disabled_debug"
     elif exclude_reviewed:
@@ -4806,7 +4811,7 @@ async def get_feed(
                         returned=len(out.get("items") or []),
                     ),
                 )
-                return out
+                return sanitize_feed_response_images(out)
             # Budget exhausted / leader produced nothing usable — serve bounded
             # process-local last-good before ever paying (or duplicating) a build.
             _lg = _live_bounded_last_good(_cache_key)
@@ -4832,7 +4837,7 @@ async def get_feed(
                         returned=len(out.get("items") or []),
                     ),
                 )
-                return out
+                return sanitize_feed_response_images(out)
             # #11259: no process-local last-good — this dyno may have just
             # started — so the anonymous base's durable copy comes before an
             # empty page. Same bounds and label; still no build of its own.
@@ -5111,7 +5116,7 @@ async def get_feed(
                             returned=len(_shared_payload.get("items") or []),
                         ),
                     )
-                    return _shared_payload
+                    return sanitize_feed_response_images(_shared_payload)
 
         # --- LAT-P141: page 2 is the same build as page 1 --------------------
         #
@@ -5410,7 +5415,7 @@ async def get_feed(
                         returned=len(_base_page.get("items") or []),
                     ),
                 )
-                return _base_page
+                return sanitize_feed_response_images(_base_page)
 
         # Build team name set once (used by both scoring functions + response).
         # Only uses Team.name (full ESPN display name like "Brown Bears"), NOT
@@ -7526,6 +7531,12 @@ def _publish_feed_item(item: dict) -> None:
         data["sport_name"] = sport_display_name(
             data.get("sport"), data.get("sport_name")
         )
+
+    # #12659: enforce Discover image truth policy at the publish boundary after
+    # all ranking/review scope keys have read raw fields. A person, team, film,
+    # or song never receives a stock photo; verified posters/covers/headshots/
+    # crests or deterministic `image_monogram` (initials on a colour) are served.
+    apply_discover_image_policy_in_place(item)
 
     # Strip internal keys BY PREFIX, not by an enumerated list.
     #
@@ -16964,7 +16975,7 @@ async def _score_golf_tournaments(
             }
         )
 
-    return feed_items
+    return dedup_discover_tournament_items(feed_items)
 
 
 def _tournament_blended_market_ids(t: dict) -> frozenset[int]:
