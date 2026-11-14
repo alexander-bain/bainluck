@@ -144,6 +144,17 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     /// #5811 — `venue_closed_no_winner`, served by `/api/events/search`;
     /// present only when true. See `EventDetail.venueClosedNoWinner`.
     let venueClosedNoWinner: Bool?
+    var sportKey: String? = nil
+    var sportName: String? = nil
+    var prematchOdds: PrematchOdds? = nil
+    var pregameProjection: PregameProjection? = nil
+    var finalScorePeriod: String? = nil
+    var homeTeamData: TeamData? = nil
+    var awayTeamData: TeamData? = nil
+    var homeImageUrl: String? = nil
+    var awayImageUrl: String? = nil
+    var homeFlagUrl: String? = nil
+    var awayFlagUrl: String? = nil
 
     /// The TEAM-PAGE rails' own probability pair, and the two orientation fields
     /// that come with them (`routes/teams.py::_format_event_brief`).

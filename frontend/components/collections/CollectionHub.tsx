@@ -242,7 +242,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
     </>;
   };
 
-  return <div className="mx-auto w-full max-w-4xl space-y-6" data-collection-hub={slug}>
+  return <div className={`mx-auto w-full space-y-6${slug === "midterms-2026" ? "" : " max-w-4xl"}`} data-collection-hub={slug}>
     <div className="flex items-center justify-between gap-4">
       <div className="flex items-center gap-3">
         {shown?.parent && (
@@ -304,10 +304,14 @@ export default function CollectionHub({ slug }: { slug: string }) {
     {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} data-collection-child={child.key.replace(/^container:/, "")} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
     {/* #10985: a hub served as one unclassified list (every provider event) has no
         section to name, so "More" would follow nothing; the page title names it. */}
-    {shown?.sections.map((section) => {
-      const lone = shown.sections.length === 1 && section.cls === "unclassified";
-      const midterms = shown.slug === "midterms-2026";
-      return <section key={section.key} className="space-y-3" aria-labelledby={lone ? "collection-title" : `section-${section.key}`}>
+    <div data-collection-sections className={shown?.slug === "midterms-2026" ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start" : "space-y-6"}>
+    {(shown?.slug === "midterms-2026"
+      ? [shown.sections.slice(0, 2), ...shown.sections.slice(2).map(section => [section])]
+      : [shown?.sections ?? []]).map((group, groupIndex) => <div key={group[0]?.key ?? groupIndex} className={shown?.slug === "midterms-2026" && groupIndex === 0 ? "grid grid-cols-1 md:col-span-2 md:grid-cols-2 xl:col-span-1 xl:grid-cols-1 gap-6 items-start" : "space-y-6 min-w-0"}>
+    {group.map((section) => {
+      const lone = shown?.sections.length === 1 && section.cls === "unclassified";
+      const midterms = shown?.slug === "midterms-2026";
+      return <section key={section.key} className="min-w-0 space-y-3" aria-labelledby={lone ? "collection-title" : `section-${section.key}`}>
       {!lone && <div className="space-y-1">
         <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>
         {/* #11040: one plain sentence saying how this section's markets settle. */}
@@ -320,7 +324,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
           <PartyControlRow senate={control(108620)} house={control(108621)} stacked />
         )
       ) : (
-        <div className={midterms && atlasEnabled ? "grid grid-cols-1 md:grid-cols-2 gap-4 items-start" : midterms && section.cls === "senate_races" ? "divide-y divide-surface-border overflow-hidden rounded-card border border-surface-border bg-surface-card" : midterms ? "grid grid-cols-1 gap-3 items-start" : "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start"}>
+        <div className={midterms && atlasEnabled ? "grid grid-cols-1 gap-4 items-start" : midterms && section.cls === "senate_races" ? "divide-y divide-surface-border overflow-hidden rounded-card border border-surface-border bg-surface-card" : midterms ? "grid grid-cols-1 gap-3 items-start" : "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start"}>
           {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
             {midterms && atlasEnabled && member.item.type === "futures" ? (
               <div id={collectionMemberDomId(member.key)} data-collection-member={member.key}>
@@ -334,12 +338,14 @@ export default function CollectionHub({ slug }: { slug: string }) {
             {/* #5342: a short list of the game's attached markets, each to its own page. */}
             {relatedLinks(member)}
             {/* #10146: a game's questions open deliberately on its own page, never as hundreds of contracts inline. */}
-            {!!(shown.related[member.key]?.length || member.relatedMarketCount) && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
+            {!!(shown?.related[member.key]?.length || member.relatedMarketCount) && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
           </div>)}
         </div>
       )}
     </section>;
     })}
+    </div>)}
+    </div>
     {shown?.relatedSummary && shown.relatedSummary.count > 0 && <p data-related-market-summary className="text-sm text-text-secondary">
       {shown.relatedSummary.count.toLocaleString()} more linked markets
       {shown.relatedSummary.unclassifiedCount > 0 && <> · {shown.relatedSummary.unclassifiedCount.toLocaleString()} uncategorized</>}

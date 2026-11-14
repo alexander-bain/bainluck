@@ -105,10 +105,7 @@ def test_search_preview_keeps_the_detail_full_field_divisor(bounded):
     assert len(preview) == 5
     for row in preview:
         assert row["probability"] == full[row["name"]]["probability"]
-        if not bounded:
-            assert row["rendered_percent"] == full[row["name"]]["rendered_percent"]
-        else:
-            assert "rendered_percent" not in row
+        assert row["rendered_percent"] == full[row["name"]]["rendered_percent"]
 
 
 @pytest.mark.parametrize(

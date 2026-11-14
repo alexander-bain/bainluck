@@ -1,0 +1,30 @@
+{
+  "slug": "roundup-as-likely-as",
+  "membership": "cross_domain_yardsticks",
+  "kind": "roundup",
+  "relations": [
+    "yardstick"
+  ],
+  "level": "related",
+  "kicker": "PERSPECTIVE · AS LIKELY AS",
+  "name": "Around a 46% chance right now",
+  "category": "general",
+  "tag": "PERSPECTIVE",
+  "section_title": "Unrelated events priced at nearly the same chance",
+  "subtitle": "One actively trading item per domain priced within 1.5 percentage points of the same probability band.",
+  "footer": "Independent markets across distinct domains · matched within ±1.5 points",
+  "score": 92.5,
+  "rule": {
+    "producer": "cross_domain_yardsticks",
+    "domain": "cross_category_yardsticks",
+    "selector": "tight_cross_domain_probability_band",
+    "band_half_width": 0.015,
+    "min_domains": 3,
+    "max_card_rows": 4,
+    "min_prob": 0.22,
+    "max_prob": 0.78,
+    "max_quote_age_hours": 24.0,
+    "max_trade_age_days": 7.0,
+    "min_volume_24h": 100.0
+  }
+}
