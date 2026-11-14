@@ -1,8 +1,28 @@
+import Darwin
 import SwiftUI
 import XCTest
 @testable import Bain_Luck
 
 final class BookmarkPinEverywhereTests: XCTestCase {
+
+    override class func setUp() {
+        super.setUp()
+        setAccessibilityAutomation(true)
+    }
+
+    override class func tearDown() {
+        setAccessibilityAutomation(false)
+        super.tearDown()
+    }
+
+    private static func setAccessibilityAutomation(_ enabled: Bool) {
+        #if os(iOS)
+        guard let lib = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW),
+              let symbol = dlsym(lib, "_AXSSetAutomationEnabled") else { return }
+        typealias SetEnabled = @convention(c) (Int32) -> Void
+        unsafeBitCast(symbol, to: SetEnabled.self)(enabled ? 1 : 0)
+        #endif
+    }
 
     private var iosRoot: URL {
         URL(fileURLWithPath: #filePath)
@@ -307,6 +327,213 @@ final class BookmarkPinEverywhereTests: XCTestCase {
             },
             fileName: "overnight1-surfaces-bookmark-390.png"
         )
+    }
+
+    private func findAccessibilityControl(exactLabel target: String, in root: NSObject) -> NSObject? {
+        if root.accessibilityLabel == target { return root }
+        var children: [NSObject] = []
+        if let elements = root.accessibilityElements as? [NSObject] { children += elements }
+        let count = root.accessibilityElementCount()
+        if count != NSNotFound, count > 0 {
+            children += (0..<count).compactMap { root.accessibilityElement(at: $0) as? NSObject }
+        }
+        if let view = root as? UIView { children += view.subviews }
+        for child in children {
+            if let found = findAccessibilityControl(exactLabel: target, in: child) { return found }
+        }
+        return nil
+    }
+
+    @MainActor
+    private func mountCardOnActiveWindow<V: View>(
+        _ view: V,
+        pinManager: PinManager
+    ) async throws -> (UIViewController, UIWindow, UIWindow?) {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+        let previous = scene?.windows.first { $0.isKeyWindow }
+        let host = hostForMeasurement(
+            view
+                .frame(width: 390)
+                .environmentObject(pinManager)
+                .environment(\.colorScheme, .light)
+        )
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = scene.map(UIWindow.init(windowScene:)) ?? UIWindow(frame: host.view.frame)
+        window.frame = host.view.frame
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        return (host, window, previous)
+    }
+
+    @MainActor
+    private func waitForCondition(
+        on host: UIViewController,
+        timeout: TimeInterval = 3,
+        condition: () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        } while Date() < deadline
+        return condition()
+    }
+
+    @MainActor
+    func testRenderedDiscoverEventCardExposesAndTogglesBookmarkPin() async throws {
+        let defaults = UserDefaults(suiteName: "BookmarkPinEventBehavioral.\(UUID().uuidString)")!
+        let pins = PinManager(
+            defaults: defaults,
+            serverLoad: { PinsResponse(events: [], futures: []) },
+            serverSync: { _, _, _ in }
+        )
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let game = try decoder.decode(FeedEventData.self, from: Data("""
+        {
+          "id": 77101,
+          "sport": "americanfootball_nfl",
+          "home_team": "Cincinnati Bengals",
+          "away_team": "Pittsburgh Steelers",
+          "commence_time": "2026-11-15T18:00:00Z",
+          "status": "scheduled",
+          "away_team_data": {"abbreviation": "PIT", "primary_color": "#FFB612"},
+          "home_team_data": {"abbreviation": "CIN", "primary_color": "#FB4F14"},
+          "current_odds": {"away_probability": 0.34, "home_probability": 0.66, "away_rendered_percent": 34, "home_rendered_percent": 66}
+        }
+        """.utf8))
+
+        var navRoutesCount = 0
+        let navBinding = Binding<NavigationPath>(
+            get: { NavigationPath() },
+            set: { path in navRoutesCount = path.count }
+        )
+
+        let (host, window, previous) = try await mountCardOnActiveWindow(
+            NativeEventDiscoverCard(
+                event: game,
+                feedContext: "AFC North opener in Pittsburgh",
+                expandedContext: nil,
+                navigationPath: navBinding
+            ),
+            pinManager: pins
+        )
+        defer {
+            window.isHidden = true
+            previous?.makeKey()
+        }
+
+        var pinControl: NSObject?
+        let foundUnpinned = await waitForCondition(on: host) {
+            pinControl = self.findAccessibilityControl(exactLabel: "Pin", in: host.view)
+            return pinControl != nil
+        }
+        XCTAssertTrue(foundUnpinned, "Discover game card must render an interactive Pin bookmark control")
+        XCTAssertFalse(pins.isPinned(type: "event", id: 77101))
+        XCTAssertNil(findAccessibilityControl(exactLabel: "Unpin", in: host.view))
+
+        XCTAssertTrue(try XCTUnwrap(pinControl).accessibilityActivate(), "Pin control accepts tap activation")
+        let flippedToPinned = await waitForCondition(on: host) {
+            pins.isPinned(type: "event", id: 77101)
+                && self.findAccessibilityControl(exactLabel: "Unpin", in: host.view) != nil
+        }
+        XCTAssertTrue(flippedToPinned, "Tapping Pin on Discover game card pins the event and flips accessibility label to Unpin")
+        XCTAssertEqual(pins.pinnedEventIDs, [77101])
+        XCTAssertEqual(pins.orderedEventIDs, [77101])
+        XCTAssertEqual(navRoutesCount, 0, "Tapping Pin must not navigate into the event detail page")
+
+        let unpinControl = try XCTUnwrap(findAccessibilityControl(exactLabel: "Unpin", in: host.view))
+        XCTAssertTrue(unpinControl.accessibilityActivate(), "Unpin control accepts tap activation")
+        let flippedBackToUnpinned = await waitForCondition(on: host) {
+            !pins.isPinned(type: "event", id: 77101)
+                && self.findAccessibilityControl(exactLabel: "Pin", in: host.view) != nil
+        }
+        XCTAssertTrue(flippedBackToUnpinned, "Tapping Unpin removes the event pin and restores Pin label")
+        XCTAssertTrue(pins.pinnedEventIDs.isEmpty)
+        XCTAssertTrue(pins.orderedEventIDs.isEmpty)
+    }
+
+    @MainActor
+    func testRenderedDiscoverFuturesCardExposesAndTogglesBookmarkPin() async throws {
+        let defaults = UserDefaults(suiteName: "BookmarkPinFuturesBehavioral.\(UUID().uuidString)")!
+        let pins = PinManager(
+            defaults: defaults,
+            serverLoad: { PinsResponse(events: [], futures: []) },
+            serverSync: { _, _, _ in }
+        )
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let market = try decoder.decode(FeedFuturesData.self, from: Data("""
+        {
+          "id": 88202,
+          "name": "Next Federal Reserve Chair",
+          "sport": null,
+          "sport_name": "Economics",
+          "llm_sport_category": "economics",
+          "source": "kalshi",
+          "source_count": 2,
+          "status": "open",
+          "confidence_tier": "high",
+          "top_outcomes": [
+            {"id": 1, "name": "Kevin Warsh", "probability": 0.44, "rendered_percent": 44},
+            {"id": 2, "name": "Scott Bessent", "probability": 0.31, "rendered_percent": 31}
+          ]
+        }
+        """.utf8))
+
+        var navRoutesCount = 0
+        let navBinding = Binding<NavigationPath>(
+            get: { NavigationPath() },
+            set: { path in navRoutesCount = path.count }
+        )
+
+        let (host, window, previous) = try await mountCardOnActiveWindow(
+            NativeFuturesDiscoverCard(
+                data: market,
+                feedContext: "Warsh leads ahead of confirmation talks",
+                expandedContext: nil,
+                navigationPath: navBinding
+            ),
+            pinManager: pins
+        )
+        defer {
+            window.isHidden = true
+            previous?.makeKey()
+        }
+
+        var pinControl: NSObject?
+        let foundUnpinned = await waitForCondition(on: host) {
+            pinControl = self.findAccessibilityControl(exactLabel: "Pin", in: host.view)
+            return pinControl != nil
+        }
+        XCTAssertTrue(foundUnpinned, "Discover market card must render an interactive Pin bookmark control")
+        XCTAssertFalse(pins.isPinned(type: "future", id: 88202))
+
+        XCTAssertTrue(try XCTUnwrap(pinControl).accessibilityActivate(), "Market Pin control accepts tap activation")
+        let flippedToPinned = await waitForCondition(on: host) {
+            pins.isPinned(type: "future", id: 88202)
+                && self.findAccessibilityControl(exactLabel: "Unpin", in: host.view) != nil
+        }
+        XCTAssertTrue(flippedToPinned, "Tapping Pin on Discover market card pins the market and flips label to Unpin")
+        XCTAssertEqual(pins.pinnedFuturesIDs, [88202])
+        XCTAssertEqual(pins.orderedFuturesIDs, [88202])
+        XCTAssertEqual(navRoutesCount, 0, "Tapping Pin must not navigate into the market detail page")
+
+        let unpinControl = try XCTUnwrap(findAccessibilityControl(exactLabel: "Unpin", in: host.view))
+        XCTAssertTrue(unpinControl.accessibilityActivate(), "Market Unpin control accepts tap activation")
+        let flippedBackToUnpinned = await waitForCondition(on: host) {
+            !pins.isPinned(type: "future", id: 88202)
+                && self.findAccessibilityControl(exactLabel: "Pin", in: host.view) != nil
+        }
+        XCTAssertTrue(flippedBackToUnpinned, "Tapping Unpin removes the market pin and restores Pin label")
+        XCTAssertTrue(pins.pinnedFuturesIDs.isEmpty)
+        XCTAssertTrue(pins.orderedFuturesIDs.isEmpty)
     }
     #endif
 }
