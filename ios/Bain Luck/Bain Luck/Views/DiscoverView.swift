@@ -483,7 +483,12 @@ struct DiscoverView: View {
         items.compactMap { item in
             guard item.type == "bundle", let bundle = item.bundle else { return item }
             let eligibleChildren = eligibleItems(bundle.items, now: now, retainingIds: retainingIds)
-            if eligibleChildren.isEmpty { return nil }
+            if eligibleChildren.isEmpty {
+                if let paired = bundle.pairedMetricSet, !paired.entries.isEmpty {
+                    return item.asPairedMetricItem()
+                }
+                return nil
+            }
             return item.withBundle(bundle.withItems(eligibleChildren))
         }
     }
@@ -516,6 +521,7 @@ struct DiscoverView: View {
         if let c = item.concept { return "concept-\(c.key)" }
         if let b = item.bundle { return "bundle-\(b.id)" }
         if let c = item.collection { return "collection-\(c.slug)" }
+        if let p = item.pairedMetricSet { return "paired-metric-\(p.setId)" }
         return UUID().uuidString
     }
 
@@ -1093,10 +1099,47 @@ struct DiscoverView: View {
                     },
                     onRequiresSignIn: inviteSignInForFeedback
                 ) {
-                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, collectionRef: collectionRef, navigationPath: $navigationPath)
+                    if let pairedBundle = vm.items.first(where: { $0.bundle?.pairedMetricSet != nil && $0.bundle?.title == title && $0.bundle?.kind == kind })?.bundle,
+                       let pairedSet = pairedBundle.pairedMetricSet,
+                       !pairedSet.entries.isEmpty {
+                        DiscoverPairedMetricCardView(
+                            set: pairedSet,
+                            form: PairedMetricPresentation.resolvedForm(for: pairedSet, preferred: pairedBundle.visualForm, cardIndex: idx),
+                            onOpenMarket: { marketId in
+                                if let primary = items.first {
+                                    recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                }
+                                navigationPath.append(Route.futuresDetail(id: marketId))
+                            }
+                        )
+                    } else {
+                        NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, collectionRef: collectionRef, navigationPath: $navigationPath)
+                    }
                 }
             case .single(let item):
-                if item.type == "collection", let entry = DiscoverCollectionFeed.entry(for: item.collection) {
+                if let pairedSet = item.pairedMetricSet, !pairedSet.entries.isEmpty {
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
+                    ) {
+                        DiscoverPairedMetricCardView(
+                            set: pairedSet,
+                            form: PairedMetricPresentation.resolvedForm(for: pairedSet, preferred: item.visualForm, cardIndex: idx),
+                            onOpenMarket: { marketId in
+                                recordInteraction(for: item, action: .detailOpen, source: "card")
+                                navigationPath.append(Route.futuresDetail(id: marketId))
+                            }
+                        )
+                    }
+                    .contextMenu { discoverCardMenu(item) }
+                } else if item.type == "collection", let entry = DiscoverCollectionFeed.entry(for: item.collection) {
                     SwipeToDismiss(
                         onSwipeLeft: {
                             recordInteraction(for: item, action: .unlike, source: "swipe")
@@ -3139,7 +3182,7 @@ struct ExpandableNativeContextText: View {
 
 // MARK: - Group Card
 
-private struct NativeGroupCard: View {
+struct NativeGroupCard: View {
     let title: String
     let items: [FeedItem]
     var kind: String? = nil
