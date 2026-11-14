@@ -55,6 +55,27 @@ struct AboutView: View {
         return true
     }
 
+    var pictureCreditsFooter: some View {
+        Link(destination: Self.pictureCreditsURL) {
+            HStack(spacing: 8) {
+                Text("Picture credits")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.cardBackground)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("about-picture-credits-link")
+    }
+
     var body: some View {
         // `.handOffToTheSystem` (the default, named here because it is load-
         // bearing rather than incidental): the About copy links to
@@ -77,24 +98,7 @@ struct AboutView: View {
                 }
             )
             Divider()
-            Link(destination: Self.pictureCreditsURL) {
-                HStack(spacing: 8) {
-                    Text("Picture credits")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Image(systemName: "arrow.up.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 13)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.cardBackground)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("about-picture-credits-link")
+            pictureCreditsFooter
         }
         .navigationTitle("About")
         #if os(iOS)

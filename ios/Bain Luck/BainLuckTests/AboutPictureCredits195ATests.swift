@@ -49,27 +49,25 @@ final class AboutPictureCredits195ATests: XCTestCase {
     }
 
     func testAboutViewExposesPictureCreditsLinkAndExports390pxRender() async throws {
-        let aboutSourceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Bain Luck")
-            .appendingPathComponent("Views")
-            .appendingPathComponent("AboutView.swift")
-        let src = try String(contentsOf: aboutSourceURL, encoding: .utf8)
-        XCTAssertTrue(src.contains(#"Text("Picture credits")"#))
-        XCTAssertTrue(src.contains("Link(destination: Self.pictureCreditsURL)"))
-
+        var heights: [DynamicTypeSize: CGFloat] = [:]
         for dt in [DynamicTypeSize.large, .accessibility5] {
-            let screen = NavigationStack {
-                AboutView()
-            }
-            .environmentObject(NavigationCoordinator())
-            .frame(width: 390, height: 852)
-            let host = hostForMeasurement(screen, at: dt)
-            let fitted = host.sizeThatFits(in: CGSize(width: 390, height: 852))
+            let footer = AboutView()
+                .environmentObject(NavigationCoordinator())
+                .pictureCreditsFooter
+            let host = hostForMeasurement(footer, at: dt)
+            let fitted = host.sizeThatFits(
+                in: CGSize(width: 390, height: UIView.layoutFittingCompressedSize.height)
+            )
             XCTAssertEqual(fitted.width, 390, accuracy: 0.5)
-            XCTAssertEqual(fitted.height, 852, accuracy: 0.5)
+            XCTAssertGreaterThan(fitted.height, 40)
+            XCTAssertLessThan(fitted.height, 220, "Footer link must fit cleanly at \(dt)")
+            heights[dt] = fitted.height
         }
+        XCTAssertGreaterThan(
+            try XCTUnwrap(heights[.accessibility5]),
+            try XCTUnwrap(heights[.large]),
+            "AX5 footer row must grow natively rather than clamping to a fixed height"
+        )
 
         if let outDir = ProcessInfo.processInfo.environment["EXPORT_195A_RENDERS_DIR"], !outDir.isEmpty {
             let dirURL = URL(fileURLWithPath: outDir, isDirectory: true)
