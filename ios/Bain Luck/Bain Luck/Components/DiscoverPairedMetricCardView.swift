@@ -180,6 +180,65 @@ struct PairedTMDBAttributionFooter: View {
     }
 }
 
+/// Subtle proportional bar-chart fill behind a percentage number box (`94%` almost full,
+/// `36%` about a third full) across both winning grouped-card looks (`#12675` / `#12642`).
+struct PairedQuietNumberBox<Label: View>: View {
+    let fraction: Double
+    let isPrimaryStage: Bool
+    var trackColor: Color = DS.trackBg
+    var fixedWidth: CGFloat? = nil
+    var expandToFillWidth: Bool = false
+    var contentAlignment: Alignment = .center
+    var cornerRadius: CGFloat = 5
+    var horizontalPadding: CGFloat = 6
+    var verticalPadding: CGFloat = 3
+    @ViewBuilder let label: () -> Label
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var clampedFraction: CGFloat {
+        CGFloat(min(1.0, max(0.0, fraction)))
+    }
+
+    private var fillTint: Color {
+        isPrimaryStage
+            ? DS.emerald.opacity(0.20)
+            : DS.textSecondary.opacity(0.16)
+    }
+
+    var body: some View {
+        let resolvedWidth: CGFloat? = dynamicTypeSize.isAccessibilitySize ? nil : fixedWidth
+        label()
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .frame(
+                width: resolvedWidth,
+                alignment: contentAlignment
+            )
+            .frame(
+                maxWidth: expandToFillWidth ? .infinity : nil,
+                alignment: contentAlignment
+            )
+            .background {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        trackColor
+                        if clampedFraction > 0 {
+                            Rectangle()
+                                .fill(fillTint)
+                                .frame(width: max(2, geo.size.width * clampedFraction))
+                        }
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(DS.border, lineWidth: 1)
+            )
+    }
+}
+
 /// Entry view rendering either Look 1 (`paired_bars_top5_expandable`) or Look 2 (`podium_and_tiers`).
 struct DiscoverPairedMetricCardView: View {
     let metricSet: PairedMetricSet
@@ -280,20 +339,28 @@ struct DiscoverPairedMetricCardView: View {
     }
 
     private var footerBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Rectangle()
-                .fill(DS.border)
-                .frame(height: 1)
-                .padding(.bottom, 2)
+        let showsOrderingFooter = !PairedMetricPresentation.subtitleStatesOrdering(cleanSubtitle)
+        let showsTMDBFooter = metricSet.usesTMDBArt
+        return Group {
+            if showsOrderingFooter || showsTMDBFooter {
+                VStack(alignment: .leading, spacing: 6) {
+                    Rectangle()
+                        .fill(DS.border)
+                        .frame(height: 1)
+                        .padding(.bottom, 2)
 
-            Text("Sorted by \(metricSet.stage2Label.lowercased()) %, ties broken by \(metricSet.stage1Label.lowercased()) %")
-                .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(DS.textSecondaryReadable)
-                .fixedSize(horizontal: false, vertical: true)
+                    if showsOrderingFooter {
+                        Text("Sorted by \(metricSet.stage2Label.lowercased()) %, ties broken by \(metricSet.stage1Label.lowercased()) %")
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
-            PairedTMDBAttributionFooter(set: metricSet)
+                    PairedTMDBAttributionFooter(set: metricSet)
+                }
+                .padding(.top, 12)
+            }
         }
-        .padding(.top, 12)
     }
 
     // MARK: - Look 1: `paired_bars_top5_expandable`
@@ -450,10 +517,20 @@ struct DiscoverPairedMetricCardView: View {
                 }
                 .frame(height: 8)
 
-                Text(s1.label)
-                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(DS.textSecondary)
-                    .frame(width: 44, alignment: .trailing)
+                PairedQuietNumberBox(
+                    fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
+                    isPrimaryStage: false,
+                    trackColor: DS.trackBg,
+                    fixedWidth: 48,
+                    contentAlignment: .trailing,
+                    horizontalPadding: 6,
+                    verticalPadding: 2.5
+                ) {
+                    Text(s1.label)
+                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(DS.textPrimary)
+                        .lineLimit(1)
+                }
 
             case .tick:
                 Text(s1.label)
@@ -517,10 +594,20 @@ struct DiscoverPairedMetricCardView: View {
                 }
                 .frame(height: 10)
 
-                Text(s2.label)
-                    .font(.system(size: 14, weight: .bold).monospacedDigit())
-                    .foregroundStyle(DS.textPrimary)
-                    .frame(width: 44, alignment: .trailing)
+                PairedQuietNumberBox(
+                    fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
+                    isPrimaryStage: true,
+                    trackColor: DS.trackBg,
+                    fixedWidth: 48,
+                    contentAlignment: .trailing,
+                    horizontalPadding: 6,
+                    verticalPadding: 2.5
+                ) {
+                    Text(s2.label)
+                        .font(.system(size: 13, weight: .bold).monospacedDigit())
+                        .foregroundStyle(DS.textPrimary)
+                        .lineLimit(1)
+                }
 
             case .cross:
                 Text(s2.label)
@@ -613,14 +700,27 @@ struct DiscoverPairedMetricCardView: View {
                 .padding(.top, 6)
 
             Group {
-                if s2.kind == .percent {
-                    HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text(s2.label)
-                            .font(.system(size: 16, weight: .bold).monospacedDigit())
-                            .foregroundStyle(DS.textPrimary)
-                        Text(s2Short)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(DS.textSecondaryReadable)
+                if s2.kind == .percent, let frac2 = PairedMetricPresentation.quietFillFraction(for: s2) {
+                    PairedQuietNumberBox(
+                        fraction: frac2,
+                        isPrimaryStage: true,
+                        trackColor: DS.cardBg,
+                        expandToFillWidth: true,
+                        contentAlignment: .center,
+                        cornerRadius: 6,
+                        horizontalPadding: 6,
+                        verticalPadding: 3.5
+                    ) {
+                        HStack(alignment: .firstTextBaseline, spacing: 2) {
+                            Text(s2.label)
+                                .font(.system(size: 15, weight: .bold).monospacedDigit())
+                                .foregroundStyle(DS.textPrimary)
+                            Text(s2Short)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(DS.textSecondaryReadable)
+                        }
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                     }
                 } else {
                     Text(s2.label)
@@ -629,14 +729,27 @@ struct DiscoverPairedMetricCardView: View {
                         .foregroundStyle(DS.textSecondaryReadable)
                 }
             }
-            .padding(.top, 4)
+            .padding(.top, 6)
 
             Group {
                 switch s1.kind {
                 case .percent:
-                    Text("\(s1.label) \(s1Short)")
-                        .font(.system(size: 12, weight: .medium).monospacedDigit())
-                        .foregroundStyle(DS.textSecondary)
+                    PairedQuietNumberBox(
+                        fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
+                        isPrimaryStage: false,
+                        trackColor: DS.cardBg,
+                        expandToFillWidth: true,
+                        contentAlignment: .center,
+                        cornerRadius: 6,
+                        horizontalPadding: 6,
+                        verticalPadding: 3
+                    ) {
+                        Text("\(s1.label) \(s1Short)")
+                            .font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                            .foregroundStyle(DS.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                    }
                 case .tick:
                     Text(s1.label)
                         .font(.system(size: 11, weight: .semibold))
@@ -653,7 +766,7 @@ struct DiscoverPairedMetricCardView: View {
                 }
             }
             .multilineTextAlignment(.center)
-            .padding(.top, 2)
+            .padding(.top, 4)
         }
         .padding(.horizontal, 10)
         .padding(.top, spot.elevated ? 12 : 10)
@@ -727,15 +840,65 @@ struct DiscoverPairedMetricCardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if s2.kind == .percent {
-                HStack(spacing: 0) {
-                    Text("\(s1.label) → ")
-                        .font(.system(size: 12, weight: .regular).monospacedDigit())
-                        .foregroundStyle(DS.textSecondary)
-                    Text(s2.label)
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
-                        .foregroundStyle(DS.textPrimary)
+                HStack(spacing: 5) {
+                    if s1.kind == .percent, let frac1 = PairedMetricPresentation.quietFillFraction(for: s1) {
+                        PairedQuietNumberBox(
+                            fraction: frac1,
+                            isPrimaryStage: false,
+                            trackColor: DS.trackBg,
+                            fixedWidth: 46,
+                            contentAlignment: .trailing,
+                            horizontalPadding: 6,
+                            verticalPadding: 2.5
+                        ) {
+                            Text(s1.label)
+                                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                                .foregroundStyle(DS.textPrimary)
+                                .lineLimit(1)
+                        }
+                    } else {
+                        Text(s1.label)
+                            .font(.system(size: 11, weight: .medium).monospacedDigit())
+                            .foregroundStyle(DS.textSecondaryReadable)
+                    }
+
+                    PairedQuietNumberBox(
+                        fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
+                        isPrimaryStage: true,
+                        trackColor: DS.trackBg,
+                        fixedWidth: 46,
+                        contentAlignment: .trailing,
+                        horizontalPadding: 6,
+                        verticalPadding: 2.5
+                    ) {
+                        Text(s2.label)
+                            .font(.system(size: 12, weight: .bold).monospacedDigit())
+                            .foregroundStyle(DS.textPrimary)
+                            .lineLimit(1)
+                    }
                 }
                 .fixedSize()
+            } else if s1.kind == .percent, let frac1 = PairedMetricPresentation.quietFillFraction(for: s1) {
+                HStack(spacing: 6) {
+                    PairedQuietNumberBox(
+                        fraction: frac1,
+                        isPrimaryStage: false,
+                        trackColor: DS.trackBg,
+                        fixedWidth: 46,
+                        contentAlignment: .trailing,
+                        horizontalPadding: 6,
+                        verticalPadding: 2.5
+                    ) {
+                        Text(s1.label)
+                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .foregroundStyle(DS.textPrimary)
+                            .lineLimit(1)
+                    }
+                    Text(s2.label)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .multilineTextAlignment(.trailing)
+                }
             } else {
                 Text("\(s1.label) · \(s2.label)")
                     .font(.system(size: 12, weight: .medium).monospacedDigit())
