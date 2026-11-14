@@ -194,7 +194,9 @@ struct EventCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             topBar
             teamsAndOdds
-            footer
+            if !compactScheduleStyle {
+                footer
+            }
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
@@ -912,7 +914,7 @@ struct EventCardView: View {
 
     @ViewBuilder
     private var footer: some View {
-        if !compactScheduleStyle && EventCardFooter.hasContent(
+        if EventCardFooter.hasContent(
             reason: reason,
             isLive: isLive,
             isFinished: isFinished,
@@ -1110,15 +1112,15 @@ struct EventCardView: View {
     /// three-way pregame reading never un-withholds a two-way live complement
     /// (`1 - home`), nor vice versa on a finished card.
     private var currentAwayIsWithheld: Bool {
-        !awayReadingIsServerVerified
-            && DrawPricedWinner.sportPricesADraw(event.sport)
+        DrawPricedWinner.sportPricesADraw(event.sport)
             && !CompactGameCard12616.hasExplicitThreeWayCurrent(event)
+            && !awayReadingIsServerVerified
     }
 
     private var prematchAwayIsWithheld: Bool {
-        !awayReadingIsServerVerified
-            && DrawPricedWinner.sportPricesADraw(event.sport)
+        DrawPricedWinner.sportPricesADraw(event.sport)
             && !CompactGameCard12616.hasExplicitThreeWayPrematch(event)
+            && !awayReadingIsServerVerified
     }
 
     private var liveTenthsPair12616: (away: String?, home: String?) {
