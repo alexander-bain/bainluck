@@ -17,7 +17,7 @@ UNAMBIGUOUS: an alias that matches two franchises makes search worse, not better
 """
 
 # (sport_key, canonical_team_name) -> list of lowercase colloquial aliases.
-from app.config.major_team_search import MAJOR_TEAM_QUERY_ALIASES, normalize_major_team_query
+from app.config.major_team_search import normalize_major_team_query
 
 CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     # #12290: Alex's observed transposition, scoped to the NFL franchise.
@@ -403,14 +403,7 @@ def curated_team_aliases(sport_key: str | None, team_name: str | None) -> tuple[
     Contested aliases are included on purpose: a row owning an alias is true per
     row, which is why the backfill writes them too.
     """
-    key = (sport_key or "", team_name or "")
-    # The spelling table is query-time evidence, not a backfill or an extra
-    # recall arm. Normalizing a typo to its literal nickname lets existing
-    # text recall retain both Giants/Cardinals/etc.; neither franchise wins
-    # by being the last entry in a one-owner expansion map.
-    return tuple(dict.fromkeys((
-        *CURATED_TEAM_ALIASES.get(key, ()), *MAJOR_TEAM_QUERY_ALIASES.get(key, ()),
-    )))
+    return tuple(CURATED_TEAM_ALIASES.get((sport_key or "", team_name or ""), ()))
 
 
 # #9834 — club SHORT FORMS: what a reader types that shares no usable word with the
@@ -449,6 +442,9 @@ CLUB_QUERY_SHORT_FORMS: dict[tuple[str, ...], str] = {
 }
 
 _SHORT_FORM_MAX_WIDTH = max(len(key) for key in CLUB_QUERY_SHORT_FORMS)
+_CURATED_QUERY_ALIASES = frozenset(
+    alias.casefold() for aliases in CURATED_TEAM_ALIASES.values() for alias in aliases
+)
 
 
 def expand_club_short_forms(query: str) -> str:
@@ -462,7 +458,10 @@ def expand_club_short_forms(query: str) -> str:
     Returns `query` itself — the same string, whitespace and all — when nothing
     matches, which is every query but these few. Pure, so the guards pin it.
     """
-    query = normalize_major_team_query(query)
+    # Existing aliases already carry sport-scoped recall. Rewriting `patroits`
+    # to the bare `patriots` would also admit the cricket namesake.
+    if query.strip().casefold() not in _CURATED_QUERY_ALIASES:
+        query = normalize_major_team_query(query)
     words = query.split()
     lowered = [word.lower() for word in words]
     out: list[str] = []

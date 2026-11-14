@@ -41,6 +41,25 @@ def test_unrelated_real_words_are_not_rewritten_as_a_team(query):
     assert expand_club_short_forms(query) == query
 
 
+def test_existing_sport_scoped_misspelling_keeps_its_cricket_exclusion():
+    assert expand_club_short_forms("patroits") == "patroits"
+    assert route._team_nickname_team_arms(["patroits"])
+    assert route._query_names_team_card(
+        {"name": "New England Patriots", "sport_key": "americanfootball_nfl"}, "patroits"
+    )
+    assert not route._query_names_team_card(
+        {"name": "St Kitts and Nevis Patriots", "sport_key": "cricket_cpl"}, "patroits"
+    )
+
+
+def test_new_spelling_evidence_does_not_change_fixture_rescue_aliases():
+    row = SimpleNamespace(name="Tampa Bay Lightning", sport_key="icehockey_nhl", alternate_names=[])
+    assert route._team_row_aliases(row) == []
+    assert route._query_names_team_card(
+        {"name": row.name, "sport_key": row.sport_key}, "lightnig"
+    )
+
+
 @pytest.mark.parametrize("typo,names", [
     ("gaints", {"New York Giants", "San Francisco Giants"}),
     ("jetts", {"New York Jets", "Winnipeg Jets"}),

@@ -236,6 +236,7 @@ from app.utils.search_intent import (
     promote_answering_rows,
 )
 from app.utils.explicit_search import explicit_search
+from app.config.major_team_search import MAJOR_TEAM_QUERY_ALIASES
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
     search_response_cache_enabled,
@@ -16622,6 +16623,13 @@ async def typeahead_search(
     # strings would be two rules, so both read `_q_identity` — connector
     # dropped (`_q_matchup`, #9527), else `red sox vs yankees` scores the game
     # below every market whose name says "vs.".
+    # Ranking-only names: add them after fixture selection so identifying the
+    # team card does not open the recent-final or next-game rescue arms.
+    for item in team_pool:
+        item["_aliases"] = [
+            *(item.get("_aliases") or ()),
+            *MAJOR_TEAM_QUERY_ALIASES.get((item.get("sport_key"), item.get("text")), ()),
+        ]
     _ta_candidates = [
         (_typeahead_evidence(item, _q_matchup), item)
         for item in (*hub_pool, *team_pool, *event_pool,
@@ -40471,6 +40479,9 @@ def _query_names_team_card(row: dict, query: str) -> bool:
         (
             row.get("name") or row.get("text") or "",
             *(row.get("_aliases") or ()),
+            *MAJOR_TEAM_QUERY_ALIASES.get(
+                (row.get("sport_key"), row.get("name") or row.get("text")), ()
+            ),
             row.get("abbreviation"),
         ),
     )
@@ -40485,6 +40496,9 @@ def _search_team_evidence(row: dict, query: str | None = None) -> "_SearchEviden
     same for a non-leading `st` (`ohio st` -> `Ohio St Buckeyes`). Every other
     query builds exactly the evidence it built before."""
     aliases: tuple[str, ...] = tuple(row.get("_aliases") or ())
+    aliases = (*aliases, *MAJOR_TEAM_QUERY_ALIASES.get(
+        (row.get("sport_key"), row.get("name")), ()
+    ))
     if row.get("abbreviation"):
         aliases = (*aliases, row["abbreviation"])
     if city_abbreviation_query(query) is not None:
