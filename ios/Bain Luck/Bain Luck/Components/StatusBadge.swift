@@ -57,6 +57,7 @@ struct StatusBadge: View {
     /// Not `private`: a `private` stored property makes Swift's memberwise
     /// initialiser `private` too, and all five call sites use it.
     @ObservedObject var clock = MinuteClock.shared
+    @Environment(\.dynamicTypeSize) var dynamicTypeSize
 
     /// Formatted live text: "Q1 5:11", "Bottom 7th", or "LIVE".
     ///
@@ -176,7 +177,8 @@ struct StatusBadge: View {
                     Text(gameCardLeadingDot ? "\u{00B7} \(when)" : when)
                         .font(.caption)
                         .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
                 } else {
                     EmptyView()
                 }

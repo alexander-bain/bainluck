@@ -275,9 +275,9 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
                 XCTAssertTrue(normalized(row[..<pctAt].joined()).contains(team),
                               "\(name): \(team) is not complete before \(percent) on its row — \(row)")
             }
-            XCTAssertEqual(read.filter { tokens($0.text).contains("Pregame") }.count, 1,
+            XCTAssertEqual(read.filter { containsPregameToken($0.text) }.count, 1,
                            "\(name): 'Pregame' header must appear once — \(all)")
-            for line in read where tokens(line.text).contains("Pregame") || line.text.contains("%") {
+            for line in read where containsPregameToken(line.text) || line.text.contains("%") {
                 XCTAssertFalse(isElided(line.text), "\(name): '\(line.text)' is cut short — \(all)")
             }
         }
@@ -298,9 +298,9 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let atletico = try XCTUnwrap(read.first { normalized($0.text).contains("Atletico") },
                                          "\(name): no Atlético row — \(all)")
             let other = rowTokens(atletico, in: read)
-            XCTAssertFalse(other.contains("Pregame") || other.contains { $0.hasSuffix("%") },
+            XCTAssertFalse(other.contains { $0.caseInsensitiveCompare("Pregame") == .orderedSame } || other.contains { $0.hasSuffix("%") },
                            "\(name): Atlético's row carries a pre-game word or number — \(other)")
-            XCTAssertEqual(read.filter { tokens($0.text).contains("Pregame") }.count, 1,
+            XCTAssertEqual(read.filter { containsPregameToken($0.text) }.count, 1,
                            "\(name): 'Pregame' header is not printed exactly once — \(all)")
         }
     }
@@ -313,7 +313,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let bare = try served(14780563)
         XCTAssertNil(bare.openingOdds, "precondition: the served final carries no pre-game probability")
         let read = try sportsLines(bare, width: 393, size: .large, name: "sports-nfl-393-large-no-baseline")
-        XCTAssertFalse(read.contains { tokens($0.text).contains("Pregame") || $0.text.contains("%") },
+        XCTAssertFalse(read.contains { containsPregameToken($0.text) || $0.text.contains("%") },
                        "no-baseline: a pre-game word or number printed with no pre-game probability — \(describe(read))")
         for status in ["live", "scheduled", "suspended"] {
             let e = try served(14780563, edits: [
@@ -327,10 +327,10 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let all = describe(lines)
             if status == "live" {
                 // #12616 / #12684: live cards with pregame odds carry the "Pregame" column header once.
-                XCTAssertEqual(lines.filter { tokens($0.text).contains("Pregame") }.count, 1,
+                XCTAssertEqual(lines.filter { containsPregameToken($0.text) }.count, 1,
                                "\(name): a live card with pregame odds must print the 'Pregame' header once — \(all)")
             } else {
-                XCTAssertFalse(lines.contains { tokens($0.text).contains("Pregame") },
+                XCTAssertFalse(lines.contains { containsPregameToken($0.text) },
                                "\(name): a \(status) card printed 'Pregame' — \(all)")
             }
             if status == "suspended" {
@@ -448,6 +448,10 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         text.folding(options: .diacriticInsensitive, locale: nil)
             .components(separatedBy: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "·•")))
             .filter { !$0.isEmpty }
+    }
+
+    private func containsPregameToken(_ text: String) -> Bool {
+        tokens(text).contains { $0.caseInsensitiveCompare("Pregame") == .orderedSame }
     }
 
     private func isElided(_ text: String) -> Bool {

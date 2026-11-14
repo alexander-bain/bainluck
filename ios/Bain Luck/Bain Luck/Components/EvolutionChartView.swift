@@ -363,9 +363,12 @@ enum EvolutionOutcomeColour {
 /// a tree whose next job is "every chart becomes a primitive" is a thing
 /// somebody eventually ports.
 struct EvolutionChartView: View {
+    static let defaultFirstScreenHeight192A: CGFloat = 296
+    static let fullscreenChartHeight192A: CGFloat = 340
+
     let marketId: Int
     var hours: Int = 168
-    var height: CGFloat = 280
+    var height: CGFloat = defaultFirstScreenHeight192A
     var tournamentStart: String?
     var tournamentEnd: String?
     var refreshToken: Int = 0
@@ -377,6 +380,18 @@ struct EvolutionChartView: View {
     /// parent Atlas futures presentation (`"No recent probability"` or settled states), so the
     /// leaderboard `Prob` column withholds those rows (`"—"`) even on `.source` boards like `108629`.
     var withheldCurrentOutcomeIds: Set<Int> = []
+    /// Ruling 192-A: first-screen chart has zero picker, zero time-range chips, and zero
+    /// Sum / Top N controls; plots the named headline contenders with right-edge labels;
+    /// moves time range into `"Full chart ↗"`; and links `"All N … ›"` in the footer.
+    var firstScreenCompact192A: Bool = true
+    var isPresentedFullscreen192A: Bool = false
+    var chartTitle192A: String = "Odds History"
+    var headlineContenderNames: [String]? = nil
+    var footerCaption192A: String? = nil
+    var allFieldButtonLabel: String? = nil
+    var onOpenAllField: (() -> Void)? = nil
+    var preloadedTimeline: ProbabilityTimelineResponse? = nil
+    var referenceNow: Date? = nil
 
     @State private var data: ProbabilityTimelineResponse?
     /// #10955 — the settled lines' results, set aside from `data`'s timeline.
@@ -397,6 +412,7 @@ struct EvolutionChartView: View {
     @State private var showCombinedProbability = LaunchRig.startsChartSumOn()
     @State private var selectedRange: EvolutionTimeRange = .week
     @State private var crosshair: CrosshairData?
+    @State private var showFullscreenChartSheet192A = false
 
     /// The window the loaded payload was ASKED for, kept so the coverage note can
     /// compare it against the coverage that came back. Written by `loadData` on
@@ -420,6 +436,54 @@ struct EvolutionChartView: View {
     /// #4373 — the leaderboard's numeric columns are measured in the face they are
     /// drawn in, so they need the size the reader is actually at.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(
+        marketId: Int,
+        hours: Int = 168,
+        height: CGFloat = EvolutionChartView.defaultFirstScreenHeight192A,
+        tournamentStart: String? = nil,
+        tournamentEnd: String? = nil,
+        refreshToken: Int = 0,
+        representation: FuturesRepresentation = .source,
+        expectation: VerifiedTitleChartExpectation? = nil,
+        withheldCurrentOutcomeIds: Set<Int> = [],
+        firstScreenCompact192A: Bool = true,
+        isPresentedFullscreen192A: Bool = false,
+        chartTitle192A: String = "Odds History",
+        headlineContenderNames: [String]? = nil,
+        footerCaption192A: String? = nil,
+        allFieldButtonLabel: String? = nil,
+        onOpenAllField: (() -> Void)? = nil,
+        preloadedTimeline: ProbabilityTimelineResponse? = nil,
+        referenceNow: Date? = nil
+    ) {
+        self.marketId = marketId
+        self.hours = hours
+        self.height = height
+        self.tournamentStart = tournamentStart
+        self.tournamentEnd = tournamentEnd
+        self.refreshToken = refreshToken
+        self.representation = representation
+        self.expectation = expectation
+        self.withheldCurrentOutcomeIds = withheldCurrentOutcomeIds
+        self.firstScreenCompact192A = firstScreenCompact192A
+        self.isPresentedFullscreen192A = isPresentedFullscreen192A
+        self.chartTitle192A = chartTitle192A
+        self.headlineContenderNames = headlineContenderNames
+        self.footerCaption192A = footerCaption192A
+        self.allFieldButtonLabel = allFieldButtonLabel
+        self.onOpenAllField = onOpenAllField
+        self.preloadedTimeline = preloadedTimeline
+        self.referenceNow = referenceNow
+        _data = State(initialValue: preloadedTimeline)
+        _loading = State(initialValue: preloadedTimeline == nil)
+        _requestedHours = State(initialValue: preloadedTimeline?.hours ?? 0)
+        if let names = headlineContenderNames, !names.isEmpty {
+            _selectedNames = State(initialValue: Set(names))
+        } else if let preloadedTimeline {
+            _selectedNames = State(initialValue: Set(preloadedTimeline.outcomes.prefix(4).map(\.name)))
+        }
+    }
 
     // MARK: - Colors
 
@@ -481,6 +545,10 @@ struct EvolutionChartView: View {
         return [.season, .week, .day, .today]
     }
 
+    private var isFirstScreenInline192A: Bool {
+        firstScreenCompact192A && !isPresentedFullscreen192A
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -514,10 +582,14 @@ struct EvolutionChartView: View {
                         }
                     }
                     .background(Color.cardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 case .plot:
                     VStack(spacing: 0) {
-                        controlBar
+                        if isFirstScreenInline192A {
+                            firstScreenHeaderBar192A
+                        } else {
+                            controlBar
+                        }
                         historyCaptionRow
                         chartSection
                         if let note = Self.coverageNote(
@@ -549,20 +621,117 @@ struct EvolutionChartView: View {
                         if crosshair != nil {
                             crosshairTooltip
                         }
-                        leaderboardGrid
+                        if isFirstScreenInline192A {
+                            firstScreenFooterBar192A
+                        } else {
+                            leaderboardGrid
+                        }
                     }
                     .background(Color.cardBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: isFirstScreenInline192A ? 1 : 0)
+                    )
                 }
             }
         }
         .task(id: ChartLoadKey(refreshToken: refreshToken, expectation: expectation)) {
+            guard preloadedTimeline == nil else { return }
             if data == nil, hasTournamentDates, let start = parsedTournamentStart, start <= Date() {
                 selectedRange = .tournament
             }
             await loadData()
         }
         .onDisappear { requestGeneration += 1 }
+        .sheet(isPresented: $showFullscreenChartSheet192A) {
+            NavigationStack {
+                ScrollView {
+                    EvolutionChartView(
+                        marketId: marketId,
+                        hours: hours,
+                        height: Self.fullscreenChartHeight192A,
+                        tournamentStart: tournamentStart,
+                        tournamentEnd: tournamentEnd,
+                        refreshToken: refreshToken,
+                        representation: representation,
+                        expectation: expectation,
+                        withheldCurrentOutcomeIds: withheldCurrentOutcomeIds,
+                        firstScreenCompact192A: true,
+                        isPresentedFullscreen192A: true,
+                        chartTitle192A: chartTitle192A,
+                        headlineContenderNames: headlineContenderNames,
+                        footerCaption192A: footerCaption192A,
+                        allFieldButtonLabel: allFieldButtonLabel,
+                        onOpenAllField: onOpenAllField,
+                        preloadedTimeline: preloadedTimeline != nil ? data : nil,
+                        referenceNow: referenceNow
+                    )
+                    .padding(16)
+                }
+                .background(Color.groupedBackground)
+                .navigationTitle(data?.marketName ?? chartTitle192A)
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                #endif
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showFullscreenChartSheet192A = false }
+                    }
+                }
+            }
+        }
+    }
+
+    private var firstScreenHeaderBar192A: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text(chartTitle192A)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button {
+                showFullscreenChartSheet192A = true
+            } label: {
+                Text("Full chart ↗")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.groupedBackground, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("evolution-full-chart-button-192a")
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+    }
+
+    private var firstScreenFooterBar192A: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .padding(.horizontal, 14)
+            HStack(spacing: 8) {
+                Text(footerCaption192A ?? "Past 7 days · time range in full chart")
+                    .font(.caption2)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let label = allFieldButtonLabel, let onOpenAllField {
+                    Button(action: onOpenAllField) {
+                        Text(label)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.blue)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("evolution-all-field-footer-button-192a")
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
     }
 
     // MARK: - Empty State
@@ -829,13 +998,32 @@ struct EvolutionChartView: View {
 
     private var displayedNames: [String] { displayedOutcomes.map(\.name) }
 
+    private var orderedHeadlineNames192A: [String] {
+        if let names = headlineContenderNames, !names.isEmpty {
+            let valid = names.filter { candidate in
+                displayedNames.contains(candidate)
+                    || (data?.outcomes.contains(where: { $0.name == candidate }) == true)
+            }
+            if !valid.isEmpty { return valid }
+            return names
+        }
+        return Array(displayedNames.prefix(4))
+    }
+
     private var effectiveSelected: Set<String> {
-        selectedNames.isEmpty ? Set(displayedNames.prefix(3)) : selectedNames
+        if isFirstScreenInline192A {
+            return Set(orderedHeadlineNames192A)
+        }
+        return selectedNames.isEmpty ? Set(displayedNames.prefix(3)) : selectedNames
     }
 
     /// Time-filtered cutoff date for chart entries.
     private var timeCutoff: Date? {
-        Self.timeCutoff(for: selectedRange, tournamentStart: parsedTournamentStart)
+        Self.timeCutoff(
+            for: selectedRange,
+            tournamentStart: parsedTournamentStart,
+            now: referenceNow ?? Date()
+        )
     }
 
     /// The client-side cutoff per chip. The widest chip has none, so every instant a
@@ -859,9 +1047,11 @@ struct EvolutionChartView: View {
 
     private var chartEntries: [EvolutionPoint] {
         guard let data else { return [] }
+        let namesForPlot = isFirstScreenInline192A ? effectiveSelected : Set(displayedNames)
+        let combinedRequested = isFirstScreenInline192A ? false : (showCombinedProbability && !firstScreenCompact192A)
         return Self.chartPoints(
-            timeline: data.timeline, names: Set(displayedNames), selected: effectiveSelected,
-            cutoff: timeCutoff, showCombined: showCombinedProbability,
+            timeline: data.timeline, names: namesForPlot, selected: effectiveSelected,
+            cutoff: timeCutoff, showCombined: combinedRequested,
             // Hoisted: a card-level fact, not a per-entry one, and the loop runs
             // once per served instant (584 on 56775596).
             supportsCombined: fieldSupportsCombinedLine)
@@ -1382,9 +1572,10 @@ struct EvolutionChartView: View {
             availableRanges: availableRanges,
             selectedRange: $selectedRange,
             showCombinedProbability: $showCombinedProbability,
-            sumAvailable: fieldSupportsCombinedLine
+            sumAvailable: !firstScreenCompact192A
+                && fieldSupportsCombinedLine
                 && EvolutionControlBar.sumHasSomethingToAdd(drawableOutcomes: drawableOutcomeCount),
-            topAvailable: EvolutionControlBar.topHasSomethingToCut(drawableOutcomes: drawableOutcomeCount),
+            topAvailable: EvolutionControlBar.topHasSomethingToCut(drawableOutcomes: drawableOutcomeCount) && !firstScreenCompact192A,
             topFilter: $topFilter,
             seasonWord: EvolutionRangeVocabulary.seasonWord(
                 sportCategory: data?.sportCategory,
@@ -1403,14 +1594,49 @@ struct EvolutionChartView: View {
     /// already uses: nothing here may be confused with a line that is data.
     static let gapBridgeDash: [CGFloat] = [1, 5]
 
+    nonisolated static func yCeilingPercent192A(entries: [EvolutionPoint]) -> Double {
+        let peak = entries.map(\.probability).max() ?? 50
+        if peak <= 26 { return 30 }
+        if peak <= 46 { return 50 }
+        if peak <= 56 { return 60 }
+        if peak <= 76 { return 80 }
+        return 100
+    }
+
+    nonisolated static func shortEndLabel192A(name: String, percentValue: Double?) -> String {
+        let stripped = name
+            .components(separatedBy: " · ").first?
+            .components(separatedBy: " — ").first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
+        let shortName: String
+        if stripped.count <= 9 {
+            shortName = stripped
+        } else {
+            let words = stripped.split(whereSeparator: \.isWhitespace).map(String.init)
+            if let last = words.last, words.count >= 2, last.count >= 3, !last.hasPrefix("(") {
+                shortName = last.count <= 9 ? last : String(last.prefix(8)) + "…"
+            } else {
+                shortName = String(stripped.prefix(8)) + "…"
+            }
+        }
+        if let pct = percentValue {
+            return "\(shortName) \(Int(pct.rounded()))%"
+        }
+        return shortName
+    }
+
     private func lineWidth(for name: String, isCombined: Bool) -> CGFloat {
         if isCombined { return 2.2 }
+        if isFirstScreenInline192A { return 2.0 }
         if highlightedName == name { return 2.5 }
         return effectiveSelected.contains(name) ? 1.8 : 0.8
     }
 
     private func lineOpacity(for name: String, isCombined: Bool) -> Double {
         if isCombined { return highlightedName != nil ? 0.45 : 0.9 }
+        if isFirstScreenInline192A {
+            return effectiveSelected.contains(name) ? 1.0 : 0.0
+        }
         let isSelected = effectiveSelected.contains(name)
         let isHighlighted = highlightedName == nil || highlightedName == name
         return isSelected && isHighlighted ? 1 : (isSelected ? 0.2 : 0.1)
@@ -1418,6 +1644,7 @@ struct EvolutionChartView: View {
 
     private var chartSection: some View {
         let entries = chartEntries
+        let ceiling192A = Self.yCeilingPercent192A(entries: entries)
         let bridges = Self.gapBridges(entries)
         let results = Self.resultMarks(settlementResults, entries: entries, names: displayedNames)
         // #7077 — how many instants this chart has evidence for, counted off the
@@ -1433,7 +1660,7 @@ struct EvolutionChartView: View {
             visibleBoundaries = roundBoundaries
         }
 
-        return Chart {
+        let plotChart = Chart {
             // Round boundary vertical lines
             ForEach(visibleBoundaries) { boundary in
                 RuleMark(x: .value("Round", boundary.date))
@@ -1514,7 +1741,7 @@ struct EvolutionChartView: View {
         }
         .chartForegroundStyleScale(mapping: { (name: String) -> Color in
             if name == "_combined" { return Self.combinedColor }
-            let idx = displayedNames.firstIndex(of: name) ?? 0
+            let idx = displayedNames.firstIndex(of: name) ?? orderedHeadlineNames192A.firstIndex(of: name) ?? 0
             return colorForOutcome(name: name, index: idx)
         })
         // Round boundary labels
@@ -1606,12 +1833,25 @@ struct EvolutionChartView: View {
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
-                AxisValueLabel {
-                    if let v = value.as(Double.self) {
-                        Text("\(Int(v))%")
-                            .font(.caption2)
+            if isFirstScreenInline192A {
+                AxisMarks(position: .leading, values: [0.0, ceiling192A / 2.0, ceiling192A]) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                    AxisValueLabel {
+                        if let v = value.as(Double.self) {
+                            Text("\(Int(v.rounded()))%")
+                                .font(.caption2)
+                                .monospacedDigit()
+                        }
+                    }
+                }
+            } else {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                    AxisValueLabel {
+                        if let v = value.as(Double.self) {
+                            Text("\(Int(v))%")
+                                .font(.caption2)
+                        }
                     }
                 }
             }
@@ -1650,9 +1890,24 @@ struct EvolutionChartView: View {
             plotWidth = width
         }
         .chartLegend(.hidden)
-        .frame(height: height)
-        .padding(.horizontal)
-        .padding(.vertical, 8)
+
+        return HStack(alignment: .top, spacing: 4) {
+            Group {
+                if isFirstScreenInline192A {
+                    plotChart.chartYScale(domain: 0...ceiling192A)
+                } else {
+                    plotChart
+                }
+            }
+            .frame(height: height)
+
+            if isFirstScreenInline192A && !dynamicTypeSize.isAccessibilitySize {
+                rightEdgeLabelsColumn192A(entries: entries, ceiling: ceiling192A)
+                    .frame(width: 84, height: height)
+            }
+        }
+        .padding(.horizontal, isFirstScreenInline192A ? 14 : 16)
+        .padding(.vertical, 6)
         // How a finger-driven test finds the region that used to swallow the
         // scroll. `.contain` is load-bearing for the same reason it is on
         // `DiscoverEventCard`: an identifier alone inherits down to every leaf
@@ -1661,6 +1916,45 @@ struct EvolutionChartView: View {
         // the chart's own 280pt frame, without merging or hiding any child.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(Self.scrubSurfaceIdentifier)
+    }
+
+    private func rightEdgeLabelsColumn192A(
+        entries: [EvolutionPoint],
+        ceiling: Double
+    ) -> some View {
+        let plotTopInset: CGFloat = 8
+        let plotBottomInset: CGFloat = 22
+        let usableHeight = max(40, height - plotTopInset - plotBottomInset)
+        let names = orderedHeadlineNames192A.filter { name in
+            entries.contains { !$0.isCombined && $0.name == name }
+        }
+        let lastProbs: [Double] = names.map { name in
+            let pts = entries.filter { !$0.isCombined && $0.name == name }.sorted { $0.date < $1.date }
+            return pts.last?.probability ?? 0
+        }
+        let rawTargets: [CGFloat] = lastProbs.map { val in
+            let clamped = min(max(val, 0), ceiling)
+            let norm = ceiling > 0 ? (clamped / ceiling) : 0
+            return plotTopInset + usableHeight * CGFloat(1.0 - norm)
+        }
+        let yPositions = EventAtlasGolfTournament11666.decollidedLabelYPositions(
+            targets: rawTargets,
+            minGap: 14,
+            plotHeight: height - plotBottomInset
+        )
+
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(names.enumerated()), id: \.element) { idx, name in
+                let styleIdx = displayedNames.firstIndex(of: name) ?? idx
+                let color = colorForOutcome(name: name, index: styleIdx)
+                let label = Self.shortEndLabel192A(name: name, percentValue: lastProbs[idx])
+                Text(label)
+                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .position(x: 42, y: yPositions[idx])
+            }
+        }
     }
 
     /// How a tap-driven test finds the chart's touch surface.

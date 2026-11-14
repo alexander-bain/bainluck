@@ -1270,8 +1270,8 @@ struct EventSportHeadlineCard12472: View {
         stacksRecord: Bool = false
     ) -> some View {
         let isLoser = side.won == false
-        return VStack(alignment: .leading, spacing: 1.5) {
-            if stacksRecord {
+        return VStack(alignment: .leading, spacing: stacksRowsVertically ? 2 : 1.5) {
+            if stacksRowsVertically || stacksRecord {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     singleLineTeamNameLabel(side.shortName, isLoser: isLoser)
                     if side.won == true {
@@ -1285,20 +1285,23 @@ struct EventSportHeadlineCard12472: View {
                     Text(subline)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(1)
+                        .lineLimit(stacksRowsVertically ? nil : 1)
                         .minimumScaleFactor(0.85)
+                        .fixedSize(horizontal: false, vertical: stacksRowsVertically)
                 } else if let record = side.record {
                     Text(record)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(1)
+                        .lineLimit(stacksRowsVertically ? nil : 1)
+                        .fixedSize(horizontal: false, vertical: stacksRowsVertically)
                 }
                 if let projected = side.projectedText, model.pregameColumnHeaders == nil {
                     Text(projected)
                         .font(.caption2.weight(.semibold).monospacedDigit())
                         .foregroundStyle(color)
-                        .lineLimit(1)
+                        .lineLimit(stacksRowsVertically ? 2 : 1)
                         .minimumScaleFactor(0.85)
+                        .fixedSize(horizontal: false, vertical: stacksRowsVertically)
                 }
             } else {
                 ViewThatFits(in: .horizontal) {
@@ -1339,7 +1342,7 @@ struct EventSportHeadlineCard12472: View {
                         }
                     }
                 }
-                if let projected = side.projectedText {
+                if let projected = side.projectedText, model.pregameColumnHeaders == nil {
                     Text(projected)
                         .font(.caption2.weight(.semibold).monospacedDigit())
                         .foregroundStyle(color)

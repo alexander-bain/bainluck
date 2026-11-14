@@ -195,6 +195,7 @@ export function MidtermsAtlasMemberCard({
       label: o.name,
       party: outParty,
       imageUrl: (o as { image_url?: string | null }).image_url ?? null,
+      imageTitle: o.image_title,
       probability: hasProb ? o.probability : null,
       renderedPercent:
         (o as { rendered_percent?: number | null }).rendered_percent ??

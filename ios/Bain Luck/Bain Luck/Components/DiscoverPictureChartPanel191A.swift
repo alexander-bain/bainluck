@@ -648,6 +648,16 @@ struct DiscoverPictureChartPanel191AView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.86)
                 }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.leftEndLabel)
+                        .font(leftFont)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    rightEndText(font: rightFont)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -656,6 +666,7 @@ struct DiscoverPictureChartPanel191AView: View {
         Text(model.leftEndLabel)
             .font(.footnote.weight(.medium).monospacedDigit())
             .foregroundStyle(DS.textSecondaryReadable)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func rightEndText(font: Font) -> some View {

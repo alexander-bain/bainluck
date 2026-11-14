@@ -770,6 +770,89 @@ enum FuturesAtlasPresentation11666 {
         return ids
     }
 
+    // MARK: - Ruling 192-A First-Screen Headline & Field Link Helpers
+
+    nonisolated static let firstScreenHeadlineLimit192A = 4
+
+    nonisolated static func isPropMarket192A(_ market: FuturesMarketDetail) -> Bool {
+        let hay = "\(market.name) \(market.category ?? "") \(market.llmSportCategory ?? "") \(market.externalId ?? "")".lowercased()
+        let propWords = [
+            "prop", "touchdown", "scorer", "1+ td", "anytime td", "specials",
+            "passing yards", "rushing yards", "receiving yards", "rebounds",
+            "assists", "strikeouts", "home run", "shots on goal",
+        ]
+        return propWords.contains { hay.contains($0) }
+    }
+
+    nonisolated static func firstScreenHeadlineRows192A(for body: BodyModel) -> [ContenderRow] {
+        switch body.shape {
+        case .twoWayDuel:
+            return Array(body.allRows.prefix(2))
+        case .singleLegPredicate:
+            return Array(body.allRows.prefix(1))
+        case .mutuallyExclusiveField, .participationField, .quantityLadder:
+            return Array(body.allRows.prefix(firstScreenHeadlineLimit192A))
+        }
+    }
+
+    nonisolated static func allFieldLinkLabel192A(
+        market: FuturesMarketDetail,
+        body: BodyModel
+    ) -> String? {
+        let headlineRows = firstScreenHeadlineRows192A(for: body)
+        guard body.allRows.count > headlineRows.count else { return nil }
+        let noun: String
+        if isPropMarket192A(market) {
+            noun = "props"
+        } else if body.shape == .quantityLadder {
+            noun = "thresholds"
+        } else {
+            let cat = (market.llmSportCategory ?? market.category ?? market.sport ?? "").lowercased()
+            let title = market.name.lowercased()
+            let teamSports: Set<String> = ["football", "basketball", "baseball", "hockey", "soccer"]
+            let playerAwardWords = ["mvp", "heisman", "rookie", "coach", "cy young", "hart", "vezina", "ballon", "player"]
+            if teamSports.contains(cat) && !playerAwardWords.contains(where: { title.contains($0) }) {
+                noun = "teams"
+            } else {
+                noun = "outcomes"
+            }
+        }
+        return "All \(body.allRows.count) \(noun) ›"
+    }
+
+    nonisolated static func chartCardTitle192A(
+        market: FuturesMarketDetail,
+        shape: MarketShape
+    ) -> String {
+        let lower = market.name.lowercased()
+        if isPropMarket192A(market) {
+            if lower.contains("touchdown") { return "Touchdown Chance" }
+            return "Prop History"
+        }
+        if shape == .mutuallyExclusiveField
+            && (lower.contains("champion") || lower.contains("winner") || lower.contains("title")) {
+            return "Title Odds History"
+        }
+        return "Odds History"
+    }
+
+    nonisolated static func chartFooterCaption192A(
+        market: FuturesMarketDetail,
+        shape: MarketShape
+    ) -> String {
+        if isPropMarket192A(market) && shape == .participationField {
+            return "Each player graded independently"
+        }
+        switch shape {
+        case .participationField:
+            return "Independent chances · time range in full chart"
+        case .quantityLadder:
+            return "Each threshold priced on its own"
+        case .twoWayDuel, .mutuallyExclusiveField, .singleLegPredicate:
+            return "Past 7 days · time range in full chart"
+        }
+    }
+
     // MARK: - Formatting Helpers
 
     nonisolated private static func formatWholePercent(_ pct: Double) -> Int {
@@ -785,7 +868,7 @@ enum FuturesAtlasPresentation11666 {
     }()
 }
 
-// MARK: - SwiftUI Views (F1, F2, F4)
+// MARK: - SwiftUI Views (F1, F2, F4 + Ruling 192-A First Screen)
 
 struct FuturesAtlasPageView11666: View {
     let market: FuturesMarketDetail
@@ -796,6 +879,8 @@ struct FuturesAtlasPageView11666: View {
     let golfTournamentEnd: String?
     let chartRefreshToken: Int
     let representation: FuturesRepresentation
+    var preloadedTimeline: ProbabilityTimelineResponse? = nil
+    var referenceNow: Date? = nil
 
     @State private var selectedOutcomeId: Int? = nil
     @State private var showDetailsSheet = false
@@ -804,19 +889,60 @@ struct FuturesAtlasPageView11666: View {
     var body: some View {
         let presentation = FuturesAtlasPresentation11666.build(
             market: market,
-            selectedOutcomeId: selectedOutcomeId
+            selectedOutcomeId: selectedOutcomeId,
+            now: referenceNow ?? Date()
+        )
+        let headlineRows = FuturesAtlasPresentation11666.firstScreenHeadlineRows192A(for: presentation.body)
+        let allFieldLabel = FuturesAtlasPresentation11666.allFieldLinkLabel192A(
+            market: market,
+            body: presentation.body
         )
 
-        VStack(alignment: .leading, spacing: 16) {
-            FuturesAtlasHeaderCardView11666(
+        VStack(alignment: .leading, spacing: 12) {
+            FuturesAtlasHeadlineCard192A(
+                market: market,
                 header: presentation.header,
-                marketId: marketId,
-                marketName: market.name,
-                shareMessage: shareMessage,
-                onShare: onShare,
-                onOpenDetails: { showDetailsSheet = true }
+                headlineRows: headlineRows,
+                allFieldLabel: allFieldLabel,
+                timelineOutcomes: preloadedTimeline?.outcomes,
+                onOpenDetails: { showDetailsSheet = true },
+                onOpenFullField: { showFullFieldSheet = true }
             )
             .contextualTipHero10876(type: "future", id: marketId, scrollSpace: FuturesDetailView.scrollSpace)
+
+            if !market.outcomes.isEmpty {
+                EvolutionChartView(
+                    marketId: marketId,
+                    hours: 168,
+                    height: EvolutionChartView.defaultFirstScreenHeight192A,
+                    tournamentStart: golfTournamentStart,
+                    tournamentEnd: golfTournamentEnd,
+                    refreshToken: chartRefreshToken,
+                    representation: representation,
+                    expectation: FuturesAtlasPresentation11666.chartExpectation(
+                        market: market,
+                        presentation: presentation,
+                        representation: representation
+                    ),
+                    withheldCurrentOutcomeIds: FuturesAtlasPresentation11666.withheldCurrentOutcomeIds(
+                        presentation: presentation
+                    ),
+                    firstScreenCompact192A: true,
+                    chartTitle192A: FuturesAtlasPresentation11666.chartCardTitle192A(
+                        market: market,
+                        shape: presentation.body.shape
+                    ),
+                    headlineContenderNames: headlineRows.map(\.name),
+                    footerCaption192A: FuturesAtlasPresentation11666.chartFooterCaption192A(
+                        market: market,
+                        shape: presentation.body.shape
+                    ),
+                    allFieldButtonLabel: allFieldLabel,
+                    onOpenAllField: allFieldLabel != nil ? { showFullFieldSheet = true } : nil,
+                    preloadedTimeline: preloadedTimeline,
+                    referenceNow: referenceNow
+                )
+            }
 
             if let narrative = presentation.narrativeCopy {
                 Text(narrative)
@@ -833,46 +959,12 @@ struct FuturesAtlasPageView11666: View {
                     )
             }
 
-            FuturesAtlasBodyCardView11666(
-                bodyModel: presentation.body,
-                selectedOutcomeId: presentation.header.selectedOutcomeId,
-                onSelectOutcome: { id in
-                    selectedOutcomeId = id
-                },
-                onOpenFullField: {
-                    showFullFieldSheet = true
-                }
-            )
-
             if EventAtlasRacingCards11666.applies(market: market) {
                 EventAtlasRacingSectionView11666(market: market)
             }
-
-            if !market.outcomes.isEmpty {
-                EvolutionChartView(
-                    marketId: marketId,
-                    hours: 168,
-                    tournamentStart: golfTournamentStart,
-                    tournamentEnd: golfTournamentEnd,
-                    refreshToken: chartRefreshToken,
-                    representation: representation,
-                    expectation: FuturesAtlasPresentation11666.chartExpectation(
-                        market: market,
-                        presentation: presentation,
-                        representation: representation
-                    ),
-                    withheldCurrentOutcomeIds: FuturesAtlasPresentation11666.withheldCurrentOutcomeIds(
-                        presentation: presentation
-                    )
-                )
-            }
-
-            if let attribution = presentation.attribution {
-                FuturesAtlasAttributionFooterView11666(attribution: attribution)
-            }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 12)
+        .padding(.top, 10)
         .sheet(isPresented: $showDetailsSheet) {
             FuturesAtlasDetailsSheetView11666(details: presentation.detailsSheet)
         }
@@ -887,6 +979,230 @@ struct FuturesAtlasPageView11666: View {
                     showFullFieldSheet = false
                 }
             )
+        }
+    }
+}
+
+struct FuturesAtlasHeadlineCard192A: View {
+    let market: FuturesMarketDetail
+    let header: FuturesAtlasPresentation11666.HeaderModel
+    let headlineRows: [FuturesAtlasPresentation11666.ContenderRow]
+    let allFieldLabel: String?
+    var timelineOutcomes: [TimelineOutcomeMeta]? = nil
+    let onOpenDetails: () -> Void
+    let onOpenFullField: () -> Void
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var cleanEyebrow: String {
+        if header.isResolved {
+            return "\(header.categoryName) · Final"
+        }
+        if FuturesAtlasPresentation11666.isPropMarket192A(market) {
+            return "\(header.categoryName) Props"
+        }
+        if let domain = FuturesAtlasPresentation11666.domainContextLabel(for: market) {
+            return "\(header.categoryName) · \(domain)"
+        }
+        return header.categoryName
+    }
+
+    private func contenderColor(for row: FuturesAtlasPresentation11666.ContenderRow, index: Int) -> Color {
+        Color(
+            hex: EvolutionOutcomeColour.markHex(
+                name: row.name,
+                outcomes: timelineOutcomes,
+                index: index
+            )
+        )
+    }
+
+    private func badgeInitials(for name: String) -> String {
+        let core = name
+            .components(separatedBy: " · ").first?
+            .components(separatedBy: " — ").first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
+        return TeamShortName.abbreviation(core)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                Text(cleanEyebrow)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DS.textSecondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                if !header.isResolved {
+                    EkgTraceShape(beating: header.primaryDisplay.asOfText == nil)
+                        .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                        .foregroundStyle(header.primaryDisplay.asOfText == nil ? Color.green : Color.secondary)
+                        .frame(width: 26, height: 9)
+                        .accessibilityHidden(true)
+                }
+
+                Button(action: onOpenDetails) {
+                    Image(systemName: "info.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(DS.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Market and provenance details")
+            }
+
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(header.marketTitle)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(DS.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let allFieldLabel {
+                        Button(action: onOpenFullField) {
+                            Text(allFieldLabel)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.blue)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("futures-all-field-header-button-192a")
+                    }
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(header.marketTitle)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(DS.textPrimary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 6)
+                    if let allFieldLabel {
+                        Button(action: onOpenFullField) {
+                            Text(allFieldLabel)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.blue)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("futures-all-field-header-button-192a")
+                    }
+                }
+            }
+
+            VStack(spacing: 6) {
+                ForEach(Array(headlineRows.enumerated()), id: \.element.id) { idx, row in
+                    contenderHeadlineRow(row, index: idx)
+                    if idx < headlineRows.count - 1 {
+                        Divider()
+                            .overlay(DS.border.opacity(0.6))
+                    }
+                }
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(DS.cardBg)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(DS.border, lineWidth: 0.75)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("futures-headline-card-192a")
+    }
+
+    @ViewBuilder
+    private func contenderHeadlineRow(
+        _ row: FuturesAtlasPresentation11666.ContenderRow,
+        index: Int
+    ) -> some View {
+        let color = contenderColor(for: row, index: index)
+        let logoURL = timelineOutcomes?.first(where: { $0.name == row.name })?.logoSmall
+
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    contenderMark(name: row.name, logoURL: logoURL, color: color)
+                    Text(row.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(DS.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 8) {
+                    rowSecondaryContext(row)
+                    Spacer()
+                    rowPrimaryValue(row, color: color)
+                }
+            }
+            .padding(.vertical, 2)
+        } else {
+            HStack(spacing: 8) {
+                contenderMark(name: row.name, logoURL: logoURL, color: color)
+                Text(row.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                rowSecondaryContext(row)
+                rowPrimaryValue(row, color: color)
+                    .frame(minWidth: 46, alignment: .trailing)
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    @ViewBuilder
+    private func contenderMark(name: String, logoURL: String?, color: Color) -> some View {
+        if let logoURL, !logoURL.isEmpty {
+            TeamLogoView(
+                url: logoURL,
+                teamName: name,
+                color: color,
+                size: 22
+            )
+        } else {
+            Text(badgeInitials(for: name))
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(Color.white)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(color))
+        }
+    }
+
+    @ViewBuilder
+    private func rowSecondaryContext(_ row: FuturesAtlasPresentation11666.ContenderRow) -> some View {
+        if let asOfText = row.displayValue.asOfText {
+            Text(asOfText)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(DS.textMuted)
+        } else if case .chance(_, _, _, let moveText?, let isUp?, _) = row.displayValue {
+            Text("\(isUp ? "↑" : "↓")\(moveText)")
+                .font(.caption2.weight(.medium).monospacedDigit())
+                .foregroundStyle(DS.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private func rowPrimaryValue(
+        _ row: FuturesAtlasPresentation11666.ContenderRow,
+        color: Color
+    ) -> some View {
+        switch row.displayValue {
+        case .chance:
+            Text(row.displayValue.primaryLabel)
+                .font(.callout.weight(.bold).monospacedDigit())
+                .foregroundStyle(color)
+        case .won:
+            Text(row.displayValue.primaryLabel)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(DS.emerald)
+        case .lost, .noRecentProbability, .resultUnconfirmed:
+            Text(row.displayValue.primaryLabel)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(DS.textSecondary)
         }
     }
 }

@@ -40,6 +40,8 @@ class MidtermsTwinEntry:
     polymarket_name: str | None
     note: str
     outcome_aliases: tuple[tuple[str, str], ...] = ()
+    # Verified Wikipedia identities, scoped to this race rather than bare names.
+    outcome_images: tuple[tuple[str, str], ...] = ()
 
 
 # Explicit 14-market twin register for midterms-2026 (#11871), read from production
@@ -80,6 +82,7 @@ MIDTERMS_TWIN_REGISTER: tuple[MidtermsTwinEntry, ...] = (
         polymarket_external_id="57648",
         polymarket_name="Kansas Senate Election Winner",
         note="paired (Adam Hamilton / Roger Marshall)",
+        outcome_images=(("Adam Hamilton", "Adam Hamilton (pastor)"), ("Roger Marshall", "Roger Marshall")),
     ),
     MidtermsTwinEntry(
         kalshi_market_id=109088,
@@ -89,6 +92,7 @@ MIDTERMS_TWIN_REGISTER: tuple[MidtermsTwinEntry, ...] = (
         polymarket_external_id="57647",
         polymarket_name="Iowa Senate Election Winner",
         note="paired (Josh Turek / Ashley Hinson)",
+        outcome_images=(("Josh Turek", "Josh Turek"), ("Ashley Hinson", "Ashley Hinson")),
     ),
     MidtermsTwinEntry(
         kalshi_market_id=109082,
@@ -98,6 +102,7 @@ MIDTERMS_TWIN_REGISTER: tuple[MidtermsTwinEntry, ...] = (
         polymarket_external_id="57650",
         polymarket_name="Maine Senate Election Winner",
         note="paired (Troy Jackson / Susan Collins)",
+        outcome_images=(("Troy Jackson", "Troy Jackson"), ("Susan Collins", "Susan Collins")),
     ),
     MidtermsTwinEntry(
         kalshi_market_id=109095,
@@ -116,6 +121,7 @@ MIDTERMS_TWIN_REGISTER: tuple[MidtermsTwinEntry, ...] = (
         polymarket_external_id="57672",
         polymarket_name="Texas Senate Election Winner",
         note="paired (James Talarico / Ken Paxton)",
+        outcome_images=(("James Talarico", "James Talarico"), ("Ken Paxton", "Ken Paxton")),
     ),
     MidtermsTwinEntry(
         kalshi_market_id=109072,
@@ -125,6 +131,7 @@ MIDTERMS_TWIN_REGISTER: tuple[MidtermsTwinEntry, ...] = (
         polymarket_external_id="57682",
         polymarket_name="Ohio Senate Election Winner",
         note="paired (Sherrod Brown / Jon Husted)",
+        outcome_images=(("Sherrod Brown", "Sherrod Brown"), ("Jon Husted", "Jon Husted")),
     ),
     MidtermsTwinEntry(
         kalshi_market_id=109068,
@@ -135,6 +142,7 @@ MIDTERMS_TWIN_REGISTER: tuple[MidtermsTwinEntry, ...] = (
         polymarket_name="South Carolina Senate Election Winner",
         note="paired (Darline Graham / Annie Andrews)",
         outcome_aliases=(("darline graham nordone", "darline graham"),),
+        outcome_images=(("Darline Graham", "Darline Graham"), ("Annie Andrews", "Annie Andrews")),
     ),
     MidtermsTwinEntry(
         kalshi_market_id=109081,
@@ -144,6 +152,7 @@ MIDTERMS_TWIN_REGISTER: tuple[MidtermsTwinEntry, ...] = (
         polymarket_external_id="57658",
         polymarket_name="Michigan Senate Election Winner",
         note="paired (Abdul El-Sayed / Mike Rogers)",
+        outcome_images=(("Abdul El-Sayed", "Abdul El-Sayed"), ("Mike Rogers", "Mike Rogers (Michigan politician)")),
     ),
     MidtermsTwinEntry(
         kalshi_market_id=108645,
@@ -153,6 +162,7 @@ MIDTERMS_TWIN_REGISTER: tuple[MidtermsTwinEntry, ...] = (
         polymarket_external_id="57161",
         polymarket_name="Georgia Governor Election Winner",
         note="paired (Keisha Lance Bottoms / Rick Jackson)",
+        outcome_images=(("Keisha Lance Bottoms", "Keisha Lance Bottoms"), ("Rick Jackson", "Rick Jackson (businessman)")),
     ),
     MidtermsTwinEntry(
         kalshi_market_id=109918,
@@ -268,6 +278,12 @@ def blend_card(primary: dict, contributors: list[dict]) -> dict:
                 outcomes[key] = copy.deepcopy(outcome)
         counts.append(contributor.get("outcome_count", 0) - dropped)
     card["top_outcomes"] = list(outcomes.values())
+    if entry is not None:
+        images = {outcome_key(name, entry): title for name, title in entry.outcome_images}
+        for outcome in card["top_outcomes"]:
+            title = images.get(outcome_key(outcome["name"], entry))
+            if title is not None:
+                outcome["image_title"] = title
     card["outcome_count"] = max([len(outcomes), *counts])
     sources = sorted(
         {

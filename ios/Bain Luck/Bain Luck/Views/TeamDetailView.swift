@@ -41,6 +41,23 @@ struct TeamDetailView: View {
     @State private var race: TeamDivisionRace.Race?
     /// #10234 — the grid fetch has finished (or was never needed).
     @State private var raceSettled = false
+    private let skipNetworkLoad: Bool
+
+    init(slug: String) {
+        self.slug = slug
+        self.skipNetworkLoad = false
+    }
+
+    #if DEBUG
+    init(slug: String, loadedPageForTest: TeamPageResponse, raceForTest: TeamDivisionRace.Race? = nil) {
+        self.slug = slug
+        self.skipNetworkLoad = true
+        self._data = State(initialValue: loadedPageForTest)
+        self._loading = State(initialValue: false)
+        self._race = State(initialValue: raceForTest)
+        self._raceSettled = State(initialValue: true)
+    }
+    #endif
 
     var body: some View {
         Group {
@@ -58,6 +75,7 @@ struct TeamDetailView: View {
 
     @MainActor
     private func loadTeam() async {
+        guard !skipNetworkLoad else { return }
         do {
             let page = try await APIClient.shared.fetchTeamPage(slug: slug)
             data = page
@@ -142,23 +160,23 @@ struct TeamDetailView: View {
                 }
             }
 
-            // Upcoming Games
+            // Upcoming Games (Ruling 183-A: unified game card, Size S)
             if !data.upcomingEvents.isEmpty {
                 Section("Upcoming") {
                     ForEach(data.upcomingEvents) { event in
                         NavigationLink(value: Route.eventDetail(id: event.id)) {
-                            gameRow(event, teamName: team.name)
+                            teamGameCard183A(event, team: team)
                         }
                     }
                 }
             }
 
-            // Recent Games
+            // Recent Games (Ruling 183-A: unified game card, Size S)
             if !data.recentEvents.isEmpty {
                 Section("Recent") {
                     ForEach(data.recentEvents) { event in
                         NavigationLink(value: Route.eventDetail(id: event.id)) {
-                            gameRow(event, teamName: team.name)
+                            teamGameCard183A(event, team: team)
                         }
                     }
                 }
@@ -289,6 +307,16 @@ struct TeamDetailView: View {
     /// normalised blend (`teams.py:559`). Putting the served number through the
     /// draw guard would be asking a question about an input that is not here, and
     /// its answer would silently blank the soccer rows it was built to protect.
+    private func teamGameCard183A(_ event: SearchEvent, team: TeamPageTeam) -> some View {
+        let adapted = SearchEventCardAdapter183A.fromTeamScheduleBrief(event, team: team)
+        return EventCardView(
+            event: adapted.feedEvent,
+            reason: nil,
+            compactScheduleStyle: true,
+            awayReadingIsServerVerified: adapted.awayReadingIsServerVerified
+        )
+    }
+
     private func gameRow(_ event: SearchEvent, teamName: String) -> some View {
         let isHome = TeamGameRow.isHome(event, teamName: teamName)
         let opponent = TeamGameRow.opponent(event, teamName: teamName)

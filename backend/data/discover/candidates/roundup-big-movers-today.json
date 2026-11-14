@@ -1,0 +1,32 @@
+{
+  "slug": "roundup-big-movers-today",
+  "membership": "big_movers_today",
+  "kind": "roundup",
+  "relations": [
+    "movement",
+    "same_window"
+  ],
+  "level": "related",
+  "kicker": "PULSE · BIGGEST 24H SHIFTS",
+  "name": "Big movers today",
+  "category": "general",
+  "tag": "MOVERS",
+  "section_title": "Biggest 24-hour market shifts",
+  "subtitle": "Actively trading markets that shifted 6 or more points over the past 24 hours, ordered by size of move.",
+  "footer": "24-hour shift in percentage points · actively trading markets only",
+  "score": 93.0,
+  "rule": {
+    "producer": "big_movers_today",
+    "domain": "cross_category_movers",
+    "selector": "largest_24h_point_shifts",
+    "window": "24h",
+    "min_abs_delta": 0.06,
+    "min_members": 3,
+    "max_card_rows": 5,
+    "min_prob": 0.03,
+    "max_prob": 0.97,
+    "max_quote_age_hours": 24.0,
+    "max_trade_age_days": 7.0,
+    "min_volume_24h": 100.0
+  }
+}
