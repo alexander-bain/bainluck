@@ -27,6 +27,8 @@ import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { crestNeedsPlate } from "@/lib/discover/crestPlate";
+import EventCard183A, { buildUnifiedCardFromFeed } from "@/components/EventCard183A";
+import { isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
 
 /**
  * This card's bar is painted at full opacity — no `opacity` style on either
@@ -46,6 +48,17 @@ interface EventCardProps extends CardActionCallbacks {
 
 export function EventCard({ item, data, liked, setLiked, onDismiss, trending, onDetailClick, onShare, onContextExpand, onContextCollapse }: EventCardProps) {
   const [showContext, setShowContext] = useState(false);
+  if (isWebGameCard183AEnabled()) {
+    return (
+      <EventCard183A
+        card={buildUnifiedCardFromFeed(item, data)}
+        surface="discover"
+        isPinned={liked}
+        onPinToggle={() => setLiked(!liked)}
+        onCardClick={onDetailClick}
+      />
+    );
+  }
   const homeColor = data.home_team_data?.primary_color || "#374151";
   const awayColor = data.away_team_data?.primary_color || "#6b7280";
   // #4470: the probability row and the bar sit on the WHITE card, so they get
