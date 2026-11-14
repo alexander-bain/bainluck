@@ -268,8 +268,12 @@ final class GolfLiveHeadlineSat2FTests: XCTestCase {
             "Brown 11%"
         )
         XCTAssertEqual(
+            EventAtlasGolfTournament11666.shortChartEndLabel(for: contenders[2], phase: .recorded),
+            "Greyserman 8%"
+        )
+        XCTAssertEqual(
             EventAtlasGolfTournament11666.shortChartEndLabel(for: contenders[3], phase: .recorded),
-            "EVR 6%"
+            "Van Rooyen 6%"
         )
 
         let sectionView = EventAtlasGolfTournamentSection11666(

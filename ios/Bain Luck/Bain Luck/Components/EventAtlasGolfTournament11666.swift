@@ -771,27 +771,25 @@ enum EventAtlasGolfTournament11666 {
         var id: String { rawValue }
     }
 
+    private nonisolated static let surnameParticles: Set<String> = [
+        "van", "von", "de", "del", "della", "der", "den", "di", "da", "du", "la", "le", "st", "st.", "san", "mc", "mac",
+    ]
+
     nonisolated static func shortChartSurname(_ name: String) -> String {
-        let parts = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var parts = name.trimmingCharacters(in: .whitespacesAndNewlines)
             .split(whereSeparator: \.isWhitespace)
             .map(String.init)
-        guard let last = parts.last else { return name }
-        let suffixes: Set<String> = ["jr", "jr.", "sr", "sr.", "ii", "iii", "iv"]
-        let core: String
-        if parts.count >= 2, suffixes.contains(last.lowercased()) {
-            core = parts[parts.count - 2]
-        } else if parts.count >= 3 {
-            // Initials for multi-part surnames like "Erik Van Rooyen" -> "EVR" if > 9 chars
-            let tail = parts.dropFirst().joined(separator: " ")
-            if tail.count > 9 {
-                core = parts.compactMap { $0.first.map(String.init) }.joined().uppercased()
-            } else {
-                core = tail
-            }
-        } else {
-            core = last
+        guard !parts.isEmpty else { return name }
+        let suffixes: Set<String> = ["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"]
+        if parts.count >= 2, let last = parts.last, suffixes.contains(last.lowercased()) {
+            parts.removeLast()
         }
-        return core.count > 9 ? String(core.prefix(8)) + "…" : core
+        guard parts.count >= 2 else { return parts[0] }
+        var surnameStart = parts.count - 1
+        while surnameStart > 1 && surnameParticles.contains(parts[surnameStart - 1].lowercased()) {
+            surnameStart -= 1
+        }
+        return parts[surnameStart...].joined(separator: " ")
     }
 
     nonisolated static func shortChartEndLabel(
@@ -1219,9 +1217,9 @@ struct EventAtlasGolfHeadlineCardView192A: View {
 
     private var trailingColumnHeader: String {
         switch phase {
-        case .before: return "CHANCE"
-        case .recorded: return "NOW"
-        case .final: return "FINAL"
+        case .before: return "Chance"
+        case .recorded: return "Now"
+        case .final: return "Final"
         }
     }
 
@@ -1357,31 +1355,37 @@ struct EventAtlasGolfHeadlineCardView192A: View {
     }
 
     private var columnHeaderRow: some View {
-        HStack(spacing: 4) {
-            Text("POS")
-                .lineLimit(1)
-                .frame(width: 24, alignment: .leading)
-            Text("GOLFER")
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            if showsParColumn {
-                Text("PAR")
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Text("Pos")
                     .lineLimit(1)
-                    .frame(width: 32, alignment: .trailing)
-            }
-            if showsPregameColumn {
-                Text("PREGAME")
+                    .frame(width: 24, alignment: .leading)
+                Text("Golfer")
                     .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(width: 52, alignment: .trailing)
+                Spacer(minLength: 4)
+                if showsParColumn {
+                    Text("Score")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: 38, alignment: .trailing)
+                }
+                if showsPregameColumn {
+                    Text("Pregame")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: 54, alignment: .trailing)
+                }
+                Text(trailingColumnHeader)
+                    .lineLimit(1)
+                    .frame(width: 50, alignment: .trailing)
             }
-            Text(trailingColumnHeader)
-                .lineLimit(1)
-                .foregroundStyle(.primary)
-                .frame(width: 50, alignment: .trailing)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(DS.textSecondaryReadable)
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
         }
-        .font(.system(size: 10, weight: .semibold))
-        .foregroundStyle(DS.textSecondaryReadable)
     }
 
     @ViewBuilder
@@ -1452,14 +1456,14 @@ struct EventAtlasGolfHeadlineCardView192A: View {
                     Text(parLabel ?? "—")
                         .font(.subheadline.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.primary)
-                        .frame(width: 32, alignment: .trailing)
+                        .frame(width: 38, alignment: .trailing)
                 }
 
                 if showsPregameColumn {
                     Text(contender.openingProbability.map { EventAtlasGolfTournament11666.wholePercentProbabilityText($0) } ?? "—")
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
-                        .frame(width: 52, alignment: .trailing)
+                        .frame(width: 54, alignment: .trailing)
                 }
 
                 golferTrailingValue(contender, color: color)
@@ -1632,7 +1636,7 @@ struct EventAtlasGolfJourneyCardView11666: View {
 
                     if !dynamicTypeSize.isAccessibilitySize {
                         rightEdgeLabelsColumn
-                            .frame(width: 82, height: EventAtlasGolfTournament11666.firstScreenChartHeight)
+                            .frame(width: 98, height: EventAtlasGolfTournament11666.firstScreenChartHeight)
                     }
                 }
             } else {
@@ -1695,10 +1699,13 @@ struct EventAtlasGolfJourneyCardView11666: View {
                 let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
                 let label = EventAtlasGolfTournament11666.shortChartEndLabel(for: contender, phase: phase)
                 Text(label)
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .position(x: 41, y: yPositions[idx])
+                    .minimumScaleFactor(0.68)
+                    .allowsTightening(true)
+                    .frame(width: 96, alignment: .leading)
+                    .position(x: 49, y: yPositions[idx])
             }
         }
     }
