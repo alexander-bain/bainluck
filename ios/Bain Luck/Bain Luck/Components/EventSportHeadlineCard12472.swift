@@ -43,20 +43,26 @@ struct EventSportHeadlineCard12472: View {
     private static let soccerWonGreen = Color(red: 0.09, green: 0.56, blue: 0.30)
     private static let soccerDrawBarSlate = Color(red: 0.58, green: 0.63, blue: 0.70)
 
+    @ScaledMetric(relativeTo: .caption2) private var liveHeaderSize: CGFloat = 11
+
     private var stacksRowsVertically: Bool {
         dynamicTypeSize.isAccessibilitySize
     }
 
+    private var liveColumnSpacing: CGFloat {
+        stacksRowsVertically ? 6 : 8
+    }
+
     private var effectiveScoreColWidth: CGFloat {
-        stacksRowsVertically ? min(liveScoreColWidth, 64) : min(liveScoreColWidth, 44)
+        stacksRowsVertically ? min(liveScoreColWidth, 52) : min(liveScoreColWidth, 44)
     }
 
     private var effectivePregameColWidth: CGFloat {
-        stacksRowsVertically ? min(max(livePregameColWidth, 112), 120) : min(livePregameColWidth, 56)
+        stacksRowsVertically ? min(max(livePregameColWidth, 84), 88) : min(livePregameColWidth, 56)
     }
 
     private var effectiveNowColWidth: CGFloat {
-        stacksRowsVertically ? min(liveNowColWidth, 118) : min(liveNowColWidth, 82)
+        stacksRowsVertically ? min(liveNowColWidth, 96) : min(liveNowColWidth, 82)
     }
 
     private var effectivePregameProjectedColWidth: CGFloat {
@@ -218,29 +224,48 @@ struct EventSportHeadlineCard12472: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         case .during:
-            HStack(spacing: 8) {
-                if let liveBadge = model.liveBadgeText {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(Color.white)
-                            .frame(width: 6, height: 6)
-                        Text(liveBadge)
-                            .font(.caption2.weight(.bold).monospacedDigit())
-                            .foregroundStyle(Color.white)
-                            .lineLimit(1)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    if let liveBadge = model.liveBadgeText {
+                        liveBadgePill(liveBadge)
+                            .fixedSize(horizontal: true, vertical: true)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3.5)
-                    .background(Capsule().fill(Color.red))
-                    .fixedSize(horizontal: !stacksRowsVertically, vertical: true)
+                    if let league = model.leagueLabel {
+                        Text(league)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
                 }
-                if let league = model.leagueLabel {
-                    Text(league)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(DS.textSecondaryReadable)
+                VStack(alignment: .leading, spacing: 4) {
+                    if let liveBadge = model.liveBadgeText {
+                        liveBadgePill(liveBadge)
+                    }
+                    if let league = model.leagueLabel {
+                        Text(league)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }
+    }
+
+    private func liveBadgePill(_ liveBadge: String) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(DS.cardBg)
+                .frame(width: 6, height: 6)
+            Text(liveBadge)
+                .font(.caption2.weight(.bold).monospacedDigit())
+                .foregroundStyle(DS.cardBg)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3.5)
+        .background(Capsule().fill(DS.danger))
     }
 
     private var trailingControls: some View {
@@ -336,43 +361,30 @@ struct EventSportHeadlineCard12472: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     crest(model.home, color: colors.home, size: 30)
-                    Text(model.home.shortName)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.primary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    singleLineTeamNameLabel(model.home.shortName, isLoser: false)
                 }
                 soccerCenterTag(threeWay)
                 HStack(spacing: 8) {
                     crest(model.away, color: colors.away, size: 30)
-                    Text(model.away.shortName)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.primary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    singleLineTeamNameLabel(model.away.shortName, isLoser: false)
                 }
             }
         } else {
             HStack(alignment: .center, spacing: 8) {
                 HStack(spacing: 7) {
                     crest(model.home, color: colors.home, size: 30)
-                    Text(model.home.shortName)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.primary)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                        .fixedSize(horizontal: false, vertical: true)
+                    singleLineTeamNameLabel(model.home.shortName, isLoser: false)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 soccerCenterTag(threeWay)
 
                 HStack(spacing: 7) {
-                    Text(model.away.shortName)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.primary)
-                        .multilineTextAlignment(.trailing)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                        .fixedSize(horizontal: false, vertical: true)
+                    singleLineTeamNameLabel(
+                        model.away.shortName,
+                        isLoser: false,
+                        alignment: .trailing
+                    )
                     crest(model.away, color: colors.away, size: 30)
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -676,13 +688,18 @@ struct EventSportHeadlineCard12472: View {
         .accessibilityHidden(true)
     }
 
+    private var liveColumnHeaderFont: Font {
+        let cap: CGFloat = stacksRowsVertically ? 14.5 : 12
+        return .system(size: min(liveHeaderSize, cap), weight: .medium)
+    }
+
     private func liveColumnHeaderRow(_ headers: EventSportHeadlines12472.LiveColumnHeaders) -> some View {
         VStack(spacing: 4) {
-            HStack(spacing: 8) {
+            HStack(spacing: liveColumnSpacing) {
                 Spacer(minLength: 0)
                 if let scoreHeader = headers.score {
                     Text(scoreHeader)
-                        .font(.caption2.weight(.medium))
+                        .font(liveColumnHeaderFont)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -690,14 +707,14 @@ struct EventSportHeadlineCard12472: View {
                 }
                 if let pregameHeader = headers.pregame {
                     Text(pregameHeader)
-                        .font(.caption2.weight(.medium))
+                        .font(liveColumnHeaderFont)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .frame(width: effectivePregameColWidth, alignment: .trailing)
                 }
                 Text(headers.now)
-                    .font(.caption2.weight(.medium))
+                    .font(liveColumnHeaderFont)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -716,7 +733,7 @@ struct EventSportHeadlineCard12472: View {
         headers: EventSportHeadlines12472.LiveColumnHeaders,
         color: Color
     ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: liveColumnSpacing) {
             if headers.score != nil {
                 Group {
                     if let score = side.liveScore {
@@ -1046,10 +1063,7 @@ struct EventSportHeadlineCard12472: View {
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(side.shortName)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+                singleLineTeamNameLabel(side.shortName, isLoser: false)
                 Spacer(minLength: 4)
                 HStack(spacing: 6) {
                     ForEach(Array(scoreFirst.setColumns.enumerated()), id: \.offset) { _, col in
@@ -1235,6 +1249,21 @@ struct EventSportHeadlineCard12472: View {
         )
     }
 
+    private func singleLineTeamNameLabel(
+        _ shortName: String,
+        isLoser: Bool,
+        alignment: TextAlignment = .leading
+    ) -> some View {
+        Text(shortName)
+            .font(.subheadline.weight(isLoser ? .semibold : .bold))
+            .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
+            .multilineTextAlignment(alignment)
+            .lineLimit(1)
+            .minimumScaleFactor(stacksRowsVertically ? 0.45 : 0.58)
+            .truncationMode(.tail)
+            .allowsTightening(true)
+    }
+
     private func teamIdentityStack(
         _ side: EventSportHeadlines12472.TeamRowModel,
         color: Color,
@@ -1244,12 +1273,7 @@ struct EventSportHeadlineCard12472: View {
         return VStack(alignment: .leading, spacing: 1.5) {
             if stacksRecord {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(side.shortName)
-                        .font(.subheadline.weight(isLoser ? .semibold : .bold))
-                        .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.85)
-                        .fixedSize(horizontal: false, vertical: true)
+                    singleLineTeamNameLabel(side.shortName, isLoser: isLoser)
                     if side.won == true {
                         Text("\u{2713}")
                             .font(.subheadline.weight(.heavy))
@@ -1277,24 +1301,42 @@ struct EventSportHeadlineCard12472: View {
                         .minimumScaleFactor(0.85)
                 }
             } else {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(side.shortName)
-                        .font(.subheadline.weight(isLoser ? .semibold : .bold))
-                        .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.85)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if side.won == true {
-                        Text("\u{2713}")
-                            .font(.subheadline.weight(.heavy))
-                            .foregroundStyle(Self.soccerWonGreen)
-                            .accessibilityLabel("won")
-                    }
-                    if let record = side.record {
-                        Text(record)
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(DS.textSecondaryReadable)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(side.shortName)
+                            .font(.subheadline.weight(isLoser ? .semibold : .bold))
+                            .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
+                            .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
+                        if side.won == true {
+                            Text("\u{2713}")
+                                .font(.subheadline.weight(.heavy))
+                                .foregroundStyle(Self.soccerWonGreen)
+                                .accessibilityLabel("won")
+                        }
+                        if let record = side.record {
+                            Text(record)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 1.5) {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            singleLineTeamNameLabel(side.shortName, isLoser: isLoser)
+                            if side.won == true {
+                                Text("\u{2713}")
+                                    .font(.subheadline.weight(.heavy))
+                                    .foregroundStyle(Self.soccerWonGreen)
+                                    .accessibilityLabel("won")
+                            }
+                        }
+                        if let record = side.record {
+                            Text(record)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .lineLimit(1)
+                        }
                     }
                 }
                 if let projected = side.projectedText {
