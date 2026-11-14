@@ -1022,13 +1022,7 @@ struct FuturesAtlasHeadlineCard192A: View {
             .components(separatedBy: " · ").first?
             .components(separatedBy: " — ").first?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
-        let words = core.split(whereSeparator: \.isWhitespace).map(String.init)
-        if words.count >= 2 {
-            let a = words[0].prefix(1)
-            let b = words[1].prefix(1)
-            return "\(a)\(b)".uppercased()
-        }
-        return String(core.prefix(3)).uppercased()
+        return TeamShortName.abbreviation(core)
     }
 
     var body: some View {
