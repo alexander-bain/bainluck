@@ -36,7 +36,7 @@ final class GolfTournamentViewModel: ObservableObject {
             let presentation = GolfTournamentPresentation(response: response)
             state = .loaded(presentation)
             if ReleaseSurfaces.isEventPageAtlasEnabled() {
-                atlasData = await Self.loadAtlasData(for: response)
+                atlasData = await Self.loadAtlasData(for: response, includeDefaultLeaderboard: true)
             }
             logger.info("Golf tournament \(self.slug, privacy: .public) loaded")
         } catch {
@@ -63,7 +63,9 @@ final class GolfTournamentViewModel: ObservableObject {
                 hours: 168,
                 fullRange: true
             )
-        }
+        },
+        fetchLeaderboard: (@Sendable (String) async throws -> GolfLeaderboardResponse)? = nil,
+        includeDefaultLeaderboard: Bool = false
     ) async -> EventAtlasGolfTournament11666.TournamentAtlasData {
         var out = EventAtlasGolfTournament11666.TournamentAtlasData()
         let winnerId = response.evolutionMarketId
@@ -73,6 +75,21 @@ final class GolfTournamentViewModel: ObservableObject {
         let top20Id = response.markets.first(where: { $0.type == "top_20" })?.marketIds.first
         let makeCutId = response.markets.first(where: { $0.type == "make_cut" })?.marketIds.first
         out.hasMakeCutMarket = (makeCutId != nil)
+
+        let rawStatus = response.tournament.scheduleStatus?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isSettledOrFinished = EventState.isFinished(rawStatus)
+            || SettledQuote.isSettled(rawStatus)
+            || response.golfers.contains(where: { ($0.isWinner == true) || ($0.won == true) })
+        let effectiveLeaderboardFetcher: (@Sendable (String) async throws -> GolfLeaderboardResponse)? = {
+            if let fetchLeaderboard { return fetchLeaderboard }
+            if includeDefaultLeaderboard {
+                return { tour in try await APIClient.shared.fetchGolfLeaderboard(tour: tour) }
+            }
+            return nil
+        }()
+        let requestedTour = (response.tournament.tour?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
+            $0.isEmpty ? nil : $0
+        } ?? "pga"
 
         async let winnerOutcome: (FuturesMarketDetail?, Bool) = {
             guard let id = winnerId else { return (nil, false) }
@@ -128,6 +145,15 @@ final class GolfTournamentViewModel: ObservableObject {
                 return (nil, true)
             }
         }()
+        async let leaderboardOutcome: GolfLeaderboardResponse? = {
+            guard !isSettledOrFinished, let fetcher = effectiveLeaderboardFetcher else { return nil }
+            do {
+                return try await fetcher(requestedTour)
+            } catch {
+                logger.error("Golf live leaderboard (\(requestedTour, privacy: .public)) fetch failed: \(error)")
+                return nil
+            }
+        }()
 
         let (winMkt, winFailed) = await winnerOutcome
         let (tlResp, tlFailed) = await timelineOutcome
@@ -135,6 +161,7 @@ final class GolfTournamentViewModel: ObservableObject {
         let (t10Mkt, t10Failed) = await top10Outcome
         let (t20Mkt, t20Failed) = await top20Outcome
         let (mcMkt, mcFailed) = await makeCutOutcome
+        let lbResp = await leaderboardOutcome
 
         out.winnerMarket = winMkt
         out.winnerTimeline = tlResp
@@ -143,6 +170,12 @@ final class GolfTournamentViewModel: ObservableObject {
         out.top10Market = t10Mkt
         out.top20Market = t20Mkt
         out.makeCutMarket = mcMkt
+        if let lbResp {
+            out.liveLeaderboard = EventAtlasGolfTournament11666.buildLiveLeaderboardCard(
+                for: response.tournament,
+                from: lbResp
+            )
+        }
 
         if winFailed { out.failedMarketSlots.insert("win") }
         if t5Failed { out.failedMarketSlots.insert("top5") }
