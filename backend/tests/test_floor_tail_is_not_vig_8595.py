@@ -26,7 +26,7 @@ from unittest.mock import patch
 import pytest
 
 import app.routes.futures as futures_routes
-from app.routes.feed import _feed_display_scale, _scale_display_probability
+from app.routes.feed import _feed_display_scale, _normalize_feed_probabilities
 from app.routes.futures import _format_market_detail
 from app.utils.futures_history_basis import devigged_consensus_by_time
 from app.utils.outcome_display import (
@@ -52,9 +52,15 @@ def _page(rows, **kwargs):
 
 
 def _card(rows, mutually_exclusive=True):
-    outs = [SimpleNamespace(id=i, current_probability=p) for i, _n, p in rows]
+    outs = [SimpleNamespace(id=i, name=n, current_probability=p) for i, n, p in rows]
     scale = _feed_display_scale(outs, "field", mutually_exclusive=mutually_exclusive)
-    return scale, {i: _scale_display_probability(p, scale) for i, _n, p in rows}
+    # Exercise the card's full-field formatter, including its bound allocation;
+    # the scalar divisor alone does not represent the served card any longer.
+    preview = [{"id": i, "name": n, "probability": p} for i, n, p in rows]
+    _normalize_feed_probabilities(
+        preview, outs, "field", mutually_exclusive=mutually_exclusive
+    )
+    return scale, {o["id"]: o["probability"] for o in preview}
 
 
 def _outcome(outcome_id, name, prob):
@@ -143,7 +149,7 @@ class TestTheSpecimen:
         assert moved is False
         assert page[LEADER] == 0.985
         assert page[OHTANI] == 0.015
-        assert page[100] == 0.010
+        assert 0 < 0.010 - page[100] < 1e-17  # installed readers print <1%, never 0%
 
     def test_the_card_prints_the_same_number(self):
         scale, card = _card(NL_MVP)

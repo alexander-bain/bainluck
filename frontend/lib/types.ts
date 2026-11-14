@@ -1895,6 +1895,8 @@ export interface FeedEventData {
 export interface FeedFuturesOutcome {
   id: number;
   name: string;
+  /** Verified Wikipedia identity, when the collection register supplies one. */
+  image_title?: string | null;
   probability: number | null;
   rank: number | null;
   movement: number | null;

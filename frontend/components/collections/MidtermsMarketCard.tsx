@@ -21,7 +21,7 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
   const row = {
     q: market.name, market_id: market.id, src: market.source ?? "",
     prob: market.top_outcomes[0].probability! * 100, outcome_count: market.outcome_count,
-    top_outcomes: market.top_outcomes.map(outcome => ({ name: outcome.name, prob: outcome.probability! * 100, rendered_percent: outcome.rendered_percent })),
+    top_outcomes: market.top_outcomes.map(outcome => ({ name: outcome.name, prob: outcome.probability! * 100, rendered_percent: outcome.rendered_percent, image_title: outcome.image_title })),
   };
   const balance = market.id === 108619 && presentation === "field"
     ? market.top_outcomes.map(outcome => ({ outcome, parties: midtermsBalanceParties(outcome.name) })) : [];
@@ -56,7 +56,7 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
   const percentages = renderedOutcomeRowPercents([pair.first.prob / 100, pair.second.prob / 100]);
   const legs = [pair.first, pair.second].map((leg, index) => {
     const source = market.top_outcomes.find(outcome => outcome.name === leg.name);
-    return { ...leg, party: midtermsOutcomeParty(market.id, source ?? { name: leg.name }),
+    return { ...leg, imageTitle: source?.image_title, party: midtermsOutcomeParty(market.id, source ?? { name: leg.name }),
       label: formatProbabilityPercent(leg.prob / 100, { rendered: source?.rendered_percent ?? percentages[index] }) };
   });
   if (legs[0].party === "R" && legs[1].party === "D") legs.reverse();
@@ -71,7 +71,7 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
         <p className={`font-mono font-semibold leading-none tabular-nums ${compact ? "text-2xl" : "text-3xl"}`} style={{ color: colour(leg.party) }}>{leg.label}</p>
         <p className={`mt-1.5 flex items-center gap-1.5 text-xs leading-snug text-text-secondary ${index ? "justify-end" : ""}`}>
           {leg.name === pair.first.name && isPersonOutcomeName(leg.name) && (
-            <EntityImage type="wikipedia" name={cleanPersonOutcomeName(leg.name)} size={20} showFallback={false} />
+            <EntityImage type="wikipedia" name={cleanPersonOutcomeName(leg.name)} imageTitle={leg.imageTitle} size={20} showFallback={false} />
           )}
           <span>{leg.name}{leg.party && <span className="ml-1 font-semibold" style={{ color: colour(leg.party) }} aria-label={partyName(leg.party)}>({leg.party})</span>}</span>
         </p>

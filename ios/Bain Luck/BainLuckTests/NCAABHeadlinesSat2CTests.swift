@@ -463,10 +463,127 @@ final class NCAABHeadlinesSat2CTests: XCTestCase {
         )
         let afterCard = try makeCard(after, liveStatus: nil, hasScore: true, streams: false)
 
-        for card in [beforeCard, duringCard, afterCard] {
-            for dt in [DynamicTypeSize.large, .accessibility2] {
+        func makeLiveLongestNameEvent(
+            id: Int,
+            sport: String,
+            awayTeam: String,
+            awayAbbr: String,
+            awayColor: String,
+            homeTeam: String,
+            homeAbbr: String,
+            homeColor: String,
+            period: String,
+            clock: String
+        ) throws -> EventDetail {
+            try decodeEvent("""
+            {
+              "id": \(id),
+              "sport": "\(sport)",
+              "home_team": "\(homeTeam)",
+              "away_team": "\(awayTeam)",
+              "commence_time": "2026-11-14T13:15:00Z",
+              "status": "live",
+              "home_score": 68,
+              "away_score": 71,
+              "home_team_data": {
+                "abbreviation": "\(homeAbbr)",
+                "primary_color": "\(homeColor)",
+                "record": "14-3"
+              },
+              "away_team_data": {
+                "abbreviation": "\(awayAbbr)",
+                "primary_color": "\(awayColor)",
+                "record": "15-2"
+              },
+              "current_odds": {
+                "home_probability": 0.438,
+                "away_probability": 0.562,
+                "home_rendered_percent": 44,
+                "away_rendered_percent": 56,
+                "updated_at": "2026-11-14T14:49:30Z"
+              },
+              "prematch_odds": {
+                "home_probability": 0.54,
+                "away_probability": 0.46,
+                "home_rendered_percent": 54,
+                "away_rendered_percent": 46,
+                "source": "blend"
+              },
+              "opening_odds": {
+                "home_probability": 0.54,
+                "away_probability": 0.46,
+                "home_rendered_percent": 54,
+                "away_rendered_percent": 46
+              },
+              "hero_probability": 0.438,
+              "hero_probability_away": 0.562,
+              "hero_probability_source": "blend",
+              "hero_probability_observed_at": "2026-11-14T14:49:30Z",
+              "espn": {
+                "period": "\(period)",
+                "game_clock": "\(clock)",
+                "broadcast": "ESPN"
+              },
+              "win_probability_sources": {
+                "betting": { "value": 0.44, "display_name": "Sportsbooks" },
+                "kalshi": { "value": 0.435, "display_name": "Kalshi" }
+              },
+              "source_mark": {
+                "state": "blend",
+                "sources": [
+                  { "key": "kalshi", "name": "Kalshi", "probability": 0.435, "observed_at": "2026-11-14T14:49:30Z" },
+                  { "key": "betting", "name": "Sportsbooks", "probability": 0.44, "count": 5, "observed_at": "2026-11-14T14:49:20Z" }
+                ]
+              }
+            }
+            """)
+        }
+
+        let boilermakersVsIllini = try makeLiveLongestNameEvent(
+            id: 9127291,
+            sport: "basketball_ncaab",
+            awayTeam: "Illinois Fighting Illini",
+            awayAbbr: "ILL",
+            awayColor: "#E84A27",
+            homeTeam: "Purdue Boilermakers",
+            homeAbbr: "PUR",
+            homeColor: "#CEB888",
+            period: "2nd Half",
+            clock: "6:18"
+        )
+        let chanticleersVsHurricane = try makeLiveLongestNameEvent(
+            id: 9127292,
+            sport: "americanfootball_ncaaf",
+            awayTeam: "Coastal Carolina Chanticleers",
+            awayAbbr: "CCU",
+            awayColor: "#006F71",
+            homeTeam: "Tulsa Golden Hurricane",
+            homeAbbr: "TLSA",
+            homeColor: "#002D72",
+            period: "Q4",
+            clock: "4:12"
+        )
+        let blazersVsWolves = try makeLiveLongestNameEvent(
+            id: 9127293,
+            sport: "basketball_nba",
+            awayTeam: "Portland Trail Blazers",
+            awayAbbr: "POR",
+            awayColor: "#E03A3E",
+            homeTeam: "Minnesota Timberwolves",
+            homeAbbr: "MIN",
+            homeColor: "#0C2340",
+            period: "Q4",
+            clock: "3:44"
+        )
+
+        let longCard1 = try makeCard(boilermakersVsIllini, liveStatus: "2nd · 6:18", hasScore: true, streams: true)
+        let longCard2 = try makeCard(chanticleersVsHurricane, liveStatus: "Q4 · 4:12", hasScore: true, streams: true)
+        let longCard3 = try makeCard(blazersVsWolves, liveStatus: "Q4 · 3:44", hasScore: true, streams: true)
+
+        for card in [beforeCard, duringCard, afterCard, longCard1, longCard2, longCard3] {
+            for dt in [DynamicTypeSize.large, .accessibility2, .accessibility5] {
                 let host = hostForMeasurement(card.frame(width: 358), at: dt)
-                let fitted = host.sizeThatFits(in: CGSize(width: 358, height: 1000))
+                let fitted = host.sizeThatFits(in: CGSize(width: 358, height: 1400))
                 XCTAssertLessThanOrEqual(fitted.width, 358.5)
                 XCTAssertGreaterThan(fitted.height, 80)
             }
@@ -585,6 +702,48 @@ final class NCAABHeadlinesSat2CTests: XCTestCase {
                 sheet,
                 size: CGSize(width: 390, height: sheetHeight),
                 to: dirURL.appendingPathComponent("sat2c-ncaab-all-states-sheet-390.png")
+            )
+
+            let longestNamesSheet = VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Longest Names · Fighting Illini & Boilermakers (390 px)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    longCard1
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Longest Names · Chanticleers & Golden Hurricane (390 px)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    longCard2
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Longest Names · Trail Blazers & Timberwolves (390 px)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    longCard3
+                }
+            }
+            .padding(16)
+            .frame(width: 390)
+            .background(Color(uiColor: .systemGroupedBackground))
+
+            let longHostLarge = hostForMeasurement(longestNamesSheet.environment(\.colorScheme, .light), at: .large)
+            let longHeightLarge = ceil(longHostLarge.sizeThatFits(in: CGSize(width: 390, height: 2600)).height)
+            try await writeHostedPNG(
+                longestNamesSheet,
+                size: CGSize(width: 390, height: longHeightLarge),
+                at: .large,
+                to: dirURL.appendingPathComponent("sat2c-longest-names-390.png")
+            )
+
+            let longHostAX5 = hostForMeasurement(longestNamesSheet.environment(\.colorScheme, .light), at: .accessibility5)
+            let longHeightAX5 = ceil(longHostAX5.sizeThatFits(in: CGSize(width: 390, height: 4200)).height)
+            try await writeHostedPNG(
+                longestNamesSheet,
+                size: CGSize(width: 390, height: longHeightAX5),
+                at: .accessibility5,
+                to: dirURL.appendingPathComponent("sat2c-longest-names-ax5-390.png")
             )
         }
     }

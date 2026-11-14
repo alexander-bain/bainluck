@@ -65,7 +65,7 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
       {winner ? (
         <p className="flex items-center gap-2 font-semibold text-text-primary">
           {isPersonOutcomeName(winner) && (
-            <EntityImage type="wikipedia" name={cleanPersonOutcomeName(winner)} size={24} showFallback={false} />
+            <EntityImage type="wikipedia" name={cleanPersonOutcomeName(winner)} imageTitle={outcomes?.find(outcome => outcome.name === winner)?.image_title} size={24} showFallback={false} />
           )}
           Settled - {winner}
         </p>
@@ -78,7 +78,7 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
           return <div key={`${outcome.id ?? index}:${outcome.name}`} className="flex items-baseline justify-between gap-3">
             <span className="min-w-0 flex items-center gap-1.5 text-text-secondary">
               {showRowHeadshot && (
-                <EntityImage type="wikipedia" name={cleanPersonOutcomeName(outcome.name)} size={20} showFallback={false} />
+                <EntityImage type="wikipedia" name={cleanPersonOutcomeName(outcome.name)} imageTitle={outcome.image_title} size={20} showFallback={false} />
               )}
               <span>{outcome.name}</span>
             </span>

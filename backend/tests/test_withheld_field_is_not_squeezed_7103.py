@@ -113,7 +113,9 @@ def test_the_same_field_IS_squeezed_when_nothing_was_withheld():
     assert outcomes[0]["probability"] + outcomes[1]["probability"] == pytest.approx(
         1.0, abs=1e-8
     )
-    assert all("rendered_percent" not in o for o in outcomes)
+    # #11995: priced rows receive the whole-percent field allocation, while
+    # one-cent upper bounds print <1% instead of adding four more points.
+    assert [o["rendered_percent"] for o in outcomes] == [79, 21, 0, 0, 0, 0]
     assert outcomes[0]["probability"] == pytest.approx(0.870 / 1.095, abs=1e-8)
     assert outcomes[2]["probability"] == pytest.approx(0.010 / 1.095, abs=1e-8)
 

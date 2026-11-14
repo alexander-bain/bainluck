@@ -1,0 +1,77 @@
+{
+  "candidate_slug": "roundup-upsets-brewing",
+  "producer": "window_events_upsets",
+  "captured_at": "2026-11-14T15:11:00+00:00",
+  "trading_guard_summary": "Seats live games where an underdog priced at <= 40% pregame now leads on the scoreboard or holds >= 50% live win probability (#15347436 Timra IK 2-0 at HV71: 40% pregame -> 84% live, #15347437 Vaxjo Lakers 1-0 at Malmo Redhawks: 39% pregame -> 69% live, #15343372 Newport County 1-0 at Crewe Alexandra: 27% pregame -> 52% live). Excludes live pregame favorites (#15341195 Almeria 61% pregame) and unpriced live games (#99153400).",
+  "input_events": [
+    {
+      "id": 15347436,
+      "sport": "icehockey_sweden_hockey_league",
+      "status": "live",
+      "period": "2nd · 08:14",
+      "home_team": "HV71",
+      "away_team": "Timrå IK",
+      "home_score": 0,
+      "away_score": 2,
+      "pregame_home_win_probability": 0.60,
+      "home_win_probability": 0.16
+    },
+    {
+      "id": 15347437,
+      "sport": "icehockey_sweden_hockey_league",
+      "status": "live",
+      "period": "2nd · 11:42",
+      "home_team": "Malmö Redhawks",
+      "away_team": "Växjö Lakers",
+      "home_score": 0,
+      "away_score": 1,
+      "pregame_home_win_probability": 0.61,
+      "home_win_probability": 0.31
+    },
+    {
+      "id": 15343372,
+      "sport": "soccer_efl_league_two",
+      "status": "live",
+      "period": "58'",
+      "home_team": "Crewe Alexandra",
+      "away_team": "Newport County",
+      "home_score": 0,
+      "away_score": 1,
+      "pregame_home_win_probability": 0.73,
+      "home_win_probability": 0.48
+    },
+    {
+      "id": 15341195,
+      "sport": "soccer_spain_segunda_division",
+      "status": "live",
+      "period": "64'",
+      "home_team": "UD Almería",
+      "away_team": "Córdoba CF",
+      "home_score": 2,
+      "away_score": 0,
+      "pregame_home_win_probability": 0.61,
+      "home_win_probability": 0.89
+    },
+    {
+      "id": 99153400,
+      "sport": "basketball_nba",
+      "status": "live",
+      "period": "Q2",
+      "home_team": "Utah Jazz",
+      "away_team": "Detroit Pistons",
+      "home_score": 48,
+      "away_score": 41,
+      "pregame_home_win_probability": 0.34,
+      "home_win_probability": null
+    }
+  ],
+  "expected_event_ids": [
+    15347436,
+    15347437,
+    15343372
+  ],
+  "excluded_event_ids": [
+    15341195,
+    99153400
+  ]
+}

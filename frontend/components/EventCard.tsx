@@ -8,6 +8,8 @@ import { getSportLabel } from "@/lib/sportCategories";
 import { useAnalytics } from "@/hooks";
 import { cn } from "@/lib/utils";
 import EventCardShell from "./EventCardShell";
+import EventCard183A, { buildUnifiedCardFromEvent } from "./EventCard183A";
+import { isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
 import PersonalizedBadge from "./PersonalizedBadge";
 import ProbabilityBar from "./ProbabilityBar";
 import EntityImage from "./EntityImage";
@@ -219,6 +221,18 @@ export default function EventCard({
   hostCue = null,
 }: EventCardProps) {
   const { trackEventCardClick } = useAnalytics();
+  if (isWebGameCard183AEnabled()) {
+    return (
+      <EventCard183A
+        card={buildUnifiedCardFromEvent(event)}
+        surface="standard"
+        isPinned={isPinned}
+        pinDisabled={pinDisabled}
+        onPinToggle={onPinToggle ? () => onPinToggle(event.id) : undefined}
+        onCardClick={() => trackEventCardClick(event, sourceSection, positionIndex)}
+      />
+    );
+  }
   const gameNumber = providerGameNumber(event);
 
   // Handle pin button click (prevent navigation)

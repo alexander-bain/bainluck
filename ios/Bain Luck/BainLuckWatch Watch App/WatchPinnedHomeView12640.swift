@@ -282,9 +282,9 @@ struct WatchPinnedHomeView12640: View {
                     .foregroundStyle(game.isLive ? Color.cyan : Color.secondary)
                 Spacer(minLength: 4)
                 if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(systemName: "bookmark.fill")
                         .font(.caption2)
-                        .foregroundStyle(.cyan)
+                        .foregroundStyle(.orange)
                 }
             }
             Text(eventRowMatchup(game: game, awayShort: awayShort, homeShort: homeShort))
@@ -341,9 +341,9 @@ struct WatchPinnedHomeView12640: View {
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(systemName: "bookmark.fill")
                         .font(.caption2)
-                        .foregroundStyle(.cyan)
+                        .foregroundStyle(.orange)
                 }
             }
             Text(market.name)
