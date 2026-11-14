@@ -492,7 +492,7 @@ class TestExit3SecondKindExamVerdict:
             "category": "curling",
             "tag": "CURLING",
             "section_title": "Next 3 games",
-            "footer": "Combined win probability · next 3 games in schedule order",
+            "footer": "Next 3 games in schedule order",
             "rule": {
                 "producer": "subject_sequence",
                 "sport": "curling_world",
@@ -546,7 +546,7 @@ class TestExit3SecondKindExamVerdict:
             level="member",
             category="nba",
             section_title="Next 3 games",
-            footer="Combined win probability · next 3 games in schedule order",
+            footer="Next 3 games in schedule order",
             kicker="NEXT 3 GAMES",
             tag="NBA",
             destination_href="/sport/basketball/nba/team/los-angeles-lakers",
@@ -585,7 +585,7 @@ class TestExit3SecondKindExamVerdict:
                     },
                     {"event_id": 3, "label": "vs Spurs · Nov 15", "probability": 0.53},
                 ],
-                footer="Combined win probability · next 3 games in schedule order",
+                footer="Next 3 games in schedule order",
                 destination_href="/sport/basketball/nba/team/los-angeles-lakers",
             ),
         )
