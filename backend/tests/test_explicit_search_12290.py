@@ -74,6 +74,18 @@ def test_unrecognised_qualifiers_do_not_get_stripped(query):
     assert explicit_search(query) is None
 
 
+@pytest.mark.parametrize("query", ["a" * 100_000, "a\t" * 50_000, "a next " * 10_000])
+def test_long_nonmatching_input_remains_literal(query):
+    assert explicit_search(query) is None
+
+
+def test_whitespace_case_and_optional_question_mark_keep_the_literal_contract():
+    parsed = explicit_search("  Boston\tCELTICS\nNEXT Three games ")
+    assert parsed and parsed.subject == "Boston CELTICS" and parsed.next_games == 3
+    assert explicit_search("WHO\tWILL WIN SUPER BOWL?").subject == "super bowl"
+    assert explicit_search("who will win super bowl??") is None
+
+
 @pytest.mark.asyncio
 async def test_next_three_route_scopes_both_fixture_sides_before_the_window(monkeypatch):
     from tests.integration.test_route_search_intent_5688 import _Recorder, _empty_result, _client_for
