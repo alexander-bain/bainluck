@@ -9,6 +9,10 @@ English how members were chosen and what moved most.
 
 Publication gate: candidate definition lives in ``backend/data/discover/candidates/``
 and is NOT registered in ``ROUNDUP_PRODUCERS`` until turned on by Fable.
+``produce_big_movers_today`` currently evaluates sequence fixtures for candidate
+grading (returning ``unsupported_session`` for live DB sessions until promoted).
+``_CRYPTO_TICKER_RE`` is an editorial word-boundary exclusion matching Discover's
+non-crypto feed policy.
 """
 
 from __future__ import annotations
@@ -105,7 +109,14 @@ def is_actively_trading_market(
     max_trade_age_days: float = 7.0,
     min_volume_24h: float = 100.0,
 ) -> bool:
-    """Return True only if the market is open and actively trading."""
+    """Return True only if the market is open and verifiably actively trading.
+
+    Fail-closed: requires explicit ``volume_24h`` (``>= min_volume_24h``) and at
+    least one valid freshness timestamp (``last_trade_at`` within
+    ``max_trade_age_days`` or ``price_observed_at``/``updated_at`` within
+    ``max_quote_age_hours``). Defaults ``now`` to ``datetime.now(timezone.utc)``
+    so real producer calls without an explicit clock still enforce freshness.
+    """
     status = str(market.get("status") or "open").strip().lower()
     if status not in {"open", "active"}:
         return False
@@ -133,32 +144,42 @@ def is_actively_trading_market(
     vol_24h = market.get("volume_24h")
     if vol_24h is None:
         vol_24h = market.get("volume24hr")
-    if vol_24h is not None:
-        try:
-            if float(vol_24h) < float(min_volume_24h):
-                return False
-        except (TypeError, ValueError):
+    if vol_24h is None or isinstance(vol_24h, bool):
+        return False
+    try:
+        if float(vol_24h) < float(min_volume_24h):
+            return False
+    except (TypeError, ValueError):
+        return False
+
+    ref_now = datetime.now(timezone.utc) if now is None else _parse_iso_utc(now)
+    if ref_now is None:
+        return False
+
+    raw_trade_ts = market.get("last_trade_at") or market.get("last_traded_at")
+    raw_quote_ts = (
+        market.get("price_observed_at")
+        or market.get("updated_at")
+        or market.get("last_updated")
+    )
+    if raw_trade_ts is None and raw_quote_ts is None:
+        return False
+
+    last_trade = _parse_iso_utc(raw_trade_ts) if raw_trade_ts is not None else None
+    if raw_trade_ts is not None and last_trade is None:
+        return False
+    if last_trade is not None:
+        age_days = (ref_now - last_trade).total_seconds() / 86400.0
+        if age_days > float(max_trade_age_days):
             return False
 
-    ref_now = _parse_iso_utc(now) if now is not None else None
-    if ref_now is not None:
-        last_trade = _parse_iso_utc(
-            market.get("last_trade_at") or market.get("last_traded_at")
-        )
-        if last_trade is not None:
-            age_days = (ref_now - last_trade).total_seconds() / 86400.0
-            if age_days > float(max_trade_age_days):
-                return False
-
-        quote_ts = _parse_iso_utc(
-            market.get("price_observed_at")
-            or market.get("updated_at")
-            or market.get("last_updated")
-        )
-        if quote_ts is not None:
-            age_hours = (ref_now - quote_ts).total_seconds() / 3600.0
-            if age_hours > float(max_quote_age_hours):
-                return False
+    quote_ts = _parse_iso_utc(raw_quote_ts) if raw_quote_ts is not None else None
+    if raw_quote_ts is not None and quote_ts is None:
+        return False
+    if quote_ts is not None:
+        age_hours = (ref_now - quote_ts).total_seconds() / 3600.0
+        if age_hours > float(max_quote_age_hours):
+            return False
 
     return True
 
@@ -178,21 +199,35 @@ def _clean_market_subject(market_name: str, outcome_name: str) -> Optional[str]:
     return f"{m_clean} — {o_clean}"
 
 
+def _parse_delta_fraction(raw: Any) -> Optional[float]:
+    """Parse a 24-hour probability delta fraction in ``[-1.0, 1.0]``."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        val = float(raw)
+        return val if -1.0 <= val <= 1.0 else None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            val = float(text)
+        except ValueError:
+            return None
+        return val if -1.0 <= val <= 1.0 else None
+    return None
+
+
 def _extract_delta(outcome: Mapping[str, Any], market: Mapping[str, Any]) -> Optional[float]:
+    """Extract 24-hour probability delta fraction (``[-1.0, 1.0]``) from outcome or market."""
     for key in ("movement", "change_24h", "price_change_24h", "delta_24h", "oneDayPriceChange"):
-        raw = outcome.get(key)
-        if raw is not None:
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                pass
+        parsed = _parse_delta_fraction(outcome.get(key))
+        if parsed is not None:
+            return parsed
     for key in ("movement", "change_24h", "price_change_24h", "delta_24h"):
-        raw = market.get(key)
-        if raw is not None:
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                pass
+        parsed = _parse_delta_fraction(market.get(key))
+        if parsed is not None:
+            return parsed
     return None
 
 
@@ -348,11 +383,19 @@ async def produce_big_movers_today(
     rule: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
+    """Evaluate a sequence of market dicts for ``big_movers_today``.
+
+    Defaults ``now`` to ``datetime.now(timezone.utc)`` so calls via
+    ``RoundupProducer.produce(db)`` enforce 24-hour quote and 7-day trade
+    freshness guards. Returns ``unsupported_session`` for live DB sessions until
+    wired to a DB query at promotion time.
+    """
     cfg = dict(rule or {})
+    effective_now = datetime.now(timezone.utc) if now is None else now
     if isinstance(db, (list, tuple)):
         return select_big_movers_today(
             db,
-            now=now,
+            now=effective_now,
             min_abs_delta=float(cfg.get("min_abs_delta") or 0.06),
             min_members=int(cfg.get("min_members") or 3),
             max_card_rows=int(cfg.get("max_card_rows") or 5),

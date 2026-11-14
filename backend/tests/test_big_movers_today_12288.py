@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -14,6 +14,7 @@ from app.utils.big_movers_today import (
     build_big_movers_today_CandidatePack,
     build_big_movers_today_producer,
     compose_big_movers_card_and_container,
+    is_actively_trading_market,
     load_candidate_definition,
     load_candidate_eval_rows,
     produce_big_movers_today,
@@ -101,3 +102,121 @@ def test_refuses_when_all_movers_are_untraded_or_crypto() -> None:
     res = select_big_movers_today(dead_or_crypto, now=now)
     assert isinstance(res, RoundupRefusal)
     assert res.reasons[0][0] == "insufficient_trading_movers"
+
+
+@pytest.mark.asyncio
+async def test_producer_closure_without_now_enforces_quote_and_trade_freshness() -> None:
+    live_now = datetime.now(timezone.utc)
+    fresh_iso = (live_now - timedelta(hours=2)).isoformat()
+    old_trade_iso = (live_now - timedelta(days=12)).isoformat()
+    old_quote_iso = (live_now - timedelta(hours=36)).isoformat()
+
+    markets = [
+        {
+            "id": 101,
+            "status": "open",
+            "category": "tech",
+            "name": "Old trade mover",
+            "volume_24h": 5000.0,
+            "last_trade_at": old_trade_iso,
+            "price_observed_at": fresh_iso,
+            "outcomes": [{"name": "Yes", "probability": 0.62, "movement": 0.15}],
+        },
+        {
+            "id": 102,
+            "status": "open",
+            "category": "economics",
+            "name": "Old quote mover",
+            "volume_24h": 5000.0,
+            "last_trade_at": fresh_iso,
+            "price_observed_at": old_quote_iso,
+            "outcomes": [{"name": "Yes", "probability": 0.48, "movement": 0.14}],
+        },
+        {
+            "id": 103,
+            "status": "open",
+            "category": "tech",
+            "name": "Fresh AI benchmark leader",
+            "volume_24h": 8400.0,
+            "last_trade_at": fresh_iso,
+            "price_observed_at": fresh_iso,
+            "outcomes": [{"name": "Google", "probability": 0.71, "movement": 0.12}],
+        },
+        {
+            "id": 104,
+            "status": "open",
+            "category": "entertainment",
+            "name": "Fresh box office leader",
+            "volume_24h": 6200.0,
+            "last_trade_at": fresh_iso,
+            "price_observed_at": fresh_iso,
+            "outcomes": [{"name": "Ebenezer", "probability": 0.56, "movement": 0.10}],
+        },
+        {
+            "id": 105,
+            "status": "open",
+            "category": "economics",
+            "name": "Fresh rate decision",
+            "volume_24h": 19200.0,
+            "last_trade_at": fresh_iso,
+            "price_observed_at": fresh_iso,
+            "outcomes": [{"name": "25 bps cut", "probability": 0.68, "movement": -0.09}],
+        },
+    ]
+
+    producer = build_big_movers_today_producer()
+    # Call producer.produce directly with NO `now` parameter!
+    res = await producer.produce(markets)
+    assert isinstance(res, RoundupMembers)
+    seated_ids = [r["market_id"] for r in res.rows]
+    assert 101 not in seated_ids
+    assert 102 not in seated_ids
+    assert seated_ids == [103, 104, 105]
+
+
+def test_guard_is_fail_closed_when_volume_24h_or_freshness_timestamp_is_missing() -> None:
+    now = datetime(2026, 11, 14, 8, 25, tzinfo=timezone.utc)
+    # Missing volume_24h -> refused
+    assert not is_actively_trading_market(
+        {
+            "id": 201,
+            "status": "open",
+            "last_trade_at": "2026-11-14T08:00:00+00:00",
+            "price_observed_at": "2026-11-14T08:00:00+00:00",
+        },
+        now=now,
+    )
+    # Missing both last_trade_at and price_observed_at/updated_at -> refused
+    assert not is_actively_trading_market(
+        {
+            "id": 202,
+            "status": "open",
+            "volume_24h": 4500.0,
+        },
+        now=now,
+    )
+    # Malformed timestamp -> refused
+    assert not is_actively_trading_market(
+        {
+            "id": 203,
+            "status": "open",
+            "volume_24h": 4500.0,
+            "price_observed_at": "not-a-timestamp",
+        },
+        now=now,
+    )
+    # Out-of-range movement (18.0 raw percentage points instead of 0.18 fraction) -> refused
+    res = select_big_movers_today(
+        [
+            {
+                "id": 204,
+                "status": "open",
+                "name": "Bad unit mover",
+                "volume_24h": 4500.0,
+                "price_observed_at": "2026-11-14T08:00:00+00:00",
+                "outcomes": [{"name": "Yes", "probability": 0.55, "movement": 18.0}],
+            }
+        ],
+        now=now,
+    )
+    assert isinstance(res, RoundupRefusal)
