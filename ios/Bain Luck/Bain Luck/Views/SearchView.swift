@@ -953,7 +953,7 @@ struct SearchView: View {
                             Button {
                                 path.append(Route.eventDetail(id: event.id))
                             } label: {
-                                searchEventRow(event)
+                                searchEventCard183A(event)
                             }
                             .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
                             .macResultMenu(.eventDetail(id: event.id))
@@ -962,7 +962,7 @@ struct SearchView: View {
                     } else {
                         ForEach(results.results) { event in
                             NavigationLink(value: Route.eventDetail(id: event.id)) {
-                                searchEventRow(event)
+                                searchEventCard183A(event)
                             }
                             .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
                             .macResultMenu(.eventDetail(id: event.id))
@@ -1197,6 +1197,15 @@ struct SearchView: View {
     }
 
     // MARK: - Event Row
+
+    private func searchEventCard183A(_ event: SearchEvent) -> some View {
+        let sportLabel = sportKeyDisplayName(event.sport, facets: viewModel.sportFacets)
+        let adapted = SearchEventCardAdapter183A.fromSearchResult(event, sportDisplayName: sportLabel)
+        return EventCardView(
+            event: adapted,
+            reason: event.highlight?.label
+        )
+    }
 
     private func searchEventRow(_ event: SearchEvent) -> some View {
         HStack(spacing: 10) {
