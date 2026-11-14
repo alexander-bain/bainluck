@@ -6,6 +6,12 @@ struct EventCardView: View {
     let reason: String?
     var personalizationReasons: [String]? = nil
     var headline: String? = nil
+    /// Ruling 183-A Size S (Team schedule & recent results): same crests,
+    /// colours, bookmark pin, and column headers without sub-captions or bottom bar.
+    var compactScheduleStyle: Bool = false
+    /// True when `/api/teams/{slug}` already resolved a draw-priced sport's
+    /// away probability via `_away_three_way_price` (#11541).
+    var awayReadingIsServerVerified: Bool = false
 
     /// #11325 — selects the finished card's accessibility arm; see
     /// `FinishedCardAccessibility11325`.
@@ -390,7 +396,7 @@ struct EventCardView: View {
                 side: .away
             )
 
-            if usesFinishedAccessibilityLayout {
+            if !compactScheduleStyle && usesFinishedAccessibilityLayout {
                 probabilityBar
             }
 
@@ -415,11 +421,11 @@ struct EventCardView: View {
                 compactDrawRow(drawChance: drawChance)
             }
 
-            if !usesFinishedAccessibilityLayout {
+            if !compactScheduleStyle && !usesFinishedAccessibilityLayout {
                 probabilityBar
             }
 
-            if let finalForecast = finalForecast11296 {
+            if !compactScheduleStyle, let finalForecast = finalForecast11296 {
                 if usesFinishedAccessibilityLayout {
                     FinalForecastLine11296(
                         comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
@@ -435,7 +441,7 @@ struct EventCardView: View {
                 }
             }
 
-            if isLive, !isSuspended {
+            if !compactScheduleStyle, isLive, !isSuspended {
                 let pregameContext = showsInlineLivePregame12616 ? nil : livePregameContext12616
                 if dynamicTypeSize.isAccessibilitySize {
                     if let liveProjection = liveProjectedFinal2920 {
@@ -906,7 +912,7 @@ struct EventCardView: View {
 
     @ViewBuilder
     private var footer: some View {
-        if EventCardFooter.hasContent(
+        if !compactScheduleStyle && EventCardFooter.hasContent(
             reason: reason,
             isLive: isLive,
             isFinished: isFinished,
@@ -1104,12 +1110,14 @@ struct EventCardView: View {
     /// three-way pregame reading never un-withholds a two-way live complement
     /// (`1 - home`), nor vice versa on a finished card.
     private var currentAwayIsWithheld: Bool {
-        DrawPricedWinner.sportPricesADraw(event.sport)
+        !awayReadingIsServerVerified
+            && DrawPricedWinner.sportPricesADraw(event.sport)
             && !CompactGameCard12616.hasExplicitThreeWayCurrent(event)
     }
 
     private var prematchAwayIsWithheld: Bool {
-        DrawPricedWinner.sportPricesADraw(event.sport)
+        !awayReadingIsServerVerified
+            && DrawPricedWinner.sportPricesADraw(event.sport)
             && !CompactGameCard12616.hasExplicitThreeWayPrematch(event)
     }
 
