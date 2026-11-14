@@ -77,7 +77,8 @@ export interface PageViewParams {
     | 'sports'
     | 'scorecard'
     | 'bug_reports'
-    | 'admin_grade';
+    | 'admin_grade'
+    | 'picture_credits';
   page_path: string;
   page_title: string;
   /** For event_detail pages */
@@ -275,7 +276,8 @@ export interface ScrollDepthParams {
     | 'sports'
     | 'scorecard'
     | 'bug_reports'
-    | 'admin_grade';
+    | 'admin_grade'
+    | 'picture_credits';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
   page_path: string;
@@ -311,7 +313,8 @@ export interface TimeOnPageParams {
     | 'sports'
     | 'scorecard'
     | 'bug_reports'
-    | 'admin_grade';
+    | 'admin_grade'
+    | 'picture_credits';
   seconds: number;
   page_path: string;
   event_id?: number;
