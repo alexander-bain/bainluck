@@ -32,9 +32,11 @@ struct NativeEventDiscoverCard: View {
     /// Fired when the reader taps the share icon — see the `ShareLink` below for
     /// why this is a simultaneous gesture and not a button action. #5525.
     var onShare: (() -> Void)? = nil
-    /// #12616 (Ruling 190-C): defaults `false` until Alex selects a picture
-    /// variant in decision 191.
+    /// #12616 (Ruling 191-A): defaults `true` so games in progress and finished
+    /// games render the chart panel under the rows while scheduled games stay compact.
     var pictureVariant191Adopted: Bool = DiscoverSingleGameCard190C.defaultPictureVariant191Adopted
+    /// Optional preloaded `/history` response for deterministic snapshot/unit tests.
+    var chartHistory: EventHistoryResponse? = nil
 
     /// #8144 — the status column between the crests is sized against the strings
     /// THIS card draws at THIS text size, so both of these are inputs to a layout
@@ -280,20 +282,16 @@ struct NativeEventDiscoverCard: View {
     }
 
     var body: some View {
-        Group {
-            if usesPictureLayout190C {
-                pictureCardBody
-            } else {
-                DiscoverCompactSingleGameCard190CView(
-                    event: event,
-                    prematch: prematch,
-                    awayColor: awayColor,
-                    homeColor: homeColor,
-                    projectionAndSuspendedLines: { discoverProjectionAndSuspendedLines },
-                    footerRow: { discoverFooterRow }
-                )
-            }
-        }
+        DiscoverCompactSingleGameCard190CView(
+            event: event,
+            prematch: prematch,
+            awayColor: awayColor,
+            homeColor: homeColor,
+            usesPictureLayout191A: usesPictureLayout190C,
+            preloadedChartHistory: chartHistory,
+            projectionAndSuspendedLines: { discoverProjectionAndSuspendedLines },
+            footerRow: { discoverFooterRow }
+        )
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))

@@ -1,23 +1,20 @@
 import Foundation
 import SwiftUI
 
-/// #12616 (Ruling 190-C, 182-A, 187-A, 161-B) — Pure presentation & eligibility model
+/// #12616 (Ruling 190-C, 191-A, 182-A, 187-A, 161-B) — Pure presentation & eligibility model
 /// for the Discover single-game card (`NativeEventDiscoverCard`).
 ///
-/// Ruling 190-C:
-/// - Compact by default (`Size M`, retiring the tall empty hero box).
-/// - The version with the win-chance picture is eligible ONLY when the game is live
-///   or its win chance has moved 5 or more percentage points since pregame.
-/// - While decision 191 (which picture look Alex selects) is pending,
-///   `defaultPictureVariant191Adopted` stays `false` so Discover renders the compact
-///   card everywhere.
+/// Rulings 190-C + 191-A (Alex, Nov 13):
+/// - Before kickoff (`scheduled`): compact card (`Size M`), no `Pregame` column, projected final shown.
+/// - During and after a game (`live` or `finished`, when not suspended / closed-no-winner):
+///   picture card (`191-A`) with the tall win-chance chart panel under the competitor rows
+///   (connected win-chance line, `50%` reference line, labelled ends).
 enum DiscoverSingleGameCard190C {
 
-    /// Flips to `true` only when Alex selects a picture variant in decision 191
-    /// and that picture variant is built.
-    nonisolated static let defaultPictureVariant191Adopted = false
+    /// Ruling 191-A selected the chart panel under the rows for in-progress and finished games.
+    nonisolated static let defaultPictureVariant191Adopted = true
 
-    // MARK: - 190-C Eligibility (Live or >= 5.0 pt swing)
+    // MARK: - 190-C / 191-A Eligibility
 
     /// Maximum percentage-point move (`0...100`) between pregame/opening and current
     /// win probability while the game can still be graded (`nil` once finished/suspended
@@ -51,8 +48,7 @@ enum DiscoverSingleGameCard190C {
         return maxDelta.isFinite ? maxDelta : nil
     }
 
-    /// True under 190-C when the single-game card would earn the win-chance picture:
-    /// either the game is live (and not suspended) or its win chance has moved >= 5 points.
+    /// Earlier 190-C pre-191 eligibility helper (live or >= 5-point pregame move).
     nonisolated static func qualifiesForPicture190C(
         event: FeedEventData,
         prematch: PrematchReading?
@@ -68,13 +64,45 @@ enum DiscoverSingleGameCard190C {
         return false
     }
 
+    /// Ruling 191-A (replaces the 5-point pregame trigger in 190-C):
+    /// - Before a game (`scheduled`): stays compact (`false`).
+    /// - Suspended or venue-closed-no-winner: stays compact (`false`).
+    /// - Games with zero win-probability readings: stays compact (`false`) rather
+    ///   than drawing a blank chart frame.
+    /// - Games in progress (`live`) and finished games (`isFinished`) that hold
+    ///   win-probability data: carries the `191-A` chart panel under the rows (`true`).
+    nonisolated static func qualifiesForPicture191A(
+        event: FeedEventData,
+        prematch: PrematchReading? = nil
+    ) -> Bool {
+        let commence = event.commenceTime?.asDate
+        let isSuspended = EventState.isSuspendedAndStarted(event.status, commenceTime: commence)
+        let closedNoWinner = EventState.showsVenueClosedNoWinner(
+            event.status,
+            venueSettled: nil,
+            venueClosedNoWinner: event.venueClosedNoWinner,
+            commenceTime: commence
+        )
+        guard !isSuspended, !closedNoWinner else { return false }
+        guard event.status == "live" || EventState.isFinished(event.status) else {
+            return false
+        }
+        let resolvedPrematch = prematch
+            ?? PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
+        let hasAnyWinChanceReading = resolvedPrematch != nil
+            || CompactGameCard12616.usableProbability(event.currentOdds?.homeProbability) != nil
+            || CompactGameCard12616.usableProbability(event.currentOdds?.awayProbability) != nil
+        return hasAnyWinChanceReading
+    }
+
     /// Active layout selector for `NativeEventDiscoverCard`.
     nonisolated static func usesPictureLayout(
         event: FeedEventData,
         prematch: PrematchReading?,
         pictureVariant191Adopted: Bool = defaultPictureVariant191Adopted
     ) -> Bool {
-        pictureVariant191Adopted && qualifiesForPicture190C(event: event, prematch: prematch)
+        guard pictureVariant191Adopted else { return false }
+        return qualifiesForPicture191A(event: event, prematch: prematch)
     }
 
     // MARK: - Compact Card Column & Row Models (Atlas Sheet `(a)`)
@@ -132,7 +160,8 @@ enum DiscoverSingleGameCard190C {
     nonisolated static func build(
         event: FeedEventData,
         prematch: PrematchReading?,
-        showsInlinePregame: Bool = true
+        showsInlinePregame: Bool = true,
+        usesPictureLayout: Bool = false
     ) -> Model {
         let isLive = event.status == "live"
         let isFinished = EventState.isFinished(event.status)
@@ -348,9 +377,10 @@ enum DiscoverSingleGameCard190C {
         }
         rows.append(homeRow)
 
-        // Bar: shown only when `!isFinished && !isSuspended` (Queue #238 + Atlas `(a)` card 4).
+        // Bar: shown only on compact pregame cards (`!usesPictureLayout && !isFinished && !isSuspended`).
+        // Under 191-A, games in progress and finished games swap the bar for the chart panel under the rows.
         let bar: BarSegments? = {
-            guard !isFinished, !isSuspended else { return nil }
+            guard !usesPictureLayout, !isFinished, !isSuspended else { return nil }
             if explicitThreeWayCurrent,
                let awayP = CompactGameCard12616.usableProbability(event.currentOdds?.awayProbability),
                let drawP = CompactGameCard12616.usableProbability(event.currentOdds?.drawProbability),

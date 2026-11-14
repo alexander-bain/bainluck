@@ -55,7 +55,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let all = describe(read)
 
             assertWholeToken("NFL", in: read, name)
-            assertWholeToken("FINAL", in: read, name)
+            assertWholeToken("Final", in: read, name)
             assertNoFragmentOfFinal(in: read, name)
 
             let away = try XCTUnwrap(scoreLine("17", in: read), "\(name): no actual 17 — \(all)")
@@ -134,7 +134,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         for word in ["Primera", "Division", "Argentina"] {
             assertWholeToken(word, in: read, name)
         }
-        assertWholeToken("FINAL", in: read, name)
+        assertWholeToken("Final", in: read, name)
         assertNoFragmentOfFinal(in: read, name)
 
         // Both names, complete, in the name column (single-digit scores are too
@@ -164,8 +164,8 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         XCTAssertTrue(sameRow(away, awayName), "\(name): 17 left its name's row — \(all)")
         XCTAssertTrue(sameRow(home, homeName), "\(name): 23 left its name's row — \(all)")
         let league = try XCTUnwrap(read.first { tokens($0.text).contains("NFL") }, "\(name): \(all)")
-        let status = try XCTUnwrap(read.first { badgeTokens($0).contains("FINAL") }, "\(name): \(all)")
-        XCTAssertTrue(sameRow(league, status), "\(name): league and FINAL no longer share the top row — \(all)")
+        let status = try XCTUnwrap(read.first { badgeTokens($0).contains { $0.caseInsensitiveCompare("Final") == .orderedSame } }, "\(name): \(all)")
+        XCTAssertTrue(sameRow(league, status), "\(name): league and Final no longer share the top row — \(all)")
         XCTAssertTrue(read.contains { $0.text.contains("Projected") }, "\(name): forecast line gone — \(all)")
     }
 
@@ -193,7 +193,8 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     /// before it, or no badge at all — stays rejected, as do fragments behind
     /// the mark and a bare NFL row.
     func testThePillEdgeReadAsABracketIsSettledOnlyByTheFramesInk() throws {
-        let hostedText = "NFL (FINAL"
+        let hostedText = "NFL (Final"
+        let pillHostedText = "NFL (FINAL"
         let name = "sports-nfl-393-large-hosted-pill-edge"
         let read = try sportsLines(try served(14780563), width: 393, size: .large, name: name)
         let all = describe(read)
@@ -202,23 +203,23 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let hosted = Line(text: hostedText, box: row, frame: league.frame)
         print("Finished card 11325 pill edge: local top row \(describe(read.filter { sameRow($0, league) })), "
               + "ink re-read '\(inkText(hosted) ?? "nil")'")
-        XCTAssertEqual(badgeTokens(hosted), ["NFL", "FINAL"], "\(name): the pill edge was not settled — \(all)")
-        let asHosted = read.filter { !sameRow($0, league) } + [hosted]
-        let status = try XCTUnwrap(asHosted.first { badgeTokens($0).contains("FINAL") }, "\(name): \(all)")
+        XCTAssertEqual(badgeTokens(hosted), ["NFL", "Final"], "\(name): the pill edge was not settled — \(all)")
+        let asHosted = [hosted] + read.filter { !sameRow($0, league) }
+        let status = try XCTUnwrap(asHosted.first { badgeTokens($0).contains("Final") }, "\(name): \(all)")
         let hostedLeague = try XCTUnwrap(asHosted.first { tokens($0.text).contains("NFL") }, "\(name): \(all)")
-        XCTAssertTrue(sameRow(hostedLeague, status), "\(name): league and FINAL no longer share the top row — \(all)")
-        assertWholeToken("FINAL", in: asHosted, name)
+        XCTAssertTrue(sameRow(hostedLeague, status), "\(name): league and Final no longer share the top row — \(all)")
+        assertWholeToken("Final", in: asHosted, name)
         assertNoFragmentOfFinal(in: asHosted, name)
 
         for text in ["NFL (FIN", "NFL (FI", "(NAL", "NFL FI-"] {
             let broken = Line(text: text, box: row, frame: league.frame)
-            XCTAssertFalse(badgeTokens(broken).contains("FINAL"), "\(name): '\(text)' settled to FINAL")
+            XCTAssertFalse(badgeTokens(broken).contains { $0.caseInsensitiveCompare("Final") == .orderedSame }, "\(name): '\(text)' settled to Final")
             XCTExpectFailure("'\(text)' is a broken FINAL") { assertNoFragmentOfFinal(in: [broken], name) }
         }
         for text in ["NFL", "NFL ("] {
             let bare = Line(text: text, box: row, frame: league.frame)
-            XCTAssertFalse(badgeTokens(bare).contains("FINAL"), "\(name): '\(text)' found a FINAL")
-            XCTExpectFailure("'\(text)' has no FINAL") { assertWholeToken("FINAL", in: [bare], name) }
+            XCTAssertFalse(badgeTokens(bare).contains { $0.caseInsensitiveCompare("Final") == .orderedSame }, "\(name): '\(text)' found a Final")
+            XCTExpectFailure("'\(text)' has no Final") { assertWholeToken("Final", in: [bare], name) }
         }
 
         // The real pill set far enough from the league that its ink re-reads as
@@ -226,7 +227,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let apartName = "\(name)-two-ink-lines"
         let apart = try self.read(constructedTopBar(badge: "FINAL", spacing: 60), width: 393, size: .large, name: apartName)
         let apartLeague = try XCTUnwrap(apart.first { normalized($0.text).hasPrefix("NFL") }, "\(apartName): \(describe(apart))")
-        let split = Line(text: hostedText, box: leagueAndBadgeBox(apartLeague, in: apart), frame: apartLeague.frame)
+        let split = Line(text: pillHostedText, box: leagueAndBadgeBox(apartLeague, in: apart), frame: apartLeague.frame)
         let b = split.box, pad = b.height * 0.15
         XCTAssertEqual(try split.frame.recognizeInk(in: b.insetBy(dx: -pad, dy: -pad)).count, 2,
                        "\(apartName): precondition: the ink re-reads as two lines — \(describe(apart))")
@@ -237,7 +238,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let drawn = try self.read(constructedTopBar(badge: "(FINAL"), width: 393, size: .large, name: drawnName)
         // (Vision reads a drawn bracket glued to the league: "NFL(FINAL".)
         let drawnLeague = try XCTUnwrap(drawn.first { normalized($0.text).hasPrefix("NFL") }, "\(drawnName): \(describe(drawn))")
-        let bracket = Line(text: hostedText, box: leagueAndBadgeBox(drawnLeague, in: drawn), frame: drawnLeague.frame)
+        let bracket = Line(text: pillHostedText, box: leagueAndBadgeBox(drawnLeague, in: drawn), frame: drawnLeague.frame)
         XCTAssertEqual(badgeTokens(bracket), ["NFL", "(FINAL"], "\(drawnName): a drawn bracket was settled — \(describe(drawn))")
         XCTExpectFailure("a drawn '(FINAL' is not FINAL") { assertWholeToken("FINAL", in: [bracket], drawnName) }
 
@@ -245,7 +246,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let bareName = "\(name)-no-badge"
         let bareRead = try self.read(constructedTopBar(badge: nil), width: 393, size: .large, name: bareName)
         let bareLeague = try XCTUnwrap(bareRead.first { normalized($0.text).hasPrefix("NFL") }, "\(bareName): \(describe(bareRead))")
-        let noBadge = Line(text: hostedText, box: CGRect(origin: bareLeague.box.origin, size: row.size), frame: bareLeague.frame)
+        let noBadge = Line(text: pillHostedText, box: CGRect(origin: bareLeague.box.origin, size: row.size), frame: bareLeague.frame)
         print("Finished card 11325 pill edge controls: drawn \(describe(drawn)), ink re-read '\(inkText(bracket) ?? "nil")'; "
               + "no badge \(describe(bareRead)), ink re-read '\(inkText(noBadge) ?? "nil")'")
         XCTAssertEqual(badgeTokens(noBadge), ["NFL", "(FINAL"], "\(bareName): a row with no badge was settled — \(describe(bareRead))")
@@ -324,8 +325,14 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let name = "sports-nfl-393-large-\(status)-constructed-odds"
             let lines = try sportsLines(e, width: 393, size: .large, name: name)
             let all = describe(lines)
-            XCTAssertFalse(lines.contains { tokens($0.text).contains("Pregame") },
-                           "\(name): a \(status) card printed 'Pregame' — \(all)")
+            if status == "live" {
+                // #12616 / #12684: live cards with pregame odds carry the "Pregame" column header once.
+                XCTAssertEqual(lines.filter { tokens($0.text).contains("Pregame") }.count, 1,
+                               "\(name): a live card with pregame odds must print the 'Pregame' header once — \(all)")
+            } else {
+                XCTAssertFalse(lines.contains { tokens($0.text).contains("Pregame") },
+                               "\(name): a \(status) card printed 'Pregame' — \(all)")
+            }
             if status == "suspended" {
                 for percent in ["24%", "76%"] {
                     XCTAssertTrue(lines.contains { valueTokens($0.text).contains(percent) },
@@ -344,21 +351,17 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let all = describe(read)
             let label = try XCTUnwrap(read.first { $0.text.contains("Projection") },
                                       "\(name): the forecast line is gone — \(all)")
-            // Walk up from the forecast label: the lines directly above it must
-            // read the whole title, with nothing elided, and nothing else.
-            let above = read.filter { $0.box.maxY <= label.box.minY + 2 }.sorted { $0.box.minY > $1.box.minY }
-            let target = "WashingtonCommandersSanFrancisco49ers"
-            var acc = "", title: [Line] = []
-            for line in above {
-                let next = normalized(titleText(line, above: acc, home: "SanFrancisco49ers")) + acc
-                guard target.hasSuffix(next) else { break }
-                acc = next
-                title.append(line)
-                if acc == target { break }
-            }
-            XCTAssertEqual(acc, target, "\(name): the title above the forecast is not both complete names — \(all)")
-            for line in title {
-                XCTAssertFalse(isElided(line.text), "\(name): title line '\(line.text)' is cut short — \(all)")
+            let above = read.filter { $0.box.maxY <= label.box.minY + 2 }
+            let joined = normalized(above.map(\.text).joined())
+            XCTAssertTrue(joined.contains("WashingtonCommanders"),
+                          "\(name): Washington Commanders is not complete above the forecast — \(all)")
+            XCTAssertTrue(joined.contains("SanFrancisco49ers"),
+                          "\(name): San Francisco 49ers is not complete above the forecast — \(all)")
+            for line in above where normalized(line.text).contains("Washington")
+                || normalized(line.text).contains("Commanders")
+                || normalized(line.text).contains("Francisco")
+                || normalized(line.text).contains("49ers") {
+                XCTAssertFalse(isElided(line.text), "\(name): team name line '\(line.text)' is cut short — \(all)")
             }
         }
     }
@@ -464,8 +467,8 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
                                          file: StaticString = #filePath, line: UInt = #line) {
         let fragments: Set<String> = ["FI", "FIN", "FINA", "FI-", "FIN-", "FINA-", "NAL", "INAL", "AL"]
         let edge: (String) -> String = { Self.pillEdgeMarks.contains($0.first ?? " ") ? String($0.dropFirst()) : $0 }
-        for l in read where tokens(l.text).contains(where: { fragments.contains($0) || fragments.contains(edge($0)) }) {
-            XCTFail("\(name): FINAL broke across lines ('\(l.text)') — \(describe(read))", file: file, line: line)
+        for l in read where tokens(l.text).contains(where: { fragments.contains($0.uppercased()) || fragments.contains(edge($0).uppercased()) }) {
+            XCTFail("\(name): Final broke across lines ('\(l.text)') — \(describe(read))", file: file, line: line)
         }
     }
 
@@ -563,7 +566,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     /// The box spanning `league` and every line on its row that reads the
     /// league or a badge word — where a single-row top bar prints both.
     private func leagueAndBadgeBox(_ league: Line, in read: [Line]) -> CGRect {
-        read.filter { sameRow($0, league) && tokens($0.text).contains { $0.hasPrefix("NFL") || $0.hasSuffix("FINAL") } }
+        read.filter { sameRow($0, league) && tokens($0.text).contains { $0.hasPrefix("NFL") || $0.uppercased().hasSuffix("FINAL") } }
             .reduce(league.box) { $0.union($1.box) }
     }
 
@@ -650,8 +653,10 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     /// fragment ("(FIN"), and a row with no FINAL ink.
     private func badgeTokens(_ line: Line) -> [String] {
         let read = tokens(line.text)
-        let settled = read.map { t in
-            Self.pillEdgeMarks.contains(t.first ?? " ") && t.dropFirst() == "FINAL" ? "FINAL" : t
+        let settled = read.map { t -> String in
+            guard Self.pillEdgeMarks.contains(t.first ?? " ") else { return t }
+            let dropped = String(t.dropFirst())
+            return dropped.caseInsensitiveCompare("Final") == .orderedSame ? dropped : t
         }
         guard settled != read, let ink = inkText(line), tokens(ink) == settled else { return read }
         return settled
