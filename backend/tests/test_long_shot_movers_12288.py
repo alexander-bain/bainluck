@@ -140,15 +140,14 @@ async def test_long_shot_movers_enforces_freshness_volume_and_points_only() -> N
     assert [r["market_id"] for r in res.rows] == [701001, 52755686, 701003]
     assert res.rows[0]["delta_label"] == "+15 pts from 6%"
     assert res.rows[1]["delta_label"] == "+11 pts from 8%"
-    assert res.rows[1]["label"] == "Trail Blazers · NBA Northwest Division Winner"
+    assert res.rows[1]["label"] == "Trail Blazers · NBA Northwest · +11 pts"
     for row in res.rows:
         assert row["prior_percent"] + row["delta_points"] == row["rendered_percent"]
 
     feed_item, container = compose_long_shot_movers_card_and_container(producer, res)
     ctx = feed_item["context_summary"]
-    assert "12% or lower a day ago" in ctx
-    assert "6 points" in ctx
-    assert "+15 pts" in ctx
+    assert "was 6% yesterday. Now it is 21%, up 15 points." in ctx
+    assert "Super Bowl" in ctx
     assert container["context_line"] == ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)
     assert not FORBIDDEN_COPY_RE.search(feed_item["data"]["roundup"]["footer"])
