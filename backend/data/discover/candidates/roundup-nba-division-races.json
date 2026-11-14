@@ -1,0 +1,27 @@
+{
+  "slug": "roundup-nba-division-races",
+  "membership": "league_division_races",
+  "kind": "roundup",
+  "relations": [
+    "same_measure",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "NBA · DIVISIONS",
+  "name": "NBA division races",
+  "category": "sports",
+  "tag": "NBA",
+  "section_title": "All NBA divisions",
+  "subtitle": "Front-runners across NBA divisions, ordered from closest race to clearest favorite.",
+  "footer": "One winner per division · 4 of 6 NBA divisions shown",
+  "score": 92.0,
+  "rule": {
+    "producer": "league_division_races",
+    "sport": "basketball_nba",
+    "selector": "division_winner",
+    "window": "2026-27-regular-season",
+    "min_divisions": 4,
+    "max_card_rows": 4
+  }
+}
