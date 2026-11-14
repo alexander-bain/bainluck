@@ -1,0 +1,90 @@
+{
+  "candidate_slug": "roundup-long-shot-movers",
+  "producer": "long_shot_movers",
+  "captured_at": "2026-11-14T15:10:00+00:00",
+  "trading_guard_summary": "Seats open markets that stood at 12% or lower 24h ago and climbed 6+ points on verified recent trading (#69841805 Austin Championship Top 5 Brendon Todd 4% -> 25% +21 pts, #69841806 Austin Championship Top 10 Sami Valimaki 8% -> 18% +10 pts, #52755686 NBA Northwest Division Trail Blazers 11% -> 19% +8 pts). Excludes low-liquidity/stale boards (#99698401 $120 total volume, 19h old quote).",
+  "input_markets": [
+    {
+      "id": 69841805,
+      "source": "polymarket",
+      "status": "open",
+      "category": "golf",
+      "group_id": "polymarket:austin-top5",
+      "name": "Austin Championship Top 5 Finish",
+      "volume": 18490.0,
+      "volume_24h": 2979.4,
+      "updated_at": "2026-11-14T15:00:00+00:00",
+      "outcomes": [
+        {
+          "name": "Brendon Todd",
+          "probability": 0.25,
+          "prior_24h_probability": 0.04,
+          "price_changed_at": "2026-11-14T14:52:00+00:00"
+        }
+      ]
+    },
+    {
+      "id": 69841806,
+      "source": "polymarket",
+      "status": "open",
+      "category": "golf",
+      "group_id": "polymarket:austin-top10",
+      "name": "Austin Championship Top 10 Finish",
+      "volume": 24120.0,
+      "volume_24h": 4430.1,
+      "updated_at": "2026-11-14T15:00:00+00:00",
+      "outcomes": [
+        {
+          "name": "Sami Valimaki",
+          "probability": 0.18,
+          "prior_24h_probability": 0.08,
+          "price_changed_at": "2026-11-14T14:48:00+00:00"
+        }
+      ]
+    },
+    {
+      "id": 52755686,
+      "source": "polymarket",
+      "status": "open",
+      "category": "basketball_nba",
+      "group_id": "polymarket:nba-northwest",
+      "name": "NBA Northwest Division Winner",
+      "volume": 312400.0,
+      "volume_24h": 54242.0,
+      "updated_at": "2026-11-14T14:29:00+00:00",
+      "outcomes": [
+        {
+          "name": "Trail Blazers",
+          "probability": 0.193,
+          "prior_24h_probability": 0.11,
+          "price_changed_at": "2026-11-14T14:20:00+00:00"
+        }
+      ]
+    },
+    {
+      "id": 99698401,
+      "source": "polymarket",
+      "status": "open",
+      "category": "tech",
+      "name": "Unverified thin long shot",
+      "volume": 120.0,
+      "volume_24h": 0.0,
+      "updated_at": "2026-11-13T18:00:00+00:00",
+      "outcomes": [
+        {
+          "name": "Yes",
+          "probability": 0.22,
+          "prior_24h_probability": 0.05
+        }
+      ]
+    }
+  ],
+  "expected_member_ids": [
+    69841805,
+    69841806,
+    52755686
+  ],
+  "excluded_ids": [
+    99698401
+  ]
+}

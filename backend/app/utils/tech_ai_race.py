@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -35,12 +35,14 @@ from app.utils.roundup_containers import (
 
 __all__ = [
     "CANDIDATE_AI_RACE_PATH",
+    "CANDIDATE_AI_RACE_ROWS_PATH",
     "PRODUCER_KIND_TECH_AI_RACE",
     "BenchmarkStanding",
     "build_ai_race_grading_candidate",
     "build_tech_ai_race_producer",
     "compose_ai_race_card_and_container",
     "load_candidate_definition",
+    "load_candidate_eval_rows",
     "produce_tech_ai_race",
     "select_tech_ai_race",
 ]
@@ -53,6 +55,14 @@ CANDIDATE_AI_RACE_PATH = (
     / "discover"
     / "candidates"
     / "roundup-ai-race.json"
+)
+
+CANDIDATE_AI_RACE_ROWS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "discover"
+    / "candidates"
+    / "roundup-ai-race-rows.json"
 )
 
 _FORBIDDEN_COPY_RE = re.compile(
@@ -159,6 +169,7 @@ class BenchmarkStanding:
     primary_market_id: int
     contributing_market_ids: tuple[int, ...]
     primary_card: dict[str, Any]
+    blended_labs: tuple[tuple[str, float], ...] = ()
 
 
 def _assert_clean_copy(text: str) -> str:
@@ -212,9 +223,45 @@ def _slot_sort_key(slot_key: str) -> tuple[int, str]:
     return (_STATIC_SLOT_ORDER.get(slot_key, 99), slot_key)
 
 
-def _extract_labs(market: Mapping[str, Any]) -> dict[str, float]:
+def _extract_labs(
+    market: Mapping[str, Any],
+    *,
+    now: Optional[datetime] = None,
+    max_quote_age_hours: float = 48.0,
+    min_volume_24h: float = 100.0,
+) -> dict[str, float]:
     if str(market.get("status") or "open").strip().lower() != "open":
         return {}
+    if market.get("is_trading") is False:
+        return {}
+    quiet_days = market.get("quiet_days")
+    if quiet_days is not None:
+        try:
+            if float(quiet_days) > 7.0:
+                return {}
+        except (TypeError, ValueError):
+            return {}
+    vol_24h = market.get("volume_24h")
+    if vol_24h is None:
+        vol_24h = market.get("volume24hr")
+    if vol_24h is not None:
+        try:
+            if float(vol_24h) < float(min_volume_24h):
+                return {}
+        except (TypeError, ValueError):
+            return {}
+    if now is not None:
+        raw_ts = market.get("price_observed_at") or market.get("updated_at")
+        if isinstance(raw_ts, str) and raw_ts.strip():
+            try:
+                parsed = datetime.fromisoformat(raw_ts.strip().replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                ref = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+                if (ref - parsed).total_seconds() / 3600.0 > float(max_quote_age_hours):
+                    return {}
+            except ValueError:
+                return {}
     labs: dict[str, float] = {}
     raw_sum = 0.0
     for out in market.get("outcomes") or ():
@@ -246,13 +293,22 @@ def _resolve_slot(
     label: str,
     track: str,
     slot_markets: Sequence[Mapping[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+    max_quote_age_hours: float = 48.0,
+    min_volume_24h: float = 100.0,
 ) -> tuple[Optional[BenchmarkStanding], Optional[tuple[Any, ...]]]:
     by_source: dict[str, tuple[Mapping[str, Any], dict[str, float]]] = {}
     for m in slot_markets:
         src = str(m.get("source") or "").strip().lower()
         if not src:
             continue
-        labs = _extract_labs(m)
+        labs = _extract_labs(
+            m,
+            now=now,
+            max_quote_age_hours=max_quote_age_hours,
+            min_volume_24h=min_volume_24h,
+        )
         if len(labs) < 2:
             continue
         if src not in by_source or len(labs) > len(by_source[src][1]):
@@ -309,12 +365,13 @@ def _resolve_slot(
             primary_market_id=int(primary_card["id"]),
             contributing_market_ids=contrib_ids,
             primary_card=primary_card,
+            blended_labs=tuple(blended),
         ),
         None,
     )
 
 
-def _compose_context_line(standings: Sequence[BenchmarkStanding]) -> str:
+def _compose_title_and_context_line(standings: Sequence[BenchmarkStanding]) -> tuple[str, str]:
     overall_leaders = {s.leader_lab for s in standings if s.track == "overall"}
     coding_leaders = {s.leader_lab for s in standings if s.track == "coding"}
     n = len(standings)
@@ -322,23 +379,48 @@ def _compose_context_line(standings: Sequence[BenchmarkStanding]) -> str:
         ov_lab = next(iter(overall_leaders))
         cd_lab = next(iter(coding_leaders))
         if ov_lab != cd_lab:
-            return _assert_clean_copy(
+            third_clause = ""
+            common_third: Optional[str] = None
+            third_probs: list[int] = []
+            for s in standings:
+                if len(s.blended_labs) >= 3:
+                    lab3, prob3 = s.blended_labs[2]
+                    if common_third is None:
+                        common_third = lab3
+                    elif common_third != lab3:
+                        common_third = ""
+                    third_probs.append(max(1, int(round(prob3 * 100))))
+                else:
+                    common_third = ""
+            if common_third and common_third not in {ov_lab, cd_lab} and third_probs:
+                lo_p, hi_p = min(third_probs), max(third_probs)
+                span_txt = f"{lo_p}%" if lo_p == hi_p else f"{lo_p}% to {hi_p}%"
+                third_clause = f", leaving {common_third} in third on all {n} boards ({span_txt})"
+            card_title = _assert_clean_copy(f"{ov_lab} leads overall AI; {cd_lab} leads coding")
+            ctx = _assert_clean_copy(
                 f"{n} live AI model leaderboards side by side — {ov_lab} leads overall "
-                f"evaluations while {cd_lab} leads coding; each row settles on its named benchmark."
+                f"evaluations while {cd_lab} leads coding{third_clause}; each row settles on its named benchmark."
             )
+            return card_title, ctx
     top = standings[0]
-    return _assert_clean_copy(
-        f"{n} live AI model leaderboards across overall and coding evaluations — "
-        f"{top.leader_lab} leads {top.benchmark_label} at {int(round(top.leader_probability * 100))}%; "
-        f"each row settles on its own named benchmark."
+    return (
+        "The AI model race",
+        _assert_clean_copy(
+            f"{n} live AI model leaderboards across overall and coding evaluations — "
+            f"{top.leader_lab} leads {top.benchmark_label} at {int(round(top.leader_probability * 100))}%; "
+            f"each row settles on its own named benchmark."
+        ),
     )
 
 
 def select_tech_ai_race(
     markets: Sequence[Mapping[str, Any]],
     *,
+    now: Optional[datetime] = None,
     min_benchmarks: int = 3,
     max_card_rows: int = 4,
+    max_quote_age_hours: float = 48.0,
+    min_volume_24h: float = 100.0,
 ) -> RoundupMembers | RoundupRefusal:
     slot_buckets: dict[str, tuple[str, str, list[Mapping[str, Any]]]] = {}
     for m in markets:
@@ -357,7 +439,15 @@ def select_tech_ai_race(
     drop_reasons: list[tuple[Any, ...]] = []
     for key in ordered_keys:
         label, track, bucket = slot_buckets[key]
-        resolved, drop_reason = _resolve_slot(key, label, track, bucket)
+        resolved, drop_reason = _resolve_slot(
+            key,
+            label,
+            track,
+            bucket,
+            now=now,
+            max_quote_age_hours=max_quote_age_hours,
+            min_volume_24h=min_volume_24h,
+        )
         if resolved is not None:
             standings.append(resolved)
         elif drop_reason is not None:
@@ -372,7 +462,7 @@ def select_tech_ai_race(
         )
 
     card_standings = standings[: max(2, int(max_card_rows))]
-    context_line = _compose_context_line(card_standings)
+    card_title, context_line = _compose_title_and_context_line(card_standings)
     footer = _assert_clean_copy(
         f"One winning lab per benchmark · {len(card_standings)} distinct AI leaderboards"
     )
@@ -410,7 +500,7 @@ def select_tech_ai_race(
         rows=rows,
         footer=footer,
         count_line=f"{len(standings)} benchmarks",
-        title="The AI model race",
+        title=card_title,
         kicker="TECH · AI BENCHMARKS",
         revision_ids=rev_ids,
         sections=(
@@ -429,13 +519,21 @@ async def produce_tech_ai_race(
     rule: Optional[Mapping[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> RoundupMembers | RoundupRefusal:
-    del now
     cfg_rule = dict(rule or {})
     min_b = int(cfg_rule.get("min_benchmarks") or 3)
     max_r = int(cfg_rule.get("max_card_rows") or 4)
+    max_q = float(cfg_rule.get("max_quote_age_hours") or 48.0)
+    min_v = float(cfg_rule.get("min_volume_24h") or 100.0)
 
     if isinstance(db, (list, tuple)):
-        return select_tech_ai_race(db, min_benchmarks=min_b, max_card_rows=max_r)
+        return select_tech_ai_race(
+            db,
+            now=now,
+            min_benchmarks=min_b,
+            max_card_rows=max_r,
+            max_quote_age_hours=max_q,
+            min_volume_24h=min_v,
+        )
 
     from sqlalchemy import or_, select
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -446,6 +544,7 @@ async def produce_tech_ai_race(
 
     from app.models.models import FuturesMarket
 
+    effective_now = now or datetime.now(timezone.utc)
     stmt = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -466,20 +565,46 @@ async def produce_tech_ai_race(
             "status": m.status,
             "source": m.source,
             "category": m.category,
+            "volume_24h": getattr(m, "volume_24h", None),
+            "updated_at": (
+                m.updated_at.isoformat()
+                if getattr(m, "updated_at", None) is not None
+                else None
+            ),
             "outcomes": [
-                {"name": o.name, "probability": o.probability}
+                {
+                    "name": o.name,
+                    "probability": (
+                        getattr(o, "current_probability", None)
+                        if getattr(o, "current_probability", None) is not None
+                        else getattr(o, "probability", None)
+                    ),
+                }
                 for o in (m.outcomes or [])
             ],
         }
         for m in orm_rows
     ]
-    return select_tech_ai_race(serialized, min_benchmarks=min_b, max_card_rows=max_r)
+    return select_tech_ai_race(
+        serialized,
+        now=effective_now,
+        min_benchmarks=min_b,
+        max_card_rows=max_r,
+        max_quote_age_hours=max_q,
+        min_volume_24h=min_v,
+    )
 
 
 def load_candidate_definition(path: Path = CANDIDATE_AI_RACE_PATH) -> dict[str, Any]:
     defn = json.loads(path.read_text(encoding="utf-8"))
     validate_roundup_definition(defn)
     return defn
+
+
+def load_candidate_eval_rows(
+    path: Path = CANDIDATE_AI_RACE_ROWS_PATH,
+) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_tech_ai_race_producer(
@@ -506,7 +631,9 @@ def build_tech_ai_race_producer(
         rule=rule,
         tag=resolved.get("tag"),
         kicker=str(resolved.get("kicker") or "TECH · AI BENCHMARKS"),
+        order=str(resolved.get("order") or "sequence"),
         score=float(resolved.get("score") or 93.0),
+        enabled=(lambda: bool(resolved["enabled"])) if "enabled" in resolved else None,
     )
 
 
@@ -521,6 +648,8 @@ def compose_ai_race_card_and_container(
     context_line = _assert_clean_copy(str(members.sections[0].get("context_line") or ""))
     feed_item["context_summary"] = context_line
     feed_item["data"]["roundup"]["context_line"] = context_line
+    feed_item["data"]["roundup"]["subtitle"] = context_line
+    feed_item["data"]["roundup"]["order"] = "sequence"
     container["context_line"] = context_line
     return feed_item, container
 
