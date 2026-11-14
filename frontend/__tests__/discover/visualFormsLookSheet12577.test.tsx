@@ -27,6 +27,7 @@ import {
 import {
   OscarsContainerLayoutPreview,
   VisualFormLookSheetGallery,
+  formatCardFaceSubtitle,
   renderLookSheetCardBySpec,
   renderVisualLookSheetDeckItem,
 } from "@/components/discover/forms/VisualFormLookSheet";
@@ -388,6 +389,72 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     }
     for (const v1Key of retiredV1Keys) {
       expect(renderVisualLookSheetDeckItem(v1Key)).toBeNull();
+    }
+  });
+
+  it("stacks Card 1A's dynamic expander summary full-width below the label, uses bg-text-muted for Stage 1 legend swatch, and keeps venue names, market IDs, and function names off all 15 card faces", () => {
+    const bpSet = PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
+    expect(formatCardFaceSubtitle(bpSet.subtitle)).toBe(
+      "99th Academy Awards · Top 10 most likely to be nominated (ordered by win %, ties broken by nominated %)",
+    );
+
+    const card1aHtml = renderToStaticMarkup(
+      renderLookSheetCardBySpec(VISUAL_FORM_SHEET_2_CARDS[0]),
+    );
+    expect(card1aHtml).toContain("flex-col items-start gap-0.5");
+    expect(card1aHtml).toContain(
+      "Sorted by wins %, ties broken by nominated %",
+    );
+    expect(card1aHtml).toContain(
+      "incl. I Play Rocky (49% nom · Not listed to win)",
+    );
+
+    // Expander summary computes stage_1_probability dynamically from entry (not hardcoded 49%)
+    const customRockySet = {
+      ...bpSet,
+      entries: bpSet.entries.map((e) =>
+        e.subject === "I Play Rocky" ? { ...e, stage_1_probability: 0.63 } : e,
+      ),
+    };
+    const overriddenCard1aHtml = renderToStaticMarkup(
+      renderLookSheetCardBySpec(VISUAL_FORM_SHEET_2_CARDS[0], {
+        pairedMetricSet: customRockySet,
+      }),
+    );
+    expect(overriddenCard1aHtml).toContain(
+      "incl. I Play Rocky (63% nom · Not listed to win)",
+    );
+    expect(overriddenCard1aHtml).not.toContain("49% nom");
+
+    // Stage 1 legend swatch on PairedBarsWithArtCard uses bg-text-muted matching the grey Stage 1 bar
+    const card1Html = renderToStaticMarkup(
+      renderLookSheetCardBySpec(VISUAL_FORM_LOOK_SHEET_CARDS[0]),
+    );
+    expect(card1Html).toContain(
+      'data-testid="legend-swatch-stage-1" class="inline-block h-2.5 w-2.5 shrink-0 rounded-sm bg-text-muted"',
+    );
+    expect(card1Html).toContain(
+      "Sorted by wins %, ties broken by nominated %",
+    );
+
+    const allSpecs = [...VISUAL_FORM_SHEET_2_CARDS, ...VISUAL_FORM_LOOK_SHEET_CARDS];
+    for (const spec of allSpecs) {
+      const cardHtml = renderToStaticMarkup(renderLookSheetCardBySpec(spec));
+      expect(cardHtml).not.toMatch(/#\d{5,}/);
+      expect(cardHtml).not.toContain("blend_with_verdict");
+      expect(cardHtml).not.toContain("Paired in register");
+      expect(cardHtml).not.toContain("Kalshi");
+      expect(cardHtml).not.toContain("Polymarket");
+    }
+
+    for (const containerSpec of OSCARS_CONTAINER_LOOK_SHEET_OPTIONS) {
+      const containerHtml = renderToStaticMarkup(
+        <OscarsContainerLayoutPreview spec={containerSpec} />,
+      );
+      expect(containerHtml).not.toMatch(/#\d{5,}/);
+      expect(containerHtml).not.toContain("blend_with_verdict");
+      expect(containerHtml).not.toContain("Kalshi");
+      expect(containerHtml).not.toContain("Polymarket");
     }
   });
 });
