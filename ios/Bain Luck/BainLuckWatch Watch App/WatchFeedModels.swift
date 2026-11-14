@@ -1,5 +1,9 @@
 import Foundation
-#if canImport(Bain_Luck)
+// Watch builds never link the iOS `Bain_Luck` module (they compile `TeamShortName.swift`
+// directly via target membership); this conditional import exists solely when `BainLuckTests`
+// compiles `WatchFeedModels.swift` alongside `@testable import Bain_Luck`, matching
+// `WatchPinsModels12640.swift`.
+#if DEBUG && canImport(Bain_Luck)
 @testable import Bain_Luck
 #endif
 
