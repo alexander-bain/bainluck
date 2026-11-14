@@ -13085,6 +13085,12 @@ async def search_events(
     # between them is a DB lane with its own clock (`futures_containers`).
     _mark("futures_refill")
 
+    # #11933: start the first title composition while the independent container
+    # and headline reads run. It already owns a separate session and single-flight
+    # task. Keep the handle even if it finishes without a cached verdict, so this
+    # request never starts that same read twice.
+    _title_started = _prime_search_verified_title(db, deduped_futures, _deadline)
+
     # #8375: a Polymarket game CONTAINER is not a market. It is the game's event
     # row, and its "outcomes" are copies of its own sub-markets' lead legs, so
     # `q=falcons packers` answered "Falcons vs. Packers · O/U 24.5 95%". The game
@@ -13506,7 +13512,8 @@ async def search_events(
     # prints — the verified-title blend, not the one venue this row came from.
     _verified_missed: list = []
     _verified_by_id = await _search_verified_titles(
-        db, (*deduped_futures, *futures_markets), _deadline, missed=_verified_missed
+        db, (*deduped_futures, *futures_markets), _deadline, missed=_verified_missed,
+        started=_title_started,
     )
     if _verified_missed:
         # #12335 step 4: the card printed its own venue's prices because the
@@ -40807,8 +40814,39 @@ def _verified_title_in_background(engine, market_id: int):
     return task
 
 
+def _verified_title_pool_available(engine) -> bool:
+    try:
+        return engine.pool.checkedout() < engine.pool.size()
+    except Exception:  # noqa: BLE001 — no counters means no spare connection proved
+        return False
+
+
+def _prime_search_verified_title(db, markets, deadline: float | None) -> dict:
+    """Start at most one already-required composition; never wait or use ``db``."""
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from app.routes.futures import _held_verified_title, _verified_title_facts
+    from app.utils.futures_verified_title import question_for
+
+    engine = getattr(db, "bind", None)
+    if not isinstance(db, AsyncSession) or not isinstance(engine, AsyncEngine):
+        return {}
+    if deadline is not None and deadline - _SEARCH_VERIFIED_TITLE_MIN_REMAINING_S <= time.monotonic():
+        return {}
+    for market in markets:
+        if (question_for(_verified_title_facts(market)) is None
+                or _held_verified_title(market.id) is not None):
+            continue
+        task = _VERIFIED_TITLE_BACKGROUND.get(market.id)
+        if task is None and not _verified_title_pool_available(engine):
+            return {}
+        return {market.id: task if task is not None else _verified_title_in_background(engine, market.id)}
+    return {}
+
+
 async def _search_verified_titles(
-    db, markets, deadline: float | None, *, missed: list | None = None
+    db, markets, deadline: float | None, *, missed: list | None = None,
+    started: dict | None = None,
 ) -> dict:
     """``{market id: Composition}`` for the title questions among ``markets``.
 
@@ -40840,6 +40878,11 @@ async def _search_verified_titles(
     ``missed`` collects the ids of title markets that got no verdict in time
     (the bound, the deadline floor, or a full pool), so the caller can cache
     that page briefly rather than pin the card's own prices for 180 s.
+
+    ``started`` holds the first composition overlapped with earlier route work
+    (#11933), including a completed refusal. Reuse it even if its own connection
+    fills the pool; waiting on it needs no new checkout. All waits retain the
+    existing shared budget and deadline floor.
     """
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -40865,14 +40908,6 @@ async def _search_verified_titles(
             out[m.id] = held
     if not pending:
         return out
-    try:
-        pool_full = engine.pool.checkedout() >= engine.pool.size()
-    except Exception:  # noqa: BLE001 — a pool without counters keeps the cards as they are
-        pool_full = True
-    if pool_full:
-        if missed is not None:
-            missed.extend(m.id for m in pending)
-        return out
     import asyncio
 
     budget_ends = time.monotonic() + _search_verified_title_wait_s()
@@ -40893,7 +40928,13 @@ async def _search_verified_titles(
             if missed is not None:
                 missed.append(m.id)
             continue
-        task = _verified_title_in_background(engine, m.id)
+        task = (started or {}).get(m.id) or _VERIFIED_TITLE_BACKGROUND.get(m.id)
+        if task is None:
+            if not _verified_title_pool_available(engine):
+                if missed is not None:
+                    missed.append(m.id)
+                continue
+            task = _verified_title_in_background(engine, m.id)
         left = min(budget_ends, floor_ends if floor_ends is not None else budget_ends) - now
         if left <= 0:
             if missed is not None:
