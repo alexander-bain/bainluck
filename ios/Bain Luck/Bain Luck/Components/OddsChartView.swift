@@ -685,12 +685,14 @@ struct OddsChartView: View {
     static func gameHasStarted(
         status: String?,
         commenceTime: Date?,
+        commenceTimeIsKickoff: Bool? = nil,
         history: EventHistoryResponse? = nil,
         now: Date = Date()
     ) -> Bool {
         if EventState.isFinished(status) { return true }
         guard status == "live" else { return false }
-        if let commenceTime, commenceTime > now {
+        let isKickoff = commenceTimeIsKickoff ?? history?.commenceTimeIsKickoff
+        if isKickoff != false, let commenceTime, commenceTime > now {
             let hasObservedPeriod = history?.espnHistory?.contains(where: {
                 guard let period = $0.period?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
                 return !period.isEmpty
@@ -701,7 +703,12 @@ struct OddsChartView: View {
     }
 
     private var isGameStarted: Bool {
-        Self.gameHasStarted(status: status, commenceTime: gameStartDate, history: vm.history)
+        Self.gameHasStarted(
+            status: status,
+            commenceTime: gameStartDate,
+            commenceTimeIsKickoff: vm.history?.commenceTimeIsKickoff,
+            history: vm.history
+        )
     }
 
     /// The instant "Since Start" cuts at — `nil` when the payload says the
@@ -1682,7 +1689,12 @@ struct OddsChartView: View {
     static func drawnWindow(status: String?, commenceTime: String?, history: EventHistoryResponse?,
                             forcedDomain: ClosedRange<Date>?, legacyDataDomain: ClosedRange<Date>?,
                             selectedRange: OddsTimeRange, playStart: (Date) -> Date?) -> DrawnWindow {
-        let started = gameHasStarted(status: status, commenceTime: commenceTime?.asDate, history: history)
+        let started = gameHasStarted(
+            status: status,
+            commenceTime: commenceTime?.asDate,
+            commenceTimeIsKickoff: history?.commenceTimeIsKickoff,
+            history: history
+        )
         let kickoff = sinceStartCut(commenceTime: commenceTime?.asDate,
                                     commenceTimeIsKickoff: history?.commenceTimeIsKickoff)
         return DrawnWindow(finishedEnd: EventState.isFinished(status) ? gameEndDate(status: status, history: history) : nil,

@@ -93,19 +93,21 @@ struct StatusBadge: View {
             .padding(.vertical, 2)
             .background(.red.opacity(0.1))
             .clipShape(Capsule())
-        } else if EventState.isFinished(status) && gameCardPlain182 {
-            Text(gameCardLeadingDot ? "\u{00B7} Final" : "Final")
-                .font(.caption)
-                .foregroundStyle(DS.textSecondaryReadable)
         } else if EventState.isFinished(status) {
-            Text("FINAL")
-                .font(.caption2)
-                .fontWeight(.medium)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.cardBackgroundDark)
-                .clipShape(Capsule())
+            if gameCardPlain182 {
+                Text(gameCardLeadingDot ? "\u{00B7} Final" : "Final")
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+            } else {
+                Text("FINAL")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.cardBackgroundDark)
+                    .clipShape(Capsule())
+            }
         } else if EventState.showsVenueSettledVerdict(
             status, venueSettled: venueSettled, commenceTime: commenceTime?.asDate) {
             if gameCardPlain182 {

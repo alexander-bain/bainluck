@@ -88,6 +88,52 @@ final class PregameChartAndProjOvernight2Tests: XCTestCase {
         XCTAssertTrue(
             OddsChartView.offersSinceStart(isGameStarted: true, kickoff: pastKickoff, now: fixedNow)
         )
+
+        // Non-kickoff commence_time (e.g. tennis / Kalshi close time sitting in the future,
+        // commence_time_is_kickoff == false) with no ESPN period rows MUST still count as started
+        // when status == "live".
+        let nonKickoffHistory = try decodeHistory("""
+        {
+          "event_id": 9124799,
+          "home_team": "Carlos Alcaraz",
+          "away_team": "Jannik Sinner",
+          "commence_time_is_kickoff": false,
+          "history": [],
+          "espn_history": []
+        }
+        """)
+        XCTAssertTrue(
+            OddsChartView.gameHasStarted(
+                status: "live",
+                commenceTime: futureKickoff,
+                commenceTimeIsKickoff: false,
+                history: nil,
+                now: fixedNow
+            ),
+            "live match with non-kickoff future expiration and no period rows is genuinely started"
+        )
+        XCTAssertTrue(
+            OddsChartView.gameHasStarted(
+                status: "live",
+                commenceTime: futureKickoff,
+                history: nonKickoffHistory,
+                now: fixedNow
+            ),
+            "live match whose history marks commence_time_is_kickoff=false is genuinely started"
+        )
+        let nonKickoffWindow = OddsChartView.drawnWindow(
+            status: "live",
+            commenceTime: "2099-01-01T00:00:00Z",
+            history: nonKickoffHistory,
+            forcedDomain: nil,
+            legacyDataDomain: nil,
+            selectedRange: .sinceStart,
+            playStart: { $0 }
+        )
+        XCTAssertTrue(
+            nonKickoffWindow.started,
+            "drawnWindow treats live non-kickoff future-expiration match as started"
+        )
     }
 
     // MARK: - 2. Prominent Pregame Projected Final Columns
