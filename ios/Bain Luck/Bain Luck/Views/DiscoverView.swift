@@ -483,10 +483,14 @@ struct DiscoverView: View {
         items.compactMap { item in
             guard item.type == "bundle", let bundle = item.bundle else { return item }
             let eligibleChildren = eligibleItems(bundle.items, now: now, retainingIds: retainingIds)
+            if let paired = bundle.pairedMetricSet, !paired.entries.isEmpty, eligibleChildren.isEmpty {
+                return item.asPairedMetricItem()
+            }
+            if bundle.kind == "roundup" {
+                guard bundle.admitsRoundupCard else { return nil }
+                return item.withBundle(bundle.withItems(eligibleChildren))
+            }
             if eligibleChildren.isEmpty {
-                if let paired = bundle.pairedMetricSet, !paired.entries.isEmpty {
-                    return item.asPairedMetricItem()
-                }
                 return nil
             }
             return item.withBundle(bundle.withItems(eligibleChildren))
@@ -1110,6 +1114,28 @@ struct DiscoverView: View {
                                     recordInteraction(for: primary, action: .detailOpen, source: "card")
                                 }
                                 navigationPath.append(Route.futuresDetail(id: marketId))
+                            }
+                        )
+                    } else if kind == "roundup",
+                              let roundupBundle = Self.resolveRoundupBundle(
+                                  title: title,
+                                  collectionRef: collectionRef,
+                                  groupItems: items,
+                                  feedItems: vm.items
+                              ),
+                              let roundupRef = roundupBundle.roundupCollectionRef,
+                              let roundupModel = DiscoverRoundupCardModel.build(
+                                  title: roundupBundle.title,
+                                  contract: roundupBundle.roundupContract
+                              ) {
+                        DiscoverRoundupCardView(
+                            model: roundupModel,
+                            collectionRef: roundupRef,
+                            onOpenCollection: { dest in
+                                if let primary = items.first {
+                                    recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                }
+                                navigationPath.append(DiscoverGroupRows.collectionRoute(for: dest))
                             }
                         )
                     } else {
@@ -1933,6 +1959,27 @@ struct DiscoverView: View {
             .accessibilityIdentifier("discover.continuation.heading")
     }
 
+    static func resolveRoundupBundle(
+        title: String,
+        collectionRef: FeedThemeCollectionRef?,
+        groupItems: [FeedItem],
+        feedItems: [FeedItem]
+    ) -> FeedBundle? {
+        if let direct = groupItems.first?.bundle, direct.kind == "roundup", direct.admitsRoundupCard {
+            return direct
+        }
+        if let slug = collectionRef?.slug,
+           let matchedBySlug = feedItems.first(where: { $0.bundle?.kind == "roundup" && $0.bundle?.roundupCollectionRef?.slug == slug })?.bundle,
+           matchedBySlug.admitsRoundupCard {
+            return matchedBySlug
+        }
+        if let matchedByTitle = feedItems.first(where: { $0.bundle?.kind == "roundup" && $0.bundle?.title == title })?.bundle,
+           matchedByTitle.admitsRoundupCard {
+            return matchedByTitle
+        }
+        return nil
+    }
+
     /// Bundles and futures groups for one already-spaced list (#1221's grouping,
     /// unchanged; extracted so #5105 and #11984 can run it per section or delta chunk).
     static func groupRelatedItems(
@@ -1957,6 +2004,21 @@ struct DiscoverView: View {
         for item in mixedItems {
             if item.type == "bundle", let bundle = item.bundle {
                 let eligibleChildren = eligibleBundleItems(bundle, retainingIds: retainingIds)
+                if bundle.kind == "roundup" {
+                    guard bundle.admitsRoundupCard else { continue }
+                    let members = eligibleChildren.isEmpty ? [item] : eligibleChildren
+                    let candidate = DiscoverGroupedItem.group(
+                        title: bundle.title,
+                        items: members,
+                        kind: bundle.kind,
+                        theme: bundle.comparisonTheme,
+                        sharedQuestion: bundle.sharedQuestion,
+                        collectionRef: bundle.roundupCollectionRef
+                    )
+                    if excludingGroupIds.contains(candidate.id) { continue }
+                    result.append(candidate)
+                    continue
+                }
                 if eligibleChildren.isEmpty { continue }
                 let candidate = DiscoverGroupedItem.group(
                     title: bundle.title,

@@ -1,0 +1,2441 @@
+{
+  "roundup-ai-race": {
+    "type": "bundle",
+    "score": 93.0,
+    "reason": "The AI model race",
+    "headline": "The AI model race",
+    "context_summary": "4 live AI model leaderboards side by side \u2014 Google leads overall evaluations while Anthropic leads coding; each row settles on its named benchmark.",
+    "data": {
+      "id": "roundup:ai-race",
+      "title": "The AI model race",
+      "kind": "roundup",
+      "story_key": "roundup:ai-race",
+      "shared_question": null,
+      "item_count": 4,
+      "member_ids": [
+        61329163,
+        32127334,
+        109623,
+        68626832
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 93.0,
+          "reason": "Overall Arena \u00b7 End of Nov \u00b7 Google",
+          "headline": "Overall Arena \u00b7 End of Nov \u00b7 Google",
+          "data": {
+            "id": 61329163,
+            "type": "futures",
+            "card": {
+              "id": 61329163,
+              "source": "polymarket",
+              "status": "open",
+              "category": "tech",
+              "name": "Which company has the best AI model end of November?",
+              "outcomes": [
+                {
+                  "name": "Google",
+                  "probability": 0.855
+                },
+                {
+                  "name": "Anthropic",
+                  "probability": 0.123
+                },
+                {
+                  "name": "OpenAI",
+                  "probability": 0.01
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 93.0,
+          "reason": "Overall \u00b7 Year-end \u00b7 Google",
+          "headline": "Overall \u00b7 Year-end \u00b7 Google",
+          "data": {
+            "id": 32127334,
+            "type": "futures",
+            "card": {
+              "id": 32127334,
+              "source": "polymarket",
+              "status": "open",
+              "category": "tech",
+              "name": "Which company has best AI model end of 2026?",
+              "outcomes": [
+                {
+                  "name": "Google",
+                  "probability": 0.753
+                },
+                {
+                  "name": "Anthropic",
+                  "probability": 0.194
+                },
+                {
+                  "name": "OpenAI",
+                  "probability": 0.027
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 93.0,
+          "reason": "Coding Arena \u00b7 Year-end \u00b7 Anthropic",
+          "headline": "Coding Arena \u00b7 Year-end \u00b7 Anthropic",
+          "data": {
+            "id": 109623,
+            "type": "futures",
+            "card": {
+              "id": 109623,
+              "source": "kalshi",
+              "status": "open",
+              "category": "tech",
+              "name": "Which AI company will have the best coding model at the end of 2026?",
+              "outcomes": [
+                {
+                  "name": "Anthropic",
+                  "probability": 0.715
+                },
+                {
+                  "name": "OpenAI",
+                  "probability": 0.125
+                },
+                {
+                  "name": "Google",
+                  "probability": 0.115
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 93.0,
+          "reason": "LiveBench Coding \u00b7 Anthropic",
+          "headline": "LiveBench Coding \u00b7 Anthropic",
+          "data": {
+            "id": 68626832,
+            "type": "futures",
+            "card": {
+              "id": 68626832,
+              "source": "polymarket",
+              "status": "open",
+              "category": "tech",
+              "name": "Which company has the best AI model on LiveBench (Coding) end of December?",
+              "outcomes": [
+                {
+                  "name": "Anthropic",
+                  "probability": 0.628
+                },
+                {
+                  "name": "Google",
+                  "probability": 0.109
+                },
+                {
+                  "name": "OpenAI",
+                  "probability": 0.109
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-ai-race",
+        "href": "/collections/roundup-ai-race",
+        "name": "The AI model race",
+        "revision": 272035054,
+        "collection_count": 4
+      },
+      "roundup": {
+        "kicker": "TECH \u00b7 AI BENCHMARKS",
+        "tag": "AI",
+        "footer": "One winning lab per benchmark \u00b7 4 distinct AI leaderboards",
+        "rows": [
+          {
+            "market_id": 61329163,
+            "label": "Overall Arena \u00b7 End of Nov \u00b7 Google",
+            "benchmark": "Overall Arena \u00b7 End of Nov",
+            "leader": "Google",
+            "probability": 0.855,
+            "rendered_percent": 86,
+            "destination": {
+              "kind": "market",
+              "id": 61329163,
+              "web": "/futures/61329163",
+              "api": "/api/futures/61329163"
+            },
+            "runner_up_label": "Anthropic 12%"
+          },
+          {
+            "market_id": 32127334,
+            "label": "Overall \u00b7 Year-end \u00b7 Google",
+            "benchmark": "Overall \u00b7 Year-end",
+            "leader": "Google",
+            "probability": 0.753,
+            "rendered_percent": 75,
+            "destination": {
+              "kind": "market",
+              "id": 32127334,
+              "web": "/futures/32127334",
+              "api": "/api/futures/32127334"
+            },
+            "runner_up_label": "Anthropic 19%"
+          },
+          {
+            "market_id": 109623,
+            "label": "Coding Arena \u00b7 Year-end \u00b7 Anthropic",
+            "benchmark": "Coding Arena \u00b7 Year-end",
+            "leader": "Anthropic",
+            "probability": 0.715,
+            "rendered_percent": 72,
+            "destination": {
+              "kind": "market",
+              "id": 109623,
+              "web": "/futures/109623",
+              "api": "/api/futures/109623"
+            },
+            "runner_up_label": "OpenAI 12%"
+          },
+          {
+            "market_id": 68626832,
+            "label": "LiveBench Coding \u00b7 Anthropic",
+            "benchmark": "LiveBench Coding",
+            "leader": "Anthropic",
+            "probability": 0.628,
+            "rendered_percent": 63,
+            "destination": {
+              "kind": "market",
+              "id": 68626832,
+              "web": "/futures/68626832",
+              "api": "/api/futures/68626832"
+            },
+            "runner_up_label": "Google 11%"
+          }
+        ],
+        "relations": [
+          "same_measure",
+          "sibling"
+        ],
+        "level": "member",
+        "count_line": "4 benchmarks",
+        "context_line": "4 live AI model leaderboards side by side \u2014 Google leads overall evaluations while Anthropic leads coding; each row settles on its named benchmark."
+      }
+    }
+  },
+  "roundup-as-likely-as": {
+    "type": "bundle",
+    "score": 92.5,
+    "reason": "Around a 46% chance right now",
+    "headline": "Around a 46% chance right now",
+    "context_summary": "Actively trading events from Sports, Economy, Tech, and Culture that sit within \u00b11.5 points of 46% right now \u2014 one per domain so you can compare unrelated chances side by side.",
+    "data": {
+      "id": "roundup:as-likely-as",
+      "title": "Around a 46% chance right now",
+      "kind": "roundup",
+      "story_key": "roundup:as-likely-as",
+      "shared_question": null,
+      "item_count": 4,
+      "member_ids": [
+        15348566,
+        30691373,
+        60607595,
+        58492244
+      ],
+      "items": [
+        {
+          "type": "event",
+          "score": 92.5,
+          "reason": "Sports: Dallas Mavericks win at Cleveland Cavaliers",
+          "headline": "Sports: Dallas Mavericks win at Cleveland Cavaliers",
+          "data": {
+            "id": 15348566,
+            "item_type": "event",
+            "sport": "basketball_nba",
+            "status": "scheduled",
+            "home_team": "Cleveland Cavaliers",
+            "away_team": "Dallas Mavericks",
+            "hero_probability": 0.54,
+            "hero_probability_away": 0.46,
+            "commence_time": "2026-11-15T00:30:00+00:00"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.5,
+          "reason": "Economy: Anthropic IPO Closing Market Cap \u2014 $1.25\u2013$1.5T",
+          "headline": "Economy: Anthropic IPO Closing Market Cap \u2014 $1.25\u2013$1.5T",
+          "data": {
+            "id": 30691373,
+            "item_type": "market",
+            "source": "polymarket",
+            "category": "economics",
+            "status": "open",
+            "name": "Anthropic IPO Closing Market Cap",
+            "volume_24h": 211802.05,
+            "updated_at": "2026-11-14T06:32:24+00:00",
+            "outcomes": [
+              {
+                "name": "$1.25\u2013$1.5T",
+                "probability": 0.4561
+              }
+            ]
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.5,
+          "reason": "Tech: OpenAI announces another Millennium Prize solution \u2014 December 31, 2027",
+          "headline": "Tech: OpenAI announces another Millennium Prize solution \u2014 December 31, 2027",
+          "data": {
+            "id": 60607595,
+            "item_type": "market",
+            "source": "polymarket",
+            "category": "tech",
+            "status": "open",
+            "name": "OpenAI announces another Millennium Prize solution?",
+            "volume_24h": 1298.56,
+            "updated_at": "2026-11-14T03:29:17+00:00",
+            "outcomes": [
+              {
+                "name": "December 31, 2027",
+                "probability": 0.465
+              }
+            ]
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.5,
+          "reason": "Culture: Grammys 2027: Best Rap Album Winner \u2014 Don't Be Dumb - A$AP Rocky",
+          "headline": "Culture: Grammys 2027: Best Rap Album Winner \u2014 Don't Be Dumb - A$AP Rocky",
+          "data": {
+            "id": 58492244,
+            "item_type": "market",
+            "source": "polymarket",
+            "category": "entertainment",
+            "status": "open",
+            "name": "Grammys 2027: Best Rap Album Winner",
+            "volume_24h": 1286.26,
+            "updated_at": "2026-11-13T22:28:43+00:00",
+            "outcomes": [
+              {
+                "name": "Don't Be Dumb - A$AP Rocky",
+                "probability": 0.4465
+              }
+            ]
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-as-likely-as",
+        "href": "/collections/roundup-as-likely-as",
+        "name": "Around a 46% chance right now",
+        "revision": 1788142282,
+        "collection_count": 4
+      },
+      "roundup": {
+        "kicker": "PERSPECTIVE \u00b7 AS LIKELY AS",
+        "tag": "PERSPECTIVE",
+        "footer": "Independent markets across 4 domains \u00b7 matched within \u00b11.5 points",
+        "rows": [
+          {
+            "id": 15348566,
+            "member_type": "event",
+            "domain": "Sports",
+            "label": "Sports: Dallas Mavericks win at Cleveland Cavaliers",
+            "subject": "Dallas Mavericks win at Cleveland Cavaliers",
+            "probability": 0.46,
+            "rendered_percent": 46,
+            "destination": {
+              "kind": "event",
+              "id": 15348566,
+              "web": "/events/15348566",
+              "api": "/api/events/15348566"
+            }
+          },
+          {
+            "id": 30691373,
+            "member_type": "market",
+            "domain": "Economy",
+            "label": "Economy: Anthropic IPO Closing Market Cap \u2014 $1.25\u2013$1.5T",
+            "subject": "Anthropic IPO Closing Market Cap \u2014 $1.25\u2013$1.5T",
+            "probability": 0.4561,
+            "rendered_percent": 46,
+            "destination": {
+              "kind": "market",
+              "id": 30691373,
+              "web": "/futures/30691373",
+              "api": "/api/futures/30691373"
+            }
+          },
+          {
+            "id": 60607595,
+            "member_type": "market",
+            "domain": "Tech",
+            "label": "Tech: OpenAI announces another Millennium Prize solution \u2014 December 31, 2027",
+            "subject": "OpenAI announces another Millennium Prize solution \u2014 December 31, 2027",
+            "probability": 0.465,
+            "rendered_percent": 46,
+            "destination": {
+              "kind": "market",
+              "id": 60607595,
+              "web": "/futures/60607595",
+              "api": "/api/futures/60607595"
+            }
+          },
+          {
+            "id": 58492244,
+            "member_type": "market",
+            "domain": "Culture",
+            "label": "Culture: Grammys 2027: Best Rap Album Winner \u2014 Don't Be Dumb - A$AP Rocky",
+            "subject": "Grammys 2027: Best Rap Album Winner \u2014 Don't Be Dumb - A$AP Rocky",
+            "probability": 0.4465,
+            "rendered_percent": 45,
+            "destination": {
+              "kind": "market",
+              "id": 58492244,
+              "web": "/futures/58492244",
+              "api": "/api/futures/58492244"
+            }
+          }
+        ],
+        "relations": [
+          "yardstick"
+        ],
+        "level": "related",
+        "count_line": "4 domains at ~46%",
+        "context_line": "Actively trading events from Sports, Economy, Tech, and Culture that sit within \u00b11.5 points of 46% right now \u2014 one per domain so you can compare unrelated chances side by side."
+      }
+    }
+  },
+  "roundup-big-movers-today": {
+    "type": "bundle",
+    "score": 93.0,
+    "reason": "Big movers today",
+    "headline": "Big movers today",
+    "context_summary": "Actively trading markets with the sharpest 24-hour shifts (6+ points), ordered by size of move \u2014 led by Gemini Krypton: Text Arena Rank Debut \u2014 Top 3 (+18 pts to 83%).",
+    "data": {
+      "id": "roundup:big-movers-today",
+      "title": "Big movers today",
+      "kind": "roundup",
+      "story_key": "roundup:big-movers-today",
+      "shared_question": null,
+      "item_count": 5,
+      "member_ids": [
+        69967999,
+        22915076,
+        67647293,
+        69851942,
+        30691373
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 93.0,
+          "reason": "Gemini Krypton: Text Arena Rank Debut \u2014 Top 3",
+          "headline": "Gemini Krypton: Text Arena Rank Debut \u2014 Top 3",
+          "data": {
+            "id": 69967999,
+            "type": "futures",
+            "card": {
+              "id": 69967999,
+              "source": "polymarket",
+              "status": "open",
+              "category": "tech",
+              "group_id": "polymarket:1360360",
+              "name": "Gemini Krypton: Text Arena Rank Debut?",
+              "volume_24h": 6728.8,
+              "price_observed_at": "2026-11-14T08:08:10+00:00",
+              "last_trade_at": "2026-11-14T08:04:00+00:00",
+              "outcomes": [
+                {
+                  "name": "Top 3",
+                  "probability": 0.83,
+                  "movement": 0.175
+                },
+                {
+                  "name": "Top 5",
+                  "probability": 0.855,
+                  "movement": 0.08
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 93.0,
+          "reason": "Next James Bond actor \u2014 Callum Turner",
+          "headline": "Next James Bond actor \u2014 Callum Turner",
+          "data": {
+            "id": 22915076,
+            "type": "futures",
+            "card": {
+              "id": 22915076,
+              "source": "polymarket",
+              "status": "open",
+              "category": "entertainment",
+              "group_id": "polymarket:498879",
+              "name": "Next James Bond actor?",
+              "volume_24h": 25462.6,
+              "price_observed_at": "2026-11-14T07:55:00+00:00",
+              "last_trade_at": "2026-11-14T07:51:00+00:00",
+              "outcomes": [
+                {
+                  "name": "Callum Turner",
+                  "probability": 0.243,
+                  "movement": -0.1195
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 93.0,
+          "reason": "Will Alphabet Inc. (GOOGL) hit (LOW) $270 in November",
+          "headline": "Will Alphabet Inc. (GOOGL) hit (LOW) $270 in November",
+          "data": {
+            "id": 67647293,
+            "type": "futures",
+            "card": {
+              "id": 67647293,
+              "source": "polymarket",
+              "status": "open",
+              "category": "economics",
+              "group_id": "polymarket:googl-270-nov",
+              "name": "Will Alphabet Inc. (GOOGL) hit (LOW) $270 in November?",
+              "volume_24h": 4120.0,
+              "price_observed_at": "2026-11-14T08:06:06+00:00",
+              "last_trade_at": "2026-11-14T08:01:00+00:00",
+              "outcomes": [
+                {
+                  "name": "Yes",
+                  "probability": 0.25,
+                  "movement": 0.09
+                },
+                {
+                  "name": "No",
+                  "probability": 0.75,
+                  "movement": -0.09
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 93.0,
+          "reason": "Next CEO of NVIDIA \u2014 Ian Buck",
+          "headline": "Next CEO of NVIDIA \u2014 Ian Buck",
+          "data": {
+            "id": 69851942,
+            "type": "futures",
+            "card": {
+              "id": 69851942,
+              "source": "polymarket",
+              "status": "open",
+              "category": "tech",
+              "group_id": "polymarket:1353337",
+              "name": "Next CEO of NVIDIA?",
+              "volume_24h": 140360.5,
+              "price_observed_at": "2026-11-14T08:12:00+00:00",
+              "last_trade_at": "2026-11-14T08:10:00+00:00",
+              "outcomes": [
+                {
+                  "name": "Ian Buck",
+                  "probability": 0.21,
+                  "movement": -0.09
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 93.0,
+          "reason": "Anthropic IPO Closing Market Cap \u2014 $1.25\u2013$1.5T",
+          "headline": "Anthropic IPO Closing Market Cap \u2014 $1.25\u2013$1.5T",
+          "data": {
+            "id": 30691373,
+            "type": "futures",
+            "card": {
+              "id": 30691373,
+              "source": "polymarket",
+              "status": "open",
+              "category": "economics",
+              "group_id": "polymarket:548858",
+              "name": "Anthropic IPO Closing Market Cap",
+              "volume_24h": 211802.0,
+              "price_observed_at": "2026-11-14T06:32:24+00:00",
+              "last_trade_at": "2026-11-14T06:30:00+00:00",
+              "outcomes": [
+                {
+                  "name": "$1.25\u2013$1.5T",
+                  "probability": 0.4561,
+                  "movement": 0.066
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-big-movers-today",
+        "href": "/collections/roundup-big-movers-today",
+        "name": "Big movers today",
+        "revision": 911181542,
+        "collection_count": 5
+      },
+      "roundup": {
+        "kicker": "PULSE \u00b7 BIGGEST 24H SHIFTS",
+        "tag": "MOVERS",
+        "footer": "24-hour shift in percentage points \u00b7 actively trading markets only",
+        "rows": [
+          {
+            "market_id": 69967999,
+            "label": "Gemini Krypton: Text Arena Rank Debut \u2014 Top 3",
+            "outcome": "Top 3",
+            "category": "tech",
+            "probability": 0.83,
+            "rendered_percent": 83,
+            "delta_points": 18,
+            "delta_label": "+18 pts",
+            "destination": {
+              "kind": "market",
+              "id": 69967999,
+              "web": "/futures/69967999",
+              "api": "/api/futures/69967999"
+            }
+          },
+          {
+            "market_id": 22915076,
+            "label": "Next James Bond actor \u2014 Callum Turner",
+            "outcome": "Callum Turner",
+            "category": "entertainment",
+            "probability": 0.243,
+            "rendered_percent": 24,
+            "delta_points": -12,
+            "delta_label": "-12 pts",
+            "destination": {
+              "kind": "market",
+              "id": 22915076,
+              "web": "/futures/22915076",
+              "api": "/api/futures/22915076"
+            }
+          },
+          {
+            "market_id": 67647293,
+            "label": "Will Alphabet Inc. (GOOGL) hit (LOW) $270 in November",
+            "outcome": "Yes",
+            "category": "economics",
+            "probability": 0.25,
+            "rendered_percent": 25,
+            "delta_points": 9,
+            "delta_label": "+9 pts",
+            "destination": {
+              "kind": "market",
+              "id": 67647293,
+              "web": "/futures/67647293",
+              "api": "/api/futures/67647293"
+            }
+          },
+          {
+            "market_id": 69851942,
+            "label": "Next CEO of NVIDIA \u2014 Ian Buck",
+            "outcome": "Ian Buck",
+            "category": "tech",
+            "probability": 0.21,
+            "rendered_percent": 21,
+            "delta_points": -9,
+            "delta_label": "-9 pts",
+            "destination": {
+              "kind": "market",
+              "id": 69851942,
+              "web": "/futures/69851942",
+              "api": "/api/futures/69851942"
+            }
+          },
+          {
+            "market_id": 30691373,
+            "label": "Anthropic IPO Closing Market Cap \u2014 $1.25\u2013$1.5T",
+            "outcome": "$1.25\u2013$1.5T",
+            "category": "economics",
+            "probability": 0.4561,
+            "rendered_percent": 46,
+            "delta_points": 7,
+            "delta_label": "+7 pts",
+            "destination": {
+              "kind": "market",
+              "id": 30691373,
+              "web": "/futures/30691373",
+              "api": "/api/futures/30691373"
+            }
+          }
+        ],
+        "relations": [
+          "movement",
+          "same_window"
+        ],
+        "level": "related",
+        "count_line": "5 active movers",
+        "context_line": "Actively trading markets with the sharpest 24-hour shifts (6+ points), ordered by size of move \u2014 led by Gemini Krypton: Text Arena Rank Debut \u2014 Top 3 (+18 pts to 83%)."
+      }
+    }
+  },
+  "roundup-ceremony-award-categories": {
+    "type": "bundle",
+    "score": 92.0,
+    "reason": "2027 Grammy Awards \u2014 active categories",
+    "headline": "2027 Grammy Awards \u2014 active categories",
+    "context_summary": "Actively trading 2027 Grammy Awards Winner categories (quiet and untraded categories excluded), showing each category's frontrunner \u2014 led by Album of the Year (you seem pretty sad for a girl so in love - Olivia Rodrigo, 41%).",
+    "data": {
+      "id": "roundup:ceremony-award-categories",
+      "title": "2027 Grammy Awards \u2014 active categories",
+      "kind": "roundup",
+      "story_key": "roundup:ceremony-award-categories",
+      "shared_question": null,
+      "item_count": 4,
+      "member_ids": [
+        58495138,
+        58492244,
+        70208639,
+        70208633
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 92.0,
+          "reason": "Album of the Year \u2014 you seem pretty sad for a girl so in love - Olivia Rodrigo",
+          "headline": "Album of the Year \u2014 you seem pretty sad for a girl so in love - Olivia Rodrigo",
+          "data": {
+            "id": 58495138,
+            "type": "futures",
+            "card": {
+              "id": 58495138,
+              "source": "polymarket",
+              "status": "open",
+              "name": "Grammys 2027: Album of the Year Winner",
+              "volume_24h": 552.32,
+              "updated_at": "2026-11-13T22:28:45+00:00",
+              "outcomes": [
+                {
+                  "name": "you seem pretty sad for a girl so in love - Olivia Rodrigo",
+                  "probability": 0.4088
+                },
+                {
+                  "name": "Lux - Rosal\u00eda",
+                  "probability": 0.2021
+                },
+                {
+                  "name": "The Art of Loving - Olivia Dean",
+                  "probability": 0.1978
+                },
+                {
+                  "name": "The Life of a Showgirl - Taylor Swift",
+                  "probability": 0.0489
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.0,
+          "reason": "Best Rap Album \u2014 Don't Be Dumb - A$AP Rocky",
+          "headline": "Best Rap Album \u2014 Don't Be Dumb - A$AP Rocky",
+          "data": {
+            "id": 58492244,
+            "type": "futures",
+            "card": {
+              "id": 58492244,
+              "source": "polymarket",
+              "status": "open",
+              "name": "Grammys 2027: Best Rap Album Winner",
+              "volume_24h": 1286.26,
+              "updated_at": "2026-11-13T22:28:43+00:00",
+              "outcomes": [
+                {
+                  "name": "Don't Be Dumb - A$AP Rocky",
+                  "probability": 0.4465
+                },
+                {
+                  "name": "Octane - Don Toliver",
+                  "probability": 0.3486
+                },
+                {
+                  "name": "Dillagence II - Busta Rhymes & J Dilla",
+                  "probability": 0.0544
+                },
+                {
+                  "name": "Ca$ino - Baby Keem",
+                  "probability": 0.0538
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.0,
+          "reason": "Best Global Music Performance \u2014 Porcelana - Rosalia",
+          "headline": "Best Global Music Performance \u2014 Porcelana - Rosalia",
+          "data": {
+            "id": 70208639,
+            "type": "futures",
+            "card": {
+              "id": 70208639,
+              "source": "polymarket",
+              "status": "open",
+              "name": "Grammys 2027: Best Global Music Performance Winner",
+              "volume_24h": 1668.39,
+              "updated_at": "2026-11-13T17:28:59+00:00",
+              "outcomes": [
+                {
+                  "name": "Porcelana - Rosalia",
+                  "probability": 0.7353
+                },
+                {
+                  "name": "Bangaranga - DARA",
+                  "probability": 0.0775
+                },
+                {
+                  "name": "EoO - Bad Bunny",
+                  "probability": 0.0642
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.0,
+          "reason": "Best Tropical Latin Album \u2014 Pais Portatil - Ruben Blades, Roberto Delgado & Orquesta",
+          "headline": "Best Tropical Latin Album \u2014 Pais Portatil - Ruben Blades, Roberto Delgado & Orquesta",
+          "data": {
+            "id": 70208633,
+            "type": "futures",
+            "card": {
+              "id": 70208633,
+              "source": "polymarket",
+              "status": "open",
+              "name": "Grammys 2027: Best Tropical Latin Album Winner",
+              "volume_24h": 1074.05,
+              "updated_at": "2026-11-13T17:28:58+00:00",
+              "outcomes": [
+                {
+                  "name": "Pais Portatil - Ruben Blades, Roberto Delgado & Orquesta",
+                  "probability": 0.1654
+                },
+                {
+                  "name": "Antes Que El Tiempo Se Vaya - Fonseca",
+                  "probability": 0.1567
+                },
+                {
+                  "name": "Raices - Gloria Estefan",
+                  "probability": 0.142
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-ceremony-award-categories",
+        "href": "/collections/roundup-ceremony-award-categories",
+        "name": "2027 Grammy Awards \u2014 active categories",
+        "revision": 4172273159,
+        "collection_count": 4
+      },
+      "roundup": {
+        "kicker": "CULTURE \u00b7 AWARDS SLATE",
+        "tag": "AWARDS",
+        "footer": "Single-winner 2027 Grammy Awards categories \u00b7 frontrunner chance per category",
+        "rows": [
+          {
+            "market_id": 58495138,
+            "category_label": "Album of the Year",
+            "leader": "you seem pretty sad for a girl so in love - Olivia Rodrigo",
+            "label": "Album of the Year \u2014 you seem pretty sad for a girl so in love - Olivia Rodrigo",
+            "probability": 0.4088,
+            "rendered_percent": 41,
+            "destination": {
+              "kind": "market",
+              "id": 58495138,
+              "web": "/futures/58495138",
+              "api": "/api/futures/58495138"
+            }
+          },
+          {
+            "market_id": 58492244,
+            "category_label": "Best Rap Album",
+            "leader": "Don't Be Dumb - A$AP Rocky",
+            "label": "Best Rap Album \u2014 Don't Be Dumb - A$AP Rocky",
+            "probability": 0.4465,
+            "rendered_percent": 45,
+            "destination": {
+              "kind": "market",
+              "id": 58492244,
+              "web": "/futures/58492244",
+              "api": "/api/futures/58492244"
+            }
+          },
+          {
+            "market_id": 70208639,
+            "category_label": "Best Global Music Performance",
+            "leader": "Porcelana - Rosalia",
+            "label": "Best Global Music Performance \u2014 Porcelana - Rosalia",
+            "probability": 0.7353,
+            "rendered_percent": 74,
+            "destination": {
+              "kind": "market",
+              "id": 70208639,
+              "web": "/futures/70208639",
+              "api": "/api/futures/70208639"
+            }
+          },
+          {
+            "market_id": 70208633,
+            "category_label": "Best Tropical Latin Album",
+            "leader": "Pais Portatil - Ruben Blades, Roberto Delgado & Orquesta",
+            "label": "Best Tropical Latin Album \u2014 Pais Portatil - Ruben Blades, Roberto Delgado & Orquesta",
+            "probability": 0.1654,
+            "rendered_percent": 17,
+            "destination": {
+              "kind": "market",
+              "id": 70208633,
+              "web": "/futures/70208633",
+              "api": "/api/futures/70208633"
+            }
+          }
+        ],
+        "relations": [
+          "same_event",
+          "sibling"
+        ],
+        "level": "member",
+        "count_line": "4 active categories",
+        "context_line": "Actively trading 2027 Grammy Awards Winner categories (quiet and untraded categories excluded), showing each category's frontrunner \u2014 led by Album of the Year (you seem pretty sad for a girl so in love - Olivia Rodrigo, 41%)."
+      }
+    }
+  },
+  "roundup-headliners-and-hosts": {
+    "type": "bundle",
+    "score": 91.0,
+    "reason": "2027 Big Game halftime stage",
+    "headline": "2027 Big Game halftime stage",
+    "context_summary": "Artists priced at 5% or higher to appear on the 2027 Big Game halftime stage \u2014 multiple guests can share the stage, so chances are independent and do not add to 100%.",
+    "data": {
+      "id": "roundup:headliners-and-hosts",
+      "title": "2027 Big Game halftime stage",
+      "kind": "roundup",
+      "story_key": "roundup:headliners-and-hosts",
+      "shared_question": null,
+      "item_count": 2,
+      "member_ids": [
+        56775565,
+        68313448
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 91.0,
+          "reason": "JAY-Z",
+          "headline": "JAY-Z",
+          "data": {
+            "id": 56775565,
+            "type": "futures",
+            "card": {
+              "id": 56775565,
+              "source": "kalshi",
+              "status": "open",
+              "mutually_exclusive": false,
+              "name": "Pro Football Championship Halftime Show: Performers",
+              "outcomes": [
+                {
+                  "name": "JAY-Z",
+                  "probability": 0.99
+                },
+                {
+                  "name": "Beyonc\u00e9",
+                  "probability": 0.735
+                },
+                {
+                  "name": "Pharrell Williams",
+                  "probability": 0.44
+                },
+                {
+                  "name": "Miley Cyrus",
+                  "probability": 0.21
+                },
+                {
+                  "name": "Justin Bieber",
+                  "probability": 0.105
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 91.0,
+          "reason": "Beyonc\u00e9",
+          "headline": "Beyonc\u00e9",
+          "data": {
+            "id": 68313448,
+            "type": "futures",
+            "card": {
+              "id": 68313448,
+              "source": "polymarket",
+              "status": "open",
+              "mutually_exclusive": false,
+              "name": "Who will be in the 2027 Big Game halftime show?",
+              "outcomes": [
+                {
+                  "name": "Jay Z",
+                  "probability": 0.972
+                },
+                {
+                  "name": "Beyonce",
+                  "probability": 0.705
+                },
+                {
+                  "name": "Pharrell",
+                  "probability": 0.41
+                },
+                {
+                  "name": "Miley Cyrus",
+                  "probability": 0.19
+                },
+                {
+                  "name": "Justin Bieber",
+                  "probability": 0.095
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-headliners-and-hosts",
+        "href": "/collections/roundup-headliners-and-hosts",
+        "name": "2027 Big Game halftime stage",
+        "revision": 399407138,
+        "collection_count": 2
+      },
+      "roundup": {
+        "kicker": "CULTURE \u00b7 STAGE & CASTING",
+        "tag": "MUSIC",
+        "footer": "Independent appearance chances \u00b7 multiple performers can settle Yes",
+        "rows": [
+          {
+            "market_id": 56775565,
+            "label": "JAY-Z",
+            "artist": "JAY-Z",
+            "probability": 0.981,
+            "rendered_percent": 98,
+            "independent": true,
+            "destination": {
+              "kind": "market",
+              "id": 56775565,
+              "web": "/futures/56775565",
+              "api": "/api/futures/56775565"
+            }
+          },
+          {
+            "market_id": 56775565,
+            "label": "Beyonc\u00e9",
+            "artist": "Beyonc\u00e9",
+            "probability": 0.72,
+            "rendered_percent": 72,
+            "independent": true,
+            "destination": {
+              "kind": "market",
+              "id": 56775565,
+              "web": "/futures/56775565",
+              "api": "/api/futures/56775565"
+            }
+          },
+          {
+            "market_id": 56775565,
+            "label": "Pharrell Williams",
+            "artist": "Pharrell Williams",
+            "probability": 0.425,
+            "rendered_percent": 42,
+            "independent": true,
+            "destination": {
+              "kind": "market",
+              "id": 56775565,
+              "web": "/futures/56775565",
+              "api": "/api/futures/56775565"
+            }
+          },
+          {
+            "market_id": 56775565,
+            "label": "Miley Cyrus",
+            "artist": "Miley Cyrus",
+            "probability": 0.2,
+            "rendered_percent": 20,
+            "independent": true,
+            "destination": {
+              "kind": "market",
+              "id": 56775565,
+              "web": "/futures/56775565",
+              "api": "/api/futures/56775565"
+            }
+          },
+          {
+            "market_id": 56775565,
+            "label": "Justin Bieber",
+            "artist": "Justin Bieber",
+            "probability": 0.1,
+            "rendered_percent": 10,
+            "independent": true,
+            "destination": {
+              "kind": "market",
+              "id": 56775565,
+              "web": "/futures/56775565",
+              "api": "/api/futures/56775565"
+            }
+          }
+        ],
+        "relations": [
+          "same_event",
+          "sibling"
+        ],
+        "level": "member",
+        "count_line": "5 contenders",
+        "context_line": "Artists priced at 5% or higher to appear on the 2027 Big Game halftime stage \u2014 multiple guests can share the stage, so chances are independent and do not add to 100%."
+      }
+    }
+  },
+  "roundup-long-shot-movers": {
+    "type": "bundle",
+    "score": 91.0,
+    "reason": "Long shots that moved",
+    "headline": "Long shots that moved",
+    "context_summary": "Markets that sat at 12% or lower a day ago and climbed at least 6 points on recent trading \u2014 led by +15 pts today.",
+    "data": {
+      "id": "roundup:long-shot-movers",
+      "title": "Long shots that moved",
+      "kind": "roundup",
+      "story_key": "roundup:long-shot-movers",
+      "shared_question": null,
+      "item_count": 3,
+      "member_ids": [
+        701001,
+        52755686,
+        701003
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 91.0,
+          "reason": "2027 Big Game Halftime Show: Miley Cyrus",
+          "headline": "2027 Big Game Halftime Show: Miley Cyrus",
+          "data": {
+            "id": 701001,
+            "type": "futures",
+            "card": {
+              "id": 701001,
+              "status": "open",
+              "source": "polymarket",
+              "name": "2027 Big Game Halftime Show: Miley Cyrus",
+              "prices_updated_at": "2026-11-13T15:40:00Z",
+              "volume": 48000,
+              "outcomes": [
+                {
+                  "name": "Yes",
+                  "probability": 0.21,
+                  "prior_24h_probability": 0.06
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 91.0,
+          "reason": "Trail Blazers \u00b7 NBA Northwest Division Winner",
+          "headline": "Trail Blazers \u00b7 NBA Northwest Division Winner",
+          "data": {
+            "id": 52755686,
+            "type": "futures",
+            "card": {
+              "id": 52755686,
+              "status": "open",
+              "source": "kalshi",
+              "name": "NBA Northwest Division Winner",
+              "prices_updated_at": "2026-11-13T15:30:00Z",
+              "volume": 29500,
+              "outcomes": [
+                {
+                  "name": "Thunder",
+                  "probability": 0.46,
+                  "prior_24h_probability": 0.51
+                },
+                {
+                  "name": "Trail Blazers",
+                  "probability": 0.19,
+                  "prior_24h_probability": 0.08
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 91.0,
+          "reason": "CJ Carr \u00b7 Heisman Trophy Winner",
+          "headline": "CJ Carr \u00b7 Heisman Trophy Winner",
+          "data": {
+            "id": 701003,
+            "type": "futures",
+            "card": {
+              "id": 701003,
+              "status": "open",
+              "source": "kalshi",
+              "name": "Heisman Trophy Winner",
+              "prices_updated_at": "2026-11-13T15:15:00Z",
+              "volume": 65000,
+              "outcomes": [
+                {
+                  "name": "CJ Carr",
+                  "probability": 0.18,
+                  "prior_24h_probability": 0.11
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-long-shot-movers",
+        "href": "/collections/roundup-long-shot-movers",
+        "name": "Long shots that moved",
+        "revision": 4062783682,
+        "collection_count": 3
+      },
+      "roundup": {
+        "kicker": "MOVERS \u00b7 LAST 24 HOURS",
+        "tag": "MOVERS",
+        "footer": "24h change in points \u00b7 started at 12% or lower \u00b7 recent trading verified",
+        "rows": [
+          {
+            "market_id": 701001,
+            "label": "2027 Big Game Halftime Show: Miley Cyrus",
+            "outcome": "Yes",
+            "prior_percent": 6,
+            "probability": 0.21,
+            "rendered_percent": 21,
+            "delta_points": 15,
+            "delta_label": "+15 pts from 6%",
+            "destination": {
+              "kind": "market",
+              "id": 701001,
+              "web": "/futures/701001",
+              "api": "/api/futures/701001"
+            }
+          },
+          {
+            "market_id": 52755686,
+            "label": "Trail Blazers \u00b7 NBA Northwest Division Winner",
+            "outcome": "Trail Blazers",
+            "prior_percent": 8,
+            "probability": 0.19,
+            "rendered_percent": 19,
+            "delta_points": 11,
+            "delta_label": "+11 pts from 8%",
+            "destination": {
+              "kind": "market",
+              "id": 52755686,
+              "web": "/futures/52755686",
+              "api": "/api/futures/52755686"
+            }
+          },
+          {
+            "market_id": 701003,
+            "label": "CJ Carr \u00b7 Heisman Trophy Winner",
+            "outcome": "CJ Carr",
+            "prior_percent": 11,
+            "probability": 0.18,
+            "rendered_percent": 18,
+            "delta_points": 7,
+            "delta_label": "+7 pts from 11%",
+            "destination": {
+              "kind": "market",
+              "id": 701003,
+              "web": "/futures/701003",
+              "api": "/api/futures/701003"
+            }
+          }
+        ],
+        "relations": [
+          "movement",
+          "same_window"
+        ],
+        "level": "member",
+        "count_line": "3 movers",
+        "context_line": "Markets that sat at 12% or lower a day ago and climbed at least 6 points on recent trading \u2014 led by +15 pts today."
+      }
+    }
+  },
+  "roundup-nba-award-ladders": {
+    "type": "bundle",
+    "score": 91.5,
+    "reason": "NBA award races",
+    "headline": "NBA award races",
+    "context_summary": "Front-runner in 4 major NBA season awards, ordered from closest race (MVP: Victor Wembanyama 36%) to clearest favorite (Defensive Player: Victor Wembanyama 70%).",
+    "data": {
+      "id": "roundup:nba-award-ladders",
+      "title": "NBA award races",
+      "kind": "roundup",
+      "story_key": "roundup:nba-award-ladders",
+      "shared_question": null,
+      "item_count": 4,
+      "member_ids": [
+        66031970,
+        60629715,
+        52755649,
+        52755648
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 91.5,
+          "reason": "MVP \u00b7 Victor Wembanyama",
+          "headline": "MVP \u00b7 Victor Wembanyama",
+          "data": {
+            "id": 66031970,
+            "type": "futures",
+            "card": {
+              "id": 66031970,
+              "source": "polymarket",
+              "status": "open",
+              "sport": "basketball_nba",
+              "name": "NBA: 2026-27 MVP",
+              "outcomes": [
+                {
+                  "name": "Victor Wembanyama",
+                  "probability": 0.36
+                },
+                {
+                  "name": "Luka Doncic",
+                  "probability": 0.342
+                },
+                {
+                  "name": "Shai Gilgeous-Alexander",
+                  "probability": 0.086
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 91.5,
+          "reason": "Coach of the Year \u00b7 Micah Nori",
+          "headline": "Coach of the Year \u00b7 Micah Nori",
+          "data": {
+            "id": 60629715,
+            "type": "futures",
+            "card": {
+              "id": 60629715,
+              "source": "kalshi",
+              "status": "open",
+              "sport": "basketball_nba",
+              "name": "Pro Basketball Coach of the Year Winner",
+              "outcomes": [
+                {
+                  "name": "Micah Nori",
+                  "probability": 0.152
+                },
+                {
+                  "name": "Ime Udoka",
+                  "probability": 0.097
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 91.5,
+          "reason": "Rookie of the Year \u00b7 Yaxel Lendeborg",
+          "headline": "Rookie of the Year \u00b7 Yaxel Lendeborg",
+          "data": {
+            "id": 52755649,
+            "type": "futures",
+            "card": {
+              "id": 52755649,
+              "source": "kalshi",
+              "status": "open",
+              "sport": "basketball_nba",
+              "name": "Pro Basketball Rookie of the Year Winner",
+              "outcomes": [
+                {
+                  "name": "Yaxel Lendeborg",
+                  "probability": 0.42
+                },
+                {
+                  "name": "Cameron Boozer",
+                  "probability": 0.215
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 91.5,
+          "reason": "Defensive Player \u00b7 Victor Wembanyama",
+          "headline": "Defensive Player \u00b7 Victor Wembanyama",
+          "data": {
+            "id": 52755648,
+            "type": "futures",
+            "card": {
+              "id": 52755648,
+              "source": "kalshi",
+              "status": "open",
+              "sport": "basketball_nba",
+              "name": "Pro Basketball Defensive Player of the Year Winner",
+              "outcomes": [
+                {
+                  "name": "Victor Wembanyama",
+                  "probability": 0.695
+                },
+                {
+                  "name": "Rudy Gobert",
+                  "probability": 0.045
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-nba-award-ladders",
+        "href": "/collections/roundup-nba-award-ladders",
+        "name": "NBA award races",
+        "revision": 1672206185,
+        "collection_count": 4
+      },
+      "roundup": {
+        "kicker": "NBA \u00b7 SEASON AWARDS",
+        "tag": "NBA",
+        "footer": "One winner per trophy \u00b7 4 major NBA awards",
+        "rows": [
+          {
+            "market_id": 66031970,
+            "label": "MVP \u00b7 Victor Wembanyama",
+            "award": "MVP",
+            "leader": "Victor Wembanyama",
+            "probability": 0.36,
+            "rendered_percent": 36,
+            "gap_points": 1.8,
+            "destination": {
+              "kind": "market",
+              "id": 66031970,
+              "web": "/futures/66031970",
+              "api": "/api/futures/66031970"
+            },
+            "runner_up_label": "Luka Doncic 34%"
+          },
+          {
+            "market_id": 60629715,
+            "label": "Coach of the Year \u00b7 Micah Nori",
+            "award": "Coach of the Year",
+            "leader": "Micah Nori",
+            "probability": 0.152,
+            "rendered_percent": 15,
+            "gap_points": 5.5,
+            "destination": {
+              "kind": "market",
+              "id": 60629715,
+              "web": "/futures/60629715",
+              "api": "/api/futures/60629715"
+            },
+            "runner_up_label": "Ime Udoka 10%"
+          },
+          {
+            "market_id": 52755649,
+            "label": "Rookie of the Year \u00b7 Yaxel Lendeborg",
+            "award": "Rookie of the Year",
+            "leader": "Yaxel Lendeborg",
+            "probability": 0.42,
+            "rendered_percent": 42,
+            "gap_points": 20.5,
+            "destination": {
+              "kind": "market",
+              "id": 52755649,
+              "web": "/futures/52755649",
+              "api": "/api/futures/52755649"
+            },
+            "runner_up_label": "Cameron Boozer 22%"
+          },
+          {
+            "market_id": 52755648,
+            "label": "Defensive Player \u00b7 Victor Wembanyama",
+            "award": "Defensive Player",
+            "leader": "Victor Wembanyama",
+            "probability": 0.695,
+            "rendered_percent": 70,
+            "gap_points": 65.0,
+            "destination": {
+              "kind": "market",
+              "id": 52755648,
+              "web": "/futures/52755648",
+              "api": "/api/futures/52755648"
+            },
+            "runner_up_label": "Rudy Gobert 4%"
+          }
+        ],
+        "relations": [
+          "same_window",
+          "sibling"
+        ],
+        "level": "member",
+        "count_line": "4 awards",
+        "context_line": "Front-runner in 4 major NBA season awards, ordered from closest race (MVP: Victor Wembanyama 36%) to clearest favorite (Defensive Player: Victor Wembanyama 70%)."
+      }
+    }
+  },
+  "roundup-nba-division-races": {
+    "type": "bundle",
+    "score": 92.0,
+    "reason": "NBA division races",
+    "headline": "NBA division races",
+    "context_summary": "4 tightest of 6 NBA division races, ordered by closest lead \u2014 Hawks (42% in Southeast) and Celtics (48% in Atlantic) sit tightest.",
+    "data": {
+      "id": "roundup:nba-division-races",
+      "title": "NBA division races",
+      "kind": "roundup",
+      "story_key": "roundup:nba-division-races",
+      "shared_question": null,
+      "item_count": 6,
+      "member_ids": [
+        52755684,
+        52755689,
+        52755686,
+        52755688,
+        52755683,
+        52755685
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 92.0,
+          "reason": "Southeast \u00b7 Hawks",
+          "headline": "Southeast \u00b7 Hawks",
+          "data": {
+            "id": 52755684,
+            "type": "futures",
+            "card": {
+              "id": 52755684,
+              "source": "kalshi",
+              "status": "open",
+              "sport": "basketball_nba",
+              "name": "Pro Basketball Southeast Division Winner",
+              "outcomes": [
+                {
+                  "name": "Atlanta",
+                  "probability": 0.421
+                },
+                {
+                  "name": "Miami",
+                  "probability": 0.335
+                },
+                {
+                  "name": "Orlando",
+                  "probability": 0.127
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.0,
+          "reason": "Atlantic \u00b7 Celtics",
+          "headline": "Atlantic \u00b7 Celtics",
+          "data": {
+            "id": 52755689,
+            "type": "futures",
+            "card": {
+              "id": 52755689,
+              "source": "kalshi",
+              "status": "open",
+              "sport": "basketball_nba",
+              "name": "Pro Basketball Atlantic Division Winner",
+              "outcomes": [
+                {
+                  "name": "Boston",
+                  "probability": 0.478
+                },
+                {
+                  "name": "Philadelphia",
+                  "probability": 0.284
+                },
+                {
+                  "name": "New York",
+                  "probability": 0.164
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.0,
+          "reason": "Northwest \u00b7 Thunder",
+          "headline": "Northwest \u00b7 Thunder",
+          "data": {
+            "id": 52755686,
+            "type": "futures",
+            "card": {
+              "id": 52755686,
+              "source": "kalshi",
+              "status": "open",
+              "sport": "basketball_nba",
+              "name": "Pro Basketball Northwest Division Winner",
+              "outcomes": [
+                {
+                  "name": "Oklahoma City",
+                  "probability": 0.458
+                },
+                {
+                  "name": "Minnesota",
+                  "probability": 0.251
+                },
+                {
+                  "name": "Portland",
+                  "probability": 0.187
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.0,
+          "reason": "Central \u00b7 Pistons",
+          "headline": "Central \u00b7 Pistons",
+          "data": {
+            "id": 52755688,
+            "type": "futures",
+            "card": {
+              "id": 52755688,
+              "source": "kalshi",
+              "status": "open",
+              "sport": "basketball_nba",
+              "name": "Pro Basketball Central Division Winner",
+              "outcomes": [
+                {
+                  "name": "Detroit",
+                  "probability": 0.615
+                },
+                {
+                  "name": "Cleveland",
+                  "probability": 0.24
+                },
+                {
+                  "name": "Indiana",
+                  "probability": 0.1
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.0,
+          "reason": "NBA division races",
+          "headline": "NBA division races",
+          "data": {
+            "id": 52755683,
+            "type": "futures",
+            "card": {
+              "id": 52755683,
+              "source": "kalshi",
+              "status": "open",
+              "sport": "basketball_nba",
+              "name": "Pro Basketball Southwest Division Winner",
+              "outcomes": [
+                {
+                  "name": "San Antonio",
+                  "probability": 0.656
+                },
+                {
+                  "name": "Houston",
+                  "probability": 0.269
+                },
+                {
+                  "name": "Dallas",
+                  "probability": 0.057
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 92.0,
+          "reason": "NBA division races",
+          "headline": "NBA division races",
+          "data": {
+            "id": 52755685,
+            "type": "futures",
+            "card": {
+              "id": 52755685,
+              "source": "kalshi",
+              "status": "open",
+              "sport": "basketball_nba",
+              "name": "Pro Basketball Pacific Division Winner",
+              "outcomes": [
+                {
+                  "name": "Los Angeles Lakers",
+                  "probability": 0.782
+                },
+                {
+                  "name": "Golden State",
+                  "probability": 0.188
+                },
+                {
+                  "name": "Phoenix",
+                  "probability": 0.03
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-nba-division-races",
+        "href": "/collections/roundup-nba-division-races",
+        "name": "NBA division races",
+        "revision": 3009089784,
+        "collection_count": 6
+      },
+      "roundup": {
+        "kicker": "NBA \u00b7 DIVISIONS",
+        "tag": "NBA",
+        "footer": "One winner per division \u00b7 4 of 6 NBA divisions shown",
+        "rows": [
+          {
+            "market_id": 52755684,
+            "label": "Southeast \u00b7 Hawks",
+            "division": "Southeast",
+            "leader": "Hawks",
+            "probability": 0.421,
+            "rendered_percent": 42,
+            "gap_points": 8.6,
+            "destination": {
+              "kind": "market",
+              "id": 52755684,
+              "web": "/futures/52755684",
+              "api": "/api/futures/52755684"
+            },
+            "runner_up_label": "Heat 34%"
+          },
+          {
+            "market_id": 52755689,
+            "label": "Atlantic \u00b7 Celtics",
+            "division": "Atlantic",
+            "leader": "Celtics",
+            "probability": 0.478,
+            "rendered_percent": 48,
+            "gap_points": 19.4,
+            "destination": {
+              "kind": "market",
+              "id": 52755689,
+              "web": "/futures/52755689",
+              "api": "/api/futures/52755689"
+            },
+            "runner_up_label": "76ers 28%"
+          },
+          {
+            "market_id": 52755686,
+            "label": "Northwest \u00b7 Thunder",
+            "division": "Northwest",
+            "leader": "Thunder",
+            "probability": 0.458,
+            "rendered_percent": 46,
+            "gap_points": 20.7,
+            "destination": {
+              "kind": "market",
+              "id": 52755686,
+              "web": "/futures/52755686",
+              "api": "/api/futures/52755686"
+            },
+            "runner_up_label": "Timberwolves 25%"
+          },
+          {
+            "market_id": 52755688,
+            "label": "Central \u00b7 Pistons",
+            "division": "Central",
+            "leader": "Pistons",
+            "probability": 0.615,
+            "rendered_percent": 62,
+            "gap_points": 37.5,
+            "destination": {
+              "kind": "market",
+              "id": 52755688,
+              "web": "/futures/52755688",
+              "api": "/api/futures/52755688"
+            },
+            "runner_up_label": "Cavaliers 24%"
+          }
+        ],
+        "relations": [
+          "same_measure",
+          "same_window",
+          "sibling"
+        ],
+        "level": "member",
+        "count_line": "6 divisions",
+        "context_line": "4 tightest of 6 NBA division races, ordered by closest lead \u2014 Hawks (42% in Southeast) and Celtics (48% in Atlantic) sit tightest."
+      }
+    }
+  },
+  "roundup-opening-weekend-slate": {
+    "type": "bundle",
+    "score": 91.5,
+    "reason": "Opening-weekend box office forecasts",
+    "headline": "Opening-weekend box office forecasts",
+    "context_summary": "Actively trading domestic opening-weekend box office brackets across 4 upcoming releases, showing each film's likeliest gross range \u2014 led by Ebenezer ($16M\u2013$19M at 56%).",
+    "data": {
+      "id": "roundup:opening-weekend-slate",
+      "title": "Opening-weekend box office forecasts",
+      "kind": "roundup",
+      "story_key": "roundup:opening-weekend-slate",
+      "shared_question": null,
+      "item_count": 4,
+      "member_ids": [
+        69847041,
+        68365230,
+        65875241,
+        68365233
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 91.5,
+          "reason": "Ebenezer \u2014 $16M\u2013$19M",
+          "headline": "Ebenezer \u2014 $16M\u2013$19M",
+          "data": {
+            "id": 69847041,
+            "type": "futures",
+            "card": {
+              "id": 69847041,
+              "source": "polymarket",
+              "status": "open",
+              "name": "\"Ebenezer\" Opening Weekend Box Office",
+              "volume_24h": 27745.39,
+              "updated_at": "2026-11-14T06:37:33+00:00",
+              "outcomes": [
+                {
+                  "name": "16m-19m",
+                  "probability": 0.5574
+                },
+                {
+                  "name": "19m-22m",
+                  "probability": 0.3556
+                },
+                {
+                  "name": "<16m",
+                  "probability": 0.0586
+                },
+                {
+                  "name": "22m-25m",
+                  "probability": 0.0274
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 91.5,
+          "reason": "Avengers: Doomsday \u2014 $400M+",
+          "headline": "Avengers: Doomsday \u2014 $400M+",
+          "data": {
+            "id": 68365230,
+            "type": "futures",
+            "card": {
+              "id": 68365230,
+              "source": "polymarket",
+              "status": "open",
+              "name": "\"Avengers: Doomsday\" Opening Weekend Box Office",
+              "volume_24h": 12475.62,
+              "updated_at": "2026-11-13T18:35:36+00:00",
+              "outcomes": [
+                {
+                  "name": "400m+",
+                  "probability": 0.5737
+                },
+                {
+                  "name": "360m-400m",
+                  "probability": 0.2522
+                },
+                {
+                  "name": "340m-360m",
+                  "probability": 0.1039
+                },
+                {
+                  "name": "300m-340m",
+                  "probability": 0.0593
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 91.5,
+          "reason": "The Hunger Games: Sunrise on the Reaping \u2014 $105M+",
+          "headline": "The Hunger Games: Sunrise on the Reaping \u2014 $105M+",
+          "data": {
+            "id": 65875241,
+            "type": "futures",
+            "card": {
+              "id": 65875241,
+              "source": "polymarket",
+              "status": "open",
+              "name": "\"The Hunger Games: Sunrise on the Reaping\" Opening Weekend Box Office",
+              "volume_24h": 6115.16,
+              "updated_at": "2026-11-13T18:35:36+00:00",
+              "outcomes": [
+                {
+                  "name": "105m+",
+                  "probability": 0.9348
+                },
+                {
+                  "name": "90m-105m",
+                  "probability": 0.048
+                },
+                {
+                  "name": "<90m",
+                  "probability": 0.0172
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 91.5,
+          "reason": "Dune: Part Three \u2014 $110M\u2013$130M",
+          "headline": "Dune: Part Three \u2014 $110M\u2013$130M",
+          "data": {
+            "id": 68365233,
+            "type": "futures",
+            "card": {
+              "id": 68365233,
+              "source": "polymarket",
+              "status": "open",
+              "name": "\"Dune: Part Three\" Opening Weekend Box Office",
+              "volume_24h": 1573.28,
+              "updated_at": "2026-11-13T18:35:36+00:00",
+              "outcomes": [
+                {
+                  "name": "110m-130m",
+                  "probability": 0.3859
+                },
+                {
+                  "name": "90m-110m",
+                  "probability": 0.2494
+                },
+                {
+                  "name": "130m+",
+                  "probability": 0.2118
+                },
+                {
+                  "name": "70m-90m",
+                  "probability": 0.1176
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-opening-weekend-slate",
+        "href": "/collections/roundup-opening-weekend-slate",
+        "name": "Opening-weekend box office forecasts",
+        "revision": 1262304565,
+        "collection_count": 4
+      },
+      "roundup": {
+        "kicker": "CULTURE \u00b7 BOX OFFICE",
+        "tag": "MOVIES",
+        "footer": "Most likely domestic opening-weekend bracket \u00b7 actively trading film markets",
+        "rows": [
+          {
+            "market_id": 69847041,
+            "film": "Ebenezer",
+            "bracket": "$16M\u2013$19M",
+            "label": "Ebenezer \u2014 $16M\u2013$19M",
+            "probability": 0.5574,
+            "rendered_percent": 56,
+            "destination": {
+              "kind": "market",
+              "id": 69847041,
+              "web": "/futures/69847041",
+              "api": "/api/futures/69847041"
+            }
+          },
+          {
+            "market_id": 68365230,
+            "film": "Avengers: Doomsday",
+            "bracket": "$400M+",
+            "label": "Avengers: Doomsday \u2014 $400M+",
+            "probability": 0.5737,
+            "rendered_percent": 57,
+            "destination": {
+              "kind": "market",
+              "id": 68365230,
+              "web": "/futures/68365230",
+              "api": "/api/futures/68365230"
+            }
+          },
+          {
+            "market_id": 65875241,
+            "film": "The Hunger Games: Sunrise on the Reaping",
+            "bracket": "$105M+",
+            "label": "The Hunger Games: Sunrise on the Reaping \u2014 $105M+",
+            "probability": 0.9348,
+            "rendered_percent": 93,
+            "destination": {
+              "kind": "market",
+              "id": 65875241,
+              "web": "/futures/65875241",
+              "api": "/api/futures/65875241"
+            }
+          },
+          {
+            "market_id": 68365233,
+            "film": "Dune: Part Three",
+            "bracket": "$110M\u2013$130M",
+            "label": "Dune: Part Three \u2014 $110M\u2013$130M",
+            "probability": 0.3859,
+            "rendered_percent": 39,
+            "destination": {
+              "kind": "market",
+              "id": 68365233,
+              "web": "/futures/68365233",
+              "api": "/api/futures/68365233"
+            }
+          }
+        ],
+        "relations": [
+          "same_measure",
+          "sibling"
+        ],
+        "level": "member",
+        "count_line": "4 upcoming releases",
+        "context_line": "Actively trading domestic opening-weekend box office brackets across 4 upcoming releases, showing each film's likeliest gross range \u2014 led by Ebenezer ($16M\u2013$19M at 56%)."
+      }
+    }
+  },
+  "roundup-team-active-streaks": {
+    "type": "bundle",
+    "score": 92.0,
+    "reason": "Longest active winning streaks on the line",
+    "headline": "Longest active winning streaks on the line",
+    "context_summary": "Teams on active 4+ game winning streaks with a priced next game, showing each streak's chance to survive \u2014 led by San Antonio Spurs (W11, 89% to reach W12 at Utah Jazz).",
+    "data": {
+      "id": "roundup:team-active-streaks",
+      "title": "Longest active winning streaks on the line",
+      "kind": "roundup",
+      "story_key": "roundup:team-active-streaks",
+      "shared_question": null,
+      "item_count": 5,
+      "member_ids": [
+        15344692,
+        15344779,
+        15344677,
+        15348567,
+        14639206
+      ],
+      "items": [
+        {
+          "type": "event",
+          "score": 92.0,
+          "reason": "San Antonio Spurs (W11) \u00b7 at Utah Jazz",
+          "headline": "San Antonio Spurs (W11) \u00b7 at Utah Jazz",
+          "data": {
+            "id": 15344692,
+            "sport": "basketball_nba",
+            "status": "scheduled",
+            "home_team": "Utah Jazz",
+            "away_team": "San Antonio Spurs",
+            "hero_probability": 0.1075,
+            "hero_probability_away": 0.8925,
+            "commence_time": "2026-11-15T22:00:00+00:00",
+            "odds_updated_at": "2026-11-14T08:00:00+00:00"
+          }
+        },
+        {
+          "type": "event",
+          "score": 92.0,
+          "reason": "Nashville Predators (W7) \u00b7 at San Jose Sharks",
+          "headline": "Nashville Predators (W7) \u00b7 at San Jose Sharks",
+          "data": {
+            "id": 15344779,
+            "sport": "icehockey_nhl",
+            "status": "scheduled",
+            "home_team": "San Jose Sharks",
+            "away_team": "Nashville Predators",
+            "hero_probability": 0.39,
+            "hero_probability_away": 0.61,
+            "commence_time": "2026-11-16T02:00:00+00:00",
+            "odds_updated_at": "2026-11-14T08:00:00+00:00"
+          }
+        },
+        {
+          "type": "event",
+          "score": 92.0,
+          "reason": "Los Angeles Lakers (W7) \u00b7 at Phoenix Suns",
+          "headline": "Los Angeles Lakers (W7) \u00b7 at Phoenix Suns",
+          "data": {
+            "id": 15344677,
+            "sport": "basketball_nba",
+            "status": "scheduled",
+            "home_team": "Phoenix Suns",
+            "away_team": "Los Angeles Lakers",
+            "hero_probability": 0.355,
+            "hero_probability_away": 0.645,
+            "commence_time": "2026-11-15T21:00:00+00:00",
+            "odds_updated_at": "2026-11-14T08:00:00+00:00"
+          }
+        },
+        {
+          "type": "event",
+          "score": 92.0,
+          "reason": "Minnesota Timberwolves (W5) \u00b7 vs Chicago Bulls",
+          "headline": "Minnesota Timberwolves (W5) \u00b7 vs Chicago Bulls",
+          "data": {
+            "id": 15348567,
+            "sport": "basketball_nba",
+            "status": "scheduled",
+            "home_team": "Minnesota Timberwolves",
+            "away_team": "Chicago Bulls",
+            "hero_probability": 0.875,
+            "hero_probability_away": 0.125,
+            "commence_time": "2026-11-15T01:00:00+00:00",
+            "odds_updated_at": "2026-11-14T08:00:00+00:00"
+          }
+        },
+        {
+          "type": "event",
+          "score": 92.0,
+          "reason": "Detroit Lions (W4) \u00b7 vs New England Patriots",
+          "headline": "Detroit Lions (W4) \u00b7 vs New England Patriots",
+          "data": {
+            "id": 14639206,
+            "sport": "americanfootball_nfl",
+            "status": "scheduled",
+            "home_team": "Detroit Lions",
+            "away_team": "New England Patriots",
+            "hero_probability": 0.575,
+            "hero_probability_away": 0.425,
+            "commence_time": "2026-11-15T14:30:00+00:00",
+            "odds_updated_at": "2026-11-14T08:00:00+00:00"
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-team-active-streaks",
+        "href": "/collections/roundup-team-active-streaks",
+        "name": "Longest active winning streaks on the line",
+        "revision": 2917331431,
+        "collection_count": 5
+      },
+      "roundup": {
+        "kicker": "SPORTS \u00b7 THE STREAK",
+        "tag": "STREAKS",
+        "footer": "Active 4+ game winning streaks \u00b7 next-game win chance",
+        "rows": [
+          {
+            "event_id": 15344692,
+            "sport": "basketball_nba",
+            "league": "NBA",
+            "team": "San Antonio Spurs",
+            "streak": "W11",
+            "next_matchup": "at Utah Jazz",
+            "label": "San Antonio Spurs (W11) \u00b7 at Utah Jazz",
+            "probability": 0.8925,
+            "rendered_percent": 89,
+            "destination": {
+              "kind": "event",
+              "id": 15344692,
+              "web": "/events/15344692",
+              "api": "/api/events/15344692"
+            }
+          },
+          {
+            "event_id": 15344779,
+            "sport": "icehockey_nhl",
+            "league": "NHL",
+            "team": "Nashville Predators",
+            "streak": "W7",
+            "next_matchup": "at San Jose Sharks",
+            "label": "Nashville Predators (W7) \u00b7 at San Jose Sharks",
+            "probability": 0.61,
+            "rendered_percent": 61,
+            "destination": {
+              "kind": "event",
+              "id": 15344779,
+              "web": "/events/15344779",
+              "api": "/api/events/15344779"
+            }
+          },
+          {
+            "event_id": 15344677,
+            "sport": "basketball_nba",
+            "league": "NBA",
+            "team": "Los Angeles Lakers",
+            "streak": "W7",
+            "next_matchup": "at Phoenix Suns",
+            "label": "Los Angeles Lakers (W7) \u00b7 at Phoenix Suns",
+            "probability": 0.645,
+            "rendered_percent": 64,
+            "destination": {
+              "kind": "event",
+              "id": 15344677,
+              "web": "/events/15344677",
+              "api": "/api/events/15344677"
+            }
+          },
+          {
+            "event_id": 15348567,
+            "sport": "basketball_nba",
+            "league": "NBA",
+            "team": "Minnesota Timberwolves",
+            "streak": "W5",
+            "next_matchup": "vs Chicago Bulls",
+            "label": "Minnesota Timberwolves (W5) \u00b7 vs Chicago Bulls",
+            "probability": 0.875,
+            "rendered_percent": 88,
+            "destination": {
+              "kind": "event",
+              "id": 15348567,
+              "web": "/events/15348567",
+              "api": "/api/events/15348567"
+            }
+          },
+          {
+            "event_id": 14639206,
+            "sport": "americanfootball_nfl",
+            "league": "NFL",
+            "team": "Detroit Lions",
+            "streak": "W4",
+            "next_matchup": "vs New England Patriots",
+            "label": "Detroit Lions (W4) \u00b7 vs New England Patriots",
+            "probability": 0.575,
+            "rendered_percent": 57,
+            "destination": {
+              "kind": "event",
+              "id": 14639206,
+              "web": "/events/14639206",
+              "api": "/api/events/14639206"
+            }
+          }
+        ],
+        "relations": [
+          "same_series",
+          "implies"
+        ],
+        "level": "related",
+        "count_line": "5 active streaks",
+        "context_line": "Teams on active 4+ game winning streaks with a priced next game, showing each streak's chance to survive \u2014 led by San Antonio Spurs (W11, 89% to reach W12 at Utah Jazz)."
+      }
+    }
+  },
+  "roundup-upsets-brewing": {
+    "type": "bundle",
+    "score": 96.0,
+    "reason": "Upsets brewing right now",
+    "headline": "Upsets brewing right now",
+    "context_summary": "3 live games where an underdog at 40% or lower pregame now leads or holds at least a 50% win chance \u2014 Hornets leads the slate at +33 pts from pregame.",
+    "data": {
+      "id": "roundup:upsets-brewing",
+      "title": "Upsets brewing right now",
+      "kind": "roundup",
+      "story_key": "roundup:upsets-brewing",
+      "shared_question": null,
+      "item_count": 3,
+      "member_ids": [
+        15390001,
+        15390002,
+        15390003
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 96.0,
+          "reason": "Hornets 78\u201371 vs Celtics",
+          "headline": "Hornets 78\u201371 vs Celtics",
+          "data": {
+            "id": 15390001,
+            "type": "event",
+            "card": {
+              "id": 15390001,
+              "status": "live",
+              "status_detail": "Q3 4:12",
+              "sport": "basketball_nba",
+              "home_team": "Charlotte Hornets",
+              "away_team": "Boston Celtics",
+              "home_team_data": {
+                "short_name": "Hornets"
+              },
+              "away_team_data": {
+                "short_name": "Celtics"
+              },
+              "home_score": 78,
+              "away_score": 71,
+              "pregame_home_win_probability": 0.28,
+              "home_win_probability": 0.61
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 96.0,
+          "reason": "Raiders 17\u201310 vs Chiefs",
+          "headline": "Raiders 17\u201310 vs Chiefs",
+          "data": {
+            "id": 15390002,
+            "type": "event",
+            "card": {
+              "id": 15390002,
+              "status": "live",
+              "status_detail": "3rd 8:45",
+              "sport": "americanfootball_nfl",
+              "home_team": "Kansas City Chiefs",
+              "away_team": "Las Vegas Raiders",
+              "home_team_data": {
+                "short_name": "Chiefs"
+              },
+              "away_team_data": {
+                "short_name": "Raiders"
+              },
+              "home_score": 10,
+              "away_score": 17,
+              "pregame_home_win_probability": 0.66,
+              "home_win_probability": 0.42
+            }
+          }
+        },
+        {
+          "type": "futures",
+          "score": 96.0,
+          "reason": "Canadiens 2\u20132 vs Maple Leafs",
+          "headline": "Canadiens 2\u20132 vs Maple Leafs",
+          "data": {
+            "id": 15390003,
+            "type": "event",
+            "card": {
+              "id": 15390003,
+              "status": "live",
+              "status_detail": "3rd 11:02",
+              "sport": "icehockey_nhl",
+              "home_team": "Montreal Canadiens",
+              "away_team": "Toronto Maple Leafs",
+              "home_team_data": {
+                "short_name": "Canadiens"
+              },
+              "away_team_data": {
+                "short_name": "Maple Leafs"
+              },
+              "home_score": 2,
+              "away_score": 2,
+              "pregame_home_win_probability": 0.38,
+              "home_win_probability": 0.52
+            }
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "roundup-upsets-brewing",
+        "href": "/collections/roundup-upsets-brewing",
+        "name": "Upsets brewing right now",
+        "revision": 3386987608,
+        "collection_count": 3
+      },
+      "roundup": {
+        "kicker": "LIVE \u00b7 UPSET WATCH",
+        "tag": "LIVE",
+        "footer": "Live win chance \u00b7 swings in points from pregame \u00b7 all 3 live upsets",
+        "rows": [
+          {
+            "event_id": 15390001,
+            "label": "Hornets 78\u201371 vs Celtics",
+            "underdog": "Hornets",
+            "favorite": "Celtics",
+            "pregame_percent": 28,
+            "probability": 0.61,
+            "rendered_percent": 61,
+            "swing_label": "+33 pts \u00b7 28% pregame",
+            "swing_points": 33,
+            "destination": {
+              "kind": "event",
+              "id": 15390001,
+              "web": "/events/15390001",
+              "api": "/api/events/15390001"
+            },
+            "period_label": "Q3 4:12"
+          },
+          {
+            "event_id": 15390002,
+            "label": "Raiders 17\u201310 vs Chiefs",
+            "underdog": "Raiders",
+            "favorite": "Chiefs",
+            "pregame_percent": 34,
+            "probability": 0.58,
+            "rendered_percent": 58,
+            "swing_label": "+24 pts \u00b7 34% pregame",
+            "swing_points": 24,
+            "destination": {
+              "kind": "event",
+              "id": 15390002,
+              "web": "/events/15390002",
+              "api": "/api/events/15390002"
+            },
+            "period_label": "3rd 8:45"
+          },
+          {
+            "event_id": 15390003,
+            "label": "Canadiens 2\u20132 vs Maple Leafs",
+            "underdog": "Canadiens",
+            "favorite": "Maple Leafs",
+            "pregame_percent": 38,
+            "probability": 0.52,
+            "rendered_percent": 52,
+            "swing_label": "+14 pts \u00b7 38% pregame",
+            "swing_points": 14,
+            "destination": {
+              "kind": "event",
+              "id": 15390003,
+              "web": "/events/15390003",
+              "api": "/api/events/15390003"
+            },
+            "period_label": "3rd 11:02"
+          }
+        ],
+        "relations": [
+          "same_window",
+          "movement"
+        ],
+        "level": "member",
+        "count_line": "3 live upsets",
+        "context_line": "3 live games where an underdog at 40% or lower pregame now leads or holds at least a 50% win chance \u2014 Hornets leads the slate at +33 pts from pregame."
+      }
+    }
+  }
+}
