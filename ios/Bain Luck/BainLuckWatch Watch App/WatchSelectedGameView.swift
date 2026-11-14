@@ -1020,7 +1020,7 @@ struct WatchSelectedGameView: View {
                     } else {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Label(store.isRestoredReading ? "Saved · \(game.stateLabel)" : game.stateLabel,
-                                  systemImage: "checkmark")
+                                  systemImage: "bookmark.fill")
                                 .foregroundStyle(store.isRestoredReading ? Color.orange : Color.secondary)
                             Spacer(minLength: 4)
                             Label("Return", systemImage: "arrow.uturn.backward").foregroundStyle(.primary)
