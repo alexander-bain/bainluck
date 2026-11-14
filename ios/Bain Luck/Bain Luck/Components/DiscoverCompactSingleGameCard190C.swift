@@ -13,6 +13,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     let prematch: PrematchReading?
     let awayColor: Color
     let homeColor: Color
+    var usesPictureLayout191A: Bool = false
+    var preloadedChartHistory: EventHistoryResponse? = nil
     @ViewBuilder let projectionAndSuspendedLines: () -> ProjectionLines
     @ViewBuilder let footerRow: () -> FooterRow
 
@@ -50,7 +52,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         DiscoverSingleGameCard190C.build(
             event: event,
             prematch: prematch,
-            showsInlinePregame: showsInlinePregame
+            showsInlinePregame: showsInlinePregame,
+            usesPictureLayout: usesPictureLayout191A
         )
     }
 
@@ -84,7 +87,15 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 }
             }
 
-            if let bar = model.bar {
+            if usesPictureLayout191A {
+                DiscoverPictureChartPanel191AView(
+                    event: event,
+                    prematch: prematch,
+                    awayColor: awayColor,
+                    homeColor: homeColor,
+                    preloadedHistory: preloadedChartHistory
+                )
+            } else if let bar = model.bar {
                 segmentedBarView(bar)
             }
 
@@ -240,8 +251,9 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     private func accessibilityRowView(_ row: DiscoverSingleGameCard190C.RowModel) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 rowBadgeView(row)
+                    .padding(.top, 3)
                 Text(row.fullName)
                     .font(.body.weight(model.isFinished ? (row.isWinner ? .bold : .medium) : .semibold))
                     .foregroundStyle(row.isDimmedAfter ? .secondary : .primary)
