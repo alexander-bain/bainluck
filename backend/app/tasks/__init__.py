@@ -4304,7 +4304,11 @@ def update_max_movement(self, heavy: bool = True):
         # before taking outcome locks, so its snapshot sweep cannot prolong
         # quote blocking. Release market locks here as well: carrying them
         # into the outcome sweeps would reverse the existing lock order.
-        async with get_task_session() as session:
+        async with get_task_session() as _movement_session:
+            # #12042: every statement is timed, so a run that hits the soft
+            # limit names the statement it was in (logged by the outer finally).
+            session = StatementClock(_movement_session)
+            _clock_box["clock"] = session
             # A10. LIST THE OPENINGS THAT WERE NEVER A PRICE (#8612).
             #
             #     A8's rule, applied to the lifetime baseline. A card says
@@ -5833,7 +5837,17 @@ def update_max_movement(self, heavy: bool = True):
                 "window_hours": MOVEMENT_WINDOW_HOURS,
                 "movers_warm": warm,
             }
-    return run_async(_impl())
+    from app.utils.statement_clock import StatementClock
+
+    _clock_box: dict = {}
+    try:
+        return run_async(_impl())
+    finally:
+        _clock = _clock_box.get("clock")
+        if _clock is not None:
+            logger.info(
+                "update_max_movement statements heavy=%s %s", heavy, _clock.summary()
+            )
 
 
 # --- Data Quality Monitoring ---
