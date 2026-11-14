@@ -27746,7 +27746,8 @@ async def _build_game_markets(
     # #12581: preserve the actual admitted quote before any row is averaged,
     # capped or selected. Poll touches are never used as quote observations.
     from app.utils.source_mark import (
-        cap_source_mark, no_source_mark, quote_source_mark, settled_source_mark,
+        cap_source_mark, fold_prop_source_marks, no_source_mark, quote_source_mark,
+        settled_source_mark,
     )
 
     _source_legs = {o.id: o for o in outcomes}
@@ -28570,11 +28571,9 @@ async def _build_game_markets(
                 best["over_probability"] = avg_prob
                 best["all_sources"] = list({e.get("source") for e in entries})
                 best["source_count"] = len(best["all_sources"])
-                best["source_mark"] = quote_source_mark(
-                    source for entry in entries
-                    for source in entry.get("source_mark", {}).get("sources", [])
-                ) if all(entry.get("source_mark", {}).get("state") in {"single", "blend"}
-                         for entry in entries) else no_source_mark("source_evidence_incomplete")
+                best["source_mark"] = fold_prop_source_marks(
+                    entry.get("source_mark") for entry in entries
+                )
 
                 # 🔴 #4970 / CERT-2647: READ EVERY CONTRIBUTOR'S CLOCK BEFORE
                 # WRITING ANY OF THEM. `best` IS one of `entries` — the same
