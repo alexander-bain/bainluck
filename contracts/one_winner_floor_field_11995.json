@@ -1,0 +1,156 @@
+{
+  "market_id": 10228658,
+  "market_name": "Prime Minister of Israel after the 2026 election?",
+  "source": "https://api.bainluck.com/api/futures/10228658",
+  "observed_at": "2026-11-14T07:10:27Z",
+  "note": "Recorded inputs remain in stored_probability. Served open one-cent bounds with zero whole-percent allocation use the adjacent Double below 0.01, so installed 1.0.6, new native readers and the website all print <1%. The priced field totals 100; stored prices, grades and the historical scaling basis are unchanged.",
+  "outcomes": [
+    {
+      "id": 57029772,
+      "name": "Gadi Eizenkot",
+      "probability": 0.495,
+      "rendered_percent": 49,
+      "stored_probability": 0.495
+    },
+    {
+      "id": 263776197,
+      "name": "No one",
+      "probability": 0.385,
+      "rendered_percent": 38,
+      "stored_probability": 0.385
+    },
+    {
+      "id": 57029770,
+      "name": "Benjamin Netanyahu",
+      "probability": 0.085,
+      "rendered_percent": 9,
+      "stored_probability": 0.085
+    },
+    {
+      "id": 57029776,
+      "name": "Avigdor Lieberman",
+      "probability": 0.035,
+      "rendered_percent": 4,
+      "stored_probability": 0.035
+    },
+    {
+      "id": 57029782,
+      "name": "Ayelet Shaked",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029783,
+      "name": "Amir Ohana",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 263776216,
+      "name": "Daniel Hagari",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029775,
+      "name": "Yariv Levin",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029784,
+      "name": "Moshe Feiglin",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029785,
+      "name": "Yoaz Hendel",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029786,
+      "name": "Nir Barkat",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 263776215,
+      "name": "Aviv Kohavi",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 82022247,
+      "name": "Yuli Edelstein",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029771,
+      "name": "Naftali Bennett",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029773,
+      "name": "Yair Lapid",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029774,
+      "name": "Benny Gantz",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029777,
+      "name": "Yair Golan",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029778,
+      "name": "Itamar Ben Gvir",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029779,
+      "name": "Yossi Cohen",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029780,
+      "name": "Israel Katz",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    },
+    {
+      "id": 57029781,
+      "name": "Gideon Sa'ar",
+      "probability": 0.009999999999999998,
+      "rendered_percent": 0,
+      "stored_probability": 0.01
+    }
+  ]
+}
