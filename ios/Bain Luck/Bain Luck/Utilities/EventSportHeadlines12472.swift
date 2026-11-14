@@ -1683,6 +1683,7 @@ enum EventSportHeadlines12472 {
                 ladderAway: ladderAway,
                 now: now
             )
+            let showsStackedRecordWhenProjectionAbsent = resolvedKind != .nbaDuringGame && liveProjections == nil
             let hasLiveScore = hasScore && (event.awayScore != nil || event.homeScore != nil)
             let columnHeaders = LiveColumnHeaders(
                 score: hasLiveScore ? "Score" : nil,
@@ -1707,7 +1708,7 @@ enum EventSportHeadlines12472 {
                     opponentFullName: homeFullName,
                     shortName: shortNames.away,
                     logoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
-                    record: liveProjections == nil ? trimmedNonEmpty(event.awayTeamData?.record) : nil,
+                    record: showsStackedRecordWhenProjectionAbsent ? trimmedNonEmpty(event.awayTeamData?.record) : nil,
                     projectedText: liveProjections?.away,
                     pregameProjectedNumberText: nil,
                     liveScore: hasScore ? event.awayScore : nil,
@@ -1720,7 +1721,7 @@ enum EventSportHeadlines12472 {
                     opponentFullName: awayFullName,
                     shortName: shortNames.home,
                     logoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
-                    record: liveProjections == nil ? trimmedNonEmpty(event.homeTeamData?.record) : nil,
+                    record: showsStackedRecordWhenProjectionAbsent ? trimmedNonEmpty(event.homeTeamData?.record) : nil,
                     projectedText: liveProjections?.home,
                     pregameProjectedNumberText: nil,
                     liveScore: hasScore ? event.homeScore : nil,
@@ -1731,7 +1732,7 @@ enum EventSportHeadlines12472 {
                 pregameAwayMarker: pregame?.awayProbability,
                 soccerThreeWay: nil,
                 showsEkg: true,
-                stacksRecordUnderName: liveProjections == nil && resolvedKind != .nbaDuringGame,
+                stacksRecordUnderName: showsStackedRecordWhenProjectionAbsent,
                 sourceMark: event.sourceMark,
                 confidenceTier: confidenceTier
             )

@@ -125,11 +125,30 @@ final class NCAAFHeadlinesSat2BTests: XCTestCase {
         """)
     }
 
-    private func ncaafDuringFixture() throws -> EventDetail {
-        try decodeEvent("""
+    private func ncaafDuringFixture(
+        sport: String = "americanfootball_ncaaf",
+        includeLiveProjection: Bool = true
+    ) throws -> EventDetail {
+        let liveProjJSON = includeLiveProjection ? """
+            "live_projection": {
+              "kind": "in_play",
+              "boundary": "commence_time",
+              "boundary_at": "2026-11-14T14:30:00Z",
+              "source": "sportsbooks",
+              "basis": "consensus_spread_total",
+              "unit": "points",
+              "period": "full_game",
+              "bookmaker_count": 5,
+              "projected_home_score": 27.5,
+              "projected_away_score": 30.5,
+              "earliest_confirmed_at": "2026-11-14T15:10:00Z",
+              "latest_captured_at": "2026-11-14T15:59:00Z"
+            },
+        """ : ""
+        return try decodeEvent("""
         {
           "id": 9127212,
-          "sport": "americanfootball_ncaaf",
+          "sport": "\(sport)",
           "home_team": "Georgia Bulldogs",
           "away_team": "Ole Miss Rebels",
           "commence_time": "2026-11-14T14:30:00Z",
@@ -147,20 +166,7 @@ final class NCAAFHeadlinesSat2BTests: XCTestCase {
             "record": "8-2"
           },
           "current_odds": {
-            "live_projection": {
-              "kind": "in_play",
-              "boundary": "commence_time",
-              "boundary_at": "2026-11-14T14:30:00Z",
-              "source": "sportsbooks",
-              "basis": "consensus_spread_total",
-              "unit": "points",
-              "period": "full_game",
-              "bookmaker_count": 5,
-              "projected_home_score": 27.5,
-              "projected_away_score": 30.5,
-              "earliest_confirmed_at": "2026-11-14T15:10:00Z",
-              "latest_captured_at": "2026-11-14T15:59:00Z"
-            },
+            \(liveProjJSON)
             "home_probability": 0.384,
             "away_probability": 0.616,
             "home_rendered_percent": 38,
@@ -365,6 +371,41 @@ final class NCAAFHeadlinesSat2BTests: XCTestCase {
         XCTAssertEqual(liveModel.home.liveScore, 17)
         XCTAssertEqual(liveModel.home.pregameChanceText, "56%")
         XCTAssertEqual(liveModel.home.winChanceText, "38.4%")
+
+        // When live projection is absent: NCAAF stacks team records under short names,
+        // while NBA live preserves `record == nil` (`stacksRecordUnderName == false`).
+        let duringNoProj = try ncaafDuringFixture(includeLiveProjection: false)
+        let liveNoProjModel = try XCTUnwrap(
+            EventSportHeadlines12472.resolve(
+                event: duringNoProj,
+                awayFullName: duringNoProj.awayTeam,
+                homeFullName: duringNoProj.homeTeam,
+                liveStatusText: "Q3 6:42",
+                hasScore: true,
+                numberStreams: true,
+                now: fixedNow
+            )
+        )
+        XCTAssertTrue(liveNoProjModel.stacksRecordUnderName)
+        XCTAssertNil(liveNoProjModel.away.projectedText)
+        XCTAssertEqual(liveNoProjModel.away.record, "8-2")
+        XCTAssertEqual(liveNoProjModel.home.record, "8-1")
+
+        let nbaLiveNoProj = try ncaafDuringFixture(sport: "basketball_nba", includeLiveProjection: false)
+        let nbaLiveNoProjModel = try XCTUnwrap(
+            EventSportHeadlines12472.resolve(
+                event: nbaLiveNoProj,
+                awayFullName: nbaLiveNoProj.awayTeam,
+                homeFullName: nbaLiveNoProj.homeTeam,
+                liveStatusText: "Q3 6:42",
+                hasScore: true,
+                numberStreams: true,
+                now: fixedNow
+            )
+        )
+        XCTAssertFalse(nbaLiveNoProjModel.stacksRecordUnderName)
+        XCTAssertNil(nbaLiveNoProjModel.away.record)
+        XCTAssertNil(nbaLiveNoProjModel.home.record)
 
         let after = try ncaafAfterFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: after, now: fixedNow), .ncaafAfterGame)
