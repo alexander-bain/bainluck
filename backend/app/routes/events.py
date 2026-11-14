@@ -235,6 +235,7 @@ from app.utils.search_intent import (
     parse_intent,
     promote_answering_rows,
 )
+from app.utils.explicit_search import explicit_search
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
     search_response_cache_enabled,
@@ -10270,6 +10271,8 @@ async def search_events(
     #
     # The read is guarded on `debug_timing` alone, and the write below adds
     # `degraded` — see each site for why the two conditions are not the same.
+    _explicit_search = explicit_search(q)
+    _next_games = _explicit_search.next_games if _explicit_search else None
     _search_cache_key = search_response_cache_key(
         q=q,
         sport=sport,
@@ -10279,6 +10282,8 @@ async def search_events(
         days_back=days_back,
         include_upcoming=include_upcoming,
     )
+    if _explicit_search:
+        _search_cache_key += ":explicit-v1"
     # #3526: `_force_search_cache_rebuild` joins the READ condition and ONLY the
     # read. The warmer sets it so this call skips the cached body and rebuilds,
     # while the write below still fires — which is what lets the warmer refresh
@@ -10401,6 +10406,8 @@ async def search_events(
         if _intent is not None and _intent.kind in _IDENTITY_SUBSTITUTED_KINDS
         else q
     )
+    if _explicit_search:
+        _q_identity = _explicit_search.subject
     # #9834: a club's short form identifies the club — `man utd` and `bvb` share
     # no word with any name a rail matches, so the page answered them with
     # nothing. An identity site, so it rewrites the subject and never `q`; the
@@ -10762,6 +10769,28 @@ async def search_events(
     # #9040: ...except among finished games, where the newest day leads first.
     _settled_day_key = _settled_day_order_key(_team_card_lead_sports)
     _mark("team_evidence")
+
+    _set_team = None
+    if _next_games:
+        # Identity remains the existing owned-name resolver's job. A literal
+        # set request narrows the fixture selector; it never guesses a club.
+        _set_candidates = [
+            card for _, card in _team_card_keyed(_early_team_rows, _q_identity, cap=None)
+            if _query_names_team_card(card, _q_identity)
+            and _is_marquee_team_sport_key(card["sport_key"])
+        ]
+        if len(_set_candidates) == 1:
+            _set_team = _set_candidates[0]
+        _set_scope = [
+            Event.status == "scheduled",
+            Event.commence_time > now,
+            or_(Event.home_team_id == _set_team["id"], Event.away_team_id == _set_team["id"])
+            if _set_team else false(),
+        ]
+        # Rescue queries also consume event_scope_conditions. They may not
+        # fill an empty requested set with past games or a namesake's games.
+        event_conditions.extend(_set_scope)
+        event_scope_conditions.extend(_set_scope)
 
     # Build base query - search both home and away team names
     query = (
@@ -11492,6 +11521,11 @@ async def search_events(
     _mark("bye_finals_probe")
 
     offset, _page_limit = _search_games_page_window(page, per_page, _bye_finals_capped)
+    if _next_games:
+        # Fold through the existing canonical-game machinery before cutting
+        # the requested set. The bounded overfetch leaves room for twins.
+        offset, _page_limit = 0, 100
+        query = query.order_by(None).order_by(Event.commence_time.asc(), Event.id.asc())
     query = query.offset(offset).limit(_page_limit)
 
     # Execute
@@ -11958,6 +11992,32 @@ async def search_events(
     for _formatted in formatted_results:
         attach_pregame_projection(_formatted, _projections.get(_formatted.get("id")))
     _mark("pregame_projection")
+
+    if _next_games:
+        _set_results = formatted_results[:_next_games]
+        _set_count = len(_set_results)
+        _set_name = _set_team["name"] if _set_team else _q_identity
+        _set_payload = {
+            "query": q, "teams": [], "event_concepts": [], "futures": [],
+            "futures_families": [], "collections": [], "results": _set_results,
+            "game_set": {
+                "title": f"{_set_name}: next {_next_games} games",
+                "selector": {"team_id": _set_team["id"] if _set_team else None,
+                             "count": _next_games, "state": "scheduled"},
+            },
+            "pagination": {"page": 1, "per_page": _next_games,
+                           "total_results": _set_count, "total_pages": 1,
+                           "has_next": False, "has_prev": False},
+            "sports": [],
+            "filters": {"sport": sport, "days_back": 0, "include_upcoming": True},
+            **({"degraded": degraded} if degraded else {}),
+            **({"debug_timing": {**_stage_ms, "total_ms": sum(_stage_ms.values())}}
+               if debug_timing else {}),
+        }
+        if _set_team is None and "teams" in degraded:
+            _set_payload["degraded"] = degraded
+        _record_search_query(_set_payload, q=q, request=request, current_user=current_user)
+        return _set_payload
 
     # Calculate pagination metadata
     total_count = total_count or 0
