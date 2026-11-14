@@ -23910,6 +23910,8 @@ _PROP_NAME_STAT_COMBOS = [
     ("points + rebounds", ["points", "rebounds"]),
     ("points + assists", ["points", "assists"]),
     ("rebounds + assists", ["rebounds", "assists"]),
+    # #12633: otherwise the singles path below grades this from blocks alone.
+    ("steals + blocks", ["steals", "blocks"]),
 ]
 # Outcome names that are a SIDE, never a person. Looking these up in the box
 # score is the miss that made a settled game report 12 ungradeable rungs.
