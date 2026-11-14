@@ -55,7 +55,7 @@ struct AboutView: View {
         return true
     }
 
-    var pictureCreditsFooter: some View {
+    static var pictureCreditsFooter: some View {
         Link(destination: Self.pictureCreditsURL) {
             HStack(spacing: 8) {
                 Text("Picture credits")
@@ -98,7 +98,7 @@ struct AboutView: View {
                 }
             )
             Divider()
-            pictureCreditsFooter
+            Self.pictureCreditsFooter
         }
         .navigationTitle("About")
         #if os(iOS)

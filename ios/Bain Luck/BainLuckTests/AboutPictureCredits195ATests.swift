@@ -51,9 +51,7 @@ final class AboutPictureCredits195ATests: XCTestCase {
     func testAboutViewExposesPictureCreditsLinkAndExports390pxRender() async throws {
         var heights: [DynamicTypeSize: CGFloat] = [:]
         for dt in [DynamicTypeSize.large, .accessibility5] {
-            let footer = AboutView()
-                .environmentObject(NavigationCoordinator())
-                .pictureCreditsFooter
+            let footer = AboutView.pictureCreditsFooter
             let host = hostForMeasurement(footer, at: dt)
             let fitted = host.sizeThatFits(
                 in: CGSize(width: 390, height: UIView.layoutFittingCompressedSize.height)
