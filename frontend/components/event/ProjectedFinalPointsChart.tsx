@@ -19,7 +19,7 @@
  * where they were observed.
  */
 
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import { format } from "date-fns";
 import {
   buildProjectedFinalPointsSeries,
@@ -371,15 +371,27 @@ export default function ProjectedFinalPointsChart({
                   vectorEffect="non-scaling-stroke"
                 />
               ) : (
-                <path
-                  key={`${key}-${i}`}
-                  data-series={`forecast-${key}`}
-                  d={stepPath(seg, key, x, y)}
-                  fill="none"
-                  stroke={stroke}
-                  strokeWidth={3}
-                  vectorEffect="non-scaling-stroke"
-                />
+                <Fragment key={`${key}-${i}`}>
+                  <path
+                    data-series={`forecast-${key}`}
+                    d={stepPath(seg, key, x, y)}
+                    fill="none"
+                    stroke={stroke}
+                    strokeWidth={3}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  {seg.map((pt, j) => (
+                    <path
+                      key={`${key}-${i}-pt-${j}`}
+                      data-forecast-mark={key}
+                      d={`M${x(pt.at).toFixed(1)},${y(pt[key]).toFixed(1)} h0.01`}
+                      stroke={stroke}
+                      strokeWidth={6}
+                      strokeLinecap="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+                </Fragment>
               ),
             ),
           )}
