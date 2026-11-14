@@ -434,7 +434,7 @@ final class PregameChartAndProjOvernight2Tests: XCTestCase {
         .environmentObject(PinManager())
         .environmentObject(NavigationCoordinator())
 
-        let renderer = ImageRenderer(content: cardsComparison.environment(\.colorScheme, .light))
+        let renderer = rendererForMeasurement(cardsComparison.environment(\.colorScheme, .light))
         renderer.scale = 3.0
         renderer.proposedSize = ProposedViewSize(width: 390, height: nil)
         if let png = renderer.uiImage?.pngData() {
