@@ -1695,6 +1695,10 @@ final class DiscoverViewModel: ObservableObject {
         if let bundle = item.bundle {
             // Recursion backstop — bundles are not expected to nest.
             if depth > 3 { return "empty_bundle" }
+            if let paired = bundle.pairedMetricSet, !paired.entries.isEmpty { return nil }
+            if bundle.kind == "roundup" {
+                return bundle.admitsRoundupCard ? nil : "invalid_roundup"
+            }
             let anyRenderable = bundle.items.contains { suppressionReason($0, depth: depth + 1) == nil }
             return anyRenderable ? nil : "empty_bundle"
         }
