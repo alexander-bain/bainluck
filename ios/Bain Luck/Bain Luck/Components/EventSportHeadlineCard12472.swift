@@ -60,7 +60,7 @@ struct EventSportHeadlineCard12472: View {
     }
 
     private var effectiveScoreColWidth: CGFloat {
-        if model.liveColumnHeaders?.projected != nil {
+        if model.kind == .nflDuringGame {
             return stacksRowsVertically ? min(liveScoreColWidth, 52) : min(liveScoreColWidth, 34)
         }
         return stacksRowsVertically ? min(liveScoreColWidth, 52) : min(liveScoreColWidth, 44)
@@ -75,7 +75,7 @@ struct EventSportHeadlineCard12472: View {
     }
 
     private var effectiveNowColWidth: CGFloat {
-        if model.liveColumnHeaders?.projected != nil {
+        if model.kind == .nflDuringGame {
             return stacksRowsVertically ? min(max(liveLargestNowColWidth, 98), 112) : min(liveLargestNowColWidth, 84)
         }
         return stacksRowsVertically ? min(liveNowColWidth, 96) : min(liveNowColWidth, 82)

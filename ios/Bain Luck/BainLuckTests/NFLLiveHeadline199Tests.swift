@@ -580,4 +580,109 @@ final class NFLLiveHeadline199Tests: XCTestCase {
             )
         }
     }
+
+    func testGameInfoKeepsProjectionRowOnNBAAndSoccerWhileSuppressingDuplicateOnLiveNFL() throws {
+        // 1. Live NBA game (uses `.nbaDuringGame` which does not carry a `Proj.` column in #12755):
+        //    Game Info MUST retain its projected-score row.
+        let nbaLive = try decodeEvent("""
+        {
+          "id": 919950,
+          "sport": "basketball_nba",
+          "home_team": "Boston Celtics",
+          "away_team": "New York Knicks",
+          "commence_time": "2026-11-15T18:00:00Z",
+          "status": "live",
+          "home_score": 61,
+          "away_score": 55,
+          "current_odds": {
+            "home_probability": 0.68,
+            "away_probability": 0.32,
+            "home_rendered_percent": 68,
+            "away_rendered_percent": 32,
+            "live_projection": {
+              "projected_home_score": 114.5,
+              "projected_away_score": 108.0,
+              "kind": "in_play",
+              "boundary": "commence_time",
+              "boundary_at": "2026-11-15T18:00:00Z",
+              "earliest_confirmed_at": "2026-11-15T19:13:00Z",
+              "latest_captured_at": "2026-11-15T19:13:00Z",
+              "source": "sportsbooks",
+              "basis": "consensus_spread_total",
+              "bookmaker_count": 4,
+              "unit": "points",
+              "period": "full_game"
+            }
+          },
+          "prematch_odds": {
+            "home_probability": 0.62,
+            "away_probability": 0.38,
+            "home_rendered_percent": 62,
+            "away_rendered_percent": 38
+          },
+          "hero_probability": 0.68,
+          "hero_probability_away": 0.32,
+          "hero_probability_source": "blend"
+        }
+        """)
+        let nbaKind = EventSportHeadlines12472.kind(for: nbaLive, now: fixedNow)
+        XCTAssertEqual(nbaKind, .nbaDuringGame)
+        let nbaProjLine = EventDetailView.gameInfoProjectionLine199(
+            event: nbaLive,
+            headlineKind12472: nbaKind,
+            nflHeadline: false,
+            heroLiveForecast: false,
+            hasScore: true,
+            now: fixedNow
+        )
+        XCTAssertEqual(nbaProjLine, "Proj. 108-115", "NBA during-game page must retain its Game Info projection row")
+
+        // 2. Live Soccer match (`.soccerDuringGame` with 3-way odds + ladder projection):
+        //    Game Info MUST retain its projected-score row.
+        let soccerLive = try decodeEvent("""
+        {
+          "id": 919951,
+          "sport": "soccer_epl",
+          "home_team": "Arsenal",
+          "away_team": "Liverpool",
+          "commence_time": "2026-11-15T18:00:00Z",
+          "status": "live",
+          "home_score": 1,
+          "away_score": 0,
+          "current_odds": {
+            "home_probability": 0.62,
+            "draw_probability": 0.23,
+            "away_probability": 0.15
+          }
+        }
+        """)
+        let soccerKind = EventSportHeadlines12472.kind(for: soccerLive, now: fixedNow)
+        XCTAssertEqual(soccerKind, .soccerDuringGame)
+        let soccerProjLine = EventDetailView.gameInfoProjectionLine199(
+            event: soccerLive,
+            headlineKind12472: soccerKind,
+            nflHeadline: false,
+            heroLiveForecast: false,
+            ladderHome: 2.1,
+            ladderAway: 0.9,
+            hasScore: true,
+            now: fixedNow
+        )
+        XCTAssertEqual(soccerProjLine, "Proj. 1-2", "Soccer during-game page must retain its Game Info projection row")
+
+        // 3. Live NFL game (`.nflDuringGame` carries `Proj.` directly in the headline):
+        //    Game Info suppresses the duplicate projected row.
+        let nflLive = try patriotsLionsLiveFixture()
+        let nflKind = EventSportHeadlines12472.kind(for: nflLive, now: fixedNow)
+        XCTAssertEqual(nflKind, .nflDuringGame)
+        let nflProjLine = EventDetailView.gameInfoProjectionLine199(
+            event: nflLive,
+            headlineKind12472: nflKind,
+            nflHeadline: false,
+            heroLiveForecast: false,
+            hasScore: true,
+            now: fixedNow
+        )
+        XCTAssertNil(nflProjLine, "Live NFL Game Info must not repeat the headline's Proj. column")
+    }
 }
