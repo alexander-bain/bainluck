@@ -101,6 +101,14 @@ nonisolated enum EventAtlasChartMarks11666 {
         return formatter
     }()
 
+    private static let minuteTimestampFormatterPT: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+        formatter.dateFormat = "MMM d, h:mm a"
+        return formatter
+    }()
+
     private static let exactTimestampLock = NSLock()
 
     /// Formats a date as an exact PT timestamp with seconds (e.g. `"Nov 6, 4:15:30 PM PT"`),
@@ -109,6 +117,13 @@ nonisolated enum EventAtlasChartMarks11666 {
         exactTimestampLock.lock()
         defer { exactTimestampLock.unlock() }
         return "\(exactTimestampFormatterPT.string(from: date)) PT"
+    }
+
+    /// Formats a date as a minute-precision PT timestamp without seconds (e.g. `"Nov 6, 4:15 PM PT"`).
+    static func formatMinuteTimestampPT(_ date: Date) -> String {
+        exactTimestampLock.lock()
+        defer { exactTimestampLock.unlock() }
+        return "\(minuteTimestampFormatterPT.string(from: date)) PT"
     }
 
     /// Maximum scrub-to-observation snap distance when a series spans at least two points.

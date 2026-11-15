@@ -74,6 +74,7 @@ final class NoFirstScreenPicker192ATests: XCTestCase {
             "status": "open",
             "source": "datagolf",
             "commence_time": "2026-11-12T12:00:00Z",
+            "created_at": "2026-11-09T12:00:00Z",
             "updated_at": "2026-11-13T17:55:00Z",
             "outcomes": [
                 ["id": 1, "name": "Scottie Scheffler", "probability": 0.29, "opening_probability": 0.21, "observed_at": "2026-11-13T17:55:00Z"],
