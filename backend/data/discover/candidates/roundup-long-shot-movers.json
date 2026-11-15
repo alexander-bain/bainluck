@@ -7,13 +7,13 @@
     "same_window"
   ],
   "level": "member",
-  "kicker": "MOVERS · LAST 24 HOURS",
-  "name": "Long shots that moved",
+  "kicker": "MOVERS \u00b7 LAST 24 HOURS",
+  "name": "Long shots waking up",
   "category": "discover",
   "tag": "MOVERS",
   "section_title": "Long shots waking up over the last 24 hours",
   "subtitle": "Markets that started at 12% or lower a day ago and climbed at least 6 points on recent trading.",
-  "footer": "24h change in points · started at 12% or lower · recent trading verified",
+  "footer": "24-hour move in points.",
   "score": 91.0,
   "rule": {
     "producer": "long_shot_movers",

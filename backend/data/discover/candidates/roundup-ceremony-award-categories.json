@@ -7,13 +7,13 @@
     "sibling"
   ],
   "level": "member",
-  "kicker": "CULTURE · AWARDS SLATE",
-  "name": "2027 Grammy Awards — active categories",
+  "kicker": "CULTURE \u00b7 AWARDS SLATE",
+  "name": "Grammy frontrunners",
   "category": "entertainment",
   "tag": "AWARDS",
   "section_title": "Active 2027 Grammy Winner categories",
-  "subtitle": "Actively trading Grammy Winner categories, showing each category's current frontrunner — nomination-only and untraded categories excluded.",
-  "footer": "Single-winner ceremony categories · frontrunner chance per category",
+  "subtitle": "Actively trading Grammy Winner categories, showing each category's current frontrunner \u2014 nomination-only and untraded categories excluded.",
+  "footer": "One winner per category.",
   "score": 92.0,
   "rule": {
     "producer": "ceremony_award_categories",

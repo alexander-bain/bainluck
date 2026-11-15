@@ -111,18 +111,18 @@ async def test_nba_award_ladders_orders_closest_race_first_and_explains_context(
     res = await produce_league_award_ladders(_live_nba_awards_fixture(), rule=producer.rule)
     assert isinstance(res, RoundupMembers)
     assert len(res.rows) == 4
-    # MVP (36.0 vs 34.2 = 1.8 pt gap) leads ahead of Coach (5.5 pt), ROY (20.5 pt), DPOY (65.0 pt)
+    # Marquee prestige order (MVP -> Defensive Player -> Rookie of the Year -> Coach of the Year)
     assert [r["award"] for r in res.rows] == [
         "MVP",
-        "Coach of the Year",
-        "Rookie of the Year",
         "Defensive Player",
+        "Rookie of the Year",
+        "Coach of the Year",
     ]
 
     feed_item, container = compose_award_ladders_card_and_container(producer, res)
     ctx = feed_item["context_summary"]
-    assert "MVP: Victor Wembanyama 36%" in ctx
-    assert "Defensive Player: Victor Wembanyama 70%" in ctx
+    assert "Defensive Player looks decided at 70%" in ctx
+    assert "Coach of the Year is wide open" in ctx
     assert container["context_line"] == ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)
     assert not FORBIDDEN_COPY_RE.search(feed_item["data"]["roundup"]["footer"])

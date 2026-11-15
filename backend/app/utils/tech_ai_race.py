@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from app.utils.candidate_editorial_copy import number_word
 from app.utils.container_presentation import market_destination
 from app.utils.futures_source_merge import blend_with_verdict
 from app.utils.roundup_containers import (
@@ -375,11 +376,11 @@ def _compose_title_and_context_line(standings: Sequence[BenchmarkStanding]) -> t
     overall_leaders = {s.leader_lab for s in standings if s.track == "overall"}
     coding_leaders = {s.leader_lab for s in standings if s.track == "coding"}
     n = len(standings)
+    n_word = number_word(n, capitalize=False)
     if len(overall_leaders) == 1 and len(coding_leaders) == 1:
         ov_lab = next(iter(overall_leaders))
         cd_lab = next(iter(coding_leaders))
         if ov_lab != cd_lab:
-            third_clause = ""
             common_third: Optional[str] = None
             third_probs: list[int] = []
             for s in standings:
@@ -392,23 +393,39 @@ def _compose_title_and_context_line(standings: Sequence[BenchmarkStanding]) -> t
                     third_probs.append(max(1, int(round(prob3 * 100))))
                 else:
                     common_third = ""
-            if common_third and common_third not in {ov_lab, cd_lab} and third_probs:
-                lo_p, hi_p = min(third_probs), max(third_probs)
-                span_txt = f"{lo_p}%" if lo_p == hi_p else f"{lo_p}% to {hi_p}%"
-                third_clause = f", leaving {common_third} in third on all {n} boards ({span_txt})"
-            card_title = _assert_clean_copy(f"{ov_lab} leads overall AI; {cd_lab} leads coding")
-            ctx = _assert_clean_copy(
-                f"{n} live AI model leaderboards side by side — {ov_lab} leads overall "
-                f"evaluations while {cd_lab} leads coding{third_clause}; each row settles on its named benchmark."
+            raw_title = f"{ov_lab} leads overall; {cd_lab} leads coding"
+            card_title = _assert_clean_copy(
+                raw_title if len(raw_title) <= 45 else "Who leads the AI model race"
             )
+            if common_third and common_third not in {ov_lab, cd_lab} and third_probs:
+                hi_p = max(third_probs)
+                ctx = _assert_clean_copy(
+                    f"{common_third} is third on all {n_word} leaderboards, no higher than {hi_p}%."
+                )
+            else:
+                ov_top = max(
+                    (s for s in standings if s.track == "overall"),
+                    key=lambda s: s.leader_probability,
+                )
+                cd_top = max(
+                    (s for s in standings if s.track == "coding"),
+                    key=lambda s: s.leader_probability,
+                )
+                ov_pct = int(round(ov_top.leader_probability * 100))
+                cd_pct = int(round(cd_top.leader_probability * 100))
+                ctx = _assert_clean_copy(
+                    f"{ov_lab} reaches {ov_pct}% in overall rankings. {cd_lab} leads coding at {cd_pct}%."
+                )
             return card_title, ctx
     top = standings[0]
+    low = min(standings, key=lambda s: s.leader_probability)
+    top_pct = int(round(top.leader_probability * 100))
+    low_pct = int(round(low.leader_probability * 100))
     return (
         "The AI model race",
         _assert_clean_copy(
-            f"{n} live AI model leaderboards across overall and coding evaluations — "
-            f"{top.leader_lab} leads {top.benchmark_label} at {int(round(top.leader_probability * 100))}%; "
-            f"each row settles on its own named benchmark."
+            f"{top.leader_lab} leads {top.benchmark_label} at {top_pct}%. "
+            f"{low.benchmark_label} is closest at {low_pct}%."
         ),
     )
 
@@ -463,9 +480,7 @@ def select_tech_ai_race(
 
     card_standings = standings[: max(2, int(max_card_rows))]
     card_title, context_line = _compose_title_and_context_line(card_standings)
-    footer = _assert_clean_copy(
-        f"One winning lab per benchmark · {len(card_standings)} distinct AI leaderboards"
-    )
+    footer = _assert_clean_copy("One winner per leaderboard.")
 
     rows: list[dict[str, Any]] = []
     for s in card_standings:

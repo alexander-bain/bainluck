@@ -24,6 +24,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from app.utils.candidate_editorial_copy import (
+    BRACKET_RE,
+    EDITORIAL_JARGON_RE,
+    plain_market_subject,
+)
 from app.utils.container_presentation import market_destination
 from app.utils.futures_source_merge import blend_with_verdict
 from app.utils.roundup_containers import (
@@ -78,6 +83,7 @@ _FORBIDDEN_COPY_RE = re.compile(
 class LongShotMover:
     market_id: int
     label: str
+    subject: str
     outcome_name: str
     prior_prob: float
     current_prob: float
@@ -209,11 +215,14 @@ def _extract_best_mover_from_market(
         if raw_gain_pts < (min_gain_points - 1e-9) or gain_pts < min_gain_points:
             continue
 
-        row_label = title if out_name.lower() == "yes" else f"{out_name} · {title}"
+        subject = plain_market_subject(title, out_name)
+        if not subject or BRACKET_RE.search(subject) or EDITORIAL_JARGON_RE.search(subject):
+            continue
         twin_key = f"{_norm_key(out_name)}::{_norm_key(title)}"
         candidate = LongShotMover(
             market_id=mkt_id,
-            label=_assert_clean_copy(row_label),
+            label=_assert_clean_copy(f"{subject} · +{gain_pts} pts"),
+            subject=_assert_clean_copy(subject),
             outcome_name=_assert_clean_copy(out_name),
             prior_prob=prior_p,
             current_prob=cur_p,
@@ -294,7 +303,8 @@ def _blend_cross_source_twins(
         resolved.append(
             LongShotMover(
                 market_id=primary.market_id,
-                label=primary.label,
+                label=_assert_clean_copy(f"{primary.subject} · +{gain_pts} pts"),
+                subject=primary.subject,
                 outcome_name=primary.outcome_name,
                 prior_prob=prior_p,
                 current_prob=cur_p,
@@ -364,22 +374,13 @@ def select_long_shot_movers(
         )
 
     shown = movers[: max(2, int(max_card_rows))]
-    cap_pct = int(round(max_prior_prob * 100))
     top = shown[0]
-    jump_summaries = ", ".join(
-        f"{mv.outcome_name} +{mv.gain_points} pts ({mv.prior_pct}% to {mv.current_pct}%)"
-        for mv in shown[:3]
-    )
-    card_title = _assert_clean_copy(
-        f"Long shots waking up — up to +{top.gain_points} pts today"
-    )
+    card_title = _assert_clean_copy("Long shots waking up")
     context_line = _assert_clean_copy(
-        f"Markets that sat at {cap_pct}% or lower a day ago and climbed at least "
-        f"{min_gain_points} points on recent trading — {jump_summaries}."
+        f"{top.subject} was {top.prior_pct}% yesterday. "
+        f"Now it is {top.current_pct}%, up {top.gain_points} points."
     )
-    footer = _assert_clean_copy(
-        f"24h change in points · started at {cap_pct}% or lower · recent trading verified"
-    )
+    footer = _assert_clean_copy("24-hour move in points.")
 
     rows: list[dict[str, Any]] = []
     for mv in shown:

@@ -167,14 +167,16 @@ async def test_each_r4_candidate_passes_eval_rows_trading_guard_and_website_cont
     footer = str(roundup.get("footer") or "").strip()
     rows = roundup.get("rows") or []
 
-    assert len(title) >= 12
-    assert len(subtitle) >= 45
+    assert 12 <= len(title) <= 45, f"{slug} title violates Rule 1 (<=45 chars): {len(title)} {title!r}"
+    assert 25 <= len(subtitle) <= 120, f"{slug} reason violates Rule 2 (<=120 chars): {len(subtitle)} {subtitle!r}"
     assert subtitle == roundup.get("context_line")
     assert subtitle == feed_item.get("context_summary")
     assert subtitle == container.get("context_line")
     assert kicker
     assert footer
     assert 3 <= len(rows) <= 5
+
+    from app.utils.candidate_editorial_copy import BRACKET_RE, EDITORIAL_JARGON_RE
 
     seen_row_ids: set[int] = set()
     for row in rows:
@@ -192,9 +194,22 @@ async def test_each_r4_candidate_passes_eval_rows_trading_guard_and_website_cont
         label = str(row.get("label") or "").strip()
         assert label
         assert not FORBIDDEN_READER_COPY_RE.search(label)
+        assert not BRACKET_RE.search(label), f"{slug} row label contains bracket (Rule 4/5): {label!r}"
+        assert not EDITORIAL_JARGON_RE.search(label), f"{slug} row label contains jargon: {label!r}"
 
-    for text_field in (title, subtitle, kicker, footer):
+    for text_field in (title, subtitle, footer):
         assert not FORBIDDEN_READER_COPY_RE.search(text_field), f"{slug} banned copy in: {text_field}"
+        assert not BRACKET_RE.search(text_field), f"{slug} bracket in reader copy (Rule 4): {text_field!r}"
+        assert not EDITORIAL_JARGON_RE.search(text_field), f"{slug} jargon in reader copy (Rule 3): {text_field!r}"
+        assert "combined" not in text_field.lower(), f"{slug} combined wording (196-A): {text_field!r}"
+        assert "survive" not in text_field.lower(), f"{slug} survive parlay wording (196-A): {text_field!r}"
+
+    if "non_featured_refusal_events" in packet:
+        minor_res = await produce_fn(
+            packet["non_featured_refusal_events"], rule=producer.rule, now=eval_now
+        )
+        assert isinstance(minor_res, rc.RoundupRefusal)
+        assert "insufficient_featured_league_upsets" in str(minor_res.reasons)
 
 
 @pytest.mark.asyncio
