@@ -477,15 +477,15 @@ extension WidgetTapJourneyTests {
                              "Fresh face editor did not expose Bottom Left complication", host: host)
         slot.tap()
         let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host, reopenSlot: {
-            try freshFaceRequire(slot.waitForExistence(timeout: 15) && slot.isHittable && host.frame.contains(slot.frame),
+            try self.freshFaceRequire(slot.waitForExistence(timeout: 15) && slot.isHittable && host.frame.contains(slot.frame),
                                  "Fresh face editor lost Bottom Left complication after gallery close", host: host)
             slot.tap()
         }) { name in
-            freshFaceCapture(host, name: name)
+            self.freshFaceCapture(host, name: name)
         }
         choice.tap()
         try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { name in
-            freshFaceCapture(host, name: name)
+            self.freshFaceCapture(host, name: name)
         }
         let installed = host.cells["ComplicationListCell -- Your game"].firstMatch
         try freshFaceRequire(installed.waitForExistence(timeout: 15) && installed.isHittable,
@@ -555,12 +555,12 @@ extension WidgetTapJourneyTests {
                              "CORNER_FACE_DEPENDENCY: no unambiguous visible Exactograph upper-left complication", host: host)
         choices[0].tap()
         let appRow = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host, reopenSlot: {
-            try freshFaceRequire(choices[0].waitForExistence(timeout: 15) && choices[0].isHittable && host.frame.contains(choices[0].frame),
+            try self.freshFaceRequire(choices[0].waitForExistence(timeout: 15) && choices[0].isHittable && host.frame.contains(choices[0].frame),
                                  "CORNER_FACE_DEPENDENCY: Exactograph lost upper-left complication after gallery close", host: host)
             choices[0].tap()
-        }) { freshFaceCapture(host, name: $0) }
+        }) { self.freshFaceCapture(host, name: $0) }
         appRow.tap()
-        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { freshFaceCapture(host, name: $0) }
+        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { self.freshFaceCapture(host, name: $0) }
         let installed = host.cells["ComplicationListCell -- Your game"].firstMatch
         try freshFaceRequire(installed.waitForExistence(timeout: 15) && installed.isHittable,
                              "CORNER_FACE_DEPENDENCY: Your game unavailable for observed corner slot", host: host)
