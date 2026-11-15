@@ -1,7 +1,12 @@
 /** @jest-environment jsdom */
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import EventCard183A, { type UnifiedGameCardData } from "@/components/EventCard183A";
+import EventCard183A, {
+  formatLiveTenthsPair,
+  formatSingleLiveTenths,
+  type UnifiedGameCardData,
+} from "@/components/EventCard183A";
+import { PIN_PATH } from "@/components/PinButton";
 import { cleanDiscoverGameReason, isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
 
 (
@@ -64,7 +69,20 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
     expect(isWebGameCard183AEnabled()).toBe(true);
   });
 
-  it("renders pregame compact card with Proj. + Chance columns, bookmark pin, EKG pulse, and NO Pregame column", () => {
+  it("formats live streaming tenths identically to iOS CompactGameCard12616", () => {
+    expect(formatSingleLiveTenths(0.004)).toBe("<1%");
+    expect(formatSingleLiveTenths(0.996)).toBe(">99%");
+    expect(formatLiveTenthsPair(0.3424, 0.6576, false)).toEqual({
+      away: "34.2%",
+      home: "65.8%",
+    });
+    expect(formatLiveTenthsPair(0.4, 0.6, true)).toEqual({
+      away: null,
+      home: "60.0%",
+    });
+  });
+
+  it("renders pregame compact card with Proj. + Chance columns, shared bookmark PIN_PATH, EKG pulse, segmented bar, and NO Pregame column", () => {
     const onPin = jest.fn();
     render(
       <EventCard183A
@@ -79,7 +97,10 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
     expect(byTestId("col-header-now")?.textContent).toBe("Chance");
     expect(byTestId("col-header-pregame")).toBeNull();
     expect(byTestId("discover-191a-chart-panel")).toBeNull();
-    expect(byTestId("bookmark-pin-icon")).not.toBeNull();
+    expect(byTestId("compact-probability-bar")).not.toBeNull();
+    const pinWrap = byTestId("bookmark-pin-icon");
+    expect(pinWrap).not.toBeNull();
+    expect(pinWrap?.querySelector("path")?.getAttribute("d")).toBe(PIN_PATH);
     expect(byTestId("ekg-feed-pulse")).not.toBeNull();
     expect(byTestId("discover-game-reason-line")?.textContent).toContain(
       "A win locks Detroit into the NFC #1 seed entering Thanksgiving.",
@@ -91,7 +112,7 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
     expect(onPin).toHaveBeenCalledTimes(1);
   });
 
-  it("renders live Discover card with Score · Pregame · Now columns, single live projection, and 191-A chart panel", () => {
+  it("renders live Discover card with Score · Pregame · Now live tenths, single live projection, and 191-A chart panel", () => {
     render(
       <EventCard183A
         card={{
@@ -99,16 +120,16 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
           status: "live",
           away_score: 21,
           home_score: 24,
-          away_prob: 0.34,
-          home_prob: 0.66,
+          away_prob: 0.342,
+          home_prob: 0.658,
           projected_away: 27,
           projected_home: 31,
           live_clock_label: "Q4 · 4:12",
-          reason_line: "Detroit swung 24 points in 3 minutes after a fourth-down red-zone takeaway.",
+          reason_line: "Detroit jumped 24 points in 3 minutes.",
           chart_points: [
             { t: 0, p: 0.58 },
             { t: 0.6, p: 0.42 },
-            { t: 1, p: 0.66 },
+            { t: 1, p: 0.658 },
           ],
         }}
         surface="discover"
@@ -118,6 +139,8 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
     expect(byTestId("col-header-score")?.textContent).toBe("Score");
     expect(byTestId("col-header-pregame")?.textContent).toBe("Pregame");
     expect(byTestId("col-header-now")?.textContent).toBe("Now");
+    expect(host.textContent).toContain("34.2%");
+    expect(host.textContent).toContain("65.8%");
     expect(byTestId("live-projected-once")?.textContent).toContain(
       "Proj. final: Patriots 27 – Lions 31",
     );
@@ -126,7 +149,7 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
     expect(host.textContent).not.toMatch(/venues/i);
   });
 
-  it("renders settled game with two rows, Score · Pregame · Final columns, and never 'Settled'", () => {
+  it("renders settled game with two rows, Score · Pregame · Final columns, Won ✓, and never 'Settled'", () => {
     render(
       <EventCard183A
         card={{
@@ -148,12 +171,12 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
     expect(byTestId("col-header-score")?.textContent).toBe("Score");
     expect(byTestId("col-header-pregame")?.textContent).toBe("Pregame");
     expect(byTestId("col-header-now")?.textContent).toBe("Final");
-    expect(host.textContent).toContain("Won");
+    expect(host.textContent).toContain("Won ✓");
     expect(byTestId("discover-191a-chart-panel")).not.toBeNull();
     expect(host.textContent).not.toMatch(/Settled/i);
   });
 
-  it("renders 187-A centered Draw strip on 3-way soccer and leaves off filler reason lines", () => {
+  it("renders 187-A middle Draw row aligned across before, during, and level final on 3-way soccer", () => {
     expect(cleanDiscoverGameReason("Trending matchup", "Arsenal", "Chelsea")).toBeNull();
     expect(cleanDiscoverGameReason("Chelsea at Arsenal", "Arsenal", "Chelsea")).toBeNull();
 
@@ -168,16 +191,88 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
           away_prob: 0.24,
           draw_prob: 0.27,
           home_prob: 0.49,
+          pregame_away_pct: 24,
+          pregame_draw_pct: 27,
+          pregame_home_pct: 49,
           projected_away: null,
           projected_home: null,
           reason_line: "Trending matchup",
         }}
-        surface="discover"
+        surface="standard"
       />,
     );
 
-    expect(byTestId("soccer-187a-centered-draw")?.textContent).toContain("Draw");
-    expect(byTestId("soccer-187a-centered-draw")?.textContent).toContain("27%");
+    const drawRow = byTestId("soccer-187a-centered-draw");
+    expect(drawRow?.textContent).toContain("Draw");
+    expect(drawRow?.textContent).toContain("27%");
     expect(byTestId("discover-game-reason-line")).toBeNull();
+
+    // Finished level 1–1: Draw row shows Draw ✓
+    render(
+      <EventCard183A
+        card={{
+          ...BASE_CARD,
+          sport: "soccer_epl",
+          sport_name: "Premier League",
+          status: "completed",
+          away_team: "Chelsea",
+          home_team: "Arsenal",
+          away_score: 1,
+          home_score: 1,
+          away_prob: null,
+          draw_prob: null,
+          home_prob: null,
+          pregame_away_pct: 24,
+          pregame_draw_pct: 27,
+          pregame_home_pct: 49,
+          projected_away: null,
+          projected_home: null,
+        }}
+        surface="standard"
+      />,
+    );
+    expect(byTestId("soccer-187a-centered-draw")?.textContent).toContain("Draw ✓");
+  });
+
+  it("renders score-first set-by-set tennis columns with serving indicator and no Proj. column", () => {
+    render(
+      <EventCard183A
+        card={{
+          ...BASE_CARD,
+          sport: "tennis_atp_finals",
+          sport_name: "ATP Finals",
+          away_team: "Taylor Fritz",
+          home_team: "Jannik Sinner",
+          status: "live",
+          away_score: 1,
+          home_score: 1,
+          away_prob: 0.284,
+          home_prob: 0.716,
+          pregame_away_pct: 22,
+          pregame_home_pct: 78,
+          projected_away: 12,
+          projected_home: 14,
+          live_clock_label: "Set 3",
+          serving: "home",
+          tennis_sets: [
+            { away: 4, home: 6 },
+            { away: 7, home: 6, tiebreak_away: 7, tiebreak_home: 5 },
+            { away: 2, home: 4, current: true },
+          ],
+          tennis_game_points: { away: "15", home: "40" },
+        }}
+        surface="standard"
+      />,
+    );
+
+    expect(byTestId("tennis-score-strip")?.textContent).toContain("S1");
+    expect(byTestId("tennis-score-strip")?.textContent).toContain("S2");
+    expect(byTestId("tennis-score-strip")?.textContent).toContain("S3");
+    expect(byTestId("tennis-score-strip")?.textContent).toContain("Pts");
+    expect(byTestId("tennis-serving-home")).not.toBeNull();
+    expect(byTestId("col-header-proj")).toBeNull();
+    expect(byTestId("live-projected-once")).toBeNull();
+    expect(host.textContent).toContain("28.4%");
+    expect(host.textContent).toContain("71.6%");
   });
 });

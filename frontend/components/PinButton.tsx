@@ -36,34 +36,15 @@
 import { cn } from "@/lib/utils";
 
 /**
- * THE PIN, AS ONE SHAPE. Both states draw this path; only the treatment differs.
+ * THE PIN, AS ONE BOOKMARK SHAPE (#12616). Both states draw this path; only the treatment differs.
  *
- * ── #7165: THE UNPINNED STATE WAS A DIFFERENT OBJECT, AND IT WAS A TROPHY ──
- *
- * The filled state has always been this diagonal pushpin. The unpinned state was
- * four separate strokes — a wide capped bar, an inverted trapezoid under it, a
- * vertical stem and a horizontal foot — which is not a hollow pushpin. Rendered,
- * it is a GOBLET, and at the 14–16px these buttons use it reads as a trophy.
- *
- * That is not a taste note. live/409 and the triage that filed #7165 both read
- * the icon on `/events/15312403` as settled chrome and concluded the page was
- * declaring a winner on an AFL match nobody — not us, not the venue — had
- * graded. A reader reaches the same conclusion faster: a trophy beside "No
- * result reported" says *someone won and we lost the score*, which is the exact
- * sentence "settled means settled" exists to refuse. The state text was right
- * all along; the icon beside it was the lie.
- *
- * ⚠️ NO NEW ARTWORK WAS DRAWN, DELIBERATELY. The outline is the SHIPPED filled
- * silhouette, stroked — so the two states cannot be two objects again, and
- * nothing here is a redesign of a mark Alex has already approved. A guard asserts
- * the two states share this `d`; a future edit that gives the outline its own
- * path goes red rather than quietly reintroducing the goblet.
- *
- * 1.5 rather than the 2 the retired strokes used: at 14px the notch between the
- * pin's head and its shaft closes at 2 and the icon fills in to a blob.
+ * Unpinned (`filled={false}`) strokes this silhouette at `strokeWidth="1.5"` with `fill="none"`;
+ * pinned (`filled={true}`) fills the exact same `PIN_PATH` with `currentColor` so both states
+ * share one silhouette across every website surface (`EventCard`, `EventCard183A`, `FuturesCard`,
+ * Discover `ActionBar`, event detail, and futures detail).
  */
 export const PIN_PATH =
-  "M16 4c0-.55-.22-1.05-.58-1.41-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-6.01 6.01C5.22 9.95 4 11.59 4 13.5c0 1.1.45 2.1 1.17 2.83L2 19.5l1.41 1.41 3.17-3.17c.73.72 1.73 1.17 2.83 1.17 1.91 0 3.55-1.22 4.91-2.58l6.01-6.01c.36-.36.58-.86.58-1.41s-.22-1.05-.58-1.41c-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-4.95 4.95-2.12-2.12L16 4z";
+  "M6 3.75h12A1.25 1.25 0 0 1 19.25 5v15.25l-7.25-4.2-7.25 4.2V5A1.25 1.25 0 0 1 6 3.75Z";
 
 export function PinIcon({ filled, className }: { filled: boolean; className?: string }) {
   if (filled) {
