@@ -598,8 +598,175 @@ function wholeClubName(full: string): string {
  * entity's name, so it is not a pair here either — same test as everywhere
  * else in this module).
  */
-export function teamCrestInitials(name: string | null | undefined): string {
+/**
+ * Ruling 194-A (Alex, 2026-11-14) — college teams print the SCHOOL, never the
+ * mascot ("Duke", "Alabama", "Gonzaga", "Ole Miss"; never "Blue Devils",
+ * "Crimson Tide", "Bulldogs", "Rebels"), and when a logo is missing the badge
+ * uses the served abbreviation ("DUKE", "ALA") rather than letters made from
+ * the mascot. Professional teams are unchanged.
+ *
+ * Matched by whole `_` or `-` segment so pro keys (`basketball_nba`,
+ * `basketball_wnba`, `americanfootball_nfl`) and non-string `.map()` indices
+ * fail closed.
+ */
+const COLLEGE_SPORT_SEGMENTS: ReadonlySet<string> = new Set([
+  "ncaaf",
+  "ncaab",
+  "wncaab",
+  "ncaa",
+]);
+
+export function isCollegeSport(sportKey: string | null | undefined): boolean {
+  if (typeof sportKey !== "string") return false;
+  const key = sportKey.trim().toLowerCase();
+  if (!key) return false;
+  return key.split(/[_-]+/).some(seg => COLLEGE_SPORT_SEGMENTS.has(seg));
+}
+
+/**
+ * Known two-word NCAA mascots (measured across all 528 distinct live NCAAF,
+ * NCAAB and WNCAAB team strings plus NCAA Division I mascots). Stripping known
+ * mascots rather than blindly dropping the last word keeps mascot-less school
+ * strings (`"Virginia Tech"`, `"Penn State"`, `"Ole Miss"`, `"Notre Dame"`,
+ * `"San Diego"`, `"Saint Louis"`, `"Seton Hall"`, `"Rhode Island"`, `"Boston
+ * University"`, `"Abilene Christian"`, `"Cal State Northridge"`) intact and
+ * makes `collegeSchoolName` idempotent.
+ */
+const COLLEGE_TWO_WORD_MASCOTS: ReadonlySet<string> = new Set([
+  "banana slugs", "big green", "big red", "black bears", "black knights",
+  "blue demons", "blue devils", "blue hens", "blue hose", "blue knights",
+  "blue raiders", "crimson tide", "delta devils", "demon deacons",
+  "fighting camels", "fighting hawks", "fighting illini", "fighting irish",
+  "fighting leathernecks", "fighting scots", "flying dutchmen", "golden bears",
+  "golden bobcats", "golden bulls", "golden eagles", "golden flashes",
+  "golden gophers", "golden griffins", "golden grizzlies", "golden hurricane",
+  "golden lions", "golden panthers", "golden rams", "golden tigers",
+  "great danes", "green terror", "green wave", "horned frogs",
+  "lady bears", "lady lions", "lady panthers", "lady techsters",
+  "lady tigers", "lady vols", "mean green", "mountain hawks",
+  "nittany lions", "purple aces", "purple eagles", "purple knights",
+  "ragin cajuns", "rainbow wahine", "rainbow warriors", "red flash",
+  "red foxes", "red hawks", "red raiders", "red storm", "red wolves",
+  "river hawks", "runnin bulldogs", "running rebels", "runnin rebels",
+  "running utes", "scarlet knights", "screaming eagles", "sea gulls",
+  "sun devils", "tar heels", "thundering herd", "trail blazers",
+  "wolf pack", "yellow jackets",
+]);
+
+const COLLEGE_ONE_WORD_MASCOTS: ReadonlySet<string> = new Set([
+  "49ers", "aces", "aggies", "anteaters", "antelopes", "argonauts", "aztecs",
+  "badgers", "beacons", "bearcats", "bearkats", "bears", "beavers",
+  "bengals", "billikens", "bison", "bisons", "blazers", "bluejays", "bobcats",
+  "boilermakers", "bonnies", "braves", "broncos", "broncs", "bruins",
+  "buccaneers", "buckeyes", "buffaloes", "bulldogs", "bulls",
+  "camels", "cardinal", "cardinals", "catamounts", "cavaliers", "chanticleers",
+  "chargers", "chippewas", "colonels", "colonials", "commodores", "cornhuskers",
+  "cougars", "cowboys", "cowgirls", "coyotes", "crimson", "crusaders", "cyclones",
+  "deacons", "demons", "devils", "dolphins", "dons", "dragons", "ducks", "dukes",
+  "eagles", "explorers", "falcons", "flames", "flyers", "friars",
+  "gaels", "gamecocks", "gators", "gauchos", "governors", "greyhounds", "grizzlies",
+  "hatters", "hawkeyes", "hawks", "highlanders", "hilltoppers", "hokies",
+  "hoosiers", "hornets", "hoyas", "huskies", "hurricane", "hurricanes",
+  "illini", "indians", "islanders", "jackrabbits", "jaguars", "jaspers", "jayhawks",
+  "kangaroos", "keydets", "knights", "ladyjacks", "lakers", "lancers",
+  "leathernecks", "leopards", "lions", "lobos", "longhorns", "lumberjacks",
+  "mastodons", "matadors", "mavericks", "midshipmen", "miners", "minutemen",
+  "minutewomen", "mocs", "monarchs", "mountaineers", "musketeers", "mustangs",
+  "norse", "oaks", "orange", "ospreys", "owls", "paladins", "panthers",
+  "patriots", "peacocks", "penguins", "phoenix", "pilots", "pioneers", "pirates",
+  "pride", "privateers", "quakers", "racers", "raiders", "ramblers", "rams",
+  "rattlers", "razorbacks", "rebels", "redbirds", "redhawks", "retrievers",
+  "revolutionaries", "roadrunners", "rockets", "roos", "royals", "saints",
+  "salukis", "scots", "seahawks", "seawolves", "seminoles", "sharks", "shockers",
+  "skyhawks", "sooners", "spartans", "spiders", "stags", "sunbirds", "sycamores",
+  "tarpons", "terrapins", "terriers", "texans", "thunderbirds", "tigers",
+  "titans", "tommies", "toreros", "trailblazers", "tribe", "tritons", "trojans",
+  "utes", "vandals", "vaqueros", "vikings", "volunteers", "vulcans",
+  "warhawks", "warriors", "waves", "wildcats", "wolfpack", "wolves",
+  "wolverines", "zags", "zips",
+]);
+
+/**
+ * Extract the school name from a college team string (`"Duke Blue Devils"` ->
+ * `"Duke"`, `"Alabama Crimson Tide (W)"` -> `"Alabama"`, `"Gonzaga Bulldogs"` ->
+ * `"Gonzaga"`, `"Ole Miss Rebels"` -> `"Ole Miss"`, `"Miami (OH) RedHawks"` ->
+ * `"Miami (OH)"`). Mascot-less school names return unchanged.
+ */
+export function collegeSchoolName(name: string | null | undefined): string {
+  const raw = (name ?? "").trim();
+  if (!raw) return "";
+  const stripped = raw.replace(/\s+\([WMwm]\)$/, "").trim();
+  const words = stripped.split(/\s+/);
+  if (words.length < 2) return stripped;
+  if (words.length >= 3) {
+    const pair = `${nicknameKey(words[words.length - 2])} ${nicknameKey(words[words.length - 1])}`;
+    if (COLLEGE_TWO_WORD_MASCOTS.has(pair)) {
+      return words.slice(0, -2).join(" ");
+    }
+  }
+  const last = nicknameKey(words[words.length - 1]);
+  if (COLLEGE_ONE_WORD_MASCOTS.has(last)) {
+    return words.slice(0, -1).join(" ");
+  }
+  return stripped;
+}
+
+/**
+ * Sanitize a served college abbreviation (`"DUKE"`, `"ALA"`, `"GONZ"`, `"MISS"`,
+ * `"TA&M"`, `"M-OH"`). Rejects long school strings some rows store in the
+ * abbreviation column (`"BOSTON UNIVERSITY"`, `"DETROIT MERCY"`, `"DARTMOUTH"`),
+ * whitespace, blocked badges, and result words.
+ */
+export function servedCollegeAbbreviation(
+  abbreviation: string | null | undefined,
+): string {
+  if (typeof abbreviation !== "string") return "";
+  const code = abbreviation.trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9&-]{1,3}$/.test(code)) return "";
+  if ((code.match(/[A-Z0-9]/g) ?? []).length < 2) return "";
+  if (UNSHIPPABLE_BADGES.has(code) || RESULT_WORD_BADGES.has(code)) return "";
+  return code;
+}
+
+function collegeSchoolFallbackBadge(school: string): string {
+  const shippable = (badge: string) =>
+    badge !== "" &&
+    !UNSHIPPABLE_BADGES.has(badge) &&
+    !RESULT_WORD_BADGES.has(badge) &&
+    !/\s/.test(badge);
+  const tokens = school
+    .split(TOKEN_SEPARATORS)
+    .map(token => alphanumeric(foldAccents(token)))
+    .filter(Boolean);
+  if (tokens.length === 0) return "";
+  if (tokens.length === 1) {
+    const three = tokens[0].slice(0, 3).toUpperCase();
+    if (shippable(three)) return three;
+    const two = tokens[0].slice(0, 2).toUpperCase();
+    return shippable(two) ? two : "";
+  }
+  const initials = tokens
+    .map(t => t.charAt(0))
+    .join("")
+    .slice(0, 4)
+    .toUpperCase();
+  if (shippable(initials)) return initials;
+  const firstThree = tokens[0].slice(0, 3).toUpperCase();
+  return shippable(firstThree) ? firstThree : "";
+}
+
+export function teamCrestInitials(
+  name: string | null | undefined,
+  sportKey?: string | null,
+  servedAbbreviation?: string | null,
+): string {
   const full = (name ?? "").trim();
+  if (isCollegeSport(sportKey)) {
+    const served = servedCollegeAbbreviation(servedAbbreviation);
+    if (served) return served;
+    if (!full) return "";
+    return collegeSchoolFallbackBadge(collegeSchoolName(full));
+  }
   if (!full) return "";
   if (isDoublesPair(full)) {
     return full
@@ -954,8 +1121,15 @@ const RESULT_WORD_BADGES: ReadonlySet<string> = new Set(["WON", "WIN", "TIE", "O
 export function shippableCrestBadge(
   name: string | null | undefined,
   sportKey?: string | null,
+  servedAbbreviation?: string | null,
 ): string {
   const full = (name ?? "").trim();
+  if (isCollegeSport(sportKey)) {
+    const served = servedCollegeAbbreviation(servedAbbreviation);
+    if (served) return served;
+    if (!full) return "";
+    return collegeSchoolFallbackBadge(collegeSchoolName(full));
+  }
   if (!full) return "";
   const shippable = (badge: string) =>
     badge !== "" &&
@@ -996,7 +1170,8 @@ export function shippableCrestBadge(
 /**
  * The crest badge for the Discover card tiles (#4537): `teamCrestBadge`, except
  * that a value in `UNSHIPPABLE_BADGES` or `RESULT_WORD_BADGES` (#10690) is
- * replaced by `shippableCrestBadge`'s.
+ * replaced by `shippableCrestBadge`'s, and college teams (Ruling 194-A) use
+ * the served abbreviation or school fallback.
  *
  * `teamCrestBadge` still emits the badges its last-word rule has always
  * produced — "Cockfosters FC" `COC`, "Avispa Fukuoka" `FUK`, "Nigeria" `NIG` —
@@ -1012,7 +1187,11 @@ export function shippableCrestBadge(
 export function discoverCrestBadge(
   name: string | null | undefined,
   sportKey?: string | null,
+  servedAbbreviation?: string | null,
 ): string {
+  if (isCollegeSport(sportKey)) {
+    return shippableCrestBadge(name, sportKey, servedAbbreviation);
+  }
   const badge = teamCrestBadge(name, sportKey);
   return UNSHIPPABLE_BADGES.has(badge) || RESULT_WORD_BADGES.has(badge)
     ? shippableCrestBadge(name, sportKey)
@@ -1148,6 +1327,9 @@ function shortNameByRule(full: string, sportKey?: string | null): string {
   // on which of the club's three live spellings the row happens to carry.
   const picked = HAND_PICKED_LABELS.get(handPickedKey(full));
   if (picked) return picked;
+  // Ruling 194-A — college teams print the school ("Duke", "Alabama",
+  // "Gonzaga", "Ole Miss"), never the mascot.
+  if (isCollegeSport(sportKey)) return collegeSchoolName(full);
   // #5634 — a football club is not its city: "Union Berlin", never "Berlin".
   // Up to THREE words only: a longer name is the formal one ("Sport Lisboa e
   // Benfica", "Futebol Clube do Porto", "Tigres de la UANL") and its last word
@@ -1240,7 +1422,11 @@ export function teamShortNames(
   //
   // #5634: a name that IS a two-word nickname ("Red Sox") is compact too, and
   // so is a country: "Czech Republic" beside "Croatia", not "CZE / CRO".
+  // Ruling 194-A: a college team's school name ("Ole Miss", "Virginia Tech") is
+  // CHOSEN, not a give-up, so it never triggers the airport-code rescue.
+  const college = isCollegeSport(sportKey);
   const gaveUp = (full: string, short: string) =>
+    !college &&
     short === full &&
     full.split(/\s+/).length >= 2 &&
     !isDoublesPair(full) &&
@@ -1267,7 +1453,7 @@ export function teamShortNames(
   // abbreviations are reached for only when the last-word rule has already
   // failed — and then only if BOTH sides carry one, so the pair stays
   // symmetric and can never read "IPS vs Liverpool".
-  if (homeGaveUp || awayGaveUp || collide) {
+  if (!college && (homeGaveUp || awayGaveUp || collide)) {
     const homeAbbrev = (home.abbreviation ?? "").trim();
     const awayAbbrev = (away.abbreviation ?? "").trim();
     if (homeAbbrev && awayAbbrev) {

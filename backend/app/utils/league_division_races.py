@@ -501,37 +501,26 @@ def _compose_context_line(
     card_standings: Sequence[DivisionStanding],
     all_standings: Sequence[DivisionStanding],
 ) -> str:
-    total_n = len(all_standings)
-    shown_n = len(card_standings)
+    _ = (league_label, all_standings)
     first = card_standings[0]
     first_pct = int(round(first.leader_probability * 100))
-    first_gap_txt = _format_gap_pts(first.gap_points)
-    runner_note = (
-        f", {first_gap_txt} pts ahead of {first.runner_up_club}"
-        if first.runner_up_club
-        else ""
-    )
-    if shown_n < total_n:
-        second = card_standings[1]
-        second_pct = int(round(second.leader_probability * 100))
-        omitted = all_standings[shown_n:]
-        omitted_txt = " and ".join(
-            f"{o.division} ({o.leader_club} {int(round(o.leader_probability * 100))}%)"
-            for o in omitted
-        )
+    if first.runner_up_club:
+        if 0.25 <= first.gap_points <= 0.75:
+            gap_phrase = "half a point"
+        elif round(first.gap_points) <= 1:
+            gap_phrase = "1 point"
+        else:
+            gap_phrase = f"{int(round(first.gap_points))} points"
         text = (
-            f"The {shown_n} tightest of {total_n} {league_label} division races — "
-            f"{first.leader_club} ({first_pct}% in {first.division}){runner_note} and "
-            f"{second.leader_club} ({second_pct}% in {second.division}) lead the closest boards, "
-            f"while runaway {omitted_txt} {'is' if len(omitted) == 1 else 'are'} omitted."
+            f"The {first.leader_club} lead the {first.division} at {first_pct}%, "
+            f"{gap_phrase} ahead of the {first.runner_up_club}."
         )
     else:
         last = card_standings[-1]
         last_pct = int(round(last.leader_probability * 100))
         text = (
-            f"All {total_n} {league_label} division front-runners, ordered from closest "
-            f"race ({first.leader_club} {first_pct}% in {first.division}{runner_note}) to clearest "
-            f"favorite ({last.leader_club} {last_pct}% in {last.division})."
+            f"The {first.leader_club} lead the {first.division} at {first_pct}%. "
+            f"The {last.leader_club} lead the {last.division} at {last_pct}%."
         )
     return _assert_clean_copy(text)
 
@@ -592,12 +581,7 @@ def select_league_division_races(
     card_standings = standings[: max(2, int(max_card_rows))]
     league_label = str(cfg["label"])
     context_line = _compose_context_line(league_label, card_standings, standings)
-    footer = _assert_clean_copy(
-        f"One winner per division · {len(card_standings)} of {len(standings)} "
-        f"{league_label} divisions shown"
-        if len(card_standings) < len(standings)
-        else f"One winner per division · all {len(standings)} {league_label} divisions"
-    )
+    footer = _assert_clean_copy(f"One winner per {league_label} division.")
 
     rows: list[dict[str, Any]] = []
     for s in card_standings:
@@ -635,12 +619,7 @@ def select_league_division_races(
             if mid not in rev_ids:
                 rev_ids.append(mid)
 
-    tightest_gap_txt = _format_gap_pts(card_standings[0].gap_points)
-    title = _assert_clean_copy(
-        f"{league_label}'s {len(card_standings)} tightest division races — led by a {tightest_gap_txt}-pt margin"
-        if len(card_standings) < len(standings)
-        else f"{league_label} division races — tightest within {tightest_gap_txt} pts"
-    )
+    title = _assert_clean_copy(f"The {league_label}'s closest division races")
     kicker = _assert_clean_copy(f"{league_label} · DIVISIONS")
     return RoundupMembers(
         members=members,

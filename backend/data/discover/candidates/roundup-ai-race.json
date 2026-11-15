@@ -7,13 +7,13 @@
     "sibling"
   ],
   "level": "member",
-  "kicker": "TECH · AI BENCHMARKS",
-  "name": "The AI model race",
+  "kicker": "TECH \u00b7 AI BENCHMARKS",
+  "name": "AI leaderboard frontrunners",
   "category": "tech",
   "tag": "AI",
   "section_title": "Active AI model leaderboards",
   "subtitle": "Overall and coding AI model leaderboards side by side, each settled on its named benchmark.",
-  "footer": "One winning lab per benchmark · 4 distinct AI leaderboards",
+  "footer": "One winner per leaderboard.",
   "score": 93.0,
   "rule": {
     "producer": "tech_ai_race",

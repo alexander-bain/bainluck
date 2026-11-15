@@ -92,19 +92,24 @@ async def test_halftime_performers_preserve_independent_chances_and_explain_non_
     producer = build_headliners_and_hosts_producer()
     res = await produce_headliners_and_hosts(_live_halftime_fixture(), rule=producer.rule)
     assert isinstance(res, RoundupMembers)
-    assert len(res.rows) == 5
-    # Probabilities sum well above 100% and MUST NOT be normalized!
+    # Near-certain lock JAY-Z (98%) is dropped by multi_appearance <=90% cap; 4 live guest races remain
+    assert len(res.rows) == 4
+    # Probabilities sum above 100% and MUST NOT be normalized!
     total_prob = sum(r["probability"] for r in res.rows)
-    assert total_prob > 2.0
-    assert res.rows[0]["artist"] == "JAY-Z"
-    assert res.rows[0]["probability"] == pytest.approx((0.972 + 0.990) / 2.0, abs=1e-4)
-    assert res.rows[1]["artist"] == "Beyoncé"
-    assert res.rows[1]["probability"] == pytest.approx((0.705 + 0.735) / 2.0, abs=1e-4)
+    assert total_prob > 1.4
+    assert [r["artist"] for r in res.rows] == [
+        "Beyoncé",
+        "Pharrell Williams",
+        "Miley Cyrus",
+        "Justin Bieber",
+    ]
+    assert res.rows[0]["probability"] == pytest.approx((0.705 + 0.735) / 2.0, abs=1e-4)
+    assert res.rows[1]["probability"] == pytest.approx((0.410 + 0.440) / 2.0, abs=1e-4)
 
     feed_item, container = compose_headliners_card_and_container(producer, res)
     ctx = feed_item["context_summary"]
-    assert "multiple guests can share the stage" in ctx
-    assert "do not add to 100%" in ctx
+    assert "More than one guest can appear" in ctx
+    assert "do not add up to 100%" in ctx
     assert container["context_line"] == ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)
     assert not FORBIDDEN_COPY_RE.search(feed_item["data"]["roundup"]["footer"])
@@ -136,7 +141,7 @@ def test_song_markets_excluded_even_when_larger_than_performer_market_or_alone()
     assert isinstance(res_lone, RoundupRefusal)
     assert list(res_lone.reasons) == [("no_matching_stage_family", "big_game_halftime_performers")]
 
-    # Case 2: 3-outcome performer market + 4-outcome song market from same source -> ONLY performers!
+    # Case 2: performer market + 4-outcome song market from same source -> ONLY performers (<90% cap)!
     mixed = [
         {
             "id": 68313448,
@@ -148,6 +153,7 @@ def test_song_markets_excluded_even_when_larger_than_performer_market_or_alone()
                 {"name": "JAY-Z", "probability": 0.97},
                 {"name": "Beyoncé", "probability": 0.71},
                 {"name": "Pharrell Williams", "probability": 0.42},
+                {"name": "Miley Cyrus", "probability": 0.21},
             ],
         },
         {
@@ -166,7 +172,7 @@ def test_song_markets_excluded_even_when_larger_than_performer_market_or_alone()
     ]
     res_mixed = select_headliners_and_hosts(mixed, family="big_game_halftime_performers", min_contenders=3)
     assert isinstance(res_mixed, RoundupMembers)
-    assert [r["artist"] for r in res_mixed.rows] == ["JAY-Z", "Beyoncé", "Pharrell Williams"]
+    assert [r["artist"] for r in res_mixed.rows] == ["Beyoncé", "Pharrell Williams", "Miley Cyrus"]
 
 
 def test_single_host_family_switches_to_single_winner_context_without_false_100_sum_claim() -> None:
@@ -187,10 +193,10 @@ def test_single_host_family_switches_to_single_winner_context_without_false_100_
     res = select_headliners_and_hosts(host_markets, family="ceremony_host", min_contenders=3)
     assert isinstance(res, RoundupMembers)
     ctx = res.sections[0]["context_line"]
-    assert "one choice settles Yes" in ctx
     assert "Conan O'Brien leads at 44%" in ctx
+    assert "16 points ahead of John Mulaney" in ctx
     assert "sum to 100%" not in (res.footer or "")
-    assert "mutually exclusive" in (res.footer or "")
+    assert "One host is chosen." in (res.footer or "")
 
 
 @pytest.mark.asyncio
@@ -235,9 +241,9 @@ async def test_divergence_gate_forbidden_labels_and_refusal_reasons() -> None:
             "mutually_exclusive": False,
             "name": "Pro Football Championship Halftime Show: Performers",
             "outcomes": [
-                {"name": "JAY-Z", "probability": 0.92},
                 {"name": "Beyoncé", "probability": 0.71},
                 {"name": "Pharrell Williams", "probability": 0.40},
+                {"name": "Miley Cyrus", "probability": 0.22},
                 {"name": "Stale Mate", "probability": 0.55},
                 {"name": "Opened Eyes", "probability": 0.50},
             ],
@@ -245,7 +251,7 @@ async def test_divergence_gate_forbidden_labels_and_refusal_reasons() -> None:
     ]
     clean_res = select_headliners_and_hosts(banned_label, min_contenders=3)
     assert isinstance(clean_res, RoundupMembers)
-    assert [r["artist"] for r in clean_res.rows] == ["JAY-Z", "Beyoncé", "Pharrell Williams"]
+    assert [r["artist"] for r in clean_res.rows] == ["Beyoncé", "Pharrell Williams", "Miley Cyrus"]
 
     # 3. no_priced_contenders & insufficient_contenders & unsupported_session
     unpriced = [
