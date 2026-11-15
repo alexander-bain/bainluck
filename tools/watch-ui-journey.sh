@@ -202,13 +202,22 @@ printf 'xcodebuild exit: %s\n' "$TEST_EXIT"
 # Read the app actually installed by this Debug UI run before judging system URL delivery.
 # Diagnostic failure never replaces the real XCTest result or becomes an acceptance pass.
 python3 - "$TEST_UDID" "$OUT/installed-watch-registration.json" "$SHA" <<'REGISTRATION'
-import json, plistlib, subprocess, sys
+import json, plistlib, subprocess, sys, time
 from pathlib import Path
 bundle = "com.bainluck.Bain-Luck.watchkitapp"
 receipt = {"sha": sys.argv[3], "udid": sys.argv[1], "bundle_id": bundle}
+def get_container(udid, bundle_id, kind):
+    for attempt in range(2):
+        try:
+            return subprocess.run(["xcrun", "simctl", "get_app_container", udid, bundle_id, kind],
+                                  capture_output=True, text=True, timeout=60, check=True)
+        except subprocess.TimeoutExpired:
+            if attempt == 0:
+                time.sleep(5)
+                continue
+            raise
 try:
-    result = subprocess.run(["xcrun", "simctl", "get_app_container", sys.argv[1], bundle, "app"],
-                            capture_output=True, text=True, timeout=15, check=True)
+    result = get_container(sys.argv[1], bundle, "app")
     installed = Path(result.stdout.strip())
     info = plistlib.loads((installed / "Info.plist").read_bytes())
     keys = ["CFBundleIdentifier", "CFBundleDisplayName", "CFBundleName", "CFBundleExecutable", "CFBundleURLTypes", "CFBundleSupportedPlatforms", "MinimumOSVersion",
@@ -219,9 +228,9 @@ try:
         extension_info = plistlib.loads((extension / "Info.plist").read_bytes())
         receipt["embedded_extensions"].append({key: extension_info.get(key) for key in keys + ["NSExtension"]})
     listing = subprocess.run(["xcrun", "simctl", "listapps", sys.argv[1]],
-                             capture_output=True, timeout=15, check=True)
+                             capture_output=True, timeout=60, check=True)
     converted = subprocess.run(["plutil", "-convert", "json", "-o", "-", "-"],
-                               input=listing.stdout, capture_output=True, timeout=15, check=True)
+                               input=listing.stdout, capture_output=True, timeout=60, check=True)
     app = json.loads(converted.stdout).get(bundle)
     receipt["system_listing"] = app
 except Exception as error:
@@ -267,12 +276,21 @@ python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHAS
 # A diagnostic error must not hide the original test failure; on a passing
 # suite the same signing checks remain mandatory.
 if python3 - "$TEST_UDID" "$OUT/simulator-widget-signing.json" "$SHA" "$DERIVED" <<'SIMSIGN'
-import json, plistlib, subprocess, sys
+import json, plistlib, subprocess, sys, time
 from pathlib import Path
 bundle_id = "com.bainluck.Bain-Luck.watchkitapp"
 receipt = {"sha": sys.argv[3], "verdict": "UNPAID", "scope": "simulator ad-hoc signatures, generated simulated xcent and installed group container"}
+def get_container_path(udid, bid, kind):
+    for attempt in range(2):
+        try:
+            return Path(subprocess.check_output(["xcrun", "simctl", "get_app_container", udid, bid, kind], text=True, timeout=60).strip())
+        except subprocess.TimeoutExpired:
+            if attempt == 0:
+                time.sleep(5)
+                continue
+            raise
 try:
-    app = Path(subprocess.check_output(["xcrun", "simctl", "get_app_container", sys.argv[1], bundle_id, "app"], text=True, timeout=15).strip())
+    app = get_container_path(sys.argv[1], bundle_id, "app")
     extensions = list((app / "PlugIns").glob("*.appex"))
     if len(extensions) != 1:
         raise ValueError("Expected one installed WidgetKit extension")
@@ -281,8 +299,8 @@ try:
         info = plistlib.loads((product / "Info.plist").read_bytes())
         if info.get("CFBundleIdentifier") != expected:
             raise ValueError("Installed simulator bundle identity mismatch")
-        subprocess.run(["codesign", "--verify", "--strict", str(product)], capture_output=True, check=True, timeout=15)
-        signature = subprocess.run(["codesign", "-dv", str(product)], capture_output=True, text=True, check=True, timeout=15)
+        subprocess.run(["codesign", "--verify", "--strict", str(product)], capture_output=True, check=True, timeout=60)
+        signature = subprocess.run(["codesign", "-dv", str(product)], capture_output=True, text=True, check=True, timeout=60)
         if "Signature=adhoc" not in signature.stderr:
             raise ValueError("Simulator signature must be ad-hoc")
         target = "BainLuckWatch Watch App" if product == app else "BainLuckComplication"
@@ -294,7 +312,7 @@ try:
         if "group.com.bainluck.watch" not in entitlements.get("com.apple.security.application-groups", []):
             raise ValueError("Generated simulated xcent lacks the shared Watch group")
         observed.append({"bundle_id": expected, "signature": "ad-hoc", "simulated_xcent": str(candidates[0]), "simulated_watch_group": True})
-    group = Path(subprocess.check_output(["xcrun", "simctl", "get_app_container", sys.argv[1], bundle_id, "group.com.bainluck.watch"], text=True, timeout=15).strip())
+    group = get_container_path(sys.argv[1], bundle_id, "group.com.bainluck.watch")
     if not group.is_dir():
         raise ValueError("Installed simulator shared group container is missing")
     receipt["installed_simulator_group_container"] = str(group)

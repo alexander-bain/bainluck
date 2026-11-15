@@ -665,6 +665,8 @@ COST_PROPOSED_SHA256 = {
 
 
 def restore_cost_reads(name, text):
+    if name == "LargeTextRecoveryJourneyTests.swift":
+        text = restore_xcode27_2_watch_fixes(name, text)
     if name == "WatchDiagnosticsJourneyTests.swift":
         text = restore_controls_traversal(text)
     assert digest(text) == COST_PROPOSED_SHA256[name], "Unreviewed cost-reduction scope"
@@ -854,6 +856,7 @@ LAUNCHER_SCOPE_TRANSFORMS = [
 
 
 def restore_launcher_scope(text):
+    text = restore_xcode27_2_watch_fixes("WidgetTapJourneyTests.swift", text)
     for current, previous in LAUNCHER_SCOPE_TRANSFORMS:
         assert text.count(current) == 1, "Missing or altered launcher scope block"
         text = text.replace(current, previous, 1)
@@ -906,6 +909,7 @@ def restore_controls_traversal(text):
 
 
 def require_flat_cleanup(raw):
+    raw = restore_xcode27_2_watch_fixes("PickerCurrentGameJourneyTests.swift", raw)
     assert (
         raw.count(FLAT_CLEANUP) == 1
     ), "Cleanup transition must be exact and fail closed"
@@ -1009,3 +1013,190 @@ def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
             end = start + (fraction if earlier else -fraction)
             assert 0 < start < 1 and 0 < end < 1
     assert 186 * 0.55 > 186 * 0.20
+
+
+# #12513: exact Xcode 27.2 Watch UI test fixes.
+XCODE_27_2_CURRENT_SHA256 = {
+    "LargeTextRecoveryJourneyTests.swift": "81fbbaf5f8db988e57e84cbd34bb5e4dcb851930c634d189c80df598216b8637",
+    "PickerCurrentGameJourneyTests.swift": "7dbc72e778b9b37df19ba568d5387869e48dc4aff78c1b8dd0ccd1817e7e59ff",
+    "WidgetTapJourneyTests.swift": "b4db3ecd93b1df0eea0a0443bd7d9f7f031ff2c870bf171b3a71b992f82789b7",
+}
+XCODE_27_2_PREVIOUS_SHA256 = {
+    "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
+    "PickerCurrentGameJourneyTests.swift": "a1bfd4e4e7f0106d8f7077b243a987426172d9f87fcef6da482f6dc50b011616",
+    "WidgetTapJourneyTests.swift": "7f5cbfe70b39a1104540a6f52986dcc657bad923cf2548b856ba81fe4089da57",
+}
+XCODE_27_2_WATCH_TRANSFORMS = {
+    "LargeTextRecoveryJourneyTests.swift": [
+        (
+            '        try reveal(heading, in: app)\n        try reveal(error, in: app)\n        let refresh = app.buttons["Refresh games"]\n        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: refresh)\n        waitForExpectations(timeout: 15)\n        try reveal(refresh, in: app)\n    }\n\n',
+            '        try reveal(heading, in: app)\n        try reveal(error, in: app)\n        let refresh = app.buttons["watch.picker-refresh"]\n        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: refresh)\n        waitForExpectations(timeout: 15)\n        _ = try revealChange(refresh, in: app)\n    }\n\n',
+            1,
+        )
+    ],
+    "PickerCurrentGameJourneyTests.swift": [
+        (
+            '    @MainActor\n    func testLiveMissingBothScoreIsExplainedAtStandardSize() throws {\n        try checkMissingLiveScore(scenario: "live-missing-both", large: false)\n    }\n',
+            '    @MainActor\n    func testLiveMissingBothScoreIsExplainedAtStandardSize() throws {\n        executionTimeAllowance = 300\n        try checkMissingLiveScore(scenario: "live-missing-both", large: false)\n    }\n',
+            1,
+        ),
+        (
+            '    @MainActor\n    func testLiveMissingBothScoreIsExplainedAtAccessibilitySize() throws {\n        try checkMissingLiveScore(scenario: "live-missing-both", large: true)\n    }\n',
+            '    @MainActor\n    func testLiveMissingBothScoreIsExplainedAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try checkMissingLiveScore(scenario: "live-missing-both", large: true)\n    }\n',
+            1,
+        ),
+        (
+            '    @MainActor\n    func testLiveMissingAwayScoreIsExplainedAtStandardSize() throws {\n        try checkMissingLiveScore(scenario: "live-missing-away", large: false)\n    }\n',
+            '    @MainActor\n    func testLiveMissingAwayScoreIsExplainedAtStandardSize() throws {\n        executionTimeAllowance = 300\n        try checkMissingLiveScore(scenario: "live-missing-away", large: false)\n    }\n',
+            1,
+        ),
+        (
+            '    @MainActor\n    func testLiveMissingAwayScoreIsExplainedAtAccessibilitySize() throws {\n        try checkMissingLiveScore(scenario: "live-missing-away", large: true)\n    }\n',
+            '    @MainActor\n    func testLiveMissingAwayScoreIsExplainedAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try checkMissingLiveScore(scenario: "live-missing-away", large: true)\n    }\n',
+            1,
+        ),
+        (
+            '    @MainActor\n    func testLiveMissingHomeScoreIsExplainedAtStandardSize() throws {\n        try checkMissingLiveScore(scenario: "live-missing-home", large: false)\n    }\n',
+            '    @MainActor\n    func testLiveMissingHomeScoreIsExplainedAtStandardSize() throws {\n        executionTimeAllowance = 300\n        try checkMissingLiveScore(scenario: "live-missing-home", large: false)\n    }\n',
+            1,
+        ),
+        (
+            '    @MainActor\n    func testLiveMissingHomeScoreIsExplainedAtAccessibilitySize() throws {\n        try checkMissingLiveScore(scenario: "live-missing-home", large: true)\n    }\n',
+            '    @MainActor\n    func testLiveMissingHomeScoreIsExplainedAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try checkMissingLiveScore(scenario: "live-missing-home", large: true)\n    }\n',
+            1,
+        ),
+        (
+            '\n    @MainActor\n    private func viewport(in app: XCUIApplication) throws -> CGRect {\n        let visible = app.scrollViews.allElementsBoundByIndex.filter {\n            $0.isHittable && !$0.frame.intersection(app.frame).isEmpty\n        }\n        guard visible.count == 1 else { throw failure("Expected one visible scroll viewport", in: app) }\n        var bounds = visible[0].frame.intersection(app.frame)\n        let bars = app.navigationBars.allElementsBoundByIndex.filter { $0.exists && $0.frame.intersects(bounds) }\n        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {\n            let top = max(bounds.minY, chromeBottom + 3)\n            bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)\n',
+            '\n    @MainActor\n    private func viewport(in app: XCUIApplication, appFrame: CGRect) throws -> CGRect {\n        let visible = app.scrollViews.allElementsBoundByIndex.compactMap { scroll -> CGRect? in\n            let bounds = scroll.frame.intersection(appFrame)\n            return scroll.isHittable && !bounds.isEmpty ? bounds : nil\n        }\n        guard visible.count == 1 else { throw failure("Expected one visible scroll viewport", in: app) }\n        var bounds = visible[0]\n        let chromeBottom = app.navigationBars.allElementsBoundByIndex.compactMap { bar -> CGFloat? in\n            guard bar.exists else { return nil }\n            let frame = bar.frame\n            return frame.intersects(bounds) ? frame.maxY : nil\n        }.max()\n        if let chromeBottom = chromeBottom {\n            let top = max(bounds.minY, chromeBottom + 3)\n            bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)\n',
+            1,
+        ),
+        (
+            '\n    @MainActor\n    private func handoffViewport(in app: XCUIApplication) throws -> CGRect {\n        // Retained watchOS alert hierarchy uses a Table, not the game\'s ScrollView.\n        let tables = app.tables.allElementsBoundByIndex.filter {\n            $0.exists && $0.buttons["OK"].exists && $0.frame.intersects(app.frame)\n        }\n        guard tables.count == 1 else { throw failure("Expected one native Handoff alert table", in: app) }\n        var bounds = tables[0].frame.intersection(app.frame)\n        let bars = app.navigationBars.allElementsBoundByIndex.filter { $0.exists && $0.frame.intersects(bounds) }\n        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {\n            let top = max(bounds.minY, chromeBottom + 3)\n            bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)\n',
+            '\n    @MainActor\n    private func viewport(in app: XCUIApplication) throws -> CGRect {\n        try viewport(in: app, appFrame: app.frame)\n    }\n\n    @MainActor\n    private func handoffViewport(in app: XCUIApplication, appFrame: CGRect) throws -> CGRect {\n        // Retained watchOS alert hierarchy uses a Table, not the game\'s ScrollView.\n        let tables = app.tables.allElementsBoundByIndex.compactMap { table -> CGRect? in\n            guard table.exists && table.buttons["OK"].exists else { return nil }\n            let bounds = table.frame.intersection(appFrame)\n            return bounds.isEmpty ? nil : bounds\n        }\n        guard tables.count == 1 else { throw failure("Expected one native Handoff alert table", in: app) }\n        var bounds = tables[0]\n        let chromeBottom = app.navigationBars.allElementsBoundByIndex.compactMap { bar -> CGFloat? in\n            guard bar.exists else { return nil }\n            let frame = bar.frame\n            return frame.intersects(bounds) ? frame.maxY : nil\n        }.max()\n        if let chromeBottom = chromeBottom {\n            let top = max(bounds.minY, chromeBottom + 3)\n            bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)\n',
+            1,
+        ),
+        (
+            "\n    @MainActor\n    private func move(in app: XCUIApplication, bounds: CGRect, earlier: Bool, fraction: CGFloat) {\n        let origin = app.coordinate(withNormalizedOffset: .zero)\n        let start = origin.withOffset(CGVector(dx: bounds.midX - app.frame.minX,\n            dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - app.frame.minY))\n        let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? fraction : -fraction)))\n        start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)\n",
+            "\n    @MainActor\n    private func move(in app: XCUIApplication, appFrame: CGRect, bounds: CGRect, earlier: Bool, fraction: CGFloat) {\n        let origin = app.coordinate(withNormalizedOffset: .zero)\n        let start = origin.withOffset(CGVector(dx: bounds.midX - appFrame.minX,\n            dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - appFrame.minY))\n        let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? fraction : -fraction)))\n        start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)\n",
+            1,
+        ),
+        (
+            "        XCTAssertTrue(element.waitForExistence(timeout: 15))\n        for _ in 0..<20 {\n            let bounds = try handoffTable ? handoffViewport(in: app) : viewport(in: app)\n            let frame = element.frame\n            let visible = frame.intersection(bounds)\n",
+            "        XCTAssertTrue(element.waitForExistence(timeout: 15))\n        for _ in 0..<20 {\n            let appFrame = app.frame\n            let bounds = try handoffTable ? handoffViewport(in: app, appFrame: appFrame) : viewport(in: app, appFrame: appFrame)\n            let frame = element.frame\n            let visible = frame.intersection(bounds)\n",
+            1,
+        ),
+        (
+            '            let earlier = frame.minY < bounds.minY\n            let distance = earlier ? bounds.minY - frame.minY : frame.maxY - bounds.maxY\n            move(in: app, bounds: bounds, earlier: earlier, fraction: min(0.50, max(0.15, distance / bounds.height)))\n        }\n        throw failure("Unreachable \\(element.identifier)", in: app)\n',
+            '            let earlier = frame.minY < bounds.minY\n            let distance = earlier ? bounds.minY - frame.minY : frame.maxY - bounds.maxY\n            move(in: app, appFrame: appFrame, bounds: bounds, earlier: earlier, fraction: min(0.50, max(0.15, distance / bounds.height)))\n        }\n        throw failure("Unreachable \\(element.identifier)", in: app)\n',
+            1,
+        ),
+        (
+            "        var covered: CGFloat?\n        for _ in 0..<24 {\n            let bounds = try handoffTable ? handoffViewport(in: app) : viewport(in: app)\n            let frame = element.frame\n            // Native multiline alert text has an offscreen midpoint; geometry proves readable coverage.\n",
+            "        var covered: CGFloat?\n        for _ in 0..<24 {\n            let appFrame = app.frame\n            let bounds = try handoffTable ? handoffViewport(in: app, appFrame: appFrame) : viewport(in: app, appFrame: appFrame)\n            let frame = element.frame\n            // Native multiline alert text has an offscreen midpoint; geometry proves readable coverage.\n",
+            1,
+        ),
+        (
+            '                break\n            }\n            move(in: app, bounds: bounds, earlier: frame.minY < bounds.minY, fraction: 0.20)\n        }\n        guard var coveredEnd = covered else { throw failure("Missing readable top: \\(name)", in: app) }\n        for _ in 0..<24 {\n            let bounds = try handoffTable ? handoffViewport(in: app) : viewport(in: app)\n            let frame = element.frame\n            let start = max(0, bounds.minY - frame.minY)\n',
+            '                break\n            }\n            move(in: app, appFrame: appFrame, bounds: bounds, earlier: frame.minY < bounds.minY, fraction: 0.20)\n        }\n        guard var coveredEnd = covered else { throw failure("Missing readable top: \\(name)", in: app) }\n        for _ in 0..<24 {\n            let appFrame = app.frame\n            let bounds = try handoffTable ? handoffViewport(in: app, appFrame: appFrame) : viewport(in: app, appFrame: appFrame)\n            let frame = element.frame\n            let start = max(0, bounds.minY - frame.minY)\n',
+            1,
+        ),
+        (
+            '                if frame.maxY <= bounds.maxY { return }\n            }\n            move(in: app, bounds: bounds, earlier: false, fraction: 0.25)\n        }\n        throw failure("Missing readable end: \\(name)", in: app)\n',
+            '                if frame.maxY <= bounds.maxY { return }\n            }\n            move(in: app, appFrame: appFrame, bounds: bounds, earlier: false, fraction: 0.25)\n        }\n        throw failure("Missing readable end: \\(name)", in: app)\n',
+            1,
+        ),
+    ],
+    "WidgetTapJourneyTests.swift": [
+        (
+            "    @MainActor\n    func testColdActualWidgetTapRetainsOfflineReading() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testColdActualWidgetTapRetainsOfflineReading() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            1,
+        ),
+        (
+            "    @MainActor\n    func testColdActualWidgetTapOffersPickerWithoutSelection() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testColdActualWidgetTapOffersPickerWithoutSelection() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            1,
+        ),
+        (
+            "    @MainActor\n    func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            1,
+        ),
+        (
+            "    @MainActor\n    func testActualCornerLauncherAndTap() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testActualCornerLauncherAndTap() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            1,
+        ),
+        (
+            "    @MainActor\n    func testActualCircularLauncherAndTap() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testActualCircularLauncherAndTap() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            1,
+        ),
+        (
+            "    @MainActor\n    func testActualComplicationHost() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testActualComplicationHost() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            1,
+        ),
+        (
+            '                             "Fresh face editor did not expose Bottom Left complication", host: host)\n        slot.tap()\n        let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host) { name in\n            freshFaceCapture(host, name: name)\n        }\n',
+            '                             "Fresh face editor did not expose Bottom Left complication", host: host)\n        slot.tap()\n        let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host, reopenSlot: {\n            try freshFaceRequire(slot.waitForExistence(timeout: 15) && slot.isHittable && host.frame.contains(slot.frame),\n                                 "Fresh face editor lost Bottom Left complication after gallery close", host: host)\n            slot.tap()\n        }) { name in\n            freshFaceCapture(host, name: name)\n        }\n',
+            1,
+        ),
+        (
+            '                             "CORNER_FACE_DEPENDENCY: no unambiguous visible Exactograph upper-left complication", host: host)\n        choices[0].tap()\n        let appRow = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host) { freshFaceCapture(host, name: $0) }\n        appRow.tap()\n        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { freshFaceCapture(host, name: $0) }\n',
+            '                             "CORNER_FACE_DEPENDENCY: no unambiguous visible Exactograph upper-left complication", host: host)\n        choices[0].tap()\n        let appRow = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host, reopenSlot: {\n            try freshFaceRequire(choices[0].waitForExistence(timeout: 15) && choices[0].isHittable && host.frame.contains(choices[0].frame),\n                                 "CORNER_FACE_DEPENDENCY: Exactograph lost upper-left complication after gallery close", host: host)\n            choices[0].tap()\n        }) { freshFaceCapture(host, name: $0) }\n        appRow.tap()\n        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { freshFaceCapture(host, name: $0) }\n',
+            1,
+        ),
+        (
+            '@MainActor\nenum WatchComplicationGalleryNavigation {\n    static func bainLuckAppRow(in host: XCUIApplication, capture: (String) -> Void) throws -> XCUIElement {\n        let appRows = host.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",\n                                                     "AppGroupCell -- ", "FeaturedWidgetCell -- "))\n',
+            '@MainActor\nenum WatchComplicationGalleryNavigation {\n    static func bainLuckAppRow(in host: XCUIApplication, reopenSlot: (() throws -> Void)? = nil, capture: (String) -> Void) throws -> XCUIElement {\n        let appRows = host.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",\n                                                     "AppGroupCell -- ", "FeaturedWidgetCell -- "))\n',
+            1,
+        ),
+        (
+            '        let detailPage = host.otherElements["ComplicationPickerDetailView"].firstMatch\n        let parentPage = host.navigationBars["NTKStarbearPickerView"].firstMatch\n        // The slot tap can return before Carousel publishes either destination.\n        // Normalize only a complete observed page, never the transition between them.\n',
+            '        let detailPage = host.otherElements["ComplicationPickerDetailView"].firstMatch\n        let parentPage = host.navigationBars["NTKStarbearPickerView"].firstMatch\n        var syncAttempt = 0\n        while true {\n        // The slot tap can return before Carousel publishes either destination.\n        // Normalize only a complete observed page, never the transition between them.\n',
+            1,
+        ),
+        (
+            "        // visible alphabetical app rows to choose direction and move by at most\n        // half a row, rather than sweeping past the target on a fixed schedule.\n        var visits: [String: Int] = [:]\n        for step in 0..<48 {\n",
+            "        // visible alphabetical app rows to choose direction and move by at most\n        // half a row, rather than sweeping past the target on a fixed schedule.\n        var needsDescriptorResync = false\n        var visits: [String: Int] = [:]\n        for step in 0..<48 {\n",
+            1,
+        ),
+        (
+            '            if !position.isEmpty {\n                visits[position, default: 0] += 1\n                try require(visits[position, default: 0] <= 3,\n                            "App-gallery search repeated visible rows without finding exact Bain Luck: \\(position)", capture: capture)\n',
+            '            if !position.isEmpty {\n                visits[position, default: 0] += 1\n                if visits[position, default: 0] > 3 && earlier && !exists && syncAttempt < 4 && reopenSlot != nil {\n                    needsDescriptorResync = true\n                    break\n                }\n                try require(visits[position, default: 0] <= 3,\n                            "App-gallery search repeated visible rows without finding exact Bain Luck: \\(position)", capture: capture)\n',
+            1,
+        ),
+        (
+            '                        "App-gallery search unexpectedly left NTKStarbearPickerView", capture: capture)\n        }\n        try require(choice.exists && choice.isHittable && host.frame.contains(choice.frame)\n                    && choice.frame.minY > chromeBottom,\n                    "Exact Bain Luck app row unreachable after bounded row-guided search", capture: capture)\n        return choice\n    }\n\n',
+            '                        "App-gallery search unexpectedly left NTKStarbearPickerView", capture: capture)\n        }\n        if needsDescriptorResync, let reopenSlot {\n            syncAttempt += 1\n            let close = parentPage.buttons["Close"].firstMatch\n            try require(close.exists && close.isHittable,\n                        "Cannot dismiss NTKStarbearPickerView while awaiting complication descriptor sync", capture: capture)\n            close.tap()\n            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: parentPage)\n            try require(XCTWaiter.wait(for: [dismissed], timeout: 15) == .completed,\n                        "NTKStarbearPickerView did not dismiss before complication descriptor resync", capture: capture)\n            _ = XCTWaiter.wait(for: [XCTestExpectation(description: "nanotimekitd post-reinstall complication descriptor sync")], timeout: 10)\n            try reopenSlot()\n            continue\n        }\n        try require(choice.exists && choice.isHittable && host.frame.contains(choice.frame)\n                    && choice.frame.minY > chromeBottom,\n                    "Exact Bain Luck app row unreachable after bounded row-guided search", capture: capture)\n        return choice\n        }\n    }\n\n',
+            1,
+        ),
+        (
+            '        let title = host.navigationBars["Bain Luck"].firstMatch\n        let game = host.cells["ComplicationListCell -- Your game"].firstMatch\n        try require(detailPage.waitForExistence(timeout: 15) && title.exists && game.exists,\n                    "Exact Bain Luck detail and Your game required after selecting app row", capture: capture)\n        capture("Actual Bain Luck complication detail after exact app selection")\n',
+            '        let title = host.navigationBars["Bain Luck"].firstMatch\n        let game = host.cells["ComplicationListCell -- Your game"].firstMatch\n        try require(detailPage.waitForExistence(timeout: 15) && title.waitForExistence(timeout: 15) && game.waitForExistence(timeout: 15),\n                    "Exact Bain Luck detail and Your game required after selecting app row", capture: capture)\n        capture("Actual Bain Luck complication detail after exact app selection")\n',
+            1,
+        ),
+    ],
+}
+
+
+def restore_xcode27_2_watch_fixes(name, text):
+    assert (
+        digest(text) == XCODE_27_2_CURRENT_SHA256[name]
+    ), f"Unreviewed #12513 Watch UI test scope in {name}"
+    for previous, current, count in reversed(XCODE_27_2_WATCH_TRANSFORMS[name]):
+        assert text.count(current) == count, f"Missing #12513 block in {name}"
+        text = text.replace(current, previous, 1)
+    assert (
+        digest(text) == XCODE_27_2_PREVIOUS_SHA256[name]
+    ), f"Prior obligations altered in {name}"
+    return text
+
+
+@pytest.mark.parametrize("name", sorted(XCODE_27_2_WATCH_TRANSFORMS))
+def test_xcode27_2_watch_fixes_fail_closed_on_reverted_or_altered_blocks(name):
+    raw = (SWIFT / name).read_text()
+    previous, current, _ = XCODE_27_2_WATCH_TRANSFORMS[name][0]
+    with pytest.raises(AssertionError):
+        restore_xcode27_2_watch_fixes(name, raw.replace(current, previous, 1))

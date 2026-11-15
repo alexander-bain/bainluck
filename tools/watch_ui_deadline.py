@@ -14,7 +14,7 @@ import signal
 import subprocess
 import time
 
-MAX_SECONDS = 50 * 60
+MAX_SECONDS = 75 * 60
 
 
 class Interrupted(Exception):

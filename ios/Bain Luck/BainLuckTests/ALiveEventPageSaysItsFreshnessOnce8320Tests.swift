@@ -151,8 +151,13 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
     /// stays.
     func testTheFinalChipSurvives() throws {
         XCTAssertFalse(try chartCode().contains("Text(\"Final\")"), "the heading repeats FINAL again (#9483)")
-        XCTAssertTrue(try code("Components", "StatusBadge.swift")
-            .contains("}elseifEventState.isFinished(status){Text(\"FINAL\")"), "the chip itself")
+        // #12513 — #12660 (182-A) gave the finished branch a plain "Final" for the
+        // new game card; the chip's "FINAL" stays in the same branch.
+        let badge = try code("Components", "StatusBadge.swift")
+        let finished = try XCTUnwrap(badge.range(of: "}elseifEventState.isFinished(status){"), "the finished branch")
+        let branch = badge[finished.upperBound...].prefix(400)
+        XCTAssertTrue(branch.contains("Text(\"FINAL\")"), "the chip itself")
+        XCTAssertTrue(branch.contains("\"Final\""), "the plain game card's Final")
         XCTAssertTrue(try pageCode()
             .contains("}elseifEventState.isFinished(event.status){StatusBadge(status:event.status,commenceTime:event.commenceTime)"),
             "every finished hero mounts it")

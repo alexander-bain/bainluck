@@ -128,10 +128,10 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         XCTAssertEqual(error.label, "Offline. Connect to the internet, then refresh games.")
         try reveal(heading, in: app)
         try reveal(error, in: app)
-        let refresh = app.buttons["Refresh games"]
+        let refresh = app.buttons["watch.picker-refresh"]
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: refresh)
         waitForExpectations(timeout: 15)
-        try reveal(refresh, in: app)
+        _ = try revealChange(refresh, in: app)
     }
 
     @MainActor

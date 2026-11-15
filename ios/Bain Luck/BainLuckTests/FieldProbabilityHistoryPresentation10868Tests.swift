@@ -1579,13 +1579,19 @@ final class FieldProbabilityHistoryPresentation10868Tests: XCTestCase {
 /// primitive only; no weather binding, rendered fit or native test execution
 /// is established by preparing these assertions.
 final class FieldHistoryWeatherTriangle10868Tests: XCTestCase {
+    /// #12513 — `Path` stores its points as `Float`, so a bounding edge at 45.6
+    /// reads back as 45.599998…; `1e-9` asked a `CGFloat` question of a `Float`
+    /// answer and failed on every run. A ten-thousandth of a point is still far
+    /// below anything drawn.
+    private static let pathTolerance: CGFloat = 1e-4
+
     func testTriangleKeepsTheApprovedUprightIdentityAndOpenUpperCorners() {
         let center = CGPoint(x: 50, y: 50)
         let triangle = FieldHistoryGeometry10868.markPath(.triangle, at: center, radius: 4)
-        XCTAssertEqual(triangle.boundingRect.minX, 45.6, accuracy: 1e-9)
-        XCTAssertEqual(triangle.boundingRect.maxX, 54.4, accuracy: 1e-9)
-        XCTAssertEqual(triangle.boundingRect.minY, 45, accuracy: 1e-9)
-        XCTAssertEqual(triangle.boundingRect.maxY, 54, accuracy: 1e-9)
+        XCTAssertEqual(triangle.boundingRect.minX, 45.6, accuracy: Self.pathTolerance)
+        XCTAssertEqual(triangle.boundingRect.maxX, 54.4, accuracy: Self.pathTolerance)
+        XCTAssertEqual(triangle.boundingRect.minY, 45, accuracy: Self.pathTolerance)
+        XCTAssertEqual(triangle.boundingRect.maxY, 54, accuracy: Self.pathTolerance)
         XCTAssertTrue(triangle.contains(CGPoint(x: 50, y: 50)))
         XCTAssertTrue(triangle.contains(CGPoint(x: 50, y: 45.1)))
         XCTAssertTrue(triangle.contains(CGPoint(x: 46, y: 53.8)))
@@ -1600,9 +1606,9 @@ final class FieldHistoryWeatherTriangle10868Tests: XCTestCase {
         for multiplier in [CGFloat(1), CGFloat(1.3), CGFloat(2)] {
             let radius = 3 * multiplier
             let path = FieldHistoryGeometry10868.markPath(.triangle, at: center, radius: radius)
-            XCTAssertEqual(path.boundingRect.midX, center.x, accuracy: 1e-9)
-            XCTAssertEqual(path.boundingRect.minY, center.y - radius * 1.25, accuracy: 1e-9)
-            XCTAssertEqual(path.boundingRect.maxY, center.y + radius, accuracy: 1e-9)
+            XCTAssertEqual(path.boundingRect.midX, center.x, accuracy: Self.pathTolerance)
+            XCTAssertEqual(path.boundingRect.minY, center.y - radius * 1.25, accuracy: Self.pathTolerance)
+            XCTAssertEqual(path.boundingRect.maxY, center.y + radius, accuracy: Self.pathTolerance)
             XCTAssertTrue(path.contains(center))
             XCTAssertFalse(path.contains(CGPoint(x: center.x + radius, y: center.y - radius)))
         }

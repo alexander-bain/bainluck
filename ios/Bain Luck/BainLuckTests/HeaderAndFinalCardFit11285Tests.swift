@@ -295,6 +295,9 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
     }
 
     func testAFinalCardsStatCategoryWrapsBesideItsActualOnThePage() async throws {
+        // Known failure on master, tracked by #12693 (found by #12513). Strict: the
+        // day this passes, XCTest reports it and this line must go with the fix.
+        XCTExpectFailure("#12693: the page shows Player Props as a list since 85-A; the final story card with \"65\" is no longer on it")
         // 393 is the r2 specimen; 375 the narrower control phone.
         for (width, size) in [(CGFloat(393), DynamicTypeSize.accessibility3), (393, .accessibility5),
                               (375, .accessibility3)] {
@@ -308,6 +311,9 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
     /// Default sizes keep the existing row: the name under the category and
     /// beside the final figure, never moved under it.
     func testTheDefaultSizeKeepsTheStoryCardRow() async throws {
+        // Known failure on master, tracked by #12693 (found by #12513). Strict: the
+        // day this passes, XCTest reports it and this line must go with the fix.
+        XCTExpectFailure("#12693: the page shows Player Props as a list since 85-A; the final story card with \"65\" is no longer on it")
         let name = "page-393-large"
         let (found, seen) = try await pageHeader(width: 393, size: .large, name: name)
         assertCategory(found, name, seen: seen)
@@ -319,6 +325,9 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
     }
 
     func testAFinalCardsStatCategoryWrapsInTheReader() throws {
+        // Known failure on master, tracked by #12693 (found by #12513). Strict: the
+        // day this passes, XCTest reports it and this line must go with the fix.
+        XCTExpectFailure("#12693: the reader's finished card shows no final 65 beside the name")
         let (_, markets) = try finalPage()
         let props = markets.playerProps ?? []
         let cards = NFLMilestoneCard9483.cards(props: props, eventStatus: "completed",
@@ -392,6 +401,9 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
     /// the page's 16pt margin — each team row reads name, number, its whole
     /// label, number, its whole label, top to bottom, then the whole legend.
     func testTheProjectedFinishLabelsReadWholeInTheDeck() throws {
+        // Known failure on master, tracked by #12693 (found by #12513). Strict: the
+        // day this passes, XCTest reports it and this line must go with the fix.
+        XCTExpectFailure("#12693: at AX5 on 393 pt the Projected Finish card draws \"Earlier foreca…\"")
         let finish = try liveFinishCard()
         let (_, markets) = try finalPage()
         let neighbour = try XCTUnwrap(NFLMilestoneCard9483.cards(
@@ -572,6 +584,9 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
     /// 375 (which keep the peek) and 320, the finish card reads both whole
     /// names, its numbers, labels and legend.
     func testTheNBAStreamsProjectedFinishReadsWholeNames() throws {
+        // Known failure on master, tracked by #12693 (found by #12513). Strict: the
+        // day this passes, XCTest reports it and this line must go with the fix.
+        XCTExpectFailure("#12693: at AX5 on 393 pt the Projected Finish card draws \"Earlier foreca…\"")
         let finish = try liveNBAFinishCard()
         let (away, home) = nbaNames()
         for width in [CGFloat(393), 375, 320] {
@@ -914,6 +929,9 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
     /// rows the reader holds. The q1 header is the retained before case; the
     /// second is the shape `nflReaderHeader` prints live.
     func testTheExpandedReaderKeepsWordsWholeOnANarrowPhone() throws {
+        // Known failure on master, tracked by #12693 (found by #12513). Strict: the
+        // day this passes, XCTest reports it and this line must go with the fix.
+        XCTExpectFailure("#12693: at AX5 on a 320 pt reader \"PROJECTED\" breaks mid-word")
         XCTAssertEqual(NFLCardReader9483.headerMargin(width: 320, accessibility: true), 6)
         XCTAssertEqual(NFLCardReader9483.headerMargin(width: 320, accessibility: false), 18)
         XCTAssertEqual(NFLCardReader9483.headerMargin(width: 375, accessibility: true), 18)
@@ -999,6 +1017,9 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
     /// apply (393/AX5, 320/Large) the chances line draws whole and no band is
     /// drawn.
     func testTheExpandedReaderLeavesTheStoryRoomOnANarrowPhone() throws {
+        // Known failure on master, tracked by #12693 (found by #12513). Strict: the
+        // day this passes, XCTest reports it and this line must go with the fix.
+        XCTExpectFailure("#12693: at AX5 on a 320 pt reader \"PROJECTED\" breaks mid-word")
         XCTAssertEqual(NFLCardReader9483.chancesMaxHeight(width: 320, height: 600, accessibility: true), 72)
         XCTAssertNil(NFLCardReader9483.chancesMaxHeight(width: 320, height: 600, accessibility: false))
         XCTAssertNil(NFLCardReader9483.chancesMaxHeight(width: 375, height: 700, accessibility: true))

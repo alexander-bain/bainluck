@@ -685,6 +685,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                 CATransaction.commit()
             }
             await DisplayTick.next()
+            await DisplayTick.next()
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
             }
@@ -1057,7 +1058,9 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         }
         let last = Self.burstBasis(Self.burstFrames.count - 1)
         await waitUntil(Self.burstAfter + 1) {
-            PacedStream.done && marks.contains { $0.mark.name == .modelHeadlineAdopted && $0.mark.basis == last }
+            PacedStream.done
+                && marks.contains { $0.mark.name == .modelHeadlineAdopted && $0.mark.basis == last }
+                && marks.contains { $0.mark.name == .modelChartAppended && $0.mark.basis == last }
         }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-subsecond-hosted")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

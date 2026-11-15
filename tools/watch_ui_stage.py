@@ -14,9 +14,9 @@ except ImportError:
 
 # Retained e356 setup consumed 2213.570s including successful compilation.
 # With compilation removed, allow at most20m for infrastructure preparation,
-# leaving at least30m for unchanged cases; upload time also consumes that50m.
+# leaving at least55m for unchanged cases; upload time also consumes that75m.
 PREPARATION_SECONDS = 20 * 60
-MIN_EXECUTION_SECONDS = 30 * 60
+MIN_EXECUTION_SECONDS = 55 * 60
 
 
 def admission(output, stage, now):

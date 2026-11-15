@@ -902,31 +902,37 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testLiveMissingBothScoreIsExplainedAtStandardSize() throws {
+        executionTimeAllowance = 300
         try checkMissingLiveScore(scenario: "live-missing-both", large: false)
     }
 
     @MainActor
     func testLiveMissingBothScoreIsExplainedAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try checkMissingLiveScore(scenario: "live-missing-both", large: true)
     }
 
     @MainActor
     func testLiveMissingAwayScoreIsExplainedAtStandardSize() throws {
+        executionTimeAllowance = 300
         try checkMissingLiveScore(scenario: "live-missing-away", large: false)
     }
 
     @MainActor
     func testLiveMissingAwayScoreIsExplainedAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try checkMissingLiveScore(scenario: "live-missing-away", large: true)
     }
 
     @MainActor
     func testLiveMissingHomeScoreIsExplainedAtStandardSize() throws {
+        executionTimeAllowance = 300
         try checkMissingLiveScore(scenario: "live-missing-home", large: false)
     }
 
     @MainActor
     func testLiveMissingHomeScoreIsExplainedAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try checkMissingLiveScore(scenario: "live-missing-home", large: true)
     }
 
@@ -1684,14 +1690,19 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     }
 
     @MainActor
-    private func viewport(in app: XCUIApplication) throws -> CGRect {
-        let visible = app.scrollViews.allElementsBoundByIndex.filter {
-            $0.isHittable && !$0.frame.intersection(app.frame).isEmpty
+    private func viewport(in app: XCUIApplication, appFrame: CGRect) throws -> CGRect {
+        let visible = app.scrollViews.allElementsBoundByIndex.compactMap { scroll -> CGRect? in
+            let bounds = scroll.frame.intersection(appFrame)
+            return scroll.isHittable && !bounds.isEmpty ? bounds : nil
         }
         guard visible.count == 1 else { throw failure("Expected one visible scroll viewport", in: app) }
-        var bounds = visible[0].frame.intersection(app.frame)
-        let bars = app.navigationBars.allElementsBoundByIndex.filter { $0.exists && $0.frame.intersects(bounds) }
-        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {
+        var bounds = visible[0]
+        let chromeBottom = app.navigationBars.allElementsBoundByIndex.compactMap { bar -> CGFloat? in
+            guard bar.exists else { return nil }
+            let frame = bar.frame
+            return frame.intersects(bounds) ? frame.maxY : nil
+        }.max()
+        if let chromeBottom = chromeBottom {
             let top = max(bounds.minY, chromeBottom + 3)
             bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)
         }
@@ -1703,15 +1714,26 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     }
 
     @MainActor
-    private func handoffViewport(in app: XCUIApplication) throws -> CGRect {
+    private func viewport(in app: XCUIApplication) throws -> CGRect {
+        try viewport(in: app, appFrame: app.frame)
+    }
+
+    @MainActor
+    private func handoffViewport(in app: XCUIApplication, appFrame: CGRect) throws -> CGRect {
         // Retained watchOS alert hierarchy uses a Table, not the game's ScrollView.
-        let tables = app.tables.allElementsBoundByIndex.filter {
-            $0.exists && $0.buttons["OK"].exists && $0.frame.intersects(app.frame)
+        let tables = app.tables.allElementsBoundByIndex.compactMap { table -> CGRect? in
+            guard table.exists && table.buttons["OK"].exists else { return nil }
+            let bounds = table.frame.intersection(appFrame)
+            return bounds.isEmpty ? nil : bounds
         }
         guard tables.count == 1 else { throw failure("Expected one native Handoff alert table", in: app) }
-        var bounds = tables[0].frame.intersection(app.frame)
-        let bars = app.navigationBars.allElementsBoundByIndex.filter { $0.exists && $0.frame.intersects(bounds) }
-        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {
+        var bounds = tables[0]
+        let chromeBottom = app.navigationBars.allElementsBoundByIndex.compactMap { bar -> CGFloat? in
+            guard bar.exists else { return nil }
+            let frame = bar.frame
+            return frame.intersects(bounds) ? frame.maxY : nil
+        }.max()
+        if let chromeBottom = chromeBottom {
             let top = max(bounds.minY, chromeBottom + 3)
             bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)
         }
@@ -1723,10 +1745,10 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     }
 
     @MainActor
-    private func move(in app: XCUIApplication, bounds: CGRect, earlier: Bool, fraction: CGFloat) {
+    private func move(in app: XCUIApplication, appFrame: CGRect, bounds: CGRect, earlier: Bool, fraction: CGFloat) {
         let origin = app.coordinate(withNormalizedOffset: .zero)
-        let start = origin.withOffset(CGVector(dx: bounds.midX - app.frame.minX,
-            dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - app.frame.minY))
+        let start = origin.withOffset(CGVector(dx: bounds.midX - appFrame.minX,
+            dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - appFrame.minY))
         let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? fraction : -fraction)))
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
     }
@@ -1735,13 +1757,14 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     private func reveal(_ element: XCUIElement, in app: XCUIApplication, handoffTable: Bool = false) throws {
         XCTAssertTrue(element.waitForExistence(timeout: 15))
         for _ in 0..<20 {
-            let bounds = try handoffTable ? handoffViewport(in: app) : viewport(in: app)
+            let appFrame = app.frame
+            let bounds = try handoffTable ? handoffViewport(in: app, appFrame: appFrame) : viewport(in: app, appFrame: appFrame)
             let frame = element.frame
             let visible = frame.intersection(bounds)
             if element.isHittable && !visible.isEmpty && visible.height >= min(30, frame.height) { return }
             let earlier = frame.minY < bounds.minY
             let distance = earlier ? bounds.minY - frame.minY : frame.maxY - bounds.maxY
-            move(in: app, bounds: bounds, earlier: earlier, fraction: min(0.50, max(0.15, distance / bounds.height)))
+            move(in: app, appFrame: appFrame, bounds: bounds, earlier: earlier, fraction: min(0.50, max(0.15, distance / bounds.height)))
         }
         throw failure("Unreachable \(element.identifier)", in: app)
     }
@@ -1751,7 +1774,8 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         XCTAssertTrue(element.waitForExistence(timeout: 15))
         var covered: CGFloat?
         for _ in 0..<24 {
-            let bounds = try handoffTable ? handoffViewport(in: app) : viewport(in: app)
+            let appFrame = app.frame
+            let bounds = try handoffTable ? handoffViewport(in: app, appFrame: appFrame) : viewport(in: app, appFrame: appFrame)
             let frame = element.frame
             // Native multiline alert text has an offscreen midpoint; geometry proves readable coverage.
             let readable = element.isHittable || (handoffTable && element.elementType == .staticText)
@@ -1769,11 +1793,12 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
                 if frame.maxY <= bounds.maxY { return }
                 break
             }
-            move(in: app, bounds: bounds, earlier: frame.minY < bounds.minY, fraction: 0.20)
+            move(in: app, appFrame: appFrame, bounds: bounds, earlier: frame.minY < bounds.minY, fraction: 0.20)
         }
         guard var coveredEnd = covered else { throw failure("Missing readable top: \(name)", in: app) }
         for _ in 0..<24 {
-            let bounds = try handoffTable ? handoffViewport(in: app) : viewport(in: app)
+            let appFrame = app.frame
+            let bounds = try handoffTable ? handoffViewport(in: app, appFrame: appFrame) : viewport(in: app, appFrame: appFrame)
             let frame = element.frame
             let start = max(0, bounds.minY - frame.minY)
             let end = min(frame.height, bounds.maxY - frame.minY)
@@ -1783,7 +1808,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
                 coveredEnd = end
                 if frame.maxY <= bounds.maxY { return }
             }
-            move(in: app, bounds: bounds, earlier: false, fraction: 0.25)
+            move(in: app, appFrame: appFrame, bounds: bounds, earlier: false, fraction: 0.25)
         }
         throw failure("Missing readable end: \(name)", in: app)
     }

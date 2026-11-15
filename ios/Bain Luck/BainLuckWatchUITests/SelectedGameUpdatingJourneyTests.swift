@@ -43,8 +43,12 @@ final class SelectedGameUpdatingJourneyTests: XCTestCase {
         let originalState = state.label
         let updating = app.staticTexts["watch.game-updating"]
         XCTAssertFalse(updating.exists)
-        let refresh = app.buttons["Refresh"].firstMatch
+        let refresh = app.buttons["watch.refresh-selected-game"].firstMatch
         try reveal(refresh, in: app)
+        if !refresh.isEnabled {
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: refresh)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
+        }
         refresh.tap()
         XCTAssertTrue(updating.waitForExistence(timeout: 10))
         try reveal(updating, in: app)

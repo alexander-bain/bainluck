@@ -28,13 +28,13 @@ class StageTests(unittest.TestCase):
 
     def test_upload_time_counts_and_global_deadline_cannot_reset(self):
         self.prepare()
-        self.assertEqual(stage.admission(self.root, "execute", 700), 2400)
+        self.assertEqual(stage.admission(self.root, "execute", 700), 3900)
         with self.assertRaisesRegex(ValueError, "reset"):
             stage.admission(self.root, "prepare", 701)
         with self.assertRaisesRegex(ValueError, "admission"):
             stage.admission(self.root, "execute", 1301)
         with self.assertRaisesRegex(ValueError, "exhausted"):
-            stage.admission(self.root, "execute", 3101)
+            stage.admission(self.root, "execute", 4601)
 
     def test_failed_missing_or_repeated_preparation_cannot_start_execution(self):
         with self.assertRaises(OSError):
@@ -80,7 +80,7 @@ class StageTests(unittest.TestCase):
             matrix.index("watch_ui_stage.py execute"),
         )
         self.assertIn("if: always()", matrix)
-        self.assertIn("timeout-minutes: 60", matrix)
+        self.assertIn("timeout-minutes: 90", matrix)
 
 
 class ExecutionGuardTests(unittest.TestCase):
@@ -98,11 +98,11 @@ class ExecutionGuardTests(unittest.TestCase):
         original = (self.root / "global-deadline.json").read_bytes()
         for now in (100, 135, 700, 780.392925333, 1299.9, 1300):
             with self.subTest(now=now):
-                remaining = 3000 - (now - 100)
+                remaining = 4500 - (now - 100)
                 minutes = stage.execution_timeout(self.root, now)
                 self.assertGreaterEqual(minutes * 60, remaining + 35)
                 self.assertLess(minutes * 60, remaining + 35 + 60)
-                self.assertLessEqual(minutes, 51)
+                self.assertLessEqual(minutes, 76)
                 record = json.loads(
                     (self.root / "execution-step-guard.json").read_text()
                 )
@@ -113,7 +113,7 @@ class ExecutionGuardTests(unittest.TestCase):
                 )
 
     def test_insufficient_reserve_and_expired_budget_cannot_emit_timeout(self):
-        for now in (1300.01, 3100, 3200):
+        for now in (1300.01, 4600, 4700):
             with self.subTest(now=now), self.assertRaises(ValueError):
                 stage.execution_timeout(self.root, now)
         self.assertFalse((self.root / "execution-step-guard.json").exists())
