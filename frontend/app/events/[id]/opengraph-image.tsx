@@ -4,7 +4,7 @@ import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { getSportLabel } from "@/lib/sportCategories";
 import { shippableCrestBadge } from "@/lib/teamShortName";
-import { teamTextColor } from "@/lib/teamColors";
+import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 import { unfurlImageOptions } from "@/lib/unfurlImageCache";
@@ -420,8 +420,14 @@ export default async function Image({ params }: { params: { id: string } }) {
   // "nobody won". A tie reaches here the same way: `resolveEventOutcome`
   // returns `null` on equal scores rather than crowning the home side.
   const decided = final && outcome?.winnerSide != null;
-  const homeColor = event.home_team_data?.primary_color || "#2563eb";
-  const awayColor = event.away_team_data?.primary_color || "#dc2626";
+  const resolvedTeamColors = resolveMatchupTeamColors({
+    homePrimary: event.home_team_data?.primary_color,
+    awayPrimary: event.away_team_data?.primary_color,
+    homeSecondary: event.home_team_data?.secondary_color,
+    awaySecondary: event.away_team_data?.secondary_color,
+  });
+  const homeColor = resolvedTeamColors.home || "#2563eb";
+  const awayColor = resolvedTeamColors.away || "#dc2626";
   // #5696 — the crest tiles and the split bar keep the raw brand colour as a
   // FILL; the two big percents are TEXT and take #5165's floor. This canvas is
   // `#f8fafc` rather than `--surface-card`'s `#FFFFFF`, so the helper's ratio
