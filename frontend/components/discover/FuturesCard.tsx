@@ -24,6 +24,7 @@ import { compactOutcomeName, feedContextSnippet, feedExpandedContext, resolvesLa
 // surfaced on this diff. Dropped rather than carried (note-level, no security
 // severity; it was never a merge blocker either way).
 import { DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars, ForYouChip, dismissCornerPad } from "./shared";
+import { QuietFillPercentBox } from "./QuietFillPercentBox";
 import { forYouCue } from "@/lib/discover/forYouCue";
 import QuantityGroup from "../QuantityGroup";
 import type { ActionBarProps, CardActionCallbacks } from "./types";
@@ -1462,10 +1463,23 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
           <span className="flex flex-col items-end leading-none">
             {/* #9642 — `text-base`, up from `text-sm`: in selected design A the
                 right-hand column of numbers is what a reader scans down a group,
-                so it is the largest type on the row. */}
-            <span className="font-mono tabular-nums text-base font-bold" data-testid="compact-row-percent">
-              {leader.probability != null && leader.probability > 0 ? formatProbabilityPercent(leader.probability, { rendered: compactPercent }) : "—"}
-            </span>
+                so it is the largest type on the row.
+                #12714 — quiet proportional fill behind grouped-card numbers. */}
+            {leader.probability != null && leader.probability > 0 ? (
+              <QuietFillPercentBox
+                percent={compactPercent ?? Math.round(leader.probability * 100)}
+                tone="emerald"
+                widthClass="min-w-[3.5rem]"
+              >
+                <span className="font-mono tabular-nums text-base font-bold" data-testid="compact-row-percent">
+                  {formatProbabilityPercent(leader.probability, { rendered: compactPercent })}
+                </span>
+              </QuietFillPercentBox>
+            ) : (
+              <span className="font-mono tabular-nums text-base font-bold" data-testid="compact-row-percent">
+                {"—"}
+              </span>
+            )}
             {percentIsAmbiguous && leader.probability != null && leader.probability > 0 && (
               <span className="mt-1 text-[10px] font-normal text-text-muted" data-testid="compact-row-chance">{" chance"}</span>
             )}
