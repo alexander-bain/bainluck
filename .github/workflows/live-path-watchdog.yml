@@ -1121,7 +1121,7 @@ jobs:
     - id: db_136_9399_a_polymarket_leg_we_refuse_to_price
       name: '#9399 A Polymarket leg we refuse to price stops keeping a number its own book prices out (real Postgres)'
       if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
-      run: "set -o pipefail\npython -m pytest tests/integration/test_polymarket_refused_leg_withdrawn_9399_real_postgres.py \\\n  -v -s -rs 2>&1\
+      run: "set -o pipefail\npython -m pytest tests/integration/test_polymarket_refused_leg_withdrawn_9399_real_postgres.py tests/integration/test_live_binary_child_write_12633_real_postgres.py \\\n  -v -s -rs 2>&1\
         \ | tee /tmp/refusedlegwithdrawn9399.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/refusedlegwithdrawn9399.txt; then\n  echo \"::error::#9399\
         \ refused-leg withdrawal gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_137_5343_a_polymarket_leg_the_venue_settled_
