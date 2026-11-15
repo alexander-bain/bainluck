@@ -1047,6 +1047,11 @@ const EXEMPT: Record<string, string[]> = {
   // "A legal disclosure of who we read data from has to name who we read data
   // from. `/privacy` is exempt on its face." — ruling 141.
   "app/privacy": ["venue-kalshi", "venue-polymarket"],
+  // Alex-approved Decision 189 About page prose (#12672#issuecomment-6878872852,
+  // Sat Nov 14): "We read the prediction markets and the sportsbooks and blend
+  // them into a single chance for each outcome." `/about` is the page that
+  // explains how Bain Luck produces one percentage.
+  "app/about": ["blend"],
 };
 
 /**
