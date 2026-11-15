@@ -1121,7 +1121,8 @@ struct EventDetailView: View {
         TeamTextContrast.cardColors(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor,
-            awaySecondaryHex: event.awayTeamData?.secondaryColor
+            awaySecondaryHex: event.awayTeamData?.secondaryColor,
+            checkHueFamily: true
         )
     }
 

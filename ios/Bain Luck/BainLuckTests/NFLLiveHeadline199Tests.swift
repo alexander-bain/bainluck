@@ -355,11 +355,24 @@ final class NFLLiveHeadline199Tests: XCTestCase {
     // MARK: - Ruling 197 Same Hue-Family Disambiguation Tests
 
     func testRuling197SameHueFamilySwitchesAwayToSecondaryElseSlateGrey() {
+        // Default `checkHueFamily == false` preserves existing callers (cards, etc.) unchanged
+        let defaultUnchanged = TeamTextContrast.cardColorHexes(
+            awayHex: "#0051ba",
+            homeHex: "#00539b"
+        )
+        XCTAssertEqual(defaultUnchanged.away, ProbabilityBarPalette.awayDefault)
+        let neDetDefault = TeamTextContrast.cardColorHexes(
+            awayHex: "#002244",
+            homeHex: "#0076B6"
+        )
+        XCTAssertEqual(neDetDefault.away, "#002244", "Callers that omit checkHueFamily keep RGB-distance-only behaviour")
+
         // Patriots (#002244 / #C60C30) at Lions (#0076B6 / #B0B7BC): both blue -> Patriots red
         let neDet = TeamTextContrast.cardColorHexes(
             awayHex: "#002244",
             homeHex: "#0076B6",
-            awaySecondaryHex: "#C60C30"
+            awaySecondaryHex: "#C60C30",
+            checkHueFamily: true
         )
         XCTAssertEqual(neDet.away, "#C60C30")
         XCTAssertEqual(neDet.home, "#0076B6")
@@ -368,7 +381,8 @@ final class NFLLiveHeadline199Tests: XCTestCase {
         let kuDuke = TeamTextContrast.cardColorHexes(
             awayHex: "#0051ba",
             homeHex: "#00539b",
-            awaySecondaryHex: "#e8000d"
+            awaySecondaryHex: "#e8000d",
+            checkHueFamily: true
         )
         XCTAssertEqual(kuDuke.away, "#E8000D")
         XCTAssertEqual(kuDuke.home, "#00539B")
@@ -377,7 +391,8 @@ final class NFLLiveHeadline199Tests: XCTestCase {
         let gonzDuke = TeamTextContrast.cardColorHexes(
             awayHex: "#041e42",
             homeHex: "#00539b",
-            awaySecondaryHex: "#c8102e"
+            awaySecondaryHex: "#c8102e",
+            checkHueFamily: true
         )
         XCTAssertEqual(gonzDuke.away, "#C8102E")
         XCTAssertEqual(gonzDuke.home, "#00539B")
@@ -386,7 +401,8 @@ final class NFLLiveHeadline199Tests: XCTestCase {
         let ukDuke = TeamTextContrast.cardColorHexes(
             awayHex: "#0033a0",
             homeHex: "#00539b",
-            awaySecondaryHex: "#ffffff"
+            awaySecondaryHex: "#ffffff",
+            checkHueFamily: true
         )
         XCTAssertEqual(ukDuke.away, ProbabilityBarPalette.awayDefault)
         XCTAssertEqual(ukDuke.home, "#00539B")
@@ -395,7 +411,8 @@ final class NFLLiveHeadline199Tests: XCTestCase {
         let bamaDuke = TeamTextContrast.cardColorHexes(
             awayHex: "#9e1b32",
             homeHex: "#00539b",
-            awaySecondaryHex: "#ffffff"
+            awaySecondaryHex: "#ffffff",
+            checkHueFamily: true
         )
         XCTAssertEqual(bamaDuke.away, "#9E1B32")
         XCTAssertEqual(bamaDuke.home, "#00539B")
@@ -427,7 +444,8 @@ final class NFLLiveHeadline199Tests: XCTestCase {
             let pairColors = TeamTextContrast.cardColors(
                 awayHex: event.awayTeamData?.primaryColor,
                 homeHex: event.homeTeamData?.primaryColor,
-                awaySecondaryHex: event.awayTeamData?.secondaryColor
+                awaySecondaryHex: event.awayTeamData?.secondaryColor,
+                checkHueFamily: true
             )
             return EventSportHeadlineCard12472(
                 model: model,

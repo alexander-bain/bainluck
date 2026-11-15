@@ -123,12 +123,14 @@ enum TeamTextContrast {
     static func cardColorHexes(
         awayHex: String?,
         homeHex: String?,
-        awaySecondaryHex: String? = nil
+        awaySecondaryHex: String? = nil,
+        checkHueFamily: Bool = false
     ) -> (away: String, home: String) {
         ProbabilityBarPalette.pair(
             awayHex: usableForText(awayHex),
             homeHex: usableForText(homeHex),
-            awaySecondaryHex: usableForText(awaySecondaryHex)
+            awaySecondaryHex: usableForText(awaySecondaryHex),
+            checkHueFamily: checkHueFamily
         )
     }
 
@@ -136,12 +138,14 @@ enum TeamTextContrast {
     static func cardColors(
         awayHex: String?,
         homeHex: String?,
-        awaySecondaryHex: String? = nil
+        awaySecondaryHex: String? = nil,
+        checkHueFamily: Bool = false
     ) -> (away: Color, home: Color) {
         let hexes = cardColorHexes(
             awayHex: awayHex,
             homeHex: homeHex,
-            awaySecondaryHex: awaySecondaryHex
+            awaySecondaryHex: awaySecondaryHex,
+            checkHueFamily: checkHueFamily
         )
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }

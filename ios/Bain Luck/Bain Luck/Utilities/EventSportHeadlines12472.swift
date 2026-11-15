@@ -2677,7 +2677,7 @@ enum EventSportHeadlines12472 {
         case .absent:
             guard vocab.scoreboardCountsTheUnit, !vocab.unit.isEmpty,
                   let away = ladderAway, let home = ladderHome,
-                  away.isFinite, home.isFinite, away > 0, away > 0
+                  away.isFinite, home.isFinite, away > 0, home > 0
             else { return nil }
             let rAway = Int(away.rounded())
             let rHome = Int(home.rounded())

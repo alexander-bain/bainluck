@@ -136,29 +136,31 @@ enum ProbabilityBarPalette {
     /// a pair. Deterministic: the same input always returns the same pair, so a
     /// card does not change colour between renders.
     ///
-    /// Ruling 197: when both primary colours are usable and either fail
-    /// `distinguishable` or share a hue family (`sameHueFamily`), home keeps its
-    /// primary colour and away switches to `awaySecondaryHex` when usable,
-    /// distinguishable from home, and outside home's hue family; otherwise away
-    /// switches to `partner(for: home, preferring: awayDefault)` (slate grey).
+    /// Ruling 197 (when `checkHueFamily == true`): when both primary colours are
+    /// usable and either fail `distinguishable` or share a hue family
+    /// (`sameHueFamily`), home keeps its primary colour and away switches to
+    /// `awaySecondaryHex` when usable, distinguishable from home, and outside
+    /// home's hue family; otherwise away switches to
+    /// `partner(for: home, preferring: awayDefault)` (slate grey). Callers that
+    /// omit `checkHueFamily` preserve existing RGB-distance-only behaviour.
     static func pair(
         awayHex: String?,
         homeHex: String?,
-        awaySecondaryHex: String? = nil
+        awaySecondaryHex: String? = nil,
+        checkHueFamily: Bool = false
     ) -> (away: String, home: String) {
         let away = usable(awayHex)
         let home = usable(homeHex)
 
         switch (away, home) {
-        case let (a?, h?) where distinguishable(a, h) && !sameHueFamily(a, h):
+        case let (a?, h?) where distinguishable(a, h) && (!checkHueFamily || !sameHueFamily(a, h)):
             return (a, h)                                   // rule 1
         case (_?, let h?):
-            // rule 3 + Ruling 197 — two crests that collide in RGB distance or
-            // hue family. Home keeps its own; away tries its own second colour,
-            // else slate grey.
+            // rule 3 (+ Ruling 197 when opted in) — two crests that collide.
+            // Home keeps its own; away tries its own second colour, else slate grey.
             if let sec = usable(awaySecondaryHex),
                distinguishable(sec, h),
-               !sameHueFamily(sec, h) {
+               (!checkHueFamily || !sameHueFamily(sec, h)) {
                 return (sec, h)
             }
             return (partner(for: h, preferring: awayDefault), h)
