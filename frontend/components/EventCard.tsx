@@ -561,6 +561,9 @@ export default function EventCard({
     : isSuspended || noReading || !favoriteKnown || !homeFavorite
       ? "text-text-primary"
       : "text-text-secondary";
+  const maxTeamLen = Math.max(event.home_team.length, event.away_team.length);
+  const sharedTeamSizeClass =
+    maxTeamLen > 22 ? "text-xs" : maxTeamLen > 16 ? "text-[13px]" : "text-sm";
 
   // Format time and date compactly
   const gameTime = new Date(event.commence_time);
@@ -890,7 +893,8 @@ export default function EventCard({
                   name={event.home_team}
                   sportKey={event.sport}
                   className={cn(
-                    "text-sm font-medium truncate hover:underline",
+                    sharedTeamSizeClass,
+                    "font-medium truncate hover:underline",
                     homeNameClass,
                   )}
                 />
@@ -998,7 +1002,8 @@ export default function EventCard({
                   name={event.away_team}
                   sportKey={event.sport}
                   className={cn(
-                    "text-sm font-medium truncate hover:underline",
+                    sharedTeamSizeClass,
+                    "font-medium truncate hover:underline",
                     awayNameClass,
                   )}
                 />

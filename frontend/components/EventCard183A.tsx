@@ -8,6 +8,7 @@ import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { awayIsTheComplement, sportPricesADraw } from "@/lib/drawPricedWinner";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
+import { ABOVE_NINETY_NINE_PERCENT, BELOW_ONE_PERCENT } from "@/lib/probabilityDisplay";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
 import { prematchReading } from "@/lib/prematchReading";
 import {
@@ -92,15 +93,37 @@ function isTennisSport(sport: string | null | undefined): boolean {
 /**
  * Formats a single live probability to tenths (`"64.2%"`), matching iOS
  * `CompactGameCard12616.formatSingleLiveTenths`: never prints `0%`/`0.0%` or
- * `100%`/`100.0%` while live (`"<1%"` below 1%, `">99%"` above 99%).
+ * `100%`/`100.0%` while live (delegates boundary clamps to `probabilityDisplay`).
  */
 export function formatSingleLiveTenths(value: number | null | undefined): string | null {
   if (value == null || !Number.isFinite(value)) return null;
   const pct = value * 100;
-  if (pct < 1) return "<1%";
-  if (pct > 99) return ">99%";
+  if (pct < 1) return BELOW_ONE_PERCENT;
+  if (pct > 99) return ABOVE_NINETY_NINE_PERCENT;
   const tenths = Math.min(990, Math.max(10, Math.round((value * 10000) / 10)));
   return `${(tenths / 10).toFixed(1)}%`;
+}
+
+/**
+ * Shared fitting font size for both competitor rows on a game card so longer
+ * college school names ("Michigan State", "Mississippi State") shrink together
+ * to fit at 390 px before ever hitting truncation.
+ */
+export function sharedGameCardTeamFontClass(
+  awayLabel: string,
+  homeLabel: string,
+  hasThreeColumns: boolean,
+): string {
+  const maxLen = Math.max(awayLabel.length, homeLabel.length);
+  if (hasThreeColumns) {
+    if (maxLen <= 11) return "text-[15px]";
+    if (maxLen <= 14) return "text-[13.5px]";
+    if (maxLen <= 18) return "text-[12.5px]";
+    return "text-[11.5px]";
+  }
+  if (maxLen <= 14) return "text-[15px]";
+  if (maxLen <= 18) return "text-[13.5px]";
+  return "text-[12.5px]";
 }
 
 /**
@@ -645,7 +668,7 @@ export default function EventCard183A({
 
   const hasScore =
     !hasTennisSetBoxes &&
-    (isLive || isDone) &&
+    isLive &&
     card.home_score != null &&
     card.away_score != null;
 
@@ -763,9 +786,11 @@ export default function EventCard183A({
   };
 
   const awayPrimaryDisplay = isDone
-    ? awayWon
-      ? "Won ✓"
-      : "—"
+    ? awayScoreCompare != null
+      ? String(awayScoreCompare)
+      : awayWon
+        ? "Won"
+        : "—"
     : isLive
       ? awayWithheld || liveTenths.away == null
         ? "—"
@@ -775,9 +800,11 @@ export default function EventCard183A({
         : `${awayWholePct}%`;
 
   const homePrimaryDisplay = isDone
-    ? homeWon
-      ? "Won ✓"
-      : "—"
+    ? homeScoreCompare != null
+      ? String(homeScoreCompare)
+      : homeWon
+        ? "Won"
+        : "—"
     : isLive
       ? liveTenths.home ?? "—"
       : homeWholePct == null
@@ -785,9 +812,7 @@ export default function EventCard183A({
         : `${homeWholePct}%`;
 
   const drawPrimaryDisplay = isDone
-    ? finishedLevelDraw
-      ? "Draw ✓"
-      : "—"
+    ? "—"
     : isLive
       ? liveDrawTenths ?? (drawWholePct != null ? `${drawWholePct}%` : "—")
       : drawWholePct != null
@@ -795,6 +820,7 @@ export default function EventCard183A({
         : "—";
 
   const hasScoreOrSets = hasScore || hasTennisSetBoxes;
+  const teamFontClass = sharedGameCardTeamFontClass(awayShort, homeShort, hasScoreOrSets);
 
   return (
     <Link
@@ -828,7 +854,7 @@ export default function EventCard183A({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <FeedPulseIcon active={isLive} />
+          {isLive && <FeedPulseIcon active />}
           {onPinToggle && (
             <button
               type="button"
@@ -861,7 +887,7 @@ export default function EventCard183A({
             </div>
           )}
           {hasScore && (
-            <span className="w-10 text-right" data-testid="col-header-score">
+            <span className="w-9 text-right" data-testid="col-header-score">
               {tennis ? "Sets" : "Score"}
             </span>
           )}
@@ -872,14 +898,14 @@ export default function EventCard183A({
           )}
           {showPregameCol && (
             <span
-              className={`w-14 text-right ${hasScoreOrSets ? "ml-[18px]" : ""}`}
+              className={`w-12 text-right ${hasScoreOrSets ? "ml-[14px]" : ""}`}
               data-testid="col-header-pregame"
             >
               Pregame
             </span>
           )}
           <span
-            className="ml-[10px] w-16 text-right text-text-secondary"
+            className="ml-[10px] w-[58px] text-right text-text-secondary"
             data-testid="col-header-now"
           >
             {isLive ? "Now" : isDone ? "Final" : "Chance"}
@@ -891,7 +917,7 @@ export default function EventCard183A({
       <div className="space-y-2">
         {/* Away row */}
         <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex min-w-0 items-center gap-2">
             <CrestBadge
               teamName={card.away_team}
               sport={card.sport}
@@ -900,7 +926,7 @@ export default function EventCard183A({
               color={card.away_color}
             />
             <span
-              className={`truncate text-[15px] ${
+              className={`truncate ${teamFontClass} ${
                 isDone && !awayWon && !finishedLevelDraw
                   ? "font-medium text-text-secondary"
                   : isDone && awayWon
@@ -910,6 +936,15 @@ export default function EventCard183A({
             >
               {awayShort}
             </span>
+            {awayWon && (
+              <span
+                className="shrink-0 text-[13px] font-extrabold text-accent-brand"
+                aria-label="Won"
+                data-testid="winner-tick-away"
+              >
+                ✓
+              </span>
+            )}
             {tennis && isLive && card.serving === "away" && (
               <span
                 className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent-brand"
@@ -950,13 +985,7 @@ export default function EventCard183A({
               </div>
             )}
             {hasScore && (
-              <span
-                className={`w-10 text-right text-[17px] font-semibold ${
-                  isDone && !awayWon && !finishedLevelDraw
-                    ? "text-text-secondary"
-                    : "text-text-primary"
-                }`}
-              >
+              <span className="w-9 text-right text-[17px] font-semibold text-text-primary">
                 {card.away_score}
               </span>
             )}
@@ -967,20 +996,22 @@ export default function EventCard183A({
             )}
             {showPregameCol && (
               <span
-                className={`w-14 text-right text-[14px] font-normal text-text-muted ${
-                  hasScoreOrSets ? "ml-[18px]" : ""
+                className={`w-12 text-right text-[14px] font-normal text-text-muted ${
+                  hasScoreOrSets ? "ml-[14px]" : ""
                 }`}
               >
                 {card.pregame_away_pct != null ? `${card.pregame_away_pct}%` : "—"}
               </span>
             )}
             <span
-              className={`ml-[10px] w-16 text-right font-bold ${
+              className={`ml-[10px] w-[58px] text-right ${
                 isDone
                   ? awayWon
-                    ? "text-[15px] text-accent-brand"
-                    : "text-[15px] font-normal text-text-muted"
-                  : "text-[18px]"
+                    ? "text-[18px] font-extrabold text-text-primary"
+                    : finishedLevelDraw
+                      ? "text-[18px] font-bold text-text-primary"
+                      : "text-[18px] font-medium text-text-muted"
+                  : "text-[18px] font-bold"
               }`}
               style={{
                 color:
@@ -1002,7 +1033,7 @@ export default function EventCard183A({
             className="flex items-center justify-between gap-2 py-0.5"
             data-testid="soccer-187a-centered-draw"
           >
-            <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex min-w-0 items-center gap-2">
               <span
                 className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-[11px] font-bold text-text-muted"
                 aria-hidden="true"
@@ -1010,7 +1041,7 @@ export default function EventCard183A({
                 =
               </span>
               <span
-                className={`truncate text-[14px] ${
+                className={`truncate text-[13.5px] ${
                   finishedLevelDraw
                     ? "font-bold text-text-primary"
                     : "font-medium text-text-secondary"
@@ -1018,28 +1049,35 @@ export default function EventCard183A({
               >
                 Draw
               </span>
+              {finishedLevelDraw && (
+                <span
+                  className="shrink-0 text-[13px] font-extrabold text-accent-brand"
+                  aria-label="Drawn result"
+                  data-testid="winner-tick-draw"
+                >
+                  ✓
+                </span>
+              )}
             </div>
             <div className="flex shrink-0 items-baseline tabular-nums">
-              {hasScore && <span className="w-10 text-right text-xs text-text-muted">—</span>}
+              {hasScore && <span className="w-9 text-right text-xs text-text-muted">—</span>}
               {showProjColBefore && (
                 <span className="w-12 text-right text-xs text-text-muted">—</span>
               )}
               {showPregameCol && (
                 <span
-                  className={`w-14 text-right text-[14px] font-normal text-text-muted ${
-                    hasScoreOrSets ? "ml-[18px]" : ""
+                  className={`w-12 text-right text-[14px] font-normal text-text-muted ${
+                    hasScoreOrSets ? "ml-[14px]" : ""
                   }`}
                 >
                   {card.pregame_draw_pct != null ? `${card.pregame_draw_pct}%` : "—"}
                 </span>
               )}
               <span
-                className={`ml-[10px] w-16 text-right font-bold ${
+                className={`ml-[10px] w-[58px] text-right ${
                   isDone
-                    ? finishedLevelDraw
-                      ? "text-[15px] text-accent-brand"
-                      : "text-[15px] font-normal text-text-muted"
-                    : "text-[16px] text-text-secondary"
+                    ? "text-[15px] font-normal text-text-muted"
+                    : "text-[16px] font-bold text-text-secondary"
                 }`}
               >
                 {drawPrimaryDisplay}
@@ -1050,7 +1088,7 @@ export default function EventCard183A({
 
         {/* Home row */}
         <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex min-w-0 items-center gap-2">
             <CrestBadge
               teamName={card.home_team}
               sport={card.sport}
@@ -1059,7 +1097,7 @@ export default function EventCard183A({
               color={card.home_color}
             />
             <span
-              className={`truncate text-[15px] ${
+              className={`truncate ${teamFontClass} ${
                 isDone && !homeWon && !finishedLevelDraw
                   ? "font-medium text-text-secondary"
                   : isDone && homeWon
@@ -1069,6 +1107,15 @@ export default function EventCard183A({
             >
               {homeShort}
             </span>
+            {homeWon && (
+              <span
+                className="shrink-0 text-[13px] font-extrabold text-accent-brand"
+                aria-label="Won"
+                data-testid="winner-tick-home"
+              >
+                ✓
+              </span>
+            )}
             {tennis && isLive && card.serving === "home" && (
               <span
                 className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent-brand"
@@ -1109,13 +1156,7 @@ export default function EventCard183A({
               </div>
             )}
             {hasScore && (
-              <span
-                className={`w-10 text-right text-[17px] font-semibold ${
-                  isDone && !homeWon && !finishedLevelDraw
-                    ? "text-text-secondary"
-                    : "text-text-primary"
-                }`}
-              >
+              <span className="w-9 text-right text-[17px] font-semibold text-text-primary">
                 {card.home_score}
               </span>
             )}
@@ -1126,20 +1167,22 @@ export default function EventCard183A({
             )}
             {showPregameCol && (
               <span
-                className={`w-14 text-right text-[14px] font-normal text-text-muted ${
-                  hasScoreOrSets ? "ml-[18px]" : ""
+                className={`w-12 text-right text-[14px] font-normal text-text-muted ${
+                  hasScoreOrSets ? "ml-[14px]" : ""
                 }`}
               >
                 {card.pregame_home_pct != null ? `${card.pregame_home_pct}%` : "—"}
               </span>
             )}
             <span
-              className={`ml-[10px] w-16 text-right font-bold ${
+              className={`ml-[10px] w-[58px] text-right ${
                 isDone
                   ? homeWon
-                    ? "text-[15px] text-accent-brand"
-                    : "text-[15px] font-normal text-text-muted"
-                  : "text-[18px]"
+                    ? "text-[18px] font-extrabold text-text-primary"
+                    : finishedLevelDraw
+                      ? "text-[18px] font-bold text-text-primary"
+                      : "text-[18px] font-medium text-text-muted"
+                  : "text-[18px] font-bold"
               }`}
               style={{
                 color:

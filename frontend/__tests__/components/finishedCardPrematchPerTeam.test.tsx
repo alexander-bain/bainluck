@@ -251,7 +251,7 @@ describe("the Discover FINAL card", () => {
 
     expect(printedPercent(html, "event-card-prematch-away")).toBe(40);
     expect(printedPercent(html, "event-card-prematch-home")).toBe(60);
-    expect(html).toContain("Pre-match");
+    expect(html).toContain("Pregame");
   });
 
   it("keeps the winner line the pre-match numbers sit under", () => {
@@ -267,7 +267,7 @@ describe("the Discover FINAL card", () => {
       })
     );
 
-    expect(html).toContain("Pre-match · sportsbooks");
+    expect(html).toContain("Pregame · sportsbooks");
   });
 
   it("speaks the same venue-free sentence as /sports, on both rungs", () => {

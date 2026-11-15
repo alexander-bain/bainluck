@@ -150,7 +150,7 @@ describe("notice 33 — the word the site may not print", () => {
   it("the Discover card says it the same way", () => {
     const html = renderDiscover(booksFinal());
 
-    expect(html).toContain("Pre-match · sportsbooks");
+    expect(html).toContain("Pregame · sportsbooks");
     expect(visibleText(html)).not.toMatch(BANNED);
   });
 

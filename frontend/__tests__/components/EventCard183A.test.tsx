@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import EventCard183A, {
   formatLiveTenthsPair,
   formatSingleLiveTenths,
+  sharedGameCardTeamFontClass,
   type UnifiedGameCardData,
 } from "@/components/EventCard183A";
 import { PIN_PATH } from "@/components/PinButton";
@@ -101,7 +102,7 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
     const pinWrap = byTestId("bookmark-pin-icon");
     expect(pinWrap).not.toBeNull();
     expect(pinWrap?.querySelector("path")?.getAttribute("d")).toBe(PIN_PATH);
-    expect(byTestId("ekg-feed-pulse")).not.toBeNull();
+    expect(byTestId("ekg-feed-pulse")).toBeNull();
     expect(byTestId("discover-game-reason-line")?.textContent).toContain(
       "A win locks Detroit into the NFC #1 seed entering Thanksgiving.",
     );
@@ -139,6 +140,7 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
     expect(byTestId("col-header-score")?.textContent).toBe("Score");
     expect(byTestId("col-header-pregame")?.textContent).toBe("Pregame");
     expect(byTestId("col-header-now")?.textContent).toBe("Now");
+    expect(byTestId("ekg-feed-pulse")).not.toBeNull();
     expect(host.textContent).toContain("34.2%");
     expect(host.textContent).toContain("65.8%");
     expect(byTestId("live-projected-once")?.textContent).toContain(
@@ -149,7 +151,7 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
     expect(host.textContent).not.toMatch(/venues/i);
   });
 
-  it("renders settled game with two rows, Score · Pregame · Final columns, Won ✓, and never 'Settled'", () => {
+  it("renders settled game matching the app: Pregame and Final columns (no separate Score column), Final shows the score, winner is ticked, and never 'Settled'", () => {
     render(
       <EventCard183A
         card={{
@@ -168,12 +170,27 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
       />,
     );
 
-    expect(byTestId("col-header-score")?.textContent).toBe("Score");
+    expect(byTestId("col-header-score")).toBeNull();
     expect(byTestId("col-header-pregame")?.textContent).toBe("Pregame");
     expect(byTestId("col-header-now")?.textContent).toBe("Final");
-    expect(host.textContent).toContain("Won ✓");
+    expect(byTestId("ekg-feed-pulse")).toBeNull();
+    expect(byTestId("winner-tick-home")?.textContent).toBe("✓");
+    expect(byTestId("winner-tick-away")).toBeNull();
+    expect(host.textContent).toContain("20");
+    expect(host.textContent).toContain("28");
+    expect(host.textContent).not.toContain("Won ✓");
     expect(byTestId("discover-191a-chart-panel")).not.toBeNull();
     expect(host.textContent).not.toMatch(/Settled/i);
+  });
+
+  it("shrinks both team names together on long college school names before cutting", () => {
+    expect(sharedGameCardTeamFontClass("Lions", "Patriots", true)).toBe("text-[15px]");
+    expect(sharedGameCardTeamFontClass("Washington", "Michigan State", true)).toBe(
+      "text-[13.5px]",
+    );
+    expect(sharedGameCardTeamFontClass("Alabama", "Mississippi State", true)).toBe(
+      "text-[12.5px]",
+    );
   });
 
   it("renders 187-A middle Draw row aligned across before, during, and level final on 3-way soccer", () => {
@@ -207,7 +224,7 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
     expect(drawRow?.textContent).toContain("27%");
     expect(byTestId("discover-game-reason-line")).toBeNull();
 
-    // Finished level 1–1: Draw row shows Draw ✓
+    // Finished level 1–1: Draw row gets winner-tick-draw ✓ while clubs show 1 and 1 under Final
     render(
       <EventCard183A
         card={{
@@ -231,7 +248,9 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
         surface="standard"
       />,
     );
-    expect(byTestId("soccer-187a-centered-draw")?.textContent).toContain("Draw ✓");
+    expect(byTestId("winner-tick-draw")?.textContent).toBe("✓");
+    expect(byTestId("col-header-score")).toBeNull();
+    expect(byTestId("col-header-now")?.textContent).toBe("Final");
   });
 
   it("renders score-first set-by-set tennis columns with serving indicator and no Proj. column", () => {
