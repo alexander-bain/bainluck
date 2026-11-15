@@ -54,13 +54,20 @@ final class Ruling201ChartScaleAndHeaderTests: XCTestCase {
             )
         }
 
-        // Soccer / draw-priced sports use 0 to 100
-        for drawSport in [
+        // Soccer and any draw-capable sport use 0 to 100
+        let drawSports = [
             "soccer_epl",
             "soccer_uefa_champs_league",
             "soccer_usa_mls",
             "soccer_spain_la_liga",
-        ] {
+            "cricket_test_match",
+            "cricket_ipl",
+            "boxing_boxing",
+            "rugbyunion_six_nations",
+            "rugbyleague_nrl",
+            "chess_fide",
+        ]
+        for drawSport in drawSports {
             XCTAssertTrue(
                 OddsChartView.usesZeroToHundredVerticalScale201(sportKey: drawSport),
                 "\(drawSport) prices a draw -> must use 0 to 100 scale"
@@ -87,11 +94,13 @@ final class Ruling201ChartScaleAndHeaderTests: XCTestCase {
         XCTAssertGreaterThan(fittedDiscover.lowerPercent, 0)
         XCTAssertLessThan(fittedDiscover.upperPercent, 100)
 
-        let drawDiscover = DiscoverPictureChartPanel191AView.verticalWindow201(
-            sportKey: "soccer_epl",
-            points: twoWayPoints
-        )
-        XCTAssertEqual(drawDiscover, ChartProbabilityAxis9483.full, "Soccer uses 0 to 100 full window")
+        for drawSport in drawSports {
+            let drawDiscover = DiscoverPictureChartPanel191AView.verticalWindow201(
+                sportKey: drawSport,
+                points: twoWayPoints
+            )
+            XCTAssertEqual(drawDiscover, ChartProbabilityAxis9483.full, "\(drawSport) uses 0 to 100 full window on Discover")
+        }
 
         // Fields of more than two (EvolutionChartView + Golf) use 0 to 100
         let sampleEntries: [EvolutionPoint] = [

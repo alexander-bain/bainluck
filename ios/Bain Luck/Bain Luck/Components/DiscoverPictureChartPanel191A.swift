@@ -478,7 +478,7 @@ struct DiscoverPictureChartPanel191AView: View {
         sportKey: String?,
         points: [DiscoverPictureChart191A.Point]
     ) -> ChartProbabilityAxis9483.Window {
-        if DrawPricedWinner.sportPricesADraw(sportKey) {
+        if OddsChartView.usesZeroToHundredVerticalScale201(sportKey: sportKey) {
             return ChartProbabilityAxis9483.full
         }
         let readings = points.map(\.probability)

@@ -5000,7 +5000,14 @@ extension OddsChartView {
     /// anything with a draw; for two teams or two players with no draw, keep the fitted
     /// vertical scale the live page uses today (`probabilityWindow9483`).
     nonisolated static func usesZeroToHundredVerticalScale201(sportKey: String?) -> Bool {
-        DrawPricedWinner.sportPricesADraw(sportKey)
+        if DrawPricedWinner.sportPricesADraw(sportKey) { return true }
+        guard let key = sportKey?.lowercased(), !key.isEmpty else { return false }
+        for prefix in ["soccer", "cricket", "boxing", "rugby", "rugbyunion", "rugbyleague", "chess"] {
+            if key == prefix || key.hasPrefix("\(prefix)_") {
+                return true
+            }
+        }
+        return false
     }
 
     /// This chart's axis plan for one Sources state, from the points it draws
