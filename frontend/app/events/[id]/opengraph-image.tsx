@@ -498,7 +498,11 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {shippableCrestBadge(awayTeam, event.sport_key || event.sport)}
+              {shippableCrestBadge(
+                awayTeam,
+                event.sport_key || event.sport,
+                event.away_team_data?.abbreviation,
+              )}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, color: awayNameColor }}>{awayTeam}</div>
             {awayHero !== null && (
@@ -535,7 +539,11 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {shippableCrestBadge(homeTeam, event.sport_key || event.sport)}
+              {shippableCrestBadge(
+                homeTeam,
+                event.sport_key || event.sport,
+                event.home_team_data?.abbreviation,
+              )}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, textAlign: "right", color: homeNameColor }}>{homeTeam}</div>
             {homeHero !== null && (

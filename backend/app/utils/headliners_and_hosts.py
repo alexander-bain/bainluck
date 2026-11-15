@@ -83,15 +83,15 @@ _EXCLUDED_STAGE_PROP_RE = re.compile(
 _STAGE_FAMILY_PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     (
         "big_game_halftime_performers",
-        "2027 Big Game halftime stage",
+        "Super Bowl halftime show",
         re.compile(
-            r"^(?!.*\bsongs?\b).*(?:big\s+game\s+halftime\s+show|championship\s+halftime\s+show)",
+            r"^(?!.*\bsongs?\b).*(?:super\s+bowl\s+(?:[ivxlcdm]+\s+)?halftime\s+show|big\s+game\s+halftime\s+show|championship\s+halftime\s+show)",
             re.IGNORECASE,
         ),
     ),
     (
         "ceremony_host",
-        "Ceremony host contenders",
+        "Ceremony host",
         re.compile(
             r"\b(?:host\s+the\s+\d*(?:st|nd|rd|th)?\s*(?:oscars|academy\s+awards|grammys|emmys|golden\s+globes)|oscars\s+host)\b",
             re.IGNORECASE,
@@ -99,7 +99,7 @@ _STAGE_FAMILY_PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     ),
     (
         "festival_headliners",
-        "Festival headliner watch",
+        "Festival headliners",
         re.compile(r"\b(?:coachella|glastonbury|lollapalooza)\b.*\bheadlin", re.IGNORECASE),
     ),
 )
@@ -245,6 +245,10 @@ def select_headliners_and_hosts(
         for out in m.get("outcomes") or ():
             if not isinstance(out, Mapping):
                 continue
+            out_status = str(out.get("status") or "").strip().lower()
+            out_result = str(out.get("result") or "").strip().lower()
+            if out_status in {"finalized", "settled", "closed"} or out_result in {"yes", "no"}:
+                continue
             art = _canonical_artist(out.get("name"))
             if not art:
                 continue
@@ -285,7 +289,7 @@ def select_headliners_and_hosts(
 
     contenders: list[StageContender] = []
     divergence_reasons: list[tuple[Any, ...]] = []
-    full_field_sum = 0.0
+    effective_max_prob = min(float(max_prob), 0.90) if multi_appearance else float(max_prob)
     for artist in sorted(all_artists):
         rows_for_blend = [
             {"source": s, "probability": by_source[s][1][artist]}
@@ -298,14 +302,13 @@ def select_headliners_and_hosts(
                 divergence_reasons.append(("contender_divergence_gate", family, artist))
                 continue
             prob = float(val)
-            full_field_sum += prob
             oid = by_source[primary_src][2].get(artist)
             if oid is None:
                 for s in sources_sorted:
                     if artist in by_source[s][2]:
                         oid = by_source[s][2][artist]
                         break
-            if min_prob <= prob <= max_prob:
+            if min_prob <= prob <= effective_max_prob:
                 contenders.append(
                     StageContender(
                         artist=artist,
@@ -317,10 +320,9 @@ def select_headliners_and_hosts(
         else:
             src_only = rows_for_blend[0]["source"]
             prob = float(rows_for_blend[0]["probability"])
-            full_field_sum += prob
             mkt_id = int(by_source[src_only][0]["id"])
             oid = by_source[src_only][2].get(artist)
-            if min_prob <= prob <= max_prob:
+            if min_prob <= prob <= effective_max_prob:
                 contenders.append(
                     StageContender(
                         artist=artist,
@@ -337,39 +339,33 @@ def select_headliners_and_hosts(
     if len(contenders) < max(2, int(min_contenders)):
         return RoundupRefusal([("insufficient_contenders", len(contenders), int(min_contenders))])
 
-    # Never normalize independent chances to 100%!
+    # Never normalize independent chances to 100%, and never print a summed total across separate markets (196-A)!
     contenders.sort(key=lambda c: (-c.probability, c.artist))
     shown = contenders[: max(2, int(max_card_rows))]
     top = shown[0]
-    field_sum_pct = int(round(full_field_sum * 100))
+    top_pct = int(round(top.probability * 100))
     if multi_appearance:
         dynamic_title = _assert_clean_copy(
-            f"{card_title} — {len(contenders)} contenders sum to {field_sum_pct}%"
+            "Who joins the Super Bowl halftime show"
+            if "halftime" in card_title.lower()
+            else f"Who joins {card_title}"
         )
         context_line = _assert_clean_copy(
-            f"{len(contenders)} artists priced at {int(round(min_prob * 100))}% or higher to appear on the "
-            f"{card_title} sum to {field_sum_pct}% combined — multiple guests can share the stage, "
-            f"so chances are independent and do not add to 100%."
+            f"{top.artist} leads at {top_pct}%. More than one guest can appear, "
+            f"so these do not add up to 100%."
         )
-        footer = _assert_clean_copy(
-            "Independent appearance chances · multiple performers can settle Yes"
-        )
+        footer = _assert_clean_copy("More than one guest can appear.")
     else:
         runner = shown[1]
         gap_pts = int(round((top.probability - runner.probability) * 100))
+        cand_title = f"{top.artist} leads {card_title.lower()}"
         dynamic_title = _assert_clean_copy(
-            f"{card_title} — {top.artist} leads at {int(round(top.probability * 100))}%"
+            cand_title if len(cand_title) <= 45 else card_title
         )
         context_line = _assert_clean_copy(
-            f"Leading contenders for {card_title} — {top.artist} leads at "
-            f"{int(round(top.probability * 100))}% ({gap_pts} pts ahead of {runner.artist}), "
-            f"and one choice settles Yes."
+            f"{top.artist} leads at {top_pct}%, {gap_pts} points ahead of {runner.artist}."
         )
-        # Displayed rows are filtered by min_prob and capped at max_card_rows, so never
-        # claim the displayed subset itself sums to 100%.
-        footer = _assert_clean_copy(
-            "Single-winner market · mutually exclusive contenders"
-        )
+        footer = _assert_clean_copy("One host is chosen.")
 
     rows = []
     used_oids: set[int] = set()

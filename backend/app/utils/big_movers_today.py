@@ -24,6 +24,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from app.utils.candidate_editorial_copy import (
+    BRACKET_RE,
+    EDITORIAL_JARGON_RE,
+    plain_market_subject,
+)
 from app.utils.container_presentation import market_destination
 from app.utils.roundup_containers import (
     RoundupMembers,
@@ -191,12 +196,10 @@ def _clean_market_subject(market_name: str, outcome_name: str) -> Optional[str]:
         return None
     if _FORBIDDEN_COPY_RE.search(m_clean) or _FORBIDDEN_COPY_RE.search(o_clean):
         return None
-    low_out = o_clean.lower()
-    if low_out in {"no", "other", "none", "field"} or low_out.startswith("not "):
+    plain = plain_market_subject(m_clean, o_clean)
+    if not plain or BRACKET_RE.search(plain) or EDITORIAL_JARGON_RE.search(plain):
         return None
-    if low_out == "yes" or low_out == m_clean.lower():
-        return m_clean
-    return f"{m_clean} — {o_clean}"
+    return plain
 
 
 def _parse_delta_fraction(raw: Any) -> Optional[float]:
@@ -327,34 +330,14 @@ def select_big_movers_today(
     )
     shown = ordered[: max(2, int(max_card_rows))]
     top = shown[0]
-    top_sign = f"+{top.signed_delta_pts}" if top.signed_delta_pts > 0 else f"{top.signed_delta_pts}"
-    min_pts_int = int(round(min_abs_delta * 100))
     top_now_pct = int(round(top.probability * 100))
-    top_prior_pct = max(1, min(99, top_now_pct - top.signed_delta_pts))
-    up_count = sum(1 for c in shown if c.signed_delta_pts > 0)
-    down_count = len(shown) - up_count
-    balance_note = (
-        f" ({up_count} climbing, {down_count} sliding)"
-        if up_count > 0 and down_count > 0
-        else ""
-    )
-    biggest_drop = next((c for c in shown[1:] if c.signed_delta_pts < 0), None)
-    drop_tail = (
-        f" while {biggest_drop.display_label} slipped {abs(biggest_drop.signed_delta_pts)} pts "
-        f"to {int(round(biggest_drop.probability * 100))}%"
-        if biggest_drop is not None and top.signed_delta_pts > 0
-        else ""
-    )
+    verb = "jumped" if top.signed_delta_pts > 0 else "dropped"
 
-    card_title = _assert_clean_copy(f"Biggest 24-hour swings — led by {top_sign} pts")
+    card_title = _assert_clean_copy("Today's biggest moves")
     context_line = _assert_clean_copy(
-        f"Actively trading markets with {min_pts_int}+ points of 24-hour movement"
-        f"{balance_note} — led by {top.display_label} "
-        f"({top_sign} pts to {top_now_pct}% from {top_prior_pct}% yesterday){drop_tail}."
+        f"{top.display_label} {verb} {top.abs_delta_pts} points to {top_now_pct}%."
     )
-    footer = _assert_clean_copy(
-        "24-hour shift in percentage points · actively trading markets only"
-    )
+    footer = _assert_clean_copy("24-hour move in points.")
 
     rows = []
     for c in shown:
@@ -362,7 +345,7 @@ def select_big_movers_today(
         rows.append(
             {
                 "market_id": c.market_id,
-                "label": _assert_clean_copy(f"{c.display_label} ({pts_text})"),
+                "label": _assert_clean_copy(f"{c.display_label} · {pts_text}"),
                 "subject": _assert_clean_copy(c.display_label),
                 "outcome": c.outcome_name,
                 "category": c.category,

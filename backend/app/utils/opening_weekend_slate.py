@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from app.utils.candidate_editorial_copy import number_word
 from app.utils.container_presentation import market_destination
 from app.utils.roundup_containers import (
     RoundupMembers,
@@ -54,6 +55,33 @@ CANDIDATE_OPENING_WEEKEND_SLATE_PATH = _CANDIDATES_DIR / "roundup-opening-weeken
 CANDIDATE_OPENING_WEEKEND_SLATE_ROWS_PATH = (
     _CANDIDATES_DIR / "roundup-opening-weekend-slate-rows.json"
 )
+BOX_OFFICE_RECORDS_PATH = (
+    Path(__file__).resolve().parents[2] / "data" / "discover" / "box_office_records.json"
+)
+
+
+def _load_domestic_opening_record() -> tuple[float, str]:
+    data = json.loads(BOX_OFFICE_RECORDS_PATH.read_text(encoding="utf-8"))
+    rec = data["domestic_opening_weekend"]
+    return float(rec["gross_usd_millions"]), str(rec["display_gross"])
+
+
+def _bracket_sort_millions(bracket_label: str) -> tuple[float, float]:
+    """Return (midpoint_millions, lower_bound_millions) for sorting largest openings first."""
+    m_range = re.match(r"^\$(\d+(?:\.\d+)?)([MB])–\$(\d+(?:\.\d+)?)([MB])$", bracket_label)
+    if m_range:
+        lo = float(m_range.group(1)) * (1000.0 if m_range.group(2) == "B" else 1.0)
+        hi = float(m_range.group(3)) * (1000.0 if m_range.group(4) == "B" else 1.0)
+        return ((lo + hi) / 2.0, lo)
+    m_plus = re.match(r"^\$(\d+(?:\.\d+)?)([MB])\+$", bracket_label)
+    if m_plus:
+        lo = float(m_plus.group(1)) * (1000.0 if m_plus.group(2) == "B" else 1.0)
+        return (lo, lo)
+    m_under = re.match(r"^Under \$(\d+(?:\.\d+)?)([MB])$", bracket_label)
+    if m_under:
+        hi = float(m_under.group(1)) * (1000.0 if m_under.group(2) == "B" else 1.0)
+        return (hi / 2.0, 0.0)
+    return (0.0, 0.0)
 
 _FORBIDDEN_COPY_RE = re.compile(
     r"\b(?:questions?|stale|venues?|kalshi|polymarket|opened)\b",
@@ -295,46 +323,46 @@ def select_opening_weekend_slate(
             [("insufficient_trading_opening_films", len(films_by_key), int(min_films))]
         )
 
-    # Order by sharpest contested bracket near 50% (tie-breaking by 24h trading activity)
+    # Order by expected opening-weekend gross descending so major tentpoles lead the card
     ordered = sorted(
         films_by_key.values(),
-        key=lambda f: (-f.volume_24h, abs(f.probability - 0.5), f.film_title),
+        key=lambda f: (-_bracket_sort_millions(f.bracket_label)[0], -f.volume_24h, f.film_title),
     )
     shown = ordered[: max(2, int(max_card_rows))]
     lead = shown[0]
-    blockbuster = next(
-        (f for f in shown if "$400M+" in f.bracket_label or "$360M" in f.bracket_label),
-        None,
-    )
-    if blockbuster is not None and blockbuster.market_id != lead.market_id:
+    lead_pct = int(round(lead.probability * 100))
+    record_millions, record_display = _load_domestic_opening_record()
+    _, lead_floor_millions = _bracket_sort_millions(lead.bracket_label)
+    n_other = len(shown) - 1
+    other_word = number_word(n_other, capitalize=True)
+    other_noun = "opening is" if n_other == 1 else "openings are"
+
+    if lead_floor_millions > record_millions and lead.bracket_label.endswith("+"):
+        floor_tok = lead.bracket_label[:-1]
+        cand_title = f"{lead.film_title} is {lead_pct}% to open above {floor_tok}"
         card_title = _assert_clean_copy(
-            f"Box office openings — {lead.bracket_label} to {blockbuster.bracket_label}"
+            cand_title if len(cand_title) <= 45 else "Opening-weekend box office forecasts"
         )
         context_line = _assert_clean_copy(
-            f"{len(shown)} upcoming wide releases with active opening-weekend brackets "
-            f"(2nd-weekend holdovers excluded) — led by {lead.film_title} "
-            f"({lead.bracket_label} at {int(round(lead.probability * 100))}%) up to "
-            f"{blockbuster.film_title} ({blockbuster.bracket_label} at "
-            f"{int(round(blockbuster.probability * 100))}%, above the $357M all-time domestic opening record)."
+            f"That would beat the record {record_display} opening. "
+            f"{other_word} other {other_noun} priced too."
         )
     else:
-        card_title = "Opening-weekend box office forecasts"
+        second = shown[1]
+        second_pct = int(round(second.probability * 100))
+        card_title = _assert_clean_copy("Opening-weekend box office forecasts")
         context_line = _assert_clean_copy(
-            f"Actively trading domestic opening-weekend box office brackets across {len(shown)} "
-            f"upcoming releases (2nd-weekend holdovers excluded), showing each film's likeliest "
-            f"gross range — led by {lead.film_title} ({lead.bracket_label} at "
-            f"{int(round(lead.probability * 100))}%)."
+            f"{lead.film_title} leads at {lead_pct}% for {lead.bracket_label}. "
+            f"{second.film_title} is {second_pct}% for {second.bracket_label}."
         )
-    footer = _assert_clean_copy(
-        "Most likely domestic opening-weekend bracket · actively trading film markets"
-    )
+    footer = _assert_clean_copy("Domestic opening-weekend forecast.")
 
     rows = [
         {
             "market_id": f.market_id,
             "film": _assert_clean_copy(f.film_title),
             "bracket": _assert_clean_copy(f.bracket_label),
-            "label": _assert_clean_copy(f"{f.film_title} — {f.bracket_label}"),
+            "label": _assert_clean_copy(f"{f.film_title} · {f.bracket_label}"),
             "probability": round(f.probability, 4),
             "rendered_percent": int(round(f.probability * 100)),
             "destination": market_destination(f.market_id),

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from app.utils.candidate_editorial_copy import display_award_leader
 from app.utils.container_presentation import market_destination
 from app.utils.futures_source_merge import blend_with_verdict
 from app.utils.roundup_containers import (
@@ -377,33 +378,40 @@ def select_ceremony_award_categories(
     shown = category_rows[: max(2, int(max_card_rows))]
     lead = shown[0]
     most_open = min(shown, key=lambda r: r.probability)
-    widest = max(shown, key=lambda r: r.probability)
+    lead_short = display_award_leader(lead.leader_name)
+    lead_pct = int(round(lead.probability * 100))
+    open_pct = int(round(most_open.probability * 100))
 
     stage_word = "Winner" if target_stage == "winner" else "Nomination"
-    card_title = f"{ceremony_title} — {len(category_rows)} categories actively trading"
-    if most_open.category_key != lead.category_key and widest.probability - most_open.probability >= 0.25:
-        tail_clause = (
-            f", while {most_open.category_label} is wide open at "
-            f"{int(round(most_open.probability * 100))}% and {widest.category_label} "
-            f"reaches {int(round(widest.probability * 100))}%"
+    candidate_title = f"{lead_short} leads {lead.category_label}"
+    card_title = (
+        candidate_title
+        if len(candidate_title) <= 45
+        else f"{ceremony_title} frontrunners"
+    )
+    if most_open.category_key != lead.category_key:
+        context_line = _assert_clean_copy(
+            f"{lead_short} is at {lead_pct}%. "
+            f"{most_open.category_label} is wide open at {open_pct}%."
         )
     else:
-        tail_clause = ""
-    context_line = _assert_clean_copy(
-        f"Only {len(category_rows)} {ceremony_title} {stage_word} categories have active "
-        f"trading today ($0-volume categories excluded) — led by "
-        f"{lead.category_label} ({lead.leader_name}, {int(round(lead.probability * 100))}%){tail_clause}."
-    )
+        context_line = _assert_clean_copy(
+            f"{lead_short} leads {lead.category_label} at {lead_pct}%."
+        )
     footer = _assert_clean_copy(
-        f"Single-winner {ceremony_title} categories · frontrunner chance per category"
+        "One winner per category."
+        if target_stage == "winner"
+        else "Nominees per category."
     )
 
     rows = [
         {
             "market_id": r.primary_market_id,
             "category_label": _assert_clean_copy(r.category_label),
-            "leader": _assert_clean_copy(r.leader_name),
-            "label": _assert_clean_copy(f"{r.category_label} — {r.leader_name}"),
+            "leader": _assert_clean_copy(display_award_leader(r.leader_name)),
+            "label": _assert_clean_copy(
+                f"{r.category_label} · {display_award_leader(r.leader_name)}"
+            ),
             "probability": round(r.probability, 4),
             "rendered_percent": int(round(r.probability * 100)),
             "destination": market_destination(r.primary_market_id),

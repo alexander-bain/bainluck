@@ -557,7 +557,7 @@ function SearchContent() {
       {/* Games section */}
       {hasEvents && (
         <section className="mb-8">
-          <SectionHeader title="Games" count={results.pagination.total_results} />
+          <SectionHeader title={results.game_set?.title ?? "Games"} count={results.pagination.total_results} />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {liveEvents.map((event, index) => (
               <div key={event.id} onClick={() => {

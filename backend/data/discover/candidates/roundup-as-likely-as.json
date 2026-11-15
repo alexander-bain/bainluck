@@ -6,13 +6,13 @@
     "yardstick"
   ],
   "level": "related",
-  "kicker": "PERSPECTIVE · AS LIKELY AS",
-  "name": "Around a 46% chance right now",
+  "kicker": "PERSPECTIVE \u00b7 AS LIKELY AS",
+  "name": "As likely as",
   "category": "general",
   "tag": "PERSPECTIVE",
   "section_title": "Unrelated events priced at nearly the same chance",
   "subtitle": "One actively trading item per domain priced within 1.5 percentage points of the same probability band.",
-  "footer": "Independent markets across distinct domains · matched within ±1.5 points",
+  "footer": "Separate events near the same chance.",
   "score": 92.5,
   "rule": {
     "producer": "cross_domain_yardsticks",
