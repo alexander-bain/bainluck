@@ -6,7 +6,7 @@ function makeRoundupPayload(caption?: unknown) {
     slug: "celtics-next-3-games",
     revision: 42,
     edition: null,
-    subtitle: "Combined win probability · next 3 games in schedule order",
+    subtitle: "Next 3 games in schedule order",
     caption,
     container: {
       id: 1001,
