@@ -53,13 +53,16 @@ async def test_eval_rows_seat_priced_streaks_and_refuse_unpriced_games() -> None
     assert seated_ids == pack["expected_event_ids"]
     assert 990001 not in seated_ids
 
-    assert res.rows[0]["label"] == "San Antonio Spurs (W11) · at Utah Jazz"
+    assert res.rows[0]["label"] == "Spurs, 11 straight · at Jazz"
     assert res.rows[0]["rendered_percent"] == 89
     assert res.rows[0]["destination"]["web"] == "/events/15344692"
 
     feed_item, container = compose_team_streaks_card_and_container(producer, res)
     ctx = feed_item["context_summary"]
-    assert "San Antonio Spurs (W11, 89% to reach W12 at Utah Jazz)" in ctx
+    assert "The Spurs have won 11 straight and are 89% to make it 12." in ctx
+    assert "The Lions are the shakiest at 57%." in ctx
+    assert "18% chance" not in (feed_item["data"]["roundup"]["footer"] or "")
+    assert "survive" not in (feed_item["data"]["roundup"]["footer"] or "").lower()
     assert not FORBIDDEN_COPY_RE.search(ctx)
     assert container["context_line"] == ctx
     assert container["sections"][0]["members"][0]["type"] == "event"

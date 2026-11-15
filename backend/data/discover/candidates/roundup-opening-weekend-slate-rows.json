@@ -12,10 +12,22 @@
       "volume_24h": 27745.39,
       "updated_at": "2026-11-14T06:37:33+00:00",
       "outcomes": [
-        {"name": "16m-19m", "probability": 0.5574},
-        {"name": "19m-22m", "probability": 0.3556},
-        {"name": "<16m", "probability": 0.0586},
-        {"name": "22m-25m", "probability": 0.0274}
+        {
+          "name": "16m-19m",
+          "probability": 0.5574
+        },
+        {
+          "name": "19m-22m",
+          "probability": 0.3556
+        },
+        {
+          "name": "<16m",
+          "probability": 0.0586
+        },
+        {
+          "name": "22m-25m",
+          "probability": 0.0274
+        }
       ]
     },
     {
@@ -26,10 +38,22 @@
       "volume_24h": 12475.62,
       "updated_at": "2026-11-13T18:35:36+00:00",
       "outcomes": [
-        {"name": "400m+", "probability": 0.5737},
-        {"name": "360m-400m", "probability": 0.2522},
-        {"name": "340m-360m", "probability": 0.1039},
-        {"name": "300m-340m", "probability": 0.0593}
+        {
+          "name": "400m+",
+          "probability": 0.5737
+        },
+        {
+          "name": "360m-400m",
+          "probability": 0.2522
+        },
+        {
+          "name": "340m-360m",
+          "probability": 0.1039
+        },
+        {
+          "name": "300m-340m",
+          "probability": 0.0593
+        }
       ]
     },
     {
@@ -40,9 +64,18 @@
       "volume_24h": 6115.16,
       "updated_at": "2026-11-13T18:35:36+00:00",
       "outcomes": [
-        {"name": "105m+", "probability": 0.9348},
-        {"name": "90m-105m", "probability": 0.048},
-        {"name": "<90m", "probability": 0.0172}
+        {
+          "name": "105m+",
+          "probability": 0.9348
+        },
+        {
+          "name": "90m-105m",
+          "probability": 0.048
+        },
+        {
+          "name": "<90m",
+          "probability": 0.0172
+        }
       ]
     },
     {
@@ -53,10 +86,22 @@
       "volume_24h": 1573.28,
       "updated_at": "2026-11-13T18:35:36+00:00",
       "outcomes": [
-        {"name": "110m-130m", "probability": 0.3859},
-        {"name": "90m-110m", "probability": 0.2494},
-        {"name": "130m+", "probability": 0.2118},
-        {"name": "70m-90m", "probability": 0.1176}
+        {
+          "name": "110m-130m",
+          "probability": 0.3859
+        },
+        {
+          "name": "90m-110m",
+          "probability": 0.2494
+        },
+        {
+          "name": "130m+",
+          "probability": 0.2118
+        },
+        {
+          "name": "70m-90m",
+          "probability": 0.1176
+        }
       ]
     },
     {
@@ -67,9 +112,18 @@
       "volume_24h": 12828.14,
       "updated_at": "2026-11-14T06:37:33+00:00",
       "outcomes": [
-        {"name": "8m-9m", "probability": 0.6515},
-        {"name": "9m-10m", "probability": 0.2013},
-        {"name": "<8m", "probability": 0.1171}
+        {
+          "name": "8m-9m",
+          "probability": 0.6515
+        },
+        {
+          "name": "9m-10m",
+          "probability": 0.2013
+        },
+        {
+          "name": "<8m",
+          "probability": 0.1171
+        }
       ]
     },
     {
@@ -80,17 +134,26 @@
       "volume_24h": 0.0,
       "updated_at": "2026-10-12T17:35:27+00:00",
       "outcomes": [
-        {"name": "Above 45", "probability": 0.975},
-        {"name": "Above 60", "probability": 0.89},
-        {"name": "Above 75", "probability": 0.68}
+        {
+          "name": "Above 45",
+          "probability": 0.975
+        },
+        {
+          "name": "Above 60",
+          "probability": 0.89
+        },
+        {
+          "name": "Above 75",
+          "probability": 0.68
+        }
       ]
     }
   ],
   "expected_member_ids": [
-    69847041,
     68365230,
+    68365233,
     65875241,
-    68365233
+    69847041
   ],
   "excluded_ids": [
     70081374,

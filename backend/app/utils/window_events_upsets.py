@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from app.utils.candidate_editorial_copy import number_word, short_team_name
 from app.utils.container_presentation import event_destination
 from app.utils.roundup_containers import (
     RoundupMembers,
@@ -36,11 +37,13 @@ from app.utils.window_events_closest import resolve_window
 __all__ = [
     "CANDIDATE_UPSETS_BREWING_PATH",
     "CANDIDATE_UPSETS_BREWING_ROWS_PATH",
+    "FEATURED_UPSET_SPORTS",
     "PRODUCER_KIND_WINDOW_EVENTS_UPSETS",
     "UpsetStanding",
     "build_upsets_brewing_grading_candidate",
     "build_window_events_upsets_producer",
     "compose_upsets_brewing_card_and_container",
+    "is_featured_upset_sport",
     "load_candidate_definition",
     "load_candidate_eval_rows",
     "produce_window_events_upsets",
@@ -48,6 +51,36 @@ __all__ = [
 ]
 
 PRODUCER_KIND_WINDOW_EVENTS_UPSETS = "window_events_upsets"
+
+FEATURED_UPSET_SPORTS: frozenset[str] = frozenset(
+    {
+        "basketball_nba",
+        "americanfootball_nfl",
+        "baseball_mlb",
+        "icehockey_nhl",
+        "basketball_ncaab",
+        "americanfootball_ncaaf",
+        "basketball_wnba",
+        "soccer_epl",
+        "soccer_uefa_champs_league",
+        "soccer_spain_la_liga",
+        "soccer_italy_serie_a",
+        "soccer_germany_bundesliga",
+        "soccer_france_ligue_one",
+        "soccer_usa_mls",
+        "soccer_fifa_world_cup",
+        "mma_mixed_martial_arts",
+        "tennis_atp",
+        "tennis_wta",
+    }
+)
+
+
+def is_featured_upset_sport(sport_raw: Any) -> bool:
+    sp = str(sport_raw or "").strip().lower()
+    if sp in FEATURED_UPSET_SPORTS:
+        return True
+    return sp.startswith(("tennis_atp_", "tennis_wta_"))
 
 CANDIDATE_UPSETS_BREWING_PATH = (
     Path(__file__).resolve().parents[2]
@@ -74,6 +107,8 @@ _FORBIDDEN_COPY_RE = re.compile(
 @dataclass(frozen=True)
 class UpsetStanding:
     event_id: int
+    sport: str
+    is_featured: bool
     underdog_team: str
     favorite_team: str
     underdog_score: Optional[int]
@@ -164,10 +199,15 @@ def _extract_upset_candidate(
         return None
 
     period_raw = str(card.get("status_detail") or card.get("period") or "").strip()
+    sport_str = str(card.get("sport") or card.get("sport_key") or "").strip().lower()
+    dog_short = short_team_name(dog_team, sport_str) or dog_team
+    fav_short = short_team_name(fav_team, sport_str) or fav_team
     return UpsetStanding(
         event_id=int(card["id"]),
-        underdog_team=dog_team,
-        favorite_team=fav_team,
+        sport=sport_str,
+        is_featured=is_featured_upset_sport(sport_str),
+        underdog_team=dog_short,
+        favorite_team=fav_short,
         underdog_score=dog_score,
         favorite_score=fav_score,
         period_label=period_raw or None,
@@ -186,6 +226,7 @@ def select_window_events_upsets(
     min_live_prob: float = 0.50,
     min_members: int = 3,
     max_card_rows: int = 4,
+    min_featured_leagues: int = 2,
 ) -> RoundupMembers | RoundupRefusal:
     candidates: list[UpsetStanding] = []
     seen_ids: set[int] = set()
@@ -202,26 +243,54 @@ def select_window_events_upsets(
     if len(candidates) < max(2, int(min_members)):
         return RoundupRefusal([("insufficient_live_upsets", len(candidates), int(min_members))])
 
-    candidates.sort(key=lambda c: (-c.swing_points, -c.live_prob, c.event_id))
+    featured_total = sum(1 for c in candidates if c.is_featured)
+    if featured_total < int(min_featured_leagues):
+        return RoundupRefusal(
+            [("insufficient_featured_league_upsets", featured_total, int(min_featured_leagues))]
+        )
+
+    candidates.sort(
+        key=lambda c: (-int(c.is_featured), -c.swing_points, -c.live_prob, c.event_id)
+    )
     shown = candidates[: max(2, int(max_card_rows))]
 
-    pre_cap_pct = int(round(max_pregame_prob * 100))
     top = shown[0]
     top_pre_pct = int(round(top.pregame_prob * 100))
     top_live_pct = int(round(top.live_prob * 100))
-    card_title = _assert_clean_copy(
-        f"{len(candidates)} live underdogs flipping pregame odds"
-    )
-    context_line = _assert_clean_copy(
-        f"{len(candidates)} live games where an underdog at {pre_cap_pct}% or lower pregame "
-        f"now leads or holds at least a 50% win chance — {top.underdog_team} leads the slate "
-        f"at +{top.swing_points} pts from pregame ({top_pre_pct}% to {top_live_pct}%)."
-    )
-    footer = _assert_clean_copy(
-        f"Live win chance · swings in points from pregame · {len(shown)} of {len(candidates)} live upsets"
-        if len(shown) < len(candidates)
-        else f"Live win chance · swings in points from pregame · all {len(candidates)} live upsets"
-    )
+    is_plural = top.underdog_team.endswith("s") and top.underdog_team not in {
+        "Jazz",
+        "Wild",
+        "Heat",
+        "Magic",
+        "Thunder",
+        "Lightning",
+        "Kraken",
+        "Avalanche",
+        "Ole Miss",
+    }
+    card_title = _assert_clean_copy(f"{number_word(len(shown))} upsets in progress")
+    if top.underdog_score is not None and top.favorite_score is not None and top.leads_score:
+        score_lead = f"Up {top.underdog_score}–{top.favorite_score}"
+        if is_plural:
+            context_line = _assert_clean_copy(
+                f"The {top.underdog_team} were {top_pre_pct}% before the game. "
+                f"{score_lead}, they are {top_live_pct}%."
+            )
+        else:
+            context_line = _assert_clean_copy(
+                f"{top.underdog_team} was {top_pre_pct}% before the game. "
+                f"{score_lead}, it is {top_live_pct}%."
+            )
+    else:
+        if is_plural:
+            context_line = _assert_clean_copy(
+                f"The {top.underdog_team} were {top_pre_pct}% before the game and are {top_live_pct}% now."
+            )
+        else:
+            context_line = _assert_clean_copy(
+                f"{top.underdog_team} was {top_pre_pct}% before the game and is {top_live_pct}% now."
+            )
+    footer = _assert_clean_copy("Live win chance.")
 
     rows: list[dict[str, Any]] = []
     for c in shown:
@@ -235,7 +304,7 @@ def select_window_events_upsets(
         row: dict[str, Any] = {
             "event_id": c.event_id,
             "label": _assert_clean_copy(
-                f"{c.underdog_team}{score_part} vs {c.favorite_team} (+{c.swing_points} pts from {pre_pct}% pregame)"
+                f"{c.underdog_team}{score_part} vs {c.favorite_team} · +{c.swing_points} pts"
             ),
             "underdog": c.underdog_team,
             "favorite": c.favorite_team,

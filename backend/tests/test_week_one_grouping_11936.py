@@ -708,7 +708,7 @@ class TestPrimitivesInvariantsAndFolderLoading:
                         "observed_at": "2026-11-06T22:00:00Z",
                     }
                 ],
-                footer="Combined probability · the 4 closest of 12 games tonight",
+                footer="The 4 closest of 12 games tonight",
             )
 
         async def _hanging_middle(_db: Any) -> Any:
@@ -724,7 +724,7 @@ class TestPrimitivesInvariantsAndFolderLoading:
             kind="roundup",
             category="sports",
             section_title="The 4 closest games",
-            footer="Combined probability · the 4 closest of 12 games tonight",
+            footer="The 4 closest of 12 games tonight",
             produce=_fast_first,
         )
         p2 = RoundupProducer(
@@ -891,7 +891,7 @@ class TestPrimitivesInvariantsAndFolderLoading:
             kind="roundup",
             category="sports",
             section_title="The 4 closest games",
-            footer="Combined probability · the 4 closest of 12 games tonight",
+            footer="The 4 closest of 12 games tonight",
             produce=_slow_first,
         )
         monkeypatch.setattr(
