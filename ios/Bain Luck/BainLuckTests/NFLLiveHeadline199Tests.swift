@@ -218,13 +218,6 @@ final class NFLLiveHeadline199Tests: XCTestCase {
         """)
     }
 
-    private func hostForMeasurement<V: View>(_ view: V, at dt: DynamicTypeSize) -> UIHostingController<AnyView> {
-        let wrapped = AnyView(view.environment(\.dynamicTypeSize, dt))
-        let host = UIHostingController(rootView: wrapped)
-        host.loadViewIfNeeded()
-        return host
-    }
-
     // MARK: - Ruling 200-B Live NFL Model & Pregame Line Tests
 
     func testNFLLiveHeadlineUsesRuling200BThreeColumnsAndSinglePregameLine() throws {
