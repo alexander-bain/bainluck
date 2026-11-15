@@ -4,10 +4,10 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import FuturesMarket, FuturesOutcome
+from app.models.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.tasks.prediction_market_matching import _write_live_polymarket_child
 from tests.integration.test_polymarket_refused_leg_withdrawn_9399_real_postgres import (
     engine as engine,
@@ -63,16 +63,29 @@ def quote_values():
 
 async def test_success_is_not_followed_by_an_unguarded_orm_flush(engine):
     oid, _, stamp = await seed(engine)
+    values = quote_values()
     async with AsyncSession(engine, expire_on_commit=False) as session:
         outcome = await session.get(FuturesOutcome, oid)
         grade_before = (outcome.is_winner, outcome.resolution_source)
         assert await _write_live_polymarket_child(
-            session, outcome, CONDITION, quote_values()
+            session, outcome, CONDITION, values, last_price=0.52
         )
         assert outcome not in session.dirty
         assert outcome.current_probability == 0.83
         assert outcome.price_changed_at > stamp
         assert (outcome.is_winner, outcome.resolution_source) == grade_before
+        snapshots = (
+            await session.scalars(
+                select(FuturesOddsSnapshot).where(FuturesOddsSnapshot.outcome_id == oid)
+            )
+        ).all()
+        assert len(snapshots) == 1
+        assert snapshots[0].bookmaker == "polymarket"
+        assert float(snapshots[0].probability) == 0.83
+        assert float(snapshots[0].yes_bid) == 0.82
+        assert float(snapshots[0].yes_ask) == 0.84
+        assert float(snapshots[0].last_price) == 0.52
+        assert snapshots[0].captured_at == values["last_updated"]
         await session.commit()
     async with AsyncSession(engine) as session:
         outcome = await session.get(FuturesOutcome, oid)
@@ -92,6 +105,13 @@ async def test_unchanged_stored_price_keeps_its_move_time(engine, probability):
         assert await _write_live_polymarket_child(session, outcome, CONDITION, values)
         assert outcome.price_changed_at == stamp
         assert outcome.last_updated > stamp
+        snapshots = (
+            await session.scalars(
+                select(FuturesOddsSnapshot).where(FuturesOddsSnapshot.outcome_id == oid)
+            )
+        ).all()
+        assert len(snapshots) == 1
+        assert snapshots[0].captured_at == values["last_updated"]
         assert outcome not in session.dirty
         await session.commit()
     async with AsyncSession(engine) as session:
@@ -155,6 +175,9 @@ async def test_a_concurrent_writer_or_grade_wins(engine, mutation):
             select(FuturesOutcome.current_probability).where(FuturesOutcome.id == oid)
         )
         assert float(actual) == (0.21 if mutation == "price" else 0.19)
+        assert (
+            await conn.scalar(select(func.count()).select_from(FuturesOddsSnapshot))
+        ) == 0
 
 
 async def test_rollback_preserves_the_prior_price_and_observation(engine):
@@ -169,3 +192,6 @@ async def test_rollback_preserves_the_prior_price_and_observation(engine):
         outcome = await session.get(FuturesOutcome, oid)
         assert float(outcome.current_probability) == 0.19
         assert outcome.last_updated == stamp
+        assert (
+            await session.scalar(select(func.count()).select_from(FuturesOddsSnapshot))
+        ) == 0

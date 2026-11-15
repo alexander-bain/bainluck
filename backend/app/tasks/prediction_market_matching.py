@@ -10996,10 +10996,17 @@ def _live_polymarket_quote(
 
 
 async def _write_live_polymarket_child(
-    session: Any, outcome: Any, condition_id: str, values: dict[str, Any]
+    session: Any,
+    outcome: Any,
+    condition_id: str,
+    values: dict[str, Any],
+    *,
+    last_price: float | None = None,
 ) -> bool:
-    """Do not replace a newer quote, grade or changed identity after the read."""
-    from app.models.models import FuturesMarket, FuturesOutcome
+    """Conditionally write a quote and its observation in the caller's transaction."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
     from app.utils.price_change_stamp import price_changed_at_value
 
     statement = (
@@ -11053,6 +11060,20 @@ async def _write_live_polymarket_child(
     written = result.first()
     if written is None:
         return False
+    # The same helper owns the delta and its evidence. A refused write records
+    # neither, and the existing caller rollback removes both on any failure.
+    await session.execute(
+        pg_insert(FuturesOddsSnapshot).values(
+            outcome_id=outcome.id,
+            bookmaker="polymarket",
+            probability=values["current_probability"],
+            american_odds=values["current_american_odds"],
+            yes_bid=values["current_yes_bid"],
+            yes_ask=values["current_yes_ask"],
+            last_price=last_price,
+            captured_at=values["last_updated"],
+        )
+    )
     # The Core write is authoritative; never flush a second, unguarded ORM
     # assignment over a socket update before the existing market commit.
     for key, value in values.items():
@@ -12542,7 +12563,10 @@ async def _poll_live_prediction_market_prices():
                                 }
                                 if token_side is not None:
                                     if not await _write_live_polymarket_child(
-                                        session, outcome, condition_id, values
+                                        session, outcome, condition_id, values,
+                                        last_price=(
+                                            float(ltp) if ltp is not None else None
+                                        ),
                                     ):
                                         stats["polymarket_children_changed_row"] = (
                                             stats.get(
@@ -12571,26 +12595,24 @@ async def _poll_live_prediction_market_prices():
                                     received_at=seen_event_times[poly_event_id],
                                 )
 
-                                # Write FuturesOddsSnapshot for chart history
-                                best_bid_val = (
-                                    float(best_bid) if best_bid is not None else None
-                                )
-                                best_ask_val = (
-                                    float(best_ask) if best_ask is not None else None
-                                )
-                                ltp_val = float(ltp) if ltp is not None else None
-                                await session.execute(
-                                    pg_insert(FuturesOddsSnapshot).values(
-                                        outcome_id=outcome.id,
-                                        bookmaker="polymarket",
-                                        probability=prob,
-                                        american_odds=american,
-                                        yes_bid=best_bid_val,
-                                        yes_ask=best_ask_val,
-                                        last_price=ltp_val,
-                                        captured_at=now,
+                                # Children already recorded this observation in
+                                # their conditional writer; the bare row retains
+                                # its existing snapshot in this transaction.
+                                if token_side is None:
+                                    await session.execute(
+                                        pg_insert(FuturesOddsSnapshot).values(
+                                            outcome_id=outcome.id,
+                                            bookmaker="polymarket",
+                                            probability=prob,
+                                            american_odds=american,
+                                            yes_bid=best_bid,
+                                            yes_ask=best_ask,
+                                            last_price=(
+                                                float(ltp) if ltp is not None else None
+                                            ),
+                                            captured_at=now,
+                                        )
                                     )
-                                )
                                 stats["futures_snapshots_written"] += 1
 
                         # #6598 / CERT-3182 — the Polymarket arm's copy of the
