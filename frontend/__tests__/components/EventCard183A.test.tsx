@@ -77,6 +77,10 @@ describe("EventCard183A unified web game card (#12616, switched off by default)"
       away: "34.2%",
       home: "65.8%",
     });
+    expect(formatLiveTenthsPair(0.412, 0.489, false)).toEqual({
+      away: "41.2%",
+      home: "48.9%",
+    });
     expect(formatLiveTenthsPair(0.4, 0.6, true)).toEqual({
       away: null,
       home: "60.0%",

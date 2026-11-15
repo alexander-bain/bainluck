@@ -358,7 +358,7 @@ function DiscoverWinChancePanel({
             cx={firstPt.x}
             cy={firstPt.y}
             r={2.75}
-            fill="#ffffff"
+            className="fill-surface-card"
             stroke={strokeColor}
             strokeWidth={1.75}
           />

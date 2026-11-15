@@ -162,8 +162,8 @@ describe("the /sports FINAL card", () => {
     );
 
     expect(printedPercent(books, "feed-card-prematch-home")).toBe(60);
-    expect(books).toContain("Pre-match · sportsbooks");
-    expect(renderFeedCard(KALSHI_FINAL)).not.toContain("Pre-match ·");
+    expect(books).toContain("Pregame · sportsbooks");
+    expect(renderFeedCard(KALSHI_FINAL)).not.toContain("Pregame ·");
   });
 
   it("speaks one venue-free sentence, whichever rung the number came from", () => {
@@ -207,7 +207,7 @@ describe("the /sports FINAL card", () => {
     );
 
     expect(books).toContain('data-prematch-source="books"');
-    expect(books).toContain("Pre-match · sportsbooks");
+    expect(books).toContain("Pregame · sportsbooks");
     expect(renderFeedCard(KALSHI_FINAL)).toContain('data-prematch-source="kalshi"');
   });
 

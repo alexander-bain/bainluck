@@ -38,6 +38,8 @@ import { cn } from "@/lib/utils";
 /**
  * THE PIN, AS ONE BOOKMARK SHAPE (#12616). Both states draw this path; only the treatment differs.
  *
+ * Replaces the #7165 pushpin silhouette per Alex's Saturday Nov 14 ruling (#12616: "website game
+ * card parity with the bookmark pin", matching Decision 178-B / #11934 onboarding pass 5 on iOS).
  * Unpinned (`filled={false}`) strokes this silhouette at `strokeWidth="1.5"` with `fill="none"`;
  * pinned (`filled={true}`) fills the exact same `PIN_PATH` with `currentColor` so both states
  * share one silhouette across every website surface (`EventCard`, `EventCard183A`, `FuturesCard`,

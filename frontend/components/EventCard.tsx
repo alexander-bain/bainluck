@@ -1103,7 +1103,7 @@ export default function EventCard({
                 data-testid="event-card-prematch-label"
                 data-prematch-source={prematch.source}
               >
-                Pre-match · {prematch.label}
+                Pregame · {prematch.label}
               </span>
             </div>
           )}
