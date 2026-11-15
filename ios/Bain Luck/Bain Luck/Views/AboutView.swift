@@ -56,24 +56,27 @@ struct AboutView: View {
     }
 
     static var pictureCreditsFooter: some View {
-        Link(destination: Self.pictureCreditsURL) {
-            HStack(spacing: 8) {
-                Text("Picture credits")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.primary)
-                Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            Divider()
+            Link(destination: Self.pictureCreditsURL) {
+                HStack(spacing: 8) {
+                    Text("Picture credits")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(DS.textPrimary)
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 13)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DS.cardBg)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 13)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.cardBackground)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("about-picture-credits-link")
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("about-picture-credits-link")
     }
 
     var body: some View {
@@ -85,21 +88,21 @@ struct AboutView: View {
         // the defect #5914 is about, arriving a moment later. /discover switches
         // natively to the Discover tab; the remaining outgoing links open in
         // Safari and Mail.
-        VStack(spacing: 0) {
-            InAppWebView(
-                url: Self.aboutURL,
-                linkPolicy: .handOffToTheSystem,
-                interceptHandOff: { candidate in
-                    Self.handleOutgoingLink(
-                        candidate,
-                        navigation: navCoordinator,
-                        dismiss: { dismiss() }
-                    )
-                }
-            )
-            Divider()
-            Self.pictureCreditsFooter
-        }
+        //
+        // `pictureCreditsFooter` sits at the bottom of the page's own scroll
+        // content (`scrollFooter`), never pinned over the copy.
+        InAppWebView(
+            url: Self.aboutURL,
+            linkPolicy: .handOffToTheSystem,
+            interceptHandOff: { candidate in
+                Self.handleOutgoingLink(
+                    candidate,
+                    navigation: navCoordinator,
+                    dismiss: { dismiss() }
+                )
+            },
+            scrollFooter: AnyView(Self.pictureCreditsFooter)
+        )
         .navigationTitle("About")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
