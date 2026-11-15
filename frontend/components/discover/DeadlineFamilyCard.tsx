@@ -13,6 +13,7 @@ import { resolveDiscoverFuturesVisual } from "@/lib/discover/discoverEntityVisua
 import type { FeedFuturesData, FeedItem } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
+import { QuietFillPercentBox } from "./QuietFillPercentBox";
 import { MovementBadge } from "./shared";
 
 export interface DeadlineFamilyCardProps {
@@ -327,13 +328,29 @@ export function DeadlineFamilyCard({
                         timeframeLabel={member.movementTimeframeLabel}
                       />
                     )}
-                    <span
-                      className="font-mono tabular-nums text-base font-bold text-text-primary"
-                      data-testid="deadline-family-member-percent"
-                      data-outcome-id={member.yesOutcomeId}
-                    >
-                      {member.yesPercentText}
-                    </span>
+                    {member.yesProbability != null && member.yesProbability > 0 ? (
+                      <QuietFillPercentBox
+                        percent={Math.round(member.yesProbability * 100)}
+                        tone="emerald"
+                        widthClass="min-w-[3.5rem]"
+                      >
+                        <span
+                          className="font-mono tabular-nums text-base font-bold text-text-primary"
+                          data-testid="deadline-family-member-percent"
+                          data-outcome-id={member.yesOutcomeId}
+                        >
+                          {member.yesPercentText}
+                        </span>
+                      </QuietFillPercentBox>
+                    ) : (
+                      <span
+                        className="font-mono tabular-nums text-base font-bold text-text-primary"
+                        data-testid="deadline-family-member-percent"
+                        data-outcome-id={member.yesOutcomeId}
+                      >
+                        {member.yesPercentText}
+                      </span>
+                    )}
                   </>
                 )}
               </div>
