@@ -95,23 +95,23 @@ function projToken(html: string): string {
 }
 
 describe("#8934 the 2nd half margin token on Ole Miss @ Florida", () => {
-  it("is the Rebels' projection — the card the reader saw", () => {
+  it("is Ole Miss's projection — the card the reader saw", () => {
     const html = render(true);
-    expect(html).toContain("Rebels by 2.5+");
+    expect(html).toContain("Ole Miss by 2.5+");
   });
 
   it("draws the favoured side's logo, as the full-game token does", () => {
     const token = projToken(render(true));
     expect(token).toContain(`src="${AWAY_LOGO}"`);
     expect(token).not.toContain(HOME_LOGO);
-    expect(token).not.toContain("Rebels");
+    expect(token).not.toContain("Ole Miss");
   });
 
   it("with no logo served, the word steps down so it fits inside the ring", () => {
     const token = projToken(render(false));
-    expect(token).toContain(">Rebels<");
+    expect(token).toContain(">Ole Miss<");
     const size = Number(/font-size:(\d+)px/.exec(token)?.[1]);
-    expect(size).toBe(markerFallbackFontSize("Rebels"));
+    expect(size).toBe(markerFallbackFontSize("Ole Miss"));
     expect(size).toBeLessThan(8);
   });
 });
