@@ -1120,7 +1120,8 @@ struct EventDetailView: View {
     private func teamColors(_ event: EventDetail) -> (away: Color, home: Color) {
         TeamTextContrast.cardColors(
             awayHex: event.awayTeamData?.primaryColor,
-            homeHex: event.homeTeamData?.primaryColor
+            homeHex: event.homeTeamData?.primaryColor,
+            awaySecondaryHex: event.awayTeamData?.secondaryColor
         )
     }
 
@@ -3647,7 +3648,7 @@ struct EventDetailView: View {
             EventDetailView.heroCarriesGameContext(status: event.status) ? [] : [
                 recordsText(event).map { ("list.number", $0) },
                 sportHeadline12472 ? nil : openedText(event).map { ("flag", $0) },
-                nflHeadline || heroLiveForecast ? nil : projectionText(
+                nflHeadline || heroLiveForecast || sportHeadline12472 ? nil : projectionText(
                     event,
                     hasScore: gameInfoHasScore
                 ).map { ("chart.line.uptrend.xyaxis", $0) },

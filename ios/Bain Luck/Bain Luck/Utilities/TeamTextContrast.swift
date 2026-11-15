@@ -120,16 +120,29 @@ enum TeamTextContrast {
     /// is precisely the mutant worth killing. Hoisting it here leaves only a
     /// single-expression delegation in each view, and each view exposes that
     /// delegation so a test can drive it on a real payload.
-    static func cardColorHexes(awayHex: String?, homeHex: String?) -> (away: String, home: String) {
+    static func cardColorHexes(
+        awayHex: String?,
+        homeHex: String?,
+        awaySecondaryHex: String? = nil
+    ) -> (away: String, home: String) {
         ProbabilityBarPalette.pair(
             awayHex: usableForText(awayHex),
-            homeHex: usableForText(homeHex)
+            homeHex: usableForText(homeHex),
+            awaySecondaryHex: usableForText(awaySecondaryHex)
         )
     }
 
     /// `cardColorHexes` as `Color`s, away first — the form the views take.
-    static func cardColors(awayHex: String?, homeHex: String?) -> (away: Color, home: Color) {
-        let hexes = cardColorHexes(awayHex: awayHex, homeHex: homeHex)
+    static func cardColors(
+        awayHex: String?,
+        homeHex: String?,
+        awaySecondaryHex: String? = nil
+    ) -> (away: Color, home: Color) {
+        let hexes = cardColorHexes(
+            awayHex: awayHex,
+            homeHex: homeHex,
+            awaySecondaryHex: awaySecondaryHex
+        )
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
 }

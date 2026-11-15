@@ -48,6 +48,17 @@ enum ProbabilityBarPalette {
     /// leaves genuinely different crests alone (`#552583` vs `#FDB927`, 240).
     static let minimumDistance = 60.0
 
+    /// Ruling 197 — maximum circular HSV hue separation (in degrees) at which
+    /// two chromatic brand colours still read as the same colour family (for
+    /// example Kansas `#0051BA` `214°`, Gonzaga `#041E42` `215°`, Patriots
+    /// `#002244` `210°`, Kentucky `#0033A0` `221°`, Duke `#00539B` `208°`, and
+    /// Lions `#0076B6` `201°` are all blue within `≤28°`, while claret `#660E36`
+    /// `333°` vs red `#EF2F24` `3°` is `30.5°` apart and blue `#00338D` `218°`
+    /// vs purple `#4F2683` `267°` is `48°` apart).
+    static let sameHueFamilyMaxDegrees = 28.0
+    static let chromaticMinimumSaturation = 0.35
+    static let chromaticMinimumValue = 0.20
+
     // MARK: - Pure colour maths (the part the tests drive)
 
     /// `(r, g, b)` in 0…255, or `nil` when `hex` is absent or unparseable.
@@ -79,20 +90,77 @@ enum ProbabilityBarPalette {
         return d >= minimumDistance
     }
 
+    /// HSV `(hueDegrees 0..<360, saturation 0…1, value 0…1)` for a parseable hex.
+    static func hsv(_ hex: String?) -> (hue: Double, saturation: Double, value: Double)? {
+        guard let c = rgb(hex) else { return nil }
+        let r = Double(c.r) / 255.0
+        let g = Double(c.g) / 255.0
+        let b = Double(c.b) / 255.0
+        let hi = max(r, g, b)
+        let lo = min(r, g, b)
+        let delta = hi - lo
+        let saturation = hi == 0 ? 0 : delta / hi
+        let hue: Double
+        if delta == 0 {
+            hue = 0
+        } else if hi == r {
+            let raw = 60.0 * ((g - b) / delta)
+            hue = raw < 0 ? raw + 360.0 : raw
+        } else if hi == g {
+            hue = 60.0 * (((b - r) / delta) + 2.0)
+        } else {
+            hue = 60.0 * (((r - g) / delta) + 4.0)
+        }
+        return (hue: hue, saturation: saturation, value: hi)
+    }
+
+    /// Ruling 197 — whether two parseable chromatic brand colours belong to the
+    /// same hue family (for example navy + royal blue, or two crimsons). Greys
+    /// (`saturation < 0.35`, e.g. `#64748B`) and near-blacks (`value < 0.20`,
+    /// e.g. `#111827`) are neutral rather than a hue family.
+    static func sameHueFamily(_ a: String?, _ b: String?) -> Bool {
+        guard let ha = hsv(a), let hb = hsv(b) else { return false }
+        guard ha.saturation >= chromaticMinimumSaturation,
+              hb.saturation >= chromaticMinimumSaturation,
+              ha.value >= chromaticMinimumValue,
+              hb.value >= chromaticMinimumValue
+        else { return false }
+        let rawDiff = abs(ha.hue - hb.hue).truncatingRemainder(dividingBy: 360.0)
+        let circularDiff = min(rawDiff, 360.0 - rawDiff)
+        return circularDiff <= sameHueFamilyMaxDegrees
+    }
+
     /// The two segment hexes, away first — the order they are drawn in.
     ///
     /// Total: every input, including two nils and two identical hexes, returns
     /// a pair. Deterministic: the same input always returns the same pair, so a
     /// card does not change colour between renders.
-    static func pair(awayHex: String?, homeHex: String?) -> (away: String, home: String) {
+    ///
+    /// Ruling 197: when both primary colours are usable and either fail
+    /// `distinguishable` or share a hue family (`sameHueFamily`), home keeps its
+    /// primary colour and away switches to `awaySecondaryHex` when usable,
+    /// distinguishable from home, and outside home's hue family; otherwise away
+    /// switches to `partner(for: home, preferring: awayDefault)` (slate grey).
+    static func pair(
+        awayHex: String?,
+        homeHex: String?,
+        awaySecondaryHex: String? = nil
+    ) -> (away: String, home: String) {
         let away = usable(awayHex)
         let home = usable(homeHex)
 
         switch (away, home) {
-        case let (a?, h?) where distinguishable(a, h):
+        case let (a?, h?) where distinguishable(a, h) && !sameHueFamily(a, h):
             return (a, h)                                   // rule 1
         case (_?, let h?):
-            // rule 3 — two crests that do not read apart. Home keeps its own.
+            // rule 3 + Ruling 197 — two crests that collide in RGB distance or
+            // hue family. Home keeps its own; away tries its own second colour,
+            // else slate grey.
+            if let sec = usable(awaySecondaryHex),
+               distinguishable(sec, h),
+               !sameHueFamily(sec, h) {
+                return (sec, h)
+            }
             return (partner(for: h, preferring: awayDefault), h)
         case let (a?, nil):
             return (a, partner(for: a, preferring: homeDefault))   // rule 2

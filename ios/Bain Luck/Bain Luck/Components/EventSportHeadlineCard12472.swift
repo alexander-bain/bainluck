@@ -19,6 +19,7 @@ struct EventSportHeadlineCard12472: View {
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .title2) private var winChanceSize: CGFloat = 25
+    @ScaledMetric(relativeTo: .title2) private var liveLargestNowSize: CGFloat = 26
     @ScaledMetric(relativeTo: .title3) private var liveTenthsChanceSize: CGFloat = 22
     @ScaledMetric(relativeTo: .title3) private var pregameProjectedSize: CGFloat = 20
     @ScaledMetric(relativeTo: .body) private var liveScoreSize: CGFloat = 18
@@ -27,8 +28,10 @@ struct EventSportHeadlineCard12472: View {
     @ScaledMetric(relativeTo: .headline) private var soccerBoxVerdictSize: CGFloat = 19
     @ScaledMetric(relativeTo: .subheadline) private var soccerScorePillSize: CGFloat = 15
     @ScaledMetric(relativeTo: .body) private var liveScoreColWidth: CGFloat = 42
+    @ScaledMetric(relativeTo: .body) private var liveProjectedColWidth: CGFloat = 48
     @ScaledMetric(relativeTo: .caption2) private var livePregameColWidth: CGFloat = 54
     @ScaledMetric(relativeTo: .title3) private var liveNowColWidth: CGFloat = 80
+    @ScaledMetric(relativeTo: .title2) private var liveLargestNowColWidth: CGFloat = 86
     @ScaledMetric(relativeTo: .body) private var pregameProjectedColWidth: CGFloat = 60
     @ScaledMetric(relativeTo: .title2) private var pregameChanceColWidth: CGFloat = 80
     @ScaledMetric(relativeTo: .title3) private var finalResultColWidth: CGFloat = 58
@@ -44,6 +47,9 @@ struct EventSportHeadlineCard12472: View {
     private static let soccerDrawBarSlate = Color(red: 0.58, green: 0.63, blue: 0.70)
 
     @ScaledMetric(relativeTo: .caption2) private var liveHeaderSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .subheadline) private var baseTeamNameSize: CGFloat = 15
+    @ScaledMetric(relativeTo: .caption) private var baseRecordSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .caption2) private var baseProjectedSublineSize: CGFloat = 11
 
     private var stacksRowsVertically: Bool {
         dynamicTypeSize.isAccessibilitySize
@@ -54,7 +60,14 @@ struct EventSportHeadlineCard12472: View {
     }
 
     private var effectiveScoreColWidth: CGFloat {
-        stacksRowsVertically ? min(liveScoreColWidth, 52) : min(liveScoreColWidth, 44)
+        if model.liveColumnHeaders?.projected != nil {
+            return stacksRowsVertically ? min(liveScoreColWidth, 52) : min(liveScoreColWidth, 38)
+        }
+        return stacksRowsVertically ? min(liveScoreColWidth, 52) : min(liveScoreColWidth, 44)
+    }
+
+    private var effectiveLiveProjectedColWidth: CGFloat {
+        stacksRowsVertically ? min(max(liveProjectedColWidth, 68), 84) : min(liveProjectedColWidth, 50)
     }
 
     private var effectivePregameColWidth: CGFloat {
@@ -62,7 +75,10 @@ struct EventSportHeadlineCard12472: View {
     }
 
     private var effectiveNowColWidth: CGFloat {
-        stacksRowsVertically ? min(liveNowColWidth, 96) : min(liveNowColWidth, 82)
+        if model.liveColumnHeaders?.projected != nil {
+            return stacksRowsVertically ? min(max(liveLargestNowColWidth, 98), 112) : min(liveLargestNowColWidth, 88)
+        }
+        return stacksRowsVertically ? min(liveNowColWidth, 96) : min(liveNowColWidth, 82)
     }
 
     private var effectivePregameProjectedColWidth: CGFloat {
@@ -97,13 +113,100 @@ struct EventSportHeadlineCard12472: View {
         model.kind.accessibilityIdentifier
     }
 
-    private var hasTrailingControls: Bool {
-        if model.showsEkg { return true }
-        return SourceMarkButton(
-            model.sourceMark,
-            number: model.home.rawProbability,
-            numberSize: 20
-        ) != nil
+    private var teamRowTrailingWidth: CGFloat {
+        if let finalHeaders = model.finalColumnHeaders {
+            let preW = finalHeaders.pregame != nil ? effectivePregameColWidth + 8 : 0
+            return preW + effectiveFinalResultColWidth
+        }
+        if let pregameHeaders = model.pregameColumnHeaders {
+            let projW = pregameHeaders.projected != nil ? effectivePregameProjectedColWidth + 8 : 0
+            return projW + effectivePregameChanceColWidth
+        }
+        if let headers = model.liveColumnHeaders, headers.hasAny {
+            let scoreW = headers.score != nil ? effectiveScoreColWidth + liveColumnSpacing : 0
+            let projW = headers.projected != nil ? effectiveLiveProjectedColWidth + liveColumnSpacing : 0
+            let preW = headers.pregame != nil ? effectivePregameColWidth + liveColumnSpacing : 0
+            return scoreW + projW + preW + effectiveNowColWidth
+        }
+        return 76
+    }
+
+    private var sharedTeamNameFontSize: CGFloat {
+        let eitherWon = (model.away.won == true) || (model.home.won == true)
+        let availableWidth: CGFloat
+        if stacksRowsVertically {
+            availableWidth = 330 - 32 - 8 - (eitherWon ? 24 : 4)
+        } else {
+            availableWidth = 330 - 32 - 6 - 10 - teamRowTrailingWidth - (eitherWon ? 20 : 0)
+        }
+        return CardTeamNameSizing.sharedSingleLineFontSize(
+            names: [model.away.shortName, model.home.shortName],
+            baseSize: baseTeamNameSize,
+            weight: .bold,
+            availableWidth: availableWidth,
+            minimumScale: stacksRowsVertically ? 0.45 : 0.58
+        )
+    }
+
+    private var sharedRecordFontSize: CGFloat {
+        CardTeamNameSizing.cappedRecordFontSize(
+            baseRecordSize: baseRecordSize,
+            teamNameFontSize: sharedTeamNameFontSize
+        )
+    }
+
+    private var sharedProjectedSublineFontSize: CGFloat {
+        min(baseProjectedSublineSize, sharedRecordFontSize)
+    }
+
+    private var sharedSoccerTeamNameFontSize: CGFloat {
+        let availableWidth: CGFloat = stacksRowsVertically ? 288 : 92
+        return CardTeamNameSizing.sharedSingleLineFontSize(
+            names: [model.home.shortName, model.away.shortName],
+            baseSize: baseTeamNameSize,
+            weight: .bold,
+            availableWidth: availableWidth,
+            minimumScale: stacksRowsVertically ? 0.45 : 0.58
+        )
+    }
+
+    private var sharedTennisPlayerNameFontSize: CGFloat {
+        let availableWidth: CGFloat
+        if stacksRowsVertically {
+            availableWidth = 220
+        } else if let scoreFirst = model.tennisScoreFirst {
+            let setsW = scoreFirst.setColumns.reduce(CGFloat(0)) { $0 + tennisSetColumnWidth(for: $1.header) }
+                + CGFloat(max(scoreFirst.setColumns.count - 1, 0)) * 4
+            let ptsW = scoreFirst.pointsColumn != nil
+                ? effectiveTennisPtsColWidth + (scoreFirst.setColumns.isEmpty ? 0 : 4)
+                : 0
+            let dividerW: CGFloat = (!scoreFirst.setColumns.isEmpty || scoreFirst.pointsColumn != nil) ? 17 : 0
+            let chancesW = (scoreFirst.pregameHeader != nil ? effectiveTennisPregameColWidth + 6 : 0) + effectiveTennisNowColWidth
+            availableWidth = max(330 - setsW - ptsW - dividerW - chancesW - 12, 64)
+        } else {
+            availableWidth = 120
+        }
+        return CardTeamNameSizing.sharedSingleLineFontSize(
+            names: [model.away.shortName, model.home.shortName],
+            baseSize: baseTeamNameSize,
+            weight: .bold,
+            availableWidth: availableWidth,
+            minimumScale: stacksRowsVertically ? 0.45 : 0.65
+        )
+    }
+
+    private func showsStreamingEkg(at now: Date) -> Bool {
+        guard model.showsEkg,
+              model.kind.phase == .during,
+              priceStreamingEligible else {
+            return false
+        }
+        let presentation = EkgHeartbeat.present(
+            ekgTracker,
+            status: liveUpdateStatus,
+            now: displayAsOf ?? now
+        )
+        return presentation.mode != .flat
     }
 
     private static func livePregameMetaText(
@@ -169,6 +272,9 @@ struct EventSportHeadlineCard12472: View {
                     if model.showsBottomBar {
                         cardStackBoundary12278 { bottomProbabilityBar }
                     }
+                    if let pregameSummary = model.livePregameSummary {
+                        cardStackBoundary12278 { livePregameSummaryRow(pregameSummary) }
+                    }
                 }
             }
             .padding(.horizontal, 14)
@@ -186,17 +292,36 @@ struct EventSportHeadlineCard12472: View {
 
     // MARK: - Top Bar
 
+    @ViewBuilder
     private var topBar: some View {
+        if let pinnedNow = displayAsOf {
+            topBarContent(at: pinnedNow)
+        } else if model.showsEkg, model.kind.phase == .during, priceStreamingEligible {
+            TimelineView(.periodic(from: .now, by: 1)) { tick in
+                topBarContent(at: tick.date)
+            }
+        } else {
+            topBarContent(at: Date())
+        }
+    }
+
+    private func topBarContent(at now: Date) -> some View {
+        let showsEkgNow = showsStreamingEkg(at: now)
+        let showsControls = showsEkgNow || SourceMarkButton(
+            model.sourceMark,
+            number: model.home.rawProbability,
+            numberSize: 20
+        ) != nil
         let layout = stacksRowsVertically
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
             : AnyLayout(HStackLayout(alignment: .center, spacing: 8))
         return layout {
             leadingMeta
-            if hasTrailingControls {
+            if showsControls {
                 if !stacksRowsVertically {
                     Spacer(minLength: 6)
                 }
-                trailingControls
+                trailingControls(showsEkgNow: showsEkgNow)
             }
         }
     }
@@ -268,9 +393,9 @@ struct EventSportHeadlineCard12472: View {
         .background(Capsule().fill(DS.danger))
     }
 
-    private var trailingControls: some View {
+    private func trailingControls(showsEkgNow: Bool) -> some View {
         HStack(spacing: 2) {
-            if model.showsEkg {
+            if showsEkgNow {
                 ekgButton
                 if liveUpdateStatus == .interrupted {
                     Button { showProbabilityDetails.toggle() } label: {
@@ -705,6 +830,14 @@ struct EventSportHeadlineCard12472: View {
                         .minimumScaleFactor(0.8)
                         .frame(width: effectiveScoreColWidth, alignment: .trailing)
                 }
+                if let projectedHeader = headers.projected {
+                    Text(projectedHeader)
+                        .font(liveColumnHeaderFont)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: effectiveLiveProjectedColWidth, alignment: .trailing)
+                }
                 if let pregameHeader = headers.pregame {
                     Text(pregameHeader)
                         .font(liveColumnHeaderFont)
@@ -738,20 +871,39 @@ struct EventSportHeadlineCard12472: View {
                 Group {
                     if let score = side.liveScore {
                         scoreText(score)
+                    } else {
+                        Color.clear.frame(height: 1)
                     }
                 }
                 .frame(width: effectiveScoreColWidth, alignment: .trailing)
+            }
+            if headers.projected != nil {
+                Group {
+                    if let liveProjected = side.liveProjectedNumberText {
+                        liveProjectedNumberLabel(liveProjected)
+                    } else {
+                        Color.clear.frame(height: 1)
+                    }
+                }
+                .frame(width: effectiveLiveProjectedColWidth, alignment: .trailing)
             }
             if headers.pregame != nil {
                 Group {
                     if let pregame = side.pregameChanceText {
                         pregameLabel(pregame)
+                    } else {
+                        Color.clear.frame(height: 1)
                     }
                 }
                 .frame(width: effectivePregameColWidth, alignment: .trailing)
             }
-            chanceText(side.winChanceText, color: color, hasInlineColumns: true)
-                .frame(width: effectiveNowColWidth, alignment: .trailing)
+            chanceText(
+                side.winChanceText,
+                color: color,
+                hasInlineColumns: true,
+                isLargestNow: headers.projected != nil
+            )
+            .frame(width: effectiveNowColWidth, alignment: .trailing)
         }
     }
 
@@ -765,6 +917,8 @@ struct EventSportHeadlineCard12472: View {
                 Group {
                     if let projectedNumber = side.pregameProjectedNumberText {
                         pregameProjectedNumberText(projectedNumber)
+                    } else {
+                        Color.clear.frame(height: 1)
                     }
                 }
                 .frame(width: effectivePregameProjectedColWidth, alignment: .trailing)
@@ -1252,14 +1406,15 @@ struct EventSportHeadlineCard12472: View {
     private func singleLineTeamNameLabel(
         _ shortName: String,
         isLoser: Bool,
+        fontSize: CGFloat? = nil,
         alignment: TextAlignment = .leading
     ) -> some View {
-        Text(shortName)
-            .font(.subheadline.weight(isLoser ? .semibold : .bold))
+        let resolvedSize = fontSize ?? sharedTeamNameFontSize
+        return Text(shortName)
+            .font(.system(size: resolvedSize, weight: isLoser ? .semibold : .bold))
             .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
             .multilineTextAlignment(alignment)
             .lineLimit(1)
-            .minimumScaleFactor(stacksRowsVertically ? 0.45 : 0.58)
             .truncationMode(.tail)
             .allowsTightening(true)
     }
@@ -1276,28 +1431,28 @@ struct EventSportHeadlineCard12472: View {
                     singleLineTeamNameLabel(side.shortName, isLoser: isLoser)
                     if side.won == true {
                         Text("\u{2713}")
-                            .font(.subheadline.weight(.heavy))
+                            .font(.system(size: sharedTeamNameFontSize, weight: .heavy))
                             .foregroundStyle(Self.soccerWonGreen)
                             .accessibilityLabel("won")
                     }
                 }
                 if let subline = side.secondarySublineText {
                     Text(subline)
-                        .font(.caption.monospacedDigit())
+                        .font(.system(size: sharedRecordFontSize, weight: .regular).monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(stacksRowsVertically ? nil : 1)
                         .minimumScaleFactor(0.85)
                         .fixedSize(horizontal: false, vertical: stacksRowsVertically)
                 } else if let record = side.record {
                     Text(record)
-                        .font(.caption.monospacedDigit())
+                        .font(.system(size: sharedRecordFontSize, weight: .regular).monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(stacksRowsVertically ? nil : 1)
                         .fixedSize(horizontal: false, vertical: stacksRowsVertically)
                 }
                 if let projected = side.projectedText, model.pregameColumnHeaders == nil {
                     Text(projected)
-                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .font(.system(size: sharedProjectedSublineFontSize, weight: .semibold).monospacedDigit())
                         .foregroundStyle(color)
                         .lineLimit(stacksRowsVertically ? 2 : 1)
                         .minimumScaleFactor(0.85)
@@ -1307,19 +1462,19 @@ struct EventSportHeadlineCard12472: View {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
                         Text(side.shortName)
-                            .font(.subheadline.weight(isLoser ? .semibold : .bold))
+                            .font(.system(size: sharedTeamNameFontSize, weight: isLoser ? .semibold : .bold))
                             .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                         if side.won == true {
                             Text("\u{2713}")
-                                .font(.subheadline.weight(.heavy))
+                                .font(.system(size: sharedTeamNameFontSize, weight: .heavy))
                                 .foregroundStyle(Self.soccerWonGreen)
                                 .accessibilityLabel("won")
                         }
                         if let record = side.record {
                             Text(record)
-                                .font(.caption.monospacedDigit())
+                                .font(.system(size: sharedRecordFontSize, weight: .regular).monospacedDigit())
                                 .foregroundStyle(DS.textSecondaryReadable)
                                 .fixedSize(horizontal: true, vertical: false)
                         }
@@ -1329,14 +1484,14 @@ struct EventSportHeadlineCard12472: View {
                             singleLineTeamNameLabel(side.shortName, isLoser: isLoser)
                             if side.won == true {
                                 Text("\u{2713}")
-                                    .font(.subheadline.weight(.heavy))
+                                    .font(.system(size: sharedTeamNameFontSize, weight: .heavy))
                                     .foregroundStyle(Self.soccerWonGreen)
                                     .accessibilityLabel("won")
                             }
                         }
                         if let record = side.record {
                             Text(record)
-                                .font(.caption.monospacedDigit())
+                                .font(.system(size: sharedRecordFontSize, weight: .regular).monospacedDigit())
                                 .foregroundStyle(DS.textSecondaryReadable)
                                 .lineLimit(1)
                         }
@@ -1344,7 +1499,7 @@ struct EventSportHeadlineCard12472: View {
                 }
                 if let projected = side.projectedText, model.pregameColumnHeaders == nil {
                     Text(projected)
-                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .font(.system(size: sharedProjectedSublineFontSize, weight: .semibold).monospacedDigit())
                         .foregroundStyle(color)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
@@ -1371,6 +1526,15 @@ struct EventSportHeadlineCard12472: View {
             .accessibilityLabel("Score \(score)")
     }
 
+    private func liveProjectedNumberLabel(_ number: String) -> some View {
+        Text(number)
+            .font(.system(size: min(liveScoreSize, 22), weight: .semibold, design: .rounded).monospacedDigit())
+            .foregroundStyle(Color.primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityLabel("Projected \(number)")
+    }
+
     private func pregameLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: min(livePregameSize, 17), weight: .medium, design: .rounded).monospacedDigit())
@@ -1380,14 +1544,42 @@ struct EventSportHeadlineCard12472: View {
             .accessibilityLabel("Pregame \(text)")
     }
 
-    private func chanceText(_ text: String, color: Color, hasInlineColumns: Bool = false) -> some View {
-        let base = hasInlineColumns ? liveTenthsChanceSize : winChanceSize
+    private func chanceText(
+        _ text: String,
+        color: Color,
+        hasInlineColumns: Bool = false,
+        isLargestNow: Bool = false
+    ) -> some View {
+        let base: CGFloat
+        let cap: CGFloat
+        if isLargestNow {
+            base = liveLargestNowSize
+            cap = 32
+        } else if hasInlineColumns {
+            base = liveTenthsChanceSize
+            cap = 30
+        } else {
+            base = winChanceSize
+            cap = 30
+        }
         return Text(text)
-            .font(.system(size: min(base, 30), weight: .black, design: .rounded).monospacedDigit())
+            .font(.system(size: min(base, cap), weight: .black, design: .rounded).monospacedDigit())
             .foregroundStyle(color)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
             .accessibilityLabel(hasInlineColumns ? "Now \(text)" : text)
+    }
+
+    private func livePregameSummaryRow(_ summary: EventSportHeadlines12472.LivePregameSummary) -> some View {
+        (Text(summary.leadWord).fontWeight(.medium) + Text("  \(summary.bodyText)"))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(DS.textSecondaryReadable)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("\(summary.leadWord), \(summary.bodyText)")
+            .accessibilityIdentifier("headline-12472-pregame-summary")
     }
 
     // MARK: - Segmented Bar + Pregame Notch
