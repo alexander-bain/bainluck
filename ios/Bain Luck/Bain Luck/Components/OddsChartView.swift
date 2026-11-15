@@ -1189,23 +1189,6 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
-                    if ReleaseSurfaces.isEventPageAtlasEnabled() {
-                        EventAtlasChartHeaderView11666(
-                            selection: selection,
-                            dataPoints: dataPoints,
-                            checkpoints: checkpoints,
-                            history: history,
-                            status: status,
-                            sides: axis.sides,
-                            includesOpening: drawnRange == .all,
-                            homeName: homeTeamName ?? homeShort,
-                            primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: history.winProbSources ?? [:]),
-                            homeScore: homeScore,
-                            awayScore: awayScore,
-                            servedSettledResult: servedSettledResult,
-                            gameStart: kickoffDate
-                        )
-                    }
                     // #9517 — no readout row here at rest: the hero above says it.
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
@@ -1275,6 +1258,27 @@ struct OddsChartView: View {
                                   tennis: tennis)
                     }
                     .frame(height: chartHeight)
+                    .overlay(alignment: .topLeading) {
+                        if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                            EventAtlasChartHeaderView11666(
+                                selection: selection,
+                                dataPoints: dataPoints,
+                                checkpoints: checkpoints,
+                                history: history,
+                                status: status,
+                                sides: axis.sides,
+                                includesOpening: drawnRange == .all,
+                                homeName: homeTeamName ?? homeShort,
+                                primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: history.winProbSources ?? [:]),
+                                homeScore: homeScore,
+                                awayScore: awayScore,
+                                servedSettledResult: servedSettledResult,
+                                gameStart: kickoffDate
+                            )
+                            .padding(.leading, chartTeamGutterWidth)
+                            .padding(.top, 2)
+                        }
+                    }
                     // #10876 — the explore-the-chart tip, inline chart only.
                     .exploreChartTip10876(eventId: eventId, touchSurfaceInstalled: scrubSurfaces, dataPoints: dataPoints)
 

@@ -229,7 +229,37 @@ final class Ruling201ChartScaleAndHeaderTests: XCTestCase {
             servedAwayProbability: 0.338,
             selectedRange: .constant(.sinceStart),
             preloadedHistory: nflHistory,
-            preloadedHistoryGeneration: 1
+            preloadedHistoryGeneration: 1,
+            selection: restSelection
+        )
+        let nflScrubbingSelection = OddsChartSelection()
+        nflScrubbingSelection.hold(date: makeDate("2026-11-15T18:30:00Z"))
+        let nflScrubbingChart = OddsChartView(
+            eventId: 919901,
+            teamColors: (away: Color(hex: "#C60C30"), home: Color(hex: "#0076B6")),
+            commenceTime: "2026-11-15T18:00:00Z",
+            status: "live",
+            homeTeamName: "Detroit Lions",
+            awayTeamName: "New England Patriots",
+            homeTeamAbbrev: "DET",
+            awayTeamAbbrev: "NE",
+            sportKey: "americanfootball_nfl",
+            servedHomeProbability: 0.662,
+            servedAwayProbability: 0.338,
+            selectedRange: .constant(.sinceStart),
+            preloadedHistory: nflHistory,
+            preloadedHistoryGeneration: 1,
+            selection: nflScrubbingSelection
+        )
+        let nflAtRestHost = hostForMeasurement(nflChart.frame(width: 358))
+        let nflScrubbingHost = hostForMeasurement(nflScrubbingChart.frame(width: 358))
+        let nflAtRestFitted = nflAtRestHost.sizeThatFits(in: CGSize(width: 358, height: 800))
+        let nflScrubbingFitted = nflScrubbingHost.sizeThatFits(in: CGSize(width: 358, height: 800))
+        XCTAssertEqual(
+            nflAtRestFitted.height,
+            nflScrubbingFitted.height,
+            accuracy: 0.5,
+            "Scrubbing readout overlays the chart plot without shifting the plot vertically"
         )
 
         let soccerHistoryJSON = """

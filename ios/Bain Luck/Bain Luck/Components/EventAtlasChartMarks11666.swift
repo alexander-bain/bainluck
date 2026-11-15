@@ -36,7 +36,6 @@ nonisolated struct EventAtlasChartMarkKeyModel11666: Equatable, Sendable {
     let settledWonWord: String
     let settledLostWord: String
     let settledExplanation: String
-    let tapHint: String
 
     init(settledResult: EventAtlasSettledResult11666?, includesOpening: Bool, openingLabel: String = "Pregame") {
         self.showsOpening = includesOpening
@@ -47,7 +46,6 @@ nonisolated struct EventAtlasChartMarkKeyModel11666: Equatable, Sendable {
         self.settledWonWord = EventAtlasSettledResult11666.won.word
         self.settledLostWord = EventAtlasSettledResult11666.lost.word
         self.settledExplanation = "Result as a word"
-        self.tapHint = "Tap any reading for exact time (PT)"
     }
 }
 
@@ -388,7 +386,11 @@ private struct EventAtlasSelectedReadingSlot11666: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .background(Color.systemBackground.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
             .padding(.bottom, 2)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("event.atlas.selectedReading")
