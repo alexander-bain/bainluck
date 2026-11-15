@@ -79,8 +79,8 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-/** The home team's compact name, which is what the caption names. */
-const HOME_SHORT = "Wolverines";
+/** The home team's compact name, which is what the caption names (Ruling 194-A: college school). */
+const HOME_SHORT = "Michigan";
 /** The caption's invariant tail — the only part of it no wording has changed. */
 const SINCE_OPEN = "since open";
 
@@ -273,7 +273,7 @@ describe("#5719/#5995 the hero's since-open caption prints the journey", () => {
   it("names no unit at all on the filed specimen's shape", () => {
     const html = draw(0.755, 0.344);
 
-    expect(html).toContain(`Wolverines 34% → 76% ${SINCE_OPEN}`);
+    expect(html).toContain(`Michigan 34% → 76% ${SINCE_OPEN}`);
 
     const text = captionText(html);
     // #5995: the score's own word, which is what a reader on a scoring sport
@@ -294,7 +294,7 @@ describe("#5719/#5995 the hero's since-open caption prints the journey", () => {
     expect(html).toContain("Opened 34%");
 
     // The caption is those same two integers, in order.
-    expect(html).toContain(`Wolverines 34% → 76% ${SINCE_OPEN}`);
+    expect(html).toContain(`Michigan 34% → 76% ${SINCE_OPEN}`);
 
     // Under #5719 this pair was chosen because the two arithmetics disagree:
     // 76 − 34 = 42, while the raw difference rounds to 41. The caption now
@@ -313,7 +313,7 @@ describe("#5719/#5995 the hero's since-open caption prints the journey", () => {
 
     expect(html).toContain(heroPrints(76));
     expect(html).toContain("Opened 75%");
-    expect(html).toContain(`Wolverines 75% → 76% ${SINCE_OPEN}`);
+    expect(html).toContain(`Michigan 75% → 76% ${SINCE_OPEN}`);
   });
 
   it("says nothing at all when the two printed levels are the same number", () => {
@@ -333,7 +333,7 @@ describe("#5719/#5995 the hero's since-open caption prints the journey", () => {
     // so the whole family of sign defects ("--42") cannot arise.
     const html = draw(0.344, 0.755);
 
-    expect(html).toContain(`Wolverines 76% → 34% ${SINCE_OPEN}`);
+    expect(html).toContain(`Michigan 76% → 34% ${SINCE_OPEN}`);
     expect(html).not.toContain("-42");
   });
 });
@@ -368,7 +368,7 @@ describe("#5995/#6064 each end of the caption matches the line that prints it", 
     // The hero itself, read out: the marker is a sibling span, so the giant
     // numeral still holds a bare 99 and the pair reads `>99%` to a person.
     expect(heroText(html)).toBe(">99%–<1%");
-    expect(html).toContain(`Wolverines 34% → &gt;99% ${SINCE_OPEN}`);
+    expect(html).toContain(`Michigan 34% → &gt;99% ${SINCE_OPEN}`);
   });
 
   it("clamps the CURRENT end at the low boundary, where 0% reads as impossible", () => {
@@ -377,7 +377,7 @@ describe("#5995/#6064 each end of the caption matches the line that prints it", 
     const html = draw(0.004, 0.344);
 
     expect(heroText(html)).toBe("<1%–>99%");
-    expect(html).toContain(`Wolverines 34% → &lt;1% ${SINCE_OPEN}`);
+    expect(html).toContain(`Michigan 34% → &lt;1% ${SINCE_OPEN}`);
   });
 
   it("spells the OPENING end exactly as the Opened line spells it", () => {
@@ -387,7 +387,7 @@ describe("#5995/#6064 each end of the caption matches the line that prints it", 
     const html = draw(0.344, 0.996);
 
     expect(html).toContain("Opened &gt;99%");
-    expect(html).toContain(`Wolverines &gt;99% → 34% ${SINCE_OPEN}`);
+    expect(html).toContain(`Michigan &gt;99% → 34% ${SINCE_OPEN}`);
   });
 
   it("carries the low clamp the same way", () => {
@@ -396,6 +396,6 @@ describe("#5995/#6064 each end of the caption matches the line that prints it", 
     const html = draw(0.344, 0.004);
 
     expect(html).toContain("Opened &lt;1%");
-    expect(html).toContain(`Wolverines &lt;1% → 34% ${SINCE_OPEN}`);
+    expect(html).toContain(`Michigan &lt;1% → 34% ${SINCE_OPEN}`);
   });
 });

@@ -22,6 +22,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from app.utils.candidate_editorial_copy import (
+    number_word,
+    short_matchup_phrase,
+    short_team_name,
+)
 from app.utils.container_presentation import MEMBER_EVENT, event_destination
 from app.utils.roundup_containers import (
     RoundupMembers,
@@ -345,38 +350,35 @@ def select_team_active_streaks(
     shown = deduped[: max(2, int(max_card_rows))]
     lead = shown[0]
     next_target = lead.streak_length + 1
-    joint_prob = 1.0
-    for item in shown:
-        joint_prob *= item.survival_probability
-    joint_pct = max(1, int(round(joint_prob * 100)))
+    lead_pct = int(round(lead.survival_probability * 100))
     most_vulnerable = min(shown, key=lambda c: (c.survival_probability, c.streak_length))
     vuln_pct = int(round(most_vulnerable.survival_probability * 100))
+    lead_short = short_team_name(lead.team, lead.sport)
+    vuln_short = short_team_name(most_vulnerable.team, most_vulnerable.sport)
+    count_w = number_word(len(shown), capitalize=True)
 
-    if target_kind == "W" and all(c.survival_probability > 0.5 for c in shown):
-        card_title = _assert_clean_copy(
-            f"{len(shown)} longest win streaks — {joint_pct}% chance all {len(shown)} survive"
-        )
-        context_line = _assert_clean_copy(
-            f"Every {min_streak}+ game winning streak is favored next out — led by "
-            f"{lead.team} ({lead.streak_kind}{lead.streak_length}, "
-            f"{int(round(lead.survival_probability * 100))}% to reach "
-            f"{lead.streak_kind}{next_target} {lead.opponent_phrase}) — yet all "
-            f"{len(shown)} surviving together is just {joint_pct}%, with "
-            f"{most_vulnerable.team} ({most_vulnerable.streak_kind}{most_vulnerable.streak_length}, "
-            f"{vuln_pct}%) most at risk."
-        )
+    if target_kind == "W":
+        card_title = _assert_clean_copy(f"{count_w} winning streaks on the line")
+        if most_vulnerable.event_id != lead.event_id:
+            context_line = _assert_clean_copy(
+                f"The {lead_short} have won {lead.streak_length} straight and are {lead_pct}% "
+                f"to make it {next_target}. The {vuln_short} are the shakiest at {vuln_pct}%."
+            )
+        else:
+            runner = shown[1]
+            runner_short = short_team_name(runner.team, runner.sport)
+            runner_pct = int(round(runner.survival_probability * 100))
+            context_line = _assert_clean_copy(
+                f"The {lead_short} have won {lead.streak_length} straight and are {lead_pct}% "
+                f"to make it {next_target}. The {runner_short} are at {runner_pct}%."
+            )
     else:
-        card_title = "Longest active winning streaks on the line"
+        card_title = _assert_clean_copy(f"{count_w} losing streaks on the line")
         context_line = _assert_clean_copy(
-            f"Teams on active {min_streak}+ game winning streaks with a priced next game, "
-            f"showing each streak's chance to survive — led by {lead.team} "
-            f"({lead.streak_kind}{lead.streak_length}, {int(round(lead.survival_probability * 100))}% "
-            f"to reach {lead.streak_kind}{next_target} {lead.opponent_phrase}) — "
-            f"{joint_pct}% chance all {len(shown)} survive."
+            f"The {lead_short} have lost {lead.streak_length} straight and are {lead_pct}% "
+            f"to drop another. The {vuln_short} are at {vuln_pct}%."
         )
-    footer = _assert_clean_copy(
-        f"Active {min_streak}+ game winning streaks · next-game win chance"
-    )
+    footer = _assert_clean_copy("Each team's next game.")
 
     rows = [
         {
@@ -387,7 +389,8 @@ def select_team_active_streaks(
             "streak": f"{c.streak_kind}{c.streak_length}",
             "next_matchup": _assert_clean_copy(c.opponent_phrase),
             "label": _assert_clean_copy(
-                f"{c.team} ({c.streak_kind}{c.streak_length}) · {c.opponent_phrase}"
+                f"{short_team_name(c.team, c.sport)}, {c.streak_length} straight · "
+                f"{short_matchup_phrase(c.opponent_phrase, c.sport)}"
             ),
             "probability": round(c.survival_probability, 4),
             "rendered_percent": int(round(c.survival_probability * 100)),

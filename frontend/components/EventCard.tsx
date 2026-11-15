@@ -143,6 +143,8 @@ function AnimatedProbability({
 // `object-contain`, which is what each was already doing.
 function ParticipantCrest({
   name,
+  sport,
+  abbreviation,
   servedFace,
   servedFlag,
   countryFlagUrl,
@@ -150,6 +152,8 @@ function ParticipantCrest({
   colorVar,
 }: {
   name: string;
+  sport?: string | null;
+  abbreviation?: string | null;
   servedFace: string | null;
   servedFlag: string | null;
   countryFlagUrl: string | null;
@@ -196,12 +200,16 @@ function ParticipantCrest({
       />
     );
   }
+  const badge = teamCrestInitials(name, sport, abbreviation);
   return (
     <div
-      className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
+      className={cn(
+        "w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center font-bold text-white/90",
+        badge.length >= 4 ? "text-[7px] tracking-tighter" : "text-[9px]",
+      )}
       style={{ backgroundColor: `rgb(var(${colorVar}))` }}
     >
-      {teamCrestInitials(name)}
+      {badge}
     </div>
   );
 }
@@ -870,6 +878,8 @@ export default function EventCard({
               <div className="flex items-center gap-2 flex-1 min-w-0">
                 <ParticipantCrest
                   name={event.home_team}
+                  sport={event.sport}
+                  abbreviation={event.home_team_data?.abbreviation ?? null}
                   servedFace={event.home_image_url ?? null}
                   servedFlag={event.home_flag_url ?? null}
                   countryFlagUrl={homeFlagUrl}
@@ -976,6 +986,8 @@ export default function EventCard({
               <div className="flex items-center gap-2 flex-1 min-w-0">
                 <ParticipantCrest
                   name={event.away_team}
+                  sport={event.sport}
+                  abbreviation={event.away_team_data?.abbreviation ?? null}
                   servedFace={event.away_image_url ?? null}
                   servedFlag={event.away_flag_url ?? null}
                   countryFlagUrl={awayFlagUrl}

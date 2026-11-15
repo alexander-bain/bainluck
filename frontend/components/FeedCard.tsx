@@ -325,7 +325,21 @@ function ThumbButtons({
 // Team logo — small inline logo with fallback
 // ============================================================================
 
-function TeamLogo({ url, name, color, isFlag, sport }: { url: string | null | undefined; name: string; color?: string | null; isFlag?: boolean; sport?: string | null }) {
+function TeamLogo({
+  url,
+  name,
+  color,
+  isFlag,
+  sport,
+  abbreviation,
+}: {
+  url: string | null | undefined;
+  name: string;
+  color?: string | null;
+  isFlag?: boolean;
+  sport?: string | null;
+  abbreviation?: string | null;
+}) {
   const [imgError, setImgError] = useState(false);
   const resolvedUrl = url || (!isFlag ? espnTeamLogoByName(name, sport) : null);
 
@@ -345,10 +359,12 @@ function TeamLogo({ url, name, color, isFlag, sport }: { url: string | null | un
   // #2882's neighbour: the same crest square as `EventCard`, and it had the
   // same inline initialism, so a doubles side rendered "S/" here too. One rule,
   // one place — see `teamCrestInitials`.
-  const initials = teamCrestInitials(name);
+  const initials = teamCrestInitials(name, sport, abbreviation);
   return (
     <div
-      className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
+      className={`w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center font-bold text-white/90 ${
+        initials.length >= 4 ? "text-[7px] tracking-tighter" : "text-[9px]"
+      }`}
       style={{ backgroundColor: color || "#6b7280" }}
     >
       {initials}
@@ -847,7 +863,7 @@ function EventFeedCard({
           <div className="flex-1 min-w-0">
             {/* Away team */}
             <div className="flex items-center gap-1.5 mb-0.5">
-              <TeamLogo url={awayParticipantUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={awayIsFlag} sport={data.sport} />
+              <TeamLogo url={awayParticipantUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={awayIsFlag} sport={data.sport} abbreviation={data.away_team_data?.abbreviation} />
               <TeamNameLink
                 name={data.away_team}
                 sportKey={data.sport}
@@ -891,7 +907,7 @@ function EventFeedCard({
             </div>
             {/* Home team */}
             <div className="flex items-center gap-1.5">
-              <TeamLogo url={homeParticipantUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={homeIsFlag} sport={data.sport} />
+              <TeamLogo url={homeParticipantUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={homeIsFlag} sport={data.sport} abbreviation={data.home_team_data?.abbreviation} />
               <TeamNameLink
                 name={data.home_team}
                 sportKey={data.sport}

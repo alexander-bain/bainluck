@@ -5,48 +5,48 @@
   "trading_guard_summary": "Seats live games where an underdog priced at <= 40% pregame now leads on the scoreboard or holds >= 50% live win probability (#15347436 Timra IK 2-0 at HV71: 40% pregame -> 84% live, #15347437 Vaxjo Lakers 1-0 at Malmo Redhawks: 39% pregame -> 69% live, #15343372 Newport County 1-0 at Crewe Alexandra: 27% pregame -> 52% live). Excludes live pregame favorites (#15341195 Almeria 61% pregame) and unpriced live games (#99153400).",
   "input_events": [
     {
+      "id": 15390001,
+      "sport": "basketball_nba",
+      "status": "live",
+      "period": "Q3 \u00b7 04:12",
+      "home_team": "Charlotte Hornets",
+      "away_team": "Boston Celtics",
+      "home_score": 78,
+      "away_score": 71,
+      "pregame_home_win_probability": 0.28,
+      "home_win_probability": 0.61
+    },
+    {
+      "id": 15390002,
+      "sport": "americanfootball_nfl",
+      "status": "live",
+      "period": "3rd \u00b7 08:45",
+      "home_team": "Kansas City Chiefs",
+      "away_team": "Las Vegas Raiders",
+      "home_score": 10,
+      "away_score": 17,
+      "pregame_home_win_probability": 0.66,
+      "home_win_probability": 0.42
+    },
+    {
       "id": 15347436,
       "sport": "icehockey_sweden_hockey_league",
       "status": "live",
-      "period": "2nd · 08:14",
+      "period": "2nd \u00b7 08:14",
       "home_team": "HV71",
-      "away_team": "Timrå IK",
+      "away_team": "Timr\u00e5 IK",
       "home_score": 0,
       "away_score": 2,
-      "pregame_home_win_probability": 0.60,
+      "pregame_home_win_probability": 0.6,
       "home_win_probability": 0.16
-    },
-    {
-      "id": 15347437,
-      "sport": "icehockey_sweden_hockey_league",
-      "status": "live",
-      "period": "2nd · 11:42",
-      "home_team": "Malmö Redhawks",
-      "away_team": "Växjö Lakers",
-      "home_score": 0,
-      "away_score": 1,
-      "pregame_home_win_probability": 0.61,
-      "home_win_probability": 0.31
-    },
-    {
-      "id": 15343372,
-      "sport": "soccer_efl_league_two",
-      "status": "live",
-      "period": "58'",
-      "home_team": "Crewe Alexandra",
-      "away_team": "Newport County",
-      "home_score": 0,
-      "away_score": 1,
-      "pregame_home_win_probability": 0.73,
-      "home_win_probability": 0.48
     },
     {
       "id": 15341195,
       "sport": "soccer_spain_segunda_division",
       "status": "live",
       "period": "64'",
-      "home_team": "UD Almería",
-      "away_team": "Córdoba CF",
+      "home_team": "UD Almer\u00eda",
+      "away_team": "C\u00f3rdoba CF",
       "home_score": 2,
       "away_score": 0,
       "pregame_home_win_probability": 0.61,
@@ -66,12 +66,50 @@
     }
   ],
   "expected_event_ids": [
-    15347436,
-    15347437,
-    15343372
+    15390001,
+    15390002,
+    15347436
   ],
   "excluded_event_ids": [
     15341195,
     99153400
+  ],
+  "non_featured_refusal_events": [
+    {
+      "id": 15347436,
+      "sport": "icehockey_sweden_hockey_league",
+      "status": "live",
+      "period": "2nd \u00b7 08:14",
+      "home_team": "HV71",
+      "away_team": "Timr\u00e5 IK",
+      "home_score": 0,
+      "away_score": 2,
+      "pregame_home_win_probability": 0.6,
+      "home_win_probability": 0.16
+    },
+    {
+      "id": 15347437,
+      "sport": "icehockey_sweden_hockey_league",
+      "status": "live",
+      "period": "2nd \u00b7 11:42",
+      "home_team": "Malm\u00f6 Redhawks",
+      "away_team": "V\u00e4xj\u00f6 Lakers",
+      "home_score": 0,
+      "away_score": 1,
+      "pregame_home_win_probability": 0.61,
+      "home_win_probability": 0.31
+    },
+    {
+      "id": 15343372,
+      "sport": "soccer_efl_league_two",
+      "status": "live",
+      "period": "58'",
+      "home_team": "Crewe Alexandra",
+      "away_team": "Newport County",
+      "home_score": 0,
+      "away_score": 1,
+      "pregame_home_win_probability": 0.73,
+      "home_win_probability": 0.48
+    }
   ]
 }
