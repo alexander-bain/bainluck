@@ -12,7 +12,7 @@
   "category": "entertainment",
   "tag": "ENTERTAINMENT",
   "section_title": "Opening weekend",
-  "footer": "Ordered by expected opening gross; each row shows that film's likeliest range.",
+  "footer": "Biggest expected opening first.",
   "rule": {
     "producer": "field_leaders",
     "domain": "box_office_opening_weekend",
