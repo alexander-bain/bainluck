@@ -105,7 +105,7 @@ describe("#6018 the pip speaks for the prices", () => {
       ],
     });
 
-    expect(pip(market)).toBe("5h ago");
+    expect(pip(market)).toBe("Sep 13");
     expect(pip(market)).not.toBe("Jul 21");
   });
 
@@ -137,10 +137,10 @@ describe("#6018 the pip speaks for the prices", () => {
       ],
     });
 
-    // The FLOOR of the two drawn rows, not the fresher one — the card's own
-    // vocabulary for a day is "1d ago" (`formatRelativeTime`), not "yesterday".
-    expect(pip(market)).toBe("1d ago");
-    expect(pip(market)).not.toBe("5h ago"); // the newer of the two rows
+    // The FLOOR of the two drawn rows, not the fresher one — stamped as a date
+    // rather than relative "Xd ago".
+    expect(pip(market)).toBe("Sep 12");
+    expect(pip(market)).not.toBe("Sep 13"); // the newer of the two rows
   });
 });
 
@@ -155,7 +155,7 @@ describe("#6018 what it refuses to say", () => {
     });
 
     const printed = pip(market);
-    expect(printed).not.toBe("31m ago"); // what `updated_at` would have given
+    expect(printed).not.toBe("Sep 13"); // what `updated_at` would have given
     expect(printed === null || printed === "").toBe(true);
   });
 
@@ -215,7 +215,7 @@ describe("#6803 a priceless rung does not date the pinned card", () => {
       outcomes: ladder(),
     });
 
-    expect(pip(market)).toBe("3h ago");
+    expect(pip(market)).toBe("Sep 17");
     // What the reader actually saw: 128 days of understatement, bought from
     // five rungs that display no number at all.
     expect(pip(market)).not.toBe("May 12");

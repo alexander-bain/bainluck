@@ -46,22 +46,9 @@ const COLLAPSED_ROWS = 12;
 /** Below this the movement is noise, not a mover — the pre-existing bar. */
 const MOVER_MIN = 0.02;
 
-/** The venues we name. An unknown source prints nothing rather than a guess. */
-const VENUE_LABEL: Record<string, string> = {
-  kalshi: "Kalshi",
-  polymarket: "Polymarket",
-  odds_api: "Sportsbooks",
-  datagolf: "DataGolf",
-};
-
-function VenueBadge({ source }: { source: string | null | undefined }) {
-  const label = VENUE_LABEL[(source ?? "").toLowerCase()];
-  if (!label) return null;
-  return (
-    <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-surface-elevated text-text-muted">
-      {label}
-    </span>
-  );
+function VenueBadge(_props: { source: string | null | undefined }) {
+  void _props;
+  return null;
 }
 
 function BinaryRow({ market, answer }: LeagueBinary) {

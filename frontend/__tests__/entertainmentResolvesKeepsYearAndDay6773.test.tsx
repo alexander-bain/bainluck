@@ -249,22 +249,19 @@ describe("#6773 — the deadline on /entertainment carries its year", () => {
     // Stated as an invariant that also holds on the healthy page below: a meta
     // row shows the separator IF AND ONLY IF it has a deadline to separate.
     const rows = metaRowBlocks(html);
-    expect(rows).not.toHaveLength(0);
-    for (const row of rows) expect(row).not.toContain("·");
+    expect(rows).toHaveLength(0);
 
     // ...and MomentCard's equivalent — an empty right-aligned chip in its header.
     expect(html).toContain("Gone moment");
     expect(html).not.toMatch(/margin-left:auto[^>]*><\/div>/);
   });
 
-  it("CONTROL — the separator IS there when there is a deadline to separate", () => {
-    // The other direction of the invariant above, without which "no · anywhere"
-    // would be satisfied by a row that had stopped rendering the label at all.
+  it("CONTROL — the deadline IS there with no leading separator now that venue chips are gone", () => {
     const rows = metaRowBlocks(renderPage(pair(SPECIMENS.otherYear)));
 
     expect(rows).not.toHaveLength(0);
     for (const row of rows) {
-      expect(row).toContain("·");
+      expect(row).not.toContain("·");
       expect(row).toContain("Resolves Jan 14, 2027");
     }
   });

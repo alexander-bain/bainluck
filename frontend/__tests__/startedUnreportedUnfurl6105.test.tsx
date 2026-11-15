@@ -303,7 +303,7 @@ describe("#6105 — the picture stops calling a started match Upcoming", () => {
     // What it draws instead: the pre-match pair, away first, and the house badge.
     expect(heroSlot(card)).toEqual(["54%", "46%"]);
     expect(text).toContain("No result reported");
-    expect(text).toContain("Pre-match · sportsbooks");
+    expect(text).toContain("Pregame · sportsbooks");
   });
 
   it("prints the frozen in-game blend NOWHERE on the card", async () => {
@@ -403,7 +403,7 @@ describe("#6105 — the picture stops calling a started match Upcoming", () => {
     const text = allText(card);
     expect(text).toContain("Live now");
     expect(text).not.toContain("No result reported");
-    expect(text).not.toContain("Pre-match");
+    expect(text).not.toContain("Pregame");
   });
 
   it("CONTROL: a genuinely upcoming game still says Upcoming and keeps its forecast", async () => {
@@ -433,7 +433,7 @@ describe("#6105 — the picture stops calling a started match Upcoming", () => {
     expect(heroSlot(card)).toEqual(["6", "3"]);
     const text = allText(card);
     expect(text).toContain("Final");
-    expect(text).toContain("Pre-match · sportsbooks");
+    expect(text).toContain("Pregame · sportsbooks");
     expect(text).not.toContain("No result reported");
     expect(text).not.toContain("93%");
   });

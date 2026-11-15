@@ -12,6 +12,7 @@ import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { namedPairLabels, twoLegCardPair } from "@/lib/twoLegCardPair";
 import { eventPath } from "@/lib/eventKey";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
+import { preciseObservedAt } from "@/lib/liquidity";
 import { parseNumericBucketSortKey } from "@/components/economics/atoms";
 import type {
   EntertainmentData,
@@ -148,21 +149,9 @@ function TagChip({ emoji, label }: { emoji?: string; label: string }) {
   );
 }
 
-function EntSourceChip({ source }: { source: string }) {
-  if (source === "kalshi") {
-    return (
-      <span className={s.srcKalshi}>
-        <span className={s.srcDot} />
-        Kalshi
-      </span>
-    );
-  }
-  return (
-    <span className={s.srcPoly}>
-      <span className={s.srcDot} />
-      Polymarket
-    </span>
-  );
+function EntSourceChip(_props: { source: string }) {
+  void _props;
+  return null;
 }
 
 function EntDelta({ value }: { value: number | null | undefined }) {
@@ -184,15 +173,17 @@ function MetaRow({
   volume?: number | null;
   resolves?: string | null;
 }) {
+  void src;
+  void volume;
   // #6773 — the authority, not a private formatter. See the note above
   // `formatDate`'s grave at the foot of this file. The guard is now on the
   // LABEL rather than on the wire value, because `formatResolvesLabel` answers
   // "" for a date that has gone and a row must not print a bare "· Resolves".
   const resolvesLine = formatResolvesLabel(resolves);
+  if (!resolvesLine) return null;
   return (
     <div className={s.metaRow}>
-      <EntSourceChip source={src} />
-      {resolvesLine && <span>· {resolvesLine}</span>}
+      <span>{resolvesLine}</span>
     </div>
   );
 }
@@ -1658,11 +1649,15 @@ export default function EntertainmentPage() {
             </b>{" "}
             active markets
           </span>
-          <span>·</span>
-          <span>
-            Updated{" "}
-            <b className={s.metaNum}>{formatTimeAgo(data.updated_at)}</b>
-          </span>
+          {preciseObservedAt(data.updated_at) && (
+            <>
+              <span>·</span>
+              <span>
+                Updated{" "}
+                <b className={s.metaNum}>{preciseObservedAt(data.updated_at)}</b>
+              </span>
+            </>
+          )}
         </div>
       </div>
 
@@ -1727,16 +1722,6 @@ export default function EntertainmentPage() {
 // ─────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────
-
-function formatTimeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
 
 /**
  * #6773 — `formatDate` USED TO LIVE HERE, AND BOTH ITS CALLERS WERE DEADLINES.

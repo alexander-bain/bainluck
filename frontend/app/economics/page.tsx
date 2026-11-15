@@ -278,7 +278,7 @@ export default function EconomicsPage() {
                       How many cuts in 2026?
                     </div>
                     <RateCutsChart cuts={t.fed.rate_cuts as [number, string][]} />
-                    <FooterNote left="Modal outcome highlighted" right="Kalshi" />
+                    <FooterNote left="Modal outcome highlighted" right="" />
                   </Card>
                 )}
                 {t.fed.side_markets && t.fed.side_markets.length > 0 && (

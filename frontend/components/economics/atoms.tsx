@@ -52,25 +52,10 @@ export function Card({ children, className = "", style }: { children: React.Reac
   );
 }
 
-export function SourceChip({ src }: { src: string }) {
-  const s = SOURCES[src] || SOURCES.kalshi;
-  if (src === "cross") {
-    return (
-      <span className="inline-flex items-center gap-1.5 border border-surface-border rounded-full text-[10px] font-semibold tracking-wide px-2 py-0.5 text-text-secondary"
-        style={{ background: `linear-gradient(90deg, ${SOURCES.kalshi.bg} 50%, ${SOURCES.polymarket.bg} 50%)` }}>
-        <span className="w-1.5 h-1.5 rounded-full" style={{ background: SOURCES.kalshi.color }} />
-        <span className="w-1.5 h-1.5 rounded-full" style={{ background: SOURCES.polymarket.color }} />
-        CROSS
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full text-[11px] font-medium px-2 py-0.5"
-      style={{ background: s.bg, color: s.fg }}>
-      <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />
-      {s.label}
-    </span>
-  );
+export function SourceChip(_props: { src: string }) {
+  void SOURCES;
+  void _props;
+  return null;
 }
 
 export function Delta({ v, unit = "pp" }: { v: number | null | undefined; unit?: string }) {

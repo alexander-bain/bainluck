@@ -310,9 +310,9 @@ describe("UX-1052 item 8 — the board that stays", () => {
     expect(html.split("+5.0").length - 1).toBe(1);
   });
 
-  it("prints the venue badge — which is what makes a MERGED board legible", () => {
-    expect(html).toContain("Kalshi");
-    expect(html).toContain("Polymarket");
+  it("prints no venue badge on card faces", () => {
+    expect(html).not.toContain("Kalshi");
+    expect(html).not.toContain("Polymarket");
   });
 
   it("draws no bar at all for an unpriced question, and says so in the product's words", () => {
