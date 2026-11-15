@@ -472,21 +472,148 @@ struct DiscoverPictureChartPanel191AView: View {
         }
     }
 
-    // MARK: - Plot Canvas (0%–25%–50%–75%–100% Scale + 50% Reference Line + Connected Line)
+    // MARK: - Ruling 201 Scale (Fitted Window for 2-Way Non-Draw, 0%–100% for Soccer / Draw)
+
+    nonisolated static func verticalWindow201(
+        sportKey: String?,
+        points: [DiscoverPictureChart191A.Point]
+    ) -> ChartProbabilityAxis9483.Window {
+        if DrawPricedWinner.sportPricesADraw(sportKey) {
+            return ChartProbabilityAxis9483.full
+        }
+        let readings = points.map(\.probability)
+        let mustShow = [points.first?.probability, points.last?.probability].compactMap { $0 }
+        return ChartProbabilityAxis9483.window(readings: readings, mustShow: mustShow)
+    }
+
+    private var yWindow: ChartProbabilityAxis9483.Window {
+        Self.verticalWindow201(sportKey: event.sport, points: model.points)
+    }
+
+    // MARK: - Plot Canvas (Ruling 201 Fitted Scale vs 0%–100% + 50% Reference Line + Connected Line)
+
+    @ChartContentBuilder
+    private func gridAndReferenceMarks(
+        gridLevels: [Double],
+        includesEven: Bool
+    ) -> some ChartContent {
+        ForEach(gridLevels, id: \.self) { level in
+            RuleMark(y: .value("Grid", level))
+                .lineStyle(StrokeStyle(lineWidth: 0.5))
+                .foregroundStyle(Color.primary.opacity(0.055))
+        }
+
+        if includesEven {
+            RuleMark(y: .value("Even", 0.5))
+                .lineStyle(StrokeStyle(lineWidth: 1.1, dash: [4, 4]))
+                .foregroundStyle(Color.secondary.opacity(0.50))
+        }
+    }
+
+    @ChartContentBuilder
+    private func seriesMarks(floorY: Double) -> some ChartContent {
+        if model.points.count >= 2 {
+            ForEach(model.points) { point in
+                AreaMark(
+                    x: .value("Time", point.date),
+                    yStart: .value("Floor", floorY),
+                    yEnd: .value("Win chance", point.probability)
+                )
+                .interpolationMethod(.linear)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [
+                            lineColor.opacity(0.16),
+                            lineColor.opacity(0.015)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+
+                LineMark(
+                    x: .value("Time", point.date),
+                    y: .value("Win chance", point.probability)
+                )
+                .interpolationMethod(.linear)
+                .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                .foregroundStyle(lineColor)
+            }
+
+            ForEach(model.points.filter { $0.isOpening || $0.isSolidMark || $0.isEndpoint }) { point in
+                pointMarks(for: point)
+            }
+        } else if let lone = model.points.first {
+            PointMark(
+                x: .value("Time", lone.date),
+                y: .value("Win chance", lone.probability)
+            )
+            .symbol(.circle)
+            .symbolSize(34)
+            .foregroundStyle(lineColor)
+        }
+    }
+
+    @ChartContentBuilder
+    private func pointMarks(for point: DiscoverPictureChart191A.Point) -> some ChartContent {
+        if point.isOpening {
+            PointMark(
+                x: .value("Time", point.date),
+                y: .value("Win chance", point.probability)
+            )
+            .symbol(.circle)
+            .symbolSize(28)
+            .foregroundStyle(Color.cardBackground)
+
+            PointMark(
+                x: .value("Time", point.date),
+                y: .value("Win chance", point.probability)
+            )
+            .symbol(.circle.strokeBorder(lineWidth: 1.6))
+            .symbolSize(28)
+            .foregroundStyle(lineColor)
+        } else if point.isEndpoint {
+            PointMark(
+                x: .value("Time", point.date),
+                y: .value("Win chance", point.probability)
+            )
+            .symbol(.circle)
+            .symbolSize(72)
+            .foregroundStyle(lineColor.opacity(0.20))
+
+            PointMark(
+                x: .value("Time", point.date),
+                y: .value("Win chance", point.probability)
+            )
+            .symbol(.circle)
+            .symbolSize(30)
+            .foregroundStyle(lineColor)
+        } else {
+            PointMark(
+                x: .value("Time", point.date),
+                y: .value("Win chance", point.probability)
+            )
+            .symbol(.circle)
+            .symbolSize(14)
+            .foregroundStyle(lineColor.opacity(0.85))
+        }
+    }
 
     private var plotCanvas: some View {
-        HStack(spacing: 6) {
+        let win = yWindow
+        let topDescendingTicks = Array(win.tickPercents.reversed())
+        let gridLevels = win.ticks.filter { abs($0 - 0.5) > 0.001 }
+        let includesEven = win.domain.contains(0.5)
+
+        return HStack(spacing: 6) {
             if !dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .trailing, spacing: 0) {
-                    yTickLabel("100%")
-                    Spacer(minLength: 0)
-                    yTickLabel("75%")
-                    Spacer(minLength: 0)
-                    yTickLabel("50%", emphasized: true)
-                    Spacer(minLength: 0)
-                    yTickLabel("25%")
-                    Spacer(minLength: 0)
-                    yTickLabel("0%")
+                    ForEach(Array(topDescendingTicks.enumerated()), id: \.offset) { idx, pct in
+                        if idx > 0 {
+                            Spacer(minLength: 0)
+                        }
+                        yTickLabel("\(pct)%", emphasized: pct == 50)
+                    }
                 }
                 .fixedSize(horizontal: true, vertical: false)
                 .frame(minWidth: 32, maxHeight: plotHeight, alignment: .trailing)
@@ -495,100 +622,10 @@ struct DiscoverPictureChartPanel191AView: View {
 
             ZStack {
                 Chart {
-                    // Subtle quarter & bound gridlines (100%, 75%, 25%, 0%)
-                    ForEach([1.0, 0.75, 0.25, 0.0], id: \.self) { level in
-                        RuleMark(y: .value("Grid", level))
-                            .lineStyle(StrokeStyle(lineWidth: 0.5))
-                            .foregroundStyle(Color.primary.opacity(0.055))
-                    }
-
-                    // 191-A 50% dashed reference line
-                    RuleMark(y: .value("Even", 0.5))
-                        .lineStyle(StrokeStyle(lineWidth: 1.1, dash: [4, 4]))
-                        .foregroundStyle(Color.secondary.opacity(0.50))
-
-                    if model.points.count >= 2 {
-                        ForEach(model.points) { point in
-                            AreaMark(
-                                x: .value("Time", point.date),
-                                yStart: .value("Floor", 0.0),
-                                yEnd: .value("Win chance", point.probability)
-                            )
-                            .interpolationMethod(.linear)
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [
-                                        lineColor.opacity(0.16),
-                                        lineColor.opacity(0.015)
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-
-                            LineMark(
-                                x: .value("Time", point.date),
-                                y: .value("Win chance", point.probability)
-                            )
-                            .interpolationMethod(.linear)
-                            .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
-                            .foregroundStyle(lineColor)
-                        }
-
-                        ForEach(model.points.filter { $0.isOpening || $0.isSolidMark || $0.isEndpoint }) { point in
-                            if point.isOpening {
-                                PointMark(
-                                    x: .value("Time", point.date),
-                                    y: .value("Win chance", point.probability)
-                                )
-                                .symbol(.circle)
-                                .symbolSize(28)
-                                .foregroundStyle(Color.cardBackground)
-
-                                PointMark(
-                                    x: .value("Time", point.date),
-                                    y: .value("Win chance", point.probability)
-                                )
-                                .symbol(.circle.strokeBorder(lineWidth: 1.6))
-                                .symbolSize(28)
-                                .foregroundStyle(lineColor)
-                            } else if point.isEndpoint {
-                                PointMark(
-                                    x: .value("Time", point.date),
-                                    y: .value("Win chance", point.probability)
-                                )
-                                .symbol(.circle)
-                                .symbolSize(72)
-                                .foregroundStyle(lineColor.opacity(0.20))
-
-                                PointMark(
-                                    x: .value("Time", point.date),
-                                    y: .value("Win chance", point.probability)
-                                )
-                                .symbol(.circle)
-                                .symbolSize(30)
-                                .foregroundStyle(lineColor)
-                            } else {
-                                PointMark(
-                                    x: .value("Time", point.date),
-                                    y: .value("Win chance", point.probability)
-                                )
-                                .symbol(.circle)
-                                .symbolSize(14)
-                                .foregroundStyle(lineColor.opacity(0.85))
-                            }
-                        }
-                    } else if let lone = model.points.first {
-                        PointMark(
-                            x: .value("Time", lone.date),
-                            y: .value("Win chance", lone.probability)
-                        )
-                        .symbol(.circle)
-                        .symbolSize(34)
-                        .foregroundStyle(lineColor)
-                    }
+                    gridAndReferenceMarks(gridLevels: gridLevels, includesEven: includesEven)
+                    seriesMarks(floorY: win.domain.lowerBound)
                 }
-                .chartYScale(domain: 0.0 ... 1.0)
+                .chartYScale(domain: win.domain)
                 .chartXAxis(.hidden)
                 .chartYAxis(.hidden)
                 .chartLegend(.hidden)

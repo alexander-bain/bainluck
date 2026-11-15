@@ -4992,19 +4992,31 @@ extension OddsChartView {
         }
     }
 
+    /// Ruling 201: use 0 to 100 (`ChartProbabilityAxis9483.full`) only for soccer and
+    /// anything with a draw; for two teams or two players with no draw, keep the fitted
+    /// vertical scale the live page uses today (`probabilityWindow9483`).
+    nonisolated static func usesZeroToHundredVerticalScale201(sportKey: String?) -> Bool {
+        DrawPricedWinner.sportPricesADraw(sportKey)
+    }
+
     /// This chart's axis plan for one Sources state, from the points it draws
     /// (already admitted and cut to its window by `filterPoints`).
     private func axisPlan9483(dataPoints: [ChartDataPoint], checkpoints: PublicationCheckpointMount4974?,
                               sourcesOpen: Bool) -> AxisPlan9483 {
         let revealed = sourcesOpen ? Self.revealableSources9483(in: dataPoints, withheld: withheldSources9483) : []
-        let window = Self.probabilityWindow9483(
-            points: dataPoints,
-            defaultSources: Self.defaultVisibleSources(in: dataPoints),
-            revealed: revealed,
-            checkpoints: checkpoints?.drawn ?? [],
-            blendSurvivors: checkpoints?.survivors,
-            liveAndOpen: status == "live" && !EventState.isFinished(status) && !venueSettled,
-            primaryClosed: EventState.isFinished(status))
+        let window: ChartProbabilityAxis9483.Window
+        if Self.usesZeroToHundredVerticalScale201(sportKey: sportKey) {
+            window = ChartProbabilityAxis9483.full
+        } else {
+            window = Self.probabilityWindow9483(
+                points: dataPoints,
+                defaultSources: Self.defaultVisibleSources(in: dataPoints),
+                revealed: revealed,
+                checkpoints: checkpoints?.drawn ?? [],
+                blendSurvivors: checkpoints?.survivors,
+                liveAndOpen: status == "live" && !EventState.isFinished(status) && !venueSettled,
+                primaryClosed: EventState.isFinished(status))
+        }
         return AxisPlan9483(sides: pageAxisSides9483, window: window, revealed: revealed)
     }
 

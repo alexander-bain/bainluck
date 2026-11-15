@@ -1594,7 +1594,16 @@ struct EvolutionChartView: View {
     /// already uses: nothing here may be confused with a line that is data.
     static let gapBridgeDash: [CGFloat] = [1, 5]
 
-    nonisolated static func yCeilingPercent192A(entries: [EvolutionPoint]) -> Double {
+    /// Ruling 201: fields of more than two use the full 0 to 100 vertical scale;
+    /// two-contender non-draw markets keep a fitted vertical ceiling.
+    nonisolated static func usesZeroToHundredVerticalScale201(outcomeCount: Int) -> Bool {
+        outcomeCount > 2
+    }
+
+    nonisolated static func yCeilingPercent192A(entries: [EvolutionPoint], outcomeCount: Int = 3) -> Double {
+        if usesZeroToHundredVerticalScale201(outcomeCount: outcomeCount) {
+            return 100
+        }
         let peak = entries.map(\.probability).max() ?? 50
         if peak <= 26 { return 30 }
         if peak <= 46 { return 50 }
@@ -1644,7 +1653,8 @@ struct EvolutionChartView: View {
 
     private var chartSection: some View {
         let entries = chartEntries
-        let ceiling192A = Self.yCeilingPercent192A(entries: entries)
+        let fieldOutcomeCount = max(data?.outcomes.count ?? 0, displayedNames.count)
+        let ceiling192A = Self.yCeilingPercent192A(entries: entries, outcomeCount: fieldOutcomeCount)
         let bridges = Self.gapBridges(entries)
         let results = Self.resultMarks(settlementResults, entries: entries, names: displayedNames)
         // #7077 — how many instants this chart has evidence for, counted off the
@@ -1893,7 +1903,7 @@ struct EvolutionChartView: View {
 
         return HStack(alignment: .top, spacing: 4) {
             Group {
-                if isFirstScreenInline192A {
+                if isFirstScreenInline192A || Self.usesZeroToHundredVerticalScale201(outcomeCount: fieldOutcomeCount) {
                     plotChart.chartYScale(domain: 0...ceiling192A)
                 } else {
                     plotChart

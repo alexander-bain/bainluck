@@ -1019,7 +1019,7 @@ struct EventAtlasGolfTournamentSection11666: View {
 
     @State private var selectedGolferName: String? = nil
     @State private var selectedFinishKey: String? = nil
-    @State private var fullScale: Bool = false
+    @State private var fullScale: Bool = true
     @State private var fullscreenTimeRange: EventAtlasGolfTournament11666.GolfTimeRange192A = .event
     @State private var chooserMode: EventAtlasGolfTournament11666.ChooserMode = .chances
     @State private var surnameBand: EventAtlasGolfTournament11666.SurnameBand = .all
@@ -1526,7 +1526,8 @@ struct EventAtlasGolfJourneyCardView11666: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var ceiling: Double {
-        EventAtlasGolfTournament11666.yAxisCeiling(contenders: contenders, fullScale: false)
+        let isFieldOverTwo = max(fieldCount, contenders.count) > 2
+        return EventAtlasGolfTournament11666.yAxisCeiling(contenders: contenders, fullScale: isFieldOverTwo)
     }
 
     private var hasSeriesPoints: Bool {
