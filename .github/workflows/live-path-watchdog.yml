@@ -2410,6 +2410,10 @@ jobs:
         \ /tmp/activitykit-registration10542.txt; then\n  echo \"::error::#10542 registration ownership gate skipped\"\n  exit 1\nfi\ngrep -qE\
         \ \"[^0-9]5 passed([,[:space:]]|$)\" /tmp/activitykit-registration10542.txt || {\n  echo \"::error::#10542 registration ownership gate\
         \ did not run all five cases\"\n  exit 1\n}\n"
+    - id: db_177a_push_devices_without_an_account
+      name: '#177-A a phone registers its pins and push tokens without an account (real Postgres)'
+      if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+      run: "python -m pytest tests/integration/test_push_devices_177a_pg.py -v -rs > /tmp/pushdevices177a.txt 2>&1 || {\n  cat /tmp/pushdevices177a.txt\n  exit 1\n}\ncat /tmp/pushdevices177a.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/pushdevices177a.txt; then\n  echo \"::error::#177-A push-devices gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]9 passed([,[:space:]]|$)\" /tmp/pushdevices177a.txt || {\n  echo \"::error::#177-A push-devices gate did not run all nine cases\"\n  exit 1\n}\n"
     - id: db_301_10556_durable_activitykit_reservations_r
       name: '#10556 durable ActivityKit reservations (real Postgres)'
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
