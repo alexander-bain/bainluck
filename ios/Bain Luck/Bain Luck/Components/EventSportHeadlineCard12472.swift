@@ -361,43 +361,30 @@ struct EventSportHeadlineCard12472: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     crest(model.home, color: colors.home, size: 30)
-                    Text(model.home.shortName)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.primary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    singleLineTeamNameLabel(model.home.shortName, isLoser: false)
                 }
                 soccerCenterTag(threeWay)
                 HStack(spacing: 8) {
                     crest(model.away, color: colors.away, size: 30)
-                    Text(model.away.shortName)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.primary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    singleLineTeamNameLabel(model.away.shortName, isLoser: false)
                 }
             }
         } else {
             HStack(alignment: .center, spacing: 8) {
                 HStack(spacing: 7) {
                     crest(model.home, color: colors.home, size: 30)
-                    Text(model.home.shortName)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.primary)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                        .fixedSize(horizontal: false, vertical: true)
+                    singleLineTeamNameLabel(model.home.shortName, isLoser: false)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 soccerCenterTag(threeWay)
 
                 HStack(spacing: 7) {
-                    Text(model.away.shortName)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.primary)
-                        .multilineTextAlignment(.trailing)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                        .fixedSize(horizontal: false, vertical: true)
+                    singleLineTeamNameLabel(
+                        model.away.shortName,
+                        isLoser: false,
+                        alignment: .trailing
+                    )
                     crest(model.away, color: colors.away, size: 30)
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -715,7 +702,7 @@ struct EventSportHeadlineCard12472: View {
                         .font(liveColumnHeaderFont)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                        .minimumScaleFactor(0.8)
                         .frame(width: effectiveScoreColWidth, alignment: .trailing)
                 }
                 if let pregameHeader = headers.pregame {
@@ -723,14 +710,14 @@ struct EventSportHeadlineCard12472: View {
                         .font(liveColumnHeaderFont)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                        .minimumScaleFactor(0.7)
                         .frame(width: effectivePregameColWidth, alignment: .trailing)
                 }
                 Text(headers.now)
                     .font(liveColumnHeaderFont)
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .minimumScaleFactor(0.8)
                     .frame(width: effectiveNowColWidth, alignment: .trailing)
             }
             Rectangle()
@@ -1076,10 +1063,7 @@ struct EventSportHeadlineCard12472: View {
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(side.shortName)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Color.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+                singleLineTeamNameLabel(side.shortName, isLoser: false)
                 Spacer(minLength: 4)
                 HStack(spacing: 6) {
                     ForEach(Array(scoreFirst.setColumns.enumerated()), id: \.offset) { _, col in
@@ -1154,10 +1138,11 @@ struct EventSportHeadlineCard12472: View {
         if let finalHeaders = model.finalColumnHeaders {
             if stacksRowsVertically {
                 VStack(alignment: .leading, spacing: 4) {
-                    teamIdentityStack(side, color: color, stacksRecord: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(alignment: .center, spacing: 8) {
-                        crest(side, color: color, size: 26)
+                    HStack(spacing: 8) {
+                        crest(side, color: color)
+                        teamIdentityStack(side, color: color, stacksRecord: true)
+                    }
+                    HStack(spacing: 0) {
                         Spacer(minLength: 0)
                         finalValueColumns(side, headers: finalHeaders)
                     }
@@ -1177,10 +1162,11 @@ struct EventSportHeadlineCard12472: View {
         } else if model.pregameColumnHeaders != nil {
             if stacksRowsVertically {
                 VStack(alignment: .leading, spacing: 4) {
-                    teamIdentityStack(side, color: color, stacksRecord: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(alignment: .center, spacing: 8) {
-                        crest(side, color: color, size: 26)
+                    HStack(spacing: 8) {
+                        crest(side, color: color)
+                        teamIdentityStack(side, color: color, stacksRecord: true)
+                    }
+                    HStack(spacing: 0) {
                         Spacer(minLength: 0)
                         pregameValueColumns(side, color: color)
                     }
@@ -1200,10 +1186,11 @@ struct EventSportHeadlineCard12472: View {
         } else if let headers = model.liveColumnHeaders, headers.hasAny {
             if stacksRowsVertically {
                 VStack(alignment: .leading, spacing: 4) {
-                    teamIdentityStack(side, color: color, stacksRecord: model.stacksRecordUnderName)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(alignment: .center, spacing: 8) {
-                        crest(side, color: color, size: 26)
+                    HStack(spacing: 8) {
+                        crest(side, color: color)
+                        teamIdentityStack(side, color: color, stacksRecord: model.stacksRecordUnderName)
+                    }
+                    HStack(spacing: 0) {
                         Spacer(minLength: 0)
                         liveValueColumns(side, headers: headers, color: color)
                     }
@@ -1222,10 +1209,11 @@ struct EventSportHeadlineCard12472: View {
             }
         } else if stacksRowsVertically {
             VStack(alignment: .leading, spacing: 4) {
-                teamIdentityStack(side, color: color, stacksRecord: model.stacksRecordUnderName)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                HStack(alignment: .center, spacing: 8) {
-                    crest(side, color: color, size: 26)
+                HStack(spacing: 8) {
+                    crest(side, color: color)
+                    teamIdentityStack(side, color: color, stacksRecord: model.stacksRecordUnderName)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Spacer(minLength: 4)
                     chanceText(side.winChanceText, color: color)
                         .fixedSize(horizontal: true, vertical: false)
@@ -1261,6 +1249,21 @@ struct EventSportHeadlineCard12472: View {
         )
     }
 
+    private func singleLineTeamNameLabel(
+        _ shortName: String,
+        isLoser: Bool,
+        alignment: TextAlignment = .leading
+    ) -> some View {
+        Text(shortName)
+            .font(.subheadline.weight(isLoser ? .semibold : .bold))
+            .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
+            .multilineTextAlignment(alignment)
+            .lineLimit(1)
+            .minimumScaleFactor(stacksRowsVertically ? 0.45 : 0.58)
+            .truncationMode(.tail)
+            .allowsTightening(true)
+    }
+
     private func teamIdentityStack(
         _ side: EventSportHeadlines12472.TeamRowModel,
         color: Color,
@@ -1270,12 +1273,7 @@ struct EventSportHeadlineCard12472: View {
         return VStack(alignment: .leading, spacing: stacksRowsVertically ? 2 : 1.5) {
             if stacksRowsVertically || stacksRecord {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(side.shortName)
-                        .font(.subheadline.weight(isLoser ? .semibold : .bold))
-                        .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
-                        .lineLimit(stacksRowsVertically ? nil : 2)
-                        .minimumScaleFactor(0.85)
-                        .fixedSize(horizontal: false, vertical: true)
+                    singleLineTeamNameLabel(side.shortName, isLoser: isLoser)
                     if side.won == true {
                         Text("\u{2713}")
                             .font(.subheadline.weight(.heavy))
@@ -1328,12 +1326,7 @@ struct EventSportHeadlineCard12472: View {
                     }
                     VStack(alignment: .leading, spacing: 1.5) {
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Text(side.shortName)
-                                .font(.subheadline.weight(isLoser ? .semibold : .bold))
-                                .foregroundStyle(isLoser ? Color.primary.opacity(0.65) : Color.primary)
-                                .lineLimit(2)
-                                .minimumScaleFactor(0.85)
-                                .fixedSize(horizontal: false, vertical: true)
+                            singleLineTeamNameLabel(side.shortName, isLoser: isLoser)
                             if side.won == true {
                                 Text("\u{2713}")
                                     .font(.subheadline.weight(.heavy))
@@ -1345,7 +1338,7 @@ struct EventSportHeadlineCard12472: View {
                             Text(record)
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(DS.textSecondaryReadable)
-                                .fixedSize(horizontal: true, vertical: false)
+                                .lineLimit(1)
                         }
                     }
                 }

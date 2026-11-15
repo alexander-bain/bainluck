@@ -62,15 +62,15 @@ const PlayoffGridPage = require("@/app/playoffs/[sport]/page").default;
 const { AnalyticsProvider } = require("@/components/Analytics");
 
 /** The served movers, as 0–1 fractions, and what each chip must print. */
-const SPECIMEN: { name: string; change: number; chip: string }[] = [
-  { name: "Mississippi State Bulldogs", change: 0.0174, chip: "+1.7 pts" },
-  { name: "Indiana Hoosiers", change: 0.0151, chip: "+1.5 pts" },
-  { name: "Texas Longhorns", change: 0.0114, chip: "+1.1 pts" },
-  { name: "Ole Miss", change: -0.01, chip: "-1 pts" },
-  { name: "Miami Hurricanes", change: 0.0096, chip: "+1 pts" },
-  { name: "Notre Dame Fighting Irish", change: 0.0066, chip: "+0.7 pts" },
-  { name: "Georgia Bulldogs", change: 0.0059, chip: "+0.6 pts" },
-  { name: "Texas Tech Red Raiders", change: -0.0053, chip: "-0.5 pts" },
+const SPECIMEN: { name: string; school: string; change: number; chip: string }[] = [
+  { name: "Mississippi State Bulldogs", school: "Mississippi State", change: 0.0174, chip: "+1.7 pts" },
+  { name: "Indiana Hoosiers", school: "Indiana", change: 0.0151, chip: "+1.5 pts" },
+  { name: "Texas Longhorns", school: "Texas", change: 0.0114, chip: "+1.1 pts" },
+  { name: "Ole Miss", school: "Ole Miss", change: -0.01, chip: "-1 pts" },
+  { name: "Miami Hurricanes", school: "Miami", change: 0.0096, chip: "+1 pts" },
+  { name: "Notre Dame Fighting Irish", school: "Notre Dame", change: 0.0066, chip: "+0.7 pts" },
+  { name: "Georgia Bulldogs", school: "Georgia", change: 0.0059, chip: "+0.6 pts" },
+  { name: "Texas Tech Red Raiders", school: "Texas Tech", change: -0.0053, chip: "-0.5 pts" },
 ];
 
 function renderPage(): string {
@@ -157,8 +157,8 @@ function cellsByTeam(
 ): Record<string, { cell: string; suffix: string; title: string }> {
   const rows = markup.split("<tr").slice(1);
   const out: Record<string, { cell: string; suffix: string; title: string }> = {};
-  for (const { name } of SPECIMEN) {
-    const row = rows.find((r) => r.includes(name));
+  for (const { name, school } of SPECIMEN) {
+    const row = rows.find((r) => r.includes(school));
     if (!row) continue;
     const m = /title="([^"]* in 24h)">([▲▼])(?:<!-- -->)?([^<]*)<span[^>]*>([^<]*)<\/span>/.exec(row);
     if (m) out[name] = { cell: `${m[2]}${m[3]}`, suffix: m[4], title: m[1] };

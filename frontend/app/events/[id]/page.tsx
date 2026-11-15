@@ -3312,7 +3312,11 @@ export default function EventPage({ params }: EventPageProps) {
                   {/* #7270 — the badge policy lives in `lib/teamShortName.ts`, which
                       owns the unshippable list. This hero used to inline its own copy
                       of the initials rule and painted `ASS` on a live Big 12 game. */}
-                  {shippableCrestBadge(event.home_team, event.sport_key ?? event.sport)}
+                  {shippableCrestBadge(
+                    event.home_team,
+                    event.sport_key ?? event.sport,
+                    event.home_team_data?.abbreviation,
+                  )}
                 </span>
               </div>
                 }
@@ -3764,7 +3768,11 @@ export default function EventPage({ params }: EventPageProps) {
                   style={{ color: teamTextColor(event.away_team_data?.primary_color) || "#64748B" }}
                 >
                   {/* #7270 — see the home tile above; same policy, same helper. */}
-                  {shippableCrestBadge(event.away_team, event.sport_key ?? event.sport)}
+                  {shippableCrestBadge(
+                    event.away_team,
+                    event.sport_key ?? event.sport,
+                    event.away_team_data?.abbreviation,
+                  )}
                 </span>
               </div>
                 }
