@@ -11000,6 +11000,7 @@ async def _write_live_polymarket_child(
 ) -> bool:
     """Do not replace a newer quote, grade or changed identity after the read."""
     from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.price_change_stamp import price_changed_at_value
 
     statement = (
         update(FuturesOutcome)
@@ -11032,16 +11033,31 @@ async def _write_live_polymarket_child(
             )
             .exists(),
         )
-        .values(**values)
+        .values(
+            current_probability=values["current_probability"],
+            current_american_odds=values["current_american_odds"],
+            current_yes_bid=values["current_yes_bid"],
+            current_yes_ask=values["current_yes_ask"],
+            last_updated=values["last_updated"],
+            probability_change_24h=values["probability_change_24h"],
+            price_changed_at=price_changed_at_value(
+                FuturesOutcome.current_probability,
+                FuturesOutcome.price_changed_at,
+                values["current_probability"],
+            ),
+        )
+        .returning(FuturesOutcome.price_changed_at)
         .execution_options(synchronize_session=False)
     )
     result = await session.execute(statement)
-    if result.rowcount != 1:
+    written = result.first()
+    if written is None:
         return False
     # The Core write is authoritative; never flush a second, unguarded ORM
     # assignment over a socket update before the existing market commit.
     for key, value in values.items():
         set_committed_value(outcome, key, value)
+    set_committed_value(outcome, "price_changed_at", written[0])
     return True
 
 
@@ -12536,8 +12552,14 @@ async def _poll_live_prediction_market_prices():
                                         )
                                         continue
                                 else:
-                                    for key, value in values.items():
-                                        setattr(outcome, key, value)
+                                    outcome.current_probability = prob
+                                    outcome.current_american_odds = american
+                                    outcome.current_yes_bid = best_bid
+                                    outcome.current_yes_ask = best_ask
+                                    outcome.last_updated = now
+                                    outcome.probability_change_24h = values[
+                                        "probability_change_24h"
+                                    ]
                                 polymarket_unpriced_reads.discard(outcome.id)
                                 polymarket_cleared_since_commit.add(outcome.id)
                                 stats["outcomes_updated"] += 1

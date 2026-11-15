@@ -396,12 +396,10 @@ def test_W1_named_replay_the_poll_writer_does_not_store_the_print(which):
     assert PRINT not in [r[0] for r in after], (
         f"the writer stored the {PRINT} trade print over a {bid}/{ask} book"
     )
-    # A refusal is a SKIP: no row for the leg on that pass, and the number the
-    # table prints is still the last supported one — UNLESS the capture book
-    # prices that number out too. Then #9399 withdraws it rather than leave a
-    # price the venue's own book contradicts (the tightest book, 0.28/0.483,
-    # sits above 0.2505; the other two contain it). Either way no snapshot is
-    # written for the leg, so the chart keeps its honest gap.
+    # #12633: a refused current book withdraws the old point even when that
+    # point lies inside the book. Being inside a wide book does not make the
+    # previous number a fresh supported quote. No snapshot is invented: the
+    # last supported historical point and the chart's honest gap remain.
     from app.utils.kalshi_empty_book import book_refutes_price
 
     assert [r[0] for r in after] == [0.2505]
@@ -410,8 +408,8 @@ def test_W1_named_replay_the_poll_writer_does_not_store_the_print(which):
         c=LARSON_CONDITION,
     ))
     refuted = book_refutes_price(bid, ask, 0.2505)
-    assert refuted == (which == "tightest")  # the replay exercises both arms
-    assert current == ([(None,)] if refuted else [(0.2505,)])
+    assert refuted == (which == "tightest")  # both inside/outside-book controls
+    assert current == [(None,)]
 
     # HEALTHY FIELD CONTROL: every other leg was written on BOTH passes, so the
     # refusal cost one cell and not a stamp.
