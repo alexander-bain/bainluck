@@ -333,6 +333,7 @@ from app.utils.outcome_display import (
     drop_incoherent_ladder_outcomes,
     ladder_treatment_collapsed,
 )
+from app.utils.not_trading import market_not_trading
 from app.utils.personalization import (
     PersonalizationContext,
     canonical_discover_category,
@@ -14815,6 +14816,10 @@ async def _score_futures(
     for market in markets:
         try:
             is_recycled = False
+            # Ruling 188 (#11937): a market nobody is trading never takes a seat.
+            # Its number is one the venue's book no longer stands behind.
+            if not price_refresh and market_not_trading(market, now):
+                continue
             if not my_teams_only and not price_refresh:
                 if market.id in ctx.recent_dismissed_futures_ids:
                     continue

@@ -433,7 +433,13 @@ NULL_RATE = 0.23
 #: where the sample had 12 of 87 (13.8%). That is this seed drawing slightly
 #: heavy, and it is left alone because it errs toward a HEAVIER artifact, which
 #: is the safe direction for a budget guard.
-MEASURED_NODES = 191_443
+#: 2026-11-15, ruling 188 (#11937): 191,443 -> 191,429, -14. `price_changed_at`
+#: joins `DERIVED_MARKET_COLUMNS`. Decomposed, not asserted: +700 is one node per
+#: market row for the new datetime, and -714 is the RNG-stream term — derived
+#: columns are nullable, so the new column's null verdict takes one more draw per
+#: row and `withheld_outcome_ids` lands on 101 boards instead of 104. Nothing
+#: else moved; the budget below is unchanged and still has room.
+MEASURED_NODES = 191_429
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
@@ -776,6 +782,8 @@ _DERIVED_KINDS = {
     "price_polled_at": "dt",
     "opening_baseline_at": "dt",
     "withheld_outcome_ids": "ids",
+    # Ruling 188 (#11937): the newest outcome price change, one datetime per market.
+    "price_changed_at": "dt",
 }
 
 #: The kinds of `DERIVED_OUTCOME_COLUMNS`, by name and for the same reason as
@@ -1250,8 +1258,16 @@ async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatc
 #: it, where #7808 left it at 92.1%. The 94 B of envelope margin is thinner than
 #: #7808's 612 B; that is a statement about the bisect's granularity at this
 #: scale, not spare room, and the guard below is what keeps it honest.
-DECODE_BUDGET_OUTCOMES = 28_686
-DECODE_BUDGET_NODES = 461_737
+#: 2026-11-15, ruling 188 (#11937), `price_changed_at`: 28,686 -> 28,532
+#: outcomes and 461,737 -> 460,632 nodes. Re-bisected by the documented method
+#: and NOT scaled — 32,000 proven over the cap, then one-outcome granularity:
+#: 28,532 encodes to 6,291,055 B against the 6,291,456 B cap (401 B of margin)
+#: and 28,533 to 6,291,811 B, which does not fit. A tagged datetime on every
+#: market row, so #7808's direction: rows heavier, fewer outcomes fit, fewer
+#: nodes at the crossing. The ordering invariant holds — 460,632 against a
+#: 500,000 cap, 92.1% of it.
+DECODE_BUDGET_OUTCOMES = 28_532
+DECODE_BUDGET_NODES = 460_632
 
 def test_the_decode_budget_scale_is_what_it_says():
     """Control for the two constants above.
