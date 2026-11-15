@@ -65,17 +65,38 @@ async def test_success_is_not_followed_by_an_unguarded_orm_flush(engine):
     oid, _, stamp = await seed(engine)
     async with AsyncSession(engine, expire_on_commit=False) as session:
         outcome = await session.get(FuturesOutcome, oid)
+        grade_before = (outcome.is_winner, outcome.resolution_source)
         assert await _write_live_polymarket_child(
             session, outcome, CONDITION, quote_values()
         )
         assert outcome not in session.dirty
         assert outcome.current_probability == 0.83
-        assert outcome.price_changed_at == stamp
+        assert outcome.price_changed_at > stamp
+        assert (outcome.is_winner, outcome.resolution_source) == grade_before
         await session.commit()
     async with AsyncSession(engine) as session:
         outcome = await session.get(FuturesOutcome, oid)
         assert float(outcome.current_probability) == 0.83
         assert float(outcome.opening_probability) == 0.235
+        assert outcome.last_updated > stamp
+        assert outcome.price_changed_at > stamp
+        assert (outcome.is_winner, outcome.resolution_source) == grade_before
+
+
+@pytest.mark.parametrize("probability", [0.19, 0.19000001])
+async def test_unchanged_stored_price_keeps_its_move_time(engine, probability):
+    oid, _, stamp = await seed(engine)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        outcome = await session.get(FuturesOutcome, oid)
+        values = {**quote_values(), "current_probability": probability}
+        assert await _write_live_polymarket_child(session, outcome, CONDITION, values)
+        assert outcome.price_changed_at == stamp
+        assert outcome.last_updated > stamp
+        assert outcome not in session.dirty
+        await session.commit()
+    async with AsyncSession(engine) as session:
+        outcome = await session.get(FuturesOutcome, oid)
+        assert outcome.price_changed_at == stamp
         assert outcome.last_updated > stamp
 
 

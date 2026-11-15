@@ -26831,6 +26831,9 @@ async def _build_game_markets(
                     FuturesMarket.source == "polymarket",
                     FuturesMarket.group_id.isnot(None),
                     FuturesMarket.group_type.in_(["polymarket_event", "negrisk"]),
+                    # #12633: New England/Miami also names an MLS fixture.
+                    # Parent rescue needs the same sport evidence as unlinked markets.
+                    sport_filter,
                     or_(*home_conditions),
                     or_(*away_conditions),
                     FuturesMarket.commence_time.isnot(None),

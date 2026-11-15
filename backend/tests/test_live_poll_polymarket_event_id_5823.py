@@ -244,7 +244,7 @@ class _Session:
         if kind == "outcomes":
             return _Result(self._population.outcomes)
         if kind == "update" and stmt.table.name == "futures_outcomes":
-            return _Result([1])
+            return _Result([(_now(),)])
         return _Result()
 
     async def commit(self):
