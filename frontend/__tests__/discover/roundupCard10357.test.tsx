@@ -470,7 +470,7 @@ describe("#10357 round-up model", () => {
     const seqContract: FeedRoundupContract = {
       kicker: "NEXT 3 GAMES",
       tag: "NBA",
-      footer: "Combined win probability · next 3 games in schedule order",
+      footer: "Next 3 games in schedule order",
       order: "sequence",
       presentation: "strip",
       relations: ["same_subject", "same_measure", "same_window"],

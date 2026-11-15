@@ -387,7 +387,7 @@ def select_subject_sequence(
     count: int = 3,
     window_days: int = 21,
     max_prob_age_hours: float = 48.0,
-    footer: str = "Combined win probability · next 3 games in schedule order",
+    footer: str = "Next 3 games in schedule order",
     destination_href: Optional[str] = None,
     caption: Optional[str | Mapping[str, Any]] = None,
 ) -> Any:
