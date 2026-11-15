@@ -103,6 +103,15 @@ describe("AboutPage Decision 189 behind NEXT_PUBLIC_ABOUT_189 (#12672)", () => {
     expect(text).not.toContain("The same knowledge as a betting app");
     expect(text).not.toContain("None of the pull.");
 
+    // Truth pillar: only the approved 64% illustration appears; no invented matchup forecasts
+    const leafPercents = Array.from(host.querySelectorAll("*"))
+      .filter((el) => el.children.length === 0)
+      .flatMap((el) => (el.textContent ?? "").match(/\b\d+%/g) ?? []);
+    expect(leafPercents.length).toBeGreaterThan(0);
+    expect(new Set(leafPercents)).toEqual(new Set(["64%"]));
+    expect(text).not.toContain("Lions vs Patriots");
+    expect(text).not.toContain("Senate majority");
+
     // Links match Fable's #12672 + Ruling 195-A spec
     const calibrationLink = host.querySelector('a[href="/calibration"]');
     expect(calibrationLink?.textContent).toBe("See how we've done.");

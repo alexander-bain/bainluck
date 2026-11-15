@@ -2,31 +2,12 @@
 
 import EmbedAwareLink from "@/components/EmbedAwareLink";
 
-const LIVE_RANGE_EXAMPLES = [
-  {
-    domain: "Tonight's game",
-    subject: "Lions vs Patriots",
-    chance: "58%",
-    widthPct: 58,
-  },
-  {
-    domain: "Election",
-    subject: "Senate majority",
-    chance: "74%",
-    widthPct: 74,
-  },
-  {
-    domain: "The Oscars",
-    subject: "One Battle After Another",
-    chance: "29%",
-    widthPct: 29,
-  },
-  {
-    domain: "The Fed",
-    subject: "December rate cut",
-    chance: "72%",
-    widthPct: 72,
-  },
+const EXPLORE_DOMAINS = [
+  { label: "Sports", href: "/sports" },
+  { label: "Politics", href: "/politics" },
+  { label: "Entertainment", href: "/entertainment" },
+  { label: "Weather", href: "/weather" },
+  { label: "Economics", href: "/economics" },
 ] as const;
 
 export default function AboutPage189() {
@@ -58,31 +39,15 @@ export default function AboutPage189() {
           weather, the Fed.
         </p>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-          {LIVE_RANGE_EXAMPLES.map((item) => (
-            <div
-              key={item.domain}
-              className="rounded-xl border border-surface-border bg-surface-deep p-3 flex flex-col justify-between gap-2"
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          {EXPLORE_DOMAINS.map((item) => (
+            <EmbedAwareLink
+              key={item.href}
+              href={item.href}
+              className="rounded-full border border-surface-border bg-surface-deep px-3.5 py-1.5 text-xs font-semibold text-text-secondary hover:border-accent-brand/40 hover:text-text-primary transition-colors"
             >
-              <div className="space-y-0.5">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-                  {item.domain}
-                </div>
-                <div className="text-xs font-semibold text-text-primary leading-snug">
-                  {item.subject}
-                </div>
-              </div>
-              <div className="relative overflow-hidden rounded-md border border-surface-border bg-surface-card px-2 py-1 flex items-center justify-end">
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0 left-0 bg-accent-brand/15"
-                  style={{ width: `${item.widthPct}%` }}
-                />
-                <span className="relative font-mono text-sm font-bold tabular-nums text-accent-brand">
-                  {item.chance}
-                </span>
-              </div>
-            </div>
+              {item.label}
+            </EmbedAwareLink>
           ))}
         </div>
       </section>
@@ -143,8 +108,8 @@ export default function AboutPage189() {
               <div className="h-2.5 rounded-full bg-surface-border" />
             </div>
             <div className="flex items-center justify-between text-[11px] font-medium text-text-muted">
-              <span>About 2 times in 3</span>
-              <span className="font-mono tabular-nums text-accent-brand">52% &rarr; 64% (+12 pts)</span>
+              <span>Example: about 2 times in 3</span>
+              <span className="font-mono tabular-nums text-accent-brand">64%</span>
             </div>
           </div>
         </section>
