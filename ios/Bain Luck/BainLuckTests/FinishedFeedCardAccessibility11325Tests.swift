@@ -325,14 +325,10 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let name = "sports-nfl-393-large-\(status)-constructed-odds"
             let lines = try sportsLines(e, width: 393, size: .large, name: name)
             let all = describe(lines)
-            if status == "live" {
-                // #12616 / #12684: live cards with pregame odds carry the "Pregame" column header once.
-                XCTAssertEqual(lines.filter { containsPregameToken($0.text) }.count, 1,
-                               "\(name): a live card with pregame odds must print the 'Pregame' header once — \(all)")
-            } else {
-                XCTAssertFalse(lines.contains { containsPregameToken($0.text) },
-                               "\(name): a \(status) card printed 'Pregame' — \(all)")
-            }
+            // Ruling 204-C: live cards print Score · Proj. · Now with no Pregame column;
+            // scheduled and suspended cards also print no 'Pregame' word.
+            XCTAssertFalse(lines.contains { containsPregameToken($0.text) },
+                           "\(name): a \(status) card printed 'Pregame' — \(all)")
             if status == "suspended" {
                 for percent in ["24%", "76%"] {
                     XCTAssertTrue(lines.contains { valueTokens($0.text).contains(percent) },
