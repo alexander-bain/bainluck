@@ -1631,6 +1631,27 @@ _TENNIS_TOUR_STOP_RE = re.compile(
 )
 
 
+def _base_title(data: dict[str, Any]) -> str:
+    name = re.sub(r"\([^)]*\)", " ", str(data.get("name") or "").casefold())
+    return " ".join(re.findall(r"[a-z0-9$.%]+", name))
+
+
+def _same_listing_with_a_qualifier(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """One venue's two listings of ONE market, told apart only by a qualifier in
+    parentheses — Saturday's sheet, seat 26: "Anthropic IPO Closing Market Cap"
+    at 46% and "Anthropic IPO Closing Market Cap (Middle Brackets)" at 51% in one
+    card. Different bracket sets, so they cannot be blended (Alex's "near"), but
+    two rows for one market is the duplicate the card exists to fold: the
+    better-ranked one stays. Titles must be identical once the parentheses go,
+    so "Men's ... (Tennis)" and "Women's ... (Tennis)" never match."""
+    if str(a.get("source") or "") != str(b.get("source") or ""):
+        return False
+    if str(a.get("name") or "") == str(b.get("name") or ""):
+        return False
+    base_a, base_b = _base_title(a), _base_title(b)
+    return bool(base_a) and base_a == base_b
+
+
 def _dedupe_same_question_members(
     members: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1684,11 +1705,14 @@ def _dedupe_same_question_members(
         data = _futures_data(item)
         source = str(data.get("source") or "")
         duplicate = any(
-            str(_futures_data(k).get("source") or "") != source
-            and is_same_question(
-                _comparison_title(_futures_data(k), data),
-                _comparison_title(data, _futures_data(k)),
+            (
+                str(_futures_data(k).get("source") or "") != source
+                and is_same_question(
+                    _comparison_title(_futures_data(k), data),
+                    _comparison_title(data, _futures_data(k)),
+                )
             )
+            or _same_listing_with_a_qualifier(_futures_data(k), data)
             for k in kept
         )
         (folded if duplicate else kept).append(item)

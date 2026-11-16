@@ -300,6 +300,33 @@ def _extract_tournament_entries(
     return out
 
 
+#: Words that name a KIND of event rather than one event: "Open" alone must
+#: never fold into "Australian Open" on a shared week.
+_GENERIC_EVENT_WORDS = frozenset({
+    "the", "at", "by", "of", "and", "in", "presented", "driven", "championship",
+    "championships", "open", "classic", "invitational", "masters", "tour", "cup",
+    "tournament", "series", "grand", "prix", "final", "finals", "women", "womens", "men", "mens",
+})
+
+
+def _distinctive_words(name: str) -> frozenset[str]:
+    words = re.findall(r"[a-z0-9]+", name.casefold())
+    return frozenset(w for w in words if w not in _GENERIC_EVENT_WORDS and len(w) >= 3)
+
+
+def _is_twin(a: "_SelectedTournament", b: "_SelectedTournament") -> bool:
+    """One tournament served under two names (Saturday's sheet, seat 24: "The
+    ANNIKA" beside "The ANNIKA driven by Gainbridge at Pelican", Nov 12–15, the
+    same leader). Same play dates AND every distinctive word of one name appears
+    in the other; a name with no distinctive word never matches."""
+    if (a.start_date, a.end_date) != (b.start_date, b.end_date):
+        return False
+    wa, wb = _distinctive_words(a.name), _distinctive_words(b.name)
+    if not wa or not wb:
+        return False
+    return wa <= wb or wb <= wa
+
+
 def _evaluate_single_tournament(
     t: Mapping[str, Any],
     *,
@@ -596,6 +623,11 @@ def select_week_events(
             continue
         assert sel is not None
         if sel.key in seen_keys:
+            refusals.append((sel.name, "duplicate_event"))
+            continue
+        # A twin under another key and name: keep the first, which the caller's
+        # order already prefers, and refuse the second as the same event.
+        if any(_is_twin(sel, kept) for kept in valid):
             refusals.append((sel.name, "duplicate_event"))
             continue
         seen_keys.add(sel.key)
