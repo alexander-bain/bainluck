@@ -339,6 +339,7 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
                 Text(phaseTitle)
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 16)
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -377,6 +378,7 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
                     Text("5 · Small Widget (.widget · 158×158) + Watch Tile (.wristTile) Side by Side")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     HStack(alignment: .center, spacing: 12) {
                         smallWidget
                         watchTile
@@ -726,5 +728,56 @@ final class OneTypeTableEverywhere199Tests: XCTestCase {
             timeZone: pacific
         )
         XCTAssertEqual(watchUp.supportingLine, "Up 8 points from 58%")
+
+        // 6. After (widgets & Watch tile print "Final" once per surface — never a duplicate bottom "Final" or trailing "· Final").
+        let afterWidgetDetail = try decodeWidgetEvent("""
+        {
+          "id": 99006,
+          "sport": "americanfootball_nfl",
+          "sport_name": "NFL",
+          "status": "completed",
+          "commence_time": "2026-11-16T13:00:00Z",
+          "away_team": "New England Patriots",
+          "home_team": "Detroit Lions",
+          "away_score": 20,
+          "home_score": 31,
+          "hero_settled_result": "home",
+          "away_team_data": { "abbreviation": "NE", "primary_color": "#002244", "secondary_color": "#C60C30" },
+          "home_team_data": { "abbreviation": "DET", "primary_color": "#0076B6" },
+          "prematch_odds": { "away_probability": 0.42, "home_probability": 0.58 },
+          "current_odds": { "away_probability": 0.0, "home_probability": 1.0 }
+        }
+        """)
+        let afterArt = SavedWidgetArt12466.game(afterWidgetDetail)
+        let afterReading = SavedWidgetReadingRules10875.game(afterWidgetDetail, side: nil, now: fixedNow)
+        let afterWidgetModel = SavedGameHeadlineWidgetModel12616.build(
+            reading: afterReading,
+            art: afterArt,
+            clockFooter: "Final",
+            isOffline: false,
+            clearsRefreshTrailing: false,
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertEqual(afterWidgetModel.smallTopMeta, "NFL · Final")
+        XCTAssertEqual(afterWidgetModel.mediumTopMeta, "NFL · Final")
+        XCTAssertEqual(afterWidgetModel.smallFooter, "")
+        XCTAssertEqual(afterWidgetModel.mediumFooter, "")
+
+        let watchAfterFav = WatchWristTileModel12616.build(
+            WatchWristTileInput12616(
+                homeTeam: "Detroit Lions", awayTeam: "New England Patriots",
+                homeServedAbbreviation: "DET", awayServedAbbreviation: "NE",
+                sportKey: "americanfootball_nfl",
+                isFinal: true,
+                homeScore: 31, awayScore: 20,
+                prematchHomeProbability: 0.58, prematchAwayProbability: 0.42,
+                homePrimaryColor: "#0076B6", awayPrimaryColor: "#C60C30"
+            ),
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertEqual(watchAfterFav.topMetaText, "FINAL · VS PATRIOTS")
+        XCTAssertEqual(watchAfterFav.supportingLine, "Pregame 58%")
     }
 }

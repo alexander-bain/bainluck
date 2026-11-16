@@ -186,7 +186,7 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
 
         // Truth guard: offline, last-recorded, and opening-line readings always keep their clock caption.
         let requiresClockOverride = isOffline || reading.phase == .lastRecorded || reading.phase == .openingLine
-        let fallbackClock = clockFooter ?? (stage == .after ? "Final" : reading.status)
+        let fallbackClock = clockFooter ?? (stage == .after ? "" : reading.status)
 
         let smallFooter: String
         let mediumFooter: String
@@ -205,8 +205,8 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
                     mediumFooter = "\(winnerName) won from a \(pct)% pregame chance"
                     footerIsEmerald = true
                 } else {
-                    smallFooter = "Final"
-                    mediumFooter = "Final"
+                    smallFooter = ""
+                    mediumFooter = ""
                     footerIsEmerald = false
                 }
             case .during:
