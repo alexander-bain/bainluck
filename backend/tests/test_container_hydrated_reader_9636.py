@@ -289,7 +289,8 @@ def _enabled(monkeypatch):
 
 
 async def _get(session, slug, **kwargs):
-    return await route.get_container(slug=slug, include_children=kwargs.get("include_children", True), db=session)
+    # These tests pin the complete-inventory contract, now explicitly requested.
+    return await route.get_container(slug=slug, include_children=kwargs.get("include_children", True), compact=False, db=session)
 
 
 def _cards_hydrated(session):

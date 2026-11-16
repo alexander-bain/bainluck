@@ -69,7 +69,8 @@ import math
 import os
 import time
 from collections import Counter
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from fastapi.encoders import jsonable_encoder
@@ -92,7 +93,6 @@ from app.utils.container_presentation import (
     MEMBER_MARKET,
     WITHHELD_UNSERIALIZABLE,
     container_destination,
-    compact_related_members,
     edition_for_slug,
     present_sections,
 )
@@ -103,6 +103,12 @@ from app.utils.container_read_cache import (
     decode_entry,
     encode_entry,
     payload_deadlines,
+)
+from app.utils.container_week_preview import (
+    MarketSummary, PAGE_DEFAULT, PAGE_MAX, PREVIEW_LIMIT,
+    decode_cursor as decode_week_cursor,
+    encode_cursor as encode_week_cursor,
+    presented_members, ranked_preview,
 )
 
 logger = logging.getLogger(__name__)
@@ -475,18 +481,11 @@ async def get_container(
     include_children: bool = Query(
         True, description="Include members of nested containers (draws)."
     ),
-    # Theme collections only (#9935). Raw strings, validated in the theme
-    # branch, so a value no NFL/MLB hub reads can never turn its 200 into a 422.
-    revision: Optional[str] = Query(
-        None, description="Theme collections: the revision paged so far."
-    ),
-    cursor: Optional[str] = Query(
-        None, description="Theme collections: the previous page's next_cursor."
-    ),
-    limit: Optional[str] = Query(
-        None, description="Theme collections: members per page."
-    ),
-    compact: bool = False,
+    # Raw strings, validated only for editions with continuation pages.
+    revision: Annotated[Optional[str], Query(description="The revision paged so far.")] = None,
+    cursor: Annotated[Optional[str], Query(description="The previous page's next_cursor.")] = None,
+    limit: Annotated[Optional[str], Query(description="Markets per continuation page.")] = None,
+    compact: bool = True,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """One published collection: header, nested collections, and its members as
@@ -494,12 +493,12 @@ async def get_container(
 
     ``include_children=false`` keeps only the collection's own members; the
     published read itself is unchanged, so the revision still covers the draws.
-    ``revision`` / ``cursor`` / ``limit`` page a theme collection and are
-    ignored for every other slug.
+    ``revision`` / ``cursor`` / ``limit`` page theme collections and NFL-week
+    markets; other editions ignore them.
 
-    ``compact=true`` serves an NFL week's games and short linked lists as
-    cards, with counts for long linked groups and their unclassified members.
-    Both representations read the published membership before caching.
+    NFL weeks default to all games plus twelve ranked market cards. Remaining
+    markets are requested through ``page.next_url``. ``compact=false`` retains
+    the explicit full-inventory read. All forms honor published membership.
     """
     if not containers_read_enabled() or (slug == MIDTERMS_SLUG and not midterms_enabled()):
         raise HTTPException(status_code=404, detail="Not found")
@@ -554,13 +553,23 @@ async def get_container(
         return result
 
     compact = compact and (edition or {}).get("kind") == EDITION_NFL_WEEK
+    if (edition or {}).get("kind") == EDITION_NFL_WEEK and any(
+        value is not None for value in (revision, cursor, limit)
+    ):
+        if not compact:
+            raise _bad_request("paging_requires_compact")
+        page = _week_page_params(published, include_children, revision, cursor, limit)
+        return await _build_published_payload(
+            db, published, include_children, compact=True, week_page=page
+        )
     if not container_read_cache_enabled():
         return await _build_published_payload(db, published, include_children, compact=compact)
     return await _serve_cached(db, slug, published, include_children, compact=compact)
 
 
 async def _build_published_payload(
-    db: AsyncSession, published, include_children: bool, compact: bool = False
+    db: AsyncSession, published, include_children: bool, compact: bool = False,
+    week_page: Optional[tuple] = None,
 ) -> dict:
     """The full 200 for a ``published`` / ``empty`` read — the uncached build."""
     payload = _state_payload(published, edition_for_slug(published.slug))
@@ -606,27 +615,67 @@ async def _build_published_payload(
 
     event_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_EVENT})
     market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
+    all_market_ids = list(market_ids)
     event_cards, event_failed = await _hydrate_event_cards(
-        db, event_ids, concurrent_references=compact
+        db, [] if week_page is not None else event_ids, concurrent_references=compact
     )
     related_counts = {}
     unclassified_count = 0
+    week_metadata = ({
+        "counts": {"market_count": 0, "selected_market_count": 0, "deferred_market_count": 0},
+        "page": {"kind": "nfl_week_markets", "limit": week_page[2] if week_page else PREVIEW_LIMIT,
+                 "next_cursor": None, "next_url": None},
+    } if compact else None)
     if compact and market_ids:
+        after, excluded, page_limit = week_page or (0, [], PREVIEW_LIMIT)
+        candidates = [mid for mid in market_ids if mid > after and mid not in excluded]
+        # Continuations need only their bounded slice's descriptors. Entry
+        # ranks narrow metadata for all members, never all outcome rows.
+        asked = candidates[:page_limit] if week_page is not None else market_ids
         rows = (
             await db.execute(
                 text(
-                    "SELECT id, event_id FROM futures_markets WHERE id = ANY(:market_ids) "
-                    "AND event_id = ANY(:event_ids)"
+                    "SELECT id, event_id, name, external_id, volume_24h, volume "
+                    "FROM futures_markets WHERE id = ANY(:market_ids)"
                 ),
-                {"market_ids": market_ids, "event_ids": sorted(event_cards)},
+                {"market_ids": asked},
             )
         ).fetchall()
-        members, related_counts, unclassified_count = compact_related_members(
-            members,
-            {int(row[0]): int(row[1]) if row[1] is not None else None for row in rows},
-            set(event_cards),
+        summaries = {int(row[0]): MarketSummary(*row) for row in rows}
+        selected = (asked if week_page is not None else ranked_preview(list(summaries.values()), set(event_ids)))
+        if week_page is None:
+            excluded = selected
+            deferred = set(all_market_ids) - set(selected)
+            related_counts = Counter(
+                row.event_id for mid, row in summaries.items()
+                if mid in deferred and row.event_id in event_cards
+            )
+            unclassified_count = len({
+                m["id"] for m in members
+                if m.get("type") == MEMBER_MARKET and m["id"] in deferred
+                and (m.get("class") or CLASS_UNCLASSIFIED) == CLASS_UNCLASSIFIED
+                and m["id"] in summaries and summaries[m["id"]].event_id in event_cards
+            })
+        else:
+            after = selected[-1] if selected else after
+            members = [m for m in members if m.get("type") == MEMBER_MARKET]
+        remaining = [mid for mid in all_market_ids if mid > after and mid not in excluded]
+        next_cursor = encode_week_cursor(
+            published.container_id, published.revision, not include_children, after, excluded
+        ) if remaining else None
+        week_metadata = {
+            "counts": {"market_count": len(all_market_ids), "selected_market_count": len(selected),
+                       "deferred_market_count": len(remaining)},
+            "page": {"kind": "nfl_week_markets", "limit": page_limit, "next_cursor": next_cursor,
+                     "next_url": f"/api/containers/{published.slug}?" + urlencode({
+                         "cursor": next_cursor, "revision": published.revision,
+                         "include_children": str(include_children).lower(),
+                     }) if next_cursor else None},
+        }
+        members = presented_members(
+            members, summaries, selected, set(event_ids)
         )
-        market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
+        market_ids = selected
     market_cards, market_event_ids, market_failed = await _hydrate_market_cards(
         db, market_ids, nfl_week=(payload["edition"] or {}).get("kind") == EDITION_NFL_WEEK
     )
@@ -665,12 +714,35 @@ async def _build_published_payload(
         "assembled": bool(members),
         "known_classes": sorted(EDGE_CLASSES if published.slug == MIDTERMS_SLUG else EDGE_CLASSES - SECTION_CLASSES),
     }
-    if compact:
+    if compact and week_page is None:
         result["related_summary"] = {
             "count": sum(related_counts.values()),
             "unclassified_count": unclassified_count,
         }
+    if week_metadata is not None:
+        result.update(week_metadata)
     return result
+
+
+def _week_page_params(published, include_children, revision, cursor, limit) -> tuple:
+    size = PAGE_DEFAULT
+    if limit is not None:
+        if not isinstance(limit, str) or len(limit) > 4 or not limit.isascii() or not limit.isdigit() or not 1 <= int(limit) <= PAGE_MAX:
+            raise _bad_request("invalid_limit")
+        size = int(limit)
+    if revision is not None and revision != str(published.revision):
+        raise HTTPException(status_code=409, detail={"reason": "revision_moved", "revision": published.revision})
+    if cursor is None:
+        return 0, [], size
+    decoded = decode_week_cursor(cursor)
+    if decoded is None:
+        raise _bad_request("invalid_cursor")
+    cid, rev, own, after, excluded = decoded
+    if cid != published.container_id or own != (not include_children):
+        raise _bad_request("cursor_scope_mismatch")
+    if rev != published.revision:
+        raise HTTPException(status_code=409, detail={"reason": "revision_moved", "revision": published.revision})
+    return after, excluded, size
 
 
 # ---------------------------------------------------------------------------
