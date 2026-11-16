@@ -105,6 +105,23 @@ async def test_a_market_with_no_metadata_at_all_still_stamps(db):
     assert BOOK_REFUSED_FIRST_KEY in await _meta(db, mid)
 
 
+async def test_a_market_whose_metadata_is_sql_null_still_stamps(db):
+    # The ORM stores JSON null for None; a raw writer can leave SQL NULL. Both.
+    mid = await _market(db, metadata={"x": 1})
+    await db.execute(text("UPDATE futures_markets SET market_metadata = NULL WHERE id = :m"), {"m": mid})
+    await db.commit()
+    assert await _stamp(db, mid, _utc_naive(-1)) == [(False,)]
+    meta = await _meta(db, mid)
+    assert isinstance(meta, dict) and BOOK_REFUSED_FIRST_KEY in meta
+
+
+async def test_json_null_metadata_becomes_an_object_never_an_array(db):
+    mid = await _market(db, metadata=None)
+    await _stamp(db, mid, _utc_naive(-1))
+    meta = await _meta(db, mid)
+    assert isinstance(meta, dict), f"stamp turned the blob into {type(meta).__name__}: {meta!r}"
+
+
 async def test_the_same_run_cannot_confirm_its_own_stamp(db):
     mid = await _market(db)
     started = _utc_naive(-1)
@@ -124,7 +141,7 @@ async def test_a_later_runs_refused_read_confirms(db):
 
 
 async def test_an_accepted_price_clears_both_and_keeps_everything_else(db):
-    mid = await _market(db, metadata={VENUE_SETTLED_KEY: "2026-11-15T00:00:00", "x": 1})
+    mid = await _market(db, metadata={VENUE_SETTLED_KEY: "2025-01-01T00:00:00", "x": 1})
     await _stamp(db, mid, _utc_naive(-1))
     await _stamp(db, mid, _utc_naive(+1))
     result = await db.execute(text(CLEAR_BOOK_REFUSED_SQL), {"mid": mid})
@@ -132,7 +149,7 @@ async def test_an_accepted_price_clears_both_and_keeps_everything_else(db):
     assert result.rowcount == 1
     meta = await _meta(db, mid)
     assert BOOK_REFUSED_KEY not in meta and BOOK_REFUSED_FIRST_KEY not in meta
-    assert meta[VENUE_SETTLED_KEY] == "2026-11-15T00:00:00" and meta["x"] == 1
+    assert meta[VENUE_SETTLED_KEY] == "2025-01-01T00:00:00" and meta["x"] == 1
 
 
 async def test_clearing_an_unstamped_market_rewrites_nothing(db):

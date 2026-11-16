@@ -323,10 +323,14 @@ CLEAR_BOOK_REFUSED_SQL = f"""
 #: refused read, with no accepted price between (which would have cleared the
 #: first), CONFIRMS with ``…_since``. ``:run_started`` (naive UTC) keeps one run
 #: from confirming its own first stamp. Open Polymarket markets only. RETURNING
-#: says whether the market is now confirmed.
+#: says whether the market is now confirmed. The merge base is ``{}`` unless the
+#: column already holds an OBJECT: an ORM insert with ``None`` stores JSON
+#: ``null`` (not SQL NULL), and ``COALESCE`` would let ``null || {...}`` turn the
+#: blob into an array. Found by the real-Postgres gate, not by the fakes.
 STAMP_BOOK_REFUSED_SQL = f"""
     UPDATE futures_markets
-       SET market_metadata = COALESCE(market_metadata, '{{}}'::jsonb) || CASE
+       SET market_metadata = (CASE WHEN jsonb_typeof(market_metadata) = 'object'
+                                   THEN market_metadata ELSE '{{}}'::jsonb END) || CASE
              WHEN market_metadata->>'{BOOK_REFUSED_FIRST_KEY}' IS NULL
                THEN jsonb_build_object('{BOOK_REFUSED_FIRST_KEY}', {VENUE_SETTLED_NOW_SQL})
              ELSE jsonb_build_object('{BOOK_REFUSED_KEY}', {VENUE_SETTLED_NOW_SQL})

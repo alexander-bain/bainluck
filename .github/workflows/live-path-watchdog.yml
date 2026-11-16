@@ -515,7 +515,7 @@ jobs:
     - id: db_039_5531_a_hook_s_stamps_survive_the_ingest_
       name: '#5531 a hook''s stamps survive the ingest poll''s metadata replace (real Postgres)'
       if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
-      run: "set -o pipefail\npython -m pytest tests/integration/test_hook_stamp_survives_ingest_poll_5531_pg.py \\\n  -v -rs 2>&1 | tee /tmp/hookstamp5531.txt\n\
+      run: "set -o pipefail\npython -m pytest tests/integration/test_hook_stamp_survives_ingest_poll_5531_pg.py tests/integration/test_refused_book_stamp_198b_pg.py \\\n  -v -rs 2>&1 | tee /tmp/hookstamp5531.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/hookstamp5531.txt; then\n  echo \"::error::#5531 hook-stamp merge contract SKIPPED \u2014 the gate\
         \ did not run\"\n  exit 1\nfi\nif grep -qiE \"no tests ran|collected 0 items\" /tmp/hookstamp5531.txt; then\n  echo \"::error::#5531 hook-stamp\
         \ merge contract collected NOTHING\"\n  exit 1\nfi\nPASSED=$(grep -oE \"[0-9]+ passed\" /tmp/hookstamp5531.txt | tail -1 | grep -oE \"\
