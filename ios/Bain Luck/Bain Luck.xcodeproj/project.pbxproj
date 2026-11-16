@@ -167,6 +167,7 @@
 				WatchDiscoveryStore.swift,
 				WatchDiscoveryAPIClient.swift,
 				WatchPinsModels12640.swift,
+				WatchSelectedGameModels.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
