@@ -679,7 +679,7 @@ class TestTheCapIsSolvedFromTheBudget:
         another file, and a stale copy of a measurement is worse than none."""
         from app.utils import sentry_budget
 
-        assert sentry_budget.CENSUS_REPLAY_PER_DAY_AT_CAP_1 == 136.2
+        assert sentry_budget.CENSUS_REPLAY_PER_DAY_AT_CAP_1 == 131.4  # 206-b: one background child
 
     def test_the_formation_constants_match_the_procfile_derived_ones(self):
         from app.utils import sentry_budget
@@ -843,7 +843,10 @@ class TestThePolicyIsNotFrozenAtImport:
         """Codex's exact specimen, at quota 5,000."""
         from app.utils import sentry_budget
 
-        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 5_000)
+        # 206-b (Nov 16 2026): with one background child the priced total fell
+        # and 5,000 now FITS a 31-day cycle, so the specimen needs a quota that
+        # still falls short to show the verdict following the boundary.
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 4_800)
         monkeypatch.setattr(
             sentry_budget, "_CACHE", {"key": None, "cap": None, "verdict": None}
         )
@@ -856,7 +859,7 @@ class TestThePolicyIsNotFrozenAtImport:
             "the process carried the previous cycle across the reset — the "
             "import-frozen verdict, restored"
         )
-        assert after["shortfall_per_day"] == 8.26
+        assert after["shortfall_per_day"] == 4.14
         assert after["fits"] is False
 
     def test_the_enforced_cap_follows_the_boundary(self, monkeypatch):
@@ -941,10 +944,14 @@ class TestThePolicyIsNotFrozenAtImport:
         make the next reader's verdict depend on who read it first."""
         from app.utils import sentry_budget
 
+        # A quota that falls short (206-b made the default fit), so the
+        # shortfall the reader overwrites is non-zero to begin with.
+        monkeypatch.setattr(sentry_budget, "QUOTA_EVENTS_PER_MONTH", 4_800)
         monkeypatch.setattr(
             sentry_budget, "_CACHE", {"key": None, "cap": None, "verdict": None}
         )
         first = sentry_budget.current_budget_verdict(self.MAR)
+        assert first["shortfall_per_day"] != 0.0
         first["shortfall_per_day"] = 0.0
         assert sentry_budget.current_budget_verdict(self.MAR)["shortfall_per_day"] != 0.0
 
@@ -1101,18 +1108,19 @@ class TestTheDisplayedCeilingIsTheEnforcedCeiling:
 
             assert sb.cycle_length_days(march) == 31
             assert sb.cycle_length_days(february) == 28
-            assert sb.discard_ceiling_per_day(march) == 5_859
-            assert sb.discard_ceiling_per_day(february) == 5_292
+            # 206-b (Nov 16 2026): one background child; R4's pair was 5,859 / 5,292.
+            assert sb.discard_ceiling_per_day(march) == 5_704
+            assert sb.discard_ceiling_per_day(february) == 5_152
 
             # The band R4 found, named as an interval rather than as two numbers.
             in_march = sb.discard_ceiling_reading(5_500, 86_400.0, march)
-            assert in_march["ceiling_per_day"] == 5_859
+            assert in_march["ceiling_per_day"] == 5_704
             assert in_march["over_ceiling"] is False
 
             # And the same rate IS a breach inside a 28-day cycle — because the
             # ceiling genuinely is lower then, not because a constant went stale.
             in_february = sb.discard_ceiling_reading(5_500, 86_400.0, february)
-            assert in_february["ceiling_per_day"] == 5_292
+            assert in_february["ceiling_per_day"] == 5_152
             assert in_february["over_ceiling"] is True
         finally:
             monkeypatch.delenv("SENTRY_QUOTA_EVENTS_PER_MONTH", raising=False)
