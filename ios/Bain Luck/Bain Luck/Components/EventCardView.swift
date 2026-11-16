@@ -628,7 +628,7 @@ struct EventCardView: View {
     }
 
     private var compactHeaderFont12616: Font {
-        .system(size: min(compactHeaderSize, 13), weight: .semibold).monospacedDigit()
+        HeadlineStyleTable199.headers(.card, scaledSize: min(compactHeaderSize, 13)).monospacedDigit()
     }
 
     private var compactHeaderRow: some View {
