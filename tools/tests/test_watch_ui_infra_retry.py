@@ -60,6 +60,21 @@ class InfraRetryTests(unittest.TestCase):
         self.assertEqual(harness.count("install_pair\n"), 1, "one retried install, never a loop")
         self.assertIn("if ! install_pair; then", harness)
 
+    def test_the_warm_up_runs_once_before_the_measured_suite_and_judges_nothing(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        execute = harness.split("XCODE_ARGS=(-xctestrun", 1)[1]
+        warm, measured = execute.split("run_xctest_suite() {", 1)
+        self.assertEqual(warm.count("xcodebuild test-without-building"), 1, "one warm-up, never a loop")
+        self.assertIn('"-only-testing:$WARMUP_CASE"', warm, "the warm-up runs a single case")
+        self.assertIn('> "$OUT/tests-warmup.log"', warm, "kept apart from the judged tests.log")
+        self.assertIn('-resultBundlePath "$RUN/warmup.xcresult"', warm)
+        self.assertIn("(not judged)", warm)
+        self.assertNotIn("TEST_EXIT", warm, "the warm-up never sets the judged exit")
+        self.assertNotIn("tests-warmup.log", measured)
+        case = harness.split("WARMUP_CASE='", 1)[1].split("'", 1)[0].rsplit("/", 1)[1]
+        tests = (ROOT / "ios/Bain Luck/BainLuckWatchUITests/PickerCurrentGameJourneyTests.swift").read_text()
+        self.assertIn(f"func {case}()", tests, "the warm-up case must exist")
+
 
 if __name__ == "__main__":
     unittest.main()

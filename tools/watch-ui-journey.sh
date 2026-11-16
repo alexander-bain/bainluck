@@ -269,6 +269,18 @@ boot_until_ready "$TEST_UDID"
 wait_services_ready "$PHONE_UDID" com.apple.SpringBoard
 wait_services_ready "$TEST_UDID" com.apple.Carousel
 XCODE_ARGS=(-xctestrun "$XCTESTRUN" -destination "platform=watchOS Simulator,id=$TEST_UDID" -parallel-testing-enabled NO)
+# Warm-up, never counted: xcodebuild installs the runner and re-installs the app,
+# and the first launch plus first pick afterwards (first complication reload) can
+# stall accessibility for minutes (run 43941807365, readings: the first test hung at
+# 31 s per element query; the 10 after it passed). One launch-and-pick here absorbs
+# that cold start. Its result is kept in tests-warmup.log and judges nothing; the
+# measured suite below still runs every selected test, this one included.
+WARMUP_CASE='BainLuckWatchUITests/PickerCurrentGameJourneyTests/testUnknownCurrentGameDoesNotInventProbabilityOrAge'
+xcodebuild test-without-building "${XCODE_ARGS[@]}" "-only-testing:$WARMUP_CASE" \
+  -resultBundlePath "$RUN/warmup.xcresult" -collect-test-diagnostics never \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 240 \
+  -maximum-test-execution-time-allowance 240 \
+  > "$OUT/tests-warmup.log" 2>&1 || echo "warm-up exit $? (not judged)" >> "$OUT/preflight.log"
 PHASE='BainLuckWatchUITests full suite from the same built products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 run_xctest_suite() {

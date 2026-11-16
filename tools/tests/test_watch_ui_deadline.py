@@ -212,7 +212,12 @@ print('only once',flush=True); time.sleep(20)
         self.assertIn("-default-test-execution-time-allowance 300", harness)
         self.assertIn("-maximum-test-execution-time-allowance 540", harness)
         self.assertNotIn("-skip-testing", harness)
-        self.assertNotIn("-only-testing", harness)
+        # The judged suite is never narrowed. The one uncounted warm-up before it
+        # (tests-warmup.log, test_watch_ui_infra_retry.py) may name its single case.
+        measured = harness.split("run_xctest_suite() {", 1)[1]
+        self.assertNotIn("-only-testing", measured)
+        self.assertEqual(harness.count("-only-testing"), 1)
+        self.assertIn('"-only-testing:$WARMUP_CASE"', harness)
         self.assertLess(MODULE.MAX_SECONDS + 30, 90 * 60 - 5 * 60)
 
 
