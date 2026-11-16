@@ -7,13 +7,13 @@
     "sibling"
   ],
   "level": "member",
-  "kicker": "CULTURE · BOX OFFICE",
-  "name": "Opening-weekend box office forecasts",
+  "kicker": "CULTURE \u00b7 BOX OFFICE",
+  "name": "Box office openings",
   "category": "entertainment",
   "tag": "MOVIES",
   "section_title": "Active opening-weekend box office forecasts",
   "subtitle": "Actively trading opening-weekend domestic gross brackets, showing each film's most likely opening range and chance.",
-  "footer": "Most likely domestic opening-weekend bracket · actively trading film markets",
+  "footer": "Domestic opening-weekend forecast.",
   "score": 91.5,
   "rule": {
     "producer": "opening_weekend_slate",

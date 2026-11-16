@@ -68,8 +68,7 @@ async def test_eval_rows_seat_only_actively_trading_markets_and_drop_quiet_ones(
 
     feed_item, container = compose_big_movers_card_and_container(producer, res)
     ctx = feed_item["context_summary"]
-    assert "6+ points" in ctx
-    assert "+18 pts to 83%" in ctx
+    assert "jumped 18 points to 83%" in ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)
     assert not FORBIDDEN_COPY_RE.search(feed_item["data"]["roundup"]["footer"])
     assert container["context_line"] == ctx

@@ -173,7 +173,7 @@ describe("EventCard", () => {
     expect(html).toContain("55%");
     expect(html).toContain("45%");
     expect(html).toContain('data-testid="event-card-prematch-home"');
-    expect(html).toContain("Pre-match · sportsbooks");
+    expect(html).toContain("Pregame · sportsbooks");
 
     // The absence assertions above are only worth anything if they name
     // strings something actually emits. A PREGAME card renders the bar and the

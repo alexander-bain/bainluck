@@ -19,6 +19,7 @@ struct EventSportHeadlineCard12472: View {
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .title2) private var winChanceSize: CGFloat = 25
+    @ScaledMetric(relativeTo: .title2) private var liveLargestNowSize: CGFloat = 26
     @ScaledMetric(relativeTo: .title3) private var liveTenthsChanceSize: CGFloat = 22
     @ScaledMetric(relativeTo: .title3) private var pregameProjectedSize: CGFloat = 20
     @ScaledMetric(relativeTo: .body) private var liveScoreSize: CGFloat = 18
@@ -27,8 +28,10 @@ struct EventSportHeadlineCard12472: View {
     @ScaledMetric(relativeTo: .headline) private var soccerBoxVerdictSize: CGFloat = 19
     @ScaledMetric(relativeTo: .subheadline) private var soccerScorePillSize: CGFloat = 15
     @ScaledMetric(relativeTo: .body) private var liveScoreColWidth: CGFloat = 42
+    @ScaledMetric(relativeTo: .body) private var liveProjectedColWidth: CGFloat = 48
     @ScaledMetric(relativeTo: .caption2) private var livePregameColWidth: CGFloat = 54
     @ScaledMetric(relativeTo: .title3) private var liveNowColWidth: CGFloat = 80
+    @ScaledMetric(relativeTo: .title2) private var liveLargestNowColWidth: CGFloat = 86
     @ScaledMetric(relativeTo: .body) private var pregameProjectedColWidth: CGFloat = 60
     @ScaledMetric(relativeTo: .title2) private var pregameChanceColWidth: CGFloat = 80
     @ScaledMetric(relativeTo: .title3) private var finalResultColWidth: CGFloat = 58
@@ -53,11 +56,21 @@ struct EventSportHeadlineCard12472: View {
     }
 
     private var liveColumnSpacing: CGFloat {
-        stacksRowsVertically ? 6 : 8
+        if model.kind == .nflDuringGame {
+            return 6
+        }
+        return stacksRowsVertically ? 6 : 8
     }
 
     private var effectiveScoreColWidth: CGFloat {
-        stacksRowsVertically ? min(liveScoreColWidth, 52) : min(liveScoreColWidth, 44)
+        if model.kind == .nflDuringGame {
+            return stacksRowsVertically ? min(liveScoreColWidth, 52) : min(liveScoreColWidth, 34)
+        }
+        return stacksRowsVertically ? min(liveScoreColWidth, 52) : min(liveScoreColWidth, 44)
+    }
+
+    private var effectiveLiveProjectedColWidth: CGFloat {
+        stacksRowsVertically ? min(max(liveProjectedColWidth, 68), 84) : min(liveProjectedColWidth, 44)
     }
 
     private var effectivePregameColWidth: CGFloat {
@@ -65,7 +78,10 @@ struct EventSportHeadlineCard12472: View {
     }
 
     private var effectiveNowColWidth: CGFloat {
-        stacksRowsVertically ? min(liveNowColWidth, 96) : min(liveNowColWidth, 82)
+        if model.kind == .nflDuringGame {
+            return stacksRowsVertically ? min(max(liveLargestNowColWidth, 98), 112) : min(liveLargestNowColWidth, 84)
+        }
+        return stacksRowsVertically ? min(liveNowColWidth, 96) : min(liveNowColWidth, 82)
     }
 
     private var effectivePregameProjectedColWidth: CGFloat {
@@ -125,12 +141,15 @@ struct EventSportHeadlineCard12472: View {
         } else {
             availableWidth = 330 - 32 - 6 - 10 - teamRowTrailingWidth - (eitherWon ? 20 : 0)
         }
+        let minScale: CGFloat = model.kind == .nflDuringGame
+            ? (stacksRowsVertically ? 0.65 : 0.85)
+            : (stacksRowsVertically ? 0.45 : 0.58)
         return CardTeamNameSizing.sharedSingleLineFontSize(
             names: [model.away.shortName, model.home.shortName],
             baseSize: baseTeamNameSize,
             weight: .bold,
             availableWidth: availableWidth,
-            minimumScale: stacksRowsVertically ? 0.45 : 0.58
+            minimumScale: minScale
         )
     }
 
@@ -235,6 +254,9 @@ struct EventSportHeadlineCard12472: View {
                     if model.showsBottomBar {
                         cardStackBoundary12278 { bottomProbabilityBar }
                     }
+                    if let pregameSummary = model.livePregameSummary {
+                        cardStackBoundary12278 { livePregameSummaryRow(pregameSummary) }
+                    }
                 } else {
                     cardStackBoundary12278 {
                         VStack(alignment: .leading, spacing: 8) {
@@ -257,6 +279,9 @@ struct EventSportHeadlineCard12472: View {
                     }
                     if model.showsBottomBar {
                         cardStackBoundary12278 { bottomProbabilityBar }
+                    }
+                    if let pregameSummary = model.livePregameSummary {
+                        cardStackBoundary12278 { livePregameSummaryRow(pregameSummary) }
                     }
                 }
             }
@@ -826,6 +851,14 @@ struct EventSportHeadlineCard12472: View {
                         .minimumScaleFactor(0.8)
                         .frame(width: effectiveScoreColWidth, alignment: .trailing)
                 }
+                if let projectedHeader = headers.projected {
+                    Text(projectedHeader)
+                        .font(liveColumnHeaderFont)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: effectiveLiveProjectedColWidth, alignment: .trailing)
+                }
                 if let pregameHeader = headers.pregame {
                     Text(pregameHeader)
                         .font(liveColumnHeaderFont)
@@ -859,20 +892,39 @@ struct EventSportHeadlineCard12472: View {
                 Group {
                     if let score = side.liveScore {
                         scoreText(score)
+                    } else {
+                        Color.clear.frame(height: 1)
                     }
                 }
                 .frame(width: effectiveScoreColWidth, alignment: .trailing)
+            }
+            if headers.projected != nil {
+                Group {
+                    if let liveProjected = side.liveProjectedNumberText {
+                        liveProjectedNumberLabel(liveProjected)
+                    } else {
+                        Color.clear.frame(height: 1)
+                    }
+                }
+                .frame(width: effectiveLiveProjectedColWidth, alignment: .trailing)
             }
             if headers.pregame != nil {
                 Group {
                     if let pregame = side.pregameChanceText {
                         pregameLabel(pregame)
+                    } else {
+                        Color.clear.frame(height: 1)
                     }
                 }
                 .frame(width: effectivePregameColWidth, alignment: .trailing)
             }
-            chanceText(side.winChanceText, color: color, hasInlineColumns: true)
-                .frame(width: effectiveNowColWidth, alignment: .trailing)
+            chanceText(
+                side.winChanceText,
+                color: color,
+                hasInlineColumns: true,
+                isLargestNow: headers.projected != nil
+            )
+            .frame(width: effectiveNowColWidth, alignment: .trailing)
         }
     }
 
@@ -1497,6 +1549,15 @@ struct EventSportHeadlineCard12472: View {
             .accessibilityLabel("Score \(score)")
     }
 
+    private func liveProjectedNumberLabel(_ number: String) -> some View {
+        Text(number)
+            .font(.system(size: min(liveScoreSize, 22), weight: .semibold, design: .rounded).monospacedDigit())
+            .foregroundStyle(Color.primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityLabel("Projected \(number)")
+    }
+
     private func pregameLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: min(livePregameSize, 17), weight: .medium, design: .rounded).monospacedDigit())
@@ -1506,14 +1567,42 @@ struct EventSportHeadlineCard12472: View {
             .accessibilityLabel("Pregame \(text)")
     }
 
-    private func chanceText(_ text: String, color: Color, hasInlineColumns: Bool = false) -> some View {
-        let base = hasInlineColumns ? liveTenthsChanceSize : winChanceSize
+    private func chanceText(
+        _ text: String,
+        color: Color,
+        hasInlineColumns: Bool = false,
+        isLargestNow: Bool = false
+    ) -> some View {
+        let base: CGFloat
+        let cap: CGFloat
+        if isLargestNow {
+            base = liveLargestNowSize
+            cap = 32
+        } else if hasInlineColumns {
+            base = liveTenthsChanceSize
+            cap = 30
+        } else {
+            base = winChanceSize
+            cap = 30
+        }
         return Text(text)
-            .font(.system(size: min(base, 30), weight: .black, design: .rounded).monospacedDigit())
+            .font(.system(size: min(base, cap), weight: .black, design: .rounded).monospacedDigit())
             .foregroundStyle(color)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
             .accessibilityLabel(hasInlineColumns ? "Now \(text)" : text)
+    }
+
+    private func livePregameSummaryRow(_ summary: EventSportHeadlines12472.LivePregameSummary) -> some View {
+        (Text(summary.leadWord).fontWeight(.medium) + Text("  \(summary.bodyText)"))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(DS.textSecondaryReadable)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("\(summary.leadWord), \(summary.bodyText)")
+            .accessibilityIdentifier("headline-12472-pregame-summary")
     }
 
     // MARK: - Segmented Bar + Pregame Notch

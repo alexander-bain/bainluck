@@ -14,6 +14,7 @@ import {
   CASE_STUDIES,
 } from "@/lib/story-content";
 import CaseStudyCard from "@/components/story/CaseStudyCard";
+import AboutPage189 from "@/components/story/AboutPage189";
 
 /* ── Intersection Observer hook for scroll-triggered reveals ── */
 function useScrollReveal(threshold = 0.1) {
@@ -94,8 +95,13 @@ export default function AboutPage() {
   }, []);
 
   useEffect(() => {
+    if (process.env.NEXT_PUBLIC_ABOUT_189 === "true") return;
     loadProof();
   }, [loadProof]);
+
+  if (process.env.NEXT_PUBLIC_ABOUT_189 === "true") {
+    return <AboutPage189 />;
+  }
 
   const categories = [
     { emoji: "\u{1F3C0}", label: "Sports", desc: "NBA, NFL, MLB, NHL, Soccer, Golf, MMA" },

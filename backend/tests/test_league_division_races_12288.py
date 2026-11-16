@@ -152,9 +152,8 @@ async def test_nba_division_races_orders_tightest_first_and_emits_clear_context_
 
     feed_item, container = compose_division_races_card_and_container(producer, result)
     ctx = feed_item["context_summary"]
-    assert "4 tightest of 6 NBA division races" in ctx
-    assert "Hawks (42% in Southeast)" in ctx
-    assert "Celtics (48% in Atlantic)" in ctx
+    assert "The Hawks lead the Southeast at 42%" in ctx
+    assert "9 points ahead of the Heat" in ctx
     assert feed_item["data"]["roundup"]["context_line"] == ctx
     assert container["context_line"] == ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)

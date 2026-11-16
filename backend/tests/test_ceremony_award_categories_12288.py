@@ -61,8 +61,8 @@ async def test_eval_rows_seat_active_grammy_winner_categories_and_exclude_quiet_
 
     feed_item, container = compose_ceremony_award_card_and_container(producer, res)
     ctx = feed_item["context_summary"]
-    assert "2027 Grammy Awards Winner categories" in ctx
-    assert "Album of the Year" in ctx
+    assert "Olivia Rodrigo is at 41%" in ctx
+    assert "wide open at 17%" in ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)
     assert container["context_line"] == ctx
 

@@ -8,13 +8,13 @@
     "sibling"
   ],
   "level": "member",
-  "kicker": "NBA · DIVISIONS",
-  "name": "NBA division races",
+  "kicker": "NBA \u00b7 DIVISIONS",
+  "name": "The NBA's closest division races",
   "category": "sports",
   "tag": "NBA",
   "section_title": "All NBA divisions",
   "subtitle": "Front-runners across NBA divisions, ordered from closest race to clearest favorite.",
-  "footer": "One winner per division · 4 of 6 NBA divisions shown",
+  "footer": "One winner per NBA division.",
   "score": 92.0,
   "rule": {
     "producer": "league_division_races",

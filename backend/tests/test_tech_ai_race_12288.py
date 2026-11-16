@@ -128,8 +128,8 @@ async def test_ai_race_keeps_distinct_benchmarks_separate_and_explains_context()
 
     feed_item, container = compose_ai_race_card_and_container(producer, res)
     ctx = feed_item["context_summary"]
-    assert "Google leads overall evaluations while Anthropic leads coding" in ctx
-    assert "each row settles on its named benchmark" in ctx
+    assert "Google reaches 86% in overall rankings" in ctx
+    assert "Anthropic leads coding at 72%" in ctx
     assert container["context_line"] == ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)
     assert not FORBIDDEN_COPY_RE.search(feed_item["data"]["roundup"]["footer"])

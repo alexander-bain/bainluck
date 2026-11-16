@@ -40,6 +40,7 @@ import {
   type GroupingGrade,
 } from "@/lib/ranking/groupingGradeSession";
 import { renderedPercent } from "@/lib/renderedPercent";
+import { QuietFillPercentBox } from "@/components/discover/QuietFillPercentBox";
 
 interface ArtThumbProps {
   entry: PairedSubjectEntry;
@@ -243,9 +244,16 @@ function DualBarRow({
                     style={{ width: `${Math.max(4, s1.percent)}%` }}
                   />
                 </div>
-                <span className="w-12 text-right text-xs font-semibold tabular-nums text-text-secondary">
-                  {s1.label}
-                </span>
+                <QuietFillPercentBox
+                  percent={s1.percent}
+                  tone="slate"
+                  widthClass="w-14"
+                  alignClass="justify-end"
+                >
+                  <span className="text-xs font-semibold tabular-nums text-text-primary">
+                    {s1.label}
+                  </span>
+                </QuietFillPercentBox>
               </>
             ) : s1.kind === "tick" ? (
               <div className="flex flex-1 items-center justify-between">
@@ -291,9 +299,16 @@ function DualBarRow({
                     style={{ width: `${Math.max(4, s2.percent)}%` }}
                   />
                 </div>
-                <span className="w-12 text-right text-sm font-bold tabular-nums text-text-primary">
-                  {s2.label}
-                </span>
+                <QuietFillPercentBox
+                  percent={s2.percent}
+                  tone="emerald"
+                  widthClass="w-14"
+                  alignClass="justify-end"
+                >
+                  <span className="text-sm font-bold tabular-nums text-text-primary">
+                    {s2.label}
+                  </span>
+                </QuietFillPercentBox>
               </>
             ) : s2.kind === "cross" ? (
               <span className="text-xs font-medium text-text-muted">
@@ -1184,12 +1199,44 @@ function PodiumAndTiersCard({
               <div className="mt-1.5 text-xs font-bold leading-tight text-text-primary">
                 {entry.subject}
               </div>
-              <div className="mt-1 text-base font-bold tabular-nums text-text-primary">
-                {s2.label}{" "}
-                <span className="text-xs font-normal text-text-muted">win</span>
-              </div>
-              <div className="text-xs font-medium tabular-nums text-text-secondary">
-                {s1.kind === "percent" ? `${s1.label} nom` : s1.label}
+              <div className="mt-2 w-full space-y-1">
+                {s2.kind === "percent" && s2.percent !== null ? (
+                  <QuietFillPercentBox
+                    percent={s2.percent}
+                    tone="emerald"
+                    fullWidth
+                    alignClass="justify-center"
+                    className="py-1"
+                  >
+                    <span className="text-base font-bold tabular-nums text-text-primary">
+                      {s2.label}
+                    </span>
+                    <span className="text-xs font-normal text-text-secondary">
+                      win
+                    </span>
+                  </QuietFillPercentBox>
+                ) : (
+                  <div className="text-xs font-medium text-text-muted">
+                    {s2.label}
+                  </div>
+                )}
+                {s1.kind === "percent" && s1.percent !== null ? (
+                  <QuietFillPercentBox
+                    percent={s1.percent}
+                    tone="slate"
+                    fullWidth
+                    alignClass="justify-center"
+                    className="py-0.5"
+                  >
+                    <span className="text-xs font-semibold tabular-nums text-text-primary">
+                      {s1.label} nom
+                    </span>
+                  </QuietFillPercentBox>
+                ) : (
+                  <div className="text-xs font-medium tabular-nums text-text-secondary">
+                    {s1.label}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -1222,10 +1269,40 @@ function PodiumAndTiersCard({
                       {entry.subject}
                     </span>
                   </div>
-                  <span className="shrink-0 text-xs tabular-nums text-text-secondary">
-                    {s1.label} →{" "}
-                    <strong className="text-text-primary">{s2.label}</strong>
-                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5 tabular-nums">
+                    {s1.kind === "percent" && s1.percent !== null ? (
+                      <QuietFillPercentBox
+                        percent={s1.percent}
+                        tone="slate"
+                        widthClass="w-14"
+                        alignClass="justify-center"
+                      >
+                        <span className="text-xs font-semibold text-text-primary">
+                          {s1.label}
+                        </span>
+                      </QuietFillPercentBox>
+                    ) : (
+                      <span className="text-xs text-text-secondary">
+                        {s1.label}
+                      </span>
+                    )}
+                    {s2.kind === "percent" && s2.percent !== null ? (
+                      <QuietFillPercentBox
+                        percent={s2.percent}
+                        tone="emerald"
+                        widthClass="w-14"
+                        alignClass="justify-center"
+                      >
+                        <span className="text-xs font-bold text-text-primary">
+                          {s2.label}
+                        </span>
+                      </QuietFillPercentBox>
+                    ) : (
+                      <span className="text-xs font-bold text-text-primary">
+                        {s2.label}
+                      </span>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -1257,19 +1334,43 @@ function PodiumAndTiersCard({
                       {entry.subject}
                     </span>
                   </div>
-                  {s2.kind === "percent" ? (
-                    <span className="shrink-0 text-xs tabular-nums text-text-secondary">
-                      {s1.label} →{" "}
-                      <strong className="text-text-primary">{s2.label}</strong>
-                    </span>
-                  ) : (
-                    <span
-                      data-testid="missing-probability-notice"
-                      className="shrink-0 text-xs font-medium text-text-muted"
-                    >
-                      {s1.label} · {s2.label}
-                    </span>
-                  )}
+                  <div className="flex shrink-0 items-center gap-1.5 tabular-nums">
+                    {s1.kind === "percent" && s1.percent !== null ? (
+                      <QuietFillPercentBox
+                        percent={s1.percent}
+                        tone="slate"
+                        widthClass="w-14"
+                        alignClass="justify-center"
+                      >
+                        <span className="text-xs font-semibold text-text-primary">
+                          {s1.label}
+                        </span>
+                      </QuietFillPercentBox>
+                    ) : (
+                      <span className="text-xs text-text-secondary">
+                        {s1.label}
+                      </span>
+                    )}
+                    {s2.kind === "percent" && s2.percent !== null ? (
+                      <QuietFillPercentBox
+                        percent={s2.percent}
+                        tone="emerald"
+                        widthClass="w-14"
+                        alignClass="justify-center"
+                      >
+                        <span className="text-xs font-bold text-text-primary">
+                          {s2.label}
+                        </span>
+                      </QuietFillPercentBox>
+                    ) : (
+                      <span
+                        data-testid="missing-probability-notice"
+                        className="w-24 text-right text-xs font-medium leading-tight text-text-muted"
+                      >
+                        {s2.label}
+                      </span>
+                    )}
+                  </div>
                 </div>
               );
             })}

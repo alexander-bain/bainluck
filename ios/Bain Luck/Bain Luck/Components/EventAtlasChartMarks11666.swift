@@ -36,7 +36,6 @@ nonisolated struct EventAtlasChartMarkKeyModel11666: Equatable, Sendable {
     let settledWonWord: String
     let settledLostWord: String
     let settledExplanation: String
-    let tapHint: String
 
     init(settledResult: EventAtlasSettledResult11666?, includesOpening: Bool, openingLabel: String = "Pregame") {
         self.showsOpening = includesOpening
@@ -47,7 +46,6 @@ nonisolated struct EventAtlasChartMarkKeyModel11666: Equatable, Sendable {
         self.settledWonWord = EventAtlasSettledResult11666.won.word
         self.settledLostWord = EventAtlasSettledResult11666.lost.word
         self.settledExplanation = "Result as a word"
-        self.tapHint = "Tap any reading for exact time (PT)"
     }
 }
 
@@ -356,20 +354,6 @@ struct EventAtlasChartHeaderView11666: View {
     var gameStart: Date? = nil
 
     var body: some View {
-        let settled = EventAtlasChartMarks11666.settledResult(
-            dataPoints: dataPoints,
-            checkpoints: checkpoints,
-            history: history,
-            status: status,
-            sides: sides,
-            homeScoreOverride: homeScore,
-            awayScoreOverride: awayScore,
-            servedSettledResult: servedSettledResult
-        )
-        let keyModel = EventAtlasChartMarkKeyModel11666(
-            settledResult: settled,
-            includesOpening: includesOpening
-        )
         let baseRows = EventAtlasChartMarks11666.observationRows(
             dataPoints: dataPoints,
             checkpoints: checkpoints,
@@ -378,78 +362,26 @@ struct EventAtlasChartHeaderView11666: View {
             gameStart: gameStart
         )
 
-        VStack(alignment: .leading, spacing: 6) {
-            FlowLayout(spacing: 10) {
-                if keyModel.showsOpening {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .strokeBorder(Color.primary, lineWidth: 1.75)
-                            .background(Circle().fill(Color.systemBackground))
-                            .frame(width: 8, height: 8)
-                        Text(keyModel.openingLabel)
-                            .font(.caption2)
-                            .foregroundStyle(DS.textSecondaryReadable)
-                    }
-                }
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(Color.primary)
-                        .frame(width: 8, height: 8)
-                    Text(keyModel.recordedLabel)
-                        .font(.caption2)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                }
-                HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(Color.primary)
-                        .frame(width: 12, height: 2)
-                    Text(keyModel.changeLabel)
-                        .font(.caption2)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                }
-                if keyModel.showsSettledResultWords {
-                    HStack(spacing: 3) {
-                        Text(keyModel.settledWonWord)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Text("/")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                        Text(keyModel.settledLostWord)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(DS.textSecondaryReadable)
-                        Text(keyModel.settledExplanation)
-                            .font(.caption2)
-                            .foregroundStyle(DS.textSecondaryReadable)
-                    }
-                    .accessibilityIdentifier("event.atlas.chartKeyResultWord")
-                }
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("event.atlas.chartMarkKey")
-
-            EventAtlasSelectedReadingSlot11666(
-                selection: selection,
-                baseRows: baseRows,
-                outcomeName: homeName,
-                includesOpening: includesOpening,
-                openingLabel: keyModel.openingLabel,
-                tapHint: keyModel.tapHint,
-                primaryColor: primaryColor
-            )
-        }
-        .padding(.bottom, 2)
+        EventAtlasSelectedReadingSlot11666(
+            selection: selection,
+            baseRows: baseRows,
+            outcomeName: homeName,
+            includesOpening: includesOpening,
+            openingLabel: "Pregame",
+            primaryColor: primaryColor
+        )
     }
 }
 
-/// Fixed-height readout slot that observes `selection` without shifting the chart plot vertically.
+/// Scrub/tap readout slot (#11666 Step E2, updated for Ruling 201):
+/// renders nothing at rest (no legend line, no "Tap any reading..." prompt)
+/// so the chart keeps a single title row with the All / Since Start control.
 private struct EventAtlasSelectedReadingSlot11666: View {
     @ObservedObject var selection: OddsChartSelection
     let baseRows: [EventAtlasObservationRow11666]
     let outcomeName: String
     let includesOpening: Bool
     let openingLabel: String
-    let tapHint: String
     let primaryColor: Color
 
     var body: some View {
@@ -461,31 +393,22 @@ private struct EventAtlasSelectedReadingSlot11666: View {
             openingLabel: openingLabel
         )
 
-        Group {
-            if let selectedModel {
-                ViewThatFits(in: .horizontal) {
-                    singleLineReadout(selectedModel)
-                    twoLineReadout(selectedModel)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("event.atlas.selectedReading")
-            } else {
-                HStack(spacing: 6) {
-                    Text(tapHint)
-                        .font(.caption2)
-                        // #12364 — the system tertiary grey read about 1.6:1.
-                        .foregroundStyle(DS.textSecondaryReadable)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 2)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                .accessibilityIdentifier("event.atlas.selectedReadingPrompt")
+        if let selectedModel {
+            ViewThatFits(in: .horizontal) {
+                singleLineReadout(selectedModel)
+                twoLineReadout(selectedModel)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .background(Color.systemBackground.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
+            .padding(.bottom, 2)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("event.atlas.selectedReading")
         }
     }
 
