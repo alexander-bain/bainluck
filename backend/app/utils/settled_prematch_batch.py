@@ -23,6 +23,7 @@ venue snapshots.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Mapping, Optional
@@ -95,7 +96,7 @@ async def settled_prematch_odds_by_event(
                     by_event.setdefault(row.event_id, {}).setdefault(
                         row.source, prematch_row_to_reading(row)
                     )
-            except BaseException:
+            except (Exception, asyncio.CancelledError):
                 try:
                     await nested.rollback()
                 except Exception:  # noqa: BLE001 — preserve the original error

@@ -1,5 +1,6 @@
 """Finished search/list cards carry the detail page's kickoff-bounded chance."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -215,3 +216,15 @@ async def test_in_page_fold_keeps_the_removed_rows_pregame_reading(serve, door):
     assert set(cards) == {canonical.id}
     assert cards[canonical.id]["prematch_odds"]["home_probability"] == .61
     assert session.calls[0]["ids"] == [canonical.id, twin.id]
+
+
+async def test_cancellation_rolls_back_and_propagates(monkeypatch):
+    session = Session([game()])
+    monkeypatch.setattr(
+        "app.utils.settled_prematch_batch.fetch_prematch_prior_rows",
+        AsyncMock(side_effect=asyncio.CancelledError),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await settled_prematch_odds_by_event(session, [game()], timeout_ms=100)
+    session.savepoints[0].rollback.assert_awaited_once()
+    session.savepoints[0].commit.assert_not_awaited()
