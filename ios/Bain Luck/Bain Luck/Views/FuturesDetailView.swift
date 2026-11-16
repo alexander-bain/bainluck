@@ -115,7 +115,17 @@ struct FuturesDetailView: View {
     @State private var sortField: FuturesSortField = .probability
     @State private var sortAscending = false
     @State private var showAllOutcomes = false
+    #if DEBUG
     private var preloadedTimelineForTest: ProbabilityTimelineResponse? = nil
+    #endif
+
+    private var chartPreloadedTimeline: ProbabilityTimelineResponse? {
+        #if DEBUG
+        return preloadedTimelineForTest
+        #else
+        return nil
+        #endif
+    }
 
     init(marketId: Int) {
         self.marketId = marketId
@@ -192,7 +202,7 @@ struct FuturesDetailView: View {
                                 golfTournamentEnd: golfTournamentEnd(market),
                                 chartRefreshToken: viewModel.chartRefreshToken,
                                 representation: viewModel.representation,
-                                preloadedTimeline: preloadedTimelineForTest
+                                preloadedTimeline: chartPreloadedTimeline
                             )
                             .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
                         } else {
@@ -243,7 +253,7 @@ struct FuturesDetailView: View {
                                             expectation: viewModel.representation == .source ? nil
                                                 : VerifiedTitleChartExpectation(
                                                     market: market, hero: futuresDetailHeroOutcome(market)),
-                                            preloadedTimeline: preloadedTimelineForTest
+                                            preloadedTimeline: chartPreloadedTimeline
                                         )
                                     }
 

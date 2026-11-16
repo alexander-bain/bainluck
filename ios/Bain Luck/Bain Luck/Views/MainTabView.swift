@@ -17,8 +17,10 @@ struct MainTabView: View {
             #endif
         case .iPadSplit:
             iPadLayout
+                .onAppear { navCoordinator.usesSidebarQuickLinks = true }
         case .phoneTabs:
             iPhoneLayout
+                .onAppear { navCoordinator.usesSidebarQuickLinks = false }
         }
     }
 

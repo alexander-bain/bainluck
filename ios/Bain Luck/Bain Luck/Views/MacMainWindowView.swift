@@ -70,36 +70,6 @@ enum MacMainWindow10878 {
         detailOnlyTabs.contains(tab) ? .leagues : tab
     }
 
-    /// Resolves the canonical sidebar section that owns a detail `Route` when
-    /// opened directly (matching `NavigationCoordinator.handleURL`, with
-    /// non-sports markets owned by Browse).
-    static func sidebarTab(for route: Route, marketCategory: String? = nil) -> AppTab {
-        switch route {
-        case .eventDetail, .eventModels, .teamDetail, .sportCategory:
-            return .feed
-        case .futuresDetail, .futuresList:
-            let nonSportsCategories: Set<String> = [
-                "politics", "economics", "weather", "entertainment", "culture", "tech", "world"
-            ]
-            if let cat = marketCategory?.lowercased(), nonSportsCategories.contains(cat) {
-                return .leagues
-            }
-            return marketCategory == nil ? .leagues : .feed
-        case .golfCategory, .golfLeaderboard, .golfTournament,
-             .tournamentHub, .containerHub, .conceptCard, .leagueGrid,
-             .weather, .economics, .politics, .entertainment:
-            return .leagues
-        case .preferences:
-            return .preferences
-        case .calibration:
-            return .calibration
-        case .about, .predictionStats:
-            return .myStuff
-        case .dailyChallenge, .friendChallenge, .discoverLabeling:
-            return .discover
-        }
-    }
-
     /// The same words the phone tab bar and iPad sidebar print.
     static func liveBadge(count: Int) -> String? {
         count > 0 ? "\(count) live" : nil

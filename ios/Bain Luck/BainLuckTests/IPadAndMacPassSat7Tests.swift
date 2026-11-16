@@ -503,6 +503,14 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             )
         }
 
+        func macSidebarTab(opening deepLink: String) throws -> AppTab {
+            let coordinator = NavigationCoordinator()
+            coordinator.usesSidebarQuickLinks = true
+            coordinator.selectedTab = .discover
+            XCTAssertTrue(coordinator.handleURL(try XCTUnwrap(URL(string: deepLink))), deepLink)
+            return MacMainWindow10878.highlightedSidebarTab(for: coordinator.selectedTab)
+        }
+
         return [
             ScreenSpecimen(id: "01-discover", title: "1. Discover", macTab: .discover) {
                 bareWrap(DiscoverView(macPlace: discoverPlace))
@@ -522,17 +530,14 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             ScreenSpecimen(
                 id: "06-game",
                 title: "6. Game Page",
-                macTab: MacMainWindow10878.sidebarTab(for: .eventDetail(id: 9101))
+                macTab: try macSidebarTab(opening: "bainluck://events/9101")
             ) {
                 navWrap(EventDetailView(eventId: 9101).withLoadedEventForTest12278(liveEventDetail, viewModel: eventVM))
             },
             ScreenSpecimen(
                 id: "07-futures",
                 title: "7. Market Page",
-                macTab: MacMainWindow10878.sidebarTab(
-                    for: .futuresDetail(id: futuresDetail.id),
-                    marketCategory: futuresDetail.llmSportCategory ?? futuresDetail.sport
-                )
+                macTab: try macSidebarTab(opening: "bainluck://futures/\(futuresDetail.id)")
             ) {
                 navWrap(
                     FuturesDetailView(
@@ -545,35 +550,35 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             ScreenSpecimen(
                 id: "08-golf",
                 title: "8. Golf Tournament",
-                macTab: MacMainWindow10878.sidebarTab(for: .golfTournament(slug: "masters-tournament", name: "Masters Tournament"))
+                macTab: try macSidebarTab(opening: "bainluck://golf/masters-tournament")
             ) {
                 navWrap(GolfTournamentView(slug: "masters-tournament", displayName: "Masters Tournament", loadedPresentationForTest: golfPresentation))
             },
             ScreenSpecimen(
                 id: "09-concept",
                 title: "9. Fight Card",
-                macTab: MacMainWindow10878.sidebarTab(for: .conceptCard(key: "event:ufc:26sep19", name: "UFC Fight Night"))
+                macTab: try macSidebarTab(opening: "bainluck://event/ufc/26sep19")
             ) {
                 navWrap(ConceptCardView(key: "event:ufc:26sep19", displayName: "UFC Fight Night", loadedPresentationForTest: ufcPresentation))
             },
             ScreenSpecimen(
                 id: "10-team",
                 title: "10. Team Page",
-                macTab: MacMainWindow10878.sidebarTab(for: .teamDetail(slug: "boston-red-sox-mlb"))
+                macTab: try macSidebarTab(opening: "bainluck://team/boston-red-sox-mlb")
             ) {
                 navWrap(TeamDetailView(slug: "boston-red-sox-mlb", loadedPageForTest: teamPage))
             },
             ScreenSpecimen(
                 id: "11-preferences",
                 title: "11. Preferences",
-                macTab: MacMainWindow10878.sidebarTab(for: .preferences)
+                macTab: try macSidebarTab(opening: "bainluck://preferences")
             ) {
                 navWrap(PreferencesView(loadedPrefsForTest: prefsResp))
             },
             ScreenSpecimen(
                 id: "12-calibration-about",
                 title: "12. Calibration & About",
-                macTab: MacMainWindow10878.sidebarTab(for: .calibration)
+                macTab: try macSidebarTab(opening: "bainluck://calibration")
             ) {
                 navWrap(CalibrationSurfaceView(viewModel: calibrationVM))
             },
@@ -768,9 +773,14 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             scale: 1.5,
             window: window
         )
+        let aboutNav = NavigationCoordinator()
+        aboutNav.usesSidebarQuickLinks = true
+        XCTAssertTrue(aboutNav.handleURL(try XCTUnwrap(URL(string: "bainluck://about"))))
+        let aboutMacTab = MacMainWindow10878.highlightedSidebarTab(for: aboutNav.selectedTab)
+        XCTAssertEqual(aboutMacTab, .myStuff)
         let aboutMac = captureViewport(
             MacWindowChromePreview(
-                activeTab: MacMainWindow10878.sidebarTab(for: .about),
+                activeTab: aboutMacTab,
                 detail: NavigationStack { AboutView() }
                     .environmentObject(NavigationCoordinator())
             ),
