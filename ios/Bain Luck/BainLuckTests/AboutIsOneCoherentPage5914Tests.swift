@@ -257,16 +257,18 @@ final class AboutIsOneCoherentPage5914Tests: XCTestCase {
     func testTheScanCanSeeTheFileItIsAbout() throws {
         let code = try aboutViewCode()
         XCTAssertTrue(code.contains("struct AboutView"), "the scan did not find the view")
-        XCTAssertTrue(code.contains("InAppWebView("), "the scan did not find the web view it is about")
-        XCTAssertTrue(code.contains("/about"), "the scan did not find the URL it is about")
+        XCTAssertTrue(code.contains("AboutCopy12672"), "the scan did not find the native #12672 About copy")
+        XCTAssertTrue(code.contains("/about"), "the scan did not find the canonical URL constant")
     }
 
-    /// The native half of the contract, in code rather than in a comment.
-    func testAboutAsksForTheEmbeddedRenderingOfThePage() throws {
+    /// Native AboutView (#12672) renders SwiftUI directly without embedding website chrome,
+    /// while preserving `aboutURL` (`?embed=1`) for `InAppWebViewNavigation` contract parity.
+    func testAboutPreservesEmbeddedCanonicalURLAndRendersWithoutWebSiteChrome() throws {
         let code = try aboutViewCode()
         XCTAssertTrue(code.contains("embed=1"),
-                      "AboutView no longer passes the embed signal — the site shell, "
-                      + "its Sign in button and the consent banner are back on the screen")
+                      "AboutView.aboutURL must retain ?embed=1")
+        XCTAssertFalse(code.contains("WKWebView"),
+                       "Native AboutView renders directly in SwiftUI with zero website chrome")
     }
 
     /// And it never asks for the browser.
