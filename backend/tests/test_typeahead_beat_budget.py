@@ -721,14 +721,13 @@ def test_the_warmer_now_owns_most_of_one_background_slot():
     # consumes MORE THAN HALF of a two-slot pool, which is what makes ordinary
     # co-tenant bursts (the :00/:15/:30/:45 backfill clusters) able to push it
     # into a multi-minute wait.
-    # Measured at two slots (LAT-P075/P076); 206-b runs one since Nov 16 2026.
-    assert free_background_slots(concurrency=2) < 1.1
-    assert BACKGROUND_WORKER_CONCURRENCY == 1
+    assert free_background_slots() < 1.1
+    assert BACKGROUND_WORKER_CONCURRENCY == 2
     assert now > 0.5, (
         "the warmer holds more than half of one slot; below that the co-tenancy "
         "argument weakens and the tail needs another explanation"
     )
-    assert free_background_slots(concurrency=3) > free_background_slots(concurrency=2), (
+    assert free_background_slots(concurrency=3) > free_background_slots(), (
         "one more slot is the smallest capacity remedy — stated here so the "
         "proposal has a number attached to it"
     )
@@ -1311,12 +1310,11 @@ def test_the_demand_model_says_oversubscribed_and_the_census_says_90_percent():
         background_utilisation,
     )
 
-    # The August finding, at the two slots it was measured with (206-b: one now).
     lo = background_utilisation(
-        concurrency=2, demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H
+        demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H
     )
     hi = background_utilisation(
-        concurrency=2, demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H
+        demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H
     )
 
     assert lo >= 1.0, f"mean-estimator rho fell below 1.0 ({lo:.2f}) — re-grade"
@@ -1329,7 +1327,6 @@ def test_the_demand_model_says_oversubscribed_and_the_census_says_90_percent():
     # WARMER but does not repair `background` — a distinction the remedy table
     # has to carry, because two of the four levers only do the former.
     ex = background_utilisation(
-        concurrency=2,
         demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H,
         include_warmer=False,
     )

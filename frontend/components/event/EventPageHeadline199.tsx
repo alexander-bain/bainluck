@@ -19,6 +19,7 @@ import {
   type HeadlineModel199,
 } from "@/lib/headlineModel199";
 import { espnTeamLogoByName } from "@/lib/images";
+import { resolveLiveSummarySideInk } from "@/components/EventCard183A";
 import { shippableCrestBadge } from "@/lib/teamShortName";
 import type { EventDetailResponse, TeamData } from "@/lib/types";
 
@@ -742,16 +743,73 @@ export default function EventPageHeadline199({
         )
       ) : null}
 
-      {/* Ruling 200-B Single Non-Wrapping Grey Pregame Summary (`during` only) */}
+      {/* Rulings 200-B & 214-A1 Single Non-Wrapping Grey Pregame Summary (`during` only, numbers in team colour) */}
       {model.livePregameSummary ? (
         <div
           data-testid="headline-12472-pregame-summary"
           className="text-[12px] leading-tight tabular-nums whitespace-nowrap overflow-hidden text-ellipsis"
-          style={{ color: HEADLINE_STYLE_199.quietInk }}
+          style={{ color: HEADLINE_STYLE_199.liveSummaryQuietInk }}
         >
           <span className="font-semibold">{model.livePregameSummary.leadWord}</span>
           {"  "}
-          <span className="font-medium">{model.livePregameSummary.bodyText}</span>
+          {model.livePregameSummary.namedText != null ||
+          model.livePregameSummary.firstProjText != null ? (
+            <>
+              {model.livePregameSummary.namedText != null && (
+                <span
+                  className="font-semibold"
+                  style={{
+                    color:
+                      model.livePregameSummary.namedSide === "away"
+                        ? resolveLiveSummarySideInk(model.colors.away)
+                        : model.livePregameSummary.namedSide === "home"
+                          ? resolveLiveSummarySideInk(model.colors.home)
+                          : HEADLINE_STYLE_199.slateTeamTextInk,
+                  }}
+                  data-testid="headline-pregame-named"
+                >
+                  {model.livePregameSummary.namedText}
+                </span>
+              )}
+              {model.livePregameSummary.firstProjText != null &&
+                model.livePregameSummary.secondProjText != null && (
+                  <>
+                    <span>
+                      {model.livePregameSummary.namedText != null
+                        ? " · projected "
+                        : "projected "}
+                    </span>
+                    <span
+                      className="font-semibold"
+                      style={{
+                        color:
+                          model.livePregameSummary.firstProjSide === "away"
+                            ? resolveLiveSummarySideInk(model.colors.away)
+                            : resolveLiveSummarySideInk(model.colors.home),
+                      }}
+                      data-testid="headline-pregame-proj-first"
+                    >
+                      {model.livePregameSummary.firstProjText}
+                    </span>
+                    <span>–</span>
+                    <span
+                      className="font-semibold"
+                      style={{
+                        color:
+                          model.livePregameSummary.secondProjSide === "away"
+                            ? resolveLiveSummarySideInk(model.colors.away)
+                            : resolveLiveSummarySideInk(model.colors.home),
+                      }}
+                      data-testid="headline-pregame-proj-second"
+                    >
+                      {model.livePregameSummary.secondProjText}
+                    </span>
+                  </>
+                )}
+            </>
+          ) : (
+            <span className="font-medium">{model.livePregameSummary.bodyText}</span>
+          )}
         </div>
       ) : null}
     </div>

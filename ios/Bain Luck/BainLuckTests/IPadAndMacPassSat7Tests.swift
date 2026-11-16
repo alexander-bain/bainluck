@@ -61,9 +61,10 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
         struct StubUnavailable: Error {}
         let detail: EventDetail
         let history: EventHistoryResponse
+        let related: RelatedFuturesResponse
         func fetchEvent(id: Int) async throws -> EventDetail { detail }
         func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { history }
-        func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { throw StubUnavailable() }
+        func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { related }
         func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw StubUnavailable() }
         func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse { throw StubUnavailable() }
         func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw StubUnavailable() }
@@ -358,9 +359,24 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
           ]
         }
         """.utf8))
+        let liveRelatedFutures = try dec.decode(RelatedFuturesResponse.self, from: Data("""
+        {
+          "event_id": 9101,
+          "home_team": "Detroit Lions",
+          "away_team": "New England Patriots",
+          "home_team_futures": [],
+          "away_team_futures": [],
+          "shared_futures": [],
+          "event_status": "live"
+        }
+        """.utf8))
         let eventVM = EventDetailViewModel(
             eventId: 9101,
-            client: StubEventProvider(detail: liveEventDetail, history: liveEventHistory)
+            client: StubEventProvider(
+                detail: liveEventDetail,
+                history: liveEventHistory,
+                related: liveRelatedFutures
+            )
         )
         await eventVM.load()
         eventVM.stopRefresh()
@@ -370,6 +386,37 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             FuturesMarketDetail.self,
             from: try fixtureData("futures-13795456-detail-8313.20261017T1545Z.json")
         )
+        let isoFmt = ISO8601DateFormatter()
+        let nowAnchor = Date()
+        let ft0 = isoFmt.string(from: nowAnchor.addingTimeInterval(-5 * 86_400))
+        let ft1 = isoFmt.string(from: nowAnchor.addingTimeInterval(-4 * 86_400))
+        let ft2 = isoFmt.string(from: nowAnchor.addingTimeInterval(-3 * 86_400))
+        let ft3 = isoFmt.string(from: nowAnchor.addingTimeInterval(-1 * 86_400))
+        let ft4 = isoFmt.string(from: nowAnchor.addingTimeInterval(-3_600))
+        let futuresTimeline = try dec.decode(ProbabilityTimelineResponse.self, from: Data("""
+        {
+          "market_id": 13795456,
+          "market_name": "Iran leadership change by December 31?",
+          "sport_category": "politics",
+          "source": "polymarket",
+          "hours": 168,
+          "top": 2,
+          "bucket_seconds": 3600,
+          "coverage_hours": 144.0,
+          "distinct_instants": 5,
+          "outcomes": [
+            { "id": 125650217, "name": "No", "current_probability": 0.885, "rank": 1, "opening_probability": 0.31 },
+            { "id": 125650216, "name": "Yes", "current_probability": 0.115, "rank": 2, "opening_probability": 0.31 }
+          ],
+          "timeline": [
+            { "timestamp": "\(ft0)", "outcomes": { "No": 0.84, "Yes": 0.16 } },
+            { "timestamp": "\(ft1)", "outcomes": { "No": 0.86, "Yes": 0.14 } },
+            { "timestamp": "\(ft2)", "outcomes": { "No": 0.85, "Yes": 0.15 } },
+            { "timestamp": "\(ft3)", "outcomes": { "No": 0.87, "Yes": 0.13 } },
+            { "timestamp": "\(ft4)", "outcomes": { "No": 0.885, "Yes": 0.115 } }
+          ]
+        }
+        """.utf8))
         let futuresVM = FuturesDetailViewModel(
             marketId: futuresDetail.id,
             client: StubFuturesProvider(detail: futuresDetail)
@@ -456,6 +503,14 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             )
         }
 
+        func macSidebarTab(opening deepLink: String) throws -> AppTab {
+            let coordinator = NavigationCoordinator()
+            coordinator.usesSidebarQuickLinks = true
+            coordinator.selectedTab = .discover
+            XCTAssertTrue(coordinator.handleURL(try XCTUnwrap(URL(string: deepLink))), deepLink)
+            return MacMainWindow10878.highlightedSidebarTab(for: coordinator.selectedTab)
+        }
+
         return [
             ScreenSpecimen(id: "01-discover", title: "1. Discover", macTab: .discover) {
                 bareWrap(DiscoverView(macPlace: discoverPlace))
@@ -472,25 +527,59 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             ScreenSpecimen(id: "05-mystuff", title: "5. My Stuff", macTab: .myStuff) {
                 bareWrap(MyStuffView())
             },
-            ScreenSpecimen(id: "06-game", title: "6. Game Page", macTab: .feed) {
+            ScreenSpecimen(
+                id: "06-game",
+                title: "6. Game Page",
+                macTab: try macSidebarTab(opening: "bainluck://events/9101")
+            ) {
                 navWrap(EventDetailView(eventId: 9101).withLoadedEventForTest12278(liveEventDetail, viewModel: eventVM))
             },
-            ScreenSpecimen(id: "07-futures", title: "7. Market Page", macTab: .discover) {
-                navWrap(FuturesDetailView(marketId: futuresDetail.id, viewModelForTest: futuresVM))
+            ScreenSpecimen(
+                id: "07-futures",
+                title: "7. Market Page",
+                macTab: try macSidebarTab(opening: "bainluck://futures/\(futuresDetail.id)")
+            ) {
+                navWrap(
+                    FuturesDetailView(
+                        marketId: futuresDetail.id,
+                        viewModelForTest: futuresVM,
+                        preloadedTimelineForTest: futuresTimeline
+                    )
+                )
             },
-            ScreenSpecimen(id: "08-golf", title: "8. Golf Tournament", macTab: .feed) {
+            ScreenSpecimen(
+                id: "08-golf",
+                title: "8. Golf Tournament",
+                macTab: try macSidebarTab(opening: "bainluck://golf/masters-tournament")
+            ) {
                 navWrap(GolfTournamentView(slug: "masters-tournament", displayName: "Masters Tournament", loadedPresentationForTest: golfPresentation))
             },
-            ScreenSpecimen(id: "09-concept", title: "9. Fight Card", macTab: .discover) {
+            ScreenSpecimen(
+                id: "09-concept",
+                title: "9. Fight Card",
+                macTab: try macSidebarTab(opening: "bainluck://event/ufc/26sep19")
+            ) {
                 navWrap(ConceptCardView(key: "event:ufc:26sep19", displayName: "UFC Fight Night", loadedPresentationForTest: ufcPresentation))
             },
-            ScreenSpecimen(id: "10-team", title: "10. Team Page", macTab: .feed) {
+            ScreenSpecimen(
+                id: "10-team",
+                title: "10. Team Page",
+                macTab: try macSidebarTab(opening: "bainluck://team/boston-red-sox-mlb")
+            ) {
                 navWrap(TeamDetailView(slug: "boston-red-sox-mlb", loadedPageForTest: teamPage))
             },
-            ScreenSpecimen(id: "11-preferences", title: "11. Preferences", macTab: .preferences) {
+            ScreenSpecimen(
+                id: "11-preferences",
+                title: "11. Preferences",
+                macTab: try macSidebarTab(opening: "bainluck://preferences")
+            ) {
                 navWrap(PreferencesView(loadedPrefsForTest: prefsResp))
             },
-            ScreenSpecimen(id: "12-calibration-about", title: "12. Calibration & About", macTab: .calibration) {
+            ScreenSpecimen(
+                id: "12-calibration-about",
+                title: "12. Calibration & About",
+                macTab: try macSidebarTab(opening: "bainluck://calibration")
+            ) {
                 navWrap(CalibrationSurfaceView(viewModel: calibrationVM))
             },
         ]
@@ -498,11 +587,26 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
 
     // MARK: - Capture & Contact-Sheet Stitcher
 
+    private func visibleSpinners(in view: UIView) -> [UIActivityIndicatorView] {
+        var found: [UIActivityIndicatorView] = []
+        if let spinner = view as? UIActivityIndicatorView,
+           !spinner.isHidden,
+           spinner.alpha > 0.01,
+           spinner.isAnimating {
+            found.append(spinner)
+        }
+        for sub in view.subviews {
+            found.append(contentsOf: visibleSpinners(in: sub))
+        }
+        return found
+    }
+
     private func captureViewport<V: View>(
         _ view: V,
         size: CGSize,
         scale: CGFloat = 2.0,
-        window: UIWindow
+        window: UIWindow,
+        assertNoSpinners label: String? = nil
     ) -> UIImage {
         let wrapped = view
             .environment(\.horizontalSizeClass, .regular)
@@ -522,6 +626,13 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.03))
+        if let label {
+            XCTAssertEqual(
+                visibleSpinners(in: host.view).count,
+                0,
+                "\(label) must not draw a loading spinner in the contact-sheet capture"
+            )
+        }
         let fmt = UIGraphicsImageRendererFormat()
         fmt.scale = scale
         return UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { _ in
@@ -613,8 +724,19 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
         }
 
+        let validSidebarTabs = Set((MacMainWindow10878.destinations + MacMainWindow10878.quickLinks).map(\.tab))
         for spec in screens {
-            let ipadImg = captureViewport(spec.makeView(), size: iPadSize, scale: 1.5, window: window)
+            XCTAssertTrue(
+                validSidebarTabs.contains(spec.macTab),
+                "\(spec.id) macTab \(spec.macTab) must exist in the Mac sidebar"
+            )
+            let ipadImg = captureViewport(
+                spec.makeView(),
+                size: iPadSize,
+                scale: 1.5,
+                window: window,
+                assertNoSpinners: "ipad-\(spec.id)"
+            )
             XCTAssertEqual(ipadImg.size.width, 834, accuracy: 1)
             iPadTiles.append((spec.title, ipadImg))
             if let dirURL {
@@ -622,13 +744,26 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             }
 
             let macWrapped = MacWindowChromePreview(activeTab: spec.macTab, detail: spec.makeView())
-            let macImg = captureViewport(macWrapped, size: macSize, scale: 1.5, window: window)
+            let macImg = captureViewport(
+                macWrapped,
+                size: macSize,
+                scale: 1.5,
+                window: window,
+                assertNoSpinners: "mac-\(spec.id)"
+            )
             XCTAssertEqual(macImg.size.width, 1280, accuracy: 1)
             macTiles.append((spec.title, macImg))
             if let dirURL {
                 try macImg.pngData()?.write(to: dirURL.appendingPathComponent("mac-\(spec.id).png"))
             }
         }
+
+        // Verify exact Mac sidebar section ownership for detail pages:
+        XCTAssertEqual(screens.first(where: { $0.id == "06-game" })?.macTab, .feed)
+        XCTAssertEqual(screens.first(where: { $0.id == "07-futures" })?.macTab, .leagues)
+        XCTAssertEqual(screens.first(where: { $0.id == "08-golf" })?.macTab, .leagues)
+        XCTAssertEqual(screens.first(where: { $0.id == "09-concept" })?.macTab, .leagues)
+        XCTAssertEqual(screens.first(where: { $0.id == "10-team" })?.macTab, .feed)
 
         // Also capture standalone AboutView at iPad & Mac
         let aboutIPad = captureViewport(
@@ -638,9 +773,14 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             scale: 1.5,
             window: window
         )
+        let aboutNav = NavigationCoordinator()
+        aboutNav.usesSidebarQuickLinks = true
+        XCTAssertTrue(aboutNav.handleURL(try XCTUnwrap(URL(string: "bainluck://about"))))
+        let aboutMacTab = MacMainWindow10878.highlightedSidebarTab(for: aboutNav.selectedTab)
+        XCTAssertEqual(aboutMacTab, .myStuff)
         let aboutMac = captureViewport(
             MacWindowChromePreview(
-                activeTab: .preferences,
+                activeTab: aboutMacTab,
                 detail: NavigationStack { AboutView() }
                     .environmentObject(NavigationCoordinator())
             ),

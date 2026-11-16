@@ -205,11 +205,7 @@ def affordable_daily_emission(now: datetime | None = None) -> float:
 #: ``tests/test_sentry_filter.py::test_measured_volume_worst_case`` owns the
 #: cap-1 measurement; ``test_sentry_ceiling_1894.py`` asserts this table still
 #: matches it, so a policy change cannot leave the price stale.
-#: 206-b (Nov 16 2026): worker-background runs ONE child, so the cap-1 replay
-#: re-derives to 131.4 (1,051 sent over 8 days; was 136.2 at two children). The
-#: cap-3 entry is still the two-child measurement: it OVERSTATES cap 3's cost,
-#: the safe direction, until someone re-measures it.
-CENSUS_REPLAY_PER_DAY = {1: 131.4, 3: 157.0}
+CENSUS_REPLAY_PER_DAY = {1: 136.2, 3: 157.0}
 
 #: Convenience alias for the shipped cap's measured base.
 CENSUS_REPLAY_PER_DAY_AT_CAP_1 = CENSUS_REPLAY_PER_DAY[1]
@@ -220,7 +216,7 @@ CENSUS_REPLAY_PER_DAY_AT_CAP_1 = CENSUS_REPLAY_PER_DAY[1]
 MAX_WORKER_POOL_CHILDREN = 4
 
 #: Children in the pool that runs the watchdog beat (``worker-background``).
-WATCHDOG_POOL_CHILDREN = 1  # 206-b (Nov 16 2026): worker-background runs --concurrency=1
+WATCHDOG_POOL_CHILDREN = 2
 
 #: The watchdog's emission cooldown is 6h and fleet-shared (Redis SET NX).
 WATCHDOG_COOLDOWN_WINDOWS_PER_DAY = 4
