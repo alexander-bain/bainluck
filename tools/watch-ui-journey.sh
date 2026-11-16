@@ -38,6 +38,24 @@ raise SystemExit(1)
   done
   return 1
 }
+# #12513: "Booted" is not "ready". Run 43867918866 lost the companion phone's
+# instruments lockdown service 92 s into a test. Wait until each device runs a
+# process, its home app has a pid, and the instruments device service is loaded.
+wait_services_ready() {
+  local udid="$1" home="$2" listing
+  local i
+  for i in $(seq 1 60); do
+    if listing="$(xcrun simctl spawn "$udid" launchctl list 2>> "$OUT/preflight.log")" \
+      && printf '%s\n' "$listing" | awk -v h="$home" '$3 == h && $1 ~ /^[0-9]+$/ {f=1} END {exit !f}' \
+      && printf '%s\n' "$listing" | grep -q 'com\.apple\.instruments\.deviceservice'; then
+      echo "$udid ready: $home running, instruments device service loaded (check $i)" >> "$OUT/preflight.log"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "$udid not ready after 120 s: $home or the instruments device service missing" >> "$OUT/preflight.log"
+  return 1
+}
 if [[ "$STAGE" == prepare ]]; then
 PHASE=preflight
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
@@ -215,6 +233,8 @@ python3 "$ROOT/tools/watch_ui_products.py" verify --repo "$ROOT" --sha "$SHA" \
   --output "$RUN/package" > "$OUT/products-verification.json"
 boot_until_ready "$PHONE_UDID"
 boot_until_ready "$TEST_UDID"
+wait_services_ready "$PHONE_UDID" com.apple.SpringBoard
+wait_services_ready "$TEST_UDID" com.apple.Carousel
 XCODE_ARGS=(-xctestrun "$XCTESTRUN" -destination "platform=watchOS Simulator,id=$TEST_UDID" -parallel-testing-enabled NO)
 PHASE='BainLuckWatchUITests full suite from the same built products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
@@ -230,15 +250,19 @@ run_xctest_suite() {
   fi
 }
 run_xctest_suite
-# Recover once if XCTRunner aborted with SIGTERM before establishing its XPC
-# connection to testmanagerd with zero test cases started (never retries any executed test).
+# Retry ONCE, only when the run died on a dropped simulator or runner connection
+# and no test failed a check or ran out of time (tools/watch_ui_infra_retry.py).
+# The first log is kept beside the retry's; infra-retry.json records the reason.
 if [[ "$TEST_EXIT" -ne 0 ]] \
-  && grep -q 'before establishing connection' "$OUT/tests.log" \
-  && ! grep -q "Test Case '" "$OUT/tests.log"; then
-  cp "$OUT/tests.log" "$OUT/tests-preconnect-abort.log"
+  && python3 "$ROOT/tools/watch_ui_infra_retry.py" "$OUT/tests.log" "$OUT/infra-retry.json"; then
+  cp "$OUT/tests.log" "$OUT/tests-infra-abort.log"
   rm -rf "$RESULT"
+  xcrun simctl shutdown "$TEST_UDID" >> "$OUT/preflight.log" 2>&1 || true
+  xcrun simctl shutdown "$PHONE_UDID" >> "$OUT/preflight.log" 2>&1 || true
   boot_until_ready "$PHONE_UDID"
   boot_until_ready "$TEST_UDID"
+  wait_services_ready "$PHONE_UDID" com.apple.SpringBoard
+  wait_services_ready "$TEST_UDID" com.apple.Carousel
   run_xctest_suite
 fi
 printf '%s\n' "$TEST_EXIT" > "$OUT/test-exit.txt"
