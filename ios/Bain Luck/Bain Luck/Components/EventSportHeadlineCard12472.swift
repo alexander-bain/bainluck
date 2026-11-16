@@ -76,6 +76,19 @@ struct EventSportHeadlineCard12472: View {
         }
     }
 
+    private func resolvedColumnWidth(for column: EventSportHeadlines12472.ColumnSpec, at index: Int) -> CGFloat {
+        let base = columnWidth(for: column.role)
+        guard case .setScore = column.role else { return base }
+        if column.header == "Sets" {
+            return stacksRowsVertically ? 34 : 30
+        }
+        let hasSuperscript = model.rows.contains { row in
+            guard let sup = row.cellSuperscripts[index] else { return false }
+            return !sup.isEmpty
+        }
+        return hasSuperscript ? base + 6 : base
+    }
+
     private func rowTint(for role: EventSportHeadlines12472.RowRole) -> Color {
         switch role {
         case .away:
@@ -119,7 +132,7 @@ struct EventSportHeadlineCard12472: View {
     }
 
     private var totalColumnsWidth: CGFloat {
-        let widths = model.columns.reduce(CGFloat(0)) { $0 + columnWidth(for: $1.role) }
+        let widths = model.columns.enumerated().reduce(CGFloat(0)) { $0 + resolvedColumnWidth(for: $1.element, at: $1.offset) }
         let gaps = CGFloat(max(model.columns.count - 1, 0)) * columnSpacing
         let extra = model.columns.indices.reduce(CGFloat(0)) { $0 + extraLeadingGap(at: $1) }
         return widths + gaps + extra
@@ -392,7 +405,7 @@ struct EventSportHeadlineCard12472: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: columnWidth(for: col.role), alignment: .trailing)
+                    .frame(width: resolvedColumnWidth(for: col, at: idx), alignment: .trailing)
                     .padding(.leading, extraLeadingGap(at: idx))
             }
         }
@@ -497,7 +510,7 @@ struct EventSportHeadlineCard12472: View {
                 row: row,
                 tint: tint
             )
-            .frame(width: columnWidth(for: col.role), alignment: .trailing)
+            .frame(width: resolvedColumnWidth(for: col, at: idx), alignment: .trailing)
             .padding(.leading, extraLeadingGap(at: idx))
         }
     }
@@ -555,13 +568,35 @@ struct EventSportHeadlineCard12472: View {
                 Color.clear.frame(height: 1)
             } else {
                 let emphasized = row.emphasizedColumns.contains(columnIndex)
-                Text(text)
-                    .font(HeadlineStyleTable199.secondNumbers(.page, prominent: emphasized, scaledSize: emphasized ? secondProminentScaledSize * 0.84 : secondRegularScaledSize))
-                    .foregroundStyle(emphasized ? HeadlineStyleTable199.primaryNumberInk : HeadlineStyleTable199.quietInk)
+                let setFont = HeadlineStyleTable199.secondNumbers(
+                    .page,
+                    prominent: emphasized,
+                    scaledSize: emphasized ? secondProminentScaledSize * 0.84 : secondRegularScaledSize
+                )
+                let setInk = emphasized ? HeadlineStyleTable199.primaryNumberInk : HeadlineStyleTable199.quietInk
+                if let tb = row.cellSuperscripts[columnIndex], !tb.isEmpty {
+                    HStack(alignment: .firstTextBaseline, spacing: 0.5) {
+                        Text(text)
+                            .font(setFont)
+                            .foregroundStyle(setInk)
+                        Text(tb)
+                            .font(HeadlineStyleTable199.headers(.page, scaledSize: headerScaledSize * 0.90).monospacedDigit())
+                            .foregroundStyle(HeadlineStyleTable199.quietInk)
+                            .baselineOffset(5)
+                    }
                     .lineLimit(1)
                     .minimumScaleFactor(0.80)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel("\(column.header) \(text)")
+                    .accessibilityLabel("\(column.header) \(text) tiebreak \(tb)")
+                } else {
+                    Text(text)
+                        .font(setFont)
+                        .foregroundStyle(setInk)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.80)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("\(column.header) \(text)")
+                }
             }
 
         case .gamePoints:
@@ -580,7 +615,7 @@ struct EventSportHeadlineCard12472: View {
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
                             .fill(HeadlineStyleTable199.rowDividerInk)
                     )
-                    .accessibilityLabel("Points \(text)")
+                    .accessibilityLabel("\(column.header == "TB" ? "Tiebreak" : "Points") \(text)")
             }
 
         case .finalResult:

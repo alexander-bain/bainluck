@@ -4122,8 +4122,13 @@ struct NativeGuessCard: View {
     }
 
     private func matchupPanel(event: FeedEventData) -> some View {
-        let homeColor = Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
-        let awayColor = Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
+        let pairColors = TeamTextContrast.cardColors(
+            awayHex: event.awayTeamData?.primaryColor,
+            homeHex: event.homeTeamData?.primaryColor,
+            awaySecondaryHex: event.awayTeamData?.secondaryColor
+        )
+        let awayColor = pairColors.away
+        let homeColor = pairColors.home
         // #3430 — two chips, one matchup: resolve the labels together.
         let sides = NativeGuessCardContent.pair(event)
 
