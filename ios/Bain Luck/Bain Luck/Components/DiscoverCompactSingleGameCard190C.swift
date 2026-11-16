@@ -121,6 +121,15 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 segmentedBarView(bar)
             }
 
+            if let livePregameSummary = model.livePregameSummary {
+                LivePregameSummaryRow214A1(
+                    summary: livePregameSummary,
+                    surface: .card,
+                    colors: (away: awayColor, home: homeColor),
+                    accessibilityIdentifier: "discover-card-live-pregame-summary"
+                )
+            }
+
             if usesPictureLayout191A {
                 DiscoverPictureChartPanel191AView(
                     event: event,

@@ -650,26 +650,23 @@ struct EventSportHeadlineCard12472: View {
         }
     }
 
-    // MARK: - Single-Line Grey Pregame Summary (Ruling 200-B)
+    // MARK: - Single-Line Team-Coloured Pregame Summary (Rulings 200-B, 213-A, 214-A1)
 
     private func livePregameSummaryRow(_ summary: EventSportHeadlines12472.LivePregameSummary) -> some View {
         let cappedSummarySize = min(baseQuietSize, stacksRowsVertically ? 20 : 14)
-        return (Text(summary.leadWord).fontWeight(.semibold) + Text("  \(summary.bodyText)"))
-            .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: true, scaledSize: cappedSummarySize))
-            .foregroundStyle(HeadlineStyleTable199.quietInk)
-            .lineLimit(1)
-            .minimumScaleFactor(stacksRowsVertically ? 0.45 : 0.78)
-            .allowsTightening(true)
-            .truncationMode(.tail)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(key: LivePregameSummaryHeightPreferenceKey199.self, value: geo.size.height)
-                }
-            )
-            .accessibilityLabel("\(summary.leadWord), \(summary.bodyText)")
-            .accessibilityIdentifier("headline-12472-pregame-summary")
+        return LivePregameSummaryRow214A1(
+            summary: summary,
+            surface: .page,
+            colors: colors,
+            scaledSize: cappedSummarySize,
+            minScale: stacksRowsVertically ? 0.45 : 0.78,
+            accessibilityIdentifier: "headline-12472-pregame-summary"
+        )
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: LivePregameSummaryHeightPreferenceKey199.self, value: geo.size.height)
+            }
+        )
     }
 
     // MARK: - Segmented Bottom Bar

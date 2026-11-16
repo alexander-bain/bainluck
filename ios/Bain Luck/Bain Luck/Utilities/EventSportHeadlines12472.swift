@@ -214,8 +214,31 @@ enum EventSportHeadlines12472 {
     }
 
     nonisolated struct LivePregameSummary: Equatable, Sendable {
+        enum SegmentInk: Equatable, Sendable {
+            case quietLead
+            case quiet
+            case awayTeam
+            case homeTeam
+            case drawOutcome
+        }
+
+        struct Segment: Equatable, Sendable {
+            let text: String
+            let ink: SegmentInk
+        }
+
         let leadWord: String
         let bodyText: String
+        var segments: [Segment]
+
+        init(leadWord: String, bodyText: String, segments: [Segment]? = nil) {
+            self.leadWord = leadWord
+            self.bodyText = bodyText
+            self.segments = segments ?? [
+                Segment(text: leadWord, ink: .quietLead),
+                Segment(text: "  \(bodyText)", ink: .quiet),
+            ]
+        }
 
         var fullText: String {
             "\(leadWord)  \(bodyText)"
@@ -2151,13 +2174,27 @@ enum EventSportHeadlines12472 {
     nonisolated static func qualifiedLivePregameProjectionPair(
         event: EventDetail
     ) -> (away: Int, home: Int)? {
-        guard event.status == "live",
-              let p = event.pregameProjection,
+        qualifiedPregameProjectionPair(
+            projection: event.pregameProjection,
+            sport: event.sport,
+            status: event.status,
+            commenceTime: event.commenceTime
+        )
+    }
+
+    nonisolated static func qualifiedPregameProjectionPair(
+        projection: PregameProjection?,
+        sport: String?,
+        status: String?,
+        commenceTime: String?
+    ) -> (away: Int, home: Int)? {
+        guard status == "live",
+              let p = projection,
               p.kind == "last_before_scheduled_start",
               p.boundary == "scheduled_start",
               p.source == "sportsbooks",
               p.basis == "consensus_spread_total",
-              let format = LiveProjectedFinalAdmission2920.format(forSport: event.sport),
+              let format = LiveProjectedFinalAdmission2920.format(forSport: sport),
               p.unit == format.unit.rawValue,
               p.period == format.period.rawValue,
               let books = p.bookmakerCount.flatMap({ Int(exactly: $0) }), books >= 1,
@@ -2169,11 +2206,11 @@ enum EventSportHeadlines12472 {
               home.isFinite, away.isFinite, home > 0, away > 0
         else { return nil }
 
-        if let rowStart = event.commenceTime?.asDate, boundary != rowStart {
+        if let rowStart = commenceTime?.asDate, boundary != rowStart {
             return nil
         }
 
-        let vocab = SportVocab.forSport(event.sport)
+        let vocab = SportVocab.forSport(sport)
         guard vocab.sportsbookSpreadIsAMargin,
               let roundedHome = Int(exactly: home.rounded()),
               let roundedAway = Int(exactly: away.rounded()),
@@ -2193,7 +2230,7 @@ enum EventSportHeadlines12472 {
         )
         let projPair = qualifiedLivePregameProjectionPair(event: event)
 
-        var chanceInfo: (homeIsFav: Bool, favName: String, favChanceText: String)?
+        var chanceInfo: (namedInk: LivePregameSummary.SegmentInk, homeIsFav: Bool, favName: String, favChanceText: String)?
         if let strictPregame,
            let pair = DrawPricedWinner.printablePair(
                away: strictPregame.awayProbability,
@@ -2218,7 +2255,12 @@ enum EventSportHeadlines12472 {
                 ? (strictPregame.percents.count > 1 ? strictPregame.percents[1] : nil)
                 : (strictPregame.percents.count > 0 ? strictPregame.percents[0] : nil)
             let favChanceText = formatProbability(favProb, renderedPercent: favRendered)
-            chanceInfo = (homeIsFav: homeIsFav, favName: favName, favChanceText: favChanceText)
+            chanceInfo = (
+                namedInk: homeIsFav ? .homeTeam : .awayTeam,
+                homeIsFav: homeIsFav,
+                favName: favName,
+                favChanceText: favChanceText
+            )
         } else if let strictPregame,
                   let pair = DrawPricedWinner.printablePair(
                       away: strictPregame.awayProbability,
@@ -2227,6 +2269,7 @@ enum EventSportHeadlines12472 {
                   ) {
             let homePct = strictPregame.percents.count > 1 ? strictPregame.percents[1] : nil
             chanceInfo = (
+                namedInk: .homeTeam,
                 homeIsFav: true,
                 favName: shortNames.home,
                 favChanceText: formatProbability(pair.home, renderedPercent: homePct)
@@ -2242,7 +2285,7 @@ enum EventSportHeadlines12472 {
         pregameShares: (home: Double, draw: Double, away: Double)?
     ) -> LivePregameSummary? {
         let projPair = qualifiedLivePregameProjectionPair(event: event)
-        var chanceInfo: (homeIsFav: Bool, favName: String, favChanceText: String)?
+        var chanceInfo: (namedInk: LivePregameSummary.SegmentInk, homeIsFav: Bool, favName: String, favChanceText: String)?
         if let shares = pregameShares {
             let texts = soccerThreeWayChanceTexts(
                 home: shares.home,
@@ -2251,11 +2294,11 @@ enum EventSportHeadlines12472 {
                 numberStreams: false
             )
             if shares.home >= shares.away && shares.home >= shares.draw {
-                chanceInfo = (true, shortNames.home, texts.home)
+                chanceInfo = (.homeTeam, true, shortNames.home, texts.home)
             } else if shares.away >= shares.home && shares.away >= shares.draw {
-                chanceInfo = (false, shortNames.away, texts.away)
+                chanceInfo = (.awayTeam, false, shortNames.away, texts.away)
             } else {
-                chanceInfo = (true, "Draw", texts.draw)
+                chanceInfo = (.drawOutcome, projPair.map { $0.home >= $0.away } ?? true, "Draw", texts.draw)
             }
         }
         if chanceInfo == nil {
@@ -2264,39 +2307,77 @@ enum EventSportHeadlines12472 {
         return formatLivePregameSummary(chanceInfo: chanceInfo, projPair: projPair, shortNames: shortNames)
     }
 
-    nonisolated private static func formatLivePregameSummary(
-        chanceInfo: (homeIsFav: Bool, favName: String, favChanceText: String)?,
+    nonisolated static func formatLivePregameSummary(
+        chanceInfo: (namedInk: LivePregameSummary.SegmentInk, homeIsFav: Bool, favName: String, favChanceText: String)?,
         projPair: (away: Int, home: Int)?,
         shortNames: (away: String, home: String)
     ) -> LivePregameSummary? {
+        typealias Seg = LivePregameSummary.Segment
         switch (chanceInfo, projPair) {
         case let (chance?, proj?):
             let favScore = chance.homeIsFav ? proj.home : proj.away
             let dogScore = chance.homeIsFav ? proj.away : proj.home
+            let favScoreInk: LivePregameSummary.SegmentInk = chance.homeIsFav ? .homeTeam : .awayTeam
+            let dogScoreInk: LivePregameSummary.SegmentInk = chance.homeIsFav ? .awayTeam : .homeTeam
             return LivePregameSummary(
                 leadWord: "Pregame",
-                bodyText: "\(chance.favName) \(chance.favChanceText) · projected \(favScore)\u{2013}\(dogScore)"
+                bodyText: "\(chance.favName) \(chance.favChanceText) · projected \(favScore)\u{2013}\(dogScore)",
+                segments: [
+                    Seg(text: "Pregame", ink: .quietLead),
+                    Seg(text: "  ", ink: .quiet),
+                    Seg(text: "\(chance.favName) \(chance.favChanceText)", ink: chance.namedInk),
+                    Seg(text: " · projected ", ink: .quiet),
+                    Seg(text: "\(favScore)", ink: favScoreInk),
+                    Seg(text: "\u{2013}", ink: .quiet),
+                    Seg(text: "\(dogScore)", ink: dogScoreInk),
+                ]
             )
         case let (chance?, nil):
             return LivePregameSummary(
                 leadWord: "Pregame",
-                bodyText: "\(chance.favName) \(chance.favChanceText)"
+                bodyText: "\(chance.favName) \(chance.favChanceText)",
+                segments: [
+                    Seg(text: "Pregame", ink: .quietLead),
+                    Seg(text: "  ", ink: .quiet),
+                    Seg(text: "\(chance.favName) \(chance.favChanceText)", ink: chance.namedInk),
+                ]
             )
         case let (nil, proj?):
             if proj.home > proj.away {
                 return LivePregameSummary(
                     leadWord: "Pregame",
-                    bodyText: "projected \(shortNames.home) \(proj.home)\u{2013}\(proj.away)"
+                    bodyText: "projected \(shortNames.home) \(proj.home)\u{2013}\(proj.away)",
+                    segments: [
+                        Seg(text: "Pregame", ink: .quietLead),
+                        Seg(text: "  projected ", ink: .quiet),
+                        Seg(text: "\(shortNames.home) \(proj.home)", ink: .homeTeam),
+                        Seg(text: "\u{2013}", ink: .quiet),
+                        Seg(text: "\(proj.away)", ink: .awayTeam),
+                    ]
                 )
             } else if proj.away > proj.home {
                 return LivePregameSummary(
                     leadWord: "Pregame",
-                    bodyText: "projected \(shortNames.away) \(proj.away)\u{2013}\(proj.home)"
+                    bodyText: "projected \(shortNames.away) \(proj.away)\u{2013}\(proj.home)",
+                    segments: [
+                        Seg(text: "Pregame", ink: .quietLead),
+                        Seg(text: "  projected ", ink: .quiet),
+                        Seg(text: "\(shortNames.away) \(proj.away)", ink: .awayTeam),
+                        Seg(text: "\u{2013}", ink: .quiet),
+                        Seg(text: "\(proj.home)", ink: .homeTeam),
+                    ]
                 )
             } else {
                 return LivePregameSummary(
                     leadWord: "Pregame",
-                    bodyText: "projected \(proj.home)\u{2013}\(proj.away)"
+                    bodyText: "projected \(proj.home)\u{2013}\(proj.away)",
+                    segments: [
+                        Seg(text: "Pregame", ink: .quietLead),
+                        Seg(text: "  projected ", ink: .quiet),
+                        Seg(text: "\(proj.home)", ink: .homeTeam),
+                        Seg(text: "\u{2013}", ink: .quiet),
+                        Seg(text: "\(proj.away)", ink: .awayTeam),
+                    ]
                 )
             }
         case (nil, nil):
