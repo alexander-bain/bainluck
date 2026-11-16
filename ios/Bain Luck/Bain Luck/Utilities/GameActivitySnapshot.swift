@@ -39,6 +39,14 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     let projectionLabel: String?
     /// #10864 — present only on a final whose verdict the server stated.
     let result: Result?
+    /// #199 — the page headline's "Now" for the home side, in tenths of a point
+    /// (`EventHeadlineTenths10090`, so the Lock Screen prints the page's 66.2%,
+    /// not a second rounding). Two-way games only; the away side is 1000 minus
+    /// it, as on the page. Absent (an older server) ⇒ the whole percents above.
+    let homeHeadlineTenths: Int?
+    /// #199 / ruling 197 — the away team's second colour, which the headline
+    /// switches to when both teams share a colour (`TeamTextContrast.cardColors`).
+    let awaySecondaryColorHex: String?
 
     private enum CodingKeys: String, CodingKey {
         case eventID, homeTeam, awayTeam, homeScore, awayScore, lifecycle
@@ -47,6 +55,7 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         case homeColorHex, awayColorHex, periodLabel
         case projectedHomeScore, projectedAwayScore, projectionLabel
         case result
+        case homeHeadlineTenths, awaySecondaryColorHex
     }
 
     init(from decoder: Decoder) throws {
@@ -83,6 +92,10 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         // An older or malformed value reads as no verdict, never a failed reading.
         let decodedResult = (try? c.decodeIfPresent(Result.self, forKey: .result)) ?? nil
         result = lifecycle == .final ? decodedResult : nil
+        let tenths = (try? c.decodeIfPresent(Int.self, forKey: .homeHeadlineTenths)) ?? nil
+        let twoWay = awayRenderedPercent != nil
+        homeHeadlineTenths = tenths.flatMap { twoWay && (0...1000).contains($0) ? $0 : nil }
+        awaySecondaryColorHex = Self.cleanHex((try? c.decodeIfPresent(String.self, forKey: .awaySecondaryColorHex)) ?? nil)
         guard eventID > 0,
               !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -107,7 +120,8 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
           homeColorHex: String? = nil, awayColorHex: String? = nil,
           periodLabel: String? = nil,
           projectedHomeScore: Int? = nil, projectedAwayScore: Int? = nil,
-          projectionLabel: String? = nil, servedResult: String? = nil) {
+          projectionLabel: String? = nil, servedResult: String? = nil,
+          awaySecondaryColorHex: String? = nil) {
         let home = homeTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         let away = awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         guard eventID > 0, !home.isEmpty, !away.isEmpty else { return nil }
@@ -130,10 +144,13 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
                 homeRenderedPercent = duel[1]
                 awayRenderedPercent = duel[1] == nil ? nil : duel[0]
             }
+            homeHeadlineTenths = awayRenderedPercent == nil ? nil
+                : Self.headlineTenths(home: validHome, away: validAway)
             self.probabilityObservedAt = homeRenderedPercent == nil ? nil : Self.validDate(probabilityObservedAt)
         } else {
             homeRenderedPercent = nil
             awayRenderedPercent = nil
+            homeHeadlineTenths = nil
             self.probabilityObservedAt = nil
         }
         self.homeAbbreviation = Self.cleanBadge(homeAbbreviation)
@@ -147,6 +164,29 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         self.projectedAwayScore = projection?.away
         self.projectionLabel = projection?.label
         self.result = lifecycle == .final ? servedResult.flatMap(Result.init(rawValue:)) : nil
+        self.awaySecondaryColorHex = Self.cleanHex(awaySecondaryColorHex)
+    }
+
+    /// #199 — the home side's tenths exactly as the page headline derives them:
+    /// a complement pair normalised by its total. A pair that isn't one (a total
+    /// outside 99–101%) has no single tenths line, so the views keep whole numbers.
+    private static func headlineTenths(home: Double?, away: Double?) -> Int? {
+        guard let home, let away else { return nil }
+        let total = home + away
+        guard total >= 0.99, total <= 1.01 else { return nil }
+        return EventHeadlineTenths10090.tenths(home / total)
+    }
+
+    /// #199 — the page headline's "Now" text for one side, or nil when this
+    /// reading has no tenths (then the views print the whole percent). Tenths
+    /// alone can't tell 99.97% from certainty, so a live reading never prints
+    /// "100%" or "0%" here: the ends read ">99%" and "<1%", as the page does
+    /// for anything short of an exact 1 or 0.
+    func headlineNowText(home: Bool) -> String? {
+        guard let t = homeHeadlineTenths else { return nil }
+        let side = home ? t : 1000 - t
+        let probability = min(max(Double(side) / 1000, 0.0001), 0.9999)
+        return EventHeadlineTenths10090.text(tenths: side, probability: probability)
     }
 
     var isTerminal: Bool { lifecycle == .final || lifecycle == .closed }

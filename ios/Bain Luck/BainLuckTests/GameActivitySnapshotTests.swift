@@ -153,4 +153,47 @@ final class GameActivitySnapshotTests: XCTestCase {
         XCTAssertNil(final.projectionLabel)
         XCTAssertNil(final.awayRenderedPercent)
     }
+
+    // #199 — the Live Activity prints the page headline's tenths, from the same pair rule.
+    func testHeadlineTenthsMatchThePageHeadlinePair() throws {
+        let value = try XCTUnwrap(GameActivitySnapshot(eventID: 101, homeTeam: "Lions", awayTeam: "Patriots",
+            status: "live", homeScore: 21, awayScore: 17, homeProbability: 0.662,
+            awayProbability: 0.338, sport: "americanfootball_nfl"))
+        let page = EventHeadlineTenths10090.pair(home: 0.662, away: 0.338)
+        XCTAssertEqual(value.headlineNowText(home: true), page.home)
+        XCTAssertEqual(value.headlineNowText(home: false), page.away)
+        XCTAssertEqual(value.headlineNowText(home: true), "66.2%")
+        XCTAssertEqual(value.headlineNowText(home: false), "33.8%")
+        // A pair that sums off 100 is normalised exactly as the page normalises it.
+        let loose = try snapshot(home: 0.5, away: 0.505, sport: "americanfootball_nfl")
+        XCTAssertEqual(loose.headlineNowText(home: true),
+                       EventHeadlineTenths10090.pair(home: 0.5, away: 0.505).home)
+        let restored = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONEncoder().encode(value))
+        XCTAssertEqual(restored.headlineNowText(home: true), "66.2%")
+    }
+
+    func testHeadlineTenthsAbsentWhereThePageHasNoPair() throws {
+        XCTAssertNil(try snapshot(home: 0.5, away: 0.3, draw: 0.2).headlineNowText(home: true),
+                     "A draw-priced reading keeps whole numbers")
+        XCTAssertNil(try snapshot(home: 0.62, away: 0.30).headlineNowText(home: true),
+                     "A pair outside 99-101% has no single tenths line")
+        XCTAssertNil(try snapshot(status: "completed", home: 1, away: 0).headlineNowText(home: true))
+        XCTAssertEqual(try snapshot(home: 0.9997, away: 0.0003).headlineNowText(home: true), ">99%",
+                       "A live reading never prints certainty")
+        XCTAssertEqual(try snapshot(home: 0.9997, away: 0.0003).headlineNowText(home: false), "<1%")
+    }
+
+    func testDecodedHeadlineTenthsOutOfRangeOrOneSidedAreDropped() throws {
+        let value = try snapshot(sport: "americanfootball_nfl")
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
+        payload["homeHeadlineTenths"] = 1001
+        var decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+        XCTAssertNil(decoded.homeHeadlineTenths)
+        payload["homeHeadlineTenths"] = 455
+        decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+        XCTAssertEqual(decoded.headlineNowText(home: false), "54.5%")
+        payload.removeValue(forKey: "awayRenderedPercent")
+        decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+        XCTAssertNil(decoded.homeHeadlineTenths, "A one-sided reading has no pair to split")
+    }
 }

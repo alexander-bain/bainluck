@@ -26,6 +26,20 @@ enum GameActivityDemo10864 {
     /// Built through the snapshot's own initializer, which applies every rule a
     /// real reading meets (a final carries no chance).
     static func snapshot(_ mode: String, now: Date = Date()) -> GameActivitySnapshot? {
+        if mode == "nfl199" {
+            // #199 — the reading #12755's page render shows (Patriots at Lions,
+            // Q3 8:14, 17–21, Now 33.8% / 66.2%), so the Lock Screen and the
+            // island can be photographed beside that page. Patriots navy shares
+            // the Lions' hue family, so ruling 197 gives them their red.
+            return GameActivitySnapshot(
+                eventID: eventID + 1, homeTeam: "Detroit Lions", awayTeam: "New England Patriots",
+                lifecycle: .live, homeScore: 21, awayScore: 17,
+                homeProbability: 0.662, awayProbability: 0.338, sport: "americanfootball_nfl",
+                scoreObservedAt: now, probabilityObservedAt: now,
+                homeAbbreviation: "DET", awayAbbreviation: "NE",
+                homeColorHex: "#0076B6", awayColorHex: "#002244", periodLabel: "Q3 8:14",
+                awaySecondaryColorHex: "#C60C30")
+        }
         let final = mode == "final"
         return GameActivitySnapshot(
             eventID: eventID, homeTeam: "Kansas City Chiefs", awayTeam: "New York Jets",
@@ -47,13 +61,23 @@ enum GameActivityDemo10864 {
         for activity in Activity<GameActivityAttributes>.activities {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
-        guard let live = snapshot("live") else { return }
+        // "pair" starts two games at once, so the island shows one compact and
+        // one minimal; "nfl199" starts the #12755 page's game alone.
+        let first = mode == "nfl199" || mode == "pair" ? "nfl199" : "live"
+        if mode == "pair", let other = snapshot("live") {
+            _ = try? Activity<GameActivityAttributes>.request(
+                attributes: GameActivityAttributes(eventID: eventID),
+                content: ActivityContent(state: GameActivityAttributes.ContentState(snapshot: other),
+                                         staleDate: Date().addingTimeInterval(15 * 60)), pushType: nil)
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        guard let live = snapshot(first) else { return }
         let content = ActivityContent(state: GameActivityAttributes.ContentState(snapshot: live),
                                       staleDate: Date().addingTimeInterval(15 * 60))
         let activity: Activity<GameActivityAttributes>
         do {
             activity = try Activity<GameActivityAttributes>.request(
-                attributes: GameActivityAttributes(eventID: eventID), content: content, pushType: nil)
+                attributes: GameActivityAttributes(eventID: live.eventID), content: content, pushType: nil)
         } catch {
             NSLog("LADEMO10864 request failed: %@", String(describing: error))
             return

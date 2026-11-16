@@ -38,7 +38,6 @@ struct GameLiveActivityBase: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 5) {
                         GameActivityChanceLine(reading: reading)
-                        GameActivityProjectionLine(reading: reading)
                         GameActivityFooter(reading: reading)
                     }
                     .padding(.horizontal, 8)
@@ -103,21 +102,15 @@ private struct GameActivityReading {
     /// A priced draw's one honest number: the home side's chance, always named.
     var singleChance: Int? { pair == nil && showsForecast ? snapshot.homeRenderedPercent : nil }
     var singleChanceLabel: String? { singleChance == nil ? nil : snapshot.probabilityLabel }
-    /// The page's admitted projected final, beside a live reading only.
-    var projection: (label: String, away: Int, home: Int)? {
-        guard matches, let label = snapshot.projectionLabel, let away = snapshot.projectedAwayScore,
-              let home = snapshot.projectedHomeScore else { return nil }
-        return (label, away, home)
-    }
-    /// The page's own wording: the label, then each badge glued to its number.
-    var projectionText: String? {
-        projection.map { "\($0.label): \(badge(.away))\u{00A0}\($0.away) · \(badge(.home))\u{00A0}\($0.home)" }
-    }
-    var projectionSpoken: String? {
-        projection.map { "\($0.label): \(name(.away)) \($0.away), \(name(.home)) \($0.home)" }
-    }
     func percentText(_ value: Int) -> String {
         (Double(value) / 100).formatted(.percent.precision(.fractionLength(0)))
+    }
+    /// #199 — the page headline's "Now" for a side: its tenths (66.2%) when the
+    /// reading carries them, else the whole percent the headline itself falls
+    /// back to. One wording for the page, the Lock Screen and the island.
+    func nowText(_ side: Side) -> String? {
+        guard let value = percent(side) else { return nil }
+        return snapshot.headlineNowText(home: side == .home) ?? percentText(value)
     }
     /// The side the compact views lead with: the favourite of a two-way game, else home.
     var lead: Side {
@@ -154,16 +147,25 @@ private struct GameActivityReading {
         }
     }
 
-    func color(_ side: Side, onDark: Bool) -> Color {
-        GameActivityColor.color(side == .home ? snapshot.homeColorHex : snapshot.awayColorHex, onDark: onDark)
+    /// #199 / ruling 197 — the headline's own two colours
+    /// (`TeamTextContrast.cardColorHexes`, as `EventDetailView.teamColors` calls
+    /// it): home keeps its colour, and an away team in the same hue family takes
+    /// its second colour, else slate grey. Never a second palette of our own.
+    private var headlineHexes: (away: String, home: String) {
+        TeamTextContrast.cardColorHexes(awayHex: snapshot.awayColorHex, homeHex: snapshot.homeColorHex,
+                                        awaySecondaryHex: snapshot.awaySecondaryColorHex,
+                                        checkHueFamily: true)
     }
-    /// The split bar's two colours. Two teams in the same red would read as one
-    /// bar, so the trailing side goes grey when the colours are too close.
+    /// On a light surface, exactly the headline's colour. On the island's black,
+    /// the same colour lifted only when it would vanish (navy on black).
+    func color(_ side: Side, onDark: Bool) -> Color {
+        let hex = side == .home ? headlineHexes.home : headlineHexes.away
+        return onDark ? GameActivityColor.color(hex, onDark: true) : Color(hex: hex)
+    }
+    /// The split bar's two colours: the headline's pair, which already keeps
+    /// two teams apart (rule 197), so no grey of our own.
     func barColors(onDark: Bool) -> (away: Color, home: Color) {
-        let close = GameActivityColor.tooClose(snapshot.awayColorHex, snapshot.homeColorHex)
-        let away = color(.away, onDark: onDark), home = color(.home, onDark: onDark)
-        guard close else { return (away, home) }
-        return lead == .home ? (Color.gray, home) : (away, Color.gray)
+        (color(.away, onDark: onDark), color(.home, onDark: onDark))
     }
     var keyline: Color? { matches ? color(lead, onDark: true) : nil }
 
@@ -230,13 +232,13 @@ private struct GameActivityReading {
 
     func rowSpoken(_ side: Side) -> String {
         var parts = [name(side), score(side).map { "\($0)" } ?? "score unavailable"]
-        if let value = percent(side) { parts.append("\(percentText(value)) chance to win") }
+        if let now = nowText(side) { parts.append("\(now) chance to win") }
         if let verdict = verdict(side) { parts.append(verdict) }
         return parts.joined(separator: ", ")
     }
     var chanceSpoken: String {
         guard let pair else { return singleChanceLabel ?? "Win probability unavailable" }
-        return "\(name(.away)) \(percentText(pair.away)), \(name(.home)) \(percentText(pair.home)) chance to win"
+        return "\(name(.away)) \(nowText(.away) ?? percentText(pair.away)), \(name(.home)) \(nowText(.home) ?? percentText(pair.home)) chance to win"
     }
     /// The Dynamic Island's compact and minimal views speak the whole reading.
     var compactSpoken: String {
@@ -276,11 +278,6 @@ private enum GameActivityColor {
         if !onDark, light > 0.8 { return mix(c, toward: 0, by: 0.35) }
         return Color(red: c.r, green: c.g, blue: c.b)
     }
-    /// Both absent (two greys) or nearer than a quarter of the colour cube.
-    static func tooClose(_ first: String?, _ second: String?) -> Bool {
-        guard let a = rgb(first), let b = rgb(second) else { return first == nil && second == nil }
-        return ((a.r - b.r) * (a.r - b.r) + (a.g - b.g) * (a.g - b.g) + (a.b - b.b) * (a.b - b.b)).squareRoot() < 0.25
-    }
     private static func mix(_ c: RGB, toward target: Double, by amount: Double) -> Color {
         Color(red: c.r + (target - c.r) * amount, green: c.g + (target - c.g) * amount,
               blue: c.b + (target - c.b) * amount)
@@ -314,7 +311,7 @@ private struct GameActivityLockScreenView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // The state and the time the numbers were observed share one row,
-            // so the card keeps room for the projection inside the Lock
+            // so the card keeps room for the column labels inside the Lock
             // Screen's 160-point height.
             HStack(alignment: .center, spacing: 8) {
                 GameActivityStatusPill(reading: reading)
@@ -324,6 +321,7 @@ private struct GameActivityLockScreenView: View {
             }
             if reading.matches {
                 VStack(spacing: 4) {
+                    if reading.pair != nil { GameActivityColumnLabels() }
                     GameActivityTeamRow(reading: reading, side: .away)
                     GameActivityTeamRow(reading: reading, side: .home)
                 }
@@ -336,7 +334,6 @@ private struct GameActivityLockScreenView: View {
                         .font(.subheadline.weight(.semibold))
                         .monospacedDigit()
                 }
-                GameActivityProjectionLine(reading: reading)
             } else {
                 Text("Game reading unavailable").font(.headline)
             }
@@ -369,15 +366,20 @@ private struct GameActivityTeamRow: View {
             }
             Spacer(minLength: 6)
             Text(reading.scoreText(side))
-                .font(.title2.weight(.bold))
+                .font(.title3.weight(.bold))
                 .monospacedDigit()
                 .foregroundStyle(reading.steppedBack(side) ? .secondary : .primary)
-            if let value = reading.percent(side) {
-                Text(reading.percentText(value))
-                    .font(.subheadline.weight(.semibold))
+                .frame(minWidth: GameActivityColumnLabels.scoreWidth, alignment: .trailing)
+            if let now = reading.nowText(side) {
+                // #199 / 200-B — "Now" is the largest thing, in the team's colour.
+                Text(now)
+                    .font(.system(size: 22, weight: .black))
                     .monospacedDigit()
-                    .foregroundStyle(reading.lead == side && !reading.isStale ? .primary : .secondary)
-                    .frame(minWidth: 48, alignment: .trailing)
+                    .foregroundStyle(reading.isStale ? AnyShapeStyle(.secondary)
+                                                     : AnyShapeStyle(reading.color(side, onDark: scheme == .dark)))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(minWidth: GameActivityColumnLabels.nowWidth, alignment: .trailing)
             } else if let verdict = reading.verdict(side) {
                 Text(verdict)
                     .font(.subheadline.weight(.semibold))
@@ -397,6 +399,26 @@ private struct GameActivityTeamRow: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(reading.rowSpoken(side))
+    }
+}
+
+/// #199 — the page headline's column labels, in its words and case: "Score"
+/// and "Now" (`EventSportHeadlines12472.LiveColumnHeaders`). The Lock Screen has
+/// no room for "Proj.", so that column is left out rather than renamed.
+@available(iOS 17.0, *)
+private struct GameActivityColumnLabels: View {
+    static let scoreWidth: CGFloat = 40
+    static let nowWidth: CGFloat = 78
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            Text("Score").frame(width: Self.scoreWidth, alignment: .trailing)
+            Text("Now").frame(width: Self.nowWidth, alignment: .trailing)
+        }
+        .font(.caption2.weight(.medium))
+        .foregroundStyle(.secondary)
+        .accessibilityHidden(true)
     }
 }
 
@@ -456,26 +478,6 @@ private struct GameActivityFooter: View {
     }
 }
 
-/// The projected final, labeled as the page labels it and kept a step below
-/// the actual score so the two are never read as one another.
-@available(iOS 17.0, *)
-private struct GameActivityProjectionLine: View {
-    let reading: GameActivityReading
-
-    var body: some View {
-        if let text = reading.projectionText {
-            Text(text)
-                .font(.caption.weight(.semibold))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel(reading.projectionSpoken ?? text)
-        }
-    }
-}
-
 /// The expanded Dynamic Island's sides: badge over a big score.
 @available(iOS 17.0, *)
 private struct GameActivityExpandedSide: View {
@@ -515,12 +517,16 @@ private struct GameActivityChanceLine: View {
         if let pair = reading.pair {
             let colors = reading.barColors(onDark: true)
             VStack(spacing: 4) {
-                HStack {
-                    Text("\(reading.badge(.away)) \(reading.percentText(pair.away))")
+                HStack(alignment: .firstTextBaseline) {
+                    Text(reading.nowText(.away) ?? reading.percentText(pair.away))
+                        .foregroundStyle(reading.color(.away, onDark: true))
                     Spacer(minLength: 8)
-                    Text("\(reading.percentText(pair.home)) \(reading.badge(.home))")
+                    Text("Now").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Text(reading.nowText(.home) ?? reading.percentText(pair.home))
+                        .foregroundStyle(reading.color(.home, onDark: true))
                 }
-                .font(.caption.weight(.semibold))
+                .font(.system(size: 20, weight: .black))
                 .monospacedDigit()
                 GameActivitySplitBar(away: colors.away, home: colors.home, awayShare: Double(pair.away) / 100)
             }
@@ -548,6 +554,14 @@ private struct GameActivityCompactLeading: View {
             } else if reading.snapshot.isTerminal {
                 Text("\(reading.badge(.away)) \(reading.scoreText(.away))")
                     .foregroundStyle(reading.lowerScoredSide == .away ? .secondary : .primary)
+            } else if let now = reading.nowText(reading.lead) {
+                // #199 — the leader and its chance now, in the headline's words.
+                HStack(spacing: 4) {
+                    Text(reading.badge(reading.lead))
+                    Text(now)
+                        .foregroundStyle(reading.isStale ? AnyShapeStyle(.secondary)
+                                                         : AnyShapeStyle(reading.color(reading.lead, onDark: true)))
+                }
             } else {
                 HStack(spacing: 4) {
                     Circle().fill(reading.color(reading.lead, onDark: true)).frame(width: 7, height: 7)
@@ -576,6 +590,14 @@ private struct GameActivityCompactTrailing: View {
             } else if reading.snapshot.isTerminal {
                 Text("\(reading.scoreText(.home)) \(reading.badge(.home))")
                     .foregroundStyle(reading.lowerScoredSide == .home ? .secondary : .primary)
+            } else if reading.pair != nil, let lead = reading.score(reading.lead),
+                      let trail = reading.score(reading.lead == .home ? .away : .home) {
+                // #199 — the score, the leader's first, beside its badge on the left.
+                HStack(spacing: 2) {
+                    if reading.isStale { Image(systemName: "clock.arrow.circlepath").imageScale(.small) }
+                    Text("\(lead)–\(trail)")
+                }
+                .foregroundStyle(reading.isStale ? .secondary : .primary)
             } else if let value = reading.percent(reading.lead) ?? reading.singleChance {
                 if reading.isStale {
                     // The last chance stays readable, dimmed behind a refresh
@@ -616,6 +638,11 @@ private struct GameActivityMinimal: View {
                 Image(systemName: "flag.checkered")
             } else if reading.snapshot.isTerminal {
                 Image(systemName: "questionmark")
+            } else if let now = reading.nowText(reading.lead) {
+                Text(now)
+                    .minimumScaleFactor(0.6)
+                    .foregroundStyle(reading.isStale ? AnyShapeStyle(.secondary)
+                                                     : AnyShapeStyle(reading.color(reading.lead, onDark: true)))
             } else if let value = reading.percent(reading.lead) ?? reading.singleChance {
                 Text(reading.percentText(value))
                     .foregroundStyle(reading.isStale ? .secondary : .primary)

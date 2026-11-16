@@ -98,7 +98,8 @@ extension GameActivitySnapshot {
             projectedAwayScore: projected?.away,
             projectionLabel: projected?.label,
             // #10864 — the server's verdict on a final; the snapshot keeps it only then.
-            servedResult: event.heroSettledResult
+            servedResult: event.heroSettledResult,
+            awaySecondaryColorHex: event.awayTeamData?.secondaryColor
         )
     }
 }
