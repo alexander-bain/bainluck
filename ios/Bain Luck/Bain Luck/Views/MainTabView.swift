@@ -67,7 +67,7 @@ struct MainTabView: View {
     /// Wraps `selectedTab` as optional for `List(selection:)` compatibility.
     private var tabSelection: Binding<AppTab?> {
         Binding(
-            get: { navCoordinator.selectedTab },
+            get: { MacMainWindow10878.highlightedSidebarTab(for: navCoordinator.selectedTab) },
             set: { newTab in
                 guard let tab = newTab else { return }
                 DispatchQueue.main.async { navCoordinator.selectedTab = tab }

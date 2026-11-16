@@ -96,6 +96,20 @@ final class MacMainWindow10878Tests: XCTestCase {
         XCTAssertEqual(Set(sidebar).count, sidebar.count, "a tab appears twice in the sidebar")
         XCTAssertTrue(Set(sidebar).isDisjoint(with: MacMainWindow10878.detailOnlyTabs))
         XCTAssertEqual(Set(sidebar).union(MacMainWindow10878.detailOnlyTabs), all)
+
+        // Every detailOnlyTab maps to Browse (.leagues) so the sidebar never loses its highlight.
+        for detailTab in MacMainWindow10878.detailOnlyTabs {
+            XCTAssertEqual(MacMainWindow10878.highlightedSidebarTab(for: detailTab), .leagues)
+            XCTAssertTrue(Set(sidebar).contains(MacMainWindow10878.highlightedSidebarTab(for: detailTab)))
+        }
+        for sidebarTab in sidebar {
+            XCTAssertEqual(MacMainWindow10878.highlightedSidebarTab(for: sidebarTab), sidebarTab)
+        }
+        XCTAssertEqual(MacMainWindow10878.sidebarTab(for: .conceptCard(key: "event:ufc:26sep19", name: "UFC")), .leagues)
+        XCTAssertEqual(MacMainWindow10878.sidebarTab(for: .golfTournament(slug: "masters", name: "Masters")), .leagues)
+        XCTAssertEqual(MacMainWindow10878.sidebarTab(for: .futuresDetail(id: 13795456), marketCategory: "politics"), .leagues)
+        XCTAssertEqual(MacMainWindow10878.sidebarTab(for: .eventDetail(id: 9101)), .feed)
+        XCTAssertEqual(MacMainWindow10878.sidebarTab(for: .teamDetail(slug: "boston-red-sox-mlb")), .feed)
     }
 
     /// Every supported link lands on a sidebar place, so the Mac sidebar always

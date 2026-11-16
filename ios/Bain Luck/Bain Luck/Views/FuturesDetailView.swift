@@ -115,6 +115,7 @@ struct FuturesDetailView: View {
     @State private var sortField: FuturesSortField = .probability
     @State private var sortAscending = false
     @State private var showAllOutcomes = false
+    private var preloadedTimelineForTest: ProbabilityTimelineResponse? = nil
 
     init(marketId: Int) {
         self.marketId = marketId
@@ -122,9 +123,14 @@ struct FuturesDetailView: View {
     }
 
     #if DEBUG
-    init(marketId: Int, viewModelForTest: FuturesDetailViewModel) {
+    init(
+        marketId: Int,
+        viewModelForTest: FuturesDetailViewModel,
+        preloadedTimelineForTest: ProbabilityTimelineResponse? = nil
+    ) {
         self.marketId = marketId
         _viewModel = StateObject(wrappedValue: viewModelForTest)
+        self.preloadedTimelineForTest = preloadedTimelineForTest
     }
     #endif
 
@@ -185,7 +191,8 @@ struct FuturesDetailView: View {
                                 golfTournamentStart: golfTournamentStart(market),
                                 golfTournamentEnd: golfTournamentEnd(market),
                                 chartRefreshToken: viewModel.chartRefreshToken,
-                                representation: viewModel.representation
+                                representation: viewModel.representation,
+                                preloadedTimeline: preloadedTimelineForTest
                             )
                             .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
                         } else {
@@ -235,7 +242,8 @@ struct FuturesDetailView: View {
                                             representation: viewModel.representation,
                                             expectation: viewModel.representation == .source ? nil
                                                 : VerifiedTitleChartExpectation(
-                                                    market: market, hero: futuresDetailHeroOutcome(market))
+                                                    market: market, hero: futuresDetailHeroOutcome(market)),
+                                            preloadedTimeline: preloadedTimelineForTest
                                         )
                                     }
 
