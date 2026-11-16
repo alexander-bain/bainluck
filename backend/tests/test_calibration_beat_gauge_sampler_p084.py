@@ -450,7 +450,7 @@ class TestDecideTerminal:
         """The sampler worked; the producer stopped. Not the same as health."""
         terminal, reason = decide_terminal(
             read_status="ok", observation=_obs(1), write_status="unchanged",
-            ledger_age_s=4 * 3600,
+            ledger_age_s=3 * 86400,  # past two daily beats (215-B; was 4 h at hourly)
         )
         assert terminal == "partial"
         assert "ledger_stale" in reason
@@ -531,7 +531,8 @@ class TestTheObserverIsNotTheProducer:
     def test_both_producer_conditions_are_reported_not_just_the_first(self):
         """They have different owners; naming one hides the other."""
         obs = dict(_obs(1), gauges_missing_required=["staged:served_at"])
-        cond = producer_condition(observation=obs, ledger_age_s=4 * 3600)
+        # past two daily beats (215-B; was 4 h at hourly)
+        cond = producer_condition(observation=obs, ledger_age_s=3 * 86400)
         assert cond["conditions"] == ["gauges_absent", "ledger_stale"]
         assert "staged:served_at" in cond["reason"]
         assert "ledger_stale" in cond["reason"]

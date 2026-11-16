@@ -138,8 +138,8 @@ HISTORY_SCHEMA = "calibration-beat-gauge-history/v1"
 HISTORY_LIMIT = 168
 
 #: The beat's scheduled period (``precompute-calibration-main`` is
-#: ``crontab(minute=15)``).
-BEAT_PERIOD_S = 3600
+#: ``crontab(minute=15, hour=10)``: daily since 215-B, Nov 16 2026).
+BEAT_PERIOD_S = 86400
 
 #: A ledger row older than this means beats have STOPPED, not that this sample
 #: had nothing to do. Two full periods plus the measured finish-time spread

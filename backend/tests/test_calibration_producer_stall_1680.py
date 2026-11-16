@@ -158,7 +158,7 @@ class TestTheThreshold:
         """Not a magic number in a branch. ``PRODUCER_STALL_AGE_S`` is the beat
         cadence times a beat count, so changing the cadence cannot silently
         leave the threshold behind."""
-        assert PUBLISH_INTERVAL_S == 3600
+        assert PUBLISH_INTERVAL_S == 86400  # daily since 215-B (Nov 16 2026); hourly before
         assert PRODUCER_STALL_AGE_S == PUBLISH_INTERVAL_S * PRODUCER_STALL_BEATS
 
     def test_the_threshold_is_looser_than_the_watchdog_alarm(self):
@@ -169,14 +169,17 @@ class TestTheThreshold:
 
     def test_the_threshold_is_far_tighter_than_the_serving_bound(self):
         """``SERVE_MAX_AGE_S`` is 7 DAYS — a sensible bound for whether a copy is
-        still worth serving, and a nonsense one for an HOURLY task. Collapsing
-        the two is what let a four-day outage read as ``fresh``."""
-        assert PRODUCER_STALL_AGE_S < SERVE_MAX_AGE_S / 24
+        still worth serving, and too loose for the producer's own cadence.
+        Collapsing the two is what let a four-day outage read as ``fresh``.
+        215-B (Nov 16 2026): the beat is daily, so the stall notice is 3 days;
+        it must still come well before the page would go dark."""
+        assert PRODUCER_STALL_AGE_S <= SERVE_MAX_AGE_S / 2
 
 
 class TestProducerStallUnit:
     def test_a_recent_publish_is_not_stalled(self):
-        out = producer_stall({"generated_at": _ago(hours=1)})
+        # One daily beat old (215-B): a healthy producer's copy, not a stall.
+        out = producer_stall({"generated_at": _ago(hours=25)})
         assert out["stalled"] is False
         assert out["beats_missed"] == 1
         assert out["stall_after_s"] == PRODUCER_STALL_AGE_S
@@ -208,10 +211,11 @@ class TestProducerStallUnit:
         assert out["beats_missed"] is None
 
     def test_it_counts_missed_beats_not_just_seconds(self):
-        """The number an operator actually wants: "nothing has been built for 90
-        beats" is legible in a way that "324,000 seconds" is not."""
+        """The number an operator actually wants: "nothing has been built for 3
+        beats" is legible in a way that "324,000 seconds" is not. (90 hours: 3
+        daily beats since 215-B; it read 90 at hourly.)"""
         out = producer_stall({"generated_at": _ago(hours=90)})
-        assert out["beats_missed"] == 90
+        assert out["beats_missed"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +241,7 @@ class TestTheSignalFires:
         out = await calibration.public_calibration(db=_durable_db(aged))
 
         assert out["producer"]["stalled"] is True
-        assert out["producer"]["beats_missed"] == 88
+        assert out["producer"]["beats_missed"] == 3  # 88 h of daily beats (215-B)
         assert out["producer"]["task"] == "precompute_calibration_main"
         assert out["producer"]["stall_after_s"] == PRODUCER_STALL_AGE_S
         assert out["availability"] == AVAILABILITY_STALE
@@ -267,14 +271,14 @@ class TestTheSignalFires:
         """The hole that made the outage invisible at tier 1.
 
         ``main`` is admitted on ``snapshot_verdict(..., max_age_s=SERVE_MAX_AGE_S)``
-        — SEVEN DAYS — so a copy days past its 2h TTL scored ``ok`` and was
+        — SEVEN DAYS — so a copy days past its TTL (2 h then, 50 h since 215-B) scored ``ok`` and was
         stamped ``fresh``. The inline justification was "its 2h TTL bounds its
         age": an assumption the consumer held about the producer, which fails
         exactly when the producer is the thing that broke.
         """
         from app.routes import calibration
 
-        aged = _payload(hours_old=30)
+        aged = _payload(hours_old=80)  # past the 3-day stall line (215-B; was 30 h at hourly)
         _use(monkeypatch, _FakeRedis(main=json.dumps(aged)))
         _no_compute(monkeypatch)
 
@@ -291,7 +295,7 @@ class TestTheSignalFires:
         request heals what the first correctly marked."""
         from app.routes import calibration
 
-        aged = _payload(hours_old=30)
+        aged = _payload(hours_old=80)  # past the 3-day stall line (215-B; was 30 h at hourly)
         _use(monkeypatch, _FakeRedis(main=json.dumps(aged)))
         _no_compute(monkeypatch)
 
