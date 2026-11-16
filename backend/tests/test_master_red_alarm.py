@@ -43,6 +43,20 @@ def test_collection_errors_count_and_repeats_collapse():
     assert alarm.failed_tests(log) == ["tests/test_a.py", "tests/test_b.py::t"]
 
 
+def test_verbose_gate_output_without_a_summary_is_read_too():
+    """The real-Postgres gates run `-v -rs`: no FAILED summary line, only this."""
+    log = (
+        "2026-11-11T15:58:01.0Z tests/integration/test_pm_withdrawal_peer_publication_and_startup_10090_pg.py"
+        "::test_publish_error_retains_owed_notification ERROR [ 96%]\n"
+        "2026-11-11T15:58:01.1Z tests/integration/test_x_pg.py::test_ok PASSED [ 97%]\n"
+        "2026-11-11T15:58:02.0Z ===== 26 passed, 1 error in 32.43s =====\n"
+    )
+    assert alarm.failed_tests(log) == [
+        "tests/integration/test_pm_withdrawal_peer_publication_and_startup_10090_pg.py"
+        "::test_publish_error_retains_owed_notification"
+    ]
+
+
 def _line(**over):
     args = dict(
         run_id=43797011147,

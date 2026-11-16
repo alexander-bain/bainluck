@@ -32,6 +32,9 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 #: pytest's short test summary: `FAILED tests/x.py::T::t[p] - msg` and
 #: `ERROR tests/x.py - msg` (a collection or fixture error).
 _FAILED = re.compile(r"^(?:FAILED|ERROR) (tests/\S+)")
+#: `-v` output with no `-rf` summary (the real-Postgres gates run `-v -rs`):
+#: `tests/x.py::t[p] FAILED [ 50%]`. The `::` keeps file progress lines out.
+_VERBOSE = re.compile(r"^(tests/\S+::\S+) (?:FAILED|ERROR)\b")
 
 
 def failed_tests(log_text: str) -> list[str]:
@@ -39,7 +42,7 @@ def failed_tests(log_text: str) -> list[str]:
     seen: list[str] = []
     for raw in log_text.splitlines():
         line = _TIMESTAMP.sub("", _ANSI.sub("", raw)).strip()
-        match = _FAILED.match(line)
+        match = _FAILED.match(line) or _VERBOSE.match(line)
         if match and match.group(1) not in seen:
             seen.append(match.group(1))
     return seen
