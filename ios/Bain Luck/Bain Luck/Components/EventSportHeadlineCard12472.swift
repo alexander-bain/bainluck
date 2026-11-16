@@ -180,7 +180,7 @@ struct EventSportHeadlineCard12472: View {
         if stacksRowsVertically {
             availableWidth = 220
         } else if let scoreFirst = model.tennisScoreFirst {
-            let setsW = scoreFirst.setColumns.reduce(CGFloat(0)) { $0 + tennisSetColumnWidth(for: $1.header) }
+            let setsW = scoreFirst.setColumns.reduce(CGFloat(0)) { $0 + tennisSetColumnWidth(for: $1) }
                 + CGFloat(max(scoreFirst.setColumns.count - 1, 0)) * 4
             let ptsW = scoreFirst.pointsColumn != nil
                 ? effectiveTennisPtsColWidth + (scoreFirst.setColumns.isEmpty ? 0 : 4)
@@ -1084,8 +1084,43 @@ struct EventSportHeadlineCard12472: View {
         }
     }
 
-    private func tennisSetColumnWidth(for header: String) -> CGFloat {
-        header == "Sets" ? max(effectiveTennisSetColWidth, 30) : effectiveTennisSetColWidth
+    private func tennisSetColumnWidth(for col: EventSportHeadlines12472.TennisSetColumn) -> CGFloat {
+        if col.header == "Sets" {
+            return max(effectiveTennisSetColWidth, 30)
+        }
+        return col.hasTiebreakSuperscript ? effectiveTennisSetColWidth + 7 : effectiveTennisSetColWidth
+    }
+
+    @ViewBuilder
+    private func tennisSetValueText(
+        value: String,
+        tiebreak: String?,
+        emphasized: Bool,
+        isStacked: Bool
+    ) -> some View {
+        let baseFont: Font = isStacked
+            ? .body.weight(emphasized ? .bold : .regular).monospacedDigit()
+            : .system(size: min(tennisSetValueSize, 20), weight: emphasized ? .bold : .medium, design: .rounded).monospacedDigit()
+        let color: Color = emphasized ? Color.primary : DS.textSecondaryReadable
+        if let tiebreak, !tiebreak.isEmpty {
+            HStack(alignment: .top, spacing: 0.5) {
+                Text(value)
+                    .font(baseFont)
+                    .foregroundStyle(color)
+                Text(tiebreak)
+                    .font(.system(size: 10.5, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .offset(y: -1)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+        } else {
+            Text(value)
+                .font(baseFont)
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
     }
 
     private func tennisHeaderRow(
@@ -1105,10 +1140,10 @@ struct EventSportHeadlineCard12472: View {
                             .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
-                            .frame(width: tennisSetColumnWidth(for: col.header), alignment: .center)
+                            .frame(width: tennisSetColumnWidth(for: col), alignment: .center)
                     }
                     if scoreFirst.pointsColumn != nil {
-                        Text("Pts")
+                        Text(scoreFirst.pointsHeader)
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(DS.greenReadable)
                             .lineLimit(1)
@@ -1163,13 +1198,15 @@ struct EventSportHeadlineCard12472: View {
             HStack(spacing: 4) {
                 ForEach(Array(scoreFirst.setColumns.enumerated()), id: \.offset) { _, col in
                     let val = isAway ? col.awayValue : col.homeValue
+                    let tb = isAway ? col.awayTiebreak : col.homeTiebreak
                     let emphasized = isAway ? col.awayEmphasized : col.homeEmphasized
-                    Text(val)
-                        .font(.system(size: min(tennisSetValueSize, 20), weight: emphasized ? .bold : .medium, design: .rounded).monospacedDigit())
-                        .foregroundStyle(emphasized ? Color.primary : DS.textSecondaryReadable)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .frame(width: tennisSetColumnWidth(for: col.header), alignment: .center)
+                    tennisSetValueText(
+                        value: val,
+                        tiebreak: tb,
+                        emphasized: emphasized,
+                        isStacked: false
+                    )
+                    .frame(width: tennisSetColumnWidth(for: col), alignment: .center)
                 }
                 if let ptsText {
                     Text(ptsText)
@@ -1245,10 +1282,14 @@ struct EventSportHeadlineCard12472: View {
                 HStack(spacing: 6) {
                     ForEach(Array(scoreFirst.setColumns.enumerated()), id: \.offset) { _, col in
                         let val = isAway ? col.awayValue : col.homeValue
+                        let tb = isAway ? col.awayTiebreak : col.homeTiebreak
                         let emphasized = isAway ? col.awayEmphasized : col.homeEmphasized
-                        Text(val)
-                            .font(.body.weight(emphasized ? .bold : .regular).monospacedDigit())
-                            .foregroundStyle(emphasized ? Color.primary : DS.textSecondaryReadable)
+                        tennisSetValueText(
+                            value: val,
+                            tiebreak: tb,
+                            emphasized: emphasized,
+                            isStacked: true
+                        )
                     }
                     if let ptsText {
                         Text(ptsText)
@@ -1291,13 +1332,17 @@ struct EventSportHeadlineCard12472: View {
     ) -> String {
         var parts: [String] = [side.shortName]
         let setValues = scoreFirst.setColumns.map { col in
-            "\(col.header) \(isAway ? col.awayValue : col.homeValue)"
+            let val = isAway ? col.awayValue : col.homeValue
+            if let tb = isAway ? col.awayTiebreak : col.homeTiebreak {
+                return "\(col.header) \(val) tiebreak \(tb)"
+            }
+            return "\(col.header) \(val)"
         }
         if !setValues.isEmpty {
             parts.append(setValues.joined(separator: ", "))
         }
         if let pts = isAway ? scoreFirst.pointsColumn?.away : scoreFirst.pointsColumn?.home {
-            parts.append("points \(pts)")
+            parts.append(scoreFirst.isTiebreakPoints ? "tiebreak \(pts)" : "points \(pts)")
         }
         if let pregame = side.pregameChanceText {
             parts.append("pregame \(pregame)")

@@ -185,13 +185,21 @@ enum EventSportHeadlines12472 {
         let header: String
         let awayValue: String
         let homeValue: String
+        var awayTiebreak: String? = nil
+        var homeTiebreak: String? = nil
         let awayEmphasized: Bool
         let homeEmphasized: Bool
+
+        var hasTiebreakSuperscript: Bool {
+            awayTiebreak != nil || homeTiebreak != nil
+        }
     }
 
     nonisolated struct TennisScoreFirstModel: Equatable, Sendable {
         let setColumns: [TennisSetColumn]
         let pointsColumn: (away: String, home: String)?
+        var pointsHeader: String = "Pts"
+        var isTiebreakPoints: Bool = false
         let pregameHeader: String?
         let nowHeader: String
 
@@ -199,6 +207,8 @@ enum EventSportHeadlines12472 {
             lhs.setColumns == rhs.setColumns
                 && lhs.pointsColumn?.away == rhs.pointsColumn?.away
                 && lhs.pointsColumn?.home == rhs.pointsColumn?.home
+                && lhs.pointsHeader == rhs.pointsHeader
+                && lhs.isTiebreakPoints == rhs.isTiebreakPoints
                 && lhs.pregameHeader == rhs.pregameHeader
                 && lhs.nowHeader == rhs.nowHeader
         }
@@ -2899,22 +2909,32 @@ enum EventSportHeadlines12472 {
         event: EventDetail,
         liveStatusText: String?
     ) -> String {
+        let isTiebreak = event.linescore?.tiebreak == true
         if let rawPeriod = trimmedNonEmpty(event.espn?.period) {
             let normalized = normalizeTennisSetLabel(rawPeriod)
+            let alreadyMentionsTB = normalized.localizedCaseInsensitiveContains("tb")
+                || normalized.localizedCaseInsensitiveContains("tiebreak")
+            if isTiebreak && !alreadyMentionsTB {
+                return "LIVE · \(normalized) · TB"
+            }
             return "LIVE · \(normalized)"
         }
+        let linescoreSetCount = event.linescore?.sets?.count ?? 0
         let setCount = max(
-            event.boxScoreData?.awayPeriodScores?.compactMap { $0 }.count ?? 0,
-            event.boxScoreData?.homePeriodScores?.compactMap { $0 }.count ?? 0
+            linescoreSetCount,
+            max(
+                event.boxScoreData?.awayPeriodScores?.compactMap { $0 }.count ?? 0,
+                event.boxScoreData?.homePeriodScores?.compactMap { $0 }.count ?? 0
+            )
         )
         if setCount >= 1 {
-            return "LIVE · Set \(setCount)"
+            return isTiebreak ? "LIVE · Set \(setCount) · TB" : "LIVE · Set \(setCount)"
         }
         if let status = trimmedNonEmpty(liveStatusText),
            parseTennisGamePointsFromClock(status) == nil {
-            return "LIVE · \(status)"
+            return isTiebreak ? "LIVE · \(status) · TB" : "LIVE · \(status)"
         }
-        return "LIVE"
+        return isTiebreak ? "LIVE · TB" : "LIVE"
     }
 
     nonisolated private static func normalizeTennisSetLabel(_ raw: String) -> String {
@@ -2930,6 +2950,10 @@ enum EventSportHeadlines12472 {
 
     nonisolated private static let tennisPointsPairRegex: NSRegularExpression? = try? NSRegularExpression(
         pattern: #"^\s*(0|15|30|40|Ad|AD)\s*[-–:]\s*(0|15|30|40|Ad|AD)\s*$"#
+    )
+
+    nonisolated private static let tennisTiebreakPairRegex: NSRegularExpression? = try? NSRegularExpression(
+        pattern: #"^\s*(\d{1,2})\s*[-–:]\s*(\d{1,2})\s*$"#
     )
 
     nonisolated static func parseTennisGamePointsFromClock(
@@ -2949,24 +2973,57 @@ enum EventSportHeadlines12472 {
         )
     }
 
+    nonisolated static func parseTennisTiebreakPointsFromClock(
+        _ rawClock: String?
+    ) -> (away: String, home: String)? {
+        guard let rawClock = trimmedNonEmpty(rawClock) else { return nil }
+        let nsRange = NSRange(rawClock.startIndex..<rawClock.endIndex, in: rawClock)
+        guard let match = tennisTiebreakPairRegex?.firstMatch(in: rawClock, options: [], range: nsRange),
+              let firstRange = Range(match.range(at: 1), in: rawClock),
+              let secondRange = Range(match.range(at: 2), in: rawClock)
+        else { return nil }
+        return (away: String(rawClock[firstRange]), home: String(rawClock[secondRange]))
+    }
+
     nonisolated static func buildTennisScoreFirstModel(
         event: EventDetail,
         hasScore: Bool,
         hasPregame: Bool
     ) -> TennisScoreFirstModel {
-        let awayPeriods = event.boxScoreData?.awayPeriodScores ?? []
-        let homePeriods = event.boxScoreData?.homePeriodScores ?? []
+        let linescoreSets = event.linescore?.sets ?? []
+        let linescoreTiebreaks = event.linescore?.tiebreaks ?? []
+        let awayPeriods: [Int?]
+        let homePeriods: [Int?]
+        if !linescoreSets.isEmpty {
+            homePeriods = linescoreSets.map { $0.count >= 2 ? $0[0] : nil }
+            awayPeriods = linescoreSets.map { $0.count >= 2 ? $0[1] : nil }
+        } else {
+            awayPeriods = event.boxScoreData?.awayPeriodScores ?? []
+            homePeriods = event.boxScoreData?.homePeriodScores ?? []
+        }
         let maxSets = max(awayPeriods.count, homePeriods.count)
 
         var setColumns: [TennisSetColumn] = []
+        var activeSetIsSixAll = false
         if maxSets > 0 {
-            var pairs: [(index: Int, away: Int, home: Int)] = []
+            var pairs: [(index: Int, away: Int, home: Int, awayTB: String?, homeTB: String?)] = []
             for idx in 0..<maxSets {
                 let a = idx < awayPeriods.count ? awayPeriods[idx] : nil
                 let h = idx < homePeriods.count ? homePeriods[idx] : nil
                 if let a, let h {
-                    pairs.append((index: idx + 1, away: a, home: h))
+                    var awayTB: String? = nil
+                    var homeTB: String? = nil
+                    if idx < linescoreTiebreaks.count,
+                       let tbPair = linescoreTiebreaks[idx],
+                       tbPair.count >= 2 {
+                        homeTB = "\(tbPair[0])"
+                        awayTB = "\(tbPair[1])"
+                    }
+                    pairs.append((index: idx + 1, away: a, home: h, awayTB: awayTB, homeTB: homeTB))
                 }
+            }
+            if let last = pairs.last, last.away == 6 && last.home == 6 {
+                activeSetIsSixAll = true
             }
             for (offset, entry) in pairs.enumerated() {
                 let isCurrentSet = (offset == pairs.count - 1)
@@ -2975,6 +3032,8 @@ enum EventSportHeadlines12472 {
                         header: "S\(entry.index)",
                         awayValue: "\(entry.away)",
                         homeValue: "\(entry.home)",
+                        awayTiebreak: entry.awayTB,
+                        homeTiebreak: entry.homeTB,
                         awayEmphasized: isCurrentSet || entry.away > entry.home,
                         homeEmphasized: isCurrentSet || entry.home > entry.away
                     )
@@ -2996,11 +3055,28 @@ enum EventSportHeadlines12472 {
             )
         }
 
-        let pointsColumn = parseTennisGamePointsFromClock(event.espn?.gameClock)
+        let resolvedPoints: (pair: (away: String, home: String)?, isTiebreak: Bool) = {
+            if let awayPts = trimmedNonEmpty(event.linescore?.awayPoints),
+               let homePts = trimmedNonEmpty(event.linescore?.homePoints) {
+                return (pair: (away: awayPts, home: homePts), isTiebreak: event.linescore?.tiebreak == true)
+            }
+            if let ordinary = parseTennisGamePointsFromClock(event.espn?.gameClock) {
+                return (pair: ordinary, isTiebreak: false)
+            }
+            let periodIndicatesTB = (event.espn?.period?.localizedCaseInsensitiveContains("tiebreak") == true)
+                || (event.espn?.period?.localizedCaseInsensitiveContains("tb") == true)
+            if (event.linescore?.tiebreak == true || activeSetIsSixAll || periodIndicatesTB),
+               let tbPts = parseTennisTiebreakPointsFromClock(event.espn?.gameClock) {
+                return (pair: tbPts, isTiebreak: true)
+            }
+            return (pair: nil, isTiebreak: false)
+        }()
 
         return TennisScoreFirstModel(
             setColumns: setColumns,
-            pointsColumn: pointsColumn,
+            pointsColumn: resolvedPoints.pair,
+            pointsHeader: resolvedPoints.isTiebreak ? "TB" : "Pts",
+            isTiebreakPoints: resolvedPoints.isTiebreak,
             pregameHeader: hasPregame ? "Pregame" : nil,
             nowHeader: "Now"
         )
