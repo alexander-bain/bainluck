@@ -375,8 +375,8 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
       ); // +27d
     });
 
-    it("2. Finished search cards keep Pregame · Final from opening_odds (Direction 209) and clamp <1% / >99%, while live/scheduled ignore opening_odds", () => {
-      const lmuAtHawaii = {
+    it("2. Finished search cards never fall back to opening_odds (print Final alone when prematch_odds is absent) and clamp <1% / >99% when prematch_odds is sent", () => {
+      const lmuAtHawaiiNoPrematch = {
         id: 15349582,
         sport: "basketball_wncaab",
         sport_name: "WNCAAB",
@@ -392,16 +392,18 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
         },
       } as unknown as Event;
 
-      const card = buildUnifiedCardFromEvent(lmuAtHawaii);
-      expect(card.pregame_away_pct).toBe(73);
-      expect(card.pregame_home_pct).toBe(27);
-      const html = renderToStaticMarkup(<EventCard183A card={card} surface="standard" />);
-      expect(html).toContain(">Pregame<");
-      expect(html).toContain(">Final<");
-      expect(html).toContain(">73%<");
-      expect(html).toContain(">27%<");
+      const cardWithoutPrematch = buildUnifiedCardFromEvent(lmuAtHawaiiNoPrematch);
+      expect(cardWithoutPrematch.pregame_away_pct).toBeNull();
+      expect(cardWithoutPrematch.pregame_home_pct).toBeNull();
+      const htmlWithoutPrematch = renderToStaticMarkup(
+        <EventCard183A card={cardWithoutPrematch} surface="standard" />,
+      );
+      expect(htmlWithoutPrematch).not.toContain(">Pregame<");
+      expect(htmlWithoutPrematch).toContain(">Final<");
+      expect(htmlWithoutPrematch).not.toContain(">73%<");
+      expect(htmlWithoutPrematch).not.toContain(">27%<");
 
-      // Extreme opening_odds (0.9975 / 0.0025 on USC vs Arkansas-Pine Bluff) clamp to >99% / <1%, never 100% / 0%
+      // When prematch_odds IS sent (including extreme 0.9975 / 0.0025), prints Pregame · Final and clamps >99% / <1%
       const uapbAtUsc = {
         id: 15348906,
         sport: "basketball_ncaab",
@@ -412,14 +414,18 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
         status: "completed",
         home_score: 122,
         away_score: 46,
-        opening_odds: {
+        prematch_odds: {
           home_probability: 0.9975,
           away_probability: 0.0025,
+          source: "odds_snapshot",
+          captured_at: "2026-11-15T23:55:00Z",
         },
       } as unknown as Event;
       const uscHtml = renderToStaticMarkup(
         <EventCard183A card={buildUnifiedCardFromEvent(uapbAtUsc)} surface="standard" />,
       );
+      expect(uscHtml).toContain(">Pregame<");
+      expect(uscHtml).toContain(">Final<");
       expect(uscHtml).toContain("&gt;99%");
       expect(uscHtml).toContain("&lt;1%");
       expect(uscHtml).not.toContain(">100%<");
