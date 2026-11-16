@@ -127,6 +127,11 @@ jobs:
         echo "EVENT_FRAME_REDIS_REQUIRED=1" >> "$GITHUB_ENV"
 
         '
+    - name: Newest master shard timings
+      if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python scripts/ci_shard_hints_fetch.py
     - name: Run tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
       if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
       run: "set -o pipefail\nFILES=\"$(python scripts/ci_shard.py --shard ${{ matrix.shard }} --of ${{ strategy.job-total }})\"\nif [ -z \"$FILES\"\
@@ -164,6 +169,11 @@ jobs:
     - name: Install dependencies
       if: needs.change-scope.outputs.reuse != 'true'
       run: pip install -r requirements.txt
+    - name: Newest master shard timings
+      if: needs.change-scope.outputs.reuse != 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python scripts/ci_shard_hints_fetch.py
     - name: The shards must cover the whole suite, exactly once each
       if: needs.change-scope.outputs.reuse != 'true'
       run: python scripts/ci_shard.py --verify --of 8
