@@ -362,6 +362,39 @@ def _cpu_per_call(fn, calls=30):
     return (time.thread_time() - t0) / calls
 
 
+_TIMER_SIGNAL = {signal.ITIMER_PROF: signal.SIGPROF, signal.ITIMER_REAL: signal.SIGALRM}
+
+
+def _bare_handler_counts(timer, interval_s, rounds):
+    """The KERNEL's own attribution on this host: a handler that only notes the
+    interrupted function, re-armed one-shot with the sampler's jitter, over the
+    same loops. Whatever this misattributes, no sampler on this host can fix."""
+    import random
+
+    rng = random.Random(7)
+    counts: dict = {}
+
+    def arm():
+        signal.setitimer(timer, interval_s * (0.5 + rng.random()))
+
+    def on_signal(signum, frame):
+        if frame is not None:
+            name = frame.f_code.co_name
+            counts[name] = counts.get(name, 0) + 1
+        arm()
+
+    signal.signal(_TIMER_SIGNAL[timer], on_signal)
+    arm()
+    try:
+        for _ in range(rounds):
+            hot_three()
+            syscall_decoy()
+    finally:
+        signal.setitimer(timer, 0)
+        signal.signal(_TIMER_SIGNAL[timer], signal.SIG_DFL)
+    return counts
+
+
 @pytest.mark.parametrize("timer", [
     pytest.param(signal.ITIMER_PROF, id="prof", marks=pytest.mark.skipif(
         sys.platform != "linux",
@@ -372,10 +405,31 @@ def test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls(restore_sigpr
     """Production's timer (prof, on Linux) charges CPU where it was spent even
     when a neighbour makes a syscall every microsecond. On macOS the prof
     timer fails exactly this (the decoy takes the hot function's samples),
-    which is why a rig there uses the real timer."""
+    which is why a rig there uses the real timer.
+
+    Nov 16 2026: some GitHub runner builds (``ubuntu-26.04`` 20261111.82.6)
+    fail it too, by ~22 points, with identical code and an identical shard,
+    while 20261111.196.1 passes. That is the kernel, not the sampler. So the
+    sampler is judged against two references, both on this host:
+
+    * a bare signal handler (the kernel's own attribution) — ALWAYS, within
+      15 points. A sampler bug that pulls samples onto the wrong frame shows
+      here on every host;
+    * the CPU-time expectation — whenever the bare handler meets it, i.e. the
+      original assertion, unchanged, on every host whose kernel can pass it.
+
+    A host whose kernel itself misattributes warns with both numbers; it never
+    passes silently.
+    """
     hot, decoy = _cpu_per_call(hot_three), _cpu_per_call(syscall_decoy)
     expected = hot / (hot + decoy)
     rounds = max(50, int(1.5 / (hot + decoy)))
+
+    bare = _bare_handler_counts(timer, 0.003, rounds)
+    bare_hot, bare_decoy = bare.get("hot_three", 0), bare.get("syscall_decoy", 0)
+    assert bare_hot + bare_decoy >= 150, bare
+    bare_share = bare_hot / (bare_hot + bare_decoy)
+
     sampler = LoopCpuSampler(interval_s=0.003, enabled=_on, timer=timer).start(thread=False)
     try:
         for _ in range(rounds):
@@ -387,7 +441,20 @@ def test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls(restore_sigpr
     got_hot, got_decoy = counts.get("hot_three", 0), counts.get("syscall_decoy", 0)
     assert got_hot + got_decoy >= 150, counts
     share = got_hot / (got_hot + got_decoy)
-    assert abs(share - expected) < 0.15, (share, expected, counts)
+
+    detail = (share, bare_share, expected, counts, bare)
+    assert abs(share - bare_share) < 0.15, ("sampler strays from the kernel's own attribution", detail)
+    if abs(bare_share - expected) < 0.15:
+        assert abs(share - expected) < 0.15, detail
+    else:
+        import warnings
+
+        warnings.warn(
+            f"this host's kernel misattributes {signal.ITIMER_PROF == timer and 'ITIMER_PROF' or 'ITIMER_REAL'}: "
+            f"bare handler {bare_share:.3f} vs CPU-time {expected:.3f}; sampler {share:.3f} "
+            "tracks the bare handler, so the expectation check cannot be judged here",
+            stacklevel=1,
+        )
 
 
 # ── R1 (latency's review of 32219d19): the walk crosses SQLAlchemy's greenlet ──
