@@ -343,6 +343,7 @@ const PAIR_PRINTERS: Array<[string, string]> = [
   // win-probability chart read "Final · Final". `RAW_JOIN_RENAMED` below is the
   // tell that makes the rename unable to hide the ninth site.
   [join(IOS_ROOT, "Components/GamePlayCardView.swift"), "the play card under the chart"],
+  [join(IOS_ROOT, "Widgets10875/SavedWidgetArt12466.swift"), "the saved-game Home Screen widget live badge"],
 ];
 
 /**

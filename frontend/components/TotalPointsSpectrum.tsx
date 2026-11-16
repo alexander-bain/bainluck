@@ -126,7 +126,7 @@ export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSp
         </div>
         <div className="flex items-center justify-between gap-6 flex-wrap">
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Pre-game line</div>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Pregame line</div>
             <div className="font-mono tabular-nums text-3xl font-bold">{ouLine}</div>
             <div className="text-xs text-text-muted">combined {unit}</div>
           </div>
@@ -159,7 +159,7 @@ export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSp
       return (
         <div className="bg-surface-elevated border border-surface-border rounded-lg p-4 mb-5">
           <div className="text-sm font-semibold text-text-primary mb-3">Expected total {unit}</div>
-          <ProjectionBar label="Pre-game" value={expected} scaleMax={scaleMax} barColor="rgba(156,163,175,0.7)" labelClass="text-text-primary" bold />
+          <ProjectionBar label="Pregame" value={expected} scaleMax={scaleMax} barColor="rgba(156,163,175,0.7)" labelClass="text-text-primary" bold />
         </div>
       );
     }
@@ -173,7 +173,7 @@ export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSp
         <div className="bg-surface-elevated border border-surface-border rounded-lg p-4 mb-5">
           <div className="text-sm font-semibold text-text-primary mb-3">Projected total {unit}</div>
           <div className="space-y-2">
-            <ProjectionBar label="Pre-game" value={ouLine} scaleMax={scaleMax} barColor="rgba(156,163,175,0.55)" labelClass="text-text-muted" />
+            <ProjectionBar label="Pregame" value={ouLine} scaleMax={scaleMax} barColor="rgba(156,163,175,0.55)" labelClass="text-text-muted" />
             {/* Pace bar with scored portion solid */}
             <div className="grid grid-cols-[80px_1fr_52px] items-center gap-3">
               <div className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "#8B5CF6" }}>Pace</div>
@@ -198,7 +198,7 @@ export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSp
               <span className="font-mono tabular-nums font-semibold" style={{ color: "#8B5CF6" }}>
                 {paceTotal > ouLine ? "+" : ""}{(paceTotal - ouLine).toFixed(1)}
               </span>{" "}
-              vs pre-game expectation.
+              vs pregame expectation.
             </div>
           )}
         </div>
@@ -215,7 +215,7 @@ export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSp
         <div className="bg-surface-elevated border border-surface-border rounded-lg p-4 mb-5">
           <div className="text-sm font-semibold text-text-primary mb-3">Final total {unit}</div>
           <div className="space-y-2">
-            <ProjectionBar label="Pre-game" value={ouLine} scaleMax={scaleMax} barColor="rgba(156,163,175,0.55)" labelClass="text-text-muted" />
+            <ProjectionBar label="Pregame" value={ouLine} scaleMax={scaleMax} barColor="rgba(156,163,175,0.55)" labelClass="text-text-muted" />
             <div className="grid grid-cols-[80px_1fr_52px] items-center gap-3">
               <div className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "#8B5CF6" }}>Actual</div>
               <div className="h-2.5 rounded-full bg-surface-border overflow-hidden">
@@ -229,7 +229,7 @@ export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSp
             <span className={`font-mono tabular-nums font-semibold ${covered ? "text-accent-brand" : "text-accent-danger"}`}>
               {covered ? "+" : ""}{diff.toFixed(1)}
             </span>{" "}
-            vs pre-game expectation.
+            vs pregame expectation.
           </div>
         </div>
       );
@@ -252,7 +252,7 @@ export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSp
               <div key={t.threshold} className="grid items-center gap-4 py-3 border-t border-surface-border" style={{ gridTemplateColumns: "80px 1fr 96px" }}>
                 <div className="font-mono tabular-nums text-sm font-semibold">{t.threshold}+</div>
                 <div className="grid grid-cols-[64px_1fr_42px] items-center gap-2">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Pre-game</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Pregame</div>
                   <div className="h-2 rounded-full bg-surface-border overflow-hidden">
                     <div className="h-full bg-text-muted/60 transition-all duration-500" style={{ width: `${preProb * 100}%` }} />
                   </div>
@@ -285,7 +285,7 @@ export default function TotalPointsSpectrum({ data, eventStatus }: TotalPointsSp
             <div key={t.threshold} className="grid items-center gap-4 py-3 border-t border-surface-border" style={{ gridTemplateColumns: "80px 1fr" }}>
               <div className="font-mono tabular-nums text-sm font-semibold">{t.threshold}+</div>
               <div className="grid grid-cols-[64px_1fr_42px] items-center gap-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Pre-game</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Pregame</div>
                 <div className="h-2 rounded-full bg-surface-border overflow-hidden">
                   <div className="h-full bg-text-muted/70 transition-all duration-500" style={{ width: `${preProb * 100}%` }} />
                 </div>

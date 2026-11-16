@@ -97,8 +97,9 @@ final class CrestBadgeNamesAPerson4624Tests: XCTestCase {
             XCTAssertEqual(TeamShortName.abbreviation("Paris Saint-Germain", sportKey: key), "PSG", "key \(key ?? "nil")")
         }
         // Not hand-picked, three distinctive tokens, and forking on production
-        // today: the fork's own subject, under the sports it is played in.
-        XCTAssertEqual(TeamShortName.abbreviation("Notre Dame Fighting Irish", sportKey: "americanfootball_ncaaf"), "NDF")
+        // today: the fork's own subject, under the sports it is played in
+        // (while college sports badge by school name under Ruling 194-A).
+        XCTAssertEqual(TeamShortName.abbreviation("Notre Dame Fighting Irish", sportKey: "americanfootball_ncaaf"), "NOT")
         XCTAssertEqual(TeamShortName.abbreviation("Ferro Carril Oeste", sportKey: "soccer_argentina_primera_division"), "FCO")
     }
 

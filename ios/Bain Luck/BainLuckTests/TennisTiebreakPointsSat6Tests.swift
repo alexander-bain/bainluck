@@ -265,7 +265,7 @@ final class TennisTiebreakPointsSat6Tests: XCTestCase {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("2. Set 3 Tiebreak + Completed S1 Tiebreak Superscript (7⁷–6⁴)")
+                Text("2. Set 3 Tiebreak + S1 Tiebreak Superscript (7⁷–6⁴)")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color(hex: "#374151"))
                 card2

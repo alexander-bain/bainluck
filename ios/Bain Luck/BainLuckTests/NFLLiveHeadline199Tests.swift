@@ -641,10 +641,10 @@ final class NFLLiveHeadline199Tests: XCTestCase {
             hasScore: true,
             now: fixedNow
         )
-        XCTAssertEqual(nbaProjLine, "Proj. 108-115", "NBA during-game page must retain its Game Info projection row")
+        XCTAssertNil(nbaProjLine, "Direction 199: NBA during-game carries Proj. directly in the unified headline, so Game Info suppresses duplicate Proj.")
 
-        // 2. Live Soccer match (`.soccerDuringGame` with 3-way odds + ladder projection):
-        //    Game Info MUST retain its projected-score row.
+        // 2. Live Soccer match (`.soccerDuringGame` now carries `Proj.` directly in the unified headline):
+        //    Game Info suppresses duplicate projected row.
         let soccerLive = try decodeEvent("""
         {
           "id": 919951,
@@ -674,7 +674,7 @@ final class NFLLiveHeadline199Tests: XCTestCase {
             hasScore: true,
             now: fixedNow
         )
-        XCTAssertEqual(soccerProjLine, "Proj. 1-2", "Soccer during-game page must retain its Game Info projection row")
+        XCTAssertNil(soccerProjLine, "Direction 199: Soccer during-game carries Proj. directly in the unified headline, so Game Info suppresses duplicate Proj.")
 
         // 3. Live NFL game (`.nflDuringGame` carries `Proj.` directly in the headline):
         //    Game Info suppresses the duplicate projected row.

@@ -12,6 +12,7 @@ import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { namedPairLabels, twoLegCardPair } from "@/lib/twoLegCardPair";
 import { eventPath } from "@/lib/eventKey";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
+import { formatAsOfStamp } from "@/lib/asOfStamp";
 import { parseNumericBucketSortKey } from "@/components/economics/atoms";
 import type {
   EntertainmentData,
@@ -148,23 +149,6 @@ function TagChip({ emoji, label }: { emoji?: string; label: string }) {
   );
 }
 
-function EntSourceChip({ source }: { source: string }) {
-  if (source === "kalshi") {
-    return (
-      <span className={s.srcKalshi}>
-        <span className={s.srcDot} />
-        Kalshi
-      </span>
-    );
-  }
-  return (
-    <span className={s.srcPoly}>
-      <span className={s.srcDot} />
-      Polymarket
-    </span>
-  );
-}
-
 function EntDelta({ value }: { value: number | null | undefined }) {
   if (!value || Math.abs(value) < 0.1)
     return <span className={s.deltaFlat}>—</span>;
@@ -184,15 +168,17 @@ function MetaRow({
   volume?: number | null;
   resolves?: string | null;
 }) {
+  void src;
+  void volume;
   // #6773 — the authority, not a private formatter. See the note above
   // `formatDate`'s grave at the foot of this file. The guard is now on the
   // LABEL rather than on the wire value, because `formatResolvesLabel` answers
   // "" for a date that has gone and a row must not print a bare "· Resolves".
   const resolvesLine = formatResolvesLabel(resolves);
+  if (!resolvesLine) return null;
   return (
     <div className={s.metaRow}>
-      <EntSourceChip source={src} />
-      {resolvesLine && <span>· {resolvesLine}</span>}
+      <span>{resolvesLine}</span>
     </div>
   );
 }
@@ -842,7 +828,6 @@ function SpotifyRace({ markets }: { markets: EntMarketRow[] }) {
             <div className={s.eyebrow}>{ladder ? "🎧 Spotify" : "🎧 Spotify Chart Race"}</div>
             <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{best.q}</div>
           </div>
-          <EntSourceChip source={best.src} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {contenders.map((c, i) => {
@@ -1025,7 +1010,6 @@ function BillboardHeatmap({ markets }: { markets: EntMarketRow[] }) {
             <div className={s.eyebrow}>📊 Billboard Hot 100</div>
             <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{best.q}</div>
           </div>
-          <EntSourceChip source={best.src} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {best.top_outcomes.map((o, i) => (
@@ -1142,7 +1126,6 @@ function BoxOfficeCards({ markets }: { markets: EntMarketRow[] }) {
                     </div>
                   )}
                 </div>
-                <EntSourceChip source={m.src} />
               </div>
               {m.top_outcomes.length > 2 && (
                 <EntHistogram
@@ -1481,9 +1464,6 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
                 ))}
               </div>
             )}
-            <div style={{ marginTop: 8 }}>
-              <EntSourceChip source={m.src} />
-            </div>
           </div>
         </Link>
         );
@@ -1532,17 +1512,16 @@ function GenericMarketCard({ market }: { market: EntMarketRow }) {
   return (
     <Link href={`/futures/${market.market_id}`}>
       <div className={s.card} style={{ padding: 14, height: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 11,
-            color: "var(--text-muted)",
-          }}
-        >
-          <EntSourceChip source={market.src} />
-          {market.outcome_count > 3 && (
+        {market.outcome_count > 3 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 11,
+              color: "var(--text-muted)",
+            }}
+          >
             <span
               style={{
                 marginLeft: "auto",
@@ -1552,8 +1531,8 @@ function GenericMarketCard({ market }: { market: EntMarketRow }) {
             >
               +{market.outcome_count - 3} more
             </span>
-          )}
-        </div>
+          </div>
+        )}
         <h3
           style={{
             margin: 0,
@@ -1658,11 +1637,14 @@ export default function EntertainmentPage() {
             </b>{" "}
             active markets
           </span>
-          <span>·</span>
-          <span>
-            Updated{" "}
-            <b className={s.metaNum}>{formatTimeAgo(data.updated_at)}</b>
-          </span>
+          {formatAsOfStamp(data.updated_at) && (
+            <>
+              <span>·</span>
+              <span>
+                <b className={s.metaNum}>{formatAsOfStamp(data.updated_at)}</b>
+              </span>
+            </>
+          )}
         </div>
       </div>
 
@@ -1735,16 +1717,6 @@ export default function EntertainmentPage() {
 // ─────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────
-
-function formatTimeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
 
 /**
  * #6773 — `formatDate` USED TO LIVE HERE, AND BOTH ITS CALLERS WERE DEADLINES.
