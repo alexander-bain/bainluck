@@ -40,7 +40,7 @@ import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { teamShortNames } from "@/lib/teamShortName";
 import { useAxisPoleFit } from "@/hooks/useAxisPoleFit";
 import { axisPoleStyle, axisLabelStyle } from "@/lib/axisPoleFit";
-import { teamTextColor } from "@/lib/teamColors";
+import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
 import { createChartTimestampMs } from "@/lib/chartTimestampMs";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
@@ -455,6 +455,8 @@ interface OddsChartProps {
   homeTeamColor?: string;
   /** Away team primary color (hex) for team label styling */
   awayTeamColor?: string;
+  /** Away team secondary color (hex) for Ruling 197 same-hue collision fallback */
+  awayTeamSecondaryColor?: string;
   /** Home team logo URL (small) */
   homeTeamLogo?: string;
   /** Away team logo URL (small) */
@@ -1258,6 +1260,7 @@ export default function OddsChart({
   periodBoundaries,
   homeTeamColor,
   awayTeamColor,
+  awayTeamSecondaryColor,
   homeTeamLogo,
   awayTeamLogo,
   homeTeamAbbrev,
@@ -3072,9 +3075,16 @@ export default function OddsChart({
     if (edge.side === "even") return `the ${where} of this ${noun} is 50/50.`;
     return `the ${where} of this ${noun} is ${sideName(edge.side)} at ${edge.percent}%.`;
   };
+  const resolvedTeamColors = resolveMatchupTeamColors({
+    homePrimary: homeTeamColor,
+    awayPrimary: awayTeamColor,
+    awaySecondary: awayTeamSecondaryColor,
+  });
+  const effectiveHomeTeamColor = resolvedTeamColors.home ?? homeTeamColor;
+  const effectiveAwayTeamColor = resolvedTeamColors.away ?? awayTeamColor;
   const tickInk = {
-    home: teamTextColor(homeTeamColor) || "#16a34a",
-    away: teamTextColor(awayTeamColor) || "#2563eb",
+    home: teamTextColor(effectiveHomeTeamColor) || "#16a34a",
+    away: teamTextColor(effectiveAwayTeamColor) || "#2563eb",
     even: "#4B5563",
   } as const;
   const renderYTick = (props: { x?: number; y?: number; payload?: { value?: number } }) => {
@@ -3724,7 +3734,7 @@ export default function OddsChart({
               aria-hidden="true"
               data-axis-label
               className="text-[11px] font-bold uppercase tracking-wider"
-              style={{ color: teamTextColor(homeTeamColor) || "#16a34a", ...axisLabelStyle(axisPoleCaps.home) }}
+              style={{ color: teamTextColor(effectiveHomeTeamColor) || "#16a34a", ...axisLabelStyle(axisPoleCaps.home) }}
             >
               {"↑"} {homeShort}
             </span>
@@ -3753,7 +3763,7 @@ export default function OddsChart({
                 aria-hidden="true"
                 data-axis-label
                 className="text-[11px] font-bold uppercase tracking-wider"
-                style={{ color: teamTextColor(awayTeamColor) || "#2563eb", ...axisLabelStyle(axisPoleCaps.away) }}
+                style={{ color: teamTextColor(effectiveAwayTeamColor) || "#2563eb", ...axisLabelStyle(axisPoleCaps.away) }}
               >
                 {"↓"} {awayShort}
               </span>

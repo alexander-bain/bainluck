@@ -43,7 +43,14 @@
  * constants for the measurement that picked each one.
  */
 
-import { hexToRgb } from "./teamColors";
+import {
+  SLATE_TEAM_FALLBACK,
+  hexToRgb,
+  sameColorFamily,
+  teamTextColor,
+} from "./teamColors";
+
+export { SLATE_TEAM_FALLBACK } from "./teamColors";
 
 /** The card the bar sits on. Light mode only — `--surface-card` in globals.css. */
 export const CARD_SURFACE = "#FFFFFF";
@@ -250,9 +257,13 @@ function rescue(
  * colour the pair is the two defaults, which is what the broken code intended
  * all along.
  *
- * When BOTH sides carry usable colours that are too close to each other, the
- * away side is kept and the home side is rescued. That choice is arbitrary but
- * it must be deterministic, or the same fixture renders two ways.
+ * When BOTH sides carry usable colours that collide — either too close to each
+ * other (`colorDistance < MIN_PAIR_DISTANCE`) or sharing a chromatic hue family
+ * per Ruling 197 (Kansas `#0051ba` and Duke `#00539b`, Gonzaga `#041e42` and
+ * Duke `#00539b`) — the home side keeps its main colour and the away side
+ * switches to `awaySecondary` (if readable on the card, distinct from home, and
+ * outside home's hue family), else `SLATE_TEAM_FALLBACK` (`#64748B`, or the
+ * first non-colliding ladder rung if home itself sits near `#64748B`).
  *
  * `opacity` is the opacity the CALLER paints these segments at, and every
  * threshold is applied to the pixel that produces. It defaults to
@@ -272,7 +283,8 @@ function rescue(
 export function probabilityBarPair(
   awayColor?: string | null,
   homeColor?: string | null,
-  opacity: number | SegmentOpacity = SEGMENT_OPACITY
+  opacity: number | SegmentOpacity = SEGMENT_OPACITY,
+  awaySecondary?: string | null
 ): BarPair {
   const { away: awayOpacity, home: homeOpacity } =
     typeof opacity === "number" ? { away: opacity, home: opacity } : opacity;
@@ -281,12 +293,25 @@ export function probabilityBarPair(
   const homeRgb = usable(homeColor, homeOpacity);
 
   if (awayRgb && homeRgb) {
-    if (!tooClose(awayRgb, awayOpacity, homeRgb, homeOpacity)) {
+    const collides =
+      tooClose(awayRgb, awayOpacity, homeRgb, homeOpacity) ||
+      sameColorFamily(awayColor, homeColor);
+    if (!collides) {
       return { away: normalize(awayColor), home: normalize(homeColor) };
     }
+    const secRgb = teamTextColor(awaySecondary)
+      ? usable(awaySecondary, awayOpacity)
+      : null;
+    if (
+      secRgb &&
+      !tooClose(secRgb, awayOpacity, homeRgb, homeOpacity) &&
+      !sameColorFamily(awaySecondary, homeColor)
+    ) {
+      return { away: normalize(awaySecondary), home: normalize(homeColor) };
+    }
     return {
-      away: normalize(awayColor),
-      home: rescue(awayRgb, awayOpacity, HOME_DEFAULT, homeOpacity),
+      away: rescue(homeRgb, homeOpacity, SLATE_TEAM_FALLBACK, awayOpacity),
+      home: normalize(homeColor),
     };
   }
 

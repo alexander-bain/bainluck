@@ -88,6 +88,7 @@ enum EventSportHeadlines12472 {
 
     nonisolated enum Kind: Equatable, Sendable {
         case nflBeforeGame
+        case nflDuringGame
         case nflAfterGame
         case nbaBeforeGame
         case nbaDuringGame
@@ -102,6 +103,8 @@ enum EventSportHeadlines12472 {
         case soccerDuringGame
         case soccerAfterGame
         case nhlDuringGame
+        case mlbBeforeGame
+        case mlbDuringGame
         case mlbAfterGame
         case mmaBeforeGame
         case mmaDuringGame
@@ -110,9 +113,9 @@ enum EventSportHeadlines12472 {
 
         nonisolated var phase: Phase {
             switch self {
-            case .nflBeforeGame, .nbaBeforeGame, .ncaafBeforeGame, .ncaabBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
+            case .nflBeforeGame, .nbaBeforeGame, .ncaafBeforeGame, .ncaabBeforeGame, .mlbBeforeGame, .soccerBeforeGame, .mmaBeforeGame:
                 return .before
-            case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .soccerDuringGame, .nhlDuringGame, .mmaDuringGame, .tennisDuringGame:
+            case .nflDuringGame, .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .mlbDuringGame, .soccerDuringGame, .nhlDuringGame, .mmaDuringGame, .tennisDuringGame:
                 return .during
             case .nflAfterGame, .nbaAfterGame, .ncaafAfterGame, .ncaabAfterGame, .soccerAfterGame, .mlbAfterGame, .mmaAfterGame:
                 return .after
@@ -122,6 +125,7 @@ enum EventSportHeadlines12472 {
         nonisolated var accessibilityIdentifier: String {
             switch self {
             case .nflBeforeGame: return "event-headline-12472-nfl-before"
+            case .nflDuringGame: return "event-headline-12472-nfl-during"
             case .nflAfterGame: return "event-headline-12472-nfl-after"
             case .nbaBeforeGame: return "event-headline-12472-nba-before"
             case .nbaDuringGame: return "event-headline-12472-nba-during"
@@ -136,6 +140,8 @@ enum EventSportHeadlines12472 {
             case .soccerDuringGame: return "event-headline-12472-soccer-during"
             case .soccerAfterGame: return "event-headline-12472-soccer-after"
             case .nhlDuringGame: return "event-headline-12472-nhl-during"
+            case .mlbBeforeGame: return "event-headline-12472-mlb-before"
+            case .mlbDuringGame: return "event-headline-12472-mlb-during"
             case .mlbAfterGame: return "event-headline-12472-mlb-after"
             case .mmaBeforeGame: return "event-headline-12472-mma-before"
             case .mmaDuringGame: return "event-headline-12472-mma-during"
@@ -152,11 +158,21 @@ enum EventSportHeadlines12472 {
 
     nonisolated struct LiveColumnHeaders: Equatable, Sendable {
         let score: String?
+        var projected: String? = nil
         let pregame: String?
         let now: String
 
         var hasAny: Bool {
-            score != nil || pregame != nil || !now.isEmpty
+            score != nil || projected != nil || pregame != nil || !now.isEmpty
+        }
+    }
+
+    nonisolated struct LivePregameSummary: Equatable, Sendable {
+        let leadWord: String
+        let bodyText: String
+
+        var fullText: String {
+            "\(leadWord)  \(bodyText)"
         }
     }
 
@@ -226,6 +242,7 @@ enum EventSportHeadlines12472 {
         let record: String?
         let projectedText: String?
         let pregameProjectedNumberText: String?
+        var liveProjectedNumberText: String? = nil
         let liveScore: Int?
         let pregameChanceText: String?
         let winChanceText: String
@@ -252,6 +269,7 @@ enum EventSportHeadlines12472 {
         let away: TeamRowModel
         let home: TeamRowModel
         let pregameAwayMarker: Double?
+        var livePregameSummary: LivePregameSummary? = nil
         let soccerThreeWay: SoccerThreeWayModel?
         var tennisScoreFirst: TennisScoreFirstModel? = nil
         let showsEkg: Bool
@@ -475,8 +493,8 @@ enum EventSportHeadlines12472 {
               pair.away != nil
         else { return nil }
 
-        if event.sport == "americanfootball_nfl" && event.status != "live" {
-            return .nflBeforeGame
+        if event.sport == "americanfootball_nfl" {
+            return event.status == "live" ? .nflDuringGame : .nflBeforeGame
         }
         if event.sport == "basketball_nba" {
             return event.status == "live" ? .nbaDuringGame : .nbaBeforeGame
@@ -486,6 +504,9 @@ enum EventSportHeadlines12472 {
         }
         if isNCAABSport(event.sport) {
             return event.status == "live" ? .ncaabDuringGame : .ncaabBeforeGame
+        }
+        if event.sport == "baseball_mlb" {
+            return event.status == "live" ? .mlbDuringGame : .mlbBeforeGame
         }
         if event.sport == "icehockey_nhl" && event.status == "live" {
             return .nhlDuringGame
@@ -569,9 +590,10 @@ enum EventSportHeadlines12472 {
                 homeFullName: homeFullName,
                 shortNames: shortNames
             )
-        case .nflBeforeGame, .nbaBeforeGame, .nbaDuringGame,
+        case .nflBeforeGame, .nflDuringGame, .nbaBeforeGame, .nbaDuringGame,
              .ncaafBeforeGame, .ncaafDuringGame,
              .ncaabBeforeGame, .ncaabDuringGame,
+             .mlbBeforeGame, .mlbDuringGame,
              .nhlDuringGame, .mmaBeforeGame, .mmaDuringGame, .tennisDuringGame:
             return resolveOpenTwoWay(
                 resolvedKind: resolvedKind,
@@ -1473,7 +1495,29 @@ enum EventSportHeadlines12472 {
                 confidenceTier: confidenceTier,
                 now: now
             )
-        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .nhlDuringGame, .mmaDuringGame:
+        case .mlbBeforeGame:
+            return resolveStandardBefore(
+                kind: .mlbBeforeGame,
+                sportKey: "baseball_mlb",
+                league: "MLB",
+                allowsStreamingTenths: false,
+                showsChanceHeaderWithoutProjection: true,
+                showsRowDivider: true,
+                event: event,
+                awayFullName: awayFullName,
+                homeFullName: homeFullName,
+                shortNames: shortNames,
+                shown: shown,
+                awayProb: awayProb,
+                homeProb: homeProb,
+                hasScore: hasScore,
+                numberStreams: numberStreams,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                confidenceTier: confidenceTier,
+                now: now
+            )
+        case .nflDuringGame, .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .mlbDuringGame, .nhlDuringGame, .mmaDuringGame:
             return resolveLiveStandard(
                 resolvedKind: resolvedKind,
                 event: event,
@@ -1619,6 +1663,7 @@ enum EventSportHeadlines12472 {
         league: String,
         allowsStreamingTenths: Bool,
         showsChanceHeaderWithoutProjection: Bool,
+        showsRowDivider: Bool = false,
         event: EventDetail,
         awayFullName: String,
         homeFullName: String,
@@ -1699,6 +1744,7 @@ enum EventSportHeadlines12472 {
             soccerThreeWay: nil,
             showsEkg: true,
             stacksRecordUnderName: pregameHeaders != nil,
+            showsRowDivider: showsRowDivider,
             sourceMark: event.sourceMark,
             confidenceTier: confidenceTier
         )
@@ -1730,11 +1776,88 @@ enum EventSportHeadlines12472 {
         let liveBadge = periodStatus.map { "LIVE · \($0)" } ?? "LIVE"
 
         switch resolvedKind {
-        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame:
+        case .nflDuringGame:
+            let liveProjNumbers = admittedLiveProjectedNumberPair(
+                event: event,
+                hasScore: hasScore,
+                ladderHome: ladderHome,
+                ladderAway: ladderAway,
+                now: now
+            )
+            let strictPregame = PrematchReading.resolve(
+                prematch: event.prematchOdds,
+                opening: nil
+            )
+            let pregameMarker: Double? = {
+                guard let strictPregame, !strictPregame.awayIsComplement else { return nil }
+                return strictPregame.awayProbability
+            }()
+            let summary = resolveLivePregameSummary(
+                event: event,
+                shortNames: shortNames
+            )
+            let columnHeaders = LiveColumnHeaders(
+                score: "Score",
+                projected: "Proj.",
+                pregame: nil,
+                now: "Now"
+            )
+            return Model(
+                eventId: event.id,
+                sportKey: "americanfootball_nfl",
+                kind: .nflDuringGame,
+                plainMetaText: nil,
+                commenceTime: event.commenceTime,
+                startIsTbd: event.startIsTbd,
+                broadcast: trimmedNonEmpty(event.espn?.broadcast),
+                eventStatus: event.status,
+                liveBadgeText: liveBadge,
+                leagueLabel: "NFL",
+                pregameColumnHeaders: nil,
+                liveColumnHeaders: columnHeaders,
+                away: TeamRowModel(
+                    fullName: awayFullName,
+                    opponentFullName: homeFullName,
+                    shortName: shortNames.away,
+                    logoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
+                    record: nil,
+                    projectedText: nil,
+                    pregameProjectedNumberText: nil,
+                    liveProjectedNumberText: liveProjNumbers?.away,
+                    liveScore: hasScore ? event.awayScore : nil,
+                    pregameChanceText: nil,
+                    winChanceText: tenths.away ?? formatProbability(awayProb),
+                    rawProbability: awayProb
+                ),
+                home: TeamRowModel(
+                    fullName: homeFullName,
+                    opponentFullName: awayFullName,
+                    shortName: shortNames.home,
+                    logoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
+                    record: nil,
+                    projectedText: nil,
+                    pregameProjectedNumberText: nil,
+                    liveProjectedNumberText: liveProjNumbers?.home,
+                    liveScore: hasScore ? event.homeScore : nil,
+                    pregameChanceText: nil,
+                    winChanceText: tenths.home,
+                    rawProbability: homeProb
+                ),
+                pregameAwayMarker: pregameMarker,
+                livePregameSummary: summary,
+                soccerThreeWay: nil,
+                showsEkg: true,
+                stacksRecordUnderName: true,
+                sourceMark: event.sourceMark,
+                confidenceTier: confidenceTier
+            )
+
+        case .nbaDuringGame, .ncaafDuringGame, .ncaabDuringGame, .mlbDuringGame:
             let liveSportKey: String = {
                 switch resolvedKind {
                 case .ncaafDuringGame: return event.sport ?? "americanfootball_ncaaf"
                 case .ncaabDuringGame: return event.sport ?? "basketball_ncaab"
+                case .mlbDuringGame: return "baseball_mlb"
                 default: return "basketball_nba"
                 }
             }()
@@ -1742,6 +1865,7 @@ enum EventSportHeadlines12472 {
                 switch resolvedKind {
                 case .ncaafDuringGame: return ncaafLeagueLabel(for: event.sport)
                 case .ncaabDuringGame: return ncaabLeagueLabel(for: event.sport)
+                case .mlbDuringGame: return "MLB"
                 default: return "NBA"
                 }
             }()
@@ -1802,6 +1926,7 @@ enum EventSportHeadlines12472 {
                 soccerThreeWay: nil,
                 showsEkg: true,
                 stacksRecordUnderName: showsStackedRecordWhenProjectionAbsent,
+                showsRowDivider: resolvedKind == .mlbDuringGame,
                 sourceMark: event.sourceMark,
                 confidenceTier: confidenceTier
             )
@@ -2526,6 +2651,177 @@ enum EventSportHeadlines12472 {
 
     nonisolated static func formatProjectedNumber(_ value: Double) -> String {
         String(format: "%.1f", value)
+    }
+
+    /// Football and basketball projections print as whole numbers (`24`, `28`);
+    /// baseball, hockey, and soccer keep one decimal (`4.5`, `3.2`, `1.8`).
+    nonisolated static func formatLiveProjectedColumnNumber(
+        _ value: Double,
+        sportKey: String?
+    ) -> String {
+        let lower = (sportKey ?? "").lowercased()
+        if lower.hasPrefix("americanfootball") || lower.hasPrefix("basketball") {
+            return "\(Int(value.rounded()))"
+        }
+        return formatProjectedNumber(value)
+    }
+
+    /// Bare live projected numbers (`"24"` / `"28"` on football & basketball;
+    /// one decimal on baseball, hockey, and soccer) for the Ruling 200-B
+    /// `Proj.` column during a game — never repeating `"Proj."` in the cell.
+    nonisolated static func admittedLiveProjectedNumberPair(
+        event: EventDetail,
+        hasScore: Bool,
+        ladderHome: Double?,
+        ladderAway: Double?,
+        now: Date = Date()
+    ) -> (away: String, home: String)? {
+        guard hasScore,
+              let awayScore = event.awayScore,
+              let homeScore = event.homeScore
+        else { return nil }
+
+        let vocab = SportVocab.forSport(event.sport)
+        let rawPair: (away: Double, home: Double)
+        switch LiveProjectedFinal2920.page(event, now: now) {
+        case .admitted(let printed):
+            rawPair = (away: printed.admitted.away, home: printed.admitted.home)
+        case .withheld, .notLive:
+            return nil
+        case .absent:
+            guard vocab.scoreboardCountsTheUnit, !vocab.unit.isEmpty,
+                  let away = ladderAway, let home = ladderHome,
+                  away.isFinite, home.isFinite, away > 0, home > 0
+            else { return nil }
+            let rAway = Int(away.rounded())
+            let rHome = Int(home.rounded())
+            guard vocab.canEndInATie || rAway != rHome,
+                  rAway >= awayScore, rHome >= homeScore
+            else { return nil }
+            rawPair = (away: away, home: home)
+        }
+
+        let safeAway = max(rawPair.away, Double(awayScore))
+        let safeHome = max(rawPair.home, Double(homeScore))
+        return (
+            away: formatLiveProjectedColumnNumber(safeAway, sportKey: event.sport),
+            home: formatLiveProjectedColumnNumber(safeHome, sportKey: event.sport)
+        )
+    }
+
+    /// Qualified pregame projected score pair for a live game (`event.pregameProjection`),
+    /// enforcing the exact `last_before_scheduled_start` provenance contract.
+    nonisolated static func qualifiedLivePregameProjectionPair(
+        event: EventDetail
+    ) -> (away: Int, home: Int)? {
+        guard event.status == "live",
+              let p = event.pregameProjection,
+              p.kind == "last_before_scheduled_start",
+              p.boundary == "scheduled_start",
+              p.source == "sportsbooks",
+              p.basis == "consensus_spread_total",
+              let format = LiveProjectedFinalAdmission2920.format(forSport: event.sport),
+              p.unit == format.unit.rawValue,
+              p.period == format.period.rawValue,
+              let books = p.bookmakerCount.flatMap({ Int(exactly: $0) }), books >= 1,
+              let earliest = p.earliestCapturedAt?.asDate,
+              let latest = p.latestCapturedAt?.asDate,
+              let boundary = p.boundaryAt?.asDate,
+              earliest <= latest, latest < boundary,
+              let home = p.projectedHomeScore, let away = p.projectedAwayScore,
+              home.isFinite, away.isFinite, home > 0, away > 0
+        else { return nil }
+
+        if let rowStart = event.commenceTime?.asDate, boundary != rowStart {
+            return nil
+        }
+
+        let vocab = SportVocab.forSport(event.sport)
+        guard vocab.sportsbookSpreadIsAMargin,
+              let roundedHome = Int(exactly: home.rounded()),
+              let roundedAway = Int(exactly: away.rounded()),
+              roundedHome != roundedAway || vocab.canEndInATie
+        else { return nil }
+
+        return (away: roundedAway, home: roundedHome)
+    }
+
+    /// Ruling 200-B single grey pregame line under the live bar:
+    /// `"Pregame  Lions 58% · projected 27–24"` (favourite's pregame chance from
+    /// `prematch_odds` only — never `opening_odds` — then pregame projected score
+    /// with the favourite first). Leaves out any missing half; returns `nil` when
+    /// both are missing.
+    nonisolated static func resolveLivePregameSummary(
+        event: EventDetail,
+        shortNames: (away: String, home: String)
+    ) -> LivePregameSummary? {
+        let strictPregame = PrematchReading.resolve(
+            prematch: event.prematchOdds,
+            opening: nil
+        )
+        let projPair = qualifiedLivePregameProjectionPair(event: event)
+
+        var chanceInfo: (homeIsFav: Bool, favName: String, favChanceText: String)?
+        if let strictPregame,
+           let pair = DrawPricedWinner.printablePair(
+               away: strictPregame.awayProbability,
+               home: strictPregame.homeProbability,
+               sport: event.sport
+           ),
+           let awayP = pair.away {
+            let homeP = pair.home
+            let homeIsFav: Bool
+            if homeP > awayP {
+                homeIsFav = true
+            } else if awayP > homeP {
+                homeIsFav = false
+            } else if let projPair, projPair.home != projPair.away {
+                homeIsFav = projPair.home > projPair.away
+            } else {
+                homeIsFav = true
+            }
+            let favName = homeIsFav ? shortNames.home : shortNames.away
+            let favProb = homeIsFav ? homeP : awayP
+            let favRendered = homeIsFav
+                ? (strictPregame.percents.count > 1 ? strictPregame.percents[1] : nil)
+                : (strictPregame.percents.count > 0 ? strictPregame.percents[0] : nil)
+            let favChanceText = formatProbability(favProb, renderedPercent: favRendered)
+            chanceInfo = (homeIsFav: homeIsFav, favName: favName, favChanceText: favChanceText)
+        }
+
+        switch (chanceInfo, projPair) {
+        case let (chance?, proj?):
+            let favScore = chance.homeIsFav ? proj.home : proj.away
+            let dogScore = chance.homeIsFav ? proj.away : proj.home
+            return LivePregameSummary(
+                leadWord: "Pregame",
+                bodyText: "\(chance.favName) \(chance.favChanceText) · projected \(favScore)\u{2013}\(dogScore)"
+            )
+        case let (chance?, nil):
+            return LivePregameSummary(
+                leadWord: "Pregame",
+                bodyText: "\(chance.favName) \(chance.favChanceText)"
+            )
+        case let (nil, proj?):
+            if proj.home > proj.away {
+                return LivePregameSummary(
+                    leadWord: "Pregame",
+                    bodyText: "projected \(shortNames.home) \(proj.home)\u{2013}\(proj.away)"
+                )
+            } else if proj.away > proj.home {
+                return LivePregameSummary(
+                    leadWord: "Pregame",
+                    bodyText: "projected \(shortNames.away) \(proj.away)\u{2013}\(proj.home)"
+                )
+            } else {
+                return LivePregameSummary(
+                    leadWord: "Pregame",
+                    bodyText: "projected \(proj.home)\u{2013}\(proj.away)"
+                )
+            }
+        case (nil, nil):
+            return nil
+        }
     }
 
     // MARK: - Finished & Tennis Score-First Helpers

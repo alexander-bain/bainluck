@@ -7,7 +7,7 @@ import {
   probabilityParts,
   type ProbabilityParts,
 } from '../lib/probabilityDisplay';
-import { teamTextColor } from '../lib/teamColors';
+import { resolveMatchupTeamColors, teamTextColor } from '../lib/teamColors';
 import { headlineDisplayAttributes, type HeadlineDisplayIdentity } from '../lib/displayIdentity';
 import { tenthsPair, type TenthsParts } from '../lib/tenthsOptIn';
 import { ATLAS_STATE_COPY } from './atlas/atlasStateCopy';
@@ -67,6 +67,7 @@ interface EventHeroProbabilityPairProps {
   awayPct: number | null;
   homeColor?: string | null;
   awayColor?: string | null;
+  awaySecondaryColor?: string | null;
   probSourceLabel?: string | null;
   /**
    * live/034 S2 — mark a pushed change. Since #10092 the new number is printed
@@ -349,6 +350,7 @@ export default function EventHeroProbabilityPair({
   awayPct,
   homeColor,
   awayColor,
+  awaySecondaryColor,
   probSourceLabel,
   animate = false,
   awayWithheld = false,
@@ -378,8 +380,13 @@ export default function EventHeroProbabilityPair({
   // the guard would have been circular. `--text-secondary` (#6B7280, 4.83:1) is
   // what #5165 chose for the same reason and is still visibly the quieter of
   // the two, so the home/away hierarchy the slate was carrying survives.
-  const home = teamTextColor(homeColor) || "#111827";
-  const away = teamTextColor(awayColor) || "var(--text-secondary)";
+  const resolvedColors = resolveMatchupTeamColors({
+    homePrimary: homeColor,
+    awayPrimary: awayColor,
+    awaySecondary: awaySecondaryColor,
+  });
+  const home = teamTextColor(resolvedColors.home) || "#111827";
+  const away = teamTextColor(resolvedColors.away) || "var(--text-secondary)";
 
   // #10092 — no count: the printed pair IS the accepted pair, this render.
   // `shownPair` is still the one place the pair is decided (#2085); with no

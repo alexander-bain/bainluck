@@ -1711,7 +1711,15 @@ export default function EntertainmentPage() {
         <div className={s.footer}>
           <span>
             Updated hourly from prediction markets. Bain Luck is a
-            discovery platform — we never accept bets.
+            discovery platform — we never accept bets.{" "}
+            <Link href="/picture-credits" style={{ color: "var(--accent-brand, #2563EB)", fontWeight: 500 }}>
+              Picture credits
+            </Link>
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/tmdb-blue-short.svg" alt="TMDB" style={{ height: 11, width: "auto" }} />
+            <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
           </span>
           <span style={{ fontFamily: "var(--font-mono, monospace)" }}>
             {data.total_markets.toLocaleString()} entertainment ·{" "}

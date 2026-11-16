@@ -25,6 +25,19 @@ from app.utils.ladder_headline import ladder_headline_outcome_id
 
 STAMP = datetime(2026, 9, 29, 6, 0, tzinfo=timezone.utc)
 
+
+@pytest.fixture(autouse=True)
+def _freeze_ladder_expiry_to_capture_stamp(monkeypatch):
+    """Specimens are 2026-09-29 snapshots; freeze `expired_ladder_rungs` `now` to `STAMP`."""
+    import app.utils.market_staleness as ms
+
+    orig = ms.expired_ladder_rungs
+    monkeypatch.setattr(
+        ms,
+        "expired_ladder_rungs",
+        lambda outcomes, _now, **kw: orig(outcomes, STAMP, **kw),
+    )
+
 POLO = (
     "Hurricane Polo category?",
     [
