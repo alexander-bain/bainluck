@@ -3,7 +3,9 @@
 import React from "react";
 import Link from "next/link";
 import type { Event, FeedEventData, FeedItem } from "@/lib/types";
+import type { TeamGameBrief } from "@/lib/api";
 import { getSportLabel } from "@/lib/sportCategories";
+import { espnTeamLogoByName } from "@/lib/images";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { awayIsTheComplement, sportPricesADraw } from "@/lib/drawPricedWinner";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
@@ -950,6 +952,74 @@ export function buildUnifiedCardFromFeed(
   };
 }
 
+export function buildUnifiedCardFromTeamGame(
+  game: TeamGameBrief,
+  teamColor: string | null,
+): UnifiedGameCardData {
+  const isDone = isFinishedStatus(game.status);
+  const drawSport = sportPricesADraw(game.sport_key);
+  const wp =
+    !isDone && game.win_probability != null && Number.isFinite(game.win_probability)
+      ? game.win_probability
+      : null;
+
+  const homeProb = game.is_home
+    ? wp
+    : wp != null && !drawSport
+      ? 1 - wp
+      : null;
+  const awayProb = !game.is_home
+    ? wp
+    : wp != null && !drawSport
+      ? 1 - wp
+      : null;
+
+  const pre =
+    game.pregame_win_probability != null && Number.isFinite(game.pregame_win_probability)
+      ? Math.round(game.pregame_win_probability * 100)
+      : null;
+  const preOpp = pre != null && !drawSport ? 100 - pre : null;
+  const preHomePct = game.is_home ? pre : preOpp;
+  const preAwayPct = game.is_home ? preOpp : pre;
+
+  const pair = resolveMatchupTeamColors({
+    homePrimary: game.is_home ? teamColor : null,
+    awayPrimary: !game.is_home ? teamColor : null,
+  });
+
+  return {
+    id: game.id,
+    sport: game.sport_key,
+    home_team: game.home_team,
+    away_team: game.away_team,
+    commence_time: game.commence_time ?? "",
+    start_is_tbd: game.start_is_tbd ?? null,
+    completed_at: game.completed_at ?? null,
+    status: game.status,
+    home_score: game.home_score,
+    away_score: game.away_score,
+    home_color: pair.home || "#1d4ed8",
+    away_color: pair.away || "#475569",
+    away_secondary_color: null,
+    home_logo: espnTeamLogoByName(game.home_team, game.sport_key) ?? null,
+    away_logo: espnTeamLogoByName(game.away_team, game.sport_key) ?? null,
+    home_abbrev: null,
+    away_abbrev: null,
+    home_prob: homeProb,
+    away_prob: awayProb,
+    draw_prob: null,
+    pregame_home_pct: preHomePct,
+    pregame_away_pct: preAwayPct,
+    pregame_draw_pct: null,
+    pregame_projected_home: null,
+    pregame_projected_away: null,
+    projected_home: null,
+    projected_away: null,
+    live_clock_label: null,
+    reason_line: null,
+  };
+}
+
 export default function EventCard183A({
   card,
   surface,
@@ -1043,9 +1113,9 @@ export default function EventCard183A({
     (hasExplicitThreeWayCurrent ||
       (isDone && (card.pregame_draw_pct != null || finishedLevelDraw)));
 
-  // Rulings 199 & 200-B:
+  // Rulings 199, 200-B & 204-C:
   // - Before a game: Proj. · Chance
-  // - During a game: Score · Proj. · Now (NO Pregame column; pregame facts live on one grey line under the bar)
+  // - During a game: Score · Proj. · Now (NO Pregame column and NO grey line on cards; the bar tick carries the pregame chance)
   // - After a game:  Pregame · Final (NO bar)
   const showPregameCol =
     isDone &&
@@ -1060,10 +1130,6 @@ export default function EventCard183A({
       ? projectedFinalFormat(card.sport) != null ||
         (card.projected_away != null && card.projected_home != null)
       : card.projected_away != null && card.projected_home != null);
-
-  const livePregameLine = isLive
-    ? formatLivePregameSummary(card, awayShort, homeShort)
-    : null;
 
   // Direction 199: during and after a game, print no sentence that repeats the card.
   // Before a game, keep the sentence when informative and name each team as its row does.
@@ -1122,15 +1188,39 @@ export default function EventCard183A({
           { t: 1, p: finalHomePct / 100 },
         ];
 
+  const homeOnlyWithheld =
+    !hasExplicitThreeWayCurrent &&
+    drawSport &&
+    card.away_prob != null &&
+    card.home_prob == null;
+  const singleAwayPct =
+    homeOnlyWithheld && card.away_prob != null && Number.isFinite(card.away_prob)
+      ? Math.round(card.away_prob * 100)
+      : null;
+  const singleAwayLiveTenths =
+    isLive && homeOnlyWithheld && card.away_prob != null
+      ? formatSingleLiveTenths(card.away_prob)
+      : null;
+
   // Segmented probability bar before & during a game; NEVER rendered after a game (Ruling 200-B)
   const showSegmentedBar =
     !isDone &&
     !isSuspended &&
-    card.home_prob != null &&
-    Number.isFinite(card.home_prob);
+    ((card.home_prob != null && Number.isFinite(card.home_prob)) ||
+      (homeOnlyWithheld && card.away_prob != null && Number.isFinite(card.away_prob)));
 
   const barShares = (() => {
-    if (!showSegmentedBar || card.home_prob == null) return null;
+    if (!showSegmentedBar) return null;
+    if (homeOnlyWithheld && card.away_prob != null) {
+      return {
+        away: card.away_prob * 100,
+        draw: null as number | null,
+        home: 0,
+        awayWithheld: false,
+        homeWithheld: true,
+      };
+    }
+    if (card.home_prob == null) return null;
     if (hasExplicitThreeWayCurrent && card.away_prob != null && inferredDraw != null) {
       const total = card.away_prob + inferredDraw + card.home_prob;
       if (total > 0) {
@@ -1139,6 +1229,7 @@ export default function EventCard183A({
           draw: (inferredDraw / total) * 100,
           home: (card.home_prob / total) * 100,
           awayWithheld: false,
+          homeWithheld: false,
         };
       }
     }
@@ -1150,6 +1241,7 @@ export default function EventCard183A({
       draw: null as number | null,
       home: (card.home_prob / total) * 100,
       awayWithheld,
+      homeWithheld: false,
     };
   })();
 
@@ -1168,12 +1260,18 @@ export default function EventCard183A({
         ? "Won"
         : "—"
     : isLive
-      ? awayWithheld || liveTenths.away == null
-        ? "—"
-        : liveTenths.away
-      : awayWithheld || awayWholePct == null
-        ? "—"
-        : `${awayWholePct}%`;
+      ? homeOnlyWithheld
+        ? singleAwayLiveTenths ?? "—"
+        : awayWithheld || liveTenths.away == null
+          ? "—"
+          : liveTenths.away
+      : homeOnlyWithheld
+        ? singleAwayPct != null
+          ? `${singleAwayPct}%`
+          : "—"
+        : awayWithheld || awayWholePct == null
+          ? "—"
+          : `${awayWholePct}%`;
 
   const homePrimaryDisplay = isDone
     ? homeScoreCompare != null
@@ -1604,12 +1702,16 @@ export default function EventCard183A({
         </div>
       </div>
 
-      {/* Segmented probability bar before & during a game; NEVER rendered after a game (Ruling 200-B) */}
+      {/* Segmented probability bar before & during a game; NEVER rendered after a game (Ruling 200-B & 204-C: bar tick carries pregame chance, no grey line on cards) */}
       {barShares && (
         <div className="relative mt-2.5" data-testid="compact-probability-bar">
           <div
             className={`flex h-1.5 overflow-hidden rounded-full ${
-              barShares.awayWithheld ? "justify-end bg-surface-border/40" : "gap-[2px]"
+              barShares.awayWithheld
+                ? "justify-end bg-surface-border/40"
+                : barShares.homeWithheld
+                  ? "justify-start bg-surface-border/40"
+                  : "gap-[2px]"
             }`}
           >
             {!barShares.awayWithheld && (
@@ -1624,31 +1726,24 @@ export default function EventCard183A({
                 style={{ width: `${barShares.draw}%` }}
               />
             )}
-            <div
-              className="h-full rounded-r-full"
-              style={{ width: `${barShares.home}%`, backgroundColor: homeInk }}
-            />
+            {!barShares.homeWithheld && (
+              <div
+                className="h-full rounded-r-full"
+                style={{ width: `${barShares.home}%`, backgroundColor: homeInk }}
+              />
+            )}
           </div>
-          {livePregameAwayTickPct != null && !barShares.awayWithheld && barShares.draw == null && (
-            <span
-              aria-hidden="true"
-              data-testid="pregame-bar-tick"
-              style={{ left: `${livePregameAwayTickPct}%` }}
-              className="pointer-events-none absolute top-1/2 h-2.5 w-[1.5px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-text-primary/70"
-            />
-          )}
-        </div>
-      )}
-
-      {/* Rulings 199 & 200-B: single non-wrapping quiet grey line under the bar during a game */}
-      {livePregameLine && (
-        <div
-          className="mt-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-[12px] leading-tight text-text-muted tabular-nums"
-          data-testid="live-pregame-summary-line"
-        >
-          <span className="font-medium">Pregame</span>
-          {"  "}
-          <span>{livePregameLine.body}</span>
+          {livePregameAwayTickPct != null &&
+            !barShares.awayWithheld &&
+            !barShares.homeWithheld &&
+            barShares.draw == null && (
+              <span
+                aria-hidden="true"
+                data-testid="pregame-bar-tick"
+                style={{ left: `${livePregameAwayTickPct}%` }}
+                className="pointer-events-none absolute top-1/2 h-2.5 w-[1.5px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-text-primary/70"
+              />
+            )}
         </div>
       )}
 

@@ -13,6 +13,8 @@ import {
   formatScheduledGameLabel,
   formatTbdStartLabel,
 } from "@/lib/gameTimeLabel";
+import EventCard183A, { buildUnifiedCardFromTeamGame } from "./EventCard183A";
+import { isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
 
 // ---------------------------------------------------------------------------
 // Team-page game cards (L2-158). Extracted from the team page so the
@@ -45,6 +47,9 @@ export function UpcomingGameCard({
   teamColor: string | null;
   gameNo?: number;
 }) {
+  if (isWebGameCard183AEnabled()) {
+    return <EventCard183A card={buildUnifiedCardFromTeamGame(game, teamColor)} surface="standard" />;
+  }
   const opponent = game.opponent || (game.is_home ? game.away_team : game.home_team);
   const live = isGameLive(game);
   const wp = game.win_probability; // team-relative, 0-1
@@ -176,6 +181,9 @@ export function RecentGameCard({
   game: TeamGameBrief;
   gameNo?: number;
 }) {
+  if (isWebGameCard183AEnabled()) {
+    return <EventCard183A card={buildUnifiedCardFromTeamGame(game, null)} surface="standard" />;
+  }
   const opponent = game.opponent || (game.is_home ? game.away_team : game.home_team);
   const result = teamResult(game);
   const dateStr = formatSettledDate(game.completed_at || game.commence_time);

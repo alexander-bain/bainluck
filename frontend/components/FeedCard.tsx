@@ -57,6 +57,8 @@ import TeamNameLink from "./TeamNameLink";
 import ProjectedFinalLine from "./ProjectedFinalLine";
 import { cardProjectedFinal, liveCardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
 import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
+import EventCard183A, { buildUnifiedCardFromFeed } from "./EventCard183A";
+import { isWebGameCard183AEnabled } from "@/lib/gameCard183AFlag";
 
 interface FeedCardProps {
   item: FeedItem;
@@ -391,6 +393,38 @@ function EventFeedCard({
   category?: string;
 }) {
   const { track } = useAnalyticsContext();
+  if (isWebGameCard183AEnabled()) {
+    const unified = buildUnifiedCardFromFeed(item, data);
+    return (
+      <EventCard183A
+        card={unified}
+        surface="standard"
+        onCardClick={() =>
+          track("event_card_click", {
+            event_id: data.id,
+            sport: data.sport || "unknown",
+            league: data.sport || "unknown",
+            league_tier: 1 as 1 | 2 | 3,
+            home_team: data.home_team,
+            away_team: data.away_team,
+            status: data.status,
+            home_probability: unified.home_prob,
+            away_probability: unified.away_prob,
+            is_close_game:
+              unified.home_prob !== null &&
+              unified.away_prob !== null &&
+              Math.abs(unified.home_prob - unified.away_prob) < 0.1,
+            is_live: data.status === "live",
+            source_section: "feed" as const,
+            position_index: 0,
+            minutes_to_start: Math.round(
+              (new Date(data.commence_time).getTime() - Date.now()) / 60000,
+            ),
+          })
+        }
+      />
+    );
+  }
   const isLive = data.status === "live";
   const isFinished = isFinishedStatus(data.status);
   // live/048 + CERT-786 — the branch this card did not have. Its three states

@@ -317,10 +317,9 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     expect(awayNow?.style.color).not.toBe("");
     expect(homeNow?.style.color).not.toBe("");
 
-    const preLine = byTestId("live-pregame-summary-line") as HTMLElement | null;
-    expect(preLine).not.toBeNull();
-    expect(preLine?.textContent).toBe("Pregame  Lions 58% · projected 27–24");
-    expect(preLine?.className).toContain("whitespace-nowrap");
+    // Ruling 204-C: cards print Score · Proj. · Now with NO grey pregame line; the bar tick carries the pregame chance
+    expect(byTestId("live-pregame-summary-line")).toBeNull();
+    expect(host.textContent).not.toContain("Pregame");
 
     const chartPanel = byTestId("discover-191a-chart-panel");
     expect(chartPanel).not.toBeNull();
@@ -587,7 +586,8 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     expect(byTestId("tennis-score-strip")?.textContent).toContain("Pts");
     expect(byTestId("tennis-serving-home")).not.toBeNull();
     expect(byTestId("col-header-proj")).toBeNull();
-    expect(byTestId("live-pregame-summary-line")?.textContent).toBe("Pregame  Sinner 78%");
+    // Ruling 204-C: live tennis card also drops the grey pregame line
+    expect(byTestId("live-pregame-summary-line")).toBeNull();
     expect(host.textContent).toContain("28.4%");
     expect(host.textContent).toContain("71.6%");
   });
