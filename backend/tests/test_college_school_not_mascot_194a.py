@@ -6,7 +6,7 @@ Every place the server mints a short name of its own is covered here: the
 playoff grid's label, the team-progression fallback, the team page's upcoming
 games row ("vs Gonzaga · Sat"), and the editorial copy helper. ESPN's
 `location` is the school, trusted only when the team's own name starts with it
-(on 2026-11-15 the `stanford-cardinal` row carried `location: "Arkansas"`).
+(on Sun Nov 15 the `stanford-cardinal` row carried `location: "Arkansas"`).
 """
 
 from __future__ import annotations
