@@ -27,7 +27,8 @@ from app.utils import team_short_name as tsn
         ("Duke Blue Devils", None, "Duke"),  # no location: the mascot is cut
         ("Stanford Cardinal", "Arkansas", "Stanford"),  # a borrowed location is refused
         ("North Carolina Tar Heels", None, "North Carolina"),
-        ("Penn Quakers", None, "Penn Quakers"),  # unknown mascot: the full name, never a guess
+        ("Penn Quakers", None, "Penn"),  # every ESPN mascot is known (Nov 16)
+        ("Westbrook Zephyrs", None, "Westbrook Zephyrs"),  # unknown mascot: the full name, never a guess
     ],
 )
 def test_the_school_is_served(name, location, expected):
@@ -102,3 +103,46 @@ def test_the_editorial_copy_uses_the_one_mascot_list():
     assert short_team_name("Gonzaga Bulldogs", "basketball_wncaab") == "Gonzaga"
     assert short_team_name("Stanford Cardinal", "basketball_ncaab") == "Stanford"
     assert short_team_name("Dallas Cowboys", "americanfootball_nfl") == "Cowboys"
+
+
+# ── 194-A on Discover's "closest games tonight" rows (Nov 16) ──
+# Monday's first 60 seats, seat 24: "Iona Gaels at UMBC Retrievers: Iona Gaels".
+# Neither mascot was on the hand-written list, and the row's team data carries
+# no `location`, so the list itself has to know every college mascot.
+
+
+@pytest.mark.parametrize("name, school", [
+    ("Iona Gaels", "Iona"),
+    ("UMBC Retrievers", "UMBC"),
+    ("Miami (OH) RedHawks", "Miami (OH)"),
+    ("Saint Mary's Gaels", "Saint Mary's"),
+    ("Boston College Eagles", "Boston College"),
+])
+def test_every_espn_college_mascot_is_known(name, school):
+    assert tsn.school_label(name) == school
+
+
+def test_no_mascot_is_the_last_word_of_a_school():
+    """Stripping a mascot must never cut into a school's own name."""
+    from app.config.college_mascots import ESPN_COLLEGE_MASCOTS
+
+    schools = ["Penn State", "Boston College", "Florida Gulf Coast", "Texas A&M",
+               "Little Rock", "Loyola Chicago", "Saint Mary's", "North Carolina"]
+    for school in schools:
+        assert not any(school.lower().endswith(" " + m.lower()) for m in ESPN_COLLEGE_MASCOTS)
+        assert tsn.school_label(school) == school
+
+
+def test_closest_games_rows_print_the_school_for_college_and_change_nothing_for_pro():
+    from app.utils.window_events_closest import _extract_blended_leader
+
+    def card(sport, home, away):
+        return {"sport": sport, "home_team": home, "away_team": away,
+                "hero_probability_source": "blend", "hero_probability": 0.43,
+                "hero_probability_away": 0.57, "home_team_data": {"abbreviation": "X"},
+                "away_team_data": {"abbreviation": "Y"}}
+
+    _, leader, row, _ = _extract_blended_leader(card("basketball_ncaab", "UMBC Retrievers", "Iona Gaels"))
+    assert (leader, row) == ("Iona", "Iona at UMBC: Iona")
+    _, leader, row, _ = _extract_blended_leader(card("basketball_nba", "Miami Heat", "Houston Rockets"))
+    assert (leader, row) == ("Houston Rockets", "Houston Rockets at Miami Heat: Houston Rockets")

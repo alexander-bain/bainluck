@@ -26,6 +26,8 @@ and only the designator set is what the parity guard compares.
 
 import re
 
+from app.config.college_mascots import ESPN_COLLEGE_MASCOTS
+
 #: Trailing words that name a club TYPE rather than a club.
 #:
 #: Byte-for-byte the web's `CLUB_TYPE_SUFFIXES`, and the parity guard asserts
@@ -117,7 +119,7 @@ COLLEGE_MASCOTS: tuple[str, ...] = tuple(sorted({
     "Jayhawks", "Cyclones", "Mountaineers", "Bruins", "Trojans", "Ducks", "Beavers",
     "Cardinals", "Cardinal", "Cavaliers", "Hokies", "Seminoles", "Hurricanes",
     "Orangemen", "Orange",
-}, key=lambda m: (-len(m), m)))
+} | ESPN_COLLEGE_MASCOTS, key=lambda m: (-len(m), m)))
 _COLLEGE_MASCOT_RE = re.compile(
     r"\s+(?:" + "|".join(re.escape(m).replace(r"\ ", r"\s+") for m in COLLEGE_MASCOTS) + r")\Z",
     re.IGNORECASE,
