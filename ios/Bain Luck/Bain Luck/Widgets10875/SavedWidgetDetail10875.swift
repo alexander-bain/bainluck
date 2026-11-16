@@ -12,6 +12,7 @@ import Foundation
 nonisolated struct SavedWidgetEventDetail10875: Decodable, Equatable, Sendable {
     let id: Int
     let sport: String?
+    var sportName: String? = nil
     let homeTeam: String
     let awayTeam: String
     let status: String?
@@ -20,6 +21,8 @@ nonisolated struct SavedWidgetEventDetail10875: Decodable, Equatable, Sendable {
     let homeScore: Int?
     let awayScore: Int?
     let currentOdds: SavedWidgetEventOdds10875?
+    var prematchOdds: SavedWidgetEventOdds10875? = nil
+    var espn: SavedWidgetESPN10875? = nil
     let heroProbability: Double?
     let heroProbabilityAway: Double?
     let heroProbabilitySource: String?
@@ -37,8 +40,16 @@ nonisolated struct SavedWidgetEventDetail10875: Decodable, Equatable, Sendable {
 nonisolated struct SavedWidgetEventOdds10875: Decodable, Equatable, Sendable {
     let homeProbability: Double?
     let awayProbability: Double?
+    var drawProbability: Double? = nil
     let homeRenderedPercent: Int?
     let awayRenderedPercent: Int?
+    var projectedHomeScore: Double? = nil
+    var projectedAwayScore: Double? = nil
+}
+
+nonisolated struct SavedWidgetESPN10875: Decodable, Equatable, Sendable {
+    var period: String? = nil
+    var gameClock: String? = nil
 }
 
 nonisolated struct SavedWidgetTeamData10875: Decodable, Equatable, Sendable {

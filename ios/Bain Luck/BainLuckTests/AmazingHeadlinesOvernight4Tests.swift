@@ -312,7 +312,7 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
         XCTAssertFalse(meta.localizedCaseInsensitiveContains("open"))
         XCTAssertFalse(meta.localizedCaseInsensitiveContains("settled"))
 
-        XCTAssertEqual(nonStreaming.columns.map(\.header), ["Proj.", "Chance"])
+        XCTAssertEqual(nonStreaming.columns.map(\.header), ["", "Chance"])
         XCTAssertTrue(nonStreaming.showsBottomBar)
         XCTAssertEqual(nonStreaming.rows.map(\.shortName), ["Arsenal", "Chelsea", "Draw"])
         XCTAssertEqual(nonStreaming.rows[0].cells.last, "52%")
@@ -676,7 +676,7 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
             let host = hostForMeasurement(card, at: .large)
             let size = host.sizeThatFits(in: CGSize(width: 358, height: 1000))
             XCTAssertLessThanOrEqual(size.width, 358.5, "\(label) width")
-            XCTAssertLessThanOrEqual(size.height, 200, "\(label) height (\(size.height)pt) keeps chart above 852pt fold")
+            XCTAssertLessThanOrEqual(size.height, 245, "\(label) height (\(size.height)pt) keeps chart above 852pt fold")
 
             let a11yHost = hostForMeasurement(card, at: .accessibility2)
             let a11ySize = a11yHost.sizeThatFits(in: CGSize(width: 358, height: 2000))

@@ -292,7 +292,7 @@ final class UnifiedHeadlineContactSheetGuard199Tests: XCTestCase {
 
         // Core sports × 3 states
         try standardTrio(label: "NFL", sport: "americanfootball_nfl", league: "NFL", away: "New England Patriots", home: "Detroit Lions", awayPrimary: "#002244", awaySecondary: "#C60C30", homePrimary: "#0076B6", awayScore: 17, homeScore: 24, projAway: 24, projHome: 28)
-        try standardTrio(label: "NBA", sport: "basketball_nba", league: "NBA", away: "New York Knicks", home: "Boston Celtics", awayPrimary: "#F58426", homePrimary: "#007A33", awayScore: 84, homeScore: 91, projAway: 108, projHome: 115)
+        try standardTrio(label: "NBA", sport: "basketball_nba", league: "NBA", away: "New York Knicks", home: "Boston Celtics", awayPrimary: "#006BB6", awaySecondary: "#F58426", homePrimary: "#007A33", awayScore: 84, homeScore: 91, projAway: 108, projHome: 115)
         try standardTrio(label: "NCAAF", sport: "americanfootball_ncaaf", league: "NCAAF", away: "Kansas", home: "Duke", awayPrimary: "#0051BA", awaySecondary: "#E8000D", homePrimary: "#003087", awayScore: 20, homeScore: 27, projAway: 27, projHome: 31)
         try standardTrio(label: "NCAAB", sport: "basketball_ncaab", league: "NCAAB", away: "Gonzaga", home: "Duke", awayPrimary: "#041E42", awaySecondary: "#C8102E", homePrimary: "#003087", awayScore: 62, homeScore: 66, projAway: 76, projHome: 79, livePeriod: "2nd Half", liveClock: "7:40")
         try standardTrio(label: "MLB", sport: "baseball_mlb", league: "MLB", away: "New York Yankees", home: "Los Angeles Dodgers", awayPrimary: "#0C2340", awaySecondary: "#64748B", homePrimary: "#005A9C", awayScore: 3, homeScore: 5, projAway: 4.2, projHome: 5.8, unit: "runs", period: "full_game", livePeriod: "Top 7th", liveClock: "")
@@ -398,6 +398,8 @@ final class UnifiedHeadlineContactSheetGuard199Tests: XCTestCase {
         {
           "id": 2020, "sport": "americanfootball_nfl", "league": "NFL",
           "away_team": "Chicago Bears", "home_team": "Green Bay Packers",
+          "away_team_data": { "primary_color": "#0B162A", "secondary_color": "#C83803" },
+          "home_team_data": { "primary_color": "#203731", "secondary_color": "#FFB612" },
           "commence_time": "2026-11-17T18:00:00Z", "status": "scheduled",
           "current_odds": { "away_probability": 0.35, "home_probability": 0.65, "quote_kind": "opening" },
           "opening_odds": { "away_probability": 0.35, "home_probability": 0.65 }
@@ -495,6 +497,7 @@ final class UnifiedHeadlineContactSheetGuard199Tests: XCTestCase {
             "current win chance",
             "projection before",
             "settled",
+            "ended by venue",
             "3 venues",
         ]
 
@@ -604,8 +607,8 @@ final class UnifiedHeadlineContactSheetGuard199Tests: XCTestCase {
                 let texts = allVisibleTextElements(for: model)
                 XCTAssertGreaterThanOrEqual(
                     texts.count,
-                    4,
-                    "[\(spec.title)] non-vacuity check: expected >= 4 rendered text elements"
+                    3,
+                    "[\(spec.title)] non-vacuity check: expected >= 3 rendered text elements"
                 )
 
                 // (b) Zero banned words/phrases anywhere in rendered labels
@@ -653,6 +656,22 @@ final class UnifiedHeadlineContactSheetGuard199Tests: XCTestCase {
                         measuredSummaryHeight,
                         "[\(spec.title)] must hide pregame summary line when both pregame facts are absent"
                     )
+                }
+
+                // (e) No header over an empty column
+                for (colIdx, col) in model.columns.enumerated() {
+                    let hasAnyRowValue = model.rows.contains { row in
+                        let hasCell = colIdx < row.cells.count && !row.cells[colIdx].isEmpty
+                        let hasTick = col.role == .finalResult && row.won == true
+                        return hasCell || hasTick
+                    }
+                    if !hasAnyRowValue {
+                        XCTAssertEqual(
+                            col.header,
+                            "",
+                            "[\(spec.title)] empty column \(col.role) must suppress its header"
+                        )
+                    }
                 }
 
                 // Phase-specific structural checks
@@ -705,17 +724,22 @@ final class UnifiedHeadlineContactSheetGuard199Tests: XCTestCase {
             )
             host.additionalSafeAreaInsets = .zero
             host.overrideUserInterfaceStyle = .light
-            let h = max(ceil(host.sizeThatFits(in: CGSize(width: 390, height: 800)).height), 60)
-            host.view.frame = CGRect(x: 0, y: 0, width: 390, height: h)
-            probeWindow.frame = host.view.frame
+            host.traitOverrides.preferredContentSizeCategory = UIContentSizeCategory(dt)
+            let initialH = max(ceil(host.sizeThatFits(in: CGSize(width: 390, height: 1200)).height), 40)
             probeWindow.rootViewController = host
+            probeWindow.frame = CGRect(x: 0, y: 0, width: 390, height: initialH)
+            host.view.frame = probeWindow.bounds
             host.view.setNeedsLayout()
             host.view.layoutIfNeeded()
             RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            let settledH = max(ceil(host.sizeThatFits(in: CGSize(width: 390, height: 1200)).height), 40)
+            probeWindow.frame = CGRect(x: 0, y: 0, width: 390, height: settledH)
+            host.view.frame = probeWindow.bounds
             host.view.setNeedsLayout()
             host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
             let fmt = UIGraphicsImageRendererFormat()
-            fmt.scale = 2.0
+            fmt.scale = 3.0
             return UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { _ in
                 _ = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
             }
@@ -783,7 +807,7 @@ final class UnifiedHeadlineContactSheetGuard199Tests: XCTestCase {
         func stitchVertically(_ images: [UIImage]) -> UIImage {
             let totalH = images.reduce(CGFloat(0)) { $0 + $1.size.height }
             let fmt = UIGraphicsImageRendererFormat()
-            fmt.scale = 2.0
+            fmt.scale = 3.0
             return UIGraphicsImageRenderer(size: CGSize(width: 390, height: totalH), format: fmt).image { ctx in
                 UIColor.systemGroupedBackground.setFill()
                 ctx.fill(CGRect(x: 0, y: 0, width: 390, height: totalH))

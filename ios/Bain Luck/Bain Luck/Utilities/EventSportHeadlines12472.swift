@@ -233,6 +233,63 @@ enum EventSportHeadlines12472 {
         let sourceMark: SourceMark?
         let confidenceTier: String?
 
+        init(
+            eventId: Int,
+            sportKey: String,
+            kind: Kind,
+            plainMetaText: String?,
+            commenceTime: String?,
+            startIsTbd: Bool?,
+            broadcast: String?,
+            eventStatus: String?,
+            liveBadgeText: String?,
+            leagueLabel: String?,
+            columns: [ColumnSpec],
+            rows: [CompetitorRow],
+            bottomBar: BottomBar?,
+            pregameColumnHeaders: PregameColumnHeaders?,
+            liveColumnHeaders: LiveColumnHeaders?,
+            finalColumnHeaders: FinalColumnHeaders?,
+            away: TeamRowModel,
+            home: TeamRowModel,
+            pregameAwayMarker: Double?,
+            livePregameSummary: LivePregameSummary?,
+            showsEkg: Bool,
+            sourceMark: SourceMark?,
+            confidenceTier: String?
+        ) {
+            self.eventId = eventId
+            self.sportKey = sportKey
+            self.kind = kind
+            self.plainMetaText = plainMetaText
+            self.commenceTime = commenceTime
+            self.startIsTbd = startIsTbd
+            self.broadcast = broadcast
+            self.eventStatus = eventStatus
+            self.liveBadgeText = liveBadgeText
+            self.leagueLabel = leagueLabel
+            self.columns = columns.enumerated().map { idx, col in
+                let hasAnyRowValue = rows.contains { row in
+                    let hasCellText = idx < row.cells.count && !row.cells[idx].isEmpty
+                    let hasWinnerTick = col.role == .finalResult && row.won == true
+                    return hasCellText || hasWinnerTick
+                }
+                return hasAnyRowValue ? col : ColumnSpec(role: col.role, header: "")
+            }
+            self.rows = rows
+            self.bottomBar = bottomBar
+            self.pregameColumnHeaders = pregameColumnHeaders
+            self.liveColumnHeaders = liveColumnHeaders
+            self.finalColumnHeaders = finalColumnHeaders
+            self.away = away
+            self.home = home
+            self.pregameAwayMarker = pregameAwayMarker
+            self.livePregameSummary = livePregameSummary
+            self.showsEkg = showsEkg
+            self.sourceMark = sourceMark
+            self.confidenceTier = confidenceTier
+        }
+
         var showsBottomBar: Bool {
             bottomBar != nil
         }
@@ -1125,8 +1182,15 @@ enum EventSportHeadlines12472 {
                 awayScore: event.awayScore,
                 servedResult: event.heroSettledResult
             )
+            let nonRegulationFinish: Bool = {
+                guard let fp = event.finalScorePeriod?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+                    return false
+                }
+                return fp == "extra_time" || fp == "penalties" || fp == "aet" || fp == "pen"
+            }()
             let winnerRole: EventAtlasSoccerCards11666.ThreeWayRole? = {
                 if let confirmed = marketSnap?.confirmedWinner { return confirmed }
+                if nonRegulationFinish && pregameTexts != nil { return nil }
                 switch resolvedOutcome {
                 case .home: return .home
                 case .away: return .away
@@ -1318,10 +1382,14 @@ enum EventSportHeadlines12472 {
             }
             if isVenueSettledOnly {
                 if let rawVerdict = trimmedNonEmpty(event.venueSettledResult) {
+                    let lower = rawVerdict.lowercased()
+                    if lower == "settled by venue" || lower == "ended by venue" || lower == "settled" {
+                        return "\(league) · Ended · no result reported"
+                    }
                     let safeVerdict = sanitizeBannedWords(rawVerdict)
                     return "\(league) · \(safeVerdict)"
                 }
-                return "\(league) · Ended"
+                return "\(league) · Ended · no result reported"
             }
             let base = afterMetaText(league: league, event: event)
             if let extraMetaOutcome {

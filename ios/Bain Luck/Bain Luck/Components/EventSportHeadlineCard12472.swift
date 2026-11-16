@@ -24,6 +24,8 @@ struct EventSportHeadlineCard12472: View {
     @ScaledMetric(relativeTo: .title2) private var nowScaledSize: CGFloat = HeadlineStyleTable199.nowBaseSize(.page)
     @ScaledMetric(relativeTo: .title3) private var secondProminentScaledSize: CGFloat = HeadlineStyleTable199.secondNumberBaseSize(.page, prominent: true)
     @ScaledMetric(relativeTo: .body) private var secondRegularScaledSize: CGFloat = HeadlineStyleTable199.secondNumberBaseSize(.page, prominent: false)
+    @ScaledMetric(relativeTo: .subheadline) private var baseNameSize: CGFloat = HeadlineStyleTable199.nameBaseSize(.page)
+    @ScaledMetric(relativeTo: .caption) private var baseQuietSize: CGFloat = HeadlineStyleTable199.quietTextBaseSize(.page)
     @ScaledMetric(relativeTo: .caption2) private var headerScaledSize: CGFloat = HeadlineStyleTable199.headerBaseSize(.page)
 
     private var stacksRowsVertically: Bool {
@@ -97,13 +99,43 @@ struct EventSportHeadlineCard12472: View {
     }
 
     private var showsActiveEkgControl: Bool {
-        guard model.showsEkg, priceStreamingEligible else { return false }
+        guard model.showsEkg,
+              model.kind.phase == .during,
+              priceStreamingEligible else { return false }
         let presentation = EkgHeartbeat.present(
             ekgTracker,
             status: liveUpdateStatus,
             now: displayAsOf ?? Date()
         )
         return presentation.mode != .flat
+    }
+
+    private var totalColumnsWidth: CGFloat {
+        let widths = model.columns.reduce(CGFloat(0)) { $0 + columnWidth(for: $1.role) }
+        let gaps = CGFloat(max(model.columns.count - 1, 0)) * columnSpacing
+        return widths + gaps
+    }
+
+    private var sharedTeamNameFontSize: CGFloat {
+        let cappedBase = min(baseNameSize, stacksRowsVertically ? 30 : 20)
+        let availableWidth: CGFloat = stacksRowsVertically
+            ? max(330 - crestSize - 8, 120)
+            : max(330 - crestSize - 10 - totalColumnsWidth, 64)
+        return CardTeamNameSizing.sharedSingleLineFontSize(
+            names: model.rows.map(\.shortName),
+            baseSize: cappedBase,
+            weight: .bold,
+            availableWidth: availableWidth,
+            minimumScale: stacksRowsVertically ? 0.58 : 0.72
+        )
+    }
+
+    private var sharedRecordFontSize: CGFloat {
+        let cappedQuiet = min(baseQuietSize, stacksRowsVertically ? 22 : 15)
+        return CardTeamNameSizing.cappedRecordFontSize(
+            baseRecordSize: cappedQuiet,
+            teamNameFontSize: sharedTeamNameFontSize
+        )
     }
 
     private var hasTrailingControls: Bool {
@@ -350,6 +382,7 @@ struct EventSportHeadlineCard12472: View {
                     .foregroundStyle(HeadlineStyleTable199.quietInk)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(width: columnWidth(for: col.role), alignment: .trailing)
             }
         }
@@ -415,24 +448,25 @@ struct EventSportHeadlineCard12472: View {
         let isLoser = row.won == false
         let nameInk: Color = {
             if row.role == .draw && row.won != true {
-                return isLoser ? HeadlineStyleTable199.loserInk : HeadlineStyleTable199.drawInk
+                return HeadlineStyleTable199.drawInk
             }
             return isLoser ? HeadlineStyleTable199.loserInk : HeadlineStyleTable199.primaryNumberInk
         }()
         return VStack(alignment: .leading, spacing: stacksRowsVertically ? 2 : 1.5) {
             Text(row.shortName)
-                .font(HeadlineStyleTable199.names(.page, isLoser: isLoser))
+                .font(HeadlineStyleTable199.names(.page, isLoser: isLoser, scaledSize: sharedTeamNameFontSize))
                 .foregroundStyle(nameInk)
                 .lineLimit(1)
                 .minimumScaleFactor(stacksRowsVertically ? 0.72 : 0.80)
                 .truncationMode(.tail)
                 .allowsTightening(true)
+                .fixedSize(horizontal: false, vertical: true)
             if let record = row.record, !record.isEmpty {
                 Text(record)
-                    .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: true))
+                    .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: true, scaledSize: sharedRecordFontSize))
                     .foregroundStyle(HeadlineStyleTable199.quietInk)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -473,7 +507,8 @@ struct EventSportHeadlineCard12472: View {
                     .foregroundStyle(tint)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
-                    .accessibilityLabel("\(column.header) \(text)")
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("\(column.header.isEmpty ? "Chance" : column.header) \(text)")
             }
 
         case .score, .projected:
@@ -485,6 +520,7 @@ struct EventSportHeadlineCard12472: View {
                     .foregroundStyle(HeadlineStyleTable199.primaryNumberInk)
                     .lineLimit(1)
                     .minimumScaleFactor(0.80)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel("\(column.header) \(text)")
             }
 
@@ -497,6 +533,7 @@ struct EventSportHeadlineCard12472: View {
                     .foregroundStyle(HeadlineStyleTable199.quietInk)
                     .lineLimit(1)
                     .minimumScaleFactor(0.80)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel("Pregame \(text)")
             }
 
@@ -510,6 +547,7 @@ struct EventSportHeadlineCard12472: View {
                     .foregroundStyle(emphasized ? HeadlineStyleTable199.primaryNumberInk : HeadlineStyleTable199.quietInk)
                     .lineLimit(1)
                     .minimumScaleFactor(0.80)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel("\(column.header) \(text)")
             }
 
@@ -522,6 +560,7 @@ struct EventSportHeadlineCard12472: View {
                     .foregroundStyle(HeadlineStyleTable199.primaryNumberInk)
                     .lineLimit(1)
                     .minimumScaleFactor(0.80)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1.5)
                     .background(
@@ -540,21 +579,24 @@ struct EventSportHeadlineCard12472: View {
                             .foregroundStyle(HeadlineStyleTable199.primaryNumberInk)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Text("\u{2713}")
                         .font(HeadlineStyleTable199.secondNumbers(.page, prominent: true, scaledSize: secondProminentScaledSize * 0.82))
                         .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityLabel(text.isEmpty ? "Won" : "Final \(text), won")
             } else if text.isEmpty {
                 Color.clear.frame(height: 1)
             } else {
-                let ink = row.won == false ? HeadlineStyleTable199.loserInk : HeadlineStyleTable199.primaryNumberInk
+                let ink = row.role == .draw ? HeadlineStyleTable199.drawInk : (row.won == false ? HeadlineStyleTable199.loserInk : HeadlineStyleTable199.primaryNumberInk)
                 Text(text)
                     .font(HeadlineStyleTable199.secondNumbers(.page, prominent: false, scaledSize: secondRegularScaledSize))
                     .foregroundStyle(ink)
                     .lineLimit(1)
                     .minimumScaleFactor(0.80)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel("Final \(text)")
             }
         }
@@ -563,13 +605,15 @@ struct EventSportHeadlineCard12472: View {
     // MARK: - Single-Line Grey Pregame Summary (Ruling 200-B)
 
     private func livePregameSummaryRow(_ summary: EventSportHeadlines12472.LivePregameSummary) -> some View {
-        (Text(summary.leadWord).fontWeight(.semibold) + Text("  \(summary.bodyText)"))
-            .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: true))
+        let cappedSummarySize = min(baseQuietSize, stacksRowsVertically ? 20 : 14)
+        return (Text(summary.leadWord).fontWeight(.semibold) + Text("  \(summary.bodyText)"))
+            .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: true, scaledSize: cappedSummarySize))
             .foregroundStyle(HeadlineStyleTable199.quietInk)
             .lineLimit(1)
-            .minimumScaleFactor(stacksRowsVertically ? 0.45 : 0.72)
+            .minimumScaleFactor(stacksRowsVertically ? 0.45 : 0.78)
             .allowsTightening(true)
             .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 GeometryReader { geo in
@@ -626,7 +670,7 @@ struct EventSportHeadlineCard12472: View {
                         .fill(colors.home)
                         .frame(width: max(width * hFrac - 1, 2))
                     Rectangle()
-                        .fill(HeadlineStyleTable199.drawInk)
+                        .fill(HeadlineStyleTable199.drawBarInk)
                         .frame(width: max(width * dFrac - 1, 2))
                     Rectangle()
                         .fill(colors.away)

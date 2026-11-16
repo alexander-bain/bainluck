@@ -262,7 +262,7 @@ final class EventDetailStackBudget12278Tests: XCTestCase {
             for obs in observations {
                 guard let top = obs.topCandidates(1).first else { continue }
                 let trimmed = top.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard trimmed == prefix || trimmed.hasPrefix("\(prefix) ") else { continue }
+                guard trimmed == prefix || trimmed.hasPrefix(prefix) else { continue }
                 return obs.boundingBox.maxX * image.size.width
             }
             return nil

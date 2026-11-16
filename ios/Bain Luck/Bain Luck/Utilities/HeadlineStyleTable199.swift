@@ -106,17 +106,26 @@ nonisolated enum HeadlineStyleTable199 {
 
     // MARK: - 3. `quietText`: Single Grey Pregame Line, Team Record, and Plain Meta
 
-    static func quietText(_ surface: Surface = .page, monospacedDigits: Bool = true) -> Font {
+    static func quietText(
+        _ surface: Surface = .page,
+        monospacedDigits: Bool = true,
+        scaledSize: CGFloat? = nil
+    ) -> Font {
         let base: Font
-        switch surface {
-        case .page:
-            base = .caption.weight(.medium)
-        case .card:
-            base = .caption.weight(.regular)
-        case .widget:
-            base = .caption2.weight(.medium)
-        case .wristTile:
-            base = .caption2.weight(.medium)
+        if let scaledSize {
+            let weight: Font.Weight = surface == .card ? .regular : .medium
+            base = .system(size: scaledSize, weight: weight)
+        } else {
+            switch surface {
+            case .page:
+                base = .caption.weight(.medium)
+            case .card:
+                base = .caption.weight(.regular)
+            case .widget:
+                base = .caption2.weight(.medium)
+            case .wristTile:
+                base = .caption2.weight(.medium)
+            }
         }
         return monospacedDigits ? base.monospacedDigit() : base
     }
@@ -171,8 +180,15 @@ nonisolated enum HeadlineStyleTable199 {
     /// Emerald tick (`✓`) next to the decided winner on finished games.
     static let winnerTickInk = Color(red: 0.09, green: 0.56, blue: 0.30)
 
-    /// Neutral slate for three-way soccer's `Draw` row and middle bar segment.
-    static let drawInk = Color(red: 0.45, green: 0.51, blue: 0.60)
+    /// Quiet light cool grey (`#94A3B8`, `slate-400`) for three-way soccer's `Draw`
+    /// row, kept visibly lighter than a team's `#64748B` (`slate-500`) fallback so
+    /// `Draw` never looks like a team on the slate fallback.
+    static let drawInk = Color(red: 148.0 / 255.0, green: 163.0 / 255.0, blue: 184.0 / 255.0)
+
+    /// Lighter silver-grey (`#CBD5E1`, `slate-300`) for the middle `Draw` segment
+    /// in three-way soccer's probability bar so a `#64748B` slate team segment
+    /// reads unmistakably darker beside it.
+    static let drawBarInk = Color(red: 203.0 / 255.0, green: 213.0 / 255.0, blue: 225.0 / 255.0)
 
     /// Live pill background red and foreground white.
     static let livePillInk = Color(red: 220.0 / 255.0, green: 38.0 / 255.0, blue: 38.0 / 255.0)
