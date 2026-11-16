@@ -2,17 +2,17 @@
 
 import React from "react";
 import Link from "next/link";
-import type { Event, FeedEventData, FeedItem } from "@/lib/types";
+import type { Event, EventHistoryResponse, FeedEventData, FeedItem } from "@/lib/types";
 import type { TeamGameBrief } from "@/lib/api";
 import { getSportLabel } from "@/lib/sportCategories";
 import { espnTeamLogoByName } from "@/lib/images";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { awayIsTheComplement, sportPricesADraw } from "@/lib/drawPricedWinner";
-import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { ABOVE_NINETY_NINE_PERCENT, BELOW_ONE_PERCENT } from "@/lib/probabilityDisplay";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
-import { resolveMatchupTeamColors } from "@/lib/teamColors";
+import { lookupTeamColors, resolveMatchupTeamColors } from "@/lib/teamColors";
 import { prematchReading } from "@/lib/prematchReading";
+import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import {
   admittedLiveProjection,
   cardProjectedFinal,
@@ -97,6 +97,105 @@ export interface EventCard183AProps {
   pinDisabled?: boolean;
   onPinToggle?: () => void;
   onCardClick?: () => void;
+}
+
+/**
+ * Extracts normalized `[0, 1]` chart points for a Discover game card from
+ * `EventHistoryResponse`, requiring `>= 3` distinct chronological readings so a
+ * card with two or fewer readings draws NO chart (Decision 207 Fix 5).
+ */
+export function extractDiscoverChartPointsFromHistory(
+  res: EventHistoryResponse | null | undefined,
+): ChartPoint183A[] | undefined {
+  if (!res || typeof res !== "object") return undefined;
+
+  const parseSeries = (
+    raw: Array<{ timestamp?: string | null; prob?: number | null }> | null | undefined,
+  ): Array<{ ms: number; p: number }> => {
+    if (!Array.isArray(raw) || raw.length < 3) return [];
+    const parsed: Array<{ ms: number; p: number }> = [];
+    for (const item of raw) {
+      if (!item || typeof item.timestamp !== "string") continue;
+      const ms = Date.parse(item.timestamp);
+      const p = item.prob;
+      if (!Number.isFinite(ms) || typeof p !== "number" || !Number.isFinite(p)) continue;
+      parsed.push({ ms, p: Math.min(1, Math.max(0, p)) });
+    }
+    if (parsed.length < 3) return [];
+    parsed.sort((a, b) => a.ms - b.ms);
+    const deduped: Array<{ ms: number; p: number }> = [];
+    for (const pt of parsed) {
+      if (deduped.length > 0 && deduped[deduped.length - 1].ms === pt.ms) {
+        deduped[deduped.length - 1] = pt;
+      } else {
+        deduped.push(pt);
+      }
+    }
+    return deduped.length >= 3 ? deduped : [];
+  };
+
+  const aggRaw = (
+    res as EventHistoryResponse & {
+      aggregate_line?: Array<{ timestamp: string; home_probability: number }> | null;
+    }
+  ).aggregate_line;
+
+  let chosen = parseSeries(
+    Array.isArray(aggRaw)
+      ? aggRaw.map((pt) => ({ timestamp: pt.timestamp, prob: pt.home_probability }))
+      : null,
+  );
+
+  if (chosen.length < 3 && Array.isArray(res.history)) {
+    chosen = parseSeries(
+      res.history.map((pt) => ({ timestamp: pt.timestamp, prob: pt.home_probability })),
+    );
+  }
+
+  if (chosen.length < 3 && res.win_prob_history && typeof res.win_prob_history === "object") {
+    let best: Array<{ ms: number; p: number }> = [];
+    for (const arr of Object.values(res.win_prob_history)) {
+      if (!Array.isArray(arr)) continue;
+      const cand = parseSeries(
+        arr.map((pt) => ({
+          timestamp: pt.timestamp,
+          prob: (pt as { home_win_prob?: number | null }).home_win_prob ?? null,
+        })),
+      );
+      if (cand.length > best.length) best = cand;
+    }
+    chosen = best;
+  }
+
+  if (chosen.length < 3) return undefined;
+  const minMs = chosen[0].ms;
+  const maxMs = chosen[chosen.length - 1].ms;
+  if (maxMs <= minMs) return undefined;
+
+  // Downsample long histories while preserving endpoints and global extrema
+  const MAX_POINTS = 64;
+  let sampled = chosen;
+  if (chosen.length > MAX_POINTS) {
+    let minIdx = 0;
+    let maxIdx = 0;
+    for (let i = 1; i < chosen.length; i++) {
+      if (chosen[i].p < chosen[minIdx].p) minIdx = i;
+      if (chosen[i].p > chosen[maxIdx].p) maxIdx = i;
+    }
+    const keep = new Set<number>([0, minIdx, maxIdx, chosen.length - 1]);
+    for (let k = 1; k < MAX_POINTS - 1; k++) {
+      keep.add(Math.round((k / (MAX_POINTS - 1)) * (chosen.length - 1)));
+    }
+    sampled = Array.from(keep)
+      .sort((a, b) => a - b)
+      .map((idx) => chosen[idx]);
+  }
+
+  const span = maxMs - minMs;
+  return sampled.map((pt) => ({
+    t: (pt.ms - minMs) / span,
+    p: pt.p,
+  }));
 }
 
 function isTennisSport(sport: string | null | undefined): boolean {
@@ -474,17 +573,102 @@ function FeedPulseIcon({ active }: { active: boolean }) {
   );
 }
 
-function formatPregameKickoff(commenceTime: string, startIsTbd?: boolean | null): string {
+/**
+ * Formats a whole-percent chance without rounding an interior probability onto
+ * 0% ("impossible") or 100% ("certain"). When `rawProb` is omitted (e.g. a
+ * pregame percent whose producer already rejected <= 0 and >= 1), 0 and 100
+ * clamp to `<1%` and `>99%`.
+ */
+export function formatBoundedWholePct(
+  pct: number | null | undefined,
+  rawProb?: number | null,
+): string {
+  if (pct == null || !Number.isFinite(pct)) return "—";
+  if (pct <= 0 && (rawProb === undefined || (rawProb != null && rawProb > 0))) {
+    return BELOW_ONE_PERCENT;
+  }
+  if (pct >= 100 && (rawProb === undefined || (rawProb != null && rawProb < 1))) {
+    return ABOVE_NINETY_NINE_PERCENT;
+  }
+  return `${pct}%`;
+}
+
+/**
+ * Upcoming game start label:
+ * - Same local calendar day: `"Today 5:15 PM"`
+ * - Next six local calendar days (`1..6`): `"Sun 10:00 AM"`
+ * - Beyond six days (or past scheduled start): `"Sun Dec 6, 10:00 AM"`
+ */
+export function formatPregameKickoff(
+  commenceTime: string,
+  startIsTbd?: boolean | null,
+  nowMs: number = Date.now(),
+): string {
   if (startIsTbd === true) {
-    return formatTbdStartLabel(commenceTime);
+    return formatTbdStartLabel(commenceTime, nowMs);
   }
   const dt = new Date(commenceTime);
   if (Number.isNaN(dt.getTime())) return "";
-  return dt.toLocaleString("en-US", {
-    weekday: "short",
+  const nowDate = new Date(nowMs);
+  const startDay = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).getTime();
+  const todayDay = new Date(
+    nowDate.getFullYear(),
+    nowDate.getMonth(),
+    nowDate.getDate(),
+  ).getTime();
+  const dayDiff = Math.round((startDay - todayDay) / 86_400_000);
+  const timeStr = dt.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
   });
+  if (dayDiff === 0) {
+    return `Today ${timeStr}`;
+  }
+  const weekday = dt.toLocaleDateString("en-US", { weekday: "short" });
+  if (dayDiff >= 1 && dayDiff <= 6) {
+    return `${weekday} ${timeStr}`;
+  }
+  const monthDay = dt.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(Math.abs(dayDiff) > 300 ? { year: "numeric" } : {}),
+  });
+  return `${weekday} ${monthDay}, ${timeStr}`;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function resolveLiveClock(
+  source: unknown,
+  sport: string | null | undefined,
+): string | null {
+  if (!source || typeof source !== "object") return null;
+  const rec = source as {
+    espn?: { period?: unknown; game_clock?: unknown } | null;
+    espn_data?: { period?: unknown; game_clock?: unknown } | null;
+    live_clock?: unknown;
+  };
+  const fromEspn = formatLiveClockLabel(
+    stringOrNull(rec.espn?.period),
+    stringOrNull(rec.espn?.game_clock),
+    " ",
+    sport,
+  );
+  if (fromEspn) return fromEspn;
+  const fromEspnData = formatLiveClockLabel(
+    stringOrNull(rec.espn_data?.period),
+    stringOrNull(rec.espn_data?.game_clock),
+    " ",
+    sport,
+  );
+  if (fromEspnData) return fromEspnData;
+  if (typeof rec.live_clock === "string" && rec.live_clock.trim() !== "") {
+    const fromLiveClock = formatLiveClockLabel(rec.live_clock, null, " ", sport);
+    if (fromLiveClock) return fromLiveClock;
+  }
+  return null;
 }
 
 function CrestBadge({
@@ -710,7 +894,12 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
 
   const eventPrematch = (event as Event & { prematch_odds?: FeedEventData["prematch_odds"] })
     .prematch_odds;
-  const pre = prematchReading({ prematch_odds: eventPrematch, opening_odds: undefined });
+  // Ruling 199 & #12801 review: never fill "Pregame" from `opening_odds` (in any state,
+  // including finished search/list cards). Where no `prematch_odds` cutoff reading is sent,
+  // finished cards print Final alone until the endpoint supplies `prematch_odds`.
+  const pre = prematchReading({
+    prematch_odds: eventPrematch,
+  });
   const openAway = pre?.awayPercent ?? null;
   const openHome = pre?.homePercent ?? null;
 
@@ -762,9 +951,7 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
         );
   })();
 
-  const clockLabel = isLive
-    ? formatLiveClockLabel(event.espn?.period, event.espn?.game_clock, " · ", event.sport)
-    : null;
+  const clockLabel = isLive ? resolveLiveClock(event, event.sport) : null;
 
   const tennisExtra = tennis ? extractTennisSets(event.espn) : {};
 
@@ -783,16 +970,19 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     home_score: event.home_score,
     away_score: event.away_score,
     ...(() => {
+      const homeKnown = lookupTeamColors(event.home_team);
+      const awayKnown = lookupTeamColors(event.away_team);
+      const awaySec = event.away_team_data?.secondary_color ?? awayKnown?.secondary ?? null;
       const pair = resolveMatchupTeamColors({
-        homePrimary: event.home_team_data?.primary_color,
-        awayPrimary: event.away_team_data?.primary_color,
-        homeSecondary: event.home_team_data?.secondary_color,
-        awaySecondary: event.away_team_data?.secondary_color,
+        homePrimary: event.home_team_data?.primary_color ?? homeKnown?.primary,
+        awayPrimary: event.away_team_data?.primary_color ?? awayKnown?.primary,
+        homeSecondary: event.home_team_data?.secondary_color ?? homeKnown?.secondary,
+        awaySecondary: awaySec,
       });
       return {
         home_color: pair.home || "#1d4ed8",
         away_color: pair.away || "#475569",
-        away_secondary_color: event.away_team_data?.secondary_color ?? null,
+        away_secondary_color: awaySec,
       };
     })(),
     home_logo:
@@ -840,7 +1030,9 @@ export function buildUnifiedCardFromFeed(
     : ((data.current_odds as { draw_probability?: number | null } | undefined)?.draw_probability ??
         null);
 
-  const pre = prematchReading({ prematch_odds: data.prematch_odds, opening_odds: undefined });
+  const pre = prematchReading({
+    prematch_odds: data.prematch_odds,
+  });
   const rawOpenDraw = (
     data.prematch_odds as { draw_probability?: number | null } | null | undefined
   )?.draw_probability;
@@ -889,9 +1081,7 @@ export function buildUnifiedCardFromFeed(
         );
   })();
 
-  const clockLabel = isLive
-    ? formatLiveClockLabel(data.espn?.period, data.espn?.game_clock, " · ", data.sport)
-    : null;
+  const clockLabel = isLive ? resolveLiveClock(data, data.sport) : null;
 
   const tennisExtra = tennis ? extractTennisSets(data.espn) : {};
 
@@ -910,16 +1100,19 @@ export function buildUnifiedCardFromFeed(
     home_score: data.home_score,
     away_score: data.away_score,
     ...(() => {
+      const homeKnown = lookupTeamColors(data.home_team);
+      const awayKnown = lookupTeamColors(data.away_team);
+      const awaySec = data.away_team_data?.secondary_color ?? awayKnown?.secondary ?? null;
       const pair = resolveMatchupTeamColors({
-        homePrimary: data.home_team_data?.primary_color,
-        awayPrimary: data.away_team_data?.primary_color,
-        homeSecondary: data.home_team_data?.secondary_color,
-        awaySecondary: data.away_team_data?.secondary_color,
+        homePrimary: data.home_team_data?.primary_color ?? homeKnown?.primary,
+        awayPrimary: data.away_team_data?.primary_color ?? awayKnown?.primary,
+        homeSecondary: data.home_team_data?.secondary_color ?? homeKnown?.secondary,
+        awaySecondary: awaySec,
       });
       return {
         home_color: pair.home || "#1d4ed8",
         away_color: pair.away || "#475569",
-        away_secondary_color: data.away_team_data?.secondary_color ?? null,
+        away_secondary_color: awaySec,
       };
     })(),
     home_logo:
@@ -956,10 +1149,26 @@ export function buildUnifiedCardFromFeed(
   };
 }
 
+export interface TeamGameColorOptions {
+  teamColor?: string | null;
+  teamSecondaryColor?: string | null;
+  opponentColor?: string | null;
+  opponentSecondaryColor?: string | null;
+  teamLogo?: string | null;
+  opponentLogo?: string | null;
+  teamAbbrev?: string | null;
+  opponentAbbrev?: string | null;
+}
+
 export function buildUnifiedCardFromTeamGame(
   game: TeamGameBrief,
-  teamColor: string | null,
+  colorOrOptions?: string | null | TeamGameColorOptions,
 ): UnifiedGameCardData {
+  const opts: TeamGameColorOptions =
+    typeof colorOrOptions === "string" || colorOrOptions == null
+      ? { teamColor: colorOrOptions ?? null }
+      : colorOrOptions;
+
   const isDone = isFinishedStatus(game.status);
   const drawSport = sportPricesADraw(game.sport_key);
   const wp =
@@ -978,18 +1187,72 @@ export function buildUnifiedCardFromTeamGame(
       ? 1 - wp
       : null;
 
-  const pre =
-    game.pregame_win_probability != null && Number.isFinite(game.pregame_win_probability)
-      ? Math.round(game.pregame_win_probability * 100)
+  const rawPre =
+    game.pregame_win_probability != null &&
+    Number.isFinite(game.pregame_win_probability) &&
+    game.pregame_win_probability > 0 &&
+    game.pregame_win_probability < 1
+      ? game.pregame_win_probability
       : null;
-  const preOpp = pre != null && !drawSport ? 100 - pre : null;
-  const preHomePct = game.is_home ? pre : preOpp;
-  const preAwayPct = game.is_home ? preOpp : pre;
+  const [preAwayPct, preHomePct] = (() => {
+    if (rawPre == null) return [null, null] as const;
+    if (drawSport) {
+      const single = Math.round(rawPre * 100);
+      return game.is_home ? ([null, single] as const) : ([single, null] as const);
+    }
+    const homePre = game.is_home ? rawPre : 1 - rawPre;
+    const awayPre = game.is_home ? 1 - rawPre : rawPre;
+    const [aPct, hPct] = servedDuelPercents(awayPre, homePre, null, null);
+    return [aPct, hPct] as const;
+  })();
+
+  const gameWithTeamData = game as TeamGameBrief & {
+    home_team_data?: Event["home_team_data"];
+    away_team_data?: Event["away_team_data"];
+  };
+  const homeKnown = lookupTeamColors(game.home_team);
+  const awayKnown = lookupTeamColors(game.away_team);
+
+  const homePrimary =
+    gameWithTeamData.home_team_data?.primary_color ??
+    (game.is_home ? opts.teamColor : opts.opponentColor) ??
+    homeKnown?.primary ??
+    null;
+  const awayPrimary =
+    gameWithTeamData.away_team_data?.primary_color ??
+    (!game.is_home ? opts.teamColor : opts.opponentColor) ??
+    awayKnown?.primary ??
+    null;
+  const homeSecondary =
+    gameWithTeamData.home_team_data?.secondary_color ??
+    (game.is_home ? opts.teamSecondaryColor : opts.opponentSecondaryColor) ??
+    homeKnown?.secondary ??
+    null;
+  const awaySecondary =
+    gameWithTeamData.away_team_data?.secondary_color ??
+    (!game.is_home ? opts.teamSecondaryColor : opts.opponentSecondaryColor) ??
+    awayKnown?.secondary ??
+    null;
 
   const pair = resolveMatchupTeamColors({
-    homePrimary: game.is_home ? teamColor : null,
-    awayPrimary: !game.is_home ? teamColor : null,
+    homePrimary,
+    awayPrimary,
+    homeSecondary,
+    awaySecondary,
   });
+
+  const homeLogo =
+    gameWithTeamData.home_team_data?.logo_small ??
+    gameWithTeamData.home_team_data?.logo_large ??
+    (game.is_home ? opts.teamLogo : opts.opponentLogo) ??
+    espnTeamLogoByName(game.home_team, game.sport_key) ??
+    null;
+  const awayLogo =
+    gameWithTeamData.away_team_data?.logo_small ??
+    gameWithTeamData.away_team_data?.logo_large ??
+    (!game.is_home ? opts.teamLogo : opts.opponentLogo) ??
+    espnTeamLogoByName(game.away_team, game.sport_key) ??
+    null;
 
   return {
     id: game.id,
@@ -1004,11 +1267,17 @@ export function buildUnifiedCardFromTeamGame(
     away_score: game.away_score,
     home_color: pair.home || "#1d4ed8",
     away_color: pair.away || "#475569",
-    away_secondary_color: null,
-    home_logo: espnTeamLogoByName(game.home_team, game.sport_key) ?? null,
-    away_logo: espnTeamLogoByName(game.away_team, game.sport_key) ?? null,
-    home_abbrev: null,
-    away_abbrev: null,
+    away_secondary_color: awaySecondary,
+    home_logo: homeLogo,
+    away_logo: awayLogo,
+    home_abbrev:
+      gameWithTeamData.home_team_data?.abbreviation ??
+      (game.is_home ? opts.teamAbbrev : opts.opponentAbbrev) ??
+      null,
+    away_abbrev:
+      gameWithTeamData.away_team_data?.abbreviation ??
+      (!game.is_home ? opts.teamAbbrev : opts.opponentAbbrev) ??
+      null,
     home_prob: homeProb,
     away_prob: awayProb,
     draw_prob: null,
@@ -1019,7 +1288,7 @@ export function buildUnifiedCardFromTeamGame(
     pregame_projected_away: null,
     projected_home: null,
     projected_away: null,
-    live_clock_label: null,
+    live_clock_label: game.status === "live" ? resolveLiveClock(game, game.sport_key) : null,
     reason_line: null,
   };
 }
@@ -1162,20 +1431,16 @@ export default function EventCard183A({
     return null;
   })();
 
+  // Decision 207 Fix 5: never synthesize a 2-point straight-line chart; require >= 3 real readings.
   const canRenderChartPanel =
     surface === "discover" &&
     !isSuspended &&
     (isLive || isDone) &&
     card.pregame_home_pct != null &&
+    Array.isArray(card.chart_points) &&
+    card.chart_points.length >= 3 &&
     (isDone ? homeWon || awayWon || finishedLevelDraw : homeWholePct != null);
 
-  const finalHomePct = isDone
-    ? homeWon
-      ? 100
-      : awayWon
-        ? 0
-        : 50
-    : (homeWholePct ?? 50);
   const chartEndLabel = isDone
     ? homeWon
       ? "Won"
@@ -1184,13 +1449,7 @@ export default function EventCard183A({
         : "0%"
     : (liveTenths.home ?? `${homeWholePct ?? 50}%`);
 
-  const chartPoints: ChartPoint183A[] =
-    card.chart_points && card.chart_points.length >= 2
-      ? card.chart_points
-      : [
-          { t: 0, p: (card.pregame_home_pct ?? 50) / 100 },
-          { t: 1, p: finalHomePct / 100 },
-        ];
+  const chartPoints: ChartPoint183A[] = canRenderChartPanel ? card.chart_points! : [];
 
   const homeOnlyWithheld =
     !hasExplicitThreeWayCurrent &&
@@ -1270,12 +1529,10 @@ export default function EventCard183A({
           ? "—"
           : liveTenths.away
       : homeOnlyWithheld
-        ? singleAwayPct != null
-          ? `${singleAwayPct}%`
-          : "—"
+        ? formatBoundedWholePct(singleAwayPct, card.away_prob)
         : awayWithheld || awayWholePct == null
           ? "—"
-          : `${awayWholePct}%`;
+          : formatBoundedWholePct(awayWholePct, card.away_prob);
 
   const homePrimaryDisplay = isDone
     ? homeScoreCompare != null
@@ -1285,17 +1542,13 @@ export default function EventCard183A({
         : "—"
     : isLive
       ? liveTenths.home ?? "—"
-      : homeWholePct == null
-        ? "—"
-        : `${homeWholePct}%`;
+      : formatBoundedWholePct(homeWholePct, card.home_prob);
 
   const drawPrimaryDisplay = isDone
     ? "—"
     : isLive
-      ? liveDrawTenths ?? (drawWholePct != null ? `${drawWholePct}%` : "—")
-      : drawWholePct != null
-        ? `${drawWholePct}%`
-        : "—";
+      ? liveDrawTenths ?? formatBoundedWholePct(drawWholePct, inferredDraw)
+      : formatBoundedWholePct(drawWholePct, inferredDraw);
 
   const hasScoreOrSets = hasScore || hasTennisSetBoxes;
   const teamFontClass = sharedGameCardTeamFontClass(awayShort, homeShort, hasScoreOrSets);
@@ -1316,7 +1569,7 @@ export default function EventCard183A({
           {isLive ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-danger/10 px-2 py-0.5 font-semibold text-accent-danger">
               <span className="h-1.5 w-1.5 rounded-full bg-accent-danger" />
-              {card.live_clock_label ? `LIVE · ${card.live_clock_label}` : "LIVE"}
+              {card.live_clock_label || "LIVE"}
             </span>
           ) : isSuspended ? (
             <span className="font-medium text-text-muted">{SUSPENDED_LABEL}</span>
@@ -1488,7 +1741,7 @@ export default function EventCard183A({
                   hasScoreOrSets ? "ml-[14px]" : ""
                 }`}
               >
-                {card.pregame_away_pct != null ? `${card.pregame_away_pct}%` : "—"}
+                {formatBoundedWholePct(card.pregame_away_pct)}
               </span>
             )}
             <span
@@ -1567,7 +1820,7 @@ export default function EventCard183A({
                     hasScoreOrSets ? "ml-[14px]" : ""
                   }`}
                 >
-                  {card.pregame_draw_pct != null ? `${card.pregame_draw_pct}%` : "—"}
+                  {formatBoundedWholePct(card.pregame_draw_pct)}
                 </span>
               )}
               <span
@@ -1677,7 +1930,7 @@ export default function EventCard183A({
                   hasScoreOrSets ? "ml-[14px]" : ""
                 }`}
               >
-                {card.pregame_home_pct != null ? `${card.pregame_home_pct}%` : "—"}
+                {formatBoundedWholePct(card.pregame_home_pct)}
               </span>
             )}
             <span
