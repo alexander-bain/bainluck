@@ -62,7 +62,23 @@ def _importance(data: dict) -> Optional[str]:
 
 
 def _pregame_home(data: dict) -> Optional[float]:
-    return _num((data.get("opening_odds") or {}).get("home_probability"))
+    """The pregame number the card itself prints ("Pregame 21%"): `prematch_odds`,
+    then `opening_odds` only when the card has no pregame of its own. Monday's
+    render (Nov 16) showed the opening number (0.2174, so "22%") in the reason
+    line beside the card's own "21%"."""
+    for key in ("prematch_odds", "opening_odds"):
+        value = _num((data.get(key) or {}).get("home_probability"))
+        if value is not None:
+            return value
+    return None
+
+
+def _pregame_pct(data: dict, home_side: bool, probability: float) -> str:
+    """That side's pregame percent exactly as the card renders it."""
+    rendered = (data.get("prematch_odds") or {}).get(f"{'home' if home_side else 'away'}_rendered_percent")
+    if isinstance(rendered, int) and not isinstance(rendered, bool):
+        return f"{rendered}%"
+    return _pct(probability)
 
 
 def _team(data: dict, side: str) -> str:
@@ -106,7 +122,7 @@ def game_reason(item: dict) -> Optional[dict]:
                 "team": team,
                 "pregame": round(before, 4),
                 "now": round(after, 4),
-                "line": f"{team}: {_pct(before)} before the game, {_pct(after)} now",
+                "line": f"{team}: {_pregame_pct(data, gainer_home, before)} before the game, {_pct(after)} now",
             }
         fast = signals.get("fast_move")
         if isinstance(fast, dict) and abs(_num(fast.get("delta")) or 0) >= FAST_POINTS - _EPS:
@@ -135,7 +151,7 @@ def game_reason(item: dict) -> Optional[dict]:
                     "kind": "upset",
                     "team": winner,
                     "pregame": round(winner_pregame, 4),
-                    "line": f"{winner} won after starting at {_pct(winner_pregame)}",
+                    "line": f"{winner} won after starting at {_pregame_pct(data, home_won, winner_pregame)}",
                 }
         moves = signals.get("team_moves") or []
         if moves:

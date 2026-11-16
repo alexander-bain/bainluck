@@ -157,3 +157,16 @@ class TestWiring:
         assert gr.game_reason_enabled() is False
         monkeypatch.setenv(gr.SWITCH_ENV, "true")
         assert gr.game_reason_enabled() is True
+
+
+def test_the_reason_line_prints_the_cards_own_pregame_number():
+    """Monday Nov 16, seat 13: the card printed "Pregame 21%" (prematch_odds) and
+    the reason line said "starting at 22%" (opening_odds 0.2174)."""
+    item = {"type": "event", "data": {
+        "status": "completed", "home_team": "Vegas Golden Knights", "away_team": "Vancouver Canucks",
+        "home_score": 3, "away_score": 6,
+        "opening_odds": {"home_probability": 0.7826, "away_probability": 0.2174},
+        "prematch_odds": {"home_probability": 0.785, "away_probability": 0.215,
+                          "home_rendered_percent": 79, "away_rendered_percent": 21},
+    }}
+    assert gr.game_reason(item)["line"] == "Vancouver Canucks won after starting at 21%"
