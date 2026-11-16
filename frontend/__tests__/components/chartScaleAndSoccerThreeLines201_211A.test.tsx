@@ -37,6 +37,7 @@ import {
   gameChartYAxis,
   manyWayChartCeiling,
   manyWayChartYTicks,
+  normalizeSoccerThreeWayPercents,
   SOCCER_DRAW_LINE_HEX,
 } from "@/lib/chartScaleRule201";
 import { HEADLINE_STYLE_199 } from "@/lib/headlineModel199";
@@ -261,5 +262,138 @@ describe("Website probability chart scale & soccer 3-line rules (#12750, Rulings
     expect(cardHtml.toLowerCase()).toContain('stroke="#ef0107"');
     expect(cardHtml.toLowerCase()).toContain('stroke="#94a3b8"');
     expect(cardHtml.toLowerCase()).toContain('stroke="#034694"');
+  });
+
+  it("keeps Discover soccer Home anchored to blended aggregate_line even when a 3-way source disagrees", () => {
+    // 1. Coherent disagreement (blend 0.52 vs kalshi 0.48): Home stays 0.52, Draw+Away partition 0.48
+    const coherent = extractDiscoverChartPointsFromHistory(
+      {
+        aggregate_line: [
+          { timestamp: isoAt(0), home_probability: 0.52 },
+          { timestamp: isoAt(30), home_probability: 0.55 },
+          { timestamp: isoAt(60), home_probability: 0.6 },
+        ],
+        win_prob_history: {
+          kalshi: [
+            { timestamp: isoAt(0), home_probability: 0.48, draw_probability: 0.26, away_probability: 0.26 },
+            { timestamp: isoAt(30), home_probability: 0.51, draw_probability: 0.245, away_probability: 0.245 },
+            { timestamp: isoAt(60), home_probability: 0.56, draw_probability: 0.22, away_probability: 0.22 },
+          ],
+        },
+      } as never,
+      "soccer_epl",
+    );
+    expect(coherent).toHaveLength(3);
+    expect(coherent![0].p).toBeCloseTo(0.52, 5);
+    expect(coherent![0].draw! + coherent![0].away! + coherent![0].p).toBeCloseTo(1.0, 5);
+    expect(coherent![2].p).toBeCloseTo(0.6, 5);
+
+    // 2. Large source divergence (blend 0.65 vs stale source 0.35): Home STILL equals blend 0.65,
+    // and incoherent 3-way lines are withheld rather than overriding the blend.
+    const divergent = extractDiscoverChartPointsFromHistory(
+      {
+        aggregate_line: [
+          { timestamp: isoAt(0), home_probability: 0.65 },
+          { timestamp: isoAt(30), home_probability: 0.68 },
+          { timestamp: isoAt(60), home_probability: 0.7 },
+        ],
+        win_prob_history: {
+          kalshi: [
+            { timestamp: isoAt(0), home_probability: 0.35, draw_probability: 0.33, away_probability: 0.32 },
+            { timestamp: isoAt(30), home_probability: 0.36, draw_probability: 0.32, away_probability: 0.32 },
+            { timestamp: isoAt(60), home_probability: 0.37, draw_probability: 0.31, away_probability: 0.32 },
+          ],
+        },
+      } as never,
+      "soccer_epl",
+    );
+    expect(divergent).toHaveLength(3);
+    expect(divergent![0].p).toBeCloseTo(0.65, 5);
+    expect(divergent![2].p).toBeCloseTo(0.7, 5);
+    expect(divergent![0].draw).toBeUndefined();
+    expect(divergent![0].away).toBeUndefined();
+  });
+
+  it("normalizes soccer 3-way triples to 100 in both directions (< 99 and > 100.5 with showBlendLine=false) and keeps 2-way soccer fallback on 0–100", () => {
+    // Sum below 99 in blend mode (40 + 20 + 25 = 85 -> preserves 40, scales 20+25 to 60)
+    const under99 = normalizeSoccerThreeWayPercents(40, 20, 25, { preserveHome: true });
+    expect(under99).not.toBeNull();
+    expect(under99!.home).toBeCloseTo(40, 5);
+    expect(under99!.home + under99!.draw + under99!.away).toBeCloseTo(100, 5);
+
+    // Sum above 100.5 with showBlendLine=false (52 + 31 + 25 = 108 -> proportional 100)
+    const over100NoBlend = normalizeSoccerThreeWayPercents(52, 31, 25, { preserveHome: false });
+    expect(over100NoBlend).not.toBeNull();
+    expect(over100NoBlend!.home + over100NoBlend!.draw + over100NoBlend!.away).toBeCloseTo(100, 5);
+    expect(over100NoBlend!.home).toBeCloseTo((52 / 108) * 100, 5);
+
+    // OddsChart with showBlendLine=false and sum > 100.5 renders 3 normalized curves on 0–100
+    const noBlendHtml = renderToStaticMarkup(
+      <OddsChart
+        history={[]}
+        winProbHistory={{
+          kalshi: [
+            { timestamp: isoAt(0), home_probability: 0.52, draw_probability: 0.31, away_probability: 0.25 },
+            { timestamp: isoAt(15), home_probability: 0.54, draw_probability: 0.3, away_probability: 0.24 },
+          ],
+        }}
+        winProbSources={{
+          kalshi: { display_name: "Kalshi", color: "#22c55e", type: "market", snapshot_count: 2 },
+        }}
+        homeTeam="Everton"
+        awayTeam="Fulham"
+        homeTeamColor="#003399"
+        awayTeamColor="#FFFFFF"
+        awayTeamSecondaryColor="#CC0000"
+        sportKey="soccer_epl"
+        commenceTime={isoAt(0)}
+        isLive
+        eventStatus="live"
+        externalTimeRange="all"
+        awayWithheld
+      />,
+    );
+    expect(noBlendHtml.match(/class="recharts-curve recharts-line-curve"/g) ?? []).toHaveLength(3);
+    expect(noBlendHtml.toLowerCase()).toContain('stroke="#cc0000"');
+
+    // 2-way complement soccer fallback stays cleanly on 0–100 without fabricating Draw/Away lines
+    const twoWayFallbackHtml = renderToStaticMarkup(
+      <OddsChart
+        history={[
+          {
+            timestamp: isoAt(0),
+            home_probability: 0.6,
+            away_probability: 0.4,
+            over_under: null,
+            projected_home_score: null,
+            projected_away_score: null,
+            bookmaker: "consensus",
+          },
+          {
+            timestamp: isoAt(15),
+            home_probability: 0.62,
+            away_probability: 0.38,
+            over_under: null,
+            projected_home_score: null,
+            projected_away_score: null,
+            bookmaker: "consensus",
+          },
+        ]}
+        homeTeam="Everton"
+        awayTeam="Chelsea"
+        homeTeamColor="#003399"
+        awayTeamColor="#034694"
+        sportKey="soccer_epl"
+        commenceTime={isoAt(0)}
+        isLive
+        eventStatus="live"
+        externalTimeRange="all"
+        awayWithheld
+      />,
+    );
+    for (const v of [0, 25, 50, 75, 100]) {
+      expect(twoWayFallbackHtml).toContain(`data-axis-value="${v}"`);
+    }
+    expect(twoWayFallbackHtml).not.toContain('data-testid="soccer-three-line-legend"');
   });
 });

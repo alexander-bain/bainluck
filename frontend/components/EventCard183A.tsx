@@ -159,50 +159,20 @@ export function extractDiscoverChartPointsFromHistory(
 
   let chosen: ParsedPt[] = [];
 
-  // Ruling 211-A: on draw-priced soccer, prefer a genuine 3-way history series so
-  // the Discover card chart draws Home, Draw, and Away together on 0–100.
-  if (sportPricesADraw(sportKey)) {
-    if (res.win_prob_history && typeof res.win_prob_history === "object") {
-      let best3: ParsedPt[] = [];
-      for (const arr of Object.values(res.win_prob_history)) {
-        if (!Array.isArray(arr)) continue;
-        const cand = parseSeries(
-          arr.map((pt) => {
-            const s = extractThreeWaySample(pt, sportKey);
-            return s
-              ? { timestamp: pt.timestamp, prob: s.home, draw: s.draw, away: s.away }
-              : { timestamp: pt.timestamp, prob: null };
-          }),
-        );
-        if (cand.length > best3.length) best3 = cand;
-      }
-      chosen = best3;
-    }
-    if (chosen.length < 3 && Array.isArray(res.history)) {
-      chosen = parseSeries(
-        res.history.map((pt) => {
-          const s = extractThreeWaySample(pt, sportKey);
-          return s
-            ? { timestamp: pt.timestamp, prob: s.home, draw: s.draw, away: s.away }
-            : { timestamp: pt.timestamp, prob: null };
-        }),
-      );
-    }
-  }
-
   const aggRaw = (
     res as EventHistoryResponse & {
       aggregate_line?: Array<{ timestamp: string; home_probability: number }> | null;
     }
   ).aggregate_line;
 
-  if (chosen.length < 3) {
-    chosen = parseSeries(
-      Array.isArray(aggRaw)
-        ? aggRaw.map((pt) => ({ timestamp: pt.timestamp, prob: pt.home_probability }))
-        : null,
-    );
-  }
+  // Always anchor Home (`p`) on the authoritative blend (`aggregate_line` -> `history` ->
+  // `win_prob_history`) so a Discover card never diverges from the blended headline or
+  // from `/events/[id]` ("the blend is the product").
+  chosen = parseSeries(
+    Array.isArray(aggRaw)
+      ? aggRaw.map((pt) => ({ timestamp: pt.timestamp, prob: pt.home_probability }))
+      : null,
+  );
 
   if (chosen.length < 3 && Array.isArray(res.history)) {
     chosen = parseSeries(
@@ -226,6 +196,114 @@ export function extractDiscoverChartPointsFromHistory(
       if (cand.length > best.length) best = cand;
     }
     chosen = best;
+  }
+
+  // Ruling 211-A: on draw-priced soccer, attach Draw and Away to the blended Home series
+  // ONLY when genuine 3-way readings exist and agree coherently with the blended Home
+  // (`|srcHome - pt.p| <= 0.12`), partitioning `1 - pt.p` between Draw and Away so Home
+  // stays 100% equal to the blend and `home + draw + away === 1`. Otherwise fall back to
+  // the single blended Home line.
+  if (sportPricesADraw(sportKey) && chosen.length >= 3) {
+    type WeightedThreeWaySeries = {
+      weight: number;
+      pts: Array<{ ms: number; home: number; draw: number; away: number }>;
+    };
+    const threeWaySeries: WeightedThreeWaySeries[] = [];
+
+    if (Array.isArray(res.history)) {
+      const sbPts: Array<{ ms: number; home: number; draw: number; away: number }> = [];
+      for (const raw of res.history) {
+        if (!raw || typeof raw.timestamp !== "string") continue;
+        const ms = Date.parse(raw.timestamp);
+        const s = extractThreeWaySample(raw, sportKey);
+        if (Number.isFinite(ms) && s) {
+          sbPts.push({ ms, home: s.home, draw: s.draw, away: s.away });
+        }
+      }
+      sbPts.sort((a, b) => a.ms - b.ms);
+      if (sbPts.length > 0) threeWaySeries.push({ weight: 3.0, pts: sbPts });
+    }
+
+    if (res.win_prob_history && typeof res.win_prob_history === "object") {
+      for (const [srcKey, arr] of Object.entries(res.win_prob_history)) {
+        if (!Array.isArray(arr)) continue;
+        const srcPts: Array<{ ms: number; home: number; draw: number; away: number }> = [];
+        for (const raw of arr) {
+          if (!raw || typeof raw.timestamp !== "string") continue;
+          const ms = Date.parse(raw.timestamp);
+          const s = extractThreeWaySample(raw, sportKey);
+          if (Number.isFinite(ms) && s) {
+            srcPts.push({ ms, home: s.home, draw: s.draw, away: s.away });
+          }
+        }
+        srcPts.sort((a, b) => a.ms - b.ms);
+        if (srcPts.length > 0) {
+          const w = srcKey === "espn" ? 1.5 : srcKey === "stat_model" ? 1.0 : 0.8;
+          threeWaySeries.push({ weight: w, pts: srcPts });
+        }
+      }
+    }
+
+    if (threeWaySeries.length > 0) {
+      const MAX_GAP_MS = 30 * 60_000;
+      const MAX_HOME_DRIFT = 0.12;
+      const findNearest = (
+        pts: Array<{ ms: number; home: number; draw: number; away: number }>,
+        targetMs: number,
+      ) => {
+        let bestPt: { ms: number; home: number; draw: number; away: number } | null = null;
+        let bestDiff = Infinity;
+        for (const p of pts) {
+          const diff = Math.abs(p.ms - targetMs);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestPt = p;
+          }
+        }
+        return bestPt && bestDiff <= MAX_GAP_MS ? bestPt : null;
+      };
+
+      const enriched: Array<{ draw: number; away: number }> = [];
+      let coherentAll = true;
+      for (const pt of chosen) {
+        let wSum = 0;
+        let hSum = 0;
+        let dSum = 0;
+        let aSum = 0;
+        for (const series of threeWaySeries) {
+          const near = findNearest(series.pts, pt.ms);
+          if (!near) continue;
+          wSum += series.weight;
+          hSum += series.weight * near.home;
+          dSum += series.weight * near.draw;
+          aSum += series.weight * near.away;
+        }
+        if (wSum <= 0) {
+          coherentAll = false;
+          break;
+        }
+        const meanHome = hSum / wSum;
+        const meanDraw = dSum / wSum;
+        const meanAway = aSum / wSum;
+        const daSum = meanDraw + meanAway;
+        if (Math.abs(meanHome - pt.p) > MAX_HOME_DRIFT || daSum <= 0) {
+          coherentAll = false;
+          break;
+        }
+        const rem = Math.max(0, 1 - pt.p);
+        const draw = (meanDraw / daSum) * rem;
+        const away = Math.max(0, rem - draw);
+        enriched.push({ draw, away });
+      }
+
+      if (coherentAll && enriched.length === chosen.length) {
+        chosen = chosen.map((pt, i) => ({
+          ...pt,
+          draw: enriched[i].draw,
+          away: enriched[i].away,
+        }));
+      }
+    }
   }
 
   if (chosen.length < 3) return undefined;

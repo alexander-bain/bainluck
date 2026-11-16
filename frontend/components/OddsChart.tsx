@@ -31,7 +31,11 @@ import {
   teamAxisEdges,
   teamAxisTick,
 } from "@/lib/eventKeyStats";
-import { extractThreeWaySample, SOCCER_DRAW_LINE_HEX } from "@/lib/chartScaleRule201";
+import {
+  extractThreeWaySample,
+  normalizeSoccerThreeWayPercents,
+  SOCCER_DRAW_LINE_HEX,
+} from "@/lib/chartScaleRule201";
 import { chartTooltipCells, chartTooltipPair } from "@/lib/drawPricedWinner";
 import {
   CHART_TOOLTIP_COMPACT_MEDIA_QUERY,
@@ -2378,17 +2382,20 @@ export default function OddsChart({
           }
         }
         if (wSum > 0) {
-          let rawAway = awayWeighted / wSum;
-          let rawDraw = drawWeighted / wSum;
-          if (showBlendLine && rawAway + rawDraw > 0 && homeVal + rawAway + rawDraw > 100.5) {
-            const rem = Math.max(0, 100 - homeVal);
-            const scale = rem / (rawAway + rawDraw);
-            rawAway *= scale;
-            rawDraw *= scale;
+          const rawAway = awayWeighted / wSum;
+          const rawDraw = drawWeighted / wSum;
+          const norm = normalizeSoccerThreeWayPercents(homeVal, rawDraw, rawAway, {
+            preserveHome: showBlendLine,
+          });
+          if (norm) {
+            pt.soccerHomeDelta = norm.home;
+            pt.soccerDrawDelta = norm.draw;
+            pt.soccerAwayDelta = norm.away;
+          } else {
+            pt.soccerHomeDelta = null;
+            pt.soccerDrawDelta = null;
+            pt.soccerAwayDelta = null;
           }
-          pt.soccerHomeDelta = homeVal;
-          pt.soccerDrawDelta = Math.min(100, Math.max(0, rawDraw));
-          pt.soccerAwayDelta = Math.min(100, Math.max(0, rawAway));
         } else {
           pt.soccerHomeDelta = null;
           pt.soccerDrawDelta = null;
@@ -3487,25 +3494,29 @@ export default function OddsChart({
           {hasSoccerThreeLines &&
             typeof matchingPoint?.soccerHomeDelta === "number" &&
             typeof matchingPoint?.soccerDrawDelta === "number" &&
-            typeof matchingPoint?.soccerAwayDelta === "number" && (
-              <div
-                className="mb-2 pb-2 border-b border-surface-border space-y-0.5 text-xs tabular-nums"
-                data-testid="soccer-three-way-tooltip"
-              >
-                <div className="flex items-center justify-between gap-3 font-semibold" style={{ color: soccerHomeLineHex }}>
-                  <span>{homeShort}</span>
-                  <span>{matchingPoint.soccerHomeDelta.toFixed(1)}%</span>
+            typeof matchingPoint?.soccerAwayDelta === "number" && (() => {
+              const fmtTriple = (v: number) =>
+                tenths ? `${v.toFixed(1)}%` : `${Math.round(v)}%`;
+              return (
+                <div
+                  className="mb-2 pb-2 border-b border-surface-border space-y-0.5 text-xs tabular-nums"
+                  data-testid="soccer-three-way-tooltip"
+                >
+                  <div className="flex items-center justify-between gap-3 font-semibold" style={{ color: soccerHomeLineHex }}>
+                    <span>{homeShort}</span>
+                    <span>{fmtTriple(matchingPoint.soccerHomeDelta)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 font-medium" style={{ color: soccerDrawLineHex }}>
+                    <span>Draw</span>
+                    <span>{fmtTriple(matchingPoint.soccerDrawDelta)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 font-semibold" style={{ color: soccerAwayLineHex }}>
+                    <span>{awayShort}</span>
+                    <span>{fmtTriple(matchingPoint.soccerAwayDelta)}</span>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between gap-3 font-medium" style={{ color: soccerDrawLineHex }}>
-                  <span>Draw</span>
-                  <span>{matchingPoint.soccerDrawDelta.toFixed(1)}%</span>
-                </div>
-                <div className="flex items-center justify-between gap-3 font-semibold" style={{ color: soccerAwayLineHex }}>
-                  <span>{awayShort}</span>
-                  <span>{matchingPoint.soccerAwayDelta.toFixed(1)}%</span>
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
           {/* #925 — at phone width the same numbers as a table: one row per
               source, one column per team, so each source costs one line instead

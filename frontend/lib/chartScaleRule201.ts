@@ -114,3 +114,49 @@ export function extractThreeWaySample(
     away: Math.min(1, Math.max(0, away)),
   };
 }
+
+/**
+ * Normalizes a three-way soccer percentage triple (`0..100`) so `home + draw + away === 100`
+ * in both directions (`< 100` and `> 100`).
+ *
+ * - When `preserveHome` is `true` (authoritative blend mode), `home` stays pinned to the
+ *   blended Home reading (`clampedHome`) and `(draw, away)` partition `100 - clampedHome`
+ *   in proportion to their weighted source ratio.
+ * - When `preserveHome` is `false` (source-only mode), all three components scale
+ *   proportionally by `100 / (home + draw + away)`.
+ */
+export function normalizeSoccerThreeWayPercents(
+  homePct: number,
+  rawDrawPct: number,
+  rawAwayPct: number,
+  opts?: { preserveHome?: boolean },
+): { home: number; draw: number; away: number } | null {
+  if (
+    !Number.isFinite(homePct) ||
+    !Number.isFinite(rawDrawPct) ||
+    !Number.isFinite(rawAwayPct)
+  ) {
+    return null;
+  }
+  const h = Math.min(100, Math.max(0, homePct));
+  const d = Math.max(0, rawDrawPct);
+  const a = Math.max(0, rawAwayPct);
+
+  if (opts?.preserveHome) {
+    const rem = Math.max(0, 100 - h);
+    const daSum = d + a;
+    if (daSum <= 0) {
+      return rem === 0 ? { home: 100, draw: 0, away: 0 } : null;
+    }
+    const drawScaled = (d / daSum) * rem;
+    const awayScaled = Math.max(0, rem - drawScaled);
+    return { home: h, draw: drawScaled, away: awayScaled };
+  }
+
+  const total = h + d + a;
+  if (total <= 0) return null;
+  const homeNorm = (h / total) * 100;
+  const drawNorm = (d / total) * 100;
+  const awayNorm = Math.max(0, 100 - homeNorm - drawNorm);
+  return { home: homeNorm, draw: drawNorm, away: awayNorm };
+}
