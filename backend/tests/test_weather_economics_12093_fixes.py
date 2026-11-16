@@ -55,7 +55,14 @@ def _market(
     )
 
 
-def test_monthly_city_best_excludes_single_day_rain_markets_and_deduplicates_cities():
+class _FrozenDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 11, 16, 12, 0, 0, tzinfo=tz or timezone.utc)
+
+
+def test_monthly_city_best_excludes_single_day_rain_markets_and_deduplicates_cities(monkeypatch):
+    monkeypatch.setattr("app.routes.weather.datetime", _FrozenDateTime)
     nov_end = datetime(2026, 12, 1, 4, 59, 59, tzinfo=timezone.utc)
     dec_end = datetime(2027, 1, 1, 4, 59, 59, tzinfo=timezone.utc)
     feb_day = datetime(2027, 2, 15, 8, 0, 0, tzinfo=timezone.utc)
