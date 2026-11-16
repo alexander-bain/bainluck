@@ -121,6 +121,9 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     private func checkHandoffHelp(large: Bool) throws {
+        // #12513: every check passes on the hosted Watch, but its lookups take
+        // 4-30 s each, so this journey runs past the 180 s default (run 43797904661).
+        executionTimeAllowance = 300
         let app = try launchCurrentGame(large: large, nativeCategory: large
             ? "UICTContentSizeCategoryAccessibilityXXXL" : "UICTContentSizeCategoryL")
         defer { app.terminate() }
@@ -1281,6 +1284,9 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     private func checkScheduledTime(large: Bool) throws {
+        // #12513: every check passes on the hosted Watch, but its lookups take
+        // 4-30 s each, so this journey runs past the 180 s default (run 43797904661).
+        executionTimeAllowance = 300
         let app = try launchCurrentGame(large: large, scenario: "scheduled-time")
         defer { app.terminate() }
         try openPicker(app)

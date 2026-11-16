@@ -17,6 +17,9 @@ final class PickerSelectedStateJourneyTests: XCTestCase {
 
     @MainActor
     private func selectedPickerJourney(largeText: Bool) throws {
+        // #12513: every check passes on the hosted Watch, but its lookups take
+        // 4-30 s each, so this journey runs past the 180 s default (run 43797904661).
+        executionTimeAllowance = 300
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
