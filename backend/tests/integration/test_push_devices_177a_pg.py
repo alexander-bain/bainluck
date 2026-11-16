@@ -61,9 +61,9 @@ async def pg():
     engine = create_async_engine(url, connect_args={"server_settings": {"search_path": schema}})
     async with engine.begin() as conn:
         await conn.execute(text("CREATE TABLE users(id INTEGER PRIMARY KEY)"))
-        await conn.execute(text("CREATE TABLE events(id INTEGER PRIMARY KEY)"))
-        await conn.execute(text("INSERT INTO users VALUES (1), (2)"))
-        await conn.execute(text("INSERT INTO events VALUES (42), (43)"))
+        await conn.execute(text("CREATE TABLE events(id INTEGER PRIMARY KEY, sport_id INTEGER, home_team_name TEXT, away_team_name TEXT, commence_time TIMESTAMPTZ, status TEXT)"))
+        await conn.execute(text("INSERT INTO users (id) VALUES (1), (2)"))
+        await conn.execute(text("INSERT INTO events (id, sport_id, home_team_name, away_team_name, commence_time, status) VALUES (42, 1, 'H', 'A', now(), 'scheduled'), (43, 1, 'H', 'A', now(), 'scheduled')"))
         await conn.run_sync(DEVICES.create)
         await conn.run_sync(REGS.create)
         await conn.run_sync(ActivityKitDelivery.__table__.create)
@@ -264,8 +264,10 @@ def test_the_migration_upgrades_refuses_an_ownerless_activity_and_downgrades():
         with engine.begin() as conn:
             conn.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
             conn.exec_driver_sql(f'SET LOCAL search_path TO "{schema}"')
-            conn.exec_driver_sql("CREATE TABLE users(id int PRIMARY KEY); CREATE TABLE events(id int PRIMARY KEY)")
-            conn.exec_driver_sql("INSERT INTO users VALUES (1); INSERT INTO events VALUES (42)")
+            conn.exec_driver_sql("CREATE TABLE users(id int PRIMARY KEY)")
+            conn.exec_driver_sql("CREATE TABLE events(id INTEGER PRIMARY KEY, sport_id INTEGER, home_team_name TEXT, away_team_name TEXT, commence_time TIMESTAMPTZ, status TEXT)")
+            conn.exec_driver_sql("INSERT INTO users (id) VALUES (1)")
+            conn.exec_driver_sql("INSERT INTO events (id, sport_id, home_team_name, away_team_name, commence_time, status) VALUES (42, 1, 'H', 'A', now(), 'scheduled')")
             with Operations.context(MigrationContext.configure(conn)):
                 _migration("activitykit_registration").upgrade()
                 _migration("activitykit_credential_expiry").upgrade()
