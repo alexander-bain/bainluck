@@ -51,6 +51,7 @@ import {
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
+import { resolveMatchupTeamColors } from "@/lib/teamColors";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import TeamNameLink from "./TeamNameLink";
 import ProjectedFinalLine from "./ProjectedFinalLine";
@@ -501,12 +502,19 @@ function EventFeedCard({
     data.current_odds?.home_rendered_percent,
   );
 
-  // Team colors for the probability bar. Decided as a PAIR (#2962): a bar with
-  // two halves is one decision, not two, or the halves can agree — or, as they
-  // did here for months, both vanish. `probabilityBarPair` owns the rule.
+  // Team colors for the probability bar and missing-logo badges. Decided as a
+  // PAIR (#2962 + Ruling 197): when both teams share a hue family or are
+  // near-identical, away switches to its secondary colour or slate grey.
   const homeColor = data.home_team_data?.primary_color ?? null;
   const awayColor = data.away_team_data?.primary_color ?? null;
-  const barPair = probabilityBarPair(awayColor, homeColor);
+  const awaySecondary = data.away_team_data?.secondary_color ?? null;
+  const matchupBadgeColors = resolveMatchupTeamColors({
+    homePrimary: homeColor,
+    awayPrimary: awayColor,
+    homeSecondary: data.home_team_data?.secondary_color,
+    awaySecondary,
+  });
+  const barPair = probabilityBarPair(awayColor, homeColor, SEGMENT_OPACITY, awaySecondary);
 
   // International sport detection — show flags instead of team logos
   const showFlags = isInternationalSport(data.sport);
@@ -863,7 +871,7 @@ function EventFeedCard({
           <div className="flex-1 min-w-0">
             {/* Away team */}
             <div className="flex items-center gap-1.5 mb-0.5">
-              <TeamLogo url={awayParticipantUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={awayIsFlag} sport={data.sport} abbreviation={data.away_team_data?.abbreviation} />
+              <TeamLogo url={awayParticipantUrl || data.away_team_data?.logo_small} name={data.away_team} color={matchupBadgeColors.away ?? data.away_team_data?.primary_color} isFlag={awayIsFlag} sport={data.sport} abbreviation={data.away_team_data?.abbreviation} />
               <TeamNameLink
                 name={data.away_team}
                 sportKey={data.sport}
@@ -907,7 +915,7 @@ function EventFeedCard({
             </div>
             {/* Home team */}
             <div className="flex items-center gap-1.5">
-              <TeamLogo url={homeParticipantUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={homeIsFlag} sport={data.sport} abbreviation={data.home_team_data?.abbreviation} />
+              <TeamLogo url={homeParticipantUrl || data.home_team_data?.logo_small} name={data.home_team} color={matchupBadgeColors.home ?? data.home_team_data?.primary_color} isFlag={homeIsFlag} sport={data.sport} abbreviation={data.home_team_data?.abbreviation} />
               <TeamNameLink
                 name={data.home_team}
                 sportKey={data.sport}

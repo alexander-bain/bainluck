@@ -965,6 +965,7 @@ export default function EventCard({
                 awayWithheld={awayWithheld}
                 homeColor={event.home_team_data?.primary_color ?? undefined}
                 awayColor={event.away_team_data?.primary_color ?? undefined}
+                awaySecondary={event.away_team_data?.secondary_color ?? undefined}
                 height={isLive ? 3 : 5}
               />
             )}

@@ -10,6 +10,7 @@ import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { ABOVE_NINETY_NINE_PERCENT, BELOW_ONE_PERCENT } from "@/lib/probabilityDisplay";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
+import { resolveMatchupTeamColors } from "@/lib/teamColors";
 import { prematchReading } from "@/lib/prematchReading";
 import {
   cardProjectedFinal,
@@ -55,6 +56,7 @@ export interface UnifiedGameCardData {
   away_score: number | null;
   home_color: string;
   away_color: string;
+  away_secondary_color?: string | null;
   home_logo?: string | null;
   away_logo?: string | null;
   home_abbrev?: string | null;
@@ -484,8 +486,19 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     status: event.status,
     home_score: event.home_score,
     away_score: event.away_score,
-    home_color: event.home_team_data?.primary_color || "#1d4ed8",
-    away_color: event.away_team_data?.primary_color || "#475569",
+    ...(() => {
+      const pair = resolveMatchupTeamColors({
+        homePrimary: event.home_team_data?.primary_color,
+        awayPrimary: event.away_team_data?.primary_color,
+        homeSecondary: event.home_team_data?.secondary_color,
+        awaySecondary: event.away_team_data?.secondary_color,
+      });
+      return {
+        home_color: pair.home || "#1d4ed8",
+        away_color: pair.away || "#475569",
+        away_secondary_color: event.away_team_data?.secondary_color ?? null,
+      };
+    })(),
     home_logo:
       event.home_team_data?.logo_small ??
       event.home_team_data?.logo_large ??
@@ -573,8 +586,19 @@ export function buildUnifiedCardFromFeed(
     status: data.status,
     home_score: data.home_score,
     away_score: data.away_score,
-    home_color: data.home_team_data?.primary_color || "#1d4ed8",
-    away_color: data.away_team_data?.primary_color || "#475569",
+    ...(() => {
+      const pair = resolveMatchupTeamColors({
+        homePrimary: data.home_team_data?.primary_color,
+        awayPrimary: data.away_team_data?.primary_color,
+        homeSecondary: data.home_team_data?.secondary_color,
+        awaySecondary: data.away_team_data?.secondary_color,
+      });
+      return {
+        home_color: pair.home || "#1d4ed8",
+        away_color: pair.away || "#475569",
+        away_secondary_color: data.away_team_data?.secondary_color ?? null,
+      };
+    })(),
     home_logo:
       data.home_team_data?.logo_small ??
       data.home_team_data?.logo_large ??
@@ -629,6 +653,7 @@ export default function EventCard183A({
     card.away_color,
     card.home_color,
     1,
+    card.away_secondary_color,
   );
 
   // Explicit 3-way reading when `draw_prob` is provided or `away + home` leaves >= 2% draw share
@@ -923,7 +948,7 @@ export default function EventCard183A({
               sport={card.sport}
               abbreviation={card.away_abbrev}
               logoUrl={card.away_logo}
-              color={card.away_color}
+              color={awayInk}
             />
             <span
               className={`truncate ${teamFontClass} ${
