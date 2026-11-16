@@ -319,24 +319,7 @@ final class Ruling197TwoTeamSurfacesTests: XCTestCase {
 
                     headlineCard
 
-                    DiscoverCompactSingleGameCard190CView(
-                        event: feedEvent,
-                        prematch: PrematchReading.resolve(
-                            prematch: feedEvent.prematchOdds,
-                            opening: feedEvent.openingOdds
-                        ),
-                        awayColor: awayColor,
-                        homeColor: homeColor,
-                        usesPictureLayout191A: false,
-                        projectionAndSuspendedLines: { EmptyView() },
-                        footerRow: { EmptyView() }
-                    )
-                    .padding(14)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
-                    )
+                    EventCardView(event: feedEvent, reason: nil)
                 }
             }
         }
@@ -404,11 +387,41 @@ final class Ruling197TwoTeamSurfacesTests: XCTestCase {
         .padding(14)
         .frame(width: 390)
         .background(Color(hex: "#F3F4F6"))
+        .environmentObject(PinManager())
+        .environmentObject(NavigationCoordinator())
         .environment(\.colorScheme, .light)
 
-        let renderer = ImageRenderer(content: sheet)
-        renderer.scale = 3.0
-        let image = try XCTUnwrap(renderer.uiImage)
+        let host = hostForMeasurement(sheet, at: .large)
+        host.overrideUserInterfaceStyle = .light
+        let fitting = host.sizeThatFits(in: CGSize(width: 390, height: 10_000))
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: max(fitting.height, 600))
+        let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
+        let window: UIWindow = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: host.view.frame)
+        window.frame = host.view.frame
+        window.overrideUserInterfaceStyle = .light
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let until = Date().addingTimeInterval(0.2)
+        repeat {
+            let nextH = max(host.sizeThatFits(in: CGSize(width: 390, height: 10_000)).height, 600)
+            if abs(host.view.frame.height - nextH) > 0.5 {
+                host.view.frame = CGRect(x: 0, y: 0, width: 390, height: nextH)
+                window.frame = host.view.frame
+            }
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        } while Date() < until
+
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 3.0
+        let image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { _ in
+            _ = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
         XCTAssertEqual(Int(image.size.width.rounded()), 390)
         XCTAssertGreaterThan(image.size.height, 600)
 
