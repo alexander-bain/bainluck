@@ -138,6 +138,8 @@ private struct GameActivityReading {
         guard let pair else { return .home }
         return pair.away > pair.home ? .away : .home
     }
+    /// The other side from `lead`.
+    var trail: Side { lead == .home ? .away : .home }
     /// After a final the lower score steps back, as on a scoreboard. Never a
     /// checkmark: scores alone do not settle a shootout or an aggregate tie.
     var lowerScoredSide: Side? {
@@ -626,6 +628,15 @@ private struct GameActivityCompactTrailing: View {
             } else if reading.snapshot.isTerminal {
                 Text("\(reading.scoreText(.home)) \(reading.badge(.home))")
                     .foregroundStyle(reading.lowerScoredSide == .home ? .secondary : .primary)
+            } else if reading.phase == .before, let now = reading.nowText(reading.trail) {
+                // #199 — before kickoff there is no score: the other side's chance,
+                // in its colour, so the island carries the page's pair.
+                HStack(spacing: 4) {
+                    Text(now)
+                        .foregroundStyle(reading.isStale ? AnyShapeStyle(.secondary)
+                                                         : AnyShapeStyle(reading.color(reading.trail, onDark: true)))
+                    Text(reading.badge(reading.trail))
+                }
             } else if reading.pair != nil, let lead = reading.score(reading.lead),
                       let trail = reading.score(reading.lead == .home ? .away : .home) {
                 // #199 — the score, the leader's first, beside its badge on the left.
