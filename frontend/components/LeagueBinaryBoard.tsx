@@ -46,11 +46,6 @@ const COLLAPSED_ROWS = 12;
 /** Below this the movement is noise, not a mover — the pre-existing bar. */
 const MOVER_MIN = 0.02;
 
-function VenueBadge(_props: { source: string | null | undefined }) {
-  void _props;
-  return null;
-}
-
 function BinaryRow({ market, answer }: LeagueBinary) {
   const p = answer.probability;
   const heat = probabilityHeat(p);
@@ -95,7 +90,6 @@ function BinaryRow({ market, answer }: LeagueBinary) {
         ) : (
           <span className="flex-1 text-[11px] text-text-muted">No probability yet</span>
         )}
-        <VenueBadge source={market.source} />
       </div>
     </Link>
   );

@@ -77,14 +77,14 @@ describe("flat Futures & Markets card", () => {
     expect(html).not.toMatch(/\d%/);
     expect(html).not.toContain("Spread -5.5");
     expect(html).not.toMatch(/>4<\/span>/);
-    expect(html).not.toContain("Oct 3");
+    expect(html).not.toContain("As of");
   });
   test("control: the same card without the key draws its rows and count as before", () => {
     const html = renderToStaticMarkup(<FuturesCard market={listing()} />);
     expect(html).toContain("53%");
     expect(html).toContain("Spread -5.5");
     expect(html).toMatch(/>4<\/span>/);
-    expect(html).toContain("Oct 3");
+    expect(html).toContain("As of ");
     expect(html).not.toContain("on this game");
   });
 });

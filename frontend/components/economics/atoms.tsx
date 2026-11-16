@@ -15,12 +15,6 @@ export function deltaColor(d: number): string {
   return "#9CA3AF";
 }
 
-const SOURCES: Record<string, { label: string; color: string; bg: string; fg: string }> = {
-  kalshi: { label: "Kalshi", color: "#22C55E", bg: "#ECFDF5", fg: "#047857" },
-  polymarket: { label: "Polymarket", color: "#3B82F6", bg: "#EFF6FF", fg: "#1D4ED8" },
-  cross: { label: "Cross-source", color: "#8B5CF6", bg: "#F5F3FF", fg: "#6D28D9" },
-};
-
 export function SectionHeader({ kicker, title, meta, count }: {
   kicker: string; title: string; meta?: string; count?: number;
 }) {
@@ -50,12 +44,6 @@ export function Card({ children, className = "", style }: { children: React.Reac
       {children}
     </div>
   );
-}
-
-export function SourceChip(_props: { src: string }) {
-  void SOURCES;
-  void _props;
-  return null;
 }
 
 export function Delta({ v, unit = "pp" }: { v: number | null | undefined; unit?: string }) {
@@ -345,21 +333,16 @@ export function MarketRow({ q, prob, src, delta, leader, marketId }: {
           destroys: weather measured 8/8 leaders cut at 390px when the same
           content was laid out as a nowrap row (ux/1083, #3147). Each piece
           stays whole and takes the next line when it must. */}
-      <div className="flex items-center flex-wrap gap-1.5 mt-1">
-        <SourceChip src={src} />
-        {/* Which outcome the row's percentage prices. "What will the tariff
-            rate on Canadian imports be on Jan 1, 2027? — 85%" is 85% of "10%
-            or above", not a confidence in anything. Omitted when the question
-            already answers itself. See EconMarketRow.leader (#6696). */}
-        {leader ? (
+      {leader ? (
+        <div className="flex items-center flex-wrap gap-1.5 mt-1">
           <span
             data-testid="econ-market-leader"
             className="text-[11px] font-semibold text-text-secondary"
           >
             {leader}
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </>
   );
   const rowClass = "block py-2.5 border-t border-surface-secondary";

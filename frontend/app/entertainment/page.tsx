@@ -12,7 +12,7 @@ import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { namedPairLabels, twoLegCardPair } from "@/lib/twoLegCardPair";
 import { eventPath } from "@/lib/eventKey";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
-import { preciseObservedAt } from "@/lib/liquidity";
+import { formatAsOfStamp } from "@/lib/asOfStamp";
 import { parseNumericBucketSortKey } from "@/components/economics/atoms";
 import type {
   EntertainmentData,
@@ -147,11 +147,6 @@ function TagChip({ emoji, label }: { emoji?: string; label: string }) {
       {label}
     </span>
   );
-}
-
-function EntSourceChip(_props: { source: string }) {
-  void _props;
-  return null;
 }
 
 function EntDelta({ value }: { value: number | null | undefined }) {
@@ -833,7 +828,6 @@ function SpotifyRace({ markets }: { markets: EntMarketRow[] }) {
             <div className={s.eyebrow}>{ladder ? "🎧 Spotify" : "🎧 Spotify Chart Race"}</div>
             <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{best.q}</div>
           </div>
-          <EntSourceChip source={best.src} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {contenders.map((c, i) => {
@@ -1016,7 +1010,6 @@ function BillboardHeatmap({ markets }: { markets: EntMarketRow[] }) {
             <div className={s.eyebrow}>📊 Billboard Hot 100</div>
             <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{best.q}</div>
           </div>
-          <EntSourceChip source={best.src} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {best.top_outcomes.map((o, i) => (
@@ -1133,7 +1126,6 @@ function BoxOfficeCards({ markets }: { markets: EntMarketRow[] }) {
                     </div>
                   )}
                 </div>
-                <EntSourceChip source={m.src} />
               </div>
               {m.top_outcomes.length > 2 && (
                 <EntHistogram
@@ -1472,9 +1464,6 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
                 ))}
               </div>
             )}
-            <div style={{ marginTop: 8 }}>
-              <EntSourceChip source={m.src} />
-            </div>
           </div>
         </Link>
         );
@@ -1523,17 +1512,16 @@ function GenericMarketCard({ market }: { market: EntMarketRow }) {
   return (
     <Link href={`/futures/${market.market_id}`}>
       <div className={s.card} style={{ padding: 14, height: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 11,
-            color: "var(--text-muted)",
-          }}
-        >
-          <EntSourceChip source={market.src} />
-          {market.outcome_count > 3 && (
+        {market.outcome_count > 3 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 11,
+              color: "var(--text-muted)",
+            }}
+          >
             <span
               style={{
                 marginLeft: "auto",
@@ -1543,8 +1531,8 @@ function GenericMarketCard({ market }: { market: EntMarketRow }) {
             >
               +{market.outcome_count - 3} more
             </span>
-          )}
-        </div>
+          </div>
+        )}
         <h3
           style={{
             margin: 0,
@@ -1649,12 +1637,11 @@ export default function EntertainmentPage() {
             </b>{" "}
             active markets
           </span>
-          {preciseObservedAt(data.updated_at) && (
+          {formatAsOfStamp(data.updated_at) && (
             <>
               <span>·</span>
               <span>
-                Updated{" "}
-                <b className={s.metaNum}>{preciseObservedAt(data.updated_at)}</b>
+                <b className={s.metaNum}>{formatAsOfStamp(data.updated_at)}</b>
               </span>
             </>
           )}

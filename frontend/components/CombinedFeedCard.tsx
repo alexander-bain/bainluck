@@ -13,8 +13,23 @@ import type { FeedItem, FeedFuturesData, FeedFuturesOutcome } from "@/lib/types"
 import { formatProbability } from "@/lib/api";
 import { getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import type { GroupedMarket } from "@/lib/feedSections";
+import { sourceHex } from "@/lib/sourceColors";
 import { countOf } from "@/lib/plural";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
+
+// ---------------------------------------------------------------------------
+// Source display helpers
+// ---------------------------------------------------------------------------
+
+const SOURCE_LABELS: Record<string, string> = {
+  odds_api: "Sportsbooks",
+  kalshi: "Kalshi",
+  polymarket: "Polymarket",
+};
+
+function sourceLabel(source: string): string {
+  return SOURCE_LABELS[source] || source;
+}
 
 // ---------------------------------------------------------------------------
 // Outcome merging (same logic as CombinedMarketCard but using FeedFuturesData)
@@ -156,7 +171,19 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
           )}
         </div>
 
-        {/* Blended outcome rows (no venue labels on card face) */}
+        {/* Source legend */}
+        <div className="px-3 pb-1.5 flex items-center gap-3">
+          {sources.map((src) => (
+            <div key={src} className="flex items-center gap-1">
+              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sourceHex(src) }} />
+              <span className="text-[10px]" style={{ color: sourceHex(src) }}>
+                {sourceLabel(src)}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Cross-source outcome comparison rows */}
         <div className="border-t border-surface-border/50">
           {displayed.map((outcome, i) => (
             <div
@@ -175,12 +202,31 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
                 {outcome.name}
               </span>
 
-              {/* Blended probability */}
-              <span className="w-10 text-right text-[11px] font-mono font-semibold text-text-primary flex-shrink-0">
-                {outcome.avgProbability > 0
-                  ? formatProbability(outcome.avgProbability)
-                  : "—"}
-              </span>
+              {/* Per-source probabilities */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {sources.map((src) => {
+                  const prob = outcome.bySource[src];
+                  if (prob === null || prob === undefined) {
+                    return (
+                      <span
+                        key={src}
+                        className="w-10 text-right text-[10px] text-text-muted"
+                      >
+                        —
+                      </span>
+                    );
+                  }
+                  return (
+                    <span
+                      key={src}
+                      className="w-10 text-right text-[11px] font-mono font-semibold"
+                      style={{ color: sourceHex(src) }}
+                    >
+                      {formatProbability(prob)}
+                    </span>
+                  );
+                })}
+              </div>
 
               {/* Movement indicator. UX-P275: the gate asks whether the move
                   PRINTS, not whether the wire fraction is nonzero — those

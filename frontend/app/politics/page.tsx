@@ -17,7 +17,7 @@ import type {
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
-import { preciseObservedAt } from "@/lib/liquidity";
+import { formatAsOfStamp } from "@/lib/asOfStamp";
 import { NEVER_A_HOLE_MS, seriesFreshness, seriesWindowLabel } from "@/lib/seriesFreshness";
 import s from "./politics.module.css";
 import { SourceBadge } from "@/components/politics/atoms";
@@ -723,7 +723,7 @@ export default function PoliticsPage() {
     other: t.other?.count || 0,
   };
 
-  const updatedStamp = preciseObservedAt(data.updated_at);
+  const asOfStamp = formatAsOfStamp(data.updated_at);
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
@@ -749,9 +749,9 @@ export default function PoliticsPage() {
             <span>
               <b className={s.metaNum}>2</b> sources
             </span>
-            {updatedStamp && (
+            {asOfStamp && (
               <span>
-                Updated <b className={s.metaNum}>{updatedStamp}</b>
+                <b className={s.metaNum}>{asOfStamp}</b>
               </span>
             )}
           </div>

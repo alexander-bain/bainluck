@@ -20,6 +20,7 @@ import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 import { answerRung, inThresholdOrder, ladderSlice, leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
+import { formatAsOfStamp } from "@/lib/asOfStamp";
 // #5552 — the SAME predicate `components/futures/OutcomeRow` uses, imported rather
 // than restated. Its docstring records that restating `isResolved && is_winner === X`
 // per branch is exactly how that surface drifted, so this card calls the one function
@@ -542,13 +543,7 @@ function OutcomeRow({
 }
 
 function formatRelativeTime(isoString: string): string {
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) return "";
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
+  return formatAsOfStamp(isoString) ?? "";
 }
 
 /* #7165 — the local `PinIcon` is gone; this card imports the shared one. Its

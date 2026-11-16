@@ -4,7 +4,7 @@ import useSWR from "swr";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import {
-  SectionHeader, Card, SourceChip, MarketRow, FooterNote,
+  SectionHeader, Card, MarketRow, FooterNote,
   ProbNum, ProbBar, Histogram, Delta, probColor, orderNumericBuckets,
 } from "@/components/economics/atoms";
 import ErrorState from "@/components/ErrorState";
@@ -152,7 +152,6 @@ function DistributionCard({ dist }: { dist: EconDistribution }) {
     <Card>
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="text-[13px] font-semibold text-text-primary leading-snug">{dist.q}</div>
-        <SourceChip src={dist.src} />
       </div>
       {isLadder
         ? <ThresholdLadder rows={dist.rows} />
@@ -266,7 +265,6 @@ export default function EconomicsPage() {
                       Market-implied probability of each Fed funds bracket
                     </p>
                   </div>
-                  <SourceChip src="kalshi" />
                 </div>
                 <FedHeatmap meetings={t.fed.fomc_meetings || []} />
                 <FooterNote left="Each column = one FOMC meeting" right="Resolves post-FOMC" />
@@ -278,7 +276,7 @@ export default function EconomicsPage() {
                       How many cuts in 2026?
                     </div>
                     <RateCutsChart cuts={t.fed.rate_cuts as [number, string][]} />
-                    <FooterNote left="Modal outcome highlighted" right="" />
+                    <FooterNote left="Modal outcome highlighted" />
                   </Card>
                 )}
                 {t.fed.side_markets && t.fed.side_markets.length > 0 && (

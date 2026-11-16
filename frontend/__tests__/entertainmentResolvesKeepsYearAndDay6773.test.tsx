@@ -250,19 +250,21 @@ describe("#6773 — the deadline on /entertainment carries its year", () => {
     // row shows the separator IF AND ONLY IF it has a deadline to separate.
     const rows = metaRowBlocks(html);
     expect(rows).toHaveLength(0);
+    expect(html).not.toMatch(/·\s*Resolves/);
+    expect(html).not.toMatch(/metaRow[^>]*>\s*<span>\s*·/);
 
     // ...and MomentCard's equivalent — an empty right-aligned chip in its header.
     expect(html).toContain("Gone moment");
     expect(html).not.toMatch(/margin-left:auto[^>]*><\/div>/);
   });
 
-  it("CONTROL — the deadline IS there with no leading separator now that venue chips are gone", () => {
+  it("CONTROL — a future deadline renders cleanly with neither a leading nor a trailing separator", () => {
     const rows = metaRowBlocks(renderPage(pair(SPECIMENS.otherYear)));
 
     expect(rows).not.toHaveLength(0);
     for (const row of rows) {
+      expect(row).toBe("<span>Resolves Jan 14, 2027</span>");
       expect(row).not.toContain("·");
-      expect(row).toContain("Resolves Jan 14, 2027");
     }
   });
 

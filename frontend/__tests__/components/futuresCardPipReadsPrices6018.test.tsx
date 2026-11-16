@@ -105,8 +105,8 @@ describe("#6018 the pip speaks for the prices", () => {
       ],
     });
 
-    expect(pip(market)).toBe("Sep 13");
-    expect(pip(market)).not.toBe("Jul 21");
+    expect(pip(market)).toMatch(/^As of \d{1,2}:50\s?[AP]M$/);
+    expect(pip(market)).not.toBe("As of Jul 21");
   });
 
   it("a five-week-old ladder on a row touched minutes ago no longer prints 13m ago", () => {
@@ -121,7 +121,7 @@ describe("#6018 the pip speaks for the prices", () => {
       ],
     });
 
-    expect(pip(market)).toBe("Aug 7");
+    expect(pip(market)).toBe("As of Aug 7");
   });
 
   it("the detail payload's own per-row stamps carry a pinned card", () => {
@@ -137,10 +137,9 @@ describe("#6018 the pip speaks for the prices", () => {
       ],
     });
 
-    // The FLOOR of the two drawn rows, not the fresher one — stamped as a date
-    // rather than relative "Xd ago".
-    expect(pip(market)).toBe("Sep 12");
-    expect(pip(market)).not.toBe("Sep 13"); // the newer of the two rows
+    // The FLOOR of the two drawn rows, not the fresher one — stamped with 'As of'.
+    expect(pip(market)).toBe("As of Sep 12");
+    expect(pip(market)).not.toMatch(/^As of \d{1,2}:50/); // the newer of the two rows
   });
 });
 
@@ -155,7 +154,7 @@ describe("#6018 what it refuses to say", () => {
     });
 
     const printed = pip(market);
-    expect(printed).not.toBe("Sep 13"); // what `updated_at` would have given
+    expect(printed).not.toContain("As of"); // what `updated_at` would have given
     expect(printed === null || printed === "").toBe(true);
   });
 
@@ -215,10 +214,10 @@ describe("#6803 a priceless rung does not date the pinned card", () => {
       outcomes: ladder(),
     });
 
-    expect(pip(market)).toBe("Sep 17");
+    expect(pip(market)).toMatch(/^As of \d{1,2}:50\s?[AP]M$/);
     // What the reader actually saw: 128 days of understatement, bought from
     // five rungs that display no number at all.
-    expect(pip(market)).not.toBe("May 12");
+    expect(pip(market)).not.toBe("As of May 12");
   });
 
   it("a ladder of nothing but placeholders prints no pip rather than May 12", () => {
