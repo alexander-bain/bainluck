@@ -648,10 +648,7 @@ except Exception:  # pragma: no cover - defensive
 #   High-frequency tasks driving user-visible live game data.
 #   Never blocked by batch jobs.
 #
-# background (Standard-1X, concurrency=1 since ruling 206-b, Nov 16 2026):
-#   206-b: two children (~245 MB each) plus the parent measured ~609 MB on this
-#   512 MB dyno, so it runs ONE job at a time. The "2 x 200MB" budget and the
-#   "one slot of two" fact below were written at two and are history.
+# background (Standard-1X, concurrency=2):
 #   Short (<300s) hourly/daily batch tasks and the merge drivers. Latency-
 #   tolerant but must still fire promptly — so it must NOT share slots with
 #   300s+ grinders. Memory budget: 2 × 200MB + ~100MB overhead ≈ 500MB, which
