@@ -3064,6 +3064,7 @@ export default function EventPage({ params }: EventPageProps) {
         onPinToggle={() => togglePin(eventId)}
         animate={streamConnected}
         homeProbForDataAttr={isFinished ? null : homeProb}
+        settledWinnerName={settledOutcome?.winnerName ?? null}
         displayIdentity={headlineIdentity}
         venueSettled={venueSettledSentence !== null}
         stoppageLabel={stoppageLabel}

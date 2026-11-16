@@ -135,6 +135,7 @@ export interface EventPageHeadline199Props {
   onPinToggle: () => void;
   animate?: boolean;
   homeProbForDataAttr?: number | null;
+  settledWinnerName?: string | null;
   displayIdentity?: HeadlineDisplayIdentity | null;
   venueSettled?: boolean;
   stoppageLabel?: string | null;
@@ -151,6 +152,7 @@ export default function EventPageHeadline199({
   onPinToggle,
   animate = false,
   homeProbForDataAttr,
+  settledWinnerName,
   displayIdentity = null,
   venueSettled = false,
   stoppageLabel = null,
@@ -167,13 +169,21 @@ export default function EventPageHeadline199({
   const primarySignature = model.rows
     .map((r) => r.cells[r.cells.length - 1] ?? "")
     .join("|");
+  const isSettledHero = model.phase === "after";
   const homeRow = model.rows.find((r) => r.role === "home") ?? null;
-  const resolvedDataProb =
+  const homeProb =
     homeProbForDataAttr !== undefined
       ? homeProbForDataAttr
-      : model.phase !== "after"
+      : !isSettledHero
         ? (homeRow?.rawProbability ?? null)
         : null;
+  const winnerRow = model.rows.find((r) => r.won === true) ?? null;
+  const resolvedWinnerName =
+    settledWinnerName !== undefined && settledWinnerName !== null
+      ? settledWinnerName
+      : winnerRow && winnerRow.role !== "draw"
+        ? winnerRow.fullName
+        : "";
   const cueRef = useHeadlineChangeCue(primarySignature, animate);
 
   const rowTint = (role: HeadlineCompetitorRow199["role"]): string => {
@@ -270,6 +280,26 @@ export default function EventPageHeadline199({
     );
   };
 
+  const wrapHeroHook = (children: React.ReactNode) =>
+    isSettledHero ? (
+      <div
+        data-testid="event-hero-settled"
+        data-winner={resolvedWinnerName}
+        className="space-y-2"
+      >
+        {children}
+      </div>
+    ) : (
+      <div
+        data-testid="event-hero-probability"
+        data-probability={homeProb ?? ""}
+        {...headlineDisplayAttributes(homeProb === null ? null : displayIdentity)}
+        className="space-y-2"
+      >
+        {children}
+      </div>
+    );
+
   return (
     <div
       ref={cueRef}
@@ -361,12 +391,8 @@ export default function EventPageHeadline199({
       </div>
 
       {/* Unified Column-Header + Competitor-Rows Table */}
-      <div
-        data-testid="event-hero-probability"
-        data-probability={resolvedDataProb ?? ""}
-        {...headlineDisplayAttributes(resolvedDataProb === null ? null : displayIdentity)}
-        className="space-y-2"
-      >
+      {wrapHeroHook(
+        <>
         {model.hasAnyColumnValue && model.columns.length > 0 ? (
           <div
             aria-hidden="true"
@@ -619,7 +645,8 @@ export default function EventPageHeadline199({
             );
           })}
         </div>
-      </div>
+        </>,
+      )}
 
       {/* Segmented Probability Bar (`before` & `during` only; never `after`) */}
       {model.bottomBar ? (

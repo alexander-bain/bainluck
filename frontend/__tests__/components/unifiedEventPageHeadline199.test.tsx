@@ -524,4 +524,24 @@ describe("Unified Website Game Page Headline (Direction 199 & Rulings 200-B, 197
     });
     expect(gonzagaDuke.away.toUpperCase()).toBe("#64748B");
   });
+
+  it("emits event-hero-probability on before/during and event-hero-settled with data-winner on after", () => {
+    const before = resolveSpecimen({});
+    expect(before.html).toContain('data-testid="event-hero-probability"');
+    expect(before.html).toContain('data-probability="0.58"');
+    expect(before.html).not.toContain('data-testid="event-hero-settled"');
+
+    const after = resolveSpecimen(
+      {
+        status: "completed",
+        commence_time: PAST_START,
+        away_score: 20,
+        home_score: 27,
+      },
+      { settledWinnerSide: "home" },
+    );
+    expect(after.html).toContain('data-testid="event-hero-settled"');
+    expect(after.html).toContain('data-winner="Detroit Lions"');
+    expect(after.html).not.toContain('data-testid="event-hero-probability"');
+  });
 });

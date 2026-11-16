@@ -31,7 +31,6 @@ import {
   PREGAME_BASIS_CONSENSUS_SPREAD_TOTAL,
   PREGAME_KIND_LAST_BEFORE_SCHEDULED_START,
 } from "@/lib/finalForecastComparison";
-import { isFinishedStatus } from "@/lib/eventState";
 import { formatEventStartLabel } from "@/lib/eventKeyStats";
 import { sportVocab } from "@/lib/marketMapUtils";
 import { projectedFinalFormat } from "@/lib/projectedFinalPair";
