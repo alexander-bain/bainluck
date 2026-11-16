@@ -81,7 +81,37 @@ describe("Ruling 212-A (#11934 Step 1D) — Shared-link web landing", () => {
               probability: 0.72,
               rendered_percent: 72,
               rank: 1,
-              movement: 0.09,
+              movement: 0.07, // 0.07 * 100 === 7.000000000000001 in IEEE-754; must print integer "7 points"
+            },
+          ],
+        },
+      },
+      {
+        type: "futures",
+        score: 82,
+        reason: "mover",
+        headline: null,
+        data: {
+          id: 77702,
+          name: "California winter 2026-27 wetter or drier?",
+          sport: null,
+          sport_name: null,
+          llm_sport_category: "weather",
+          source: "kalshi",
+          source_count: 1,
+          market_tier: 1,
+          status: "open",
+          resolution_date: "2027-03-31T19:00:00Z",
+          outcome_count: 2,
+          canonical_market_key: null,
+          top_outcomes: [
+            {
+              id: 2,
+              name: "Wetter",
+              probability: 0.61,
+              rendered_percent: 61,
+              rank: 1,
+              movement: -0.29, // -0.29 * 100 === -28.999999999999996 in IEEE-754; must print integer "29 points"
             },
           ],
         },
@@ -97,9 +127,12 @@ describe("Ruling 212-A (#11934 Step 1D) — Shared-link web landing", () => {
     // Shipped EventCard183A renders Proj. · Chance columns on scheduled games
     expect(html).toContain("Proj.");
     expect(html).toContain("Chance");
-    // Futures teaser strips leading "Will the" and prints "points", never "pts"
+    // Futures teaser strips leading "Will the" and prints rounded integer "points", never float garbage or "pts"
     expect(html).toContain("Fed cut interest rates in December");
-    expect(html).toContain("up 9 points");
+    expect(html).toContain("up 7 points");
+    expect(html).toContain("down 29 points");
+    expect(html).not.toContain("7.000");
+    expect(html).not.toContain("28.999");
     expect(html).toContain("Moved +9 points after CPI report");
     expect(html).not.toMatch(/\bpts\b/i);
     expect(html).not.toContain("Projected: PIT");
@@ -121,5 +154,10 @@ describe("Ruling 212-A (#11934 Step 1D) — Shared-link web landing", () => {
     );
     expect(pinnedHtml).toContain("Pinned on this browser");
     expect(pinnedHtml).toContain('aria-label="Unpin game"');
+
+    const maxPinsHtml = renderToStaticMarkup(
+      <SharedLinkPinBanner isPinned={false} pinDisabled={true} onPinToggle={() => {}} />,
+    );
+    expect(maxPinsHtml).toContain('title="Max 6 pins"');
   });
 });

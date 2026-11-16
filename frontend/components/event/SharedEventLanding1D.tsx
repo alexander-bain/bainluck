@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import EventCard183A, { buildUnifiedCardFromFeed } from "@/components/EventCard183A";
-import { PinIcon } from "@/components/PinButton";
+import { PinIcon, pinTitle } from "@/components/PinButton";
 import { fetchFeed } from "@/lib/api";
 import { APP_STORE_URL } from "@/lib/brandCopy";
 import { formatProbabilityPercent, movementPoints } from "@/lib/probabilityDisplay";
@@ -81,8 +81,11 @@ function SharedFuturesTeaserCard({ item }: { item: FeedItem }) {
 
   let moveChip: string | null = null;
   const movePts = movementPoints(leader.movement);
-  if (movePts !== null && Math.abs(movePts) >= 2) {
-    moveChip = `${movePts > 0 ? "up" : "down"} ${Math.abs(movePts)} points`;
+  if (movePts !== null) {
+    const pts = Math.round(Math.abs(movePts));
+    if (pts >= 2) {
+      moveChip = `${movePts > 0 ? "up" : "down"} ${pts} points`;
+    }
   }
 
   return (
@@ -246,6 +249,7 @@ export function SharedLinkPinBanner({
             type="button"
             disabled={pinDisabled}
             onClick={onPinToggle}
+            title={pinTitle(isPinned, pinDisabled)}
             aria-label={isPinned ? "Unpin game" : "Pin game"}
             aria-pressed={isPinned}
             data-testid="shared-link-pin-button"
