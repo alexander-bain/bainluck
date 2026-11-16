@@ -275,6 +275,22 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
       expect(unheldHtml).toContain(">Score<");
       expect(unheldHtml).toContain(">Now<");
       expect(unheldHtml).not.toContain(">Proj.<");
+
+      // On college games without logos, CrestBadge honours served school abbreviations (Ruling 194-A)
+      const customAbbrevItem: FeedItem = {
+        ...feedItem,
+        data: {
+          ...eventData,
+          sport: "americanfootball_ncaaf",
+          home_team: "Bainport State Wolfpack",
+          away_team: "Harbor Tech Engineers",
+          home_team_data: { name: "Bainport State Wolfpack", abbreviation: "BPST" },
+          away_team_data: { name: "Harbor Tech Engineers", abbreviation: "HTU" },
+        },
+      } as unknown as FeedItem;
+      const abbrevHtml = renderToStaticMarkup(<FeedCard item={customAbbrevItem} />);
+      expect(abbrevHtml).toContain(">BPST<");
+      expect(abbrevHtml).toContain(">HTU<");
     });
 
     it("delegates UpcomingGameCard and RecentGameCard to EventCard183A only when NEXT_PUBLIC_GAME_CARD_183A=true", () => {
