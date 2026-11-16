@@ -41,7 +41,7 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-/** Extract visible text plus accessible label/title text from rendered HTML. */
+/** Extract visible text plus accessible label/title text from rendered HTML without regex tag filters. */
 export function extractCardFaceReadableText(html: string): string {
   const attrs: string[] = [];
   const attrRe = /\b(?:aria-label|title)="([^"]*)"/gi;
@@ -49,13 +49,24 @@ export function extractCardFaceReadableText(html: string): string {
   while ((match = attrRe.exec(html)) !== null) {
     if (match[1]) attrs.push(match[1]);
   }
-  const visible = html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&middot;/gi, "·")
-    .replace(/&amp;/gi, "&")
+  let out = "";
+  let insideTag = false;
+  for (let i = 0; i < html.length; i += 1) {
+    const ch = html[i];
+    if (ch === "<") {
+      insideTag = true;
+      out += " ";
+    } else if (ch === ">") {
+      insideTag = false;
+      out += " ";
+    } else if (!insideTag) {
+      out += ch;
+    }
+  }
+  const visible = out
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&middot;", "·")
+    .replaceAll("&amp;", "&")
     .replace(/\s+/g, " ")
     .trim();
   return [visible, ...attrs].join(" | ");
