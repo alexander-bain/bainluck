@@ -106,3 +106,23 @@ class TestOneListingOneRow:
             _member(2, "Will Anthropic's valuation hit (HIGH) $1.5T by December 31?"),
         ])
         assert len(kept) == 2 and not folded
+
+
+def test_brackets_inside_a_title_name_different_things_and_never_fold():
+    """Monday Nov 16, seat 16: the relegation card's "(LP)" and "(RC)" are two
+    clubs (Estudiantes de La Plata, Estudiantes de Río Cuarto)."""
+    from app.utils.discover_bundles import _same_listing_with_a_qualifier as same
+
+    def m(name):
+        return {"name": name, "source": "kalshi"}
+
+    t = "Will Estudiantes ({}) be relegated from the 2026 Liga Profesional (Argentina)?"
+    assert not same(m(t.format("LP")), m(t.format("RC")))
+    g = "Will Gimnasia y Esgrima ({}) be relegated from the 2026 Liga Profesional (Argentina)?"
+    assert not same(m(g.format("M")), m(g.format("LP")))
+    # The case the rule exists for still folds, in either order.
+    a, b = m("Anthropic IPO Closing Market Cap"), m("Anthropic IPO Closing Market Cap (Middle Brackets)")
+    assert same(a, b) and same(b, a)
+    # Same title twice, or another venue, is not this rule's business.
+    assert not same(a, m("Anthropic IPO Closing Market Cap"))
+    assert not same(a, {"name": b["name"], "source": "polymarket"})

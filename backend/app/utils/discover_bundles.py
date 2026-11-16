@@ -1631,25 +1631,34 @@ _TENNIS_TOUR_STOP_RE = re.compile(
 )
 
 
-def _base_title(data: dict[str, Any]) -> str:
-    name = re.sub(r"\([^)]*\)", " ", str(data.get("name") or "").casefold())
-    return " ".join(re.findall(r"[a-z0-9$.%]+", name))
+_LISTING_QUALIFIER_RE = re.compile(r"\s*\(([^()]*)\)\s*\Z")
+
+
+def _norm_title(data: dict[str, Any]) -> str:
+    return " ".join(str(data.get("name") or "").split()).casefold()
 
 
 def _same_listing_with_a_qualifier(a: dict[str, Any], b: dict[str, Any]) -> bool:
-    """One venue's two listings of ONE market, told apart only by a qualifier in
-    parentheses — Saturday's sheet, seat 26: "Anthropic IPO Closing Market Cap"
-    at 46% and "Anthropic IPO Closing Market Cap (Middle Brackets)" at 51% in one
-    card. Different bracket sets, so they cannot be blended (Alex's "near"), but
-    two rows for one market is the duplicate the card exists to fold: the
-    better-ranked one stays. Titles must be identical once the parentheses go,
-    so "Men's ... (Tennis)" and "Women's ... (Tennis)" never match."""
+    """One venue's two listings of ONE market, told apart only by a note in
+    brackets at the END of one title — Saturday's sheet, seat 26: "Anthropic IPO
+    Closing Market Cap" at 46% and "Anthropic IPO Closing Market Cap (Middle
+    Brackets)" at 51% in one card. Different bracket sets, so they cannot be
+    blended (Alex's "near"), but two rows for one market is the duplicate the
+    card exists to fold: the better-ranked one stays.
+
+    The rule is narrow on purpose: one title must be EXACTLY the other plus a
+    trailing "(...)". Brackets inside a title name the thing itself — Monday's
+    relegation card lists "Will Estudiantes (LP) be relegated ..." and "Will
+    Estudiantes (RC) ...", two different clubs — and "Men's ... (Tennis)" vs
+    "Women's ... (Tennis)" differ outside the brackets, so neither ever folds."""
     if str(a.get("source") or "") != str(b.get("source") or ""):
         return False
-    if str(a.get("name") or "") == str(b.get("name") or ""):
+    ta, tb = _norm_title(a), _norm_title(b)
+    if not ta or not tb or ta == tb:
         return False
-    base_a, base_b = _base_title(a), _base_title(b)
-    return bool(base_a) and base_a == base_b
+    short, long_ = (ta, tb) if len(ta) < len(tb) else (tb, ta)
+    match = _LISTING_QUALIFIER_RE.search(long_)
+    return bool(match) and bool(match.group(1).strip()) and long_[: match.start()].strip() == short
 
 
 def _dedupe_same_question_members(
