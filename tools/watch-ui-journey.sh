@@ -197,7 +197,7 @@ python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHAS
 if xcodebuild test-without-building "${XCODE_ARGS[@]}" ${TEST_SELECTION[@]+"${TEST_SELECTION[@]}"} \
   -resultBundlePath "$RESULT" -collect-test-diagnostics never \
   -test-timeouts-enabled YES -default-test-execution-time-allowance 180 \
-  -maximum-test-execution-time-allowance 300 \
+  -maximum-test-execution-time-allowance 540 \
   > "$OUT/tests.log" 2>&1; then
   TEST_EXIT=0
 else

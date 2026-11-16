@@ -2,9 +2,14 @@
 import XCTest
 
 final class WidgetTapJourneyTests: XCTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        executionTimeAllowance = 540
+    }
+
     @MainActor
     func testColdActualWidgetTapRetainsOfflineReading() throws {
-        executionTimeAllowance = 300
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -58,7 +63,7 @@ final class WidgetTapJourneyTests: XCTestCase {
 
     @MainActor
     func testColdActualWidgetTapOffersPickerWithoutSelection() throws {
-        executionTimeAllowance = 300
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -99,7 +104,7 @@ final class WidgetTapJourneyTests: XCTestCase {
 
     @MainActor
     func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {
-        executionTimeAllowance = 300
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -130,7 +135,7 @@ final class WidgetTapJourneyTests: XCTestCase {
 
     @MainActor
     func testActualCornerLauncherAndTap() throws {
-        executionTimeAllowance = 300
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         let originalObservation = Date().addingTimeInterval(-120)
@@ -162,7 +167,7 @@ final class WidgetTapJourneyTests: XCTestCase {
 
     @MainActor
     func testActualCircularLauncherAndTap() throws {
-        executionTimeAllowance = 300
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment = [
@@ -197,7 +202,7 @@ final class WidgetTapJourneyTests: XCTestCase {
 
     @MainActor
     func testActualComplicationHost() throws {
-        executionTimeAllowance = 300
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment = [

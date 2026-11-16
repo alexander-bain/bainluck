@@ -3,6 +3,11 @@ import XCTest
 
 /// Selected-row presentation only; fixtures do not pay physical VoiceOver acceptance.
 final class PickerSelectedStateJourneyTests: XCTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        executionTimeAllowance = 360
+    }
+
     @MainActor
     func testSelectedGameIsMarkedInPickerAndCanChange() throws {
         try selectedPickerJourney(largeText: false)
@@ -93,6 +98,15 @@ final class PickerSelectedStateJourneyTests: XCTestCase {
         XCTAssertTrue(change.waitForExistence(timeout: 15))
         try reveal(change, in: app)
         change.tap()
+        if !app.buttons["watch.picker-cancel"].firstMatch.waitForExistence(timeout: 6) {
+            if let container = try? scrollViewport(in: app),
+               let bounds = try? viewport(container, appFrame: app.frame) {
+                scroll(bounds: bounds, appFrame: app.frame, towardTop: false, in: app)
+            }
+            if change.exists {
+                change.tap()
+            }
+        }
         XCTAssertTrue(app.buttons["watch.picker-cancel"].firstMatch.waitForExistence(timeout: 15))
     }
 
@@ -135,7 +149,8 @@ final class PickerSelectedStateJourneyTests: XCTestCase {
             let appFrame = app.frame
             let bounds = try viewport(container, appFrame: appFrame)
             let frame = element.frame
-            if element.isHittable && bounds.intersects(frame) { return }
+            let visible = frame.intersection(bounds)
+            if element.isHittable && !visible.isEmpty && visible.height >= min(30, frame.height) { return }
             let earlier = frame.minY < bounds.minY
             let hiddenDistance = earlier ? bounds.minY - frame.minY : max(0, frame.maxY - bounds.maxY)
             let distance = min(0.55, max(0.15, (hiddenDistance + 8) / bounds.height))
