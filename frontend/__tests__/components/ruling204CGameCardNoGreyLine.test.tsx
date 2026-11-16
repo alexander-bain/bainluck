@@ -7,14 +7,17 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import EventCard183A, {
+  buildUnifiedCardFromEvent,
   buildUnifiedCardFromTeamGame,
+  extractDiscoverChartPointsFromHistory,
   formatLivePregameSummary,
+  formatPregameKickoff,
   type UnifiedGameCardData,
 } from "@/components/EventCard183A";
 import FeedCard from "@/components/FeedCard";
 import { RecentGameCard, UpcomingGameCard } from "@/components/TeamGameCards";
 import type { TeamGameBrief } from "@/lib/api";
-import type { FeedEventData, FeedItem } from "@/lib/types";
+import type { Event, EventHistoryResponse, FeedEventData, FeedItem } from "@/lib/types";
 
 jest.mock("@/components/Analytics", () => ({
   __esModule: true,
@@ -256,6 +259,9 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
       expect(onHtml).toContain(">Score<");
       expect(onHtml).toContain(">Proj.<");
       expect(onHtml).toContain(">Now<");
+      // Decision 207 live clock fix: prints period + clock ("Q3 6:12") without "LIVE · " prefix
+      expect(onHtml).toContain("Q3 6:12");
+      expect(onHtml).not.toContain("LIVE ·");
       expect(onHtml).toContain('data-testid="pregame-bar-tick"');
       expect(onHtml).not.toContain('data-testid="live-pregame-summary-line"');
       expect(onHtml).not.toContain("Pregame");
@@ -350,5 +356,161 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
       "Lions",
     );
     expect(line?.fullText).toBe("Pregame  Lions 58% · projected 27–23");
+  });
+
+  describe("Decision 207 turn-on fixes (#12616)", () => {
+    it("1. Dates: prints Today on the same day, weekday alone within 6 days, and weekday + month day beyond 6 days", () => {
+      // Jest pins TZ=UTC
+      const nowMs = Date.parse("2026-11-16T15:00:00Z"); // Mon Nov 16
+      expect(formatPregameKickoff("2026-11-16T22:15:00Z", false, nowMs)).toBe("Today 10:15 PM");
+      expect(formatPregameKickoff("2026-11-22T18:00:00Z", false, nowMs)).toBe("Sun 6:00 PM"); // +6d
+      expect(formatPregameKickoff("2026-11-26T18:00:00Z", false, nowMs)).toBe(
+        "Thu Nov 26, 6:00 PM",
+      ); // +10d
+      expect(formatPregameKickoff("2026-12-06T18:00:00Z", false, nowMs)).toBe(
+        "Sun Dec 6, 6:00 PM",
+      ); // +20d
+      expect(formatPregameKickoff("2026-12-13T18:00:00Z", false, nowMs)).toBe(
+        "Sun Dec 13, 6:00 PM",
+      ); // +27d
+    });
+
+    it("2. Finished search cards keep Pregame · Final from opening_odds (Direction 209) and clamp <1% / >99%, while live/scheduled ignore opening_odds", () => {
+      const lmuAtHawaii = {
+        id: 15349582,
+        sport: "basketball_wncaab",
+        sport_name: "WNCAAB",
+        home_team: "Hawai'i Rainbow Warriors",
+        away_team: "Loyola Marymount Lions",
+        commence_time: "2026-11-16T00:45:00Z",
+        status: "completed",
+        home_score: 49,
+        away_score: 59,
+        opening_odds: {
+          home_probability: 0.2665,
+          away_probability: 0.7335,
+        },
+      } as unknown as Event;
+
+      const card = buildUnifiedCardFromEvent(lmuAtHawaii);
+      expect(card.pregame_away_pct).toBe(73);
+      expect(card.pregame_home_pct).toBe(27);
+      const html = renderToStaticMarkup(<EventCard183A card={card} surface="standard" />);
+      expect(html).toContain(">Pregame<");
+      expect(html).toContain(">Final<");
+      expect(html).toContain(">73%<");
+      expect(html).toContain(">27%<");
+
+      // Extreme opening_odds (0.9975 / 0.0025 on USC vs Arkansas-Pine Bluff) clamp to >99% / <1%, never 100% / 0%
+      const uapbAtUsc = {
+        id: 15348906,
+        sport: "basketball_ncaab",
+        sport_name: "NCAAB",
+        home_team: "USC Trojans",
+        away_team: "Arkansas-Pine Bluff Golden Lions",
+        commence_time: "2026-11-16T00:00:00Z",
+        status: "completed",
+        home_score: 122,
+        away_score: 46,
+        opening_odds: {
+          home_probability: 0.9975,
+          away_probability: 0.0025,
+        },
+      } as unknown as Event;
+      const uscHtml = renderToStaticMarkup(
+        <EventCard183A card={buildUnifiedCardFromEvent(uapbAtUsc)} surface="standard" />,
+      );
+      expect(uscHtml).toContain("&gt;99%");
+      expect(uscHtml).toContain("&lt;1%");
+      expect(uscHtml).not.toContain(">100%<");
+      expect(uscHtml).not.toContain(">0%<");
+    });
+
+    it("3. Row order stays strictly [away, home] across before, during, and after regardless of who leads or wins", () => {
+      const states: Array<Partial<Event>> = [
+        { status: "scheduled", home_score: null, away_score: null },
+        { status: "live", home_score: 31, away_score: 24 },
+        { status: "completed", home_score: 49, away_score: 59 }, // away wins
+        { status: "completed", home_score: 122, away_score: 46 }, // home wins
+      ];
+      for (const st of states) {
+        const ev = {
+          id: 15349582,
+          sport: "basketball_wncaab",
+          sport_name: "WNCAAB",
+          home_team: "Hawai'i Rainbow Warriors",
+          away_team: "Loyola Marymount Lions",
+          commence_time: "2026-11-16T00:45:00Z",
+          current_odds: { home_probability: 0.27, away_probability: 0.73 },
+          opening_odds: { home_probability: 0.27, away_probability: 0.73 },
+          ...st,
+        } as unknown as Event;
+        const html = renderToStaticMarkup(
+          <EventCard183A card={buildUnifiedCardFromEvent(ev)} surface="standard" />,
+        );
+        const awayIdx = html.indexOf("Loyola Marymount");
+        const homeIdx = html.indexOf("Hawai");
+        expect(awayIdx).toBeGreaterThan(-1);
+        expect(homeIdx).toBeGreaterThan(awayIdx);
+      }
+    });
+
+    it("4. Team-page cards resolve both teams' colours and apply Ruling 197 collision switching", () => {
+      // Titans (#0C2340 navy blue, secondary #C8102E red) at Lions (#0076B6 Honolulu blue) — both blue family!
+      const titansAtLions = buildUnifiedCardFromTeamGame(
+        makeTeamGame({
+          home_team: "Detroit Lions",
+          away_team: "Tennessee Titans",
+          opponent: "Tennessee Titans",
+          is_home: true,
+        }),
+        { teamColor: "#0076B6", teamSecondaryColor: "#B0B7BC" },
+      );
+      expect(titansAtLions.home_color.toLowerCase()).toBe("#0076b6");
+      // Ruling 197 switches away Titans from blue #0C2340 to red #C8102E (never grey #475569!)
+      expect(titansAtLions.away_color.toLowerCase()).toBe("#c8102e");
+
+      // Buccaneers (#D50A0A red) at Lions (#0076B6 blue) — distinct families keep both main colours
+      const bucsAtLions = buildUnifiedCardFromTeamGame(
+        makeTeamGame({
+          home_team: "Detroit Lions",
+          away_team: "Tampa Bay Buccaneers",
+          opponent: "Tampa Bay Buccaneers",
+          is_home: true,
+        }),
+        { teamColor: "#0076B6" },
+      );
+      expect(bucsAtLions.home_color.toLowerCase()).toBe("#0076b6");
+      expect(bucsAtLions.away_color.toLowerCase()).toBe("#d50a0a");
+    });
+
+    it("5. extractDiscoverChartPointsFromHistory requires >= 3 readings and returns undefined for <= 2 readings", () => {
+      const twoPoints = {
+        event_id: 1,
+        home_team: "A",
+        away_team: "B",
+        history: [
+          { timestamp: "2026-11-16T01:00:00Z", home_probability: 0.79 },
+          { timestamp: "2026-11-16T03:30:00Z", home_probability: 0.0 },
+        ],
+      } as unknown as EventHistoryResponse;
+      expect(extractDiscoverChartPointsFromHistory(twoPoints)).toBeUndefined();
+
+      const fourPoints = {
+        event_id: 1,
+        home_team: "A",
+        away_team: "B",
+        history: [
+          { timestamp: "2026-11-16T01:00:00Z", home_probability: 0.79 },
+          { timestamp: "2026-11-16T01:45:00Z", home_probability: 0.62 },
+          { timestamp: "2026-11-16T02:30:00Z", home_probability: 0.34 },
+          { timestamp: "2026-11-16T03:30:00Z", home_probability: 0.0 },
+        ],
+      } as unknown as EventHistoryResponse;
+      const extracted = extractDiscoverChartPointsFromHistory(fourPoints);
+      expect(extracted).toHaveLength(4);
+      expect(extracted?.[0]).toEqual({ t: 0, p: 0.79 });
+      expect(extracted?.[3]).toEqual({ t: 1, p: 0 });
+    });
   });
 });

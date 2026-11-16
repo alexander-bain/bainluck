@@ -361,11 +361,51 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     expect(host.textContent).toContain("20");
     expect(host.textContent).toContain("28");
     expect(host.textContent).not.toContain("Won ✓");
-    expect(byTestId("discover-191a-chart-panel")).not.toBeNull();
+    // Decision 207 Fix 5: settled card without >= 3 chart_points draws NO chart (never a 2-point straight line)
+    expect(byTestId("discover-191a-chart-panel")).toBeNull();
     // Direction 199: after a game, print no sentence repeating the card
     expect(byTestId("discover-game-reason-line")).toBeNull();
     expect(host.textContent).not.toContain("65%");
     expect(host.textContent).not.toMatch(/Settled/i);
+
+    // With 2 readings, still draws NO chart
+    render(
+      <EventCard183A
+        card={{
+          ...BASE_CARD,
+          status: "completed",
+          completed_at: "2026-11-15T18:05:00Z",
+          away_score: 20,
+          home_score: 28,
+          chart_points: [
+            { t: 0, p: 0.58 },
+            { t: 1, p: 1.0 },
+          ],
+        }}
+        surface="discover"
+      />,
+    );
+    expect(byTestId("discover-191a-chart-panel")).toBeNull();
+
+    // With >= 3 real readings, draws the 191-A chart panel
+    render(
+      <EventCard183A
+        card={{
+          ...BASE_CARD,
+          status: "completed",
+          completed_at: "2026-11-15T18:05:00Z",
+          away_score: 20,
+          home_score: 28,
+          chart_points: [
+            { t: 0, p: 0.58 },
+            { t: 0.5, p: 0.44 },
+            { t: 1, p: 1.0 },
+          ],
+        }}
+        surface="discover"
+      />,
+    );
+    expect(byTestId("discover-191a-chart-panel")).not.toBeNull();
   });
 
   it("formats football/basketball projections as whole numbers and soccer/baseball/hockey to one decimal, omits live bar tick when unheld, and aligns pregame team names", () => {
@@ -509,6 +549,7 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
           projected_home: 1.9,
           chart_points: [
             { t: 0, p: 0.49 },
+            { t: 0.5, p: 0.57 },
             { t: 1, p: 0.64 },
           ],
         }}
