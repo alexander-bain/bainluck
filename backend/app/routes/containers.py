@@ -69,6 +69,9 @@ import math
 import os
 import time
 from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
+from time import perf_counter
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
@@ -108,6 +111,23 @@ from app.utils.container_read_cache import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Containers"])
+
+_stage_timings: ContextVar[Optional[dict[str, float]]] = ContextVar(
+    "container_stage_timings", default=None
+)
+
+
+@contextmanager
+def _time_stage(name: str):
+    timings = _stage_timings.get()
+    if timings is None:
+        yield
+        return
+    started = perf_counter()
+    try:
+        yield
+    finally:
+        timings[name] = timings.get(name, 0.0) + (perf_counter() - started) * 1000
 
 
 def containers_read_enabled() -> bool:
@@ -166,8 +186,14 @@ async def _read_event_card_references(names: list[str]) -> tuple[dict, dict]:
     from app.services.database import async_session_maker
 
     async with async_session_maker() as reference_db:
-        percentiles = await _load_gei_percentiles(reference_db)
-        teams = await _build_team_lookup(reference_db, names)
+        if _stage_timings.get() is not None:
+            # A session checks out lazily on its first query. Opt-in timing
+            # acquires that same connection first to separate it from the reads.
+            with _time_stage("reference_checkout"):
+                await reference_db.connection()
+        with _time_stage("reference_reads"):
+            percentiles = await _load_gei_percentiles(reference_db)
+            teams = await _build_team_lookup(reference_db, names)
     return percentiles, teams
 
 
@@ -270,7 +296,8 @@ async def _assemble_event_cards(
         folded_map = await folded_card_numbers_batch(db, events)
     else:
         folded_map = await folded_card_numbers_batch(db, events)
-        gei_percentiles, team_lookup = await references
+        with _time_stage("reference_wait"):
+            gei_percentiles, team_lookup = await references
 
     cards: dict = {}
     failed: dict = {}
@@ -487,6 +514,7 @@ async def get_container(
         None, description="Theme collections: members per page."
     ),
     compact: bool = False,
+    debug_timing: bool = False,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """One published collection: header, nested collections, and its members as
@@ -500,7 +528,34 @@ async def get_container(
     ``compact=true`` serves an NFL week's games and short linked lists as
     cards, with counts for long linked groups and their unclassified members.
     Both representations read the published membership before caching.
+
+    ``debug_timing=true`` adds request-local stage wall times to the response
+    header. Stages can nest or overlap and must not be added together. Cache
+    writes measure local storage and scheduling, with shared publication still
+    deferred. Cache lookup and publication policy remain the normal path.
     """
+    timings = {} if debug_timing else None
+    token = _stage_timings.set(timings)
+    try:
+        with _time_stage("total"):
+            result = await _get_container(
+                slug, include_children, revision, cursor, limit, compact, db
+            )
+            if timings is not None and not isinstance(result, Response):
+                result = Response(content=_render(result), media_type="application/json")
+        if timings is not None:
+            result.headers["X-Container-Timing"] = ";".join(
+                f"{name}={elapsed:.1f}" for name, elapsed in sorted(timings.items())
+            ) + ";basis=overlapping_wall_ms;shared_publish=background"
+        return result
+    finally:
+        _stage_timings.reset(token)
+
+
+async def _get_container(
+    slug: str, include_children: bool, revision: Optional[str],
+    cursor: Optional[str], limit: Optional[str], compact: bool, db: AsyncSession,
+) -> dict:
     if not containers_read_enabled() or (slug == MIDTERMS_SLUG and not midterms_enabled()):
         raise HTTPException(status_code=404, detail="Not found")
 
@@ -509,7 +564,8 @@ async def get_container(
     if slug in ROUNDUP_PRODUCERS:
         return await serve_roundup(slug, db, include_children=include_children)
 
-    published = await read_published(db, slug)
+    with _time_stage("published_read"):
+        published = await read_published(db, slug)
     if published.state == READ_UNAVAILABLE:
         raise HTTPException(
             status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
@@ -606,30 +662,33 @@ async def _build_published_payload(
 
     event_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_EVENT})
     market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
-    event_cards, event_failed = await _hydrate_event_cards(
-        db, event_ids, concurrent_references=compact
-    )
+    with _time_stage("event_cards"):
+        event_cards, event_failed = await _hydrate_event_cards(
+            db, event_ids, concurrent_references=compact
+        )
     related_counts = {}
     unclassified_count = 0
     if compact and market_ids:
-        rows = (
-            await db.execute(
-                text(
-                    "SELECT id, event_id FROM futures_markets WHERE id = ANY(:market_ids) "
-                    "AND event_id = ANY(:event_ids)"
-                ),
-                {"market_ids": market_ids, "event_ids": sorted(event_cards)},
+        with _time_stage("linked_market_lookup"):
+            rows = (
+                await db.execute(
+                    text(
+                        "SELECT id, event_id FROM futures_markets WHERE id = ANY(:market_ids) "
+                        "AND event_id = ANY(:event_ids)"
+                    ),
+                    {"market_ids": market_ids, "event_ids": sorted(event_cards)},
+                )
+            ).fetchall()
+            members, related_counts, unclassified_count = compact_related_members(
+                members,
+                {int(row[0]): int(row[1]) if row[1] is not None else None for row in rows},
+                set(event_cards),
             )
-        ).fetchall()
-        members, related_counts, unclassified_count = compact_related_members(
-            members,
-            {int(row[0]): int(row[1]) if row[1] is not None else None for row in rows},
-            set(event_cards),
-        )
         market_ids = sorted({int(m["id"]) for m in members if m.get("type") == MEMBER_MARKET})
-    market_cards, market_event_ids, market_failed = await _hydrate_market_cards(
-        db, market_ids, nfl_week=(payload["edition"] or {}).get("kind") == EDITION_NFL_WEEK
-    )
+    with _time_stage("market_cards"):
+        market_cards, market_event_ids, market_failed = await _hydrate_market_cards(
+            db, market_ids, nfl_week=(payload["edition"] or {}).get("kind") == EDITION_NFL_WEEK
+        )
     sections, withheld = present_sections(
         members,
         event_cards=event_cards,
@@ -705,13 +764,14 @@ def _render(payload: dict) -> bytes:
     Rendered once per build instead of once per request; byte-identical to the
     uncached path (the same encoder, the same ``json.dumps`` arguments).
     """
-    return json.dumps(
-        jsonable_encoder(payload),
-        ensure_ascii=False,
-        allow_nan=False,
-        indent=None,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    with _time_stage("render"):
+        return json.dumps(
+            jsonable_encoder(payload),
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+        ).encode("utf-8")
 
 
 def _remember_local(key: str, entry: CachedRead) -> None:
@@ -774,8 +834,9 @@ async def _publish_shared(key: str, entry: CachedRead) -> None:
 def _store_entry(key: str, entry: CachedRead) -> None:
     from app.utils.request_cache import schedule_background
 
-    _remember_local(key, entry)
-    schedule_background(_publish_shared(key, entry))
+    with _time_stage("cache_store"):
+        _remember_local(key, entry)
+        schedule_background(_publish_shared(key, entry))
 
 
 async def _build_entry(
@@ -838,6 +899,7 @@ async def _refresh_in_background(
     from app.utils.request_cache import finish_build
 
     result = None
+    timing_token = _stage_timings.set(None)
     try:
         async with async_session_maker() as session:
             published = await read_published(session, slug)
@@ -858,6 +920,7 @@ async def _refresh_in_background(
         )
     finally:
         finish_build(key, future, result=result)
+        _stage_timings.reset(timing_token)
 
 
 async def _serve_cached(
@@ -867,7 +930,8 @@ async def _serve_cached(
 
     key = container_read_cache_key(slug, published.revision, include_children, compact)
     now = time.time()
-    entry, from_shared = await _load_entry(key, now)
+    with _time_stage("cache_lookup"):
+        entry, from_shared = await _load_entry(key, now)
     if entry is not None and not entry.is_fresh(now):
         # The shared read awaited; a rebuild on this worker may have landed
         # meanwhile. Re-checked with no await between it and the claim below,
