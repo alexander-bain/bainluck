@@ -156,6 +156,7 @@ enum DiscoverSingleGameCard190C {
         let headers: ColumnHeaders
         let rows: [RowModel]
         let bar: BarSegments?
+        var livePregameSummary: EventSportHeadlines12472.LivePregameSummary? = nil
         let scheduledProjectedLine: String?
     }
 
@@ -454,6 +455,8 @@ enum DiscoverSingleGameCard190C {
         // never a separate `"Projected: NE 21 – DET 27"` sentence beneath the bar.
         let scheduledProjectedLine: String? = nil
 
+        let livePregameSummary = LivePregameCardSummary213A.resolve(event: event)
+
         return Model(
             leagueName: event.sportName ?? sportDisplayName(for: event.sport),
             isLive: isLive && !isSuspended,
@@ -462,6 +465,7 @@ enum DiscoverSingleGameCard190C {
             headers: headers,
             rows: rows,
             bar: bar,
+            livePregameSummary: livePregameSummary,
             scheduledProjectedLine: scheduledProjectedLine
         )
     }

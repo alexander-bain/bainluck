@@ -485,6 +485,16 @@ struct EventCardView: View {
                 probabilityBar
             }
 
+            if !compactScheduleStyle,
+               let livePregameSummary = LivePregameCardSummary213A.resolve(event: event) {
+                LivePregameSummaryRow214A1(
+                    summary: livePregameSummary,
+                    surface: .card,
+                    colors: (away: awayColor, home: homeColor),
+                    accessibilityIdentifier: "eventCard.livePregameSummary"
+                )
+            }
+
             if !compactScheduleStyle, let scheduledProjectedLine = scheduledAccessibilityProjectedLine12616 {
                 CompactProjectedContextLine12616(
                     text: scheduledProjectedLine.visible,

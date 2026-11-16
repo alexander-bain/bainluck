@@ -1078,13 +1078,7 @@ def derive_response_ttl_s(
 #: `worker-background`'s celery `--concurrency`, from `backend/Procfile`.
 #: Mirrored, and pinned against the Procfile by
 #: `test_background_concurrency_mirror_matches_the_procfile`.
-#:
-#: Ruling 206-b (Alex, Nov 16 2026): ONE. Two children (~245 MB each) plus the
-#: parent measured ~609 MB on a 512 MB dyno (Nov 15 capture). The LAT-P0xx findings below were measured at TWO and their
-#: tests now pass ``concurrency=2`` explicitly; they are history, not this
-#: worker's current capacity. To switch back: set the Procfile line and this
-#: constant to 2 together.
-BACKGROUND_WORKER_CONCURRENCY = 1
+BACKGROUND_WORKER_CONCURRENCY = 2
 
 
 def background_slot_occupancy(
