@@ -3,10 +3,11 @@ import UIKit
 import XCTest
 @testable import Bain_Luck
 
-/// Item 5 — Ruling 201 Chart Scale & Header Cleanup:
+/// Item 5 — Rulings 201 & 202-A Chart Scale & Header Cleanup:
 /// 1. Two teams or two players with no draw: keep the fitted vertical scale (`probabilityWindow9483` / `ChartProbabilityAxis9483.window`).
-/// 2. Use `0` to `100` (`ChartProbabilityAxis9483.full`) only for soccer and anything with a draw, and for fields of more than two (golf, futures, multi-outcome props).
-/// 3. Remove the legend line (`"Recorded reading"`, `"Change"`, etc.) and the `"Tap any reading for exact time (PT)"` line; keep one title row with the `All` / `Since Start` control (while preserving active scrub selection readout when `selection.date != nil`).
+/// 2. Use `0` to `100` (`ChartProbabilityAxis9483.full`) for soccer and anything with a draw (`soccer`, `cricket`, `boxing`, `rugby`, `chess`).
+/// 3. Ruling 202-A: golf and futures charts keep zero to the top value shown (`yCeilingPercent192A` / `yAxisCeiling(..., fullScale: false)`), not a full `0` to `100`.
+/// 4. Remove the legend line (`"Recorded reading"`, `"Change"`, etc.), the `"Tap any reading for exact time (PT)"` line, and single-line chart legends; keep one title row with the `All` / `Since Start` control (while preserving active scrub selection readout when `selection.date != nil`).
 @MainActor
 final class Ruling201ChartScaleAndHeaderTests: XCTestCase {
 
@@ -102,20 +103,24 @@ final class Ruling201ChartScaleAndHeaderTests: XCTestCase {
             XCTAssertEqual(drawDiscover, ChartProbabilityAxis9483.full, "\(drawSport) uses 0 to 100 full window on Discover")
         }
 
-        // Fields of more than two (EvolutionChartView + Golf) use 0 to 100
-        let sampleEntries: [EvolutionPoint] = [
+        // Ruling 202-A: Futures & golf keep 0 to the top value shown (not full 0 to 100)
+        let lowFieldEntries: [EvolutionPoint] = [
+            EvolutionPoint(date: t0, name: "Scheffler", probability: 18, isCombined: false, archive: nil),
+            EvolutionPoint(date: t0.addingTimeInterval(3600), name: "Scheffler", probability: 24, isCombined: false, archive: nil),
+        ]
+        XCTAssertEqual(
+            EvolutionChartView.yCeilingPercent192A(entries: lowFieldEntries),
+            30.0,
+            "Ruling 202-A: field peaking at 24% keeps 0-to-30% ceiling above the leader, not 0-to-100%"
+        )
+        let midFieldEntries: [EvolutionPoint] = [
             EvolutionPoint(date: t0, name: "Scheffler", probability: 24, isCombined: false, archive: nil),
             EvolutionPoint(date: t0.addingTimeInterval(3600), name: "Scheffler", probability: 28, isCombined: false, archive: nil),
         ]
         XCTAssertEqual(
-            EvolutionChartView.yCeilingPercent192A(entries: sampleEntries, outcomeCount: 4),
-            100.0,
-            "Fields of more than two (outcomeCount = 4) must use 0 to 100"
-        )
-        XCTAssertEqual(
-            EvolutionChartView.yCeilingPercent192A(entries: sampleEntries, outcomeCount: 2),
+            EvolutionChartView.yCeilingPercent192A(entries: midFieldEntries),
             50.0,
-            "Two-outcome non-draw market keeps fitted ceiling"
+            "Ruling 202-A: field peaking at 28% keeps 0-to-50% ceiling above the leader, not 0-to-100%"
         )
     }
 
