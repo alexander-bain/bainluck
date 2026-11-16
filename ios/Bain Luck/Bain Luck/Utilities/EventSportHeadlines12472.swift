@@ -151,8 +151,43 @@ enum EventSportHeadlines12472 {
         let won: Bool?
         /// Per-column emphasis flags for set scores (e.g. won/current tennis set).
         var emphasizedColumns: Set<Int> = []
+        /// Optional per-column tiebreak superscripts (e.g. `7` with superscript `"7"` / `6` with `"4"`).
+        var cellSuperscripts: [Int: String] = [:]
         var abbreviation: String? = nil
         var opponentAbbreviation: String? = nil
+    }
+
+    nonisolated struct TennisSetColumn: Equatable, Sendable {
+        let header: String
+        let awayValue: String
+        let homeValue: String
+        var awayTiebreak: String? = nil
+        var homeTiebreak: String? = nil
+        let awayEmphasized: Bool
+        let homeEmphasized: Bool
+
+        var hasTiebreakSuperscript: Bool {
+            awayTiebreak != nil || homeTiebreak != nil
+        }
+    }
+
+    nonisolated struct TennisScoreFirstModel: Equatable, Sendable {
+        let setColumns: [TennisSetColumn]
+        let pointsColumn: (away: String, home: String)?
+        var pointsHeader: String = "Pts"
+        var isTiebreakPoints: Bool = false
+        let pregameHeader: String?
+        let nowHeader: String
+
+        static func == (lhs: TennisScoreFirstModel, rhs: TennisScoreFirstModel) -> Bool {
+            lhs.setColumns == rhs.setColumns
+                && lhs.pointsColumn?.away == rhs.pointsColumn?.away
+                && lhs.pointsColumn?.home == rhs.pointsColumn?.home
+                && lhs.pointsHeader == rhs.pointsHeader
+                && lhs.isTiebreakPoints == rhs.isTiebreakPoints
+                && lhs.pregameHeader == rhs.pregameHeader
+                && lhs.nowHeader == rhs.nowHeader
+        }
     }
 
     nonisolated enum BottomBar: Equatable, Sendable {
@@ -229,6 +264,7 @@ enum EventSportHeadlines12472 {
         let pregameColumnHeaders: PregameColumnHeaders?
         let liveColumnHeaders: LiveColumnHeaders?
         var finalColumnHeaders: FinalColumnHeaders? = nil
+        var tennisScoreFirst: TennisScoreFirstModel? = nil
         var away: TeamRowModel
         var home: TeamRowModel
         let pregameAwayMarker: Double?
@@ -254,6 +290,7 @@ enum EventSportHeadlines12472 {
             pregameColumnHeaders: PregameColumnHeaders?,
             liveColumnHeaders: LiveColumnHeaders?,
             finalColumnHeaders: FinalColumnHeaders?,
+            tennisScoreFirst: TennisScoreFirstModel? = nil,
             away: TeamRowModel,
             home: TeamRowModel,
             pregameAwayMarker: Double?,
@@ -285,6 +322,7 @@ enum EventSportHeadlines12472 {
             self.pregameColumnHeaders = pregameColumnHeaders
             self.liveColumnHeaders = liveColumnHeaders
             self.finalColumnHeaders = finalColumnHeaders
+            self.tennisScoreFirst = tennisScoreFirst
             self.away = away
             self.home = home
             self.pregameAwayMarker = pregameAwayMarker
@@ -877,14 +915,10 @@ enum EventSportHeadlines12472 {
         let awayProjCell = liveProjNumbers?.away ?? ""
         let homeProjCell = liveProjNumbers?.home ?? ""
 
-        // Tennis score-slot columns (`S1`, `S2`, … or `Sets` + optional `Pts`)
-        let tennisScoreSlot: (
-            columns: [ColumnSpec],
-            awayCells: [String],
-            homeCells: [String],
-            awayEmph: Set<Int>,
-            homeEmph: Set<Int>
-        )? = isTennis ? buildTennisScoreSlot(event: event, hasScore: hasScore, includePoints: isLive) : nil
+        // Tennis score-slot columns (`S1`, `S2`, … or `Sets` + optional `Pts` / `TB`)
+        let tennisScoreSlot: TennisScoreSlotResult? = isTennis
+            ? buildTennisScoreSlot(event: event, hasScore: hasScore, includePoints: isLive)
+            : nil
 
         let columns: [ColumnSpec] = {
             if let tennisSlot = tennisScoreSlot {
@@ -1063,12 +1097,16 @@ enum EventSportHeadlines12472 {
         let homeCells: [String]
         let awayEmph: Set<Int>
         let homeEmph: Set<Int>
+        let awaySuperscripts: [Int: String]
+        let homeSuperscripts: [Int: String]
 
         if let tennisSlot = tennisScoreSlot {
             awayCells = tennisSlot.awayCells + [awayNow]
             homeCells = tennisSlot.homeCells + [homeNow]
             awayEmph = tennisSlot.awayEmph
             homeEmph = tennisSlot.homeEmph
+            awaySuperscripts = tennisSlot.awaySuperscripts
+            homeSuperscripts = tennisSlot.homeSuperscripts
         } else {
             var a: [String] = []
             var h: [String] = []
@@ -1086,6 +1124,8 @@ enum EventSportHeadlines12472 {
             homeCells = h
             awayEmph = []
             homeEmph = []
+            awaySuperscripts = [:]
+            homeSuperscripts = [:]
         }
 
         let awayRow = CompetitorRow(
@@ -1098,7 +1138,8 @@ enum EventSportHeadlines12472 {
             cells: awayCells,
             rawProbability: awayNow.isEmpty ? nil : awayProb,
             won: nil,
-            emphasizedColumns: awayEmph
+            emphasizedColumns: awayEmph,
+            cellSuperscripts: awaySuperscripts
         )
         let homeRow = CompetitorRow(
             role: .home,
@@ -1110,7 +1151,8 @@ enum EventSportHeadlines12472 {
             cells: homeCells,
             rawProbability: homeNow.isEmpty ? nil : homeProb,
             won: nil,
-            emphasizedColumns: homeEmph
+            emphasizedColumns: homeEmph,
+            cellSuperscripts: homeSuperscripts
         )
 
         return Model(
@@ -1130,6 +1172,7 @@ enum EventSportHeadlines12472 {
             pregameColumnHeaders: nil,
             liveColumnHeaders: compatLiveHeaders,
             finalColumnHeaders: nil,
+            tennisScoreFirst: tennisScoreSlot?.scoreFirstModel,
             away: makeCompatTeamRow(awayRow, projNumber: nil, liveProjNumber: liveProjNumbers?.away, liveScore: hasScore ? event.awayScore : nil, pregameChance: nil, chance: awayNow, finalText: nil),
             home: makeCompatTeamRow(homeRow, projNumber: nil, liveProjNumber: liveProjNumbers?.home, liveScore: hasScore ? event.homeScore : nil, pregameChance: nil, chance: homeNow, finalText: nil),
             pregameAwayMarker: pregameMarker,
@@ -1424,14 +1467,8 @@ enum EventSportHeadlines12472 {
             return base
         }()
 
-        // Finished tennis set columns (if period scores exist)
-        let tennisFinishedSets: (
-            columns: [ColumnSpec],
-            awayCells: [String],
-            homeCells: [String],
-            awayEmph: Set<Int>,
-            homeEmph: Set<Int>
-        )? = {
+        // Finished tennis set columns (if period scores or linescore sets exist)
+        let tennisFinishedSets: TennisScoreSlotResult? = {
             guard isTennisSport(event.sport), isFinished else { return nil }
             let slot = buildTennisScoreSlot(event: event, hasScore: false, includePoints: false)
             return slot.columns.isEmpty ? nil : slot
@@ -1456,7 +1493,8 @@ enum EventSportHeadlines12472 {
             cells: awayCells,
             rawProbability: strictPregame?.awayProbability,
             won: awayWon,
-            emphasizedColumns: tennisFinishedSets?.awayEmph ?? []
+            emphasizedColumns: tennisFinishedSets?.awayEmph ?? [],
+            cellSuperscripts: tennisFinishedSets?.awaySuperscripts ?? [:]
         )
         let homeRow = CompetitorRow(
             role: .home,
@@ -1468,7 +1506,8 @@ enum EventSportHeadlines12472 {
             cells: homeCells,
             rawProbability: strictPregame?.homeProbability,
             won: homeWon,
-            emphasizedColumns: tennisFinishedSets?.homeEmph ?? []
+            emphasizedColumns: tennisFinishedSets?.homeEmph ?? [],
+            cellSuperscripts: tennisFinishedSets?.homeSuperscripts ?? [:]
         )
 
         return Model(
@@ -2285,22 +2324,32 @@ enum EventSportHeadlines12472 {
         event: EventDetail,
         liveStatusText: String?
     ) -> String {
+        let isTiebreak = event.linescore?.tiebreak == true
         if let rawPeriod = trimmedNonEmpty(event.espn?.period) {
             let normalized = normalizeTennisSetLabel(rawPeriod)
+            let alreadyMentionsTB = normalized.localizedCaseInsensitiveContains("tb")
+                || normalized.localizedCaseInsensitiveContains("tiebreak")
+            if isTiebreak && !alreadyMentionsTB {
+                return "LIVE · \(normalized) · TB"
+            }
             return "LIVE · \(normalized)"
         }
+        let linescoreSetCount = event.linescore?.sets?.count ?? 0
         let setCount = max(
-            event.boxScoreData?.awayPeriodScores?.compactMap { $0 }.count ?? 0,
-            event.boxScoreData?.homePeriodScores?.compactMap { $0 }.count ?? 0
+            linescoreSetCount,
+            max(
+                event.boxScoreData?.awayPeriodScores?.compactMap { $0 }.count ?? 0,
+                event.boxScoreData?.homePeriodScores?.compactMap { $0 }.count ?? 0
+            )
         )
         if setCount >= 1 {
-            return "LIVE · Set \(setCount)"
+            return isTiebreak ? "LIVE · Set \(setCount) · TB" : "LIVE · Set \(setCount)"
         }
         if let status = trimmedNonEmpty(liveStatusText),
            parseTennisGamePointsFromClock(status) == nil {
-            return "LIVE · \(status)"
+            return isTiebreak ? "LIVE · \(status) · TB" : "LIVE · \(status)"
         }
-        return "LIVE"
+        return isTiebreak ? "LIVE · TB" : "LIVE"
     }
 
     nonisolated private static func normalizeTennisSetLabel(_ raw: String) -> String {
@@ -2316,6 +2365,10 @@ enum EventSportHeadlines12472 {
 
     nonisolated private static let tennisPointsPairRegex: NSRegularExpression? = try? NSRegularExpression(
         pattern: #"^\s*(0|15|30|40|Ad|AD)\s*[-–:]\s*(0|15|30|40|Ad|AD)\s*$"#
+    )
+
+    nonisolated private static let tennisTiebreakPairRegex: NSRegularExpression? = try? NSRegularExpression(
+        pattern: #"^\s*(\d{1,2})\s*[-–:]\s*(\d{1,2})\s*$"#
     )
 
     nonisolated static func parseTennisGamePointsFromClock(
@@ -2335,19 +2388,45 @@ enum EventSportHeadlines12472 {
         )
     }
 
+    nonisolated static func parseTennisTiebreakPointsFromClock(
+        _ rawClock: String?
+    ) -> (away: String, home: String)? {
+        guard let rawClock = trimmedNonEmpty(rawClock) else { return nil }
+        let nsRange = NSRange(rawClock.startIndex..<rawClock.endIndex, in: rawClock)
+        guard let match = tennisTiebreakPairRegex?.firstMatch(in: rawClock, options: [], range: nsRange),
+              let firstRange = Range(match.range(at: 1), in: rawClock),
+              let secondRange = Range(match.range(at: 2), in: rawClock)
+        else { return nil }
+        return (away: String(rawClock[firstRange]), home: String(rawClock[secondRange]))
+    }
+
+    private struct TennisScoreSlotResult {
+        let columns: [ColumnSpec]
+        let awayCells: [String]
+        let homeCells: [String]
+        let awayEmph: Set<Int>
+        let homeEmph: Set<Int>
+        let awaySuperscripts: [Int: String]
+        let homeSuperscripts: [Int: String]
+        let scoreFirstModel: TennisScoreFirstModel
+    }
+
     nonisolated private static func buildTennisScoreSlot(
         event: EventDetail,
         hasScore: Bool,
         includePoints: Bool
-    ) -> (
-        columns: [ColumnSpec],
-        awayCells: [String],
-        homeCells: [String],
-        awayEmph: Set<Int>,
-        homeEmph: Set<Int>
-    ) {
-        let awayPeriods = event.boxScoreData?.awayPeriodScores ?? []
-        let homePeriods = event.boxScoreData?.homePeriodScores ?? []
+    ) -> TennisScoreSlotResult {
+        let linescoreSets = event.linescore?.sets ?? []
+        let linescoreTiebreaks = event.linescore?.tiebreaks ?? []
+        let awayPeriods: [Int?]
+        let homePeriods: [Int?]
+        if !linescoreSets.isEmpty {
+            homePeriods = linescoreSets.map { $0.count >= 2 ? $0[0] : nil }
+            awayPeriods = linescoreSets.map { $0.count >= 2 ? $0[1] : nil }
+        } else {
+            awayPeriods = event.boxScoreData?.awayPeriodScores ?? []
+            homePeriods = event.boxScoreData?.homePeriodScores ?? []
+        }
         let maxSets = max(awayPeriods.count, homePeriods.count)
 
         var cols: [ColumnSpec] = []
@@ -2355,46 +2434,123 @@ enum EventSportHeadlines12472 {
         var homeCells: [String] = []
         var awayEmph: Set<Int> = []
         var homeEmph: Set<Int> = []
+        var awaySuperscripts: [Int: String] = [:]
+        var homeSuperscripts: [Int: String] = [:]
+        var setColumns: [TennisSetColumn] = []
+        var activeSetIsSixAll = false
 
         if maxSets > 0 {
-            var pairs: [(index: Int, away: Int, home: Int)] = []
+            var pairs: [(index: Int, away: Int, home: Int, awayTB: String?, homeTB: String?)] = []
             for idx in 0..<maxSets {
                 let a = idx < awayPeriods.count ? awayPeriods[idx] : nil
                 let h = idx < homePeriods.count ? homePeriods[idx] : nil
                 if let a, let h {
-                    pairs.append((index: idx + 1, away: a, home: h))
+                    var awayTB: String? = nil
+                    var homeTB: String? = nil
+                    if idx < linescoreTiebreaks.count,
+                       let tbPair = linescoreTiebreaks[idx],
+                       tbPair.count >= 2 {
+                        homeTB = "\(tbPair[0])"
+                        awayTB = "\(tbPair[1])"
+                    }
+                    pairs.append((index: idx + 1, away: a, home: h, awayTB: awayTB, homeTB: homeTB))
                 }
+            }
+            if let last = pairs.last, last.away == 6 && last.home == 6 {
+                activeSetIsSixAll = true
             }
             for (offset, entry) in pairs.enumerated() {
                 let isCurrentSet = includePoints && (offset == pairs.count - 1)
+                let aEmph = isCurrentSet || entry.away > entry.home
+                let hEmph = isCurrentSet || entry.home > entry.away
                 cols.append(.init(role: .setScore(index: entry.index), header: "S\(entry.index)"))
                 awayCells.append("\(entry.away)")
                 homeCells.append("\(entry.home)")
-                if isCurrentSet || entry.away > entry.home { awayEmph.insert(offset) }
-                if isCurrentSet || entry.home > entry.away { homeEmph.insert(offset) }
+                if aEmph { awayEmph.insert(offset) }
+                if hEmph { homeEmph.insert(offset) }
+                if let aTB = entry.awayTB { awaySuperscripts[offset] = aTB }
+                if let hTB = entry.homeTB { homeSuperscripts[offset] = hTB }
+                setColumns.append(
+                    TennisSetColumn(
+                        header: "S\(entry.index)",
+                        awayValue: "\(entry.away)",
+                        homeValue: "\(entry.home)",
+                        awayTiebreak: entry.awayTB,
+                        homeTiebreak: entry.homeTB,
+                        awayEmphasized: aEmph,
+                        homeEmphasized: hEmph
+                    )
+                )
             }
         }
 
         if cols.isEmpty && includePoints {
             cols.append(.init(role: .setScore(index: 0), header: "Sets"))
+            let awaySetsVal = hasScore ? (event.awayScore.map(String.init) ?? "") : ""
+            let homeSetsVal = hasScore ? (event.homeScore.map(String.init) ?? "") : ""
+            awayCells.append(awaySetsVal)
+            homeCells.append(homeSetsVal)
             if hasScore {
-                awayCells.append(event.awayScore.map(String.init) ?? "")
-                homeCells.append(event.homeScore.map(String.init) ?? "")
                 awayEmph.insert(0)
                 homeEmph.insert(0)
-            } else {
-                awayCells.append("")
-                homeCells.append("")
+            }
+            if !awaySetsVal.isEmpty && !homeSetsVal.isEmpty {
+                setColumns.append(
+                    TennisSetColumn(
+                        header: "Sets",
+                        awayValue: awaySetsVal,
+                        homeValue: homeSetsVal,
+                        awayEmphasized: true,
+                        homeEmphasized: true
+                    )
+                )
             }
         }
 
-        if includePoints, let pts = parseTennisGamePointsFromClock(event.espn?.gameClock) {
-            cols.append(.init(role: .gamePoints, header: "Pts"))
+        let resolvedPoints: (pair: (away: String, home: String)?, isTiebreak: Bool) = {
+            guard includePoints else { return (pair: nil, isTiebreak: false) }
+            if let awayPts = trimmedNonEmpty(event.linescore?.awayPoints),
+               let homePts = trimmedNonEmpty(event.linescore?.homePoints) {
+                return (pair: (away: awayPts, home: homePts), isTiebreak: event.linescore?.tiebreak == true)
+            }
+            if let ordinary = parseTennisGamePointsFromClock(event.espn?.gameClock) {
+                return (pair: ordinary, isTiebreak: false)
+            }
+            let periodIndicatesTB = (event.espn?.period?.localizedCaseInsensitiveContains("tiebreak") == true)
+                || (event.espn?.period?.localizedCaseInsensitiveContains("tb") == true)
+            if (event.linescore?.tiebreak == true || activeSetIsSixAll || periodIndicatesTB),
+               let tbPts = parseTennisTiebreakPointsFromClock(event.espn?.gameClock) {
+                return (pair: tbPts, isTiebreak: true)
+            }
+            return (pair: nil, isTiebreak: false)
+        }()
+
+        let pointsHeader = resolvedPoints.isTiebreak ? "TB" : "Pts"
+        if let pts = resolvedPoints.pair {
+            cols.append(.init(role: .gamePoints, header: pointsHeader))
             awayCells.append(pts.away)
             homeCells.append(pts.home)
         }
 
-        return (cols, awayCells, homeCells, awayEmph, homeEmph)
+        let sfModel = TennisScoreFirstModel(
+            setColumns: setColumns,
+            pointsColumn: resolvedPoints.pair,
+            pointsHeader: pointsHeader,
+            isTiebreakPoints: resolvedPoints.isTiebreak,
+            pregameHeader: nil,
+            nowHeader: "Now"
+        )
+
+        return TennisScoreSlotResult(
+            columns: cols,
+            awayCells: awayCells,
+            homeCells: homeCells,
+            awayEmph: awayEmph,
+            homeEmph: homeEmph,
+            awaySuperscripts: awaySuperscripts,
+            homeSuperscripts: homeSuperscripts,
+            scoreFirstModel: sfModel
+        )
     }
 
     nonisolated private static func trimmedNonEmpty(_ text: String?) -> String? {
