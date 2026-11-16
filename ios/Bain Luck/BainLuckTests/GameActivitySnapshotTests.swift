@@ -196,4 +196,23 @@ final class GameActivitySnapshotTests: XCTestCase {
         decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
         XCTAssertNil(decoded.homeHeadlineTenths, "A one-sided reading has no pair to split")
     }
+
+    /// Direction 209 — the pregame pair is both sides or neither, each 0–100,
+    /// and it survives a round trip through the activity's content state.
+    func testThePregamePairIsBothOrNeitherAndRoundTrips() throws {
+        let both = try XCTUnwrap(GameActivitySnapshot(eventID: 5, homeTeam: "Detroit Lions", awayTeam: "New England Patriots",
+            lifecycle: .final, homeScore: 27, awayScore: 20, sport: "americanfootball_nfl", servedResult: "home",
+            pregameAwayPercent: 39, pregameHomePercent: 61))
+        let decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONEncoder().encode(both))
+        XCTAssertEqual(decoded.pregameAwayPercent, 39)
+        XCTAssertEqual(decoded.pregameHomePercent, 61)
+        XCTAssertEqual(decoded.sport, "americanfootball_nfl")
+        let oneSided = try XCTUnwrap(GameActivitySnapshot(eventID: 5, homeTeam: "A", awayTeam: "B", lifecycle: .final,
+            pregameAwayPercent: nil, pregameHomePercent: 61))
+        XCTAssertNil(oneSided.pregameHomePercent)
+        let outOfRange = #"{"eventID":5,"homeTeam":"A","awayTeam":"B","lifecycle":"final","pregameAwayPercent":140,"pregameHomePercent":61}"#
+        let bad = try JSONDecoder().decode(GameActivitySnapshot.self, from: Data(outOfRange.utf8))
+        XCTAssertNil(bad.pregameAwayPercent)
+        XCTAssertNil(bad.pregameHomePercent)
+    }
 }

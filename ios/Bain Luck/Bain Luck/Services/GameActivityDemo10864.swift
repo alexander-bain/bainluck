@@ -39,7 +39,8 @@ enum GameActivityDemo10864 {
                 homeAbbreviation: "DET", awayAbbreviation: "NE",
                 homeColorHex: "#0076B6", awayColorHex: "#002244", periodLabel: nil,
                 servedResult: final ? "home" : nil,
-                awaySecondaryColorHex: "#C60C30")
+                awaySecondaryColorHex: "#C60C30",
+                pregameAwayPercent: final ? 39 : nil, pregameHomePercent: final ? 61 : nil)
         }
         if mode == "nfl199" {
             // #199 — the reading #12755's page render shows (Patriots at Lions,

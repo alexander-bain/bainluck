@@ -85,4 +85,18 @@ final class GameActivityEventProjectionTests: XCTestCase {
         XCTAssertNil(final.probabilityText)
         XCTAssertNil(final.scoreObservedAt)
     }
+
+    /// Direction 209 — a finished game carries the page's strict pregame pair
+    /// (`prematch_odds` in its served whole percents), never the opening line.
+    func testAFinalCarriesTheStrictPregamePairAndNeverTheOpeningLine() throws {
+        let prematch = #""prematch_odds":{"home_probability":0.584,"away_probability":0.416,"home_rendered_percent":58,"away_rendered_percent":42,"source":"kalshi"},"#
+        let final = try XCTUnwrap(GameActivitySnapshot.liveActivityReading(for: event(status: "completed", extra: prematch)))
+        XCTAssertEqual(final.pregameHomePercent, 58)
+        XCTAssertEqual(final.pregameAwayPercent, 42)
+        XCTAssertEqual(final.sport, "baseball_mlb")
+        let opening = #""opening_odds":{"home_probability":0.61,"away_probability":0.39},"#
+        let openingOnly = try XCTUnwrap(GameActivitySnapshot.liveActivityReading(for: event(status: "completed", extra: opening)))
+        XCTAssertNil(openingOnly.pregameHomePercent, "the opening line is not the pregame chance")
+        XCTAssertNil(openingOnly.pregameAwayPercent)
+    }
 }

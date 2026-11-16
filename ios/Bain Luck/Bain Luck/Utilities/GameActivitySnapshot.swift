@@ -47,6 +47,14 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     /// #199 / ruling 197 — the away team's second colour, which the headline
     /// switches to when both teams share a colour (`TeamTextContrast.cardColors`).
     let awaySecondaryColorHex: String?
+    /// #199 — the sport key, so the Lock Screen prints the page's short names
+    /// (`TeamShortName.shortPair`, which reads the sport). Absent ⇒ no sport.
+    let sport: String?
+    /// Direction 209 — the page's after-game "Pregame" column: each side's
+    /// strict pregame chance in whole percents (`PrematchReading`, never the
+    /// opening line). Two-way only, both or neither; shown once the game is final.
+    let pregameAwayPercent: Int?
+    let pregameHomePercent: Int?
 
     private enum CodingKeys: String, CodingKey {
         case eventID, homeTeam, awayTeam, homeScore, awayScore, lifecycle
@@ -56,6 +64,7 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         case projectedHomeScore, projectedAwayScore, projectionLabel
         case result
         case homeHeadlineTenths, awaySecondaryColorHex
+        case sport, pregameAwayPercent, pregameHomePercent
     }
 
     init(from decoder: Decoder) throws {
@@ -96,6 +105,11 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         let twoWay = awayRenderedPercent != nil
         homeHeadlineTenths = tenths.flatMap { twoWay && (0...1000).contains($0) ? $0 : nil }
         awaySecondaryColorHex = Self.cleanHex((try? c.decodeIfPresent(String.self, forKey: .awaySecondaryColorHex)) ?? nil)
+        sport = Self.cleanSport((try? c.decodeIfPresent(String.self, forKey: .sport)) ?? nil)
+        let pregame = Self.cleanPregame(away: (try? c.decodeIfPresent(Int.self, forKey: .pregameAwayPercent)) ?? nil,
+                                        home: (try? c.decodeIfPresent(Int.self, forKey: .pregameHomePercent)) ?? nil)
+        pregameAwayPercent = pregame?.away
+        pregameHomePercent = pregame?.home
         guard eventID > 0,
               !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -121,7 +135,8 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
           periodLabel: String? = nil,
           projectedHomeScore: Int? = nil, projectedAwayScore: Int? = nil,
           projectionLabel: String? = nil, servedResult: String? = nil,
-          awaySecondaryColorHex: String? = nil) {
+          awaySecondaryColorHex: String? = nil,
+          pregameAwayPercent: Int? = nil, pregameHomePercent: Int? = nil) {
         let home = homeTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         let away = awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         guard eventID > 0, !home.isEmpty, !away.isEmpty else { return nil }
@@ -165,6 +180,24 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         self.projectionLabel = projection?.label
         self.result = lifecycle == .final ? servedResult.flatMap(Result.init(rawValue:)) : nil
         self.awaySecondaryColorHex = Self.cleanHex(awaySecondaryColorHex)
+        self.sport = Self.cleanSport(sport)
+        let pregame = Self.cleanPregame(away: pregameAwayPercent, home: pregameHomePercent)
+        self.pregameAwayPercent = pregame?.away
+        self.pregameHomePercent = pregame?.home
+    }
+
+    /// A short plain sport key ("americanfootball_nfl"), else none.
+    private static func cleanSport(_ raw: String?) -> String? {
+        guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty,
+              value.count <= 64, value.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return nil }
+        return value
+    }
+
+    /// Both pregame percents, each 0–100, or neither: one side alone would read
+    /// as a duel the reading is not.
+    private static func cleanPregame(away: Int?, home: Int?) -> (away: Int, home: Int)? {
+        guard let away, let home, (0...100).contains(away), (0...100).contains(home) else { return nil }
+        return (away, home)
     }
 
     /// #199 — the home side's tenths exactly as the page headline derives them:

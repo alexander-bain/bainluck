@@ -101,6 +101,28 @@ private struct GameActivityReading {
     var isLive: Bool { matches && !isStale && snapshot.lifecycle == .live }
 
     func name(_ side: Side) -> String { side == .home ? snapshot.homeTeam : snapshot.awayTeam }
+    /// #199 — the short name the page headline prints ("Patriots"), by its rule.
+    func shortName(_ side: Side) -> String {
+        let pair = TeamShortName.shortPair(away: snapshot.awayTeam, home: snapshot.homeTeam, sportKey: snapshot.sport)
+        return side == .home ? pair.home : pair.away
+    }
+    /// Direction 209 — after a game, each side's pregame chance ("42%"), as the
+    /// page's Pregame column prints it. Nothing before or during a game.
+    func pregameText(_ side: Side) -> String? {
+        guard phase == .after, let away = snapshot.pregameAwayPercent,
+              let home = snapshot.pregameHomePercent else { return nil }
+        return "\(side == .home ? home : away)%"
+    }
+    var hasPregame: Bool { pregameText(.home) != nil }
+    /// The side the server's verdict names as the winner (no draw), else none.
+    var winner: Side? {
+        guard matches, snapshot.isFinal else { return nil }
+        switch snapshot.result {
+        case .home: return .home
+        case .away: return .away
+        default: return nil
+        }
+    }
     /// The served badge, else the app's own badge rule for the name.
     func badge(_ side: Side) -> String {
         (side == .home ? snapshot.homeAbbreviation : snapshot.awayAbbreviation)
@@ -257,6 +279,7 @@ private struct GameActivityReading {
         var parts = [name(side)]
         if phase != .before { parts.append(score(side).map { "\($0)" } ?? "score unavailable") }
         if let now = nowText(side) { parts.append("\(now) chance to win") }
+        if let pregame = pregameText(side) { parts.append("\(pregame) chance before the game") }
         if let verdict = verdict(side) { parts.append(verdict) }
         return parts.joined(separator: ", ")
     }
@@ -273,7 +296,7 @@ private struct GameActivityReading {
         if pair != nil || singleChanceLabel != nil {
             parts.append(Self.ageSpoken("Probability", age: snapshot.probabilityAge(at: Date())))
         }
-        parts.append(isStale ? "Stale reading. Open on iPhone to refresh."
+        parts.append(isStale ? "Earlier reading. Open on iPhone to refresh."
                              : "Reported reading. Open on iPhone for current details.")
         return parts.joined(separator: ". ")
     }
@@ -377,20 +400,20 @@ private struct GameActivityTeamRow: View {
     let side: GameActivityReading.Side
 
     var body: some View {
-        let badge = reading.badge(side)
-        let name = reading.name(side)
         HStack(spacing: 8) {
-            Text(badge)
-                .font(.headline.weight(.heavy))
-                .frame(minWidth: 44, alignment: .leading)
-            if name.caseInsensitiveCompare(badge) != .orderedSame {
-                Text(name)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
+            // #199 — the page's short name, once ("Patriots"); the islands keep the badge.
+            Text(reading.shortName(side))
+                .font(.headline.weight(.bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Spacer(minLength: 6)
+            if let pregame = reading.pregameText(side) {
+                // Direction 209 — the page's after-game Pregame column, quiet.
+                Text(pregame)
+                    .font(HeadlineStyleTable199.secondNumbers(.lockScreen))
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: GameActivityColumnLabels.pregameWidth, alignment: .trailing)
+            }
             if reading.phase != .before {
                 Text(reading.scoreText(side))
                     .font(HeadlineStyleTable199.secondNumbers(.lockScreen, prominent: true))
@@ -438,6 +461,7 @@ private struct GameActivityColumnLabels: View {
     static let scoreWidth: CGFloat = 40
     static let nowWidth: CGFloat = 78
     static let tickWidth: CGFloat = 18
+    static let pregameWidth: CGFloat = 64
     let reading: GameActivityReading
 
     var body: some View {
@@ -450,6 +474,9 @@ private struct GameActivityColumnLabels: View {
                 Text("Score").frame(width: Self.scoreWidth, alignment: .trailing)
                 Text("Now").frame(width: Self.nowWidth, alignment: .trailing)
             case .after:
+                if reading.hasPregame {
+                    Text("Pregame").frame(width: Self.pregameWidth, alignment: .trailing)
+                }
                 Text("Final").frame(width: Self.scoreWidth, alignment: .trailing)
                 Color.clear.frame(width: Self.tickWidth, height: 1)
             }
@@ -575,6 +602,20 @@ private struct GameActivityChanceLine: View {
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
                 .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let awayPregame = reading.pregameText(.away), let homePregame = reading.pregameText(.home) {
+            // Direction 209 — after a game, each side's pregame chance under its
+            // final score, labelled as the page labels the column.
+            HStack(alignment: .firstTextBaseline) {
+                Text(awayPregame)
+                Spacer(minLength: 8)
+                Text("Pregame").font(HeadlineStyleTable199.headers(.island))
+                Spacer(minLength: 8)
+                Text(homePregame)
+            }
+            .font(HeadlineStyleTable199.secondNumbers(.island))
+            .foregroundStyle(.secondary)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Before the game: \(reading.name(.away)) \(awayPregame), \(reading.name(.home)) \(homePregame)")
         }
     }
 }
@@ -589,6 +630,11 @@ private struct GameActivityCompactLeading: View {
         Group {
             if !reading.matches {
                 Text("—")
+            } else if let winner = reading.winner, reading.hasPregame,
+                      let won = reading.score(winner), let lost = reading.score(winner == .home ? .away : .home) {
+                // Direction 209 — the winner and the score, winner's first; its
+                // pregame chance follows on the trailing side.
+                Text("\(reading.badge(winner)) \(won)–\(lost)")
             } else if reading.snapshot.isTerminal {
                 Text("\(reading.badge(.away)) \(reading.scoreText(.away))")
                     .foregroundStyle(reading.lowerScoredSide == .away ? .secondary : .primary)
@@ -625,6 +671,11 @@ private struct GameActivityCompactTrailing: View {
         Group {
             if !reading.matches {
                 Text("—")
+            } else if let winner = reading.winner, reading.hasPregame,
+                      reading.score(.home) != nil, reading.score(.away) != nil,
+                      let pregame = reading.pregameText(winner) {
+                Text("was \(pregame)")
+                    .foregroundStyle(.secondary)
             } else if reading.snapshot.isTerminal {
                 Text("\(reading.scoreText(.home)) \(reading.badge(.home))")
                     .foregroundStyle(reading.lowerScoredSide == .home ? .secondary : .primary)
