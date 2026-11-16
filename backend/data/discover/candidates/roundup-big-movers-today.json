@@ -7,13 +7,13 @@
     "same_window"
   ],
   "level": "related",
-  "kicker": "PULSE · BIGGEST 24H SHIFTS",
-  "name": "Big movers today",
+  "kicker": "PULSE \u00b7 BIGGEST 24H SHIFTS",
+  "name": "Today's biggest moves",
   "category": "general",
   "tag": "MOVERS",
   "section_title": "Biggest 24-hour market shifts",
   "subtitle": "Actively trading markets that shifted 6 or more points over the past 24 hours, ordered by size of move.",
-  "footer": "24-hour shift in percentage points · actively trading markets only",
+  "footer": "24-hour move in points.",
   "score": 93.0,
   "rule": {
     "producer": "big_movers_today",

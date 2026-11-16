@@ -7,7 +7,7 @@ import { formatPeriod, restingGameClock } from "@/lib/restingGameClock";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { renderedComplementPercents, renderedDuelPercents } from "@/lib/renderedPercent";
 import { teamShortNames } from "@/lib/teamShortName";
-import { teamTextColor } from "@/lib/teamColors";
+import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
 import type { ActiveChartPoint, ScoringPlay } from "@/lib/types";
 
 interface GamePlayCardProps {
@@ -16,6 +16,7 @@ interface GamePlayCardProps {
   awayTeam: string;
   homeTeamColor?: string;
   awayTeamColor?: string;
+  awayTeamSecondaryColor?: string;
   homeTeamLogo?: string;
   awayTeamLogo?: string;
   /** Most recent chart point (shown when not hovering) */
@@ -124,6 +125,7 @@ export default function GamePlayCard({
   awayTeam,
   homeTeamColor,
   awayTeamColor,
+  awayTeamSecondaryColor,
   homeTeamLogo,
   awayTeamLogo,
   lastPoint,
@@ -133,6 +135,14 @@ export default function GamePlayCard({
 }: GamePlayCardProps) {
   const point = activePoint || lastPoint;
   if (!point) return null;
+
+  const resolvedTeamColors = resolveMatchupTeamColors({
+    homePrimary: homeTeamColor,
+    awayPrimary: awayTeamColor,
+    awaySecondary: awayTeamSecondaryColor,
+  });
+  const effectiveHomeTeamColor = resolvedTeamColors.home ?? homeTeamColor;
+  const effectiveAwayTeamColor = resolvedTeamColors.away ?? awayTeamColor;
 
   const hasScore = point.homeScore != null && point.awayScore != null;
   const hasScoringPlay = !!point.scoringPlay;
@@ -340,13 +350,13 @@ export default function GamePlayCard({
               {homeTeamLogo && (
                 <img src={homeTeamLogo} alt="" width={14} height={14} className="w-3.5 h-3.5 object-contain" />
               )}
-              <span style={{ color: teamTextColor(homeTeamColor) || "var(--text-secondary)" }}>
+              <span style={{ color: teamTextColor(effectiveHomeTeamColor) || "var(--text-secondary)" }}>
                 {point.homeScore}
               </span>
             </span>
             <span className="text-text-muted text-xs">-</span>
             <span className="flex items-center gap-1">
-              <span style={{ color: teamTextColor(awayTeamColor) || "var(--text-secondary)" }}>
+              <span style={{ color: teamTextColor(effectiveAwayTeamColor) || "var(--text-secondary)" }}>
                 {point.awayScore}
               </span>
               {awayTeamLogo && (
@@ -402,7 +412,7 @@ export default function GamePlayCard({
                   inside itself if a single side is wider than the card. */}
               <span className="inline-block" data-testid="game-play-card-side">
                 {homeShort}{" "}
-                <span className="font-semibold" style={{ color: teamTextColor(homeTeamColor) || "var(--text-secondary)" }}>
+                <span className="font-semibold" style={{ color: teamTextColor(effectiveHomeTeamColor) || "var(--text-secondary)" }}>
                   {homeText}
                 </span>
               </span>
@@ -418,7 +428,7 @@ export default function GamePlayCard({
                   <span className="inline-block" data-testid="game-play-card-side">
                     {"— "}
                     {awayShort}{" "}
-                    <span className="font-semibold" style={{ color: teamTextColor(awayTeamColor) || "var(--text-secondary)" }}>
+                    <span className="font-semibold" style={{ color: teamTextColor(effectiveAwayTeamColor) || "var(--text-secondary)" }}>
                       {awayText}
                     </span>
                   </span>

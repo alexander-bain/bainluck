@@ -61,9 +61,9 @@ async def test_eval_rows_pair_four_domains_near_46_percent_and_preserve_event_de
     assert econ_row["destination"]["web"] == "/futures/30691373"
 
     feed_item, container = compose_yardsticks_card_and_container(producer, res)
-    assert res.title == "Around a 46% chance right now"
+    assert res.title == "Four things that are all about 46% likely"
     ctx = feed_item["context_summary"]
-    assert "±1.5 points of 46%" in ctx
+    assert "rated the same" in ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)
     assert container["context_line"] == ctx
 

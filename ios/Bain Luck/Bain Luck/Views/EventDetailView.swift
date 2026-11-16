@@ -1123,7 +1123,9 @@ struct EventDetailView: View {
     private func teamColors(_ event: EventDetail) -> (away: Color, home: Color) {
         TeamTextContrast.cardColors(
             awayHex: event.awayTeamData?.primaryColor,
-            homeHex: event.homeTeamData?.primaryColor
+            homeHex: event.homeTeamData?.primaryColor,
+            awaySecondaryHex: event.awayTeamData?.secondaryColor,
+            checkHueFamily: true
         )
     }
 
@@ -1453,6 +1455,40 @@ struct EventDetailView: View {
             ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
             ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
             hasScore: hasScore)
+    }
+
+    static func gameInfoSuppressesProjection199(
+        headlineKind12472: EventSportHeadlines12472.Kind?,
+        nflHeadline: Bool,
+        heroLiveForecast: Bool
+    ) -> Bool {
+        nflHeadline || heroLiveForecast || headlineKind12472 == .nflDuringGame
+    }
+
+    static func gameInfoProjectionLine199(
+        event: EventDetail,
+        headlineKind12472: EventSportHeadlines12472.Kind?,
+        nflHeadline: Bool,
+        heroLiveForecast: Bool,
+        ladderHome: Double? = nil,
+        ladderAway: Double? = nil,
+        hasScore: Bool,
+        now: Date = Date()
+    ) -> String? {
+        if gameInfoSuppressesProjection199(
+            headlineKind12472: headlineKind12472,
+            nflHeadline: nflHeadline,
+            heroLiveForecast: heroLiveForecast
+        ) {
+            return nil
+        }
+        return EventDetailView.projectionText(
+            event,
+            ladderHome: ladderHome,
+            ladderAway: ladderAway,
+            hasScore: hasScore,
+            now: now
+        )
     }
 
     /// The page's choice of pair, pure, so every arm is decided by behaviour:
@@ -3644,11 +3680,13 @@ struct EventDetailView: View {
         // in any state, so Game Info holds them; it carries the projection, so
         // Game Info does not repeat it.
         let nflHeadline = nflPairedHeadline(event, hasScore: gameInfoHasScore) != nil
-        let sportHeadline12472 = EventSportHeadlines12472.applies(
-            to: event,
+        let headlineKind12472 = EventSportHeadlines12472.kind(
+            for: event,
             gameMarkets: vm.gameMarkets?.eventId == event.id ? vm.gameMarkets : nil,
             now: displayNow()
         )
+        let sportHeadline12472 = headlineKind12472 != nil
+        let nflLiveHeadline12472 = headlineKind12472 == .nflDuringGame
         // #11296 — nor when the generic hero printed the admitted live pair.
         let heroLiveForecast = genericLiveForecast11296(event, hasScore: gameInfoHasScore) != nil
         let nflHandedOver: [(icon: String, text: String)] = nflHeadline && !sportHeadline12472 ? [
@@ -3659,7 +3697,11 @@ struct EventDetailView: View {
             EventDetailView.heroCarriesGameContext(status: event.status) ? [] : [
                 recordsText(event).map { ("list.number", $0) },
                 sportHeadline12472 ? nil : openedText(event).map { ("flag", $0) },
-                nflHeadline || heroLiveForecast ? nil : projectionText(
+                EventDetailView.gameInfoSuppressesProjection199(
+                    headlineKind12472: headlineKind12472,
+                    nflHeadline: nflHeadline,
+                    heroLiveForecast: heroLiveForecast
+                ) ? nil : projectionText(
                     event,
                     hasScore: gameInfoHasScore
                 ).map { ("chart.line.uptrend.xyaxis", $0) },

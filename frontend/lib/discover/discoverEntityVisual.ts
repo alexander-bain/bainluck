@@ -82,10 +82,16 @@ const INITIALS_NOISE = new Set([
 ]);
 
 const MUSIC_TITLE_RE =
-  /\b(grammys?|grammy\s+awards?|latin\s+grammys?|song\s+of\s+the\s+year|record\s+of\s+the\s+year|album\s+of\s+the\s+year|best\s+[a-z\s]{0,30}\s+(?:album|song|music\s+performance|rap\s+performance|pop\s+solo\s+performance|vocal\s+album)|billboard\s+(?:hot\s+100|200)|spotify|apple\s+music|gta\s+vi:\s+the\s+album|featured\s+on\s+.*album|eurovision|halftime\s+show\s+headliner)\b/i;
+  /\b(grammys?|grammy\s+awards?|latin\s+grammys?|song\s+of\s+the\s+year|record\s+of\s+the\s+year|album\s+of\s+the\s+year|best\s+original\s+song|best\s+[a-z\s]{0,30}\s+(?:album|song|music\s+performance|rap\s+performance|pop\s+solo\s+performance|vocal\s+album)|billboard\s+(?:hot\s+100|200|#?\d+\s+(?:song|artist|album))|(?:top|most)\s+(?:u\.?s\.?\s+|global\s+)?streamed\s+(?:song|artist|album)|spotify\s+(?:#?\d+|top|most\s+streamed|global|u\.?s\.?|chart|daily|weekly|artist|song|album|streams)|apple\s+music|coachella|glastonbury|lollapalooza|rolling\s+loud|perform\s+at\s+.+|weeks\s+at\s+no\.\s*1|release\s+(?:a\s+)?new\s+(?:album|song|single|ep|mixtape)|gta\s+vi:\s+the\s+album|featured\s+on\s+.*album|eurovision|halftime\s+show\s+headliner)\b/i;
 
 const FILM_TITLE_RE =
-  /\b(oscars?|academy\s+awards?|golden\s+globes?|emmys?|bafta|cannes|best\s+(?:picture|director|actor|actress|casting|animated\s+feature|screenplay)|rotten\s+tomatoes|box\s+office|opening\s+weekend|james\s+bond|next\s+007|marvel|star\s+wars|dc\s+studios)\b/i;
+  /(?:\b(?:oscars?|academy\s+awards?|golden\s+globes?|emmys?|bafta|cannes|tony\s+awards?|best\s+(?:picture|director|actor|actress|supporting\s+actor|supporting\s+actress|casting|animated\s+feature|motion\s+picture|screenplay)|rotten\s+tomatoes|box\s+office|opening\s+weekend|highest\s+grossing\s+movie|top\s+(?:global\s+|u\.?s\.?\s+)?netflix\s+(?:movie|show|series)|tv\s+shows?\s+cancelled|searched\s+(?:tv\s+show|movie|film)|(?:the\s+)?game\s+awards|game\s+of\s+the\s+year|best\s+(?:audio\s+design|narrative|independent\s+game|game\s+direction|multiplayer)|james\s+bond|next\s+007|marvel|star\s+wars|dc\s+studios|the\s+batman|spider-man|superman|jumanji|toy\s+story|avengers|hunger\s+games)\b|#\d+\s+(?:u\.?s\.?\s+|global\s+)?netflix\s+(?:movie|show|series)\b|#1\s+movie\s+on\s+netflix\b)/i;
+
+const REALITY_COMPETITION_RE =
+  /\b(dancing\s+with\s+the\s+stars|survivor|big\s+brother|love\s+island|bachelorette|the\s+bachelor|the\s+traitors|american\s+idol|the\s+voice|rupaul)\b/i;
+
+const PERSON_FILM_AWARD_OR_CAST_RE =
+  /\b(director|actor|actress|cast|moneypenny|felix\s+leiter|host)\b/i;
 
 const TEAM_SPORT_CATS = new Set([
   "basketball",
@@ -102,20 +108,24 @@ const TEAM_TITLE_RE =
 
 const TICKER_RE = /\(([A-Z]{2,5})\)/;
 const ORG_TITLE_RE =
-  /\b(ipo|quarterly\s+earnings|beat\s+earnings|market\s+cap|kimi|moonshot\s+ai|bloomberg|openai|anthropic|spacex|stripe|databricks)\b/i;
+  /\b(ipo|quarterly\s+earnings|beat\s+earnings|market\s+cap|kimi|moonshot\s+ai|bloomberg|openai|anthropic|spacex|stripe|databricks|spotify)\b/i;
 
 const PARTY_OR_BUCKET_OUTCOME_RE =
-  /^(yes|no|not\s+.+|none|no\s+change|no\s+head\s+of\s+state|before\s+.+|after\s+.+|by\s+.+|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}.*|above\s+.+|below\s+.+|top\s+\d+|[\$<>≤≥\-+\d.% \t]+(?:\s+bps.*)?|.*\([A-Z]{2,5}\))$/i;
+  /^(yes|no|not\s+.+|none|other(?:\s*\(.*\))?|no\s+change|no\s+head\s+of\s+state|before\s+.+|after\s+.+|by\s+.+|at\s+least\s+.+|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}.*|above\s+.+|below\s+.+|top\s+\d+|\d+(?:st|nd|rd|th)(?:\s*[-–]\s*\d+(?:st|nd|rd|th))?|[\$<>≤≥\-+\d.% \t]+(?:\s*(?:bps|m|b|k|\+|-.*))?|.*\([A-Z]{2,5}\))$/i;
 
 const PERSON_HEADLINE_PATTERNS: ReadonlyArray<RegExp> = [
-  /^Will\s+([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+(?:de|le|la|van|von|di|del|da|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.\-']*)){1,3}?)\s+(?:join|attend|testify|publicly\s+testify|resign|step\s+down|win|beat|divorce|leave|endorse|pardon|visit|meet)\b/,
-  /^([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+(?:de|le|la|van|von|di|del|da|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.\-']*)){1,3}?)\s+(?:out\s+as|divorce|impeached|pardoned|arrested|confirmed\s+as)\b/,
+  /^Will\s+([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+(?:de|le|la|van|von|di|del|da|[IVXLCDM]{1,6}|Jr\.|Sr\.|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.\-']*)){1,4}?)\s+(?:join|attend|testify|publicly\s+testify|resign|step\s+down|win|beat|divorce|leave|endorse|pardon|visit|meet|release|announce|confirm|perform|host|star\s+in|be\s+(?:TIME\s+Person|time\s+person|named|cast|elected|appointed|impeached|arrested))\b/,
+  /^Will\s+(Drake|Rihanna|Adele|Beyonc[eé]|Eminem|Madonna|Shakira|Rosal[ií]a|SZA|Usher|Cher|Bono|Future)\s+(?:release|perform|headline|win|tour|drop|attend|announce)\b/i,
+  /^([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+(?:de|le|la|van|von|di|del|da|[IVXLCDM]{1,6}|Jr\.|Sr\.|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.\-']*)){1,3}?)\s+(?:out\s+as|divorce|announces?|impeached|pardoned|arrested|confirmed\s+as)\b/,
+  /^([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+(?:de|le|la|van|von|di|del|da|[IVXLCDM]{1,6}|Jr\.|Sr\.|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.\-']*)){1,2}?)\s+and\s+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+(?:de|le|la|van|von|di|del|da|[IVXLCDM]{1,6}|Jr\.|Sr\.|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.\-']*)){1,2}?\s+(?:engaged|married|confirm\s+relationship|break\s+up|divorce|dating)\b/,
+  /^([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+(?:de|le|la|van|von|di|del|da|[IVXLCDM]{1,6}|Jr\.|Sr\.|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.\-']*)){1,2}?)\s+as\s+[A-Z][A-Za-z0-9\s\-']+\??$/,
+  /^([A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+(?:\s+(?:de|le|la|van|von|di|del|da|[IVXLCDM]{1,6}|Jr\.|Sr\.|[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.\-']*)){1,2}?)(?::\s+.+\b(?:sale\s+price|Sale\s+Price)\b|['’]s\s+[“"].+[”"]\s+(?:sale\s+price|Sale\s+Price)\b|\s+baby:)/,
   /\bimpeach\s+(Trump|Biden|Macron|Lula|Yoon)\b/i,
   /\bWill\s+(Trump|Putin|Netanyahu|Zelenskyy?|Xi\s+Jinping|Modi)\s+be\b/i,
 ];
 
 const PERSON_ELECTION_OR_ROLE_RE =
-  /\b(presidential\s+election|governor\s+election|mayor\s+election|prime\s+minister|minister\s+of\s+finance|leader\s+end\s+of|next\s+ceo\s+of|most\s+searched\s+people|ufc\s+.*champion|mvp\s+winner)\b/i;
+  /\b(presidential\s+election|governor\s+election|mayor\s+election|prime\s+minister|minister\s+of\s+finance|leader\s+end\s+of|next\s+ceo\s+of|most\s+searched\s+people|year\s+in\s+search.*#1\s+search|time\s+person\s+of\s+the\s+year|nobel\s+peace\s+prize|guests\s+this\s+year|ufc\s+.*champion|mvp\s+winner)\b/i;
 
 function hostOf(url: string | null | undefined): string {
   if (!url) return "";
@@ -231,9 +241,6 @@ export function classifyDiscoverSubject(
   const cat = (category ?? "").trim().toLowerCase();
   const lead = firstMeaningfulOutcome(topOutcomes);
 
-  if (MUSIC_TITLE_RE.test(title)) {
-    return { kind: "song", label: lead || title, tickerOk: false };
-  }
   for (const pat of PERSON_HEADLINE_PATTERNS) {
     const m = pat.exec(title);
     if (m) {
@@ -243,8 +250,17 @@ export function classifyDiscoverSubject(
       return { kind: "person", label: person, tickerOk: false };
     }
   }
+  if (MUSIC_TITLE_RE.test(title)) {
+    return { kind: "song", label: lead || title, tickerOk: false };
+  }
+  if (REALITY_COMPETITION_RE.test(title)) {
+    if (lead && looksLikePersonName(lead)) {
+      return { kind: "person", label: lead, tickerOk: false };
+    }
+    return { kind: "film", label: title, tickerOk: false };
+  }
   if (FILM_TITLE_RE.test(title) || (cat === "entertainment" && title.includes('"'))) {
-    if (lead && looksLikePersonName(lead) && title.toLowerCase().includes("actor")) {
+    if (lead && looksLikePersonName(lead) && PERSON_FILM_AWARD_OR_CAST_RE.test(title)) {
       return { kind: "person", label: lead, tickerOk: false };
     }
     const quoted = /["“]([^"”]{2,80})["”]/.exec(title);
@@ -262,7 +278,8 @@ export function classifyDiscoverSubject(
     return { kind: "person", label: lead, tickerOk: false };
   }
   if (TICKER_RE.test(title) || ORG_TITLE_RE.test(title)) {
-    return { kind: "organization", label: title, tickerOk: true };
+    const orgLabel = title.toLowerCase().includes("spotify") ? "Spotify" : title;
+    return { kind: "organization", label: orgLabel, tickerOk: true };
   }
   return { kind: "topic", label: title || "Discover", tickerOk: false };
 }

@@ -377,15 +377,14 @@ def select_league_award_ladders(
             ]
         )
 
-    standings.sort(key=lambda s: (s.gap_points, abs(s.leader_probability - 0.5), s.award_label))
+    # Preserve canonical slot order (MVP, Defensive Player, Rookie, Coach) so row order matches title.
     shown = standings[: max(2, int(max_card_rows))]
     league_label = str(cfg["label"])
-    first = shown[0]
-    last = shown[-1]
-    first_pct = int(round(first.leader_probability * 100))
-    last_pct = int(round(last.leader_probability * 100))
-    first_gap = int(round(first.gap_points))
-    last_gap = int(round(last.gap_points))
+    highest = max(shown, key=lambda s: (s.leader_probability, s.gap_points))
+    lowest = min(shown, key=lambda s: (s.leader_probability, s.gap_points))
+    highest_pct = int(round(highest.leader_probability * 100))
+    lowest_pct = int(round(lowest.leader_probability * 100))
+    lowest_gap = max(1, int(round(lowest.gap_points)))
 
     awards_by_leader: dict[str, list[AwardStanding]] = {}
     for s in shown:
@@ -394,40 +393,33 @@ def select_league_award_ladders(
 
     if multi_leader is not None:
         m_name, m_awards = multi_leader
-        card_title = _assert_clean_copy(
-            f"{m_name} leads {len(m_awards)} {league_label} trophies at once"
-        )
-        m_parts = [
-            f"{a.award_label}: {a.leader_name} {int(round(a.leader_probability * 100))}%"
-            + (f", +{int(round(a.gap_points))} pts over {a.runner_up_name}" if a.runner_up_name else "")
-            for a in m_awards
-        ]
-        if first.award_label not in {a.award_label for a in m_awards}:
-            first_runner = f" vs {first.runner_up_name}" if first.runner_up_name else ""
-            context_line = _assert_clean_copy(
-                f"{m_name} leads {len(m_awards)} {league_label} trophies ({' · '.join(m_parts)}), "
-                f"while {first.award_label} sits within {first_gap} pts "
-                f"({first.award_label}: {first.leader_name} {first_pct}%{first_runner})."
+        surname = m_name.split()[-1] if " " in m_name else m_name
+        if len(m_awards) == 2:
+            full_t = f"{m_name} leads for {m_awards[0].award_label} and {m_awards[1].award_label}"
+            short_t = f"{surname} leads for {m_awards[0].award_label} and {m_awards[1].award_label}"
+            card_title = _assert_clean_copy(
+                full_t
+                if len(full_t) <= 45
+                else (short_t if len(short_t) <= 45 else f"{surname} leads two {league_label} awards")
             )
         else:
-            context_line = _assert_clean_copy(
-                f"{m_name} leads {len(m_awards)} {league_label} trophies across {len(shown)} "
-                f"season boards ({' · '.join(m_parts)})."
+            card_title = _assert_clean_copy(
+                f"{surname} leads {len(m_awards)} {league_label} award races"
             )
     else:
-        card_title = _assert_clean_copy(
-            f"{league_label} award races — tightest within {first_gap} pts"
-        )
-        first_runner = f", +{first_gap} pts over {first.runner_up_name}" if first.runner_up_name else ""
-        last_runner = f", +{last_gap} pts over {last.runner_up_name}" if last.runner_up_name else ""
+        card_title = _assert_clean_copy(f"Who leads the {league_label} award races")
+
+    if highest_pct >= 65 and lowest_pct <= 25 and highest.slot_key != lowest.slot_key:
         context_line = _assert_clean_copy(
-            f"Front-runner in {len(shown)} major {league_label} season awards, ordered from "
-            f"closest race ({first.award_label}: {first.leader_name} {first_pct}%{first_runner}) "
-            f"to clearest favorite ({last.award_label}: {last.leader_name} {last_pct}%{last_runner})."
+            f"{highest.award_label} looks decided at {highest_pct}%. "
+            f"{lowest.award_label} is wide open: the leader is at {lowest_pct}%."
         )
-    footer = _assert_clean_copy(
-        f"One winner per trophy · {len(shown)} major {league_label} awards"
-    )
+    else:
+        context_line = _assert_clean_copy(
+            f"{highest.leader_name} leads {highest.award_label} at {highest_pct}%. "
+            f"{lowest.award_label} is closest, within {lowest_gap} points."
+        )
+    footer = _assert_clean_copy("One winner per award.")
 
     rows: list[dict[str, Any]] = []
     for s in shown:

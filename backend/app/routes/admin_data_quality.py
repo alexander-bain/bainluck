@@ -3106,11 +3106,28 @@ async def trigger_precompute_category_pages(
 ):
     """Force-refresh the category-page Redis caches (weather/politics/economics/
     entertainment/golf). The cache is the only thing gating /api/weather/cities
-    from returning the 47+ markets that already exist (Manus #943)."""
+    from returning the 47+ markets that already exist (Manus #943).
+
+    #12042: the sections run as their own tasks now (the hourly beat sends one a
+    minute from :26), and ``precompute_category_pages`` only opens the hour's
+    report. So this opens a fresh report and sends all seven section tasks at
+    once, and returns each one's id; sending the :25 task alone would refresh
+    nothing.
+    """
     _check_admin_secret(secret, request=request)
-    from app.tasks import celery_app
-    result = _safe_send_task("app.tasks.precompute_category_pages")
-    return {"status": "queued", "task_id": str(result.id)}
+    from app.tasks import CATEGORY_SECTION_BEAT_ORDER
+    from app.tasks.precompute_category_pages import start_section_report
+
+    start_section_report()
+    task_ids = {}
+    for section in CATEGORY_SECTION_BEAT_ORDER:
+        result = _safe_send_task(
+            "app.tasks.precompute_category_section",
+            kwargs={"section": section},
+            queue="background",
+        )
+        task_ids[section] = str(result.id)
+    return {"status": "queued", "task_ids": task_ids}
 
 
 @router.post("/recover-datagolf-participation")

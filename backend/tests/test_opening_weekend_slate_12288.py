@@ -62,16 +62,17 @@ async def test_eval_rows_seat_active_opening_films_and_drop_holdover_or_untraded
     for ex in pack["excluded_ids"]:
         assert ex not in seated_ids
 
-    assert res.rows[0]["label"] == "Ebenezer — $16M–$19M"
-    assert res.rows[0]["rendered_percent"] == 56
-    assert res.rows[1]["label"] == "Avengers: Doomsday — $400M+"
-    assert res.rows[1]["rendered_percent"] == 57
-    assert res.rows[3]["label"] == "Dune: Part Three — $110M–$130M"
-    assert res.rows[3]["rendered_percent"] == 39
+    assert res.rows[0]["label"] == "Avengers: Doomsday · $400M+"
+    assert res.rows[0]["rendered_percent"] == 57
+    assert res.rows[1]["label"] == "Dune: Part Three · $110M–$130M"
+    assert res.rows[1]["rendered_percent"] == 39
+    assert res.rows[3]["label"] == "Ebenezer · $16M–$19M"
+    assert res.rows[3]["rendered_percent"] == 56
 
     feed_item, container = compose_opening_weekend_card_and_container(producer, res)
+    assert res.title == "Avengers: Doomsday is 57% to open above $400M"
     ctx = feed_item["context_summary"]
-    assert "Ebenezer ($16M–$19M at 56%)" in ctx
+    assert "beat the record $357M opening" in ctx
     assert not FORBIDDEN_COPY_RE.search(ctx)
     assert container["context_line"] == ctx
 

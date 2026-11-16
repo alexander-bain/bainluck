@@ -22,6 +22,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from app.utils.candidate_editorial_copy import (
+    display_award_leader,
+    number_word,
+    plain_market_subject,
+    short_team_name,
+)
 from app.utils.container_presentation import (
     MEMBER_EVENT,
     MEMBER_MARKET,
@@ -75,10 +81,28 @@ class YardstickItem:
     domain: str
     domain_badge: str
     label: str
+    reason_phrase: str
     probability: float
     activity_weight: float
     destination: dict[str, Any]
     card: Mapping[str, Any]
+
+
+def _market_reason_phrase(title: str, outcome_name: str, plain_label: str) -> str:
+    t_low = title.lower()
+    if "grammy" in t_low:
+        artist = display_award_leader(outcome_name)
+        return f"a Grammy for {artist}"
+    if "oscar" in t_low or "academy award" in t_low:
+        artist = display_award_leader(outcome_name)
+        return f"an Oscar for {artist}"
+    if "emmy" in t_low:
+        artist = display_award_leader(outcome_name)
+        return f"an Emmy for {artist}"
+    if "golden globe" in t_low:
+        artist = display_award_leader(outcome_name)
+        return f"a Golden Globe for {artist}"
+    return plain_label
 
 
 def _assert_clean_copy(text: str) -> str:
@@ -192,7 +216,13 @@ def _extract_yardstick_candidates(
             hp_f = float(hp)
             ap_f = float(ap) if ap is not None else (1.0 - hp_f)
             dom_key, dom_badge = _normalize_domain(str(raw.get("sport") or "sports"))
-            for side_label, p_val in ((f"{ht} beat {at}", hp_f), (f"{at} win at {ht}", ap_f)):
+            short_ht = short_team_name(ht, str(raw.get("sport") or ""))
+            short_at = short_team_name(at, str(raw.get("sport") or ""))
+            event_sides = (
+                (f"{short_ht} beat {short_at}", f"a {short_ht} home win", hp_f),
+                (f"{short_at} win at {short_ht}", f"a {short_at} road win", ap_f),
+            )
+            for side_label, side_phrase, p_val in event_sides:
                 if min_prob <= p_val <= max_prob:
                     pool.append(
                         YardstickItem(
@@ -201,6 +231,7 @@ def _extract_yardstick_candidates(
                             domain=dom_key,
                             domain_badge=dom_badge,
                             label=side_label,
+                            reason_phrase=side_phrase,
                             probability=p_val,
                             activity_weight=5000.0,
                             destination=event_destination(item_id),
@@ -236,14 +267,18 @@ def _extract_yardstick_candidates(
             oname = str(top_out.get("name") or "").strip()
             if not oname or oname.lower() in {"no", "other", "none", "field"} or _FORBIDDEN_COPY_RE.search(oname):
                 continue
-            label = title if oname.lower() == "yes" else f"{title} — {oname}"
+            plain = plain_market_subject(title, oname)
+            if not plain:
+                continue
+            r_phrase = _market_reason_phrase(title, oname, plain)
             pool.append(
                 YardstickItem(
                     item_id=item_id,
                     member_type=MEMBER_MARKET,
                     domain=dom_key,
                     domain_badge=dom_badge,
-                    label=label,
+                    label=plain,
+                    reason_phrase=r_phrase,
                     probability=p_val,
                     activity_weight=v24,
                     destination=market_destination(item_id),
@@ -315,24 +350,18 @@ def select_cross_domain_yardsticks(
     if best_center is None or len(best_band) < max(3, int(min_domains)):
         return RoundupRefusal([("no_multi_domain_band_found", int(min_domains))])
 
-    domains_str = ", ".join(c.domain_badge for c in best_band[:-1]) + f", and {best_band[-1].domain_badge}"
-    half_pts = round(band_half_width * 100, 1)
-    half_txt = str(int(half_pts)) if half_pts.is_integer() else f"{half_pts:.1f}"
-    spread_pts = round(
-        (max(c.probability for c in best_band) - min(c.probability for c in best_band)) * 100,
-        1,
+    count_w = number_word(len(best_band), capitalize=True)
+    card_title = f"{count_w} things that are all about {best_center}% likely"
+    sports_anchor = next((c for c in best_band if c.domain == "sports"), best_band[0])
+    contrast_anchor = next(
+        (c for c in best_band if c.domain == "entertainment" and c.item_id != sports_anchor.item_id),
+        next((c for c in best_band if c.item_id != sports_anchor.item_id), best_band[-1]),
     )
-    spread_txt = str(int(spread_pts)) if spread_pts.is_integer() else f"{spread_pts:.1f}"
-
-    card_title = f"Around a {best_center}% chance right now"
+    first_phrase = sports_anchor.reason_phrase[:1].upper() + sports_anchor.reason_phrase[1:]
     context_line = _assert_clean_copy(
-        f"{len(best_band)} unrelated events across {domains_str} trading within ±{half_txt} points "
-        f"of {best_center}% ({spread_txt}-pt spread across all {len(best_band)} boards) — "
-        f"pairing familiar game odds with unfamiliar forecasts."
+        f"{first_phrase} and {contrast_anchor.reason_phrase} are rated the same."
     )
-    footer = _assert_clean_copy(
-        f"Independent markets across {len(best_band)} domains · matched within ±{half_txt} points"
-    )
+    footer = _assert_clean_copy("Separate events near the same chance.")
 
     rows = [
         {
@@ -340,7 +369,7 @@ def select_cross_domain_yardsticks(
             **({"event_id": c.item_id} if c.member_type == "event" else {"market_id": c.item_id}),
             "member_type": c.member_type,
             "domain": c.domain_badge,
-            "label": _assert_clean_copy(f"{c.domain_badge}: {c.label}"),
+            "label": _assert_clean_copy(c.label),
             "subject": _assert_clean_copy(c.label),
             "probability": round(c.probability, 4),
             "rendered_percent": int(round(c.probability * 100)),
