@@ -385,15 +385,27 @@ private struct EventAtlasSelectedReadingSlot11666: View {
     let primaryColor: Color
 
     var body: some View {
-        let selectedModel = EventAtlasChartMarks11666.selectedReading(
+        if selection.checkpoint == .withheld {
+            Text(PublicationCheckpointReadoutSlot4974.withheldText)
+                .font(.caption2)
+                .foregroundStyle(DS.textSecondaryReadable)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .background(Color.systemBackground.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)
+                )
+                .padding(.bottom, 2)
+                .accessibilityIdentifier("event.atlas.selectedReading")
+        } else if let selectedModel = EventAtlasChartMarks11666.selectedReading(
             rows: baseRows,
             selectedDate: selection.date,
             outcomeName: outcomeName,
             includesOpening: includesOpening,
             openingLabel: openingLabel
-        )
-
-        if let selectedModel {
+        ) {
             ViewThatFits(in: .horizontal) {
                 singleLineReadout(selectedModel)
                 twoLineReadout(selectedModel)
