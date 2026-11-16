@@ -22,6 +22,7 @@ waits for Alex. This version is the one that ships without it.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -96,9 +97,28 @@ def trim_roundup(item: dict, stale_ids: set[int]) -> Optional[dict]:
     out_data["items"] = items
     out_data["item_count"] = len(member_ids)
     if rows is not None:
-        out_data["roundup"] = {**roundup, "rows": rows}
+        out_data["roundup"] = {**roundup, "rows": rows, "count_line": _recount(roundup, data, rows, stale_ids)}
     out["data"] = out_data
     return out
+
+
+_COUNT_LINE_RE = re.compile(r"^Showing (\d+) of (\d+)")
+
+
+def _recount(roundup: dict, data: dict, rows: list, stale_ids: set[int]) -> Optional[str]:
+    """The card's "Showing K of N" after its quiet members leave. Monday's render
+    (Nov 16) caught "By November 30" drawing 4 rows under "Showing 5 of 6". K is
+    the rows still drawn, N drops by the members removed; when every remaining
+    member is drawn the line goes, as a builder omits it when nothing is hidden."""
+    line = roundup.get("count_line")
+    match = _COUNT_LINE_RE.match(line) if isinstance(line, str) else None
+    if not match:
+        return line
+    removed = sum(1 for m in (data.get("member_ids") or []) if _market_id(m) in stale_ids)
+    total = max(int(match.group(2)) - removed, len(rows))
+    if len(rows) >= total:
+        return None
+    return f"Showing {len(rows)} of {total}" + line[match.end():]
 
 
 async def drop_not_trading_roundup_members(db: Any, produced: list[dict], now: datetime, covered_ids) -> list[dict]:

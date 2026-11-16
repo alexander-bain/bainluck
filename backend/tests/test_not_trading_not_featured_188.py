@@ -167,3 +167,17 @@ def test_a_market_rebuilt_from_the_cache_gives_the_same_answer_as_the_row_it_cam
     assert [nt.market_not_trading(m, NOW) for m in rows] == [True, False, False]
     assert [nt.market_not_trading(m, NOW) for m in rebuilt] == [True, False, False]
     assert rebuilt[0].__dict__["price_changed_at"] == _ago(12)
+
+
+def test_the_count_line_follows_the_rows_that_remain():
+    """Monday's render (Nov 16): "By November 30" drew 4 rows under "Showing 5 of 6"."""
+    from app.utils.not_trading import trim_roundup
+
+    def card(n, line, shown=5):
+        return {"data": {"member_ids": list(range(1, n + 1)), "items": [],
+                         "roundup": {"rows": [{"market_id": i} for i in range(1, shown + 1)], "count_line": line}}}
+
+    assert trim_roundup(card(6, "Showing 5 of 6"), {1})["data"]["roundup"]["count_line"] == "Showing 4 of 5"
+    assert trim_roundup(card(30, "Showing 5 of 30 clubs"), {1, 2, 20, 21})["data"]["roundup"]["count_line"] == "Showing 3 of 26 clubs"
+    # The one hidden member was the quiet one: nothing is hidden any more, so no line.
+    assert trim_roundup(card(6, "Showing 5 of 6"), {6})["data"]["roundup"]["count_line"] is None
