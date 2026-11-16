@@ -637,27 +637,24 @@ struct EventCardView: View {
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Spacer(minLength: 0)
                 if showsMediumColumn12616 {
-                    Text((headers.medium ?? "").uppercased())
+                    Text(headers.medium ?? "")
                         .font(compactHeaderFont12616)
-                        .tracking(0.45)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
                         .frame(width: effectiveMediumColWidth, alignment: .trailing)
                 }
                 if showsInlineLivePregame12616 {
-                    Text((headers.pregame ?? "").uppercased())
+                    Text(headers.pregame ?? "")
                         .font(compactHeaderFont12616)
-                        .tracking(0.45)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
                         .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
                         .padding(.leading, pregameColumnLeadingGap12616)
                 }
                 if showsLargeColumn12616 {
-                    Text((headers.large ?? "").uppercased())
+                    Text(headers.large ?? "")
                         .font(compactHeaderFont12616)
-                        .tracking(0.45)
-                        .foregroundStyle(isLive || isFinished ? Color.primary.opacity(0.78) : DS.textSecondaryReadable)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
                         .frame(width: effectiveLargeColWidth, alignment: .trailing)
                         .padding(.leading, largeColumnLeadingGap12616)
