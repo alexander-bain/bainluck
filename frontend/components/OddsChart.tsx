@@ -3211,8 +3211,14 @@ export default function OddsChart({
   });
   const effectiveHomeTeamColor = resolvedTeamColors.home ?? homeTeamColor;
   const effectiveAwayTeamColor = resolvedTeamColors.away ?? awayTeamColor;
-  const soccerHomeLineHex = effectiveHomeTeamColor || "#2563EB";
-  const soccerAwayLineHex = effectiveAwayTeamColor || "#64748B";
+  const soccerHomeLineHex =
+    teamTextColor(effectiveHomeTeamColor) ??
+    teamTextColor(homeTeamColor) ??
+    "#2563EB";
+  const soccerAwayLineHex =
+    teamTextColor(effectiveAwayTeamColor) ??
+    teamTextColor(awayTeamSecondaryColor) ??
+    "#475569";
   const soccerDrawLineHex = SOCCER_DRAW_LINE_HEX;
   const tickInk = {
     home: teamTextColor(effectiveHomeTeamColor) || "#16a34a",

@@ -29,6 +29,7 @@ jest.mock("recharts", () => {
   };
 });
 
+import EventCard183A, { extractDiscoverChartPointsFromHistory } from "@/components/EventCard183A";
 import { FuturesChart } from "@/components/FuturesChart";
 import OddsChart from "@/components/OddsChart";
 import {
@@ -175,11 +176,10 @@ describe("Website probability chart scale & soccer 3-line rules (#12750, Rulings
           {
             outcome_id: 1,
             name: "Detroit Lions",
-            current_probability: 0.11,
             history: [
-              { timestamp: isoAt(-1440), probability: 0.09 },
-              { timestamp: isoAt(-720), probability: 0.1 },
-              { timestamp: isoAt(0), probability: 0.11 },
+              { timestamp: isoAt(-1440), probability: 0.09, american_odds: 1000, bookmaker: "kalshi" },
+              { timestamp: isoAt(-720), probability: 0.1, american_odds: 900, bookmaker: "kalshi" },
+              { timestamp: isoAt(0), probability: 0.11, american_odds: 800, bookmaker: "kalshi" },
             ],
           },
         ]}
@@ -207,5 +207,59 @@ describe("Website probability chart scale & soccer 3-line rules (#12750, Rulings
     );
     expect(teamJourneySrc).toMatch(/<FuturesChart[\s\S]*?fieldCeiling/);
     expect(settledPathSrc).toMatch(/<FuturesChart[\s\S]*?fieldCeiling/);
+  });
+
+  it("draws all three lines (Home, Draw in #94A3B8, Away) on Discover live/settled soccer cards (EventCard183A)", () => {
+    const pts = extractDiscoverChartPointsFromHistory(
+      {
+        win_prob_history: {
+          kalshi: [
+            { timestamp: isoAt(0), home_probability: 0.49, draw_probability: 0.27, away_probability: 0.24 },
+            { timestamp: isoAt(30), home_probability: 0.56, draw_probability: 0.25, away_probability: 0.19 },
+            { timestamp: isoAt(60), home_probability: 0.64, draw_probability: 0.22, away_probability: 0.14 },
+          ],
+        },
+      } as never,
+      "soccer_epl",
+    );
+    expect(pts).toHaveLength(3);
+    expect(pts?.[0]).toEqual({ t: 0, p: 0.49, draw: 0.27, away: 0.24 });
+
+    const cardHtml = renderToStaticMarkup(
+      <EventCard183A
+        card={{
+          id: 777,
+          sport: "soccer_epl",
+          sport_name: "Premier League",
+          status: "live",
+          home_team: "Arsenal",
+          away_team: "Chelsea",
+          commence_time: isoAt(0),
+          home_score: 1,
+          away_score: 0,
+          home_color: "#EF0107",
+          away_color: "#034694",
+          home_prob: 0.64,
+          draw_prob: 0.22,
+          away_prob: 0.14,
+          pregame_home_pct: 49,
+          pregame_draw_pct: 27,
+          pregame_away_pct: 24,
+          projected_home: 1.9,
+          projected_away: 0.6,
+          live_clock_label: "62'",
+          chart_points: pts,
+        }}
+        surface="discover"
+      />,
+    );
+
+    expect(cardHtml).toContain('data-chart-domain="0-100"');
+    expect(cardHtml).toContain('data-testid="discover-soccer-line-home"');
+    expect(cardHtml).toContain('data-testid="discover-soccer-line-draw"');
+    expect(cardHtml).toContain('data-testid="discover-soccer-line-away"');
+    expect(cardHtml.toLowerCase()).toContain('stroke="#ef0107"');
+    expect(cardHtml.toLowerCase()).toContain('stroke="#94a3b8"');
+    expect(cardHtml.toLowerCase()).toContain('stroke="#034694"');
   });
 });

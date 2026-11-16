@@ -8,6 +8,7 @@ import { getSportLabel } from "@/lib/sportCategories";
 import { espnTeamLogoByName } from "@/lib/images";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { awayIsTheComplement, sportPricesADraw } from "@/lib/drawPricedWinner";
+import { extractThreeWaySample, SOCCER_DRAW_LINE_HEX } from "@/lib/chartScaleRule201";
 import { ABOVE_NINETY_NINE_PERCENT, BELOW_ONE_PERCENT } from "@/lib/probabilityDisplay";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
 import { lookupTeamColors, resolveMatchupTeamColors } from "@/lib/teamColors";
@@ -41,6 +42,10 @@ export interface ChartPoint183A {
   t: number;
   /** Home win probability in [0, 1]. */
   p: number;
+  /** Ruling 211-A: optional Draw probability in [0, 1] for 3-way soccer. */
+  draw?: number;
+  /** Ruling 211-A: optional Away win probability in [0, 1] for 3-way soccer. */
+  away?: number;
 }
 
 export interface TennisSetScore183A {
@@ -106,24 +111,42 @@ export interface EventCard183AProps {
  */
 export function extractDiscoverChartPointsFromHistory(
   res: EventHistoryResponse | null | undefined,
+  sportKey?: string | null,
 ): ChartPoint183A[] | undefined {
   if (!res || typeof res !== "object") return undefined;
 
+  type ParsedPt = { ms: number; p: number; draw?: number; away?: number };
+
   const parseSeries = (
-    raw: Array<{ timestamp?: string | null; prob?: number | null }> | null | undefined,
-  ): Array<{ ms: number; p: number }> => {
+    raw:
+      | Array<{
+          timestamp?: string | null;
+          prob?: number | null;
+          draw?: number | null;
+          away?: number | null;
+        }>
+      | null
+      | undefined,
+  ): ParsedPt[] => {
     if (!Array.isArray(raw) || raw.length < 3) return [];
-    const parsed: Array<{ ms: number; p: number }> = [];
+    const parsed: ParsedPt[] = [];
     for (const item of raw) {
       if (!item || typeof item.timestamp !== "string") continue;
       const ms = Date.parse(item.timestamp);
       const p = item.prob;
       if (!Number.isFinite(ms) || typeof p !== "number" || !Number.isFinite(p)) continue;
-      parsed.push({ ms, p: Math.min(1, Math.max(0, p)) });
+      const pt: ParsedPt = { ms, p: Math.min(1, Math.max(0, p)) };
+      if (typeof item.draw === "number" && Number.isFinite(item.draw)) {
+        pt.draw = Math.min(1, Math.max(0, item.draw));
+      }
+      if (typeof item.away === "number" && Number.isFinite(item.away)) {
+        pt.away = Math.min(1, Math.max(0, item.away));
+      }
+      parsed.push(pt);
     }
     if (parsed.length < 3) return [];
     parsed.sort((a, b) => a.ms - b.ms);
-    const deduped: Array<{ ms: number; p: number }> = [];
+    const deduped: ParsedPt[] = [];
     for (const pt of parsed) {
       if (deduped.length > 0 && deduped[deduped.length - 1].ms === pt.ms) {
         deduped[deduped.length - 1] = pt;
@@ -134,17 +157,52 @@ export function extractDiscoverChartPointsFromHistory(
     return deduped.length >= 3 ? deduped : [];
   };
 
+  let chosen: ParsedPt[] = [];
+
+  // Ruling 211-A: on draw-priced soccer, prefer a genuine 3-way history series so
+  // the Discover card chart draws Home, Draw, and Away together on 0–100.
+  if (sportPricesADraw(sportKey)) {
+    if (res.win_prob_history && typeof res.win_prob_history === "object") {
+      let best3: ParsedPt[] = [];
+      for (const arr of Object.values(res.win_prob_history)) {
+        if (!Array.isArray(arr)) continue;
+        const cand = parseSeries(
+          arr.map((pt) => {
+            const s = extractThreeWaySample(pt, sportKey);
+            return s
+              ? { timestamp: pt.timestamp, prob: s.home, draw: s.draw, away: s.away }
+              : { timestamp: pt.timestamp, prob: null };
+          }),
+        );
+        if (cand.length > best3.length) best3 = cand;
+      }
+      chosen = best3;
+    }
+    if (chosen.length < 3 && Array.isArray(res.history)) {
+      chosen = parseSeries(
+        res.history.map((pt) => {
+          const s = extractThreeWaySample(pt, sportKey);
+          return s
+            ? { timestamp: pt.timestamp, prob: s.home, draw: s.draw, away: s.away }
+            : { timestamp: pt.timestamp, prob: null };
+        }),
+      );
+    }
+  }
+
   const aggRaw = (
     res as EventHistoryResponse & {
       aggregate_line?: Array<{ timestamp: string; home_probability: number }> | null;
     }
   ).aggregate_line;
 
-  let chosen = parseSeries(
-    Array.isArray(aggRaw)
-      ? aggRaw.map((pt) => ({ timestamp: pt.timestamp, prob: pt.home_probability }))
-      : null,
-  );
+  if (chosen.length < 3) {
+    chosen = parseSeries(
+      Array.isArray(aggRaw)
+        ? aggRaw.map((pt) => ({ timestamp: pt.timestamp, prob: pt.home_probability }))
+        : null,
+    );
+  }
 
   if (chosen.length < 3 && Array.isArray(res.history)) {
     chosen = parseSeries(
@@ -153,13 +211,16 @@ export function extractDiscoverChartPointsFromHistory(
   }
 
   if (chosen.length < 3 && res.win_prob_history && typeof res.win_prob_history === "object") {
-    let best: Array<{ ms: number; p: number }> = [];
+    let best: ParsedPt[] = [];
     for (const arr of Object.values(res.win_prob_history)) {
       if (!Array.isArray(arr)) continue;
       const cand = parseSeries(
         arr.map((pt) => ({
           timestamp: pt.timestamp,
-          prob: (pt as { home_win_prob?: number | null }).home_win_prob ?? null,
+          prob:
+            pt.home_probability ??
+            (pt as { home_win_prob?: number | null }).home_win_prob ??
+            null,
         })),
       );
       if (cand.length > best.length) best = cand;
@@ -195,6 +256,8 @@ export function extractDiscoverChartPointsFromHistory(
   return sampled.map((pt) => ({
     t: (pt.ms - minMs) / span,
     p: pt.p,
+    ...(pt.draw !== undefined ? { draw: pt.draw } : {}),
+    ...(pt.away !== undefined ? { away: pt.away } : {}),
   }));
 }
 
@@ -720,6 +783,7 @@ function CrestBadge({
 function DiscoverWinChancePanel({
   points,
   strokeColor,
+  awayStrokeColor = "#64748B",
   teamLabel,
   pregamePct,
   endPctLabel,
@@ -729,6 +793,7 @@ function DiscoverWinChancePanel({
 }: {
   points: ChartPoint183A[];
   strokeColor: string;
+  awayStrokeColor?: string;
   teamLabel: string;
   pregamePct: number;
   endPctLabel: string;
@@ -752,17 +817,36 @@ function DiscoverWinChancePanel({
     return padTop + (1 - (clampedP - domain.min) / span) * plotH;
   };
 
+  const hasThreeWayLines =
+    !fitScale &&
+    points.length >= 2 &&
+    points.every((pt) => typeof pt.draw === "number" && typeof pt.away === "number");
+
   const clamped = points.map((pt) => ({
     x: padLeft + Math.min(1, Math.max(0, pt.t)) * plotW,
     y: toY(Math.min(1, Math.max(0, pt.p))),
   }));
-  const polyD = clamped
-    .map((pt, idx) => `${idx === 0 ? "M" : "L"}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`)
-    .join(" ");
+  const drawClamped = hasThreeWayLines
+    ? points.map((pt) => ({
+        x: padLeft + Math.min(1, Math.max(0, pt.t)) * plotW,
+        y: toY(Math.min(1, Math.max(0, pt.draw!))),
+      }))
+    : [];
+  const awayClamped = hasThreeWayLines
+    ? points.map((pt) => ({
+        x: padLeft + Math.min(1, Math.max(0, pt.t)) * plotW,
+        y: toY(Math.min(1, Math.max(0, pt.away!))),
+      }))
+    : [];
+  const toPathD = (pts: Array<{ x: number; y: number }>) =>
+    pts.map((pt, idx) => `${idx === 0 ? "M" : "L"}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
+  const polyD = toPathD(clamped);
+  const drawPolyD = toPathD(drawClamped);
+  const awayPolyD = toPathD(awayClamped);
   const firstPt = clamped[0];
   const lastPt = clamped[clamped.length - 1];
   const areaD =
-    firstPt && lastPt
+    !hasThreeWayLines && firstPt && lastPt
       ? `${polyD} L${lastPt.x.toFixed(1)},${(padTop + plotH).toFixed(1)} L${firstPt.x.toFixed(1)},${(padTop + plotH).toFixed(1)} Z`
       : "";
   const gradId = `chart191a-grad-${cardId}`;
@@ -814,6 +898,64 @@ function DiscoverWinChancePanel({
           );
         })}
         {areaD && <path d={areaD} fill={`url(#${gradId})`} />}
+        {hasThreeWayLines && (
+          <>
+            <path
+              d={drawPolyD}
+              fill="none"
+              stroke={SOCCER_DRAW_LINE_HEX}
+              strokeWidth={1.75}
+              strokeLinejoin="miter"
+              strokeLinecap="round"
+              data-testid="discover-soccer-line-draw"
+            />
+            {drawClamped[0] && (
+              <circle
+                cx={drawClamped[0].x}
+                cy={drawClamped[0].y}
+                r={2.25}
+                className="fill-surface-card"
+                stroke={SOCCER_DRAW_LINE_HEX}
+                strokeWidth={1.5}
+              />
+            )}
+            {drawClamped[drawClamped.length - 1] && (
+              <circle
+                cx={drawClamped[drawClamped.length - 1].x}
+                cy={drawClamped[drawClamped.length - 1].y}
+                r={3}
+                fill={SOCCER_DRAW_LINE_HEX}
+              />
+            )}
+            <path
+              d={awayPolyD}
+              fill="none"
+              stroke={awayStrokeColor}
+              strokeWidth={2.25}
+              strokeLinejoin="miter"
+              strokeLinecap="round"
+              data-testid="discover-soccer-line-away"
+            />
+            {awayClamped[0] && (
+              <circle
+                cx={awayClamped[0].x}
+                cy={awayClamped[0].y}
+                r={2.5}
+                className="fill-surface-card"
+                stroke={awayStrokeColor}
+                strokeWidth={1.75}
+              />
+            )}
+            {awayClamped[awayClamped.length - 1] && (
+              <circle
+                cx={awayClamped[awayClamped.length - 1].x}
+                cy={awayClamped[awayClamped.length - 1].y}
+                r={3.25}
+                fill={awayStrokeColor}
+              />
+            )}
+          </>
+        )}
         <path
           d={polyD}
           fill="none"
@@ -821,6 +963,7 @@ function DiscoverWinChancePanel({
           strokeWidth={2.25}
           strokeLinejoin="miter"
           strokeLinecap="round"
+          data-testid={hasThreeWayLines ? "discover-soccer-line-home" : undefined}
         />
         {firstPt && (
           <circle
@@ -2010,6 +2153,7 @@ export default function EventCard183A({
           cardId={card.id}
           points={chartPoints}
           strokeColor={homeInk}
+          awayStrokeColor={awayInk}
           teamLabel={homeShort}
           pregamePct={card.pregame_home_pct as number}
           endPctLabel={chartEndLabel}
