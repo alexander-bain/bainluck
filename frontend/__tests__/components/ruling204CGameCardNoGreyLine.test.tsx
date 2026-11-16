@@ -512,5 +512,22 @@ describe("Ruling 204-C — buildUnifiedCardFromTeamGame & EventCard183A flag-gat
       expect(extracted?.[0]).toEqual({ t: 0, p: 0.79 });
       expect(extracted?.[3]).toEqual({ t: 1, p: 0 });
     });
+
+    it("6. resolveLiveClock handles numeric raw espn_data.period safely without throwing", () => {
+      const liveWithNumericEspnData = {
+        id: 15349999,
+        sport: "americanfootball_nfl",
+        sport_name: "NFL",
+        home_team: "Detroit Lions",
+        away_team: "Green Bay Packers",
+        commence_time: LIVE_ISO,
+        status: "live",
+        home_score: 17,
+        away_score: 14,
+        espn_data: { period: 3, game_clock: "8:14" },
+      } as unknown as Event;
+      const card = buildUnifiedCardFromEvent(liveWithNumericEspnData);
+      expect(card.live_clock_label).toBe("8:14");
+    });
   });
 });

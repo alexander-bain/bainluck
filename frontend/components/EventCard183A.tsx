@@ -636,21 +636,30 @@ export function formatPregameKickoff(
   return `${weekday} ${monthDay}, ${timeStr}`;
 }
 
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
 function resolveLiveClock(
   source: unknown,
   sport: string | null | undefined,
 ): string | null {
   if (!source || typeof source !== "object") return null;
   const rec = source as {
-    espn?: { period?: string | null; game_clock?: string | null } | null;
-    espn_data?: { period?: string | null; game_clock?: string | null } | null;
-    live_clock?: string | null;
+    espn?: { period?: unknown; game_clock?: unknown } | null;
+    espn_data?: { period?: unknown; game_clock?: unknown } | null;
+    live_clock?: unknown;
   };
-  const fromEspn = formatLiveClockLabel(rec.espn?.period, rec.espn?.game_clock, " ", sport);
+  const fromEspn = formatLiveClockLabel(
+    stringOrNull(rec.espn?.period),
+    stringOrNull(rec.espn?.game_clock),
+    " ",
+    sport,
+  );
   if (fromEspn) return fromEspn;
   const fromEspnData = formatLiveClockLabel(
-    rec.espn_data?.period,
-    rec.espn_data?.game_clock,
+    stringOrNull(rec.espn_data?.period),
+    stringOrNull(rec.espn_data?.game_clock),
     " ",
     sport,
   );
