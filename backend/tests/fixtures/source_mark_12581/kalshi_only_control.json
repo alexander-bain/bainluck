@@ -1,0 +1,12 @@
+{
+  "event_id": 14638896,
+  "home": "Kansas City Chiefs",
+  "away": "Denver Broncos",
+  "status": "completed",
+  "before_rows": 448,
+  "after_rows": 448,
+  "before_header_source": "kalshi",
+  "after_header_source": "kalshi",
+  "holds": [],
+  "scope": "saved served rows through the local selection utility; not deployed proof"
+}

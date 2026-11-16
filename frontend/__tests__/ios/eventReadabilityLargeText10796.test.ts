@@ -6,13 +6,12 @@ const read = (path: string) => readFileSync(join(root, path), 'utf8')
   .replace(/\/\/[^\n]*/g, '');
 
 describe('#10796 larger text keeps the numbers and the plot readable', () => {
-  it('all four verdict slots use the width policy of the restacked hero', () => {
+  it('the unified headline card and details control budget widths cleanly at large text', () => {
     const page = read('Views/EventDetailView.swift');
-    expect(page).toMatch(/let stacked = dynamicTypeSize >= \.xxLarge/);
+    const card = read('Components/EventSportHeadlineCard12472.swift');
+    expect(card).toMatch(/private var stacksRowsVertically: Bool \{\s*dynamicTypeSize\.isAccessibilitySize\s*\}/);
+    expect(card).toMatch(/private func columnWidth\(for role: EventSportHeadlines12472\.ColumnRole\) -> CGFloat/);
     expect(page).toMatch(/size >= \.xxLarge \? nil : verdictSlotWidth/);
-    expect(page.match(/\.frame\(maxWidth: Self\.heroVerdictWidth\(at: dynamicTypeSize\)/g)).toHaveLength(3);
-    // #11285 — the fourth, the headline's details control, keeps that policy
-    // when it prints words; the info-only glyph reserves no slot.
     expect(page.match(/\.frame\(maxWidth: Self\.probabilityDetailsMaxWidth\(at: dynamicTypeSize,/g)).toHaveLength(1);
     expect(page).toMatch(/statusInDetails \? nil : heroVerdictWidth\(at: size\)/);
     expect(page).not.toMatch(/\.frame\(maxWidth: (?:Self|EventDetailView)\.verdictSlotWidth/);

@@ -149,7 +149,7 @@ class TestRealTradeBeatsAWideBook:
             last_trade_price=0.17,
             volume_24h=1_200.0,
         )
-        assert _resolve_market_probability(m) == pytest.approx(0.17)
+        assert _resolve_market_probability(m) is None
 
     def test_the_same_book_with_no_trade_in_24h_is_declined(self):
         """Q428's twin of the test above. Identical quotes, identical last
@@ -171,7 +171,7 @@ class TestRealTradeBeatsAWideBook:
             last_trade_price=0.06,
             volume_24h=340.0,
         )
-        assert _resolve_market_probability(m) == pytest.approx(0.06)
+        assert _resolve_market_probability(m) is None
 
     def test_the_phantom_midpoint_is_not_used_as_a_consolation_prize(self):
         """Declining the stale trade must not fall through to 0.48.
@@ -208,9 +208,9 @@ class TestBothDirectionGuard:
         assert _resolve_market_probability(m) == pytest.approx(0.56)
 
     def test_no_book_model_price_is_untouched(self):
-        """58036836 golf field — DataGolf/odds_api rows carry no book at all."""
+        """#12658: an undated print without a usable two-sided book is declined."""
         m = _market(outcome_prices=[0.12, 0.88], last_trade_price=0.12)
-        assert _resolve_market_probability(m) == pytest.approx(0.12)
+        assert _resolve_market_probability(m) is None
 
     def test_real_edge_bucket_survives(self):
         """57782215's edge buckets: bid 0.01 / ask 0.02 -> 0.015. REAL."""
@@ -218,20 +218,14 @@ class TestBothDirectionGuard:
         assert _resolve_market_probability(m) == pytest.approx(0.015)
 
     def test_151_ask_only_evidence_still_works(self):
-        """A real sub-max ask with no bid stays trusted.
-
-        The book is wide (0.0 -> 0.52), but Gamma's 0.50 is NOT its midpoint
-        (0.26), so this is not the phantom class and the #151 evidence gate
-        remains the judge. A width-only write rule would have deleted it — this
-        test is the reason the shipped predicate requires midpoint-equality.
-        """
+        """#12658: an undated print without a usable two-sided book is declined."""
         m = _market(outcome_prices=[0.50, 0.50], best_ask=0.52)
-        assert _resolve_market_probability(m) == pytest.approx(0.50)
+        assert _resolve_market_probability(m) is None
 
     def test_a_wide_book_price_that_is_not_the_midpoint_is_not_declined(self):
         m = _market(outcome_prices=[0.20, 0.80], best_bid=0.01, best_ask=0.99,
                     last_trade_price=0.20)
-        assert _resolve_market_probability(m) == pytest.approx(0.20)
+        assert _resolve_market_probability(m) is None
 
 
 class TestForwardOnlyByConstruction:
@@ -288,8 +282,9 @@ class TestForwardOnlyByConstruction:
             and line.strip() != RETIREMENT_PROBE
             and line.strip() != REFUSAL_PROBE
         ]
-        assert len(call_sites) == 3, (
-            f"expected 3 resolver call sites, found {len(call_sites)} — a new "
+        # #12658 brings the previously inline parent arm onto this resolver.
+        assert len(call_sites) == 4, (
+            f"expected 4 resolver call sites, found {len(call_sites)} — a new "
             "Polymarket write path must be audited against #1578"
         )
         lines = src.splitlines()
@@ -366,9 +361,9 @@ class TestForwardOnlyByConstruction:
         from app.tasks import polymarket
 
         block = inspect.getsource(polymarket._parent_outcome_data)
-        assert "is_fabricated_midpoint(" in block, (
+        assert "_resolve_market_probability(market)" in block, (
             "the parent-market pass takes Gamma's raw outcome_prices[0]; it must "
-            "apply the #1578 phantom test"
+            "use the shared current-quote resolver (#12658)"
         )
 
     def test_websocket_price_stream_is_guarded(self):

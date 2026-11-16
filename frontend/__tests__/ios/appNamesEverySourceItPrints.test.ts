@@ -531,18 +531,19 @@ d("#4135 — the app names a source or draws none", () => {
       expect(body).not.toContain(".capitalized");
     });
 
-    it("every one of the seven files reaches the resolver at all", () => {
+    it("every file that still prints a venue reaches the resolver at all", () => {
       // The coarse net under the slices: a rewrite that renames the declarations
       // above would skip every `it.each` case via a red slice, but this one still
-      // has to hold. All seven files #4351 touched are here, including the four
-      // the first cut of this ship missed and a LOOK found.
+      // has to hold. #4351 touched seven files, including the four the first cut
+      // of this ship missed and a LOOK found. #12578 / 137-A (Alex, Nov 10): the
+      // Player Props header names no venue any more, so PlayerPropsCardView
+      // prints none and is no longer one of them.
       for (const rel of [
         "Components/DiscoverFuturesCard.swift",
         "Views/DiscoverView.swift",
         "Components/RelatedFuturesView.swift",
         "Components/DistributionCardView.swift",
         "Components/HeatMapCardView.swift",
-        "Components/PlayerPropsCardView.swift",
         "Views/TeamDetailView.swift",
       ]) {
         const source = stripComments(readFileSync(join(IOS_ROOT, rel), "utf8"));

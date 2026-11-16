@@ -25,6 +25,7 @@ from app.utils.futures_unsupported_price import (
 from app.utils.latest_observation import blended_observed_at
 from app.utils.market_shape import venue_leg_count
 from app.utils.settledness import market_assigned_settled
+from app.utils.source_mark import quote_source_mark
 
 
 def _positive_id(value: object) -> int | None:
@@ -163,7 +164,11 @@ def final_game_winner_quotes(
                     )):
                 break
             valid_rows.append({**row, "side": side, "probability": probability,
-                               "observed_at": _stamp(observed_at.get(leg.id))})
+                               "observed_at": _stamp(observed_at.get(leg.id)),
+                               "source_mark": quote_source_mark([{
+                                   "key": source, "probability": probability,
+                                   "observed_at": observed_at.get(leg.id),
+                               }])})
         if len(valid_rows) == len(rows) and any(row["probability"] > 0 for row in valid_rows):
             candidates.extend(valid_rows)
 
@@ -196,6 +201,7 @@ def final_game_winner_quotes(
                     "outcome_id": row["outcome_id"], "side": row["side"],
                     "name": names[row["side"]], "probability": row["probability"],
                     "observed_at": row["observed_at"],
+                    "source_mark": row["source_mark"],
                 } for row in sorted(selected, key=lambda row: order[row["side"]])],
             }
             # Judged on the served (post-#23) number, the one a reader would see.

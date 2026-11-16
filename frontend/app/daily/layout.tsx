@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
+import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
 import { selfCanonical } from "@/lib/routeMetadata";
 
 // #4193: a pass-through layout that exists only to state this route's identity.
@@ -23,5 +25,8 @@ export default function DailyLayout({
 }: {
   children: React.ReactNode;
 }) {
+  if (!CHALLENGE_SURFACES_ENABLED) {
+    redirect("/discover");
+  }
   return <>{children}</>;
 }

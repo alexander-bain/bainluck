@@ -912,15 +912,18 @@ struct WatchSelectedGameView: View {
 
     @ViewBuilder
     private func pickerMatchup(away: String, home: String, metadata: WatchFeedEvent?) -> some View {
+        let displayTeams = TeamShortName.isCollegeSport(sportKey: metadata?.sport)
+            ? TeamShortName.shortPair(away: away, home: home, sportKey: metadata?.sport)
+            : (away: away, home: home)
         let awayColor = pickerTeamColor(metadata?.awayTeamData?.primaryColor)
         let homeColor = pickerTeamColor(metadata?.homeTeamData?.primaryColor)
         if awayColor != nil || homeColor != nil {
             VStack(alignment: .leading, spacing: 2) {
-                pickerTeamName(away, color: awayColor)
-                pickerTeamName("at " + home, color: homeColor)
+                pickerTeamName(displayTeams.away, color: awayColor)
+                pickerTeamName("at " + displayTeams.home, color: homeColor)
             }
         } else {
-            Text("\(away) at \(home)")
+            Text("\(displayTeams.away) at \(displayTeams.home)")
                 .font(.footnote.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1020,7 +1023,7 @@ struct WatchSelectedGameView: View {
                     } else {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Label(store.isRestoredReading ? "Saved · \(game.stateLabel)" : game.stateLabel,
-                                  systemImage: "checkmark")
+                                  systemImage: "bookmark.fill")
                                 .foregroundStyle(store.isRestoredReading ? Color.orange : Color.secondary)
                             Spacer(minLength: 4)
                             Label("Return", systemImage: "arrow.uturn.backward").foregroundStyle(.primary)
@@ -1045,16 +1048,22 @@ struct WatchSelectedGameView: View {
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(probability).font(.title2.bold()).monospacedDigit()
-                            Text(age.compactText.map {
-                                $0 + (game.isLive && age.isStale ? " · stale" : "")
+                            Text(age.compactText.map { compact in
+                                if game.isLive, age.isStale, let obs = game.probabilityObservedAt {
+                                    return "As of \(WatchRectangularReading.asOfClock(obs))"
+                                }
+                                return compact
                             } ?? "Observation time unavailable")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                         .fixedSize(horizontal: true, vertical: false)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(probability).font(.title2.bold()).monospacedDigit()
-                            Text(age.compactText.map {
-                                $0 + (game.isLive && age.isStale ? " · stale" : "")
+                            Text(age.compactText.map { compact in
+                                if game.isLive, age.isStale, let obs = game.probabilityObservedAt {
+                                    return "As of \(WatchRectangularReading.asOfClock(obs))"
+                                }
+                                return compact
                             } ?? "Observation time unavailable")
                                 .font(.footnote).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1069,8 +1078,12 @@ struct WatchSelectedGameView: View {
                                   metadata: picker.games.first { store.isSelected(eventID: $0.id) })
                 }
                 if !game.showsForecast || game.homeProbabilityText == nil {
-                    Text(age.compactText.map {
-                        "\(clockName) observed \($0)" + (game.isLive && age.isStale ? " · stale" : "")
+                    Text(age.compactText.map { compact in
+                        let obs = game.showsForecast ? game.probabilityObservedAt : game.scoreObservedAt
+                        if game.isLive, age.isStale, let obs {
+                            return "\(clockName) · As of \(WatchRectangularReading.asOfClock(obs))"
+                        }
+                        return "\(clockName) observed \(compact)"
                     } ?? (compactUnavailable ? "Observation time unavailable" : "\(clockName) observation time unavailable"))
                         .font(.footnote).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1092,7 +1105,7 @@ struct WatchSelectedGameView: View {
                                  "Scheduled start " + $0.formatted(.dateTime.month().day().hour().minute())
                              } : nil,
                              reading, age.spokenText.map { "\(clockName) observed \($0)" } ?? "\(clockName) observation time unavailable",
-                             game.isLive && age.isStale ? "Stale \(clockName.lowercased())." : nil]
+                             game.isLive && age.isStale ? "May be out of date." : nil]
             .compactMap { $0 }.joined(separator: " "))
         .accessibilityAddTraits(.isSelected)
         .accessibilityIdentifier("watch.pick.\(rowID)")

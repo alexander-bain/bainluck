@@ -80,6 +80,7 @@ from app.utils.series_card_labels import (
     relabel_series_card,
 )
 from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_CATEGORY
+from app.utils.tennis_live_score import attach_tennis_score, tennis_point_cache_expiry
 
 # #6923. The search card's age pip and the futures card's age mark must agree on
 # what "prints a price" means, so both call the one predicate; `routes/feed.py`
@@ -235,6 +236,8 @@ from app.utils.search_intent import (
     parse_intent,
     promote_answering_rows,
 )
+from app.utils.explicit_search import explicit_search
+from app.config.major_team_search import MAJOR_TEAM_QUERY_ALIASES
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
     search_response_cache_enabled,
@@ -3402,6 +3405,10 @@ def _team_card_keyed(
         }
         for row in rows
     ]
+    for card in cards:
+        card["_aliases"].extend(MAJOR_TEAM_QUERY_ALIASES.get(
+            (card["sport_key"], card["name"]), ()
+        ))
     if not restated_aliases:
         for card in cards:
             card["_aliases"] = [
@@ -9438,6 +9445,13 @@ def _has_extractable_trigram(term: str) -> bool:
     )
 
 
+def _recent_projection_keys(aggregated) -> dict:
+    """#12595: `current_odds`' projection keys, empty unless a projection was applied."""
+    from app.utils.recent_line_readings import projection_keys
+
+    return projection_keys(aggregated)
+
+
 def latest_odds_per_bookmaker_query(event_ids: list[int]):
     """The latest snapshot per (event, bookmaker) for a page of events.
 
@@ -10263,6 +10277,8 @@ async def search_events(
     #
     # The read is guarded on `debug_timing` alone, and the write below adds
     # `degraded` — see each site for why the two conditions are not the same.
+    _explicit_search = explicit_search(q)
+    _next_games = _explicit_search.next_games if _explicit_search else None
     _search_cache_key = search_response_cache_key(
         q=q,
         sport=sport,
@@ -10272,6 +10288,8 @@ async def search_events(
         days_back=days_back,
         include_upcoming=include_upcoming,
     )
+    if _explicit_search:
+        _search_cache_key += ":explicit-v1"
     # #3526: `_force_search_cache_rebuild` joins the READ condition and ONLY the
     # read. The warmer sets it so this call skips the cached body and rebuilds,
     # while the write below still fires — which is what lets the warmer refresh
@@ -10394,6 +10412,8 @@ async def search_events(
         if _intent is not None and _intent.kind in _IDENTITY_SUBSTITUTED_KINDS
         else q
     )
+    if _explicit_search:
+        _q_identity = _explicit_search.subject
     # #9834: a club's short form identifies the club — `man utd` and `bvb` share
     # no word with any name a rail matches, so the page answered them with
     # nothing. An identity site, so it rewrites the subject and never `q`; the
@@ -10755,6 +10775,34 @@ async def search_events(
     # #9040: ...except among finished games, where the newest day leads first.
     _settled_day_key = _settled_day_order_key(_team_card_lead_sports)
     _mark("team_evidence")
+
+    _set_team = None
+    if _next_games:
+        # Identity remains the existing owned-name resolver's job. A literal
+        # set request narrows the fixture selector; it never guesses a club.
+        _set_candidates = [
+            card for _, card in _team_card_keyed(_early_team_rows, _q_identity, cap=None)
+            if _query_names_team_card(card, _q_identity)
+            and _is_marquee_team_sport_key(card["sport_key"])
+        ]
+        if len(_set_candidates) == 1:
+            _set_team = _set_candidates[0]
+        else:
+            # No unique club means no fixture selector. Keep the subject's
+            # ordinary search (including every matching team card) and echo
+            # the original query; do not invent an empty "next N games" set.
+            _next_games = None
+
+    if _next_games:
+        _set_scope = [
+            Event.status == "scheduled",
+            Event.commence_time > now,
+            or_(Event.home_team_id == _set_team["id"], Event.away_team_id == _set_team["id"]),
+        ]
+        # Rescue queries also consume event_scope_conditions. They may not
+        # fill an empty requested set with past games or a namesake's games.
+        event_conditions.extend(_set_scope)
+        event_scope_conditions.extend(_set_scope)
 
     # Build base query - search both home and away team names
     query = (
@@ -11485,6 +11533,11 @@ async def search_events(
     _mark("bye_finals_probe")
 
     offset, _page_limit = _search_games_page_window(page, per_page, _bye_finals_capped)
+    if _next_games:
+        # Fold through the existing canonical-game machinery before cutting
+        # the requested set. The bounded overfetch leaves room for twins.
+        offset, _page_limit = 0, 100
+        query = query.order_by(None).order_by(Event.commence_time.asc(), Event.id.asc())
     query = query.offset(offset).limit(_page_limit)
 
     # Execute
@@ -11846,6 +11899,10 @@ async def search_events(
                 "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
                 "captured_at": latest_time,
             }
+        # #12595: a scheduled game's pair comes from recent line readings.
+        from app.utils.recent_line_readings import apply_recent_line_projections
+
+        await apply_recent_line_projections(db, events, aggregated_odds_map)
     _mark("event_odds_aggregate")
 
     # Load GEI percentiles for formatting
@@ -11947,6 +12004,40 @@ async def search_events(
     for _formatted in formatted_results:
         attach_pregame_projection(_formatted, _projections.get(_formatted.get("id")))
     _mark("pregame_projection")
+
+    # #1619: empty means no futures statement ran, including a game-set response.
+    _futures_arm_ms: dict[str, int] = {}
+    if _next_games:
+        _set_results = formatted_results[:_next_games]
+        _set_count = len(_set_results)
+        _set_name = _set_team["name"]
+        _set_title = (
+            f"{_set_name}: next {_set_count} game{'s' if _set_count != 1 else ''}"
+            if _set_count else f"{_set_name}: no upcoming games"
+        )
+        _set_pages = max(1, (_set_count + per_page - 1) // per_page)
+        _set_offset = (page - 1) * per_page
+        _set_payload = {
+            "query": q, "teams": [], "event_concepts": [], "futures": [],
+            "futures_families": [], "collections": [],
+            "results": _set_results[_set_offset:_set_offset + per_page],
+            "game_set": {
+                "title": _set_title,
+                "selector": {"team_id": _set_team["id"],
+                             "count": _next_games, "state": "scheduled"},
+            },
+            "pagination": {"page": page, "per_page": per_page,
+                           "total_results": _set_count, "total_pages": _set_pages,
+                           "has_next": page < _set_pages, "has_prev": page > 1},
+            "sports": [],
+            "filters": {"sport": sport, "days_back": 0, "include_upcoming": True},
+            **({"degraded": degraded} if degraded else {}),
+            **({"debug_timing": {**_stage_ms, "total_ms": sum(_stage_ms.values()),
+                                 "futures_arm_ms": _futures_arm_ms}}
+               if debug_timing else {}),
+        }
+        _record_search_query(_set_payload, q=q, request=request, current_user=current_user)
+        return _set_payload
 
     # Calculate pagination metadata
     total_count = total_count or 0
@@ -12658,8 +12749,6 @@ async def search_events(
     _futures_outcome_arm = "not_reached"
     # #10024: the split arms' state, beside the outcome arm's (gotcha #53).
     _futures_split_report: dict = {"state": "not_reached"}
-    # #1619: each futures statement's own ms; see `_fetch_futures_window`.
-    _futures_arm_ms: dict[str, int] = {}
     # #8704: tier<=1 rows ranked 21-60, fetched by the window's own statement.
     # See `_futures_refill_in_hand` for when they ARE the collapse refill.
     _futures_spare_rows: list = []
@@ -13911,6 +14000,7 @@ async def search_events(
     for _c in event_concepts:
         _c.pop("_derived", None)
     for _t in matched_teams:
+        _t["query_names_team"] = _query_names_team_card(_t, q)
         _t.pop("_aliases", None)
 
     _payload = {
@@ -16550,6 +16640,13 @@ async def typeahead_search(
     # strings would be two rules, so both read `_q_identity` — connector
     # dropped (`_q_matchup`, #9527), else `red sox vs yankees` scores the game
     # below every market whose name says "vs.".
+    # Ranking-only names: add them after fixture selection so identifying the
+    # team card does not open the recent-final or next-game rescue arms.
+    for item in team_pool:
+        item["_aliases"] = [
+            *(item.get("_aliases") or ()),
+            *MAJOR_TEAM_QUERY_ALIASES.get((item.get("sport_key"), item.get("text")), ()),
+        ]
     _ta_candidates = [
         (_typeahead_evidence(item, _q_matchup), item)
         for item in (*hub_pool, *team_pool, *event_pool,
@@ -16601,6 +16698,8 @@ async def typeahead_search(
 
     _typeahead_stamp_related_game_listings(suggestions)  # #10298
     for _s in suggestions:
+        if _s.get("type") == "team":
+            _s["query_names_team"] = _query_names_team_card(_s, q)
         _s.pop("_derived", None)
         _s.pop("_aliases", None)
         # Ranking evidence, never a payload: a 40-outcome market would other-
@@ -19006,6 +19105,10 @@ async def list_events(
                 "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
                 "captured_at": latest_time,
             }
+        # #12595: a scheduled game's pair comes from recent line readings.
+        from app.utils.recent_line_readings import apply_recent_line_projections
+
+        await apply_recent_line_projections(db, events, aggregated_odds_map)
 
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
@@ -19494,6 +19597,9 @@ def _cached_detail_payload(event_id: int, now: float) -> dict | None:
     else:
         ttl = _EVENT_DETAIL_DEFAULT_TTL
     if now - cached_at >= ttl:
+        return None
+    point_expiry = tennis_point_cache_expiry(cached_resp)
+    if point_expiry is not None and now >= point_expiry:
         return None
     return cached_resp
 
@@ -20550,6 +20656,23 @@ async def get_event(
         if not agg_snapshots:
             agg_snapshots = filtered_snapshots  # fallback: use all if all were flagged
         aggregated = aggregate_bookmaker_odds(agg_snapshots)
+        # #12595: a scheduled game's spread, total and projected pair come from
+        # recent line readings, with their own stamp; the probability, moneyline,
+        # `captured_at` and `bookmaker_count` above are untouched.
+        from app.utils.recent_line_readings import (
+            apply_projection as _apply_projection,
+            in_scope as _projection_in_scope,
+            recent_line_projections as _recent_line_projections,
+        )
+
+        if _projection_in_scope(event):
+            # Never raises: a failed read withholds the pair (`read_failed`).
+            aggregated = _apply_projection(
+                aggregated,
+                (await _recent_line_projections(
+                    db, [event], {event.id: list(latest_snapshots)}
+                )).get(event.id),
+            )
 
         # Hero probability: use multi-source aggregate (matching feed),
         # fall back to bookmaker-only consensus if aggregate unavailable.
@@ -20621,6 +20744,8 @@ async def get_event(
             "projected_home_score": aggregated["projected_home_score"],
             "projected_away_score": aggregated["projected_away_score"],
             "bookmaker_count": aggregated["bookmaker_count"],
+            # #12595: the pair's own stamp, count and reason (scheduled, in scope).
+            **_recent_projection_keys(aggregated),
             # #1854 (UX-P077, Alex ruling 2026-08-14): `probability_range` USED to
             # sit here — the sportsbook min/max, served beside a hero that is the
             # multi-source BLEND since #1829. Measured on production 2026-08-13:
@@ -20832,7 +20957,11 @@ async def get_event(
     # "lightweight row wrapper" that module's docstring says it accepts. The
     # settled and opening arms are unaffected: the view changes only
     # `win_probability_sources`.
-    _hero = resolve_hero(blend_view)
+    _hero_source_inputs: list[tuple[str, float]] = []
+    _hero_source_method: list[str] = []
+    _hero = resolve_hero(
+        blend_view, source_inputs=_hero_source_inputs, source_method=_hero_source_method,
+    )
     # #8749: cache the observation clock WITH the value it dates. History can
     # serve this cached probability while reading a newer event row; borrowing
     # that row's clock would falsely promote an older cached price to new truth.
@@ -20884,6 +21013,14 @@ async def get_event(
 
             response["hero_sportsbook_count"] = hero_sportsbook_count(blend_view)
 
+    from app.utils.source_mark import headline_source_marks
+
+    response["source_mark"], response["away_source_mark"] = headline_source_marks(
+        blend_view, _hero, _hero_source_inputs,
+        method=_hero_source_method[0] if _hero_source_method else None,
+        away_available=response.get("hero_probability_away") is not None,
+    )
+
     # #5077: this page says LIVE, ticks a 20s refresh, shows no score, and its
     # number has not moved in hours — while the venue settled every market on the
     # match. The client cannot work that out for itself: it sees one current
@@ -20933,6 +21070,9 @@ async def get_event(
         if _periods is not None:
             response["box_score_data"].update(_periods)
 
+    # Tennis's games do not add up to sets won. Its whole source snapshot is
+    # checked separately and maps to the fields the installed headline reads.
+    attach_tennis_score(event, response, datetime.now(timezone.utc))
     response.update(_state_read_window)
 
     # Q050: cache under the id the caller ASKED FOR as well as the one we
@@ -23770,6 +23910,8 @@ _PROP_NAME_STAT_COMBOS = [
     ("points + rebounds", ["points", "rebounds"]),
     ("points + assists", ["points", "assists"]),
     ("rebounds + assists", ["rebounds", "assists"]),
+    # #12633: otherwise the singles path below grades this from blocks alone.
+    ("steals + blocks", ["steals", "blocks"]),
 ]
 # Outcome names that are a SIDE, never a person. Looking these up in the box
 # score is the miss that made a settled game report 12 ungradeable rungs.
@@ -25676,6 +25818,8 @@ def _build_props_script(player_props):
     inverted — a row whose number was already true of its own label is
     byte-identical.
     """
+    from app.utils.source_mark import settled_source_mark, source_mark_on_axis
+
     script: list[dict] = []
     for pp in player_props:
         label = pp.get("outcome_name") or pp.get("market_name") or ""
@@ -25713,6 +25857,10 @@ def _build_props_script(player_props):
             "label": label,
             "pregame_mark": _own_axis(pp.get("pregame_mark"), inverted),
             "current": _own_axis(pp.get("over_probability"), inverted),
+            "source_mark": (
+                settled_source_mark(pp.get("resolution_source"), "Won" if hit else "Lost")
+                if hit is not None else source_mark_on_axis(pp.get("source_mark"), inverted=inverted)
+            ),
             "graded_result": graded_result,
             "graded_label": graded_label,
             # #5088 — THE ROW SAYS WHETHER IT IS SETTLED; THE SECTION SAYS WHAT
@@ -26683,6 +26831,9 @@ async def _build_game_markets(
                     FuturesMarket.source == "polymarket",
                     FuturesMarket.group_id.isnot(None),
                     FuturesMarket.group_type.in_(["polymarket_event", "negrisk"]),
+                    # #12633: New England/Miami also names an MLS fixture.
+                    # Parent rescue needs the same sport evidence as unlinked markets.
+                    sport_filter,
                     or_(*home_conditions),
                     or_(*away_conditions),
                     FuturesMarket.commence_time.isnot(None),
@@ -27688,6 +27839,65 @@ async def _build_game_markets(
                     "_market_id": market.id,
                 })
 
+    # #12581: preserve the actual admitted quote before any row is averaged,
+    # capped or selected. Poll touches are never used as quote observations.
+    from app.utils.source_mark import (
+        cap_source_mark, fold_prop_source_marks, no_source_mark, quote_source_mark,
+        settled_source_mark,
+    )
+
+    _source_legs = {o.id: o for o in outcomes}
+
+    from app.utils.game_prop_sources import annotate_prop_fields
+
+    annotate_prop_fields(player_props, markets=market_map,
+                         player_and_stat=_prop_player_and_stat,
+                         home_team=event.home_team_name, away_team=event.away_team_name)
+
+    def _initial_source_mark(row: dict) -> dict:
+        hit = row.get("hit")
+        if hit is not None:
+            won = not hit if row.get("_inverted") else hit
+            return settled_source_mark(
+                getattr(event, "score_source", None), "Won" if won else "Lost",
+            )
+        if _verdict_is_provable(row, row.get("_market_id") in markets_with_a_winner):
+            return settled_source_mark(
+                row.get("resolution_source"),
+                "Won" if row.get("is_winner") else "Lost",
+            )
+        price_key = "over_probability" if "over_probability" in row else "probability"
+        if row.get(price_key) is None:
+            return no_source_mark("no_probability")
+        inputs = []
+        for oid in row.get("contributor_outcome_ids", []):
+            leg = _source_legs.get(oid)
+            market = market_map.get(leg.market_id) if leg is not None else None
+            if leg is None or market is None or leg.current_probability is None:
+                return no_source_mark("source_evidence_incomplete")
+            probability = float(leg.current_probability)
+            if price_key == "over_probability" and _prop_side(leg.name) == "under":
+                probability = 1 - probability
+            inputs.append({"key": market.source, "probability": probability,
+                           "observed_at": _observed(leg)})
+        return quote_source_mark(inputs)
+
+    for _source_rows in (totals_thresholds, player_props, spreads, period_markets,
+                         other_markets, _deep_otm_spreads):
+        for _source_row in _source_rows:
+            _source_row["source_mark"] = _initial_source_mark(_source_row)
+    for _source_matchup in matchups:
+        for _source_row in _source_matchup["outcomes"]:
+            _source_row["source_mark"] = _initial_source_mark(_source_row)
+
+    # 157-A: a Protected contract is not the standard prop. Apply the policy
+    # before any live/finished copy, price fold or script can retain it.
+    from app.utils.game_prop_sources import select_standard_prop_rows
+
+    player_props, _prop_contract_withheld = select_standard_prop_rows(
+        player_props, markets=market_map, sport_key=sport_key,
+    )
+
     # 6. Sort totals and spreads by threshold value
     totals_thresholds.sort(key=lambda t: t["threshold"])
     spreads.sort(key=lambda s: s.get("threshold") or 0)
@@ -27935,6 +28145,7 @@ async def _build_game_markets(
                 # indistinguishable from one that was independently observed at
                 # the donor's time, and the two are not the same claim.
                 capped["observed_at_basis"] = "capped_to_sibling"
+                cap_source_mark(capped)
                 result.append(capped)
             else:
                 result.append(item)
@@ -28409,12 +28620,32 @@ async def _build_game_markets(
         if _window_is_closed(_otm_row):
             _window_closed_items.append(_otm_row)
 
+    # #12581: the known NFL participation-rule holds select one venue's book;
+    # protected contracts remain separate. Preserve the matrix's raw inputs.
+    from app.utils.game_prop_sources import shape_nfl_prop_rows
+
+    player_props, _prop_source_holds = shape_nfl_prop_rows(
+        player_props, markets=market_map, legs=_source_legs,
+        player_and_stat=_prop_player_and_stat,
+        home_team=event.home_team_name, away_team=event.away_team_name,
+        sport_key=sport_key,
+        orient_under_verdict=lambda row: _settled_over_verdict(
+            row, True, row.get("_market_id") in markets_with_a_winner,
+        ),
+    )
+
     # 9b. Cross-source dedup: when Kalshi and Polymarket both have the same
     # player+stat+threshold, merge into one entry with averaged probability
     # and a sources list, instead of showing duplicate rows.
     if len(player_props) > 1:
         dedup_map: dict[tuple, list[dict]] = {}
+        merged_props = []
         for p in player_props:
+            if sport_key == "americanfootball_nfl" and p.get("player") and p.get("stat"):
+                # Typed NFL books were handled above. In particular, do not
+                # average away a graded book or merge different contract rules.
+                merged_props.append(p)
+                continue
             # WHO and WHICH STAT, read provider-appropriately (#3594). The key also
             # carries the side, so this stays a CROSS-SOURCE dedup and never folds a
             # market's own Over row into its Under row.
@@ -28424,7 +28655,6 @@ async def _build_game_markets(
             key = (player_part, stat_part, p.get("threshold"), _prop_side(p.get("outcome_name")))
             dedup_map.setdefault(key, []).append(p)
 
-        merged_props = []
         for entries in dedup_map.values():
             if len(entries) == 1:
                 merged_props.append(entries[0])
@@ -28436,7 +28666,10 @@ async def _build_game_markets(
                 best = max(entries, key=lambda e: 1 if e.get("source") == "kalshi" else 0)
                 best["over_probability"] = avg_prob
                 best["all_sources"] = list({e.get("source") for e in entries})
-                best["source_count"] = len(entries)
+                best["source_count"] = len(best["all_sources"])
+                best["source_mark"] = fold_prop_source_marks(
+                    entry.get("source_mark") for entry in entries
+                )
 
                 # 🔴 #4970 / CERT-2647: READ EVERY CONTRIBUTOR'S CLOCK BEFORE
                 # WRITING ANY OF THEM. `best` IS one of `entries` — the same
@@ -28964,6 +29197,8 @@ async def _build_game_markets(
         ),
         "totals": game_totals,
         "player_props": player_props,
+        "prop_source_holds": _prop_source_holds,
+        "prop_contract_withheld": _prop_contract_withheld,
         "team_totals": team_total_items,
         "spreads": spreads,
         "period_markets": period_markets,
@@ -37246,6 +37481,7 @@ def _format_event(
         import logging
         logging.warning(f"Error adding EI data for event {event.id}: {e}")
 
+    attach_tennis_score(event, response, _served_now)
     return response
 
 
@@ -37458,6 +37694,8 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             "projected_home_score": aggregated["projected_home_score"],
             "projected_away_score": aggregated["projected_away_score"],
             "bookmaker_count": aggregated["bookmaker_count"],
+            # #12595: the pair's own stamp, count and reason (scheduled, in scope).
+            **_recent_projection_keys(aggregated),
             # #1854 (UX-P077): the second hero site. Same removal, same reason as
             # `get_event` above - this object's `home_probability` is `_blend`.
         }
@@ -40254,6 +40492,26 @@ def _search_concept_evidence(row: dict) -> "_SearchEvidence":
         name=row.get("name") or "",
         kind="concept",
         derived=bool(row.get("_derived")),
+    )
+
+
+def _query_names_team_card(row: dict, query: str) -> bool:
+    """Carry the owned-name verdict to clients before private aliases leave.
+
+    Nicknames and curated misspellings have the same ownership as names. A
+    partial word or a sentence is not a whole team name, so cannot promote an
+    incidental team ahead of the collection or market the reader requested.
+    """
+    return query_is_entity_name(
+        query,
+        (
+            row.get("name") or row.get("text") or "",
+            *(row.get("_aliases") or ()),
+            *MAJOR_TEAM_QUERY_ALIASES.get(
+                (row.get("sport_key"), row.get("name") or row.get("text")), ()
+            ),
+            row.get("abbreviation"),
+        ),
     )
 
 

@@ -157,7 +157,7 @@ export default function CategoryPage({
               {/* Ruling 142: the empty state says what this page IS, not when
                   it will refill. The link is navigation, not a promise. */}
               <p className="text-caption text-text-muted">
-                This page lists open {categoryName.toLowerCase()} questions.{" "}
+                This page lists open {categoryName.toLowerCase()} markets.{" "}
                 <Link href="/categories" className="underline hover:text-text-secondary">
                   Browse other categories
                 </Link>

@@ -469,7 +469,7 @@ async def test_the_warmers_own_calls_are_never_logged(rc, logged):
 
 
 def test_the_suppression_guard_lives_inside_the_shared_recorder():
-    """One helper, called from both exits, with the guard INSIDE it.
+    """One helper, called from all three exits, with the guard INSIDE it.
 
     #2117's own conclusion, applied structurally. Two call sites each carrying
     their own `if not suppressed` is two chances to forget, and the exit that
@@ -484,8 +484,8 @@ def test_the_suppression_guard_lives_inside_the_shared_recorder():
     )
 
     route_src = inspect.getsource(events.search_events)
-    assert route_src.count("_record_search_query(") == 2, (
-        "search_events must call the recorder from BOTH exits (hit and miss) "
+    assert route_src.count("_record_search_query(") == 3, (
+        "search_events must call the recorder from cache hit, game-set and ordinary exits "
         "and from nowhere else"
     )
     assert "_dispatch_search_log(" not in route_src, (

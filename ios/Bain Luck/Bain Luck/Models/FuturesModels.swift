@@ -200,6 +200,10 @@ nonisolated struct GameMarketPlayerProp: Decodable, Equatable, Identifiable, Sen
     /// Absent on older payloads, decoding to `nil`.
     var observedAt: String? = nil
     var _inverted: Bool? = nil
+    /// #12581 / 137-A — where this prop's number came from, as the server
+    /// says it. Not served yet (Builder B, this week); absent decodes to nil
+    /// and the row draws no mark.
+    var sourceMark: SourceMark? = nil
 }
 
 /// Generic game market outcome used for spreads, totals, team totals, and periods.
@@ -301,6 +305,7 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     /// `polymarket`). Metadata only — the hero names its OWN outcome's sources.
     @TolerantNumeric var contributingSources: [String]? = nil
     @TolerantNumeric var representationFallback: String? = nil
+    @TolerantNumeric var createdAt: String? = nil
 }
 
 /// #9387 — the provider-backed question a verified response answers. Every field
@@ -568,6 +573,24 @@ nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
     /// much of the venue's record was recovered (`EvolutionFullRange683.swift`).
     /// `var` so a verified chart can carry `/history`'s block with its lines.
     @LenientDecode var historyRange: FuturesHistoryRange? = nil
+    /// #12633 — what `/probability-timeline` says about its own venue-history block.
+    /// When `scale == "venue_yes_probability_raw"` and `pointsServed > 0`, raw venue
+    /// YES points sit on an unnormalized footing that can disagree with a normalized
+    /// field's current probabilities (`108629`: `96.25%` raw vs `88.91%` canonical).
+    @LenientDecode var venueHistory: TimelineVenueHistory? = nil
+}
+
+/// #12633 — `/probability-timeline`'s `venue_history` metadata block.
+nonisolated struct TimelineVenueHistory: Codable, Equatable, Sendable {
+    @TolerantNumeric var state: String? = nil
+    @TolerantNumeric var pointsServed: Int? = nil
+    @TolerantNumeric var scale: String? = nil
+    @TolerantNumeric var refusalReason: String? = nil
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.state == rhs.state && lhs.pointsServed == rhs.pointsServed
+            && lhs.scale == rhs.scale && lhs.refusalReason == rhs.refusalReason
+    }
 }
 
 /// #9387 — `{kind: "single_source", source: "odds_api", market_id: 86832}`.

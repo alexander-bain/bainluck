@@ -473,3 +473,13 @@ def test_the_detail_attach_sits_on_the_current_odds_it_extends():
     built = detail.index('response["current_odds"] = {')
     attach = detail.index("event_live_projection(")
     assert built < attach
+
+
+@pytest.fixture(autouse=True)
+def _recent_lines_clock_at_kickoff(monkeypatch):
+    """#12595: a scheduled pair counts only line readings within 90 min of now.
+    These fixtures are dated, so the clock is pinned to their kickoff, the
+    moment the rows describe, rather than the wall clock."""
+    from app.utils import recent_line_readings
+
+    monkeypatch.setattr(recent_line_readings, "_utcnow", lambda: _KICKOFF)

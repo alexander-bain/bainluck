@@ -14,6 +14,7 @@ import {
   CASE_STUDIES,
 } from "@/lib/story-content";
 import CaseStudyCard from "@/components/story/CaseStudyCard";
+import AboutPage189 from "@/components/story/AboutPage189";
 
 /* ── Intersection Observer hook for scroll-triggered reveals ── */
 function useScrollReveal(threshold = 0.1) {
@@ -94,12 +95,17 @@ export default function AboutPage() {
   }, []);
 
   useEffect(() => {
+    if (process.env.NEXT_PUBLIC_ABOUT_189 === "true") return;
     loadProof();
   }, [loadProof]);
 
+  if (process.env.NEXT_PUBLIC_ABOUT_189 === "true") {
+    return <AboutPage189 />;
+  }
+
   const categories = [
     { emoji: "\u{1F3C0}", label: "Sports", desc: "NBA, NFL, MLB, NHL, Soccer, Golf, MMA" },
-    { emoji: "\u{1F4C8}", label: "Prediction Markets", desc: "Open questions, merged into one number" },
+    { emoji: "\u{1F4C8}", label: "Prediction Markets", desc: "Open markets, merged into one number" },
     { emoji: "\u{1F326}\u{FE0F}", label: "Weather", desc: "Rain, temperature, storms" },
     { emoji: "\u{1F4B0}", label: "Economics", desc: "Fed rates, GDP, inflation" },
     { emoji: "\u{1F5F3}\u{FE0F}", label: "Politics", desc: "Elections, policy, geopolitics" },
@@ -320,6 +326,10 @@ export default function AboutPage() {
               &middot;{" "}
               <EmbedAwareLink href="/privacy" className="text-accent-brand hover:underline">
                 Privacy Policy
+              </EmbedAwareLink>{" "}
+              &middot;{" "}
+              <EmbedAwareLink href="/picture-credits" className="text-accent-brand hover:underline">
+                Picture credits
               </EmbedAwareLink>
             </p>
           </div>

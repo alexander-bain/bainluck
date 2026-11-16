@@ -645,16 +645,16 @@ struct OddsChartView: View {
     /// #10830 — the phone's inline plot (260 through build 46; Alex: "win
     /// probability needs more V space"). Paid for by the Live Activity row and
     /// the hero's blank band, both reclaimed above the chart.
-    static let phoneChartHeight: CGFloat = 300
+    static let phoneChartHeight: CGFloat = 340
 
     private var chartHeight: CGFloat {
         guard sizeClass == .regular else { return Self.phoneChartHeight }
-        // Medium breakpoint (~320pt) for iPad Air landscape / split-view
+        // Medium breakpoint (~350pt) for iPad Air landscape / split-view
         #if os(iOS)
         let bounds = UIScreen.main.bounds
-        if bounds.width > bounds.height { return 320 }
+        if bounds.width > bounds.height { return 350 }
         #endif
-        return 380
+        return 420
     }
 
     /// #10796 — the full-size plot's height when a finished tennis match is
@@ -682,8 +682,33 @@ struct OddsChartView: View {
         commenceTime?.asDate
     }
 
+    static func gameHasStarted(
+        status: String?,
+        commenceTime: Date?,
+        commenceTimeIsKickoff: Bool? = nil,
+        history: EventHistoryResponse? = nil,
+        now: Date = Date()
+    ) -> Bool {
+        if EventState.isFinished(status) { return true }
+        guard status == "live" else { return false }
+        let isKickoff = commenceTimeIsKickoff ?? history?.commenceTimeIsKickoff
+        if isKickoff != false, let commenceTime, commenceTime > now {
+            let hasObservedPeriod = history?.espnHistory?.contains(where: {
+                guard let period = $0.period?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+                return !period.isEmpty
+            }) ?? false
+            return hasObservedPeriod
+        }
+        return true
+    }
+
     private var isGameStarted: Bool {
-        status == "live" || EventState.isFinished(status)
+        Self.gameHasStarted(
+            status: status,
+            commenceTime: gameStartDate,
+            commenceTimeIsKickoff: vm.history?.commenceTimeIsKickoff,
+            history: vm.history
+        )
     }
 
     /// The instant "Since Start" cuts at — `nil` when the payload says the
@@ -1164,23 +1189,6 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
-                    if ReleaseSurfaces.isEventPageAtlasEnabled() {
-                        EventAtlasChartHeaderView11666(
-                            selection: selection,
-                            dataPoints: dataPoints,
-                            checkpoints: checkpoints,
-                            history: history,
-                            status: status,
-                            sides: axis.sides,
-                            includesOpening: drawnRange == .all,
-                            homeName: homeTeamName ?? homeShort,
-                            primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: history.winProbSources ?? [:]),
-                            homeScore: homeScore,
-                            awayScore: awayScore,
-                            servedSettledResult: servedSettledResult,
-                            gameStart: kickoffDate
-                        )
-                    }
                     // #9517 — no readout row here at rest: the hero above says it.
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
@@ -1262,9 +1270,6 @@ struct OddsChartView: View {
                     // sit flush against the bottom of the chart's own frame.
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                sourcesOpen: $inlineSourcesOpen, rail: false)
-                        .padding(.leading, chartTeamGutterWidth)
-                        .padding(.top, 2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
 
                     // Indented onto the SAME left margin as the plot area and the
                     // legend, for the reason UX-P090 gives above: three rows that
@@ -1664,7 +1669,12 @@ struct OddsChartView: View {
     static func drawnWindow(status: String?, commenceTime: String?, history: EventHistoryResponse?,
                             forcedDomain: ClosedRange<Date>?, legacyDataDomain: ClosedRange<Date>?,
                             selectedRange: OddsTimeRange, playStart: (Date) -> Date?) -> DrawnWindow {
-        let started = status == "live" || EventState.isFinished(status)
+        let started = gameHasStarted(
+            status: status,
+            commenceTime: commenceTime?.asDate,
+            commenceTimeIsKickoff: history?.commenceTimeIsKickoff,
+            history: history
+        )
         let kickoff = sinceStartCut(commenceTime: commenceTime?.asDate,
                                     commenceTimeIsKickoff: history?.commenceTimeIsKickoff)
         return DrawnWindow(finishedEnd: EventState.isFinished(status) ? gameEndDate(status: status, history: history) : nil,
@@ -1726,11 +1736,12 @@ struct OddsChartView: View {
         return commenceTime
     }
 
-    /// The All / Since Start choice exists only for a started game with a start
-    /// we can cut at. With no cut, "Since Start" and "All" would be the same
-    /// picture under two names.
-    static func offersSinceStart(isGameStarted: Bool, kickoff: Date?) -> Bool {
-        isGameStarted && kickoff != nil
+    /// The All / Since Start choice exists only for a started game whose kickoff
+    /// is at or before `now` and can be cut at. Before a game starts, "Since Start"
+    /// is never offered.
+    static func offersSinceStart(isGameStarted: Bool, kickoff: Date?, now: Date = Date()) -> Bool {
+        guard isGameStarted, let kickoff else { return false }
+        return kickoff <= now
     }
 
     /// The Since Start window over already-clipped points.
@@ -2572,6 +2583,26 @@ struct OddsChartView: View {
         // `ChartScrubSurface`), so the Mac keeps the built-in selection.
         .chartXSelection(value: Binding(get: { selection.date }, set: { selection.select($0) }))
         #endif
+        .overlay(alignment: .topLeading) {
+            if sharesPageAxis, let history = vm.history, ReleaseSurfaces.isEventPageAtlasEnabled() {
+                EventAtlasChartHeaderView11666(
+                    selection: selection,
+                    dataPoints: dataPoints,
+                    checkpoints: checkpoints,
+                    history: history,
+                    status: status,
+                    sides: axis.sides,
+                    includesOpening: drawnRange == .all,
+                    homeName: homeTeamName ?? homeShort,
+                    primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: history.winProbSources ?? [:]),
+                    homeScore: homeScore,
+                    awayScore: awayScore,
+                    servedSettledResult: servedSettledResult,
+                    gameStart: kickoffDate
+                )
+                .padding(.top, 2)
+            }
+        }
     }
 
     /// #925 — the date under a finger at chart-space `x`, clamped to the plot
@@ -2680,46 +2711,57 @@ struct OddsChartView: View {
         if hasBlend {
             let open = sourcesOpen.wrappedValue && !revealable.isEmpty
             if rail {
-                let primaryKey = legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
-                let control = railControl9483(open: open, count: revealable.count, sourcesOpen)
-                let names = ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        if open {
+                if open {
+                    let primaryKey = legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
+                    let control = railControl9483(open: open, count: revealable.count, sourcesOpen)
+                    let names = ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
                             ForEach(revealable, id: \.self) { source in
                                 legendKey(source, sources: sources, isPrimary: false)
                             }
                         }
+                        .fixedSize(horizontal: true, vertical: false)
                     }
-                    .fixedSize(horizontal: true, vertical: false)
+                    Self.railRow9483(primaryKey: primaryKey, control: control, names: names,
+                                     readableWidth: railReadableWidth9483)
+                } else if !revealable.isEmpty {
+                    railControl9483(open: false, count: revealable.count, sourcesOpen)
                 }
-                Self.railRow9483(primaryKey: primaryKey, control: control, names: names,
-                                 readableWidth: railReadableWidth9483)
-            } else {
+            } else if open {
                 FlowLayout(spacing: 8) {
                     legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
-                    if open {
-                        ForEach(revealable, id: \.self) { source in
-                            legendKey(source, sources: sources, isPrimary: false)
-                        }
-                        sourcesHideButton(sourcesOpen)
-                    } else if !revealable.isEmpty {
-                        sourcesShowButton(count: revealable.count, sourcesOpen)
+                    ForEach(revealable, id: \.self) { source in
+                        legendKey(source, sources: sources, isPrimary: false)
                     }
+                    sourcesHideButton(sourcesOpen)
                 }
+                .padding(.leading, chartTeamGutterWidth)
+                .padding(.top, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if !revealable.isEmpty {
+                sourcesShowButton(count: revealable.count, sourcesOpen)
+                    .padding(.leading, chartTeamGutterWidth)
+                    .padding(.top, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            // Legend mirrors what is actually drawn: the fail-closed full set
-            // (L2-216), with the sportsbook consensus first as the primary line.
+            // A chart with one line has no legend: only draw a legend when more
+            // than one line is actually drawn on the plot.
             let ordered = Self.defaultVisibleSources(in: dataPoints).sorted { a, b in
                 if a == "consensus" { return true }
                 if b == "consensus" { return false }
                 return a < b
             }
-            FlowLayout(spacing: 8) {
-                ForEach(ordered, id: \.self) { source in
-                    legendKey(source, sources: sources, isPrimary: source == "consensus",
-                              reading: source == Self.primarySource(in: dataPoints) ? endReading : nil)
+            if ordered.count > 1 {
+                FlowLayout(spacing: 8) {
+                    ForEach(ordered, id: \.self) { source in
+                        legendKey(source, sources: sources, isPrimary: source == "consensus",
+                                  reading: source == Self.primarySource(in: dataPoints) ? endReading : nil)
+                    }
                 }
+                .padding(.leading, rail ? 0 : chartTeamGutterWidth)
+                .padding(.top, rail ? 0 : 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -3466,12 +3508,11 @@ struct OddsChartView: View {
             return contractSegments(ordered, liveEdge: liveEdge, gameStart: gameStart, resolution: resolution)
         }
 
-        var segments: [[ChartDataPoint]] = [ordered]
         var median: TimeInterval?
         if ordered.count > 1, let gameStart {
             // The series' own in-game rhythm. Taken over exactly the intervals
-            // the rule can act on, so a long pre-match sleep cannot inflate it
-            // and thereby excuse a real in-game hole.
+            // the trailing live-edge check acts on, so a long pre-match sleep
+            // cannot inflate it.
             var inGameIntervals: [TimeInterval] = []
             for (previous, current) in zip(ordered, ordered.dropFirst())
             where previous.date >= gameStart {
@@ -3479,27 +3520,14 @@ struct OddsChartView: View {
             }
             if !inGameIntervals.isEmpty {
                 let sortedIntervals = inGameIntervals.sorted()
-                let cadence = sortedIntervals[sortedIntervals.count / 2]
-                median = cadence
-
-                segments = []
-                var run: [ChartDataPoint] = [ordered[0]]
-                for (previous, current) in zip(ordered, ordered.dropFirst()) {
-                    let interval = current.date.timeIntervalSince(previous.date)
-                    let inGame = previous.date >= gameStart && current.date >= gameStart
-                    if inGame, interval > floor, interval > cadenceMultiple * cadence {
-                        segments.append(run)
-                        run = [current]
-                    } else {
-                        run.append(current)
-                    }
-                }
-                segments.append(run)
+                median = sortedIntervals[sortedIntervals.count / 2]
             }
         }
 
-        // The trailing interval, judged by the same three conditions. No
-        // in-game cadence (or no `gameStart`) means nothing is judged.
+        // #12639 (Decision 164): all recorded readings of a series connect with
+        // straight segments; only the synthetic trailing live edge is dropped
+        // when the trailing interval is unsupported.
+        var run = ordered
         if let liveEdge, let lastReal = ordered.last, liveEdge.date > lastReal.date {
             let interval = liveEdge.date.timeIntervalSince(lastReal.date)
             var unsupported = false
@@ -3507,10 +3535,10 @@ struct OddsChartView: View {
                 unsupported = interval > floor && interval > cadenceMultiple * median
             }
             if !unsupported {
-                segments[segments.count - 1].append(liveEdge)
+                run.append(liveEdge)
             }
         }
-        return segments
+        return [run]
     }
 
     /// The contract's reading of one served point (#7878.v1), mirroring the web's
@@ -3568,23 +3596,15 @@ struct OddsChartView: View {
             return to > holeStart && to.timeIntervalSince(holeStart) > resolution
         }
 
-        var segments: [[ChartDataPoint]] = []
-        var run: [ChartDataPoint] = [ordered[0]]
-        for (previous, current) in zip(ordered, ordered.dropFirst()) {
-            if unknown(after: previous, until: current.date) {
-                segments.append(run)
-                run = [current]
-            } else {
-                run.append(current)
-            }
-        }
-        segments.append(run)
-
+        // #12639 (Decision 164): recorded readings stay joined by straight
+        // segments across quiet interior stretches; the live edge still ends
+        // the run only when the trailing interval is supported.
+        var run = ordered
         if let liveEdge, let last = ordered.last, liveEdge.date > last.date,
            !unknown(after: last, until: liveEdge.date) {
-            segments[segments.count - 1].append(liveEdge)
+            run.append(liveEdge)
         }
-        return segments
+        return [run]
     }
 
     /// What to say instead of an empty frame (#3278).
@@ -4983,19 +5003,38 @@ extension OddsChartView {
         }
     }
 
+    /// Ruling 201: use 0 to 100 (`ChartProbabilityAxis9483.full`) only for soccer and
+    /// anything with a draw; for two teams or two players with no draw, keep the fitted
+    /// vertical scale the live page uses today (`probabilityWindow9483`).
+    nonisolated static func usesZeroToHundredVerticalScale201(sportKey: String?) -> Bool {
+        if DrawPricedWinner.sportPricesADraw(sportKey) { return true }
+        guard let key = sportKey?.lowercased(), !key.isEmpty else { return false }
+        for prefix in ["soccer", "cricket", "boxing", "rugby", "rugbyunion", "rugbyleague", "chess"] {
+            if key == prefix || key.hasPrefix("\(prefix)_") {
+                return true
+            }
+        }
+        return false
+    }
+
     /// This chart's axis plan for one Sources state, from the points it draws
     /// (already admitted and cut to its window by `filterPoints`).
     private func axisPlan9483(dataPoints: [ChartDataPoint], checkpoints: PublicationCheckpointMount4974?,
                               sourcesOpen: Bool) -> AxisPlan9483 {
         let revealed = sourcesOpen ? Self.revealableSources9483(in: dataPoints, withheld: withheldSources9483) : []
-        let window = Self.probabilityWindow9483(
-            points: dataPoints,
-            defaultSources: Self.defaultVisibleSources(in: dataPoints),
-            revealed: revealed,
-            checkpoints: checkpoints?.drawn ?? [],
-            blendSurvivors: checkpoints?.survivors,
-            liveAndOpen: status == "live" && !EventState.isFinished(status) && !venueSettled,
-            primaryClosed: EventState.isFinished(status))
+        let window: ChartProbabilityAxis9483.Window
+        if Self.usesZeroToHundredVerticalScale201(sportKey: sportKey) {
+            window = ChartProbabilityAxis9483.full
+        } else {
+            window = Self.probabilityWindow9483(
+                points: dataPoints,
+                defaultSources: Self.defaultVisibleSources(in: dataPoints),
+                revealed: revealed,
+                checkpoints: checkpoints?.drawn ?? [],
+                blendSurvivors: checkpoints?.survivors,
+                liveAndOpen: status == "live" && !EventState.isFinished(status) && !venueSettled,
+                primaryClosed: EventState.isFinished(status))
+        }
         return AxisPlan9483(sides: pageAxisSides9483, window: window, revealed: revealed)
     }
 
@@ -5333,12 +5372,16 @@ extension OddsChartView {
                                gameStart: Date?) -> PrimaryInk9483 {
         if let checkpoints {
             let plan = checkpoints.plan
-            return PrimaryInk9483(
-                runs: plan.lines.map(\.points),
-                marks: plan.dots.map(\.point) + plan.checkpoints.map {
+            let connected = plan.connectedPoints
+            let drawnCheckpoints = plan.checkpoints.count <= PublicationCheckpointRenderPlan4974.standaloneDotCeiling
+                ? plan.checkpoints.map {
                     ChartDataPoint(date: $0.date, probability: $0.probability,
                                    source: PublicationCheckpointMount4974.blendSource)
-                })
+                }
+                : []
+            return PrimaryInk9483(
+                runs: connected.count >= 2 ? [connected] : [],
+                marks: (connected.count == 1 ? connected : []) + drawnCheckpoints)
         }
         let primary = primarySource(in: dataPoints)
         let segments = observationSegments(dataPoints.filter { $0.source == primary }, gameStart: gameStart)

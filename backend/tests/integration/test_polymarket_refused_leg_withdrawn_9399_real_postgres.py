@@ -76,7 +76,7 @@ def _nolo(cat5, cat3=None):
         title="How strong will Nolo be?",
         neg_risk=True,
         markets=[
-            _leg(CAT4, 4, prices=[0.785, 0.215], bid=0.65, ask=0.92, last=0.72),
+            _leg(CAT4, 4, prices=[0.785, 0.215], bid=0.71, ask=0.73, last=0.72),
             cat5,
             cat3 or _leg(CAT3, 3, prices=[0.025, 0.975], bid=0.02, ask=0.03, last=0.025),
         ],
@@ -495,12 +495,11 @@ async def test_10298_refresh_keeps_a_supported_040_and_writes_no_053(engine, mon
     # the healthy sibling on the same parent still refreshes
     assert after[_PARENT_SPREAD]["p"] == pytest.approx(0.30)
     assert after[_PARENT_SPREAD]["fresh_snapshots"] == 1
-    # the decomposed child keeps its unchanged resolver contract (via the twin pass)
-    from app.tasks.polymarket import _resolve_market_probability
-
-    resolved = _resolve_market_probability(_ml(0.53, 0.15, 0.52, last=0.53))
-    assert after[_CHILD_ML_YES]["p"] == pytest.approx(resolved)
-    assert after[_CHILD_ML_YES]["fresh_snapshots"] == 1
+    # #12658: the child refuses the same wide book, preserving its old number
+    # without a snapshot or a fresh observation stamp.
+    assert after[_CHILD_ML_YES]["p"] == before[_CHILD_ML_YES]["p"]
+    assert after[_CHILD_ML_YES]["touched"] == before[_CHILD_ML_YES]["touched"]
+    assert after[_CHILD_ML_YES]["fresh_snapshots"] == 0
 
 
 async def test_10298_refresh_withdraws_a_stored_053_without_a_new_snapshot(engine, monkeypatch):
@@ -549,7 +548,8 @@ async def test_10298_a_twin_only_parent_is_withheld_like_a_selected_one(
     assert p_after["fresh_snapshots"] == 0
     for col in ("bid", "ask", "touched", "opening"):
         assert p_after[col] == p_before[col], col
-    assert after[_CHILD_ML_YES]["fresh_snapshots"] == 1, "the selected child still prices"
+    assert after[_CHILD_ML_YES]["fresh_snapshots"] == 0, "the child also refuses the wide quote"
+    assert after[_CHILD_ML_YES]["touched"] == before[_CHILD_ML_YES]["touched"]
     assert after[_PARENT_SPREAD]["p"] == pytest.approx(0.30)
     assert after[_PARENT_SPREAD]["fresh_snapshots"] == 1, "the healthy parent sibling refreshes"
     assert stats["legs_withdrawn_book_refuted"] == withdrawn
@@ -632,10 +632,11 @@ async def test_10298_twin_path_respects_the_compare_and_set(engine, monkeypatch)
     assert after[_PARENT_ML]["p"] == pytest.approx(0.20)
 
 
-async def test_10298_strawman_without_the_tag_reproduces_the_finding(engine, monkeypatch):
-    """The reviewer's recording, as a control: strip the fetch's tag and the
-    supported 0.40 comes out NULL with a 0.53 snapshot left behind. Without this
-    the two tests above would also pass on a rig that never reached the write."""
+async def test_10298_strawman_admitting_the_old_trade_reproduces_the_finding(engine, monkeypatch):
+    """Reintroducing the old trade and stripping its refusal reproduces the
+    historical bug: a supported 0.40 becomes NULL with a 0.53 snapshot.
+    The normal path above carries no price, so cannot bank that snapshot.
+    """
     from app.tasks import futures_price_refresh as fpr
 
     real = fpr._fetch_polymarket_prices
@@ -645,7 +646,8 @@ async def test_10298_strawman_without_the_tag_reproduces_the_finding(engine, mon
         for items in out.values():
             if isinstance(items, list):
                 for item in items:
-                    item.pop("parent_book_refused", None)
+                    if item.pop("parent_book_refused", None):
+                        item.update(probability=0.53, yes_bid=0.15, yes_ask=0.52)
         return out, unpriced
 
     await _poll(_game(_ml(0.40, 0.39, 0.41, last=0.40)))
@@ -660,14 +662,16 @@ async def test_10298_strawman_without_the_tag_reproduces_the_finding(engine, mon
     assert after[_PARENT_ML]["fresh_snapshots"] == 1
 
 
-@pytest.mark.parametrize("raw, bid, ask, declined", [
-    (0.525, 0.15, 0.52, 0),    # half a cent over the ask: inside epsilon, kept
-    (0.5251, 0.15, 0.52, 1),   # past it: refused
-    (0.145, 0.15, 0.52, 0),    # bid mirror, kept
-    (0.1449, 0.15, 0.52, 1),   # bid mirror, refused
-    (0.53, None, None, 0),     # no book: outside this change
+@pytest.mark.parametrize("raw, bid, ask, tagged", [
+    (0.525, 0.15, 0.52, 1),    # old half-cent boundary: still a wide quote
+    (0.5251, 0.15, 0.52, 1),
+    (0.145, 0.15, 0.52, 1),
+    (0.1449, 0.15, 0.52, 1),
+    (0.53, None, None, 0),     # no book cannot refute the stored number
 ])
-async def test_10298_refresh_boundaries_and_no_book(engine, monkeypatch, raw, bid, ask, declined):
+async def test_10298_refresh_wide_or_missing_book_never_banks_a_trade(
+    engine, monkeypatch, raw, bid, ask, tagged
+):
     await _poll(_game(_ml(0.40, 0.39, 0.41, last=0.40)))
     before = await _legs(engine)
     stats = await _refresh(
@@ -675,11 +679,11 @@ async def test_10298_refresh_boundaries_and_no_book(engine, monkeypatch, raw, bi
         registered=[_mid(before, GAME_ID)],
     )
     after = await _legs(engine)
-    # a kept leg is written by the unchanged resolver; a refused one is not
-    assert after[_PARENT_ML]["fresh_snapshots"] == 1 - declined
-    if declined:
-        assert after[_PARENT_ML]["touched"] == before[_PARENT_ML]["touched"]
-    assert stats.get("legs_declined_parent_refused", 0) == declined
+    assert after[_PARENT_ML]["fresh_snapshots"] == 0
+    assert after[_PARENT_ML]["touched"] == before[_PARENT_ML]["touched"]
+    assert after[_PARENT_ML]["p"] == pytest.approx(0.40)
+    assert stats.get("legs_declined_parent_refused", 0) >= tagged
+    assert stats["legs_withdrawn_book_refuted"] == 0
 
 
 async def test_10298_refresh_a_truncated_payload_tags_nothing(engine, monkeypatch):
@@ -711,8 +715,8 @@ async def test_10298_refresh_negrisk_field_is_untouched_by_the_tag(engine, monke
     assert after[(EVENT_ID, CAT4)]["fresh_snapshots"] == 1
 
 
-async def test_10298_refresh_singleton_game_is_untouched_by_the_tag(engine, monkeypatch):
-    """Single-market control: one market, raw 0.53 over 0.15/0.52, nothing tagged."""
+async def test_12658_refresh_singleton_game_refuses_without_expanding_withdrawal(engine, monkeypatch):
+    """Single-market control: unsupported quote adds no price or observation."""
     from app.services.polymarket_api import PolymarketEvent
 
     def _solo(m):
@@ -724,5 +728,9 @@ async def test_10298_refresh_singleton_game_is_untouched_by_the_tag(engine, monk
         engine, monkeypatch, _solo(_ml(0.53, 0.15, 0.52, last=0.53)),
         registered=[_mid(before, GAME_ID)],
     )
-    assert (await _legs(engine))[_PARENT_ML]["fresh_snapshots"] == 1, "written as before"
+    after = await _legs(engine)
+    assert after[_PARENT_ML]["fresh_snapshots"] == 0
+    assert after[_PARENT_ML]["p"] == before[_PARENT_ML]["p"]
+    assert after[_PARENT_ML]["touched"] == before[_PARENT_ML]["touched"]
+    assert stats["legs_withdrawn_book_refuted"] == 0
     assert stats.get("legs_declined_parent_refused", 0) == 0

@@ -183,8 +183,8 @@ def _child(idx, title, price, *, closed):
         "clobTokenIds": f'["{idx}1", "{idx}2"]',
         # A tight two-sided book with a trade, so every gate upstream of the
         # snapshot passes and the leg is one the pass genuinely prices.
-        "bestBid": round(price - 0.01, 4),
-        "bestAsk": round(price + 0.01, 4),
+        "bestBid": round(price - min(0.01, price / 2, (1 - price) / 2), 8),
+        "bestAsk": round(price + min(0.01, price / 2, (1 - price) / 2), 8),
         "lastTradePrice": price,
     }
     # `_OMIT` drops the key; any other value is sent as given.
@@ -239,8 +239,8 @@ def _sole_child(event_id="972698", *, price=0.62, child_closed=False):
         "outcomes": '["Flyers", "Hurricanes"]',
         "outcomePrices": f'["{price}", "{round(1 - price, 6)}"]',
         "clobTokenIds": '["d1", "d2"]',
-        "bestBid": round(price - 0.02, 4),
-        "bestAsk": min(1.0, round(price + 0.01, 4)),
+        "bestBid": round(price - min(0.01, price / 2, (1 - price) / 2), 8),
+        "bestAsk": min(1.0, round(price + min(0.01, price / 2, (1 - price) / 2), 8)),
         "lastTradePrice": price,
     }
     market["closed"] = child_closed
@@ -301,7 +301,7 @@ class TestAClosedChildFirstSeenHereGainsNoObservation:
         flyers = legs["0x698dsole"]
         assert flyers["market_id"] == 60972698
         assert flyers["current_probability"] == pytest.approx(0.62)
-        assert flyers["current_yes_bid"] == pytest.approx(0.60)
+        assert flyers["current_yes_bid"] == pytest.approx(0.61)
         assert flyers["current_yes_ask"] == pytest.approx(0.63)
         assert flyers["current_american_odds"] is not None
         assert {v["rank"] for v in legs.values()} == {1, 2}

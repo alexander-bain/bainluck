@@ -258,6 +258,10 @@ async def _assemble_event_cards(
             "aggregated": aggregate_bookmaker_odds(agg if agg else filtered),
             "captured_at": max(s.captured_at for s in filtered) if filtered else None,
         }
+    # #12595: a scheduled game's pair comes from recent line readings.
+    from app.utils.recent_line_readings import apply_recent_line_projections
+
+    await apply_recent_line_projections(db, events, odds_map)
 
     if references is None:
         gei_percentiles = await _load_gei_percentiles(db)

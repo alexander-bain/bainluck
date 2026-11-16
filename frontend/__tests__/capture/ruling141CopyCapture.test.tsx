@@ -129,7 +129,7 @@ const SWEEP = [
     id: "about-category",
     surface: "/about — the category grid",
     was: "Kalshi + Polymarket, unified",
-    now: "Open questions, merged into one number",
+    now: "Open markets, merged into one number",
     survives:
       "that this category is the one where several places quote the same question and we show one number for it — which is the standing “the blend is the product” ruling, said without the supplier list.",
   },
@@ -153,7 +153,7 @@ const SWEEP = [
     id: "weather-rain",
     surface: "/weather — the daily rain card",
     was: "Daily “Will it rain?” markets from Kalshi",
-    now: "Daily “Will it rain?” questions, one per day",
+    now: "Daily “Will it rain?” markets, one per day",
     survives:
       "the shape of the question and its cadence. The venue was being said twice: <code>&lt;SourceBadge src=&quot;kalshi&quot; /&gt;</code> sits on the same row and renders the name, and that badge is attribution, which the amendment allows.",
   },

@@ -335,7 +335,7 @@ const CASES: PageCase[] = [
     emptyState: "category-no-items",
     // The RENDER resolves `{categoryName.toLowerCase()}`, so unlike the source
     // anchor this reads the whole sentence the reader sees, data included.
-    states: "This page lists open politics questions.",
+    states: "This page lists open politics markets.",
     retired: "Check back soon or browse other categories",
     render: () =>
       renderInIsolation(

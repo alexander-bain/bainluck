@@ -33,6 +33,7 @@ from app.utils.content_understanding import (  # CU-1 clause (2), #5273
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.polymarket_evidence import PMEvidence  # #1870
+from app.utils.polymarket_quote import current_polymarket_quote, quoted_price_change
 from app.utils.settled_price import (  # #5246 / #7767
     SETTLED_NO_PRICE,
     SETTLED_YES_PRICE,
@@ -1091,6 +1092,86 @@ def resolve_event_category(
 # Polling implementation
 # =========================================================================
 
+#: #219E / decision 170-188: the keyset walk's saved position and its share of
+#: the poll's time budget. It runs after the newest-first offset scan and stops
+#: here, leaving the rest of the 420 s budget to the settled-sports pass.
+POLYMARKET_KEYSET_CURSOR_KEY = "bainluck:polymarket_keyset_cursor"
+POLYMARKET_KEYSET_CURSOR_TTL_S = 2 * 86400
+POLYMARKET_KEYSET_STOP_AT_S = 300
+
+
+async def _keyset_walk_active_events(
+    service,
+    rc,
+    *,
+    seen_ids: set,
+    process_batch,
+    started: float,
+    stop_at_s: float = POLYMARKET_KEYSET_STOP_AT_S,
+    clock=None,
+) -> dict:
+    """#219E: re-read active Polymarket events the offset scan cannot reach.
+
+    The hourly poll's offset scan reaches only the 2,000 newest active events
+    (Gamma's offset cap), so an active market in an older event was never re-read
+    by it. That is most of what Discover features ("AI bubble burst in 2026?").
+    This walks ALL active events by keyset, in id order, from a saved cursor, a
+    page at a time until ``stop_at_s`` of the poll has elapsed. Each page goes
+    through the poll's own batch writer (``process_batch``), and the cursor is
+    saved only after its page is written, so a killed run re-reads, never skips.
+    The end of the active set clears the cursor, so the next run starts over.
+    Events the offset scan already handled this run are skipped. Never raises.
+    """
+    import time as _time
+
+    clock = clock or _time.monotonic
+    out = {"keyset_pages": 0, "keyset_events": 0, "keyset_complete": False, "keyset_error": None}
+    try:
+        raw = rc.get(POLYMARKET_KEYSET_CURSOR_KEY) if rc is not None else None
+        cursor = (raw.decode() if isinstance(raw, bytes) else raw) or None
+    except Exception:
+        cursor = None
+    while clock() - started < stop_at_s:
+        try:
+            events, next_cursor = await service.get_events_keyset(
+                active=True, closed=False, limit=100, after_cursor=cursor
+            )
+        except Exception as exc:  # the offset scan's work stands; next run resumes
+            out["keyset_error"] = str(exc)[:200]
+            logger.warning("Polymarket keyset walk: page read failed: %s", exc)
+            break
+        batch = []
+        for event_data in events:
+            event_id = str(event_data.get("id", ""))
+            if not event_id or event_id in seen_ids:
+                continue
+            seen_ids.add(event_id)
+            parsed = service._parse_event(event_data)
+            if parsed and parsed.markets:
+                batch.append(parsed)
+        if batch:
+            try:
+                await process_batch(batch)
+            except Exception as exc:  # cursor not advanced: this page is re-read next run
+                out["keyset_error"] = str(exc)[:200]
+                logger.warning("Polymarket keyset walk: page write failed: %s", exc)
+                break
+            out["keyset_events"] += len(batch)
+        out["keyset_pages"] += 1
+        try:
+            if next_cursor:
+                rc.setex(POLYMARKET_KEYSET_CURSOR_KEY, POLYMARKET_KEYSET_CURSOR_TTL_S, next_cursor)
+            else:
+                rc.delete(POLYMARKET_KEYSET_CURSOR_KEY)
+        except Exception:
+            pass  # a lost cursor only means the walk starts over
+        if not next_cursor:
+            out["keyset_complete"] = True
+            break
+        cursor = next_cursor
+    return out
+
+
 async def _poll_polymarket_markets():
     """Async implementation of Polymarket polling."""
     import asyncio
@@ -1329,6 +1410,22 @@ async def _poll_polymarket_markets():
         stats["pages_fetched"] = pages_fetched
         stats["unique_events_seen"] = len(seen_ids)
         stats["hit_page_cap"] = pages_fetched >= max_pages
+
+        # #219E / decision 170-188: the offset scan above stops at the 2,000
+        # newest events; walk the rest by keyset, inside the same time budget.
+        async def _process_keyset_batch(events):
+            await _process_event_batch(
+                events, stats, FuturesMarket, FuturesOutcome,
+                FuturesOddsSnapshot, pg_insert, probability_to_american,
+                compute_market_tier,
+            )
+
+        stats.update(
+            await _keyset_walk_active_events(
+                service, _rc, seen_ids=seen_ids,
+                process_batch=_process_keyset_batch, started=_start,
+            )
+        )
 
         # Supplementary pass: fetch settled sports game events by tag.
         # The main scan (active=True, closed=False) only gets open events.
@@ -3540,9 +3637,17 @@ async def _process_event_batch(
                         # closed on a None partner by design, so asking it here
                         # would blank every one-sided market on the venue.
                         sub_price_ok = True
+                        sub_under_quote = sub_under_raw
+                        if not market.closed and sub_under_raw is not None:
+                            # #12658: current sides use the same binary book. The
+                            # raw pair above remains the opening provenance gate.
+                            no_bid, no_ask, _ = complementary_book(
+                                market.best_bid, market.best_ask, market.last_trade_price
+                            )
+                            sub_under_quote = current_polymarket_quote(no_bid, no_ask)
                         if sub_under_raw is not None:
                             sub_price_verdict = classify_pair_price(
-                                prob, sub_under_raw
+                                prob, sub_under_quote
                             )
                             if sub_price_verdict != PAIR_OPENING_OK:
                                 sub_price_ok = False
@@ -3599,9 +3704,7 @@ async def _process_event_batch(
                         # freshness stamp on an absence. Both keys are therefore
                         # omitted on refusal, leaving the prior values untouched.
                         if sub_price_ok:
-                            over_update["probability_change_24h"] = (
-                                prob - FuturesOutcome.current_probability
-                            )
+                            over_update["probability_change_24h"] = quoted_price_change(prob)
                             over_update["price_changed_at"] = price_changed_at_value(  # #2024
                                 FuturesOutcome.current_probability,
                                 FuturesOutcome.price_changed_at,
@@ -3678,7 +3781,7 @@ async def _process_event_batch(
 
                         # Create Under/No outcome if available
                         if len(market.outcome_prices) > 1:
-                            under_prob = market.outcome_prices[1]
+                            under_prob = sub_under_quote
                             under_fallback = "Under" if "o/u" in sub_name.lower() else "No"
                             under_name = _sub_market_side_label(
                                 market,
@@ -3775,6 +3878,7 @@ async def _process_event_batch(
                             if sub_activity.observed:
                                 under_update["volume"] = sub_vol
                             if sub_price_ok:
+                                under_update["probability_change_24h"] = quoted_price_change(under_prob)
                                 under_update["price_changed_at"] = price_changed_at_value(  # #2024
                                     FuturesOutcome.current_probability,
                                     FuturesOutcome.price_changed_at,
@@ -3971,7 +4075,7 @@ async def _process_event_batch(
                         "current_yes_bid": od["yes_bid"],
                         "current_yes_ask": od["yes_ask"],
                         "rank": rank,
-                        "probability_change_24h": prob - FuturesOutcome.current_probability,
+                        "probability_change_24h": quoted_price_change(prob),
                         "rank_change_24h": FuturesOutcome.rank - rank,
                         "last_updated": func.now(),
                         "price_changed_at": price_changed_at_value(  # #2024
@@ -6209,26 +6313,10 @@ def _parent_outcome_data(event) -> list[dict]:
     dark-market refresh below cannot drift into two different ideas of what a
     Polymarket event's parent price is. Both call this and nothing else.
 
-    The three shapes are the poll's own, unchanged, and the difference between
-    them is deliberate — folding them together would be a pricing change wearing
-    a refactor's clothes:
-
-    * **negRisk multi-market** — a single-winner partition, so each sub-market IS
-      one leg. Priced through :func:`_resolve_market_probability`, which applies
-      the placeholder filter and the #151 evidence gate.
-    * **non-negRisk multi-market** (a game: moneyline + spread + O/U + props) —
-      the parent keeps a leg per sub-market for the moneyline matching task, and
-      it takes Gamma's precomputed ``outcome_prices[0]`` RAW, bypassing those two
-      gates. #1578 recorded that as the least-guarded of the five write paths and
-      deliberately added only the phantom-midpoint test to it. #10298 tightened it
-      once, on purpose: a raw value that its own same-payload book prices out
-      (``book_refutes_price``, epsilon 0.005) is now dropped, never substituted, and
-      :func:`_refused_leg_books` reads this branch's output to name it.
-    * **single-market** — priced through the gated resolver and named "Yes"
-      unless the venue named a side (#6739). TWO legs when the venue named
-      BOTH sides — a sole-moneyline game, which never reaches the
-      decomposition branch — and one otherwise, which keeps every genuine
-      Yes/No question byte-identical (#7505; see the branch's own note).
+    All three shapes use the same open-market quote policy. A negRisk field
+    has a leg per sub-market, a non-negRisk parent keeps one anchor per
+    sub-market, and a single named binary keeps both complementary sides.
+    Closed markets retain their existing settlement interpretation.
 
     Returns the rows unsorted and unranked; the caller sorts, ranks and writes.
     """
@@ -6261,28 +6349,9 @@ def _parent_outcome_data(event) -> list[dict]:
 
     if len(event.markets) > 1:
         for market in event.markets:
-            prob = market.outcome_prices[0] if market.outcome_prices else None
-            # #6676: the same pair, for the same reason, as in
-            # `_resolve_market_probability_with_source` — read the long comment
-            # there. This is the least-guarded of the five write paths (#1578), and
-            # outcome 61246705 reached a /sports card through THIS branch, not the
-            # resolver, so guarding only the resolver would have fixed two of the
-            # three named rows and left the parent anchor printing 50%.
-            if is_fabricated_midpoint(
-                prob, market.best_bid, market.best_ask
-            ) or is_empty_book_midpoint(prob, market.best_bid, market.best_ask):
-                # #7548: ...and only a trade the leg's own book has not priced out.
-                prob = _last_trade_survives_own_book(market)
-            elif prob is not None and prob > 0 and book_refutes_price(
-                market.best_bid, market.best_ask, float(prob)
-            ):
-                # #10298 C2: anyone can buy at this ask or sell into this bid right
-                # now, so a raw number the book prices out is not a current price,
-                # whatever produced it (Lions–Packers: 0.53 over a 0.52 ask). SKIP, never substitute: no
-                # last trade, no ask, no midpoint. This can remove a number and can
-                # never add one. An ask of None or 1.0 cannot be exceeded and a
-                # 0-bid refutes nothing, so gotcha #19's blowout still prices.
-                continue
+            # #12658: parent and child use the same current book. Gamma's raw
+            # value can switch to an undated trade without the book moving.
+            prob = _resolve_market_probability(market)
             if prob is None or prob <= 0:
                 continue
             # Q492: this is the parent anchor of a game-level event, and its
@@ -6434,7 +6503,7 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
     """
     Resolve the Yes-side probability for a Polymarket market, and name its source.
 
-    Priority: outcomePrices[0] → bid/ask midpoint → lastTradePrice.
+    Open markets: a usable two-sided book. Closed markets: the legacy resolver.
 
     THE SOURCE IS RETURNED BECAUSE THE PAIR WRITER NEEDS IT. Only
     ``outcome_prices`` is a leg of the same upstream-normalised pair as
@@ -6461,6 +6530,24 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
     # Reject known placeholder markets before examining prices
     if _is_placeholder_outcome(market):
         return None, None
+
+    # #12658: a current open-market number is the midpoint of a usable book.
+    # Neither outcomePrices nor lastTradePrice carries the time of a trade.
+    # Even positive 24-hour volume cannot date that print to this quote. Closed
+    # markets retain the existing settlement path below.
+    if not getattr(market, "closed", False):
+        quote = current_polymarket_quote(market.best_bid, market.best_ask)
+        if quote is None:
+            return None, None
+        raw = market.outcome_prices[0] if market.outcome_prices else None
+        # Preserve opening provenance when Gamma's own pair is this same quote;
+        # a replacement of its old trade must not masquerade as that raw pair.
+        source = (
+            "outcome_prices"
+            if raw is not None and round(float(raw), 6) == round(quote, 6)
+            else "bid_ask_midpoint"
+        )
+        return quote, source
 
     # #151 cp-capture guard: real price discovery leaves orderbook/trade evidence.
     # A live bid, a real (sub-max) ask, or a last trade all count. Gamma's

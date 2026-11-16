@@ -55,6 +55,7 @@ import {
   type SettledLadderRead,
 } from "./propGrade";
 import { isScoringRaceMarket, parsePropLabel } from "./otherMarketGroups";
+import type { SourceMark } from "./types";
 
 export interface StatRung {
   threshold: number;
@@ -102,6 +103,7 @@ export interface PlayerPropRow extends PropGradeFields {
   over_probability?: number | null;
   movement?: number | null;
   source?: string | null;
+  source_mark?: SourceMark;
   player_team?: "home" | "away" | "unknown" | null;
   player_headshot?: string | null;
   /** Set by the route on the UNDER leg of an O/U market; its `hit` is the Under's. */
@@ -731,7 +733,7 @@ function groupPlayerPropsTraced(
     readonly actual: number | null;
     readonly isWinner: boolean | null;
     readonly gradeRow: PropGradeFields;
-    readonly source: string;
+    readonly sources: readonly string[];
     /** #10340: the row's exact script key, or null when either name is missing. */
     readonly scriptKey: string | null;
   }
@@ -829,7 +831,11 @@ function groupPlayerPropsTraced(
         is_winner: underLeg ? null : (p.is_winner ?? null),
         resolution_source: p.resolution_source ?? null,
       },
-      source: p.source as string,
+      // A compatibility key is not a venue. Read all fields before committing
+      // so malformed provenance cannot leave a partially mutated player card.
+      sources: Object.freeze(p.source_mark
+        ? p.source_mark.sources.map((source) => source.key)
+        : p.source === "bainluck" ? [] : [p.source as string]),
       // Both `movement` and `movementAbs` are primitives normalized above, inside
       // this guarded read. The commit phase must never coerce anything.
       movementAbs,
@@ -903,7 +909,7 @@ function groupPlayerPropsTraced(
     // "graded a loser" from "never graded" — `is_winner` alone cannot, being a
     // non-nullable column defaulted to false.
     statEntry.gradeRows.push(c.gradeRow);
-    statEntry.sources.add(c.source);
+    c.sources.forEach((source) => statEntry.sources.add(source));
     // UX-P060 (C281 B1): a comparison of two stored primitives — no coercion, so
     // this line cannot throw after the mutations above it.
     if (c.movementAbs != null && (statEntry.movementAbs == null || c.movementAbs > statEntry.movementAbs)) {

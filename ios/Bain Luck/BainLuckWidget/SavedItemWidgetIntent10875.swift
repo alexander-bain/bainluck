@@ -173,8 +173,11 @@ struct SavedOutcomeEntityQuery10875: EntityQuery {
     static func options(_ payload: SavedWidgetDetailPayload10875) -> [SavedOutcomeEntity10875] {
         switch payload {
         case .game(let event):
-            return [SavedOutcomeEntity10875(id: SavedWidgetGameSide10875.away.rawValue, title: event.awayTeam),
-                    SavedOutcomeEntity10875(id: SavedWidgetGameSide10875.home.rawValue, title: event.homeTeam)]
+            let displayTeams = TeamShortName.isCollegeSport(sportKey: event.sport)
+                ? TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+                : (away: event.awayTeam, home: event.homeTeam)
+            return [SavedOutcomeEntity10875(id: SavedWidgetGameSide10875.away.rawValue, title: displayTeams.away),
+                    SavedOutcomeEntity10875(id: SavedWidgetGameSide10875.home.rawValue, title: displayTeams.home)]
         case .market(let market):
             return market.outcomes
                 .sorted { ($0.probability ?? -1, -$0.id) > ($1.probability ?? -1, -$1.id) }
@@ -204,6 +207,9 @@ struct SelectSavedItemIntent10875: WidgetConfigurationIntent {
     }
 
     init() {}
+
+    /// The look this widget draws over a reading (#12466: Matchup, look A).
+    var look12466: SavedWidgetLook12466 { .shipping }
 
     /// The plain-value selection the timeline reads.
     var selection: SavedWidgetSelection10875? {

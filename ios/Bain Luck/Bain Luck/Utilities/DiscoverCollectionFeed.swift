@@ -51,6 +51,9 @@ enum DiscoverCollectionFeed {
         if let collection = item.collection {
             return collection.edition.league == "nfl" ? "americanfootball" : "baseball"
         }
+        if let paired = item.pairedMetricSet, item.bundle == nil {
+            return paired.category.lowercased()
+        }
         return DiscoverCategory.of(item, bundleChild: bundleChild)
     }
 
@@ -59,6 +62,9 @@ enum DiscoverCollectionFeed {
         bundleChild: (FeedBundle) -> FeedItem? = { $0.items.first }
     ) -> String {
         if item.collection != nil { return category(of: item, bundleChild: bundleChild) }
+        if let paired = item.pairedMetricSet, item.bundle == nil {
+            return "\(paired.category.lowercased()):\(paired.setId)"
+        }
         return DiscoverCategory.family(item, bundleChild: bundleChild)
     }
 

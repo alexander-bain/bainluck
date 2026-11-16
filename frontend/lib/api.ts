@@ -8,6 +8,7 @@ import type { TournamentPayload } from "@/lib/tournament";
 import type { ClosedPeriodRow } from "@/lib/marketMapUtils";
 import type { HistoryRangeRequest } from "@/lib/historyRange";
 import type {
+  SourceMark,
   EventsResponse,
   EventDetailResponse,
   EventHistoryResponse,
@@ -578,6 +579,7 @@ export interface TypeaheadSuggestion {
   logo?: string;
   team_id?: number;
   team_slug?: string;
+  query_names_team?: boolean;
   sport_key?: string;
   // Event fields
   event_id?: number;
@@ -1258,6 +1260,7 @@ export interface GameMarketsResponse {
     bookmaker_count?: number;
   }[];
   player_props: {
+    source_mark?: SourceMark;
     market_name: string;
     outcome_name: string;
     threshold: number | null;
@@ -2463,7 +2466,7 @@ export interface PoliticsMarketRow {
   prob: number;
   src: string;
   market_id: number;
-  top_outcomes: { name: string; prob: number; rendered_percent?: number | null }[];
+  top_outcomes: { name: string; prob: number; rendered_percent?: number | null; image_title?: string | null }[];
   outcome_count: number;
   // Rungs `/futures/{id}` shows beyond `top_outcomes` (#9109). Absent on a
   // payload built before it shipped.

@@ -1342,6 +1342,26 @@ class TestVenueTeamCodes12530:
             row.team_id = 10740
         return markets, roster
 
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_verified_pages_name_the_same_clubs_without_changing_source_rows(self, mid):
+        markets, roster = self.markets()
+        original_names = [[o.name for o in market.outcomes] for market in markets]
+        source_before, _ = await detail(mid, markets, "source", roster=roster)
+        canonical, _ = await detail(ODDS_ID, markets, VERIFIED, roster=roster)
+        payload, _ = await detail(mid, markets, VERIFIED, roster=roster)
+
+        expected = {row["name"] for row in canonical["outcomes"]}
+        actual = {row["name"] for row in payload["outcomes"] if row["name"] != "Other"}
+        assert actual == expected
+        assert by_name(payload, "Buffalo Bills")["probability"] == by_name(canonical, "Buffalo Bills")["probability"]
+        assert by_name(payload, "Jacksonville Jaguars")["probability"] == by_name(canonical, "Jacksonville Jaguars")["probability"]
+        assert [row["id"] for row in payload["outcomes"]] == [row["id"] for row in source_before["outcomes"]]
+        assert [[o.name for o in market.outcomes] for market in markets] == original_names
+        source_after, _ = await detail(mid, markets, "source", roster=roster)
+        assert source_after == source_before
+        if mid == PM_ID:
+            assert by_name(payload, "Other")["probability"] is None
+
     async def test_venue_codes_share_values_and_clocks_on_all_three_pages(self):
         markets, roster = self.markets()
         expected = {"Jacksonville": round(0.105 / 0.5805, 8),
@@ -1349,7 +1369,7 @@ class TestVenueTeamCodes12530:
         for mid in (ODDS_ID, KALSHI_ID, PM_ID):
             payload, _ = await detail(mid, markets, VERIFIED, roster=roster)
             for city, nickname in (("Jacksonville", "Jaguars"), ("Washington", "Commanders")):
-                row = by_name(payload, city if mid == KALSHI_ID else f"{city} {nickname}")
+                row = by_name(payload, f"{city} {nickname}")
                 assert row["probability"] == pytest.approx(expected[city], abs=1e-8)
                 assert row["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
                 assert row["aggregation_rule"] == "weighted_median"
@@ -1428,6 +1448,7 @@ class TestVenueTeamCodes12530:
         assert by_name(odds, "Buffalo Bills")["contributing_sources"] == ["odds_api", "kalshi", "polymarket"]
         own, _ = await detail(KALSHI_ID, markets, VERIFIED, roster=roster)
         refused = next(r for r in own["outcomes"] if r["id"] == 643835)
+        assert refused["name"] == name
         assert refused["contributing_sources"] == ["kalshi"]
         assert refused["probability"] == 0.105
 

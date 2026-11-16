@@ -1,6 +1,6 @@
 """#969: backfill_kalshi_settled must not bust its 900s soft limit.
 
-_backfill_from_settled_events paginates per-series (up to 200 pages/series). The
+_backfill_from_settled_events paginates per-series (up to 200 x 200 events/series, #12042). The
 outer per-series time-budget check is not enough — a single deep series can
 paginate past the 900s soft wall mid-loop (this kept the task in a ~5.5-day
 SoftTimeLimitExceeded outage). The inner page loop MUST carry a _MAX_SECONDS
@@ -17,8 +17,8 @@ def _page_loop_body() -> str:
     src = inspect.getsource(_backfill_from_settled_events)
     # the slice from the page loop header to the inner retry loop is where the
     # top-of-page guard must live
-    assert "for page_num in range(200):" in src, "page loop shape changed"
-    after_page = src.split("for page_num in range(200):", 1)[1]
+    assert "for page_num in range(_SETTLED_PAGES_PER_SERIES):" in src, "page loop shape changed"
+    after_page = src.split("for page_num in range(_SETTLED_PAGES_PER_SERIES):", 1)[1]
     return after_page.split("for _retry in range(3):", 1)[0]
 
 

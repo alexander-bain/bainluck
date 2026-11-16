@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { collegeSchoolName, isCollegeSport } from "@/lib/teamShortName";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
 
 interface TeamNameLinkProps {
@@ -19,9 +20,10 @@ export default function TeamNameLink({
   children,
 }: TeamNameLinkProps) {
   const url = buildTeamPageUrl(name, sportKey);
+  const label = children ?? (isCollegeSport(sportKey) ? collegeSchoolName(name) : name);
 
   if (!url) {
-    return <span className={className} style={style}>{children ?? name}</span>;
+    return <span className={className} style={style}>{label}</span>;
   }
 
   return (
@@ -31,7 +33,7 @@ export default function TeamNameLink({
       className={className}
       style={style}
     >
-      {children ?? name}
+      {label}
     </Link>
   );
 }

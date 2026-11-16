@@ -1,10 +1,12 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatTournamentTimingLabel } from "@/lib/gameTimeLabel";
 import { toAcronymSafeKeepingCase } from "@/lib/titleCase";
+import { resolveDiscoverAuxiliaryVisual } from "@/lib/discover/discoverEntityVisual";
 import type { FeedTournamentData } from "@/lib/types";
 import { AnimatedProbability, DismissBtn, ActionBar, MovementBadge, dismissCornerBadge } from "./shared";
 import { HERO_CHIP_ON_DARK } from "./constants";
@@ -33,6 +35,18 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
   // only shouts a known acronym, so the UX-P050 "Pga" still reads "PGA".
   const title = toAcronymSafeKeepingCase(data.name) || data.name;
   const leader = data.golfers?.[0];
+  const [imgErrored, setImgErrored] = useState(false);
+  const rawRecord = data as unknown as Record<string, unknown>;
+  const rawImg = typeof rawRecord.image_url === "string" ? rawRecord.image_url : null;
+  useEffect(() => {
+    setImgErrored(false);
+  }, [rawImg]);
+  const visual = resolveDiscoverAuxiliaryVisual(
+    rawRecord,
+    leader?.name || title,
+    "person",
+  );
+  const effectiveImageUrl = imgErrored ? null : visual.imageUrl;
   const leaderProbability = formatShareProbability(leader?.probability);
   // L2-159 / #235 Item 4: just-settled marquee tournament (T+36h WHAT-HIT window)
   // leads result-first — the leader is the CHAMPION, live movement is suppressed,
@@ -73,7 +87,19 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
   return (
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
       <DismissBtn onDismiss={onDismiss} />
-      <div className="relative h-44 flex flex-col items-center justify-center" style={{ background: "linear-gradient(135deg, #14532d, #166534)" }}>
+      <div className="relative h-44 flex flex-col items-center justify-center overflow-hidden" style={{ background: "linear-gradient(135deg, #14532d, #166534)" }}>
+        {effectiveImageUrl && (
+          <img
+            src={effectiveImageUrl}
+            alt=""
+            aria-hidden="true"
+            loading="lazy"
+            decoding="async"
+            onError={() => setImgErrored(true)}
+            className="absolute right-2 bottom-0 h-36 w-36 object-contain object-bottom opacity-90 pointer-events-none select-none drop-shadow-lg"
+            data-testid="tournament-hero-image"
+          />
+        )}
         {/* #8436 — the on-dark skin: `bg-lime-600/15 text-lime-700` was the white-card
             golf chip, and on this hero it read as dark lime on dark green. */}
         <div className={`absolute top-3 left-3 ${HERO_CHIP_ON_DARK} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>⛳ Golf</div>

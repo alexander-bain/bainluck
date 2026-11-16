@@ -122,6 +122,12 @@ export async function retryWaitMs(res: Answer): Promise<number | null> {
   return Math.min(ms, MAX_RETRY_WAIT_MS);
 }
 
+/** #11937: the neutral line a grade page shows while it waits to save again. */
+export function retryNoticeText(secondsLeft: number): string {
+  const s = Math.max(1, Math.ceil(secondsLeft));
+  return `Busy for a moment. Saving again in ${s} s…`;
+}
+
 /**
  * #11937: send a grade, and if the server says "too many requests", wait what
  * it asks and send it once more, so a grader never has to press twice or

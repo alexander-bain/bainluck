@@ -18,6 +18,7 @@ import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import DiscoverCard from "@/components/DiscoverCard";
+import { useRetryNotice } from "@/lib/ranking/useRetryNotice";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 import { setDiscoverLearningGate } from "@/lib/discoverInteractions";
 import {
@@ -77,6 +78,7 @@ function GradeSession() {
   // While a named slate re-deals for the grader, the grade buttons wait, so a
   // quick tap can't grade a card the new deck is about to skip.
   const [dealing, setDealing] = useState(false);
+  const { notice, startWait, clearNotice } = useRetryNotice();
 
   useEffect(() => {
     setSlateRef(slateFromSearch(window.location.search));
@@ -173,9 +175,9 @@ function GradeSession() {
           body,
         }),
         (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-        (ms) => setError(`Busy for a moment; saving again in ${Math.ceil(ms / 1000)} s…`),
+        startWait,
       );
-      setError(null);
+      clearNotice();
       if (!res.ok) {
         setError(`Not saved (${res.status}): ${(await res.text()).slice(0, 200)}`);
         return;
@@ -185,6 +187,7 @@ function GradeSession() {
       setIndex((i) => i + 1);
       void loadTally(deck.slate_id);
     } catch {
+      clearNotice();
       setError("Not saved: the network dropped. Try that card again.");
     } finally {
       setSaving(false);
@@ -280,6 +283,7 @@ function GradeSession() {
           </button>
         ))}
       </div>
+      {notice && <p className="mt-2 text-sm text-text-muted" role="status">{notice}</p>}
       {error && <p className="mt-2 text-sm text-text-secondary">{error}</p>}
     </Shell>
   );

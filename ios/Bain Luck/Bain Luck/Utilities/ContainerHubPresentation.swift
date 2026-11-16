@@ -66,7 +66,9 @@ nonisolated struct ContainerHubPresentation: Sendable {
         case "prop": return "Player and game props"
         case "title": return "Championship"
         case "advancement": return "Advancement"
-        case "side_question": return "More markets"
+        // #11547 (Alex: a market is not a "question") — the game page's related
+        // tab and this section share one name.
+        case "side_question": return "Other markets"
         case "doubles": return "Doubles"
         default: return "More"
         }

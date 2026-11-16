@@ -160,7 +160,7 @@ def select_register_closest(
     min_open_races: int = 3,
     card_rows: int = 3,
     section_title: str = "Open races",
-    footer: str = "Combined probability · both sources where paired",
+    footer: str = "One winner per race.",
     title: Optional[str] = None,
     kicker: Optional[str] = None,
 ) -> Any:
@@ -593,7 +593,7 @@ async def produce_register_closest(
         card_rows=int(rule.get("card_rows", 3)),
         section_title=str(definition.get("section_title") or "Open races"),
         footer=str(
-            definition.get("footer") or "Combined probability · both sources where paired"
+            definition.get("footer") or "One winner per race."
         ),
         title=str(definition.get("name") or "") or None,
         kicker=str(definition.get("kicker") or "") or None,

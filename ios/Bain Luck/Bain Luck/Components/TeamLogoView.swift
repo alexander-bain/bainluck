@@ -47,6 +47,10 @@ struct TeamLogoView: View {
     /// two sides share — see `badge(teamName:opponentName:)`. Defaults to nil,
     /// which is every one-circle surface unchanged.
     var opponentName: String? = nil
+    /// Ruling 194-A — provider-served team abbreviation (e.g. `DUKE`, `ALA`)
+    /// shown on the fallback badge when a logo is missing or fails to load.
+    var abbreviation: String? = nil
+    var opponentAbbreviation: String? = nil
 
     @State private var image: PlatformImage?
     @State private var loadFailed = false
@@ -157,14 +161,24 @@ struct TeamLogoView: View {
     /// #10714 — this circle is a reader-facing tile, so a badge that spells a
     /// result word ("Chak Lam Coleman Wong" `WON`, beside the real WON chip on the
     /// finished hero) is re-lettered (`CW`). `abbreviation` itself is untouched.
-    static func badge(teamName: String, opponentName: String?, sportKey: String? = nil) -> String {
+    static func badge(
+        teamName: String,
+        opponentName: String?,
+        sportKey: String? = nil,
+        servedAbbreviation: String? = nil,
+        opponentAbbreviation: String? = nil
+    ) -> String {
         let badge: String
         if let opponentName, !opponentName.isEmpty, opponentName != teamName {
             badge = TeamShortName.abbreviationPair(
                 away: teamName,
                 home: opponentName,
+                awayServed: servedAbbreviation,
+                homeServed: opponentAbbreviation,
                 sportKey: sportKey
             ).away
+        } else if let served = servedAbbreviation?.trimmingCharacters(in: .whitespacesAndNewlines), !served.isEmpty {
+            badge = served
         } else {
             badge = TeamShortName.abbreviation(teamName, sportKey: sportKey)
         }
@@ -176,15 +190,19 @@ struct TeamLogoView: View {
             Circle()
                 .fill(color.opacity(0.2))
             // Three glyphs where one used to sit, at every size this view is drawn
-            // (18 on a leaderboard row, 80 on the iPad hero). The width frame is the
-            // chord the circle can actually hold, so `minimumScaleFactor` shrinks a
-            // wide trio to fit instead of truncating it to "BE…" — a badge that
-            // ellipsises is worse than the letter it replaced.
-            Text(Self.badge(teamName: teamName, opponentName: opponentName, sportKey: sportKey))
-                .font(.system(size: size * 0.40, weight: .bold))
+            // (18 on a leaderboard row, 80 on the iPad hero), plus four-letter
+            // served college codes (`DUKE`, `GONZ`, `MISS`) under Ruling 194-A.
+            Text(Self.badge(
+                teamName: teamName,
+                opponentName: opponentName,
+                sportKey: sportKey,
+                servedAbbreviation: abbreviation,
+                opponentAbbreviation: opponentAbbreviation
+            ))
+                .font(.system(size: size * 0.38, weight: .bold))
                 .lineLimit(1)
-                .minimumScaleFactor(0.45)
-                .frame(width: size * 0.82)
+                .minimumScaleFactor(0.40)
+                .frame(width: size * 0.84)
                 .foregroundStyle(color)
         }
         .frame(width: size, height: size)
@@ -193,8 +211,9 @@ struct TeamLogoView: View {
 
 // MARK: - ESPN Team Logo Lookup
 
-/// Known ESPN team IDs for major North American teams.
-private let espnTeamIDs: [String: (id: String, sport: String)] = [
+/// Known ESPN team IDs for major North American teams (#4911 / #12730).
+/// Every value must be ESPN's own team ID for that sport (never an NHL-API or MLB-API ID).
+let espnTeamIDs: [String: (id: String, sport: String)] = [
     // NBA
     "atlanta hawks": ("1", "nba"),
     "boston celtics": ("2", "nba"),
@@ -208,6 +227,7 @@ private let espnTeamIDs: [String: (id: String, sport: String)] = [
     "golden state warriors": ("9", "nba"),
     "houston rockets": ("10", "nba"),
     "indiana pacers": ("11", "nba"),
+    "la clippers": ("12", "nba"),
     "los angeles clippers": ("12", "nba"),
     "los angeles lakers": ("13", "nba"),
     "memphis grizzlies": ("29", "nba"),
@@ -264,10 +284,8 @@ private let espnTeamIDs: [String: (id: String, sport: String)] = [
     "atlanta braves": ("15", "mlb"),
     // The A's dropped the city. `teams.name` now serves "Athletics", which matched
     // nothing, so both the Sports row and the Discover hero drew a letter "A" for
-    // a club ESPN still publishes at the same id (verified 200, 40x40 PNG,
-    // 2026-09-08). Photographed on the Sports row in
-    // `artifacts-native-067/AFTER-sports-tab.png`; the Oakland spelling stays for
-    // rows that still carry it.
+    // a club ESPN still publishes at the same id. Both keys are kept for rows that
+    // still carry the relocation-era spelling.
     "athletics": ("11", "mlb"),
     "baltimore orioles": ("1", "mlb"),
     "boston red sox": ("2", "mlb"),
@@ -297,44 +315,54 @@ private let espnTeamIDs: [String: (id: String, sport: String)] = [
     "texas rangers": ("13", "mlb"),
     "toronto blue jays": ("14", "mlb"),
     "washington nationals": ("20", "mlb"),
-    // NHL
+    // NHL (#12730 — authoritative ESPN NHL IDs, replacing NHL-API IDs that collided or drew wrong clubs)
     "anaheim ducks": ("25", "nhl"),
     "boston bruins": ("1", "nhl"),
     "buffalo sabres": ("2", "nhl"),
-    "calgary flames": ("20", "nhl"),
+    "calgary flames": ("3", "nhl"),
     "carolina hurricanes": ("7", "nhl"),
     "chicago blackhawks": ("4", "nhl"),
     "colorado avalanche": ("17", "nhl"),
     "columbus blue jackets": ("29", "nhl"),
     "dallas stars": ("9", "nhl"),
     "detroit red wings": ("5", "nhl"),
-    "edmonton oilers": ("22", "nhl"),
-    "florida panthers": ("13", "nhl"),
-    "los angeles kings": ("26", "nhl"),
+    "edmonton oilers": ("6", "nhl"),
+    "florida panthers": ("26", "nhl"),
+    "los angeles kings": ("8", "nhl"),
     "minnesota wild": ("30", "nhl"),
-    "montreal canadiens": ("8", "nhl"),
-    "nashville predators": ("18", "nhl"),
-    "new jersey devils": ("1", "nhl"),
-    "new york islanders": ("2", "nhl"),
-    "new york rangers": ("3", "nhl"),
-    "ottawa senators": ("9", "nhl"),
-    "philadelphia flyers": ("4", "nhl"),
-    "pittsburgh penguins": ("5", "nhl"),
-    "san jose sharks": ("28", "nhl"),
-    "seattle kraken": ("55", "nhl"),
+    "montreal canadiens": ("10", "nhl"),
+    "nashville predators": ("27", "nhl"),
+    "new jersey devils": ("11", "nhl"),
+    "new york islanders": ("12", "nhl"),
+    "new york rangers": ("13", "nhl"),
+    "ottawa senators": ("14", "nhl"),
+    "philadelphia flyers": ("15", "nhl"),
+    "pittsburgh penguins": ("16", "nhl"),
+    "san jose sharks": ("18", "nhl"),
+    // ESPN CDN hosts expansion Kraken and Utah crests under abbreviation slugs (`sea.png`, `utah.png`),
+    // while numeric `124292.png` / `129764.png` return 404.
+    "seattle kraken": ("sea", "nhl"),
     "st. louis blues": ("19", "nhl"),
-    "tampa bay lightning": ("14", "nhl"),
-    "toronto maple leafs": ("10", "nhl"),
-    "utah hockey club": ("56", "nhl"),
-    "vancouver canucks": ("23", "nhl"),
-    "vegas golden knights": ("54", "nhl"),
-    "washington capitals": ("15", "nhl"),
-    "winnipeg jets": ("52", "nhl"),
+    "tampa bay lightning": ("20", "nhl"),
+    "toronto maple leafs": ("21", "nhl"),
+    "utah hockey club": ("utah", "nhl"),
+    "utah mammoth": ("utah", "nhl"),
+    "vancouver canucks": ("22", "nhl"),
+    "vegas golden knights": ("37", "nhl"),
+    "washington capitals": ("23", "nhl"),
+    "winnipeg jets": ("28", "nhl"),
 ]
+
+func normalizeEspnTeamLookupKey(_ teamName: String) -> String {
+    teamName
+        .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        .lowercased()
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+}
 
 /// Returns ESPN team logo URL for a given team name, or nil if not found.
 func espnTeamLogoURL(for teamName: String) -> String? {
-    let key = teamName.lowercased().trimmingCharacters(in: .whitespaces)
+    let key = normalizeEspnTeamLookupKey(teamName)
     guard let entry = espnTeamIDs[key] else { return nil }
-    return "https://a.espncdn.com/combiner/i?img=/i/teamlogos/\(entry.sport)/500/\(entry.id).png&w=40&h=40&transparent=true"
+    return "https://a.espncdn.com/combiner/i?img=/i/teamlogos/\(entry.sport)/500/\(entry.id).png&w=120&h=120&transparent=true"
 }

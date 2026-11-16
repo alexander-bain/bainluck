@@ -48,6 +48,11 @@ final class NavigationCoordinator: ObservableObject {
         false
         #endif
     }()
+    /// #12601 — whether quiz links (`daily`, `challenge/<code>`) open the
+    /// challenge screens or land on Discover while the quiz is switched off.
+    /// Defaults to `ReleaseSurfaces.predictionsExperienceEnabled`; settable so
+    /// unit tests can exercise both answers.
+    var predictionsExperienceEnabled: Bool = ReleaseSurfaces.predictionsExperienceEnabled
     /// This window's outstanding ask for Search field focus; SearchView drains it.
     @Published private(set) var searchFocus = MacSearchFocusTicket10878()
     @Published var pendingRoute: Route?
@@ -295,12 +300,26 @@ final class NavigationCoordinator: ObservableObject {
             }
 
         case "daily":
-            navigate(to: .dailyChallenge, tab: .discover)
+            // #12601 — while the quiz is switched off, a `bainluck://daily` or
+            // `bainluck.com/daily` link lands on Discover rather than pushing
+            // the Daily Challenge screen, matching web's `/daily` -> `/discover`
+            // redirect.
+            if predictionsExperienceEnabled {
+                navigate(to: .dailyChallenge, tab: .discover)
+            } else {
+                pendingRoute = nil
+                selectedTab = .discover
+            }
             return true
 
         case "challenge":
             if pathComponents.count >= 2 {
-                navigate(to: .friendChallenge(code: pathComponents[1]), tab: .discover)
+                if predictionsExperienceEnabled {
+                    navigate(to: .friendChallenge(code: pathComponents[1]), tab: .discover)
+                } else {
+                    pendingRoute = nil
+                    selectedTab = .discover
+                }
                 return true
             }
 

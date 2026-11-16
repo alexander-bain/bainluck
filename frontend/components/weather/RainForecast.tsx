@@ -153,7 +153,7 @@ export default function RainForecast() {
                   {rainCardHeading(rain?.length ?? 0)}
                 </h3>
                 <p className="text-text-secondary text-sm mt-0.5">
-                  Daily &ldquo;Will it rain?&rdquo; questions, one per day
+                  Daily &ldquo;Will it rain?&rdquo; markets, one per day
                 </p>
               </div>
               <SourceBadge src="kalshi" />
@@ -166,7 +166,7 @@ export default function RainForecast() {
             ) : loaded && !rain ? (
               <div className="py-12 text-center">
                 <p className="text-text-secondary text-sm">No live rain markets right now</p>
-                <p className="text-text-muted text-xs mt-1.5">This card tracks daily &ldquo;will it rain?&rdquo; questions.</p>
+                <p className="text-text-muted text-xs mt-1.5">This card tracks daily &ldquo;will it rain?&rdquo; markets.</p>
               </div>
             ) : !rain ? (
               <RainDaySkeleton />
@@ -342,9 +342,11 @@ export default function RainForecast() {
 
             <div className="mt-4 pt-3 border-t border-dashed border-surface-border text-xs text-text-muted flex items-center justify-between">
               <span>24h change shown at right</span>
-              <span className="font-mono">
-                {monthly ? `Kalshi · ${cityCount} ${cityCount === 1 ? "city" : "cities"}` : "Kalshi"}
-              </span>
+              {monthly && (
+                <span className="font-mono">
+                  {`${cityCount} ${cityCount === 1 ? "city" : "cities"}`}
+                </span>
+              )}
             </div>
           </div>
         </div>

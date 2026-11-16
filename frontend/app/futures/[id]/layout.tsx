@@ -21,6 +21,7 @@ import {
   type ResolutionFailure,
 } from "@/lib/unresolvedShareMeta";
 import { withSettledResultCertainty } from "@/lib/settledResultDisplay";
+import { VERIFIED_TITLE } from "@/lib/verifiedTitleDetail";
 
 type FuturesMarketMetadata = FuturesMarketDetailResponse & {
   image_url?: string | null;
@@ -50,7 +51,7 @@ async function fetchMarket(id: string): Promise<MarketLookup> {
   }
 
   try {
-    const response = await fetch(`${API_URL}/api/futures/${marketId}`, {
+    const response = await fetch(`${API_URL}/api/futures/${marketId}?representation=${VERIFIED_TITLE}`, {
       next: { revalidate: 60 },
     });
     if (response.status === 404) return { ok: false, failure: "not-found" };

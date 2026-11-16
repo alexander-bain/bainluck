@@ -88,21 +88,21 @@ d("#4857 — the props card deals a stable order", () => {
       );
     });
 
-    it("there are exactly five sorts in the file, and each one is named", () => {
+    it("there are exactly four sorts in the file, and each one is named", () => {
       // A NEW `.sorted` appearing on the cards pipeline would silently take
       // precedence over the helper — the last sort wins — so the tripwire is the
-      // count, and the five are enumerated so the next reader can see which is which.
+      // count, and the four are enumerated so the next reader can see which is which.
       const source = card();
-      expect((source.match(/\.sorted[ (\.{]/g) ?? []).length).toBe(5);
+      expect((source.match(/\.sorted[ (\.{]/g) ?? []).length).toBe(4);
 
       // 1. the rungs inside one stat group, by threshold — already a total order
       //    (thresholds are distinct within a ladder).
       expect(source).toMatch(/rungs: rungs\.sorted \{ \$0\.threshold < \$1\.threshold \}/);
       // 2. the stat groups, and 3. the cards — the two this ship repaired, asserted above.
-      // 4. the source badge list: a Set of strings through the default comparator,
-      //    deterministic already and deliberately left alone.
-      expect(source).toMatch(/Array\(Set\(playerProps\.compactMap\(\\\.source\)\)\)\.sorted\(\)/);
-      // 5. #10830 — the browser rows, by family rank and then their position in
+      // (The source badge list's sort is gone: #12578 / 137-A, the header names
+      //    no venue, so nothing is sorted to pick one.)
+      expect(source).not.toMatch(/playerProps\.compactMap\(\\\.source\)/);
+      // 4. #10830 — the browser rows, by family rank and then their position in
       //    the card order above. It ends on the enumeration offset, so it is a
       //    total order that keeps sort 3's ranking inside each family.
       expect(source).toMatch(/return ra != rb \? ra < rb : a\.offset < b\.offset/);

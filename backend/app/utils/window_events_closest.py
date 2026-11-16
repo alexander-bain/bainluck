@@ -259,7 +259,7 @@ def select_closest_window_events(
     count: int = 4,
     minimum: int = 4,
     league: Optional[str] = None,
-    footer_template: str = "Combined probability · the 4 closest of {n} games tonight",
+    footer_template: str = "The 4 closest of {n} games tonight",
 ) -> RoundupMembers | RoundupRefusal:
     """Pure selector for ``window_events_closest``.
 

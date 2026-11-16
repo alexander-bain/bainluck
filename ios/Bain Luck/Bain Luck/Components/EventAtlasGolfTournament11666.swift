@@ -61,6 +61,7 @@ enum EventAtlasGolfTournament11666 {
         var top20Market: FuturesMarketDetail? = nil
         var makeCutMarket: FuturesMarketDetail? = nil
         var closingRound: ClosingRoundCard? = nil
+        var liveLeaderboard: LiveLeaderboardCard? = nil
         var hasMakeCutMarket: Bool = false
         var failedMarketSlots: Set<String> = []
         var winnerTimelineFailed: Bool = false
@@ -75,9 +76,52 @@ enum EventAtlasGolfTournament11666 {
                 && lhs.top20Market?.id == rhs.top20Market?.id
                 && lhs.makeCutMarket?.id == rhs.makeCutMarket?.id
                 && lhs.closingRound == rhs.closingRound
+                && lhs.liveLeaderboard == rhs.liveLeaderboard
                 && lhs.hasMakeCutMarket == rhs.hasMakeCutMarket
                 && lhs.failedMarketSlots == rhs.failedMarketSlots
                 && lhs.winnerTimelineFailed == rhs.winnerTimelineFailed
+        }
+    }
+
+    // MARK: - Live Leaderboard Overlay Model (Pass 4 Sheet 4)
+
+    nonisolated struct LiveLeaderboardRow: Equatable, Identifiable, Sendable {
+        var id: String { golferName }
+        let golferName: String
+        let position: String
+        let parDisplay: String
+        let totalScoreRaw: Int?
+    }
+
+    nonisolated struct LiveLeaderboardCard: Equatable, Sendable {
+        let eventName: String
+        let currentRound: Int?
+        let rows: [LiveLeaderboardRow]
+
+        func selectedRow(named golferName: String?) -> LiveLeaderboardRow? {
+            guard let golferName else { return rows.first }
+            let target = EventAtlasGolfTournament11666.normalizeGolferName(golferName)
+            guard !target.isEmpty else { return nil }
+            let matches = rows.filter { EventAtlasGolfTournament11666.normalizeGolferName($0.golferName) == target }
+            return matches.count == 1 ? matches[0] : nil
+        }
+
+        static func formatParDisplay(score: String, totalScoreRaw: Int?) -> String {
+            let trimmed = score.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                if trimmed.uppercased() == "E" || trimmed == "0" || trimmed == "+0" || trimmed == "-0" {
+                    return "E"
+                }
+                if trimmed.hasPrefix("-") {
+                    return "−" + trimmed.dropFirst()
+                }
+                return trimmed
+            }
+            if let raw = totalScoreRaw {
+                if raw == 0 { return "E" }
+                return raw > 0 ? "+\(raw)" : "−\(abs(raw))"
+            }
+            return "—"
         }
     }
 
@@ -138,6 +182,109 @@ enum EventAtlasGolfTournament11666 {
         return String(String.UnicodeScalarView(scalars))
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
+    }
+
+    private nonisolated static let tournamentStopwords: Set<String> = [
+        "the", "presented", "by", "at", "in", "of", "for", "and", "golf",
+        "tournament", "pga", "tour", "dp", "world", "lpga", "liv",
+        "2024", "2025", "2026", "2027",
+    ]
+
+    private nonisolated static let genericTournamentWords: Set<String> = [
+        "open", "championship", "classic", "invitational", "cup", "challenge", "masters",
+    ]
+
+    private nonisolated static func tournamentTokens(_ raw: String?) -> [String] {
+        guard let raw else { return [] }
+        return normalizeGolferName(raw.replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " "))
+            .lowercased()
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+            .filter { !tournamentStopwords.contains($0) }
+    }
+
+    /// Ensures `/api/golf/leaderboard` only attaches to the matching tournament page.
+    nonisolated static func matchesTournamentIdentity(
+        tournamentName: String,
+        slug: String?,
+        leaderboardEventName: String?
+    ) -> Bool {
+        let lbTokens = tournamentTokens(leaderboardEventName)
+        guard !lbTokens.isEmpty else { return false }
+
+        let candidates = [tournamentTokens(tournamentName), tournamentTokens(slug)].filter { !$0.isEmpty }
+        guard !candidates.isEmpty else { return false }
+
+        let lbJoined = lbTokens.joined(separator: " ")
+        for candTokens in candidates {
+            let candJoined = candTokens.joined(separator: " ")
+            if candJoined == lbJoined {
+                return true
+            }
+            let shorter = candTokens.count <= lbTokens.count ? candTokens : lbTokens
+            let longerSet = Set(candTokens.count <= lbTokens.count ? lbTokens : candTokens)
+            let specificShorter = shorter.filter { !genericTournamentWords.contains($0) }
+            if !specificShorter.isEmpty, shorter.allSatisfy({ longerSet.contains($0) }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    nonisolated static func buildLiveLeaderboardCard(
+        for tournament: GolfTournamentData,
+        from response: GolfLeaderboardResponse
+    ) -> LiveLeaderboardCard? {
+        guard response.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "live",
+              !response.players.isEmpty,
+              matchesTournamentIdentity(
+                  tournamentName: tournament.name,
+                  slug: tournament.slug,
+                  leaderboardEventName: response.eventName
+              )
+        else {
+            return nil
+        }
+
+        let resolvedRound = response.currentRound ?? response.players.compactMap(\.currentRound).max()
+        let rows: [LiveLeaderboardRow] = response.players.compactMap { player in
+            let name = player.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            let pos = player.position.trimmingCharacters(in: .whitespacesAndNewlines)
+            return LiveLeaderboardRow(
+                golferName: name,
+                position: pos.isEmpty ? "—" : pos,
+                parDisplay: LiveLeaderboardCard.formatParDisplay(
+                    score: player.score,
+                    totalScoreRaw: player.totalScoreRaw
+                ),
+                totalScoreRaw: player.totalScoreRaw
+            )
+        }
+        guard !rows.isEmpty else { return nil }
+        return LiveLeaderboardCard(
+            eventName: response.eventName ?? tournament.name,
+            currentRound: resolvedRound,
+            rows: rows
+        )
+    }
+
+    nonisolated static func wholePercentProbabilityText(_ p: Double) -> String {
+        let clamped = max(0.0, min(1.0, p))
+        let pct = clamped * 100.0
+        if pct > 0 && pct < 0.5 {
+            return "<1%"
+        }
+        return "\(Int(pct.rounded()))%"
+    }
+
+    nonisolated static func liveStreamingProbabilityText(_ p: Double) -> String {
+        let clamped = max(0.0, min(1.0, p))
+        let pct = clamped * 100.0
+        if pct > 0 && pct < 0.05 {
+            return "<0.1%"
+        }
+        return String(format: "%.1f%%", pct)
     }
 
     nonisolated static func surnameSortKey(_ name: String) -> String {
@@ -206,6 +353,40 @@ enum EventAtlasGolfTournament11666 {
         return value
     }
 
+    /// Resolves the tournament's first tee time from full ISO-8601 (`"2026-11-13T13:00:00Z"`)
+    /// or date-only (`"2026-11-13"`) strings.
+    nonisolated static func resolveFirstTeeTime(
+        commenceTime: String?,
+        fallbackMarketCommenceTime: String? = nil
+    ) -> Date? {
+        for candidate in [commenceTime, fallbackMarketCommenceTime] {
+            guard let raw = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { continue }
+            if let dt = raw.asDate { return dt }
+            if raw.count == 10, let dt = "\(raw)T00:00:00Z".asDate { return dt }
+        }
+        return nil
+    }
+
+    /// Interim pregame rule (#12740): `/api/futures/{id}` does not carry a per-outcome timestamp
+    /// for `opening_probability`, only `created_at` when the market was first seen. Show a starting
+    /// number under `"Pregame"` ONLY when the market was first seen strictly before the tournament's
+    /// first tee time; leave `"Pregame"` empty for markets first seen at/after play began or when unknown.
+    nonisolated static func isPreTeeTimeMarket(
+        market: FuturesMarketDetail?,
+        tournamentCommenceTime: String?
+    ) -> Bool {
+        guard let createdIso = market?.createdAt,
+              let createdAt = createdIso.asDate,
+              let firstTee = resolveFirstTeeTime(
+                  commenceTime: tournamentCommenceTime,
+                  fallbackMarketCommenceTime: market?.commenceTime
+              )
+        else {
+            return false
+        }
+        return createdAt < firstTee
+    }
+
     nonisolated static func formatSourceDisplay(_ raw: String?) -> String {
         guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return "Market source"
@@ -224,6 +405,7 @@ enum EventAtlasGolfTournament11666 {
         golferName: String,
         phase: GolfFinishPhase10868,
         market: FuturesMarketDetail?,
+        tournamentCommenceTime: String? = nil,
         fallbackWinRow: GolfTournamentFieldRow? = nil,
         isTournamentSettled: Bool = false,
         loadFailed: Bool = false,
@@ -250,7 +432,7 @@ enum EventAtlasGolfTournament11666 {
         let observedIso = outcome?.observedAt ?? outcome?.lastUpdated ?? market?.updatedAt
         let recent = market == nil ? true : NFLMilestoneCard9483.isRecent(observedIso, now: now)
         let sourceText = formatSourceDisplay(market?.source)
-        let timeText = observedIso?.asDate.map { EventAtlasChartMarks11666.formatExactTimestampPT($0) }
+        let timeText = observedIso?.asDate.map { EventAtlasChartMarks11666.formatMinuteTimestampPT($0) }
 
         let detailSuffix: String = {
             if let timeText {
@@ -284,11 +466,12 @@ enum EventAtlasGolfTournament11666 {
             recordedMissing = "Not recorded"
 
         case .recorded:
-            if let openProb = validChance(outcome?.openingProbability ?? fallbackWinRow?.openingProbability) {
+            let hasPreTeeBaseline = isPreTeeTimeMarket(market: market, tournamentCommenceTime: tournamentCommenceTime)
+            if hasPreTeeBaseline, let openProb = validChance(outcome?.openingProbability ?? fallbackWinRow?.openingProbability) {
                 beforeObs = GolfFinishObservation10868(
                     probability: openProb,
                     text: formatProbability(openProb),
-                    accessibilityDetail: "Opened · \(sourceText)"
+                    accessibilityDetail: "Pregame · \(sourceText)"
                 )
                 beforeMissing = "Not recorded"
             } else {
@@ -309,11 +492,12 @@ enum EventAtlasGolfTournament11666 {
             }
 
         case .final:
-            if let openProb = validChance(outcome?.openingProbability ?? fallbackWinRow?.openingProbability) {
+            let hasPreTeeBaseline = isPreTeeTimeMarket(market: market, tournamentCommenceTime: tournamentCommenceTime)
+            if hasPreTeeBaseline, let openProb = validChance(outcome?.openingProbability ?? fallbackWinRow?.openingProbability) {
                 beforeObs = GolfFinishObservation10868(
                     probability: openProb,
                     text: formatProbability(openProb),
-                    accessibilityDetail: "Opened · \(sourceText)"
+                    accessibilityDetail: "Pregame · \(sourceText)"
                 )
             } else {
                 beforeObs = nil
@@ -329,9 +513,9 @@ enum EventAtlasGolfTournament11666 {
                   let liveProb = recordedObs?.probability
             else { return nil }
             if let pts = formatMovementPoints(liveProb - openProb) {
-                return "\(pts) since open"
+                return "\(pts) since pregame"
             }
-            return "0.0 pts since open"
+            return "0.0 pts since pregame"
         }()
 
         let actual: GolfFinishResult10868 = {
@@ -424,6 +608,7 @@ enum EventAtlasGolfTournament11666 {
             golferName: selectedGolferName,
             phase: phase,
             market: atlasData.winnerMarket,
+            tournamentCommenceTime: presentation.commenceTime,
             fallbackWinRow: fallbackWinRow,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("win"),
@@ -436,6 +621,7 @@ enum EventAtlasGolfTournament11666 {
             golferName: selectedGolferName,
             phase: phase,
             market: atlasData.top5Market,
+            tournamentCommenceTime: presentation.commenceTime,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("top5"),
             now: now
@@ -447,6 +633,7 @@ enum EventAtlasGolfTournament11666 {
             golferName: selectedGolferName,
             phase: phase,
             market: atlasData.top10Market,
+            tournamentCommenceTime: presentation.commenceTime,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("top10"),
             now: now
@@ -458,6 +645,7 @@ enum EventAtlasGolfTournament11666 {
             golferName: selectedGolferName,
             phase: phase,
             market: atlasData.top20Market,
+            tournamentCommenceTime: presentation.commenceTime,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("top20"),
             now: now
@@ -472,23 +660,32 @@ enum EventAtlasGolfTournament11666 {
             golferName: selectedGolferName,
             phase: phase,
             market: atlasData.makeCutMarket,
+            tournamentCommenceTime: presentation.commenceTime,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("makeCut"),
             now: now
         ) : nil
 
+        let allSlots = [winSlot, top5Slot, top10Slot, top20Slot] + (makeCutSlot.map { [$0] } ?? [])
+        let anyHasPregameBaseline = allSlots.contains { $0.before != nil }
+
         let contextText: String? = {
             let observedIso = findOutcome(for: selectedGolferName, in: atlasData.winnerMarket)?.observedAt
                 ?? findOutcome(for: selectedGolferName, in: atlasData.winnerMarket)?.lastUpdated
                 ?? atlasData.winnerMarket?.updatedAt
-            let pt = observedIso?.asDate.map { EventAtlasChartMarks11666.formatExactTimestampPT($0) }
+            let pt = observedIso?.asDate.map { EventAtlasChartMarks11666.formatMinuteTimestampPT($0) }
             switch phase {
             case .before:
                 return pt.map { "Pre-tournament · updated \($0)" } ?? "Pre-tournament expectations"
             case .recorded:
-                return pt.map { "In play · latest recorded \($0) · vs open" } ?? "In play · recorded vs opening chance"
+                if anyHasPregameBaseline {
+                    return pt.map { "In play · latest recorded \($0) · vs pregame" } ?? "In play · recorded vs pregame chance"
+                }
+                return pt.map { "In play · latest recorded \($0)" } ?? "In play · recorded estimates"
             case .final:
-                return "Final · opening chances beside confirmed results"
+                return anyHasPregameBaseline
+                    ? "Final · pregame chances beside confirmed results"
+                    : "Final · confirmed results"
             }
         }()
 
@@ -503,7 +700,6 @@ enum EventAtlasGolfTournament11666 {
             return strokes
         }()
 
-        let allSlots = [winSlot, top5Slot, top10Slot, top20Slot] + (makeCutSlot.map { [$0] } ?? [])
         let anyLoadFailed = !atlasData.failedMarketSlots.isEmpty
         let allEmpty = allSlots.allSatisfy { $0.before == nil && $0.recorded == nil }
         let useOpeningLabels = phase != .before
@@ -520,16 +716,16 @@ enum EventAtlasGolfTournament11666 {
             actualSummary: actualSummary,
             selected: phase == .recorded ? selectedFinish : nil,
             makeCut: makeCutSlot,
-            beforeLabel: useOpeningLabels ? "Opened" : GolfFinishExpectationInput10868.beforeTitle,
-            beforeColumnLabel: useOpeningLabels ? "Opened" : "Before",
-            finalBarsExplanation: "Bars show opening market chances.",
+            beforeLabel: useOpeningLabels ? "Pregame" : GolfFinishExpectationInput10868.beforeTitle,
+            beforeColumnLabel: useOpeningLabels ? "Pregame" : "Before",
+            finalBarsExplanation: "Bars show pregame market chances.",
             missingBaselinesExplanation: (anyLoadFailed && allEmpty)
                 ? "Couldn’t load finish markets."
-                : (useOpeningLabels ? "Opening chances weren’t recorded." : "Pre-tournament chances weren’t recorded."),
+                : (useOpeningLabels ? "Pregame chances weren’t recorded." : "Pre-tournament chances weren’t recorded."),
             missingRecordedExplanation: (anyLoadFailed && allEmpty)
                 ? "Couldn’t load finish markets."
                 : "No recorded finish estimates for this golfer at this moment.",
-            finalFootnotePrefix: "Actual finish is separate from each opening chance."
+            finalFootnotePrefix: "Actual finish is separate from each pregame chance."
         )
     }
 
@@ -552,7 +748,7 @@ enum EventAtlasGolfTournament11666 {
         }()
         let outcome = findOutcome(for: golferName, in: market)
         let observedIso = outcome?.observedAt ?? outcome?.lastUpdated ?? market?.updatedAt
-        let pt = observedIso?.asDate.map { EventAtlasChartMarks11666.formatExactTimestampPT($0) }
+        let pt = observedIso?.asDate.map { EventAtlasChartMarks11666.formatMinuteTimestampPT($0) }
         let sourceAttr: String? = {
             guard let src = market?.source, !src.isEmpty else { return nil }
             return "\(formatSourceDisplay(src)) market"
@@ -610,6 +806,137 @@ enum EventAtlasGolfTournament11666 {
         return 1.0
     }
 
+    /// Ruling 192-A: the Golf headline card names the top 4 golfers, and the first-screen
+    /// inline chart plots those exact 4 contenders with right-edge labels and zero picker.
+    static let headlineContenderCount = 4
+    static let firstScreenChartHeight: CGFloat = 228
+
+    nonisolated enum GolfTimeRange192A: String, CaseIterable, Identifiable, Equatable, Sendable {
+        case day = "24h"
+        case week = "7d"
+        case event = "Event"
+        case season = "Season"
+
+        var id: String { rawValue }
+    }
+
+    private nonisolated static let surnameParticles: Set<String> = [
+        "van", "von", "de", "del", "della", "der", "den", "di", "da", "du", "la", "le", "st", "st.", "san", "mc", "mac",
+    ]
+
+    nonisolated static func shortChartSurname(_ name: String) -> String {
+        var parts = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+        guard !parts.isEmpty else { return name }
+        let suffixes: Set<String> = ["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"]
+        if parts.count >= 2, let last = parts.last, suffixes.contains(last.lowercased()) {
+            parts.removeLast()
+        }
+        guard parts.count >= 2 else { return parts[0] }
+        var surnameStart = parts.count - 1
+        while surnameStart > 1 && surnameParticles.contains(parts[surnameStart - 1].lowercased()) {
+            surnameStart -= 1
+        }
+        return parts[surnameStart...].joined(separator: " ")
+    }
+
+    nonisolated static func shortChartEndLabel(
+        for contender: JourneyContender,
+        phase: GolfFinishPhase10868
+    ) -> String {
+        let surname = shortChartSurname(contender.name)
+        if phase == .final {
+            switch contender.finalVerdict {
+            case .won: return "\(surname) ✓"
+            case .lost, nil:
+                if let last = contender.points.last?.probability {
+                    return "\(surname) \(wholePercentProbabilityText(last))"
+                }
+                return surname
+            }
+        }
+        if let cur = contender.currentProbability ?? contender.points.last?.probability {
+            return "\(surname) \(wholePercentProbabilityText(cur))"
+        }
+        return surname
+    }
+
+    /// Spaces right-edge label Y coordinates so adjacent contender labels never collide.
+    nonisolated static func decollidedLabelYPositions(
+        targets: [CGFloat],
+        minGap: CGFloat = 14,
+        plotHeight: CGFloat
+    ) -> [CGFloat] {
+        guard !targets.isEmpty else { return [] }
+        let topPad: CGFloat = 8
+        let bottomPad: CGFloat = max(topPad, plotHeight - 8)
+        let indexed = targets.enumerated().sorted { $0.element < $1.element }
+        var placed = indexed.map { min(max($0.element, topPad), bottomPad) }
+        for i in 1..<placed.count {
+            if placed[i] - placed[i - 1] < minGap {
+                placed[i] = placed[i - 1] + minGap
+            }
+        }
+        if let last = placed.last, last > bottomPad {
+            let overflow = last - bottomPad
+            for i in placed.indices {
+                placed[i] -= overflow
+            }
+            for i in (0..<(placed.count - 1)).reversed() {
+                if placed[i + 1] - placed[i] < minGap {
+                    placed[i] = placed[i + 1] - minGap
+                }
+            }
+            for i in placed.indices {
+                placed[i] = max(topPad, min(bottomPad, placed[i]))
+            }
+        }
+        var out = Array(repeating: CGFloat(0), count: targets.count)
+        for (orderIdx, pair) in indexed.enumerated() {
+            out[pair.offset] = placed[orderIdx]
+        }
+        return out
+    }
+
+    nonisolated static func filterContendersByTimeRange(
+        _ contenders: [JourneyContender],
+        range: GolfTimeRange192A,
+        commenceTime: String?,
+        now: Date = Date()
+    ) -> [JourneyContender] {
+        let latestDate = contenders.flatMap { $0.points.map(\.date) }.max() ?? now
+        let cutoff: Date? = {
+            switch range {
+            case .day:
+                return latestDate.addingTimeInterval(-24 * 3600)
+            case .week:
+                return latestDate.addingTimeInterval(-7 * 24 * 3600)
+            case .event:
+                if let start = commenceTime?.asDate {
+                    return start.addingTimeInterval(-12 * 3600)
+                }
+                return latestDate.addingTimeInterval(-5 * 24 * 3600)
+            case .season:
+                return nil
+            }
+        }()
+        guard let cutoff else { return contenders }
+        let filtered = contenders.map { c in
+            let pts = c.points.filter { $0.date >= cutoff }
+            return JourneyContender(
+                name: c.name,
+                colorIndex: c.colorIndex,
+                openingProbability: c.openingProbability,
+                currentProbability: c.currentProbability,
+                finalVerdict: c.finalVerdict,
+                loadFailed: c.loadFailed,
+                points: pts.count >= 2 ? pts : c.points
+            )
+        }
+        return filtered
+    }
+
     nonisolated static func buildJourneyContenders(
         presentation: GolfTournamentPresentation,
         atlasData: TournamentAtlasData,
@@ -626,7 +953,7 @@ enum EventAtlasGolfTournament11666 {
         let resolved = isMarketResolved(atlasData.winnerMarket) || phase == .final
         let winFailed = atlasData.failedMarketSlots.contains("win")
 
-        var chosenNames: [String] = Array(presentation.field.prefix(5).map(\.name))
+        var chosenNames: [String] = Array(presentation.field.prefix(headlineContenderCount).map(\.name))
         if let selected = selectedGolferName,
            !chosenNames.contains(where: { normalizeGolferName($0) == normalizeGolferName(selected) }),
            presentation.field.contains(where: { normalizeGolferName($0.name) == normalizeGolferName(selected) })
@@ -658,8 +985,12 @@ enum EventAtlasGolfTournament11666 {
                 return nil
             }
 
+            let winnerHasPreTeeBaseline = isPreTeeTimeMarket(
+                market: atlasData.winnerMarket,
+                tournamentCommenceTime: presentation.commenceTime
+            )
             let openProb: Double? = {
-                guard phase != .before, !winFailed else { return nil }
+                guard phase != .before, !winFailed, winnerHasPreTeeBaseline else { return nil }
                 return validChance(outcome?.openingProbability ?? meta?.openingProbability ?? fieldRow?.openingProbability)
             }()
 
@@ -742,10 +1073,13 @@ struct EventAtlasGolfTournamentSection11666: View {
     @State private var selectedGolferName: String? = nil
     @State private var selectedFinishKey: String? = nil
     @State private var fullScale: Bool = false
+    @State private var fullscreenTimeRange: EventAtlasGolfTournament11666.GolfTimeRange192A = .event
     @State private var chooserMode: EventAtlasGolfTournament11666.ChooserMode = .chances
     @State private var surnameBand: EventAtlasGolfTournament11666.SurnameBand = .all
     @State private var selectedRoundNumber: Int? = nil
     @State private var activeDetailsItem: EventAtlasGolfTournament11666.FinishDetailsSheetItem? = nil
+    @State private var showFullFieldSheet: Bool = false
+    @State private var showFullscreenChartSheet: Bool = false
 
     private var effectiveSelectedGolfer: String {
         if let selectedGolferName,
@@ -757,6 +1091,16 @@ struct EventAtlasGolfTournamentSection11666: View {
             return selectedGolferName
         }
         return presentation.field.first?.name ?? ""
+    }
+
+    /// Ruling 192-A: the first-screen headline and chart always pair the exact top 4 golfers.
+    private var headlineContenders: [EventAtlasGolfTournament11666.JourneyContender] {
+        EventAtlasGolfTournament11666.buildJourneyContenders(
+            presentation: presentation,
+            atlasData: atlasData,
+            selectedGolferName: nil,
+            now: now
+        )
     }
 
     private var contenders: [EventAtlasGolfTournament11666.JourneyContender] {
@@ -790,16 +1134,32 @@ struct EventAtlasGolfTournamentSection11666: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            EventAtlasGolfJourneyCardView11666(
-                contenders: contenders,
+        VStack(alignment: .leading, spacing: 12) {
+            EventAtlasGolfHeadlineCardView192A(
+                presentation: presentation,
+                contenders: headlineContenders,
+                closingRound: atlasData.closingRound,
+                liveLeaderboard: atlasData.liveLeaderboard,
                 phase: finishInput.phase,
-                selectedGolferName: effectiveSelectedGolfer,
-                timelineLoadFailed: atlasData.winnerTimelineFailed,
-                fullScale: $fullScale,
-                onSelectGolfer: { name in
-                    selectedGolferName = name
+                onOpenFullField: { showFullFieldSheet = true },
+                onOpenDetails: {
+                    activeDetailsItem = EventAtlasGolfTournament11666.buildFinishDetailsItem(
+                        selection: "win",
+                        golferName: effectiveSelectedGolfer,
+                        finishInput: finishInput,
+                        atlasData: atlasData
+                    )
                 }
+            )
+
+            EventAtlasGolfJourneyCardView11666(
+                contenders: headlineContenders,
+                phase: finishInput.phase,
+                fieldCount: presentation.field.count,
+                liveRound: atlasData.liveLeaderboard?.currentRound,
+                timelineLoadFailed: atlasData.winnerTimelineFailed,
+                onOpenFullscreenChart: { showFullscreenChartSheet = true },
+                onOpenFullField: { showFullFieldSheet = true }
             )
 
             if !effectiveSelectedGolfer.isEmpty {
@@ -851,146 +1211,691 @@ struct EventAtlasGolfTournamentSection11666: View {
                     }
                 )
             }
-
-            EventAtlasGolfContenderChooserView11666(
-                field: presentation.field,
-                phase: finishInput.phase,
-                selectedGolferName: effectiveSelectedGolfer,
-                mode: $chooserMode,
-                band: $surnameBand,
-                onSelectGolfer: { name in
-                    selectedGolferName = name
-                }
-            )
         }
         .sheet(item: $activeDetailsItem) { item in
             EventAtlasGolfFinishDetailsSheet11666(item: item)
         }
+        .sheet(isPresented: $showFullFieldSheet) {
+            EventAtlasGolfFieldSheet192A(
+                presentation: presentation,
+                atlasData: atlasData,
+                phase: finishInput.phase,
+                selectedGolferName: $selectedGolferName,
+                effectiveSelectedGolfer: effectiveSelectedGolfer,
+                finishInput: finishInput,
+                mode: $chooserMode,
+                band: $surnameBand
+            )
+        }
+        .sheet(isPresented: $showFullscreenChartSheet) {
+            EventAtlasGolfFullscreenChartSheet192A(
+                tournamentName: presentation.name,
+                commenceTime: presentation.commenceTime,
+                contenders: contenders,
+                phase: finishInput.phase,
+                timeRange: $fullscreenTimeRange,
+                fullScale: $fullScale,
+                now: now
+            )
+        }
     }
 }
 
-// MARK: - 1. Tournament Win-Probability Journey Card
+// MARK: - 0. Ruling 192-A Golf First-Screen Headline Card
+
+struct EventAtlasGolfHeadlineCardView192A: View {
+    let presentation: GolfTournamentPresentation
+    let contenders: [EventAtlasGolfTournament11666.JourneyContender]
+    let closingRound: EventAtlasGolfTournament11666.ClosingRoundCard?
+    var liveLeaderboard: EventAtlasGolfTournament11666.LiveLeaderboardCard? = nil
+    let phase: GolfFinishPhase10868
+    let onOpenFullField: () -> Void
+    let onOpenDetails: () -> Void
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var showsPregameColumn: Bool {
+        phase != .before && contenders.contains { $0.openingProbability != nil }
+    }
+
+    private var showsParColumn: Bool {
+        if phase == .recorded, let liveLeaderboard {
+            if contenders.contains(where: { liveLeaderboard.selectedRow(named: $0.name) != nil }) {
+                return true
+            }
+        }
+        guard let closingRound else { return false }
+        return contenders.contains { closingRound.selectedRow(named: $0.name) != nil }
+    }
+
+    private var trailingColumnHeader: String {
+        switch phase {
+        case .before: return "Chance"
+        case .recorded: return "Now"
+        case .final: return "Final"
+        }
+    }
+
+    private var tournamentLiveRoundCapsuleText: String {
+        if let round = liveLeaderboard?.currentRound, round >= 1 {
+            return "LIVE · R\(round)"
+        }
+        return "LIVE"
+    }
+
+    private var eyebrowContextLine: String {
+        if phase == .recorded, liveLeaderboard != nil {
+            if let tour = presentation.tourLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !tour.isEmpty {
+                return tour
+            }
+            return "Golf"
+        }
+        let parts = [presentation.tourLabel, presentation.venue ?? presentation.dateRange]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+        return parts.isEmpty ? "Golf" : parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            topEyebrowRow
+            titleAndFieldLinkRow
+            if !dynamicTypeSize.isAccessibilitySize {
+                columnHeaderRow
+            }
+            VStack(spacing: 6) {
+                ForEach(Array(contenders.prefix(EventAtlasGolfTournament11666.headlineContenderCount).enumerated()), id: \.element.id) { idx, contender in
+                    golferHeadlineRow(contender, rank: idx + 1)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("golf.atlas.headlineCard192A")
+    }
+
+    @ViewBuilder
+    private var topEyebrowRow: some View {
+        HStack(spacing: 8) {
+            if phase == .recorded {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(DS.cardBg)
+                        .frame(width: 5, height: 5)
+                    Text(tournamentLiveRoundCapsuleText)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(DS.cardBg)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(DS.danger))
+            } else if phase == .final {
+                Text("FINAL")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(DS.textSecondaryReadable)
+            }
+
+            Text(eyebrowContextLine)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(DS.textSecondaryReadable)
+                .lineLimit(1)
+
+            Spacer(minLength: 4)
+
+            if phase == .recorded {
+                EkgTraceShape(beating: true)
+                    .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    .foregroundStyle(DS.emerald)
+                    .frame(width: 26, height: 9)
+                    .accessibilityHidden(true)
+            }
+
+            Button(action: onOpenDetails) {
+                Image(systemName: "info.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Tournament market details")
+        }
+    }
+
+    @ViewBuilder
+    private var titleAndFieldLinkRow: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(presentation.name)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !presentation.field.isEmpty {
+                    Button(action: onOpenFullField) {
+                        Text("All \(presentation.field.count) golfers ›")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(DS.blueReadable)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("golf.atlas.allGolfersHeaderButton")
+                }
+            }
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(presentation.name)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                if !presentation.field.isEmpty {
+                    Button(action: onOpenFullField) {
+                        Text("All \(presentation.field.count) golfers ›")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(DS.blueReadable)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("golf.atlas.allGolfersHeaderButton")
+                }
+            }
+        }
+    }
+
+    private var columnHeaderRow: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Text("Pos")
+                    .lineLimit(1)
+                    .frame(width: 24, alignment: .leading)
+                Text("Golfer")
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if showsParColumn {
+                    Text("Score")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: 38, alignment: .trailing)
+                }
+                if showsPregameColumn {
+                    Text("Pregame")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: 54, alignment: .trailing)
+                }
+                Text(trailingColumnHeader)
+                    .lineLimit(1)
+                    .frame(width: 50, alignment: .trailing)
+            }
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(DS.textSecondaryReadable)
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
+        }
+    }
+
+    @ViewBuilder
+    private func golferHeadlineRow(
+        _ contender: EventAtlasGolfTournament11666.JourneyContender,
+        rank: Int
+    ) -> some View {
+        let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
+        let liveRow = phase == .recorded ? liveLeaderboard?.selectedRow(named: contender.name) : nil
+        let closingRow = closingRound?.selectedRow(named: contender.name)
+        let posLabel = liveRow?.position ?? closingRow?.finishLabel ?? "\(rank)"
+        let parLabel: String? = {
+            if let liveRow { return liveRow.parDisplay }
+            if let closingRow { return EventAtlasGolfTournament11666.ClosingRoundCard.formatStrokes(closingRow.strokesToPar) }
+            return nil
+        }()
+
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(posLabel)
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(DS.textSecondaryReadable)
+                    Circle()
+                        .fill(color)
+                        .frame(width: 8, height: 8)
+                    Text(contender.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 10) {
+                    if let parLabel {
+                        Text(parLabel)
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                    }
+                    if showsPregameColumn, let open = contender.openingProbability {
+                        Text(EventAtlasGolfTournament11666.wholePercentProbabilityText(open))
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(DS.textSecondaryReadable)
+                    }
+                    Spacer()
+                    golferTrailingValue(contender, color: color)
+                }
+            }
+            .padding(.vertical, 2)
+        } else {
+            HStack(spacing: 4) {
+                Text(posLabel)
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .frame(width: 24, alignment: .leading)
+
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(color)
+                        .frame(width: 7, height: 7)
+                    Text(contender.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.88)
+                }
+
+                Spacer(minLength: 4)
+
+                if showsParColumn {
+                    Text(parLabel ?? "—")
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.primary)
+                        .frame(width: 38, alignment: .trailing)
+                }
+
+                if showsPregameColumn {
+                    Text(contender.openingProbability.map { EventAtlasGolfTournament11666.wholePercentProbabilityText($0) } ?? "—")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .frame(width: 54, alignment: .trailing)
+                }
+
+                golferTrailingValue(contender, color: color)
+                    .frame(minWidth: 50, alignment: .trailing)
+            }
+            .padding(.vertical, 1)
+        }
+    }
+
+    @ViewBuilder
+    private func golferTrailingValue(
+        _ contender: EventAtlasGolfTournament11666.JourneyContender,
+        color: Color
+    ) -> some View {
+        if contender.loadFailed {
+            Text("—")
+                .font(.subheadline)
+                .foregroundStyle(DS.textSecondaryReadable)
+        } else if phase == .final {
+            switch contender.finalVerdict {
+            case .won:
+                Text("✓ Won")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(DS.emeraldDark)
+            case .lost:
+                Text("Lost")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DS.textSecondaryReadable)
+            case nil:
+                Text("—")
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+            }
+        } else if let current = contender.currentProbability {
+            let formatted = phase == .recorded
+                ? EventAtlasGolfTournament11666.liveStreamingProbabilityText(current)
+                : EventAtlasGolfTournament11666.wholePercentProbabilityText(current)
+            Text(formatted)
+                .font(.callout.weight(.bold).monospacedDigit())
+                .foregroundStyle(color)
+        } else {
+            Text("No recent probability")
+                .font(.caption2)
+                .foregroundStyle(DS.textSecondaryReadable)
+        }
+    }
+}
+
+// MARK: - 1. Tournament Win-Probability Journey Card (Ruling 192-A First-Screen Chart)
 
 struct EventAtlasGolfJourneyCardView11666: View {
     let contenders: [EventAtlasGolfTournament11666.JourneyContender]
     let phase: GolfFinishPhase10868
-    let selectedGolferName: String
+    var fieldCount: Int = 0
+    var liveRound: Int? = nil
     var timelineLoadFailed: Bool = false
-    @Binding var fullScale: Bool
-    let onSelectGolfer: (String) -> Void
+    let onOpenFullscreenChart: () -> Void
+    let onOpenFullField: () -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var ceiling: Double {
-        EventAtlasGolfTournament11666.yAxisCeiling(contenders: contenders, fullScale: fullScale)
+        EventAtlasGolfTournament11666.yAxisCeiling(contenders: contenders, fullScale: false)
     }
 
     private var hasSeriesPoints: Bool {
         contenders.contains { $0.points.count >= 2 }
     }
 
+    private var footerJourneyCaption: String {
+        let hasPregame = contenders.contains { $0.openingProbability != nil }
+        switch phase {
+        case .before:
+            return "Pre-tournament win history"
+        case .recorded:
+            if let round = liveRound, round >= 1 {
+                return "Round 1 tee-off → Round \(round) live"
+            }
+            return hasPregame ? "Pregame to live" : "Live tournament history"
+        case .final:
+            return hasPregame ? "Pregame to final" : "Tournament history"
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Chance to win")
-                            .font(.headline)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(phase == .final ? "Tournament win-probability journey · Final" : "Tournament win-probability journey")
-                            .font(.caption)
-                            .foregroundStyle(DS.textSecondaryReadable)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    HStack(spacing: 6) {
-                        scaleButton(title: "Auto", isFull: false)
-                        scaleButton(title: "Full", isFull: true)
-                    }
-                    .accessibilityIdentifier("golf.atlas.scaleToggle")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("Leaders' Win Chance")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Button(action: onOpenFullscreenChart) {
+                    Text("Full chart ↗")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.groupedBackground, in: Capsule())
                 }
-            } else {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Chance to win")
-                            .font(.headline)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(phase == .final ? "Tournament win-probability journey · Final" : "Tournament win-probability journey")
-                            .font(.caption)
-                            .foregroundStyle(DS.textSecondaryReadable)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 4)
-                    HStack(spacing: 4) {
-                        scaleButton(title: "Auto", isFull: false)
-                        scaleButton(title: "Full", isFull: true)
-                    }
-                    .accessibilityIdentifier("golf.atlas.scaleToggle")
-                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("golf.atlas.fullChartButton")
             }
 
             if hasSeriesPoints {
-                Chart {
-                    ForEach(contenders) { contender in
-                        let isSelected = EventAtlasGolfTournament11666.normalizeGolferName(contender.name)
-                            == EventAtlasGolfTournament11666.normalizeGolferName(selectedGolferName)
-                        let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
-                        ForEach(contender.points) { pt in
-                            LineMark(
-                                x: .value("Time", pt.date),
-                                y: .value("Win chance", min(pt.probability, ceiling)),
-                                series: .value("Golfer", contender.name)
-                            )
-                            .foregroundStyle(color.opacity(isSelected ? 1.0 : 0.45))
-                            .lineStyle(StrokeStyle(lineWidth: isSelected ? 2.5 : 1.5))
-                        }
-                    }
-                }
-                .chartYScale(domain: 0...ceiling)
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: dynamicTypeSize.isAccessibilitySize ? 2 : 4)) { _ in
-                        AxisGridLine()
-                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
-                            .font(.caption2)
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks(values: [0.0, ceiling / 2.0, ceiling]) { val in
-                        AxisGridLine()
-                        AxisValueLabel {
-                            if let d = val.as(Double.self) {
-                                Text("\(Int((d * 100).rounded()))%")
-                                    .font(.caption2)
-                                    .monospacedDigit()
+                HStack(alignment: .top, spacing: 4) {
+                    Chart {
+                        ForEach(contenders) { contender in
+                            let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
+                            ForEach(contender.points) { pt in
+                                LineMark(
+                                    x: .value("Time", pt.date),
+                                    y: .value("Win chance", min(pt.probability, ceiling)),
+                                    series: .value("Golfer", contender.name)
+                                )
+                                .foregroundStyle(color)
+                                .lineStyle(StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round))
+                            }
+                            if let lastPt = contender.points.last {
+                                PointMark(
+                                    x: .value("Time", lastPt.date),
+                                    y: .value("Win chance", min(lastPt.probability, ceiling))
+                                )
+                                .foregroundStyle(color)
+                                .symbolSize(24)
                             }
                         }
                     }
+                    .chartYScale(domain: 0...ceiling)
+                    .chartXAxis {
+                        let allDates = contenders.flatMap { $0.points.map(\.date) }
+                        if let minD = allDates.min(), let maxD = allDates.max(), maxD > minD {
+                            let spanHours = maxD.timeIntervalSince(minD) / 3600
+                            let midD = minD.addingTimeInterval(maxD.timeIntervalSince(minD) / 2.0)
+                            let tickDates = dynamicTypeSize.isAccessibilitySize ? [minD, maxD] : [minD, midD, maxD]
+                            AxisMarks(values: tickDates) { value in
+                                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.4, dash: [3, 3]))
+                                if spanHours < 48 {
+                                    AxisValueLabel(
+                                        format: .dateTime.weekday(.abbreviated).hour(),
+                                        anchor: OddsChartView.xAxisLabelAnchor(index: value.index, count: value.count)
+                                    )
+                                    .font(.caption2)
+                                } else {
+                                    AxisValueLabel(
+                                        format: .dateTime.month(.abbreviated).day(),
+                                        anchor: OddsChartView.xAxisLabelAnchor(index: value.index, count: value.count)
+                                    )
+                                    .font(.caption2)
+                                }
+                            }
+                        } else {
+                            AxisMarks(values: .automatic(desiredCount: 2))
+                        }
+                    }
+                    .chartYAxis {
+                        AxisMarks(position: .leading, values: [0.0, ceiling / 2.0, ceiling]) { val in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.4, dash: [3, 3]))
+                            AxisValueLabel {
+                                if let d = val.as(Double.self) {
+                                    Text("\(Int((d * 100).rounded()))%")
+                                        .font(.caption2)
+                                        .monospacedDigit()
+                                }
+                            }
+                        }
+                    }
+                    .chartLegend(.hidden)
+                    .frame(height: EventAtlasGolfTournament11666.firstScreenChartHeight)
+                    .accessibilityIdentifier("golf.atlas.journeyChart")
+
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        rightEdgeLabelsColumn
+                            .frame(width: 98, height: EventAtlasGolfTournament11666.firstScreenChartHeight)
+                    }
                 }
-                .frame(height: 180)
-                .accessibilityIdentifier("golf.atlas.journeyChart")
             } else {
                 Text(
                     timelineLoadFailed
                         ? "Couldn’t load win-probability history."
                         : "Win-probability history isn’t available for this tournament yet."
                 )
-                    .font(.footnote)
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 8)
+                .font(.footnote)
+                .foregroundStyle(DS.textSecondaryReadable)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 8)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(contenders) { contender in
-                    contenderChip(contender)
+            Divider()
+
+            HStack(spacing: 8) {
+                Text(footerJourneyCaption)
+                    .font(.caption2)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                Spacer(minLength: 4)
+                if fieldCount > 0 {
+                    Button(action: onOpenFullField) {
+                        Text("All \(fieldCount) golfers ›")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("golf.atlas.allGolfersFooterButton")
                 }
             }
         }
         .padding(14)
-        .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
         .accessibilityIdentifier("golf.atlas.journeyCard")
     }
 
-    private func scaleButton(title: String, isFull: Bool) -> some View {
+    private var rightEdgeLabelsColumn: some View {
+        let plotTopInset: CGFloat = 8
+        let plotBottomInset: CGFloat = 22
+        let usableHeight = max(40, EventAtlasGolfTournament11666.firstScreenChartHeight - plotTopInset - plotBottomInset)
+        let plotted = contenders.filter { !$0.points.isEmpty }
+        let rawTargets: [CGFloat] = plotted.map { contender in
+            let lastVal = min(max(contender.points.last?.probability ?? 0, 0), ceiling)
+            let norm = ceiling > 0 ? (lastVal / ceiling) : 0
+            return plotTopInset + usableHeight * CGFloat(1.0 - norm)
+        }
+        let yPositions = EventAtlasGolfTournament11666.decollidedLabelYPositions(
+            targets: rawTargets,
+            minGap: 14,
+            plotHeight: EventAtlasGolfTournament11666.firstScreenChartHeight - plotBottomInset
+        )
+
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(plotted.enumerated()), id: \.element.id) { idx, contender in
+                let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
+                let label = EventAtlasGolfTournament11666.shortChartEndLabel(for: contender, phase: phase)
+                Text(label)
+                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.68)
+                    .allowsTightening(true)
+                    .frame(width: 96, alignment: .leading)
+                    .position(x: 49, y: yPositions[idx])
+            }
+        }
+    }
+}
+
+// MARK: - 1b. Ruling 192-A Full-Screen Golf Chart Sheet (Time Range Lives Here)
+
+struct EventAtlasGolfFullscreenChartSheet192A: View {
+    let tournamentName: String
+    let commenceTime: String?
+    let contenders: [EventAtlasGolfTournament11666.JourneyContender]
+    let phase: GolfFinishPhase10868
+    @Binding var timeRange: EventAtlasGolfTournament11666.GolfTimeRange192A
+    @Binding var fullScale: Bool
+    var now: Date = Date()
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var filteredContenders: [EventAtlasGolfTournament11666.JourneyContender] {
+        EventAtlasGolfTournament11666.filterContendersByTimeRange(
+            contenders,
+            range: timeRange,
+            commenceTime: commenceTime,
+            now: now
+        )
+    }
+
+    private var ceiling: Double {
+        EventAtlasGolfTournament11666.yAxisCeiling(contenders: filteredContenders, fullScale: fullScale)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 8) {
+                        HStack(spacing: 0) {
+                            ForEach(EventAtlasGolfTournament11666.GolfTimeRange192A.allCases) { range in
+                                Button {
+                                    timeRange = range
+                                } label: {
+                                    Text(range.rawValue)
+                                        .font(.caption.weight(timeRange == range ? .semibold : .regular))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(timeRange == range ? Color.blue.opacity(0.15) : Color.clear)
+                                        .foregroundStyle(timeRange == range ? Color.blue : Color.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
+                        )
+                        .accessibilityIdentifier("golf.atlas.fullscreenTimeRangeBar")
+
+                        Spacer(minLength: 4)
+
+                        HStack(spacing: 4) {
+                            scaleChip("Auto", isFull: false)
+                            scaleChip("Full", isFull: true)
+                        }
+                        .accessibilityIdentifier("golf.atlas.scaleToggle")
+                    }
+
+                    Chart {
+                        ForEach(filteredContenders) { contender in
+                            let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
+                            ForEach(contender.points) { pt in
+                                LineMark(
+                                    x: .value("Time", pt.date),
+                                    y: .value("Win chance", min(pt.probability, ceiling)),
+                                    series: .value("Golfer", contender.name)
+                                )
+                                .foregroundStyle(color)
+                                .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                            }
+                        }
+                    }
+                    .chartYScale(domain: 0...ceiling)
+                    .chartYAxis {
+                        AxisMarks(position: .leading, values: [0.0, ceiling / 2.0, ceiling]) { val in
+                            AxisGridLine()
+                            AxisValueLabel {
+                                if let d = val.as(Double.self) {
+                                    Text("\(Int((d * 100).rounded()))%")
+                                        .font(.caption2.monospacedDigit())
+                                }
+                            }
+                        }
+                    }
+                    .frame(height: 310)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(filteredContenders) { contender in
+                            let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(color)
+                                    .frame(width: 9, height: 9)
+                                Text(contender.name)
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                if let open = contender.openingProbability {
+                                    Text("Pregame \(formatProbability(open))")
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(DS.textSecondaryReadable)
+                                }
+                                if let cur = contender.currentProbability {
+                                    Text(formatProbability(cur))
+                                        .font(.subheadline.weight(.bold).monospacedDigit())
+                                        .foregroundStyle(color)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .background(Color.groupedBackground)
+            .navigationTitle(tournamentName)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func scaleChip(_ title: String, isFull: Bool) -> some View {
         let active = fullScale == isFull
         return Button {
             fullScale = isFull
@@ -998,114 +1903,57 @@ struct EventAtlasGolfJourneyCardView11666: View {
             Text(title)
                 .font(.caption.weight(active ? .semibold : .regular))
                 .foregroundStyle(active ? Color.primary : Color.secondary)
-                .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .frame(minHeight: 36)
-                .background(
-                    active ? Color.tertiaryFill : Color.clear,
-                    in: Capsule()
-                )
+                .background(active ? Color.tertiaryFill : Color.clear, in: Capsule())
         }
         .buttonStyle(.plain)
     }
+}
 
-    @ViewBuilder
-    private func contenderChip(_ contender: EventAtlasGolfTournament11666.JourneyContender) -> some View {
-        let isSelected = EventAtlasGolfTournament11666.normalizeGolferName(contender.name)
-            == EventAtlasGolfTournament11666.normalizeGolferName(selectedGolferName)
-        let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
+// MARK: - 1c. Ruling 192-A Full-Field Sheet ("All N golfers ›")
 
-        Button {
-            onSelectGolfer(contender.name)
-        } label: {
-            Group {
-                if dynamicTypeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(color)
-                                .frame(width: 10, height: 10)
-                            Text(contender.name)
-                                .font(.subheadline.weight(isSelected ? .bold : .medium))
-                                .foregroundStyle(.primary)
-                                .fixedSize(horizontal: false, vertical: true)
+struct EventAtlasGolfFieldSheet192A: View {
+    let presentation: GolfTournamentPresentation
+    let atlasData: EventAtlasGolfTournament11666.TournamentAtlasData
+    let phase: GolfFinishPhase10868
+    @Binding var selectedGolferName: String?
+    let effectiveSelectedGolfer: String
+    let finishInput: GolfFinishExpectationInput10868
+    @Binding var mode: EventAtlasGolfTournament11666.ChooserMode
+    @Binding var band: EventAtlasGolfTournament11666.SurnameBand
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    EventAtlasGolfContenderChooserView11666(
+                        field: presentation.field,
+                        phase: phase,
+                        showsPregameBaseline: EventAtlasGolfTournament11666.isPreTeeTimeMarket(
+                            market: atlasData.winnerMarket,
+                            tournamentCommenceTime: presentation.commenceTime
+                        ),
+                        selectedGolferName: effectiveSelectedGolfer,
+                        mode: $mode,
+                        band: $band,
+                        onSelectGolfer: { name in
+                            selectedGolferName = name
                         }
-                        contenderTrailingValue(contender)
-                    }
-                } else {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(color)
-                            .frame(width: 10, height: 10)
-                        Text(contender.name)
-                            .font(.subheadline.weight(isSelected ? .bold : .medium))
-                            .foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 6)
-                        contenderTrailingValue(contender)
-                    }
+                    )
                 }
+                .padding(16)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .background(
-                isSelected ? color.opacity(0.12) : Color.groupedBackground,
-                in: RoundedRectangle(cornerRadius: 10)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(isSelected ? color : Color.clear, lineWidth: 1.5)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private func contenderTrailingValue(_ contender: EventAtlasGolfTournament11666.JourneyContender) -> some View {
-        HStack(spacing: 8) {
-            if contender.loadFailed {
-                Text("Couldn’t load market")
-                    .font(.caption)
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                if let open = contender.openingProbability {
-                    Text("○ Opened \(formatProbability(open))")
-                        .font(.caption)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .monospacedDigit()
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if phase == .final {
-                    switch contender.finalVerdict {
-                    case .won:
-                        Text("✓ Won")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(DS.emeraldDark)
-                            .fixedSize(horizontal: false, vertical: true)
-                    case .lost:
-                        Text("✗ Lost")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(DS.textSecondaryReadable)
-                            .fixedSize(horizontal: false, vertical: true)
-                    case nil:
-                        Text("Result not confirmed")
-                            .font(.caption)
-                            .foregroundStyle(DS.textSecondaryReadable)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                } else if let current = contender.currentProbability {
-                    Text(formatProbability(current))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .monospacedDigit()
-                } else {
-                    Text("No recent probability")
-                        .font(.caption)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .fixedSize(horizontal: false, vertical: true)
+            .background(Color.groupedBackground)
+            .navigationTitle("All \(presentation.field.count) Golfers")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
                 }
             }
         }
@@ -1160,7 +2008,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
                     Text(row.golferName)
                         .font(.subheadline.weight(.bold))
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Opening win chance: \(preText)")
+                    Text("Pregame win chance: \(preText)")
                         .font(.caption)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1184,7 +2032,7 @@ struct EventAtlasGolfClosingRoundCardView11666: View {
                         Text(scoreText)
                             .font(.title3.weight(.bold))
                             .monospacedDigit()
-                        Text("○ Opened \(preText)")
+                        Text("○ Pregame \(preText)")
                             .font(.caption)
                             .foregroundStyle(DS.textSecondaryReadable)
                             .monospacedDigit()
@@ -1387,12 +2235,6 @@ struct EventAtlasGolfRoundsCardView11666: View {
                                     .foregroundStyle(.primary)
                                     .fixedSize(horizontal: false, vertical: true)
                                 HStack(spacing: 8) {
-                                    if let open = outcome.openingProbability, open > 0, open < 1 {
-                                        Text("○ Opened \(formatProbability(open))")
-                                            .font(.caption)
-                                            .foregroundStyle(DS.textSecondaryReadable)
-                                            .monospacedDigit()
-                                    }
                                     if isSettled {
                                         Text(isWinner ? "✓ Won" : (group.gradedWinner != nil ? "—" : "Unconfirmed"))
                                             .font(.caption.weight(isWinner ? .semibold : .regular))
@@ -1413,12 +2255,6 @@ struct EventAtlasGolfRoundsCardView11666: View {
                                     .foregroundStyle(.primary)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
-                                if let open = outcome.openingProbability, open > 0, open < 1 {
-                                    Text("○ Opened \(formatProbability(open))")
-                                        .font(.caption)
-                                        .foregroundStyle(DS.textSecondaryReadable)
-                                        .monospacedDigit()
-                                }
                                 if isSettled {
                                     Text(isWinner ? "✓ Won" : (group.gradedWinner != nil ? "—" : "Unconfirmed"))
                                         .font(.caption.weight(isWinner ? .semibold : .regular))
@@ -1448,6 +2284,7 @@ struct EventAtlasGolfRoundsCardView11666: View {
 struct EventAtlasGolfContenderChooserView11666: View {
     let field: [GolfTournamentFieldRow]
     let phase: GolfFinishPhase10868
+    var showsPregameBaseline: Bool = false
     let selectedGolferName: String
     @Binding var mode: EventAtlasGolfTournament11666.ChooserMode
     @Binding var band: EventAtlasGolfTournament11666.SurnameBand
@@ -1651,8 +2488,8 @@ struct EventAtlasGolfContenderChooserView11666: View {
                     Text("✓ Won")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(DS.emeraldDark)
-                } else if let open = row.openingProbability, open > 0, open < 1 {
-                    Text("○ Opened \(formatProbability(open))")
+                } else if showsPregameBaseline, let open = row.openingProbability, open > 0, open < 1 {
+                    Text("○ Pregame \(formatProbability(open))")
                         .font(.caption)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .monospacedDigit()
@@ -1693,13 +2530,13 @@ struct EventAtlasGolfFinishDetailsSheet11666: View {
 
                 Section("Readings") {
                     LabeledContent(
-                        item.phase == .before ? "Before tournament" : "Opened",
+                        item.phase == .before ? "Before tournament" : "Pregame",
                         value: item.beforePercent ?? item.beforeMissingText
                     )
                     if item.phase == .recorded {
                         LabeledContent("Recorded estimate", value: item.recordedPercent ?? item.recordedMissingText)
                         if let deltaText = item.deltaText {
-                            LabeledContent("Since open", value: deltaText)
+                            LabeledContent("Since pregame", value: deltaText)
                         }
                     }
                     if let resultText = item.resultText {

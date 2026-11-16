@@ -91,6 +91,12 @@ KNOWN_STORING_WRITERS = {
     "futures_price_refresh.py::_write_prices",
     "kalshi.py::_poll_kalshi_markets",
     "polymarket.py::_process_event_batch",
+    # #12658: the REST live poll stores a supported quote-to-quote delta and
+    # inserts that outcome's Polymarket snapshot before its existing commit.
+    "prediction_market_matching.py::_poll_live_prediction_market_prices",
+    # #12633: the conditional binary-child writer owns its snapshot insert;
+    # refused writes return before both the observation and the delta claim.
+    "prediction_market_matching.py::_write_live_polymarket_child",
 }
 
 

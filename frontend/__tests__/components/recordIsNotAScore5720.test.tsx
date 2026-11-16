@@ -148,7 +148,7 @@ function draw(scores: Scores, status = "live", minutesFromNow = -206): string {
   );
   // A `not.toContain` against a page that did not draw is a pass that proves
   // nothing. The hero renders on every branch this file exercises.
-  expect(html).toContain("Mountaineers");
+  expect(html).toContain("Appalachian State");
   return html;
 }
 

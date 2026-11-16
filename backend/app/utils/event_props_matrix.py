@@ -48,6 +48,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
 from app.utils.latest_observation import blended_observed_at
+from app.utils.source_mark import no_source_mark, quote_source_mark, settled_source_mark
 
 CONTRACT = "10236.v1"
 COVERAGE_SCOPE = "linked_markets_loaded_for_event"
@@ -204,6 +205,8 @@ def type_prop_row(
     outcome_name: Optional[str],
     player_and_stat: Callable[[Optional[str], Optional[str]], tuple[str, str]],
     team_forms: set[str],
+    *,
+    additional_stats: Optional[dict[str, str]] = None,
 ) -> dict:
     """Type one prop leg into a question, or say why it cannot be typed.
 
@@ -258,7 +261,7 @@ def type_prop_row(
         stat_norm = _normalize_stat(m.group("stat"))
     else:
         stat_norm = _normalize_stat(stat_text)
-    stat_key = _STAT_BY_SPELLING.get(stat_norm)
+    stat_key = _STAT_BY_SPELLING.get(stat_norm) or (additional_stats or {}).get(stat_norm)
     if stat_key is None:
         return {"refused": "untyped_stat"}
 
@@ -484,6 +487,18 @@ def build_during_player_props(
         market_ids = sorted({
             i for l in legs for i in ([l["market_id"]] if l["market_id"] is not None else [])
         })
+        if current["state"] == "quoted":
+            source_mark = quote_source_mark({
+                "key": contributor["source"],
+                "probability": contributor["probability"],
+                "observed_at": contributor["observed_at"],
+            } for contributor in contributors)
+        elif result is not None and (result.get("hit") is not None
+                                     or result.get("is_winner") is not None):
+            won = result.get("hit") if result.get("hit") is not None else result["is_winner"]
+            source_mark = settled_source_mark(result.get("resolution_source"), "Won" if won else "Lost")
+        else:
+            source_mark = no_source_mark(current["state"])
         questions[qkey] = {
             "question_key": qkey,
             "subject": {
@@ -506,6 +521,7 @@ def build_during_player_props(
                 if typed["side"] == "under" else None
             ),
             "current": current,
+            "source_mark": source_mark,
             "contributors": contributors,
             "result": result,
             "_market_id": legs[0]["market_id"],

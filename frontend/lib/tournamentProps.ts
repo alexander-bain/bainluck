@@ -580,7 +580,7 @@ export function propIsQuiet(market: PropMarket): boolean {
 
 /** The sentence that defines the age, once per section. Never per card. */
 export const FRESHNESS_DEFINITION =
-  "“Last number” is when we last saw a new probability for a question — not when it was created, and not when it last changed hands.";
+  "“Last number” is when we last saw a new probability for a market — not when it was created, and not when it last changed hands.";
 
 export type PropFreshnessState = "fresh" | "waiting" | "quiet";
 
@@ -1049,7 +1049,7 @@ export function curatedPropsEmptyReason(result: CuratedProps): string | null {
   // anything except an empty draw or a draw whose every question is a
   // reach-a-round one.
   if (advance > 0) {
-    return "Every question for this draw is about how far a player gets — those are on the Bracket tab.";
+    return "Every market for this draw is about how far a player gets — those are on the Bracket tab.";
   }
   return null;
 }

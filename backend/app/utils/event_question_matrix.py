@@ -51,6 +51,7 @@ from app.utils.final_score_margin import _MARGIN_RE, _SPORT_SCORING_UNIT, _singu
 from app.utils.market_shape import _DRAW_TOKENS, _TOP_N_RE, _norm, venue_leg_count
 from app.utils.series_winner_correspondence import SERIES_BLEND_BASIS
 from app.utils.team_side import resolve_team_side
+from app.utils.source_mark import no_source_mark, quote_source_mark, settled_source_mark
 
 CONTRACT = "10238.v1"
 COVERAGE_SCOPE = "rows_served_by_this_response"
@@ -862,6 +863,17 @@ def _game_option(entry: dict, side: str, lifecycle_state: str, shared: dict) -> 
     evidence = [] if refused else _game_evidence(entry, side, shared)
     leg = legs_by_id.get(contributors[0]) if len(contributors) == 1 else None
     comparison = _game_comparison(entry, value_state, leg, shared)
+    source_mark = entry["row"].get("source_mark")
+    if result["state"] in ("won", "lost"):
+        source_mark = settled_source_mark(
+            entry["row"].get("resolution_source"), result["state"].title(),
+        )
+    elif source_mark is None or (source_mark.get("reason") == "no_probability"
+                                 and value_state == "quoted"):
+        source_mark = quote_source_mark({
+            "key": item["source"], "probability": item["raw_probability"],
+            "observed_at": item["observed_at"],
+        } for item in evidence) if value_state == "quoted" else no_source_mark(value_state)
     return {
         "option_key": "o:" + "+".join(str(c) for c in sorted(contributors)),
         "label": _axis_label(entry),
@@ -876,6 +888,7 @@ def _game_option(entry: dict, side: str, lifecycle_state: str, shared: dict) -> 
             "observed_at": entry["observed_at"],
         },
         "source_evidence": evidence,
+        "source_mark": source_mark,
         "result": result,
         "comparison": comparison,
         "pregame_reading": _pregame_reading(entry, value_state, leg, shared),
@@ -1113,6 +1126,8 @@ def _unblended_option(entries: list, side: str, lifecycle_state: str, shared: di
         "source_evidence": evidence,
         "result": result,
         "comparison": _unavailable("not_quoted"),
+        "source_mark": (settled_source_mark(None, result["state"].title())
+                        if graded else no_source_mark("unblended_equivalents")),
         "pregame_reading": _no_reading("multiple_contributors"),
     }
 
@@ -1222,6 +1237,7 @@ def _equivalent_option(entries: list, lifecycle_state: str, shared: dict) -> dic
     ):
         option["published"]["value_state"] = "refused"
         option["source_evidence"] = []
+        option["source_mark"] = no_source_mark("refused")
     return option
 
 

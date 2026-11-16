@@ -171,7 +171,7 @@ describe("the BEFORE state, from the verbatim served payload", () => {
     // green capture was holding a listed debt in place. Anchored on the line
     // the page ships today and on the navigation affordance beside it.
     const text = visibleText(render(SERVED_BEFORE));
-    expect(text).toContain("This page lists open soccer questions");
+    expect(text).toContain("This page lists open soccer markets");
     expect(text).toContain("Browse other categories");
     expect(text).not.toContain("Failed");
     expect(text).not.toContain("Error");

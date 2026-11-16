@@ -22,6 +22,8 @@ struct PinActionFeedback: Identifiable, Equatable {
 final class PinManager: ObservableObject {
     @Published var pinnedEventIDs: Set<Int> = []
     @Published var pinnedFuturesIDs: Set<Int> = []
+    @Published private(set) var orderedEventIDs: [Int] = []
+    @Published private(set) var orderedFuturesIDs: [Int] = []
     @Published var feedback: PinActionFeedback?
     /// Pins whose server save has not answered yet, keyed `type:id`.
     @Published private(set) var savingKeys: Set<String> = []
@@ -42,6 +44,27 @@ final class PinManager: ObservableObject {
         return Set(events + futures).union(pendingRemovals).sorted {
             $0.type == $1.type ? $0.value < $1.value : $0.type < $1.type
         }
+    }
+
+    /// #12640 — ordered pin wire items for the paired Apple Watch (events in pin order,
+    /// then markets in pin order). Reconciles direct set assignments used in unit tests.
+    var watchPinItems12640: [WatchPinWireItem12640] {
+        let events = Self.reconcileOrder(ordered: orderedEventIDs, set: pinnedEventIDs)
+            .map { WatchPinWireItem12640(kind: .event, id: $0) }
+        let futures = Self.reconcileOrder(ordered: orderedFuturesIDs, set: pinnedFuturesIDs)
+            .map { WatchPinWireItem12640(kind: .future, id: $0) }
+        return WatchPinsWire12640.sanitize(events + futures)
+    }
+
+    private static func dedupPreservingOrder(_ ids: [Int]) -> [Int] {
+        var seen = Set<Int>()
+        return ids.filter { $0 > 0 && seen.insert($0).inserted }
+    }
+
+    private static func reconcileOrder(ordered: [Int], set: Set<Int>) -> [Int] {
+        let kept = ordered.filter { set.contains($0) }
+        let extras = set.subtracting(kept).filter { $0 > 0 }.sorted()
+        return dedupPreservingOrder(kept + extras)
     }
 
     func presentManagement(type: String? = nil) {
@@ -287,16 +310,24 @@ final class PinManager: ObservableObject {
 
     private func addLocally(type: String, id: Int) {
         switch type {
-        case "event": pinnedEventIDs.insert(id)
-        case "future": pinnedFuturesIDs.insert(id)
+        case "event":
+            pinnedEventIDs.insert(id)
+            if id > 0, !orderedEventIDs.contains(id) { orderedEventIDs.append(id) }
+        case "future":
+            pinnedFuturesIDs.insert(id)
+            if id > 0, !orderedFuturesIDs.contains(id) { orderedFuturesIDs.append(id) }
         default: break
         }
     }
 
     private func removeLocally(type: String, id: Int) {
         switch type {
-        case "event": pinnedEventIDs.remove(id)
-        case "future": pinnedFuturesIDs.remove(id)
+        case "event":
+            pinnedEventIDs.remove(id)
+            orderedEventIDs.removeAll { $0 == id }
+        case "future":
+            pinnedFuturesIDs.remove(id)
+            orderedFuturesIDs.removeAll { $0 == id }
         default: break
         }
     }
@@ -304,22 +335,36 @@ final class PinManager: ObservableObject {
     private func loadFromDefaults() {
         if let data = defaults.data(forKey: eventsKey),
            let ids = try? JSONDecoder().decode([Int].self, from: data) {
-            pinnedEventIDs = Set(ids)
-        } else { pinnedEventIDs = [] }
+            orderedEventIDs = Self.dedupPreservingOrder(ids)
+            pinnedEventIDs = Set(orderedEventIDs)
+        } else {
+            orderedEventIDs = []
+            pinnedEventIDs = []
+        }
         if let data = defaults.data(forKey: futuresKey),
            let ids = try? JSONDecoder().decode([Int].self, from: data) {
-            pinnedFuturesIDs = Set(ids)
-        } else { pinnedFuturesIDs = [] }
+            orderedFuturesIDs = Self.dedupPreservingOrder(ids)
+            pinnedFuturesIDs = Set(orderedFuturesIDs)
+        } else {
+            orderedFuturesIDs = []
+            pinnedFuturesIDs = []
+        }
     }
 
     /// A removal the server has not confirmed is still a saved pin on disk: a
     /// cold restart whose first load fails must find it, not lose it (#9875).
     private func saveToDefaults() {
         func removing(_ type: String) -> [Int] { pendingRemovals.filter { $0.type == type }.map(\.value) }
-        if let data = try? JSONEncoder().encode(Array(pinnedEventIDs.union(removing("event")))) {
+        let events = Self.dedupPreservingOrder(
+            Self.reconcileOrder(ordered: orderedEventIDs, set: pinnedEventIDs) + removing("event")
+        )
+        if let data = try? JSONEncoder().encode(events) {
             defaults.set(data, forKey: eventsKey)
         }
-        if let data = try? JSONEncoder().encode(Array(pinnedFuturesIDs.union(removing("future")))) {
+        let futures = Self.dedupPreservingOrder(
+            Self.reconcileOrder(ordered: orderedFuturesIDs, set: pinnedFuturesIDs) + removing("future")
+        )
+        if let data = try? JSONEncoder().encode(futures) {
             defaults.set(data, forKey: futuresKey)
         }
     }
@@ -336,9 +381,14 @@ final class PinManager: ObservableObject {
             guard identityGeneration == generation, loadRequest == request else { return }
             // Keep unrelated server pins while preserving edits made during this
             // read. Dropping the entire response would hide those other pins.
-            pinnedEventIDs = Set(pins.events)
-            pinnedFuturesIDs = Set(pins.futures)
-            for (pin, mutation) in mutations where mutation.revision > revision || savingKeys.contains(pin.id) {
+            orderedEventIDs = Self.dedupPreservingOrder(pins.events)
+            pinnedEventIDs = Set(orderedEventIDs)
+            orderedFuturesIDs = Self.dedupPreservingOrder(pins.futures)
+            pinnedFuturesIDs = Set(orderedFuturesIDs)
+            let pendingEdits = mutations
+                .filter { $0.value.revision > revision || savingKeys.contains($0.key.id) }
+                .sorted { $0.value.revision < $1.value.revision }
+            for (pin, mutation) in pendingEdits {
                 if mutation.pinned { addLocally(type: pin.type, id: pin.value) }
                 else { removeLocally(type: pin.type, id: pin.value) }
             }

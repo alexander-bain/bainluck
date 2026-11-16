@@ -269,17 +269,18 @@ class TestThroughTheLivePoll:
 
         stats = await _run(monkeypatch, session, poly=poly)
 
-        # Precondition: the poll DID price the empty-book leg, so the refusal
-        # below is the pin guard and not a pricing-side skip.
+        # #12658: the price writer now declines this undated trade too; the
+        # fresh read still prevents a pin while the priced sibling survives.
         empty_leg = [o for o in beat.outcomes if o.market_id == 1][0]
-        assert empty_leg.current_probability == pytest.approx(0.01, abs=1e-4)
+        assert empty_leg.current_probability is None
         assert empty_leg.current_yes_bid is None
-        assert float(empty_leg.current_yes_ask) == 1.0
+        assert empty_leg.current_yes_ask is None
 
         assert [p["id"] for p in pins] == [2], f"pins written: {pins}"
         assert '"3002": 0.62' in pins[0]["mark"]
         assert stats["pregame_marks_written"] == 1
-        assert stats["pregame_mark_empty_book_legs_refused"] == 1
+        assert stats["polymarket_quotes_refused"] == 1
+        assert stats["pregame_mark_empty_book_legs_refused"] == 0  # no stored price to pin
 
     async def test_a_book_that_just_emptied_is_judged_on_the_fresh_read(
         self, monkeypatch
@@ -322,11 +323,11 @@ class TestThroughTheLivePoll:
 
         stats = await _run(monkeypatch, session, poly=poly)
 
-        # Precondition, the reviewer's reproduction: the poll priced the leg at
-        # the 1c trade and the stale bid survived on the row.
-        assert prior.current_probability == pytest.approx(0.01, abs=1e-4)
+        # #12658: a refused read leaves the prior price/book intact. The pin
+        # still judges this pass's empty book, not the older stored one.
+        assert prior.current_probability == pytest.approx(0.62, abs=1e-4)
         assert float(prior.current_yes_bid) == 0.61
-        assert float(prior.current_yes_ask) == 1.0
+        assert float(prior.current_yes_ask) == 0.63
 
         assert pins == [], f"pins written: {pins}"
         assert stats["pregame_marks_written"] == 0
@@ -397,7 +398,7 @@ class TestThroughTheLivePoll:
                 "cond-1", prices='["0.5", "0.5"]', last=0.5, bid=0.02, ask=0.98
             ),
         )
-        assert stats["polymarket_phantom_midpoints_refused"] == 1
+        assert stats["polymarket_quotes_refused"] == 1
         assert float(prior.current_probability) == 0.495
 
         assert pins == [], f"pins written: {pins}"

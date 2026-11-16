@@ -21,7 +21,7 @@ describe("collection share image names its public edition without inventing a pr
     for (const [fixture, category] of [[nflHub(), "football"], [mlbHub(), "baseball"]] as const) {
       const hub = parseCollection(fixture, fixture.slug);
       read.mockResolvedValue(hub);
-      expect(await imageProps(fixture.slug)).toMatchObject({ title: hub.title, subtitle: hub.edition, rows: [], accent: accentFor(category), verdict: hub.note ?? "Explore games, results and related questions." });
+      expect(await imageProps(fixture.slug)).toMatchObject({ title: hub.title, subtitle: hub.edition, rows: [], accent: accentFor(category), verdict: hub.note ?? "Explore games, results and related markets." });
     }
     expect(response.mock.calls[0][1]).toEqual({ width: 1200, height: 630, headers: { "cache-control": UNFURL_CACHE_MOVING } });
   });

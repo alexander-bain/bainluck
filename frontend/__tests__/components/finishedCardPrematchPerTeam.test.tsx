@@ -162,8 +162,8 @@ describe("the /sports FINAL card", () => {
     );
 
     expect(printedPercent(books, "feed-card-prematch-home")).toBe(60);
-    expect(books).toContain("Pre-match · sportsbooks");
-    expect(renderFeedCard(KALSHI_FINAL)).not.toContain("Pre-match ·");
+    expect(books).toContain("Pregame · sportsbooks");
+    expect(renderFeedCard(KALSHI_FINAL)).not.toContain("Pregame ·");
   });
 
   it("speaks one venue-free sentence, whichever rung the number came from", () => {
@@ -207,7 +207,7 @@ describe("the /sports FINAL card", () => {
     );
 
     expect(books).toContain('data-prematch-source="books"');
-    expect(books).toContain("Pre-match · sportsbooks");
+    expect(books).toContain("Pregame · sportsbooks");
     expect(renderFeedCard(KALSHI_FINAL)).toContain('data-prematch-source="kalshi"');
   });
 
@@ -251,7 +251,7 @@ describe("the Discover FINAL card", () => {
 
     expect(printedPercent(html, "event-card-prematch-away")).toBe(40);
     expect(printedPercent(html, "event-card-prematch-home")).toBe(60);
-    expect(html).toContain("Pre-match");
+    expect(html).toContain("Pregame");
   });
 
   it("keeps the winner line the pre-match numbers sit under", () => {
@@ -267,7 +267,7 @@ describe("the Discover FINAL card", () => {
       })
     );
 
-    expect(html).toContain("Pre-match · sportsbooks");
+    expect(html).toContain("Pregame · sportsbooks");
   });
 
   it("speaks the same venue-free sentence as /sports, on both rungs", () => {

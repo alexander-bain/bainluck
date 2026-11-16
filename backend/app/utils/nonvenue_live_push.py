@@ -447,8 +447,9 @@ async def write_nonvenue_probability(
     ``trace_inputs`` (#10090) is the producer's own input/version witness, a
     dict or a zero-argument callable; it is read only for a traced event and
     reaches nothing but `nonvenue_trace`. ``received_at`` (#10090) is when the
-    producer received its input, epoch seconds; it reaches only the writer
-    receipt (module doc).
+    producer received its input, epoch seconds. For a sportsbook consensus
+    derived entirely from that response, it also dates the exact source value
+    (#12581); neither a cached row nor this writer's clock substitutes for it.
     """
     if source not in NONVENUE_SOURCES:
         raise ValueError(f"not a nonvenue probability source: {source}")
@@ -475,7 +476,15 @@ async def _write(session, event, source, value, metadata, values, evidence, trac
     # Literal source dispatch keeps the existing writer/eligibility scanner
     # able to verify every mint. This entry point never accepts venue sources.
     if source == "betting":
-        expression = atomic_stamp_expression("betting", value)
+        from datetime import datetime, timezone
+
+        read_at = None
+        if type(received_at) in (int, float) and received_at > 0:
+            try:
+                read_at = datetime.fromtimestamp(received_at, timezone.utc)
+            except (ValueError, OverflowError, OSError):
+                pass  # an invalid receive clock makes no age claim
+        expression = atomic_stamp_expression("betting", value, price_read_at=read_at)
     elif source == "stat_model":
         expression = atomic_stamp_expression("stat_model", value)
     elif source == "mlb":

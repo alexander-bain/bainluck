@@ -154,7 +154,7 @@ describe("UX-P170 · loading and loaded-empty stop being the same thing", () => 
     // ENTITY, but `renderToStaticMarkup` has already resolved it to the
     // character by then, so the replacement never fires. Asserting the
     // character is asserting what the reader is served.
-    expect(text).toContain("This card tracks daily “will it rain?” questions.");
+    expect(text).toContain("This card tracks daily “will it rain?” markets.");
     expect(text).not.toContain("appear here");
   });
 
@@ -197,7 +197,8 @@ describe("UX-P170 · the card stops claiming cities it does not have", () => {
 
   test("the footer agrees with the subtitle rather than contradicting it", () => {
     const text = visibleText(render(SERVED_BEFORE));
-    expect(text).toContain("Kalshi · 1 city");
+    expect(text).toContain("1 city");
+    expect(text).not.toContain("Kalshi");
     // One card, one number: the two must not disagree.
     expect(text.match(/1 city/g)).toHaveLength(2);
   });
@@ -314,6 +315,6 @@ describe("UX-P170 · the parts of the section that were fine stay fine", () => {
     // (ux/1081, #3230) — the card still identifies itself, which is what this
     // test is for.
     expect(text).toContain("NYC · daily rain probability");
-    expect(text).toContain("Kalshi");
+    expect(text).not.toContain("Kalshi");
   });
 });

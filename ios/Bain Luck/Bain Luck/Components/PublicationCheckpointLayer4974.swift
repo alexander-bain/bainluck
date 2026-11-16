@@ -57,9 +57,40 @@ struct PublicationCheckpointRenderPlan4974 {
     /// Prefix of every legacy series value this layer emits.
     static let seriesPrefix = "publication-checkpoint-4974-legacy"
 
+    /// Maximum checkpoint count that also draws raw vertex circles inside this
+    /// layer when rendered standalone; denser curves rely on the parent chart's
+    /// strided reading marks (`EventAtlasChartMarks11666.solidMarkStride`).
+    static let standaloneDotCeiling = 36
+
     let lines: [LegacyLine]
     let dots: [LegacyDot]
     let checkpoints: [CheckpointDot]
+
+    /// #12639 (Decision 164) — one chronological straight-segment path joining
+    /// surviving legacy readings outside the recorded window with the recorded
+    /// checkpoints inside it. Computed rather than stored so the plan's three
+    /// stored fields stay unchanged.
+    var connectedPoints: [ChartDataPoint] {
+        let survivingLegacy = (lines.flatMap(\.points) + dots.map(\.point))
+            .sorted { $0.date < $1.date }
+        let orderedCheckpoints = checkpoints.sorted {
+            $0.date == $1.date ? $0.id < $1.id : $0.date < $1.date
+        }
+        guard let firstDate = orderedCheckpoints.first?.date,
+              let lastDate = orderedCheckpoints.last?.date else {
+            return survivingLegacy
+        }
+        let before = survivingLegacy.filter { $0.date < firstDate }
+        let after = survivingLegacy.filter { $0.date > lastDate }
+        let middle = orderedCheckpoints.map {
+            ChartDataPoint(
+                date: $0.date,
+                probability: $0.probability,
+                source: PublicationCheckpointMount4974.blendSource
+            )
+        }
+        return before + middle + after
+    }
 
     /// `observationRuns` are the caller's ALREADY computed aggregate runs
     /// (`OddsChartView.observationSegments`), never raw history.
@@ -99,36 +130,36 @@ struct PublicationCheckpointLayer4974: ChartContent {
     static let symbolArea: CGFloat = 18
 
     var body: some ChartContent {
-        ForEach(plan.lines) { line in
-            ForEach(line.points) { point in
+        let connected = plan.connectedPoints
+        if connected.count >= 2 {
+            ForEach(connected) { point in
                 LineMark(
                     x: .value("Time", point.date),
                     y: .value("Win probability", point.probability),
-                    series: .value("Source", line.id)
+                    series: .value("Source", "\(PublicationCheckpointRenderPlan4974.seriesPrefix)#connected")
                 )
                 .foregroundStyle(color)
                 .lineStyle(stroke)
                 .interpolationMethod(.linear)
             }
-        }
-
-        ForEach(plan.dots) { dot in
+        } else if let only = connected.first {
             PointMark(
-                x: .value("Time", dot.point.date),
-                y: .value("Win probability", dot.point.probability)
+                x: .value("Time", only.date),
+                y: .value("Win probability", only.probability)
             )
             .foregroundStyle(color)
             .symbolSize(Self.symbolArea)
         }
 
-        // Each checkpoint is its own mark; none shares a series with anything.
-        ForEach(plan.checkpoints) { checkpoint in
-            PointMark(
-                x: .value("Time", checkpoint.date),
-                y: .value("Win probability", checkpoint.probability)
-            )
-            .foregroundStyle(color)
-            .symbolSize(Self.symbolArea)
+        if plan.checkpoints.count <= PublicationCheckpointRenderPlan4974.standaloneDotCeiling {
+            ForEach(plan.checkpoints) { checkpoint in
+                PointMark(
+                    x: .value("Time", checkpoint.date),
+                    y: .value("Win probability", checkpoint.probability)
+                )
+                .foregroundStyle(color)
+                .symbolSize(Self.symbolArea)
+            }
         }
     }
 }

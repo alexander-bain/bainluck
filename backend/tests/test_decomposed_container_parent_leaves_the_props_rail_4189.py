@@ -675,7 +675,13 @@ class TestAMergedRowIsNotDisownedByItsMember:
         assert _decomposed_container_parent_candidates(markets) == {PARENT_ID}
         payload = await self._payload()
         props = payload.get("player_props") or []
-        assert any(p.get("source_count") == 2 for p in props), (
+        # source_count names distinct venues (#12581); these are two inputs
+        # from ONE venue. Pin the actual market and outcome union instead.
+        assert any(
+            p.get("_market_ids") == [PARENT_ID, PARENT_ID + 12]
+            and p.get("contributor_outcome_ids") == [8000, 8001]
+            for p in props
+        ), (
             "step 9b never merged the two rows, so this fixture cannot reach "
             f"the state it exists for: {props}"
         )
@@ -685,7 +691,8 @@ class TestAMergedRowIsNotDisownedByItsMember:
         payload = await self._payload()
         merged = [
             p for p in (payload.get("player_props") or [])
-            if p.get("source_count") == 2
+            if p.get("_market_ids") == [PARENT_ID, PARENT_ID + 12]
+            and p.get("contributor_outcome_ids") == [8000, 8001]
         ]
         assert merged, (
             "the merged prop was deleted with the container parent, but half of "
@@ -694,6 +701,8 @@ class TestAMergedRowIsNotDisownedByItsMember:
         assert merged[0]["over_probability"] == 0.50, (
             f"the merged average is not the two rows' mean: {merged[0]}"
         )
+        assert merged[0]["source_count"] == 1
+        assert merged[0]["all_sources"] == ["polymarket"]
 
 
 CORNERS_GROUP = "polymarket:corners-piast-katowice"

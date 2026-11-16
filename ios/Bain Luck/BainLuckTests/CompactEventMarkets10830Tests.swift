@@ -173,7 +173,7 @@ final class CompactEventMarkets10830Tests: XCTestCase {
 
         XCTAssertEqual(rows.map(\.id), ["1-10", "1-11", "4-40", "3-30", "5-50"])
         XCTAssertEqual(rows.map(\.family),
-                       ["Season outcomes", "Season outcomes", "Awards", "More questions", "More questions"])
+                       ["Season outcomes", "Season outcomes", "Awards", "Other markets", "Other markets"])
     }
 
     /// A row the server did not classify stays a link: no number we vouch for.
@@ -182,7 +182,7 @@ final class CompactEventMarkets10830Tests: XCTestCase {
         XCTAssertTrue(RelatedMarketsCatalog.Row(
             id: "a", future: try future(market: 1, outcome: 1, category: "award"), family: "Awards").printsPrice)
         XCTAssertFalse(RelatedMarketsCatalog.Row(
-            id: "b", future: try future(market: 1, outcome: 2, category: nil), family: "More questions").printsPrice)
+            id: "b", future: try future(market: 1, outcome: 2, category: nil), family: "Other markets").printsPrice)
         XCTAssertFalse(RelatedMarketsCatalog.Row(
             id: "c", future: try future(market: 1, outcome: 3, category: "award", probability: nil),
             family: "Awards").printsPrice)

@@ -93,7 +93,10 @@ final class DiscoverInitialLoadLifetime10094Tests: XCTestCase {
         client.release()
         await fulfillment(of: [finished], timeout: 5)
         XCTAssertEqual(outcome, .published)
-        XCTAssertEqual(ids(model), [20]); XCTAssertFalse(model.isShowingCachedContent)
+        // #11984 Path 1: `loadForInitialAppearance` reconciles (`mayReorder: false`)
+        // over an already-painted cache seed so painted card 10 stays in seat 0 and
+        // unseen fresh card 20 appends behind it, while clearing `isShowingCachedContent`.
+        XCTAssertEqual(ids(model), [10, 20]); XCTAssertFalse(model.isShowingCachedContent)
         XCTAssertFalse(model.loading); XCTAssertNil(model.error)
         XCTAssertEqual(client.callCount, 1)
     }

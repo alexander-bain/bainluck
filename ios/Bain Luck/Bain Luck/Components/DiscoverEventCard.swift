@@ -32,11 +32,17 @@ struct NativeEventDiscoverCard: View {
     /// Fired when the reader taps the share icon — see the `ShareLink` below for
     /// why this is a simultaneous gesture and not a button action. #5525.
     var onShare: (() -> Void)? = nil
+    /// #12616 (Ruling 191-A): defaults `true` so games in progress and finished
+    /// games render the chart panel under the rows while scheduled games stay compact.
+    var pictureVariant191Adopted: Bool = DiscoverSingleGameCard190C.defaultPictureVariant191Adopted
+    /// Optional preloaded `/history` response for deterministic snapshot/unit tests.
+    var chartHistory: EventHistoryResponse? = nil
 
     /// #8144 — the status column between the crests is sized against the strings
     /// THIS card draws at THIS text size, so both of these are inputs to a layout
     /// decision rather than decoration. See `GameCardStatusColumn`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ObservedObject var clock = MinuteClock.shared
     @State private var heroContentWidth: Double = 0
 
     /// This card's slate/blue defaults are where `ProbabilityBarPalette`'s came
@@ -205,13 +211,34 @@ struct NativeEventDiscoverCard: View {
     }
 
     private var contextText: String? {
-        if let feedContext, !feedContext.isEmpty { return feedContext }
-        if let label = event.highlight?.label, !label.isEmpty { return label }
+        if let cleaned = CompactGameCard12616.sanitizedReason(feedContext) { return cleaned }
+        if let cleaned = CompactGameCard12616.sanitizedReason(event.highlight?.label) { return cleaned }
         if let ei = event.ei, let score = ei.score, score >= 60, let label = ei.label {
             return "Excitement Index \(score): \(label)"
         }
-        if isLive { return "Live probability is moving now" }
         return nil
+    }
+
+    private var prematch: PrematchReading? {
+        PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
+    }
+
+    private var discoverLiveSidePregame12616: (away: String?, home: String?, draw: String?) {
+        guard isLive, !isSuspended,
+              !EventCardView.EventCardFooter.reasonStatesTheOpening(contextText) else {
+            return (nil, nil, nil)
+        }
+        return CompactGameCard12616.liveSidePregameLabels(event: event, prematch: prematch)
+    }
+
+    private var showsDiscoverInlinePregame12616: Bool {
+        let labels = discoverLiveSidePregame12616
+        guard labels.away != nil || labels.home != nil else { return false }
+        return CompactGameCard12616.liveInlinePregameFits(
+            awayShortName: cardSides.away,
+            homeShortName: cardSides.home,
+            typeSize: dynamicTypeSize
+        )
     }
 
     private var shareURL: URL {
@@ -246,32 +273,120 @@ struct NativeEventDiscoverCard: View {
         )
     }
 
+    var usesPictureLayout190C: Bool {
+        DiscoverSingleGameCard190C.usesPictureLayout(
+            event: event,
+            prematch: prematch,
+            pictureVariant191Adopted: pictureVariant191Adopted
+        )
+    }
+
     var body: some View {
+        DiscoverCompactSingleGameCard190CView(
+            event: event,
+            prematch: prematch,
+            awayColor: awayColor,
+            homeColor: homeColor,
+            usesPictureLayout191A: usesPictureLayout190C,
+            preloadedChartHistory: chartHistory,
+            projectionAndSuspendedLines: { discoverProjectionAndSuspendedLines },
+            footerRow: { discoverFooterRow }
+        )
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.07), radius: 12, x: 0, y: 5)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            navigationPath.append(Route.eventDetail(id: event.id))
+            onOpen?()
+        }
+        // The card opens on `.onTapGesture`, not a Button or a NavigationLink,
+        // so it carries no trait a tap-driven test can find it by: in the
+        // accessibility tree it is an unnamed `Other` among ~40 of them. A test
+        // that instead located it by some label inside it ("the element holding
+        // a StaticText with ' @ '") would be keyed on the card's COPY, so a
+        // formatting ship would red the navigation journey.
+        //
+        // `.contain` is load-bearing and was MEASURED, not assumed. An
+        // identifier on its own INHERITS down to every leaf in the subtree, so
+        // one card became 20-odd matching elements and the query's `.firstMatch`
+        // resolved to whichever leaf came first — on a live feed, the ⚾ emoji, a
+        // 104pt-wide StaticText. Tapping it still worked (the gesture bubbles),
+        // which is the trap: the navigation test passed while the SWIPE test
+        // failed, because a 104pt element cannot be dragged the 120pt
+        // `DiscoverSwipeState.commitDistance` needs, and the count-the-cards
+        // assertions were counting leaves (48 of them across the page).
+        //
+        // `.contain` makes the card one accessibility CONTAINER, so the
+        // identifier lands once, on an element with the card's own frame. It
+        // does not hide or merge the children — a VoiceOver reader still hears
+        // every label in the same order; the card is additionally navigable as
+        // the group it visually already is.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(Self.tapTargetIdentifier)
+    }
+
+    @ViewBuilder
+    private var discoverProjectionAndSuspendedLines: some View {
+        // #11296 — the final score is above; the forecast before it is one
+        // quiet line here, in the card's team order.
+        if let finalForecast = finalForecast11296 {
+            FinalForecastLine11296(
+                comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+        }
+
+        // #2920 — live: the marked in-play projected final, in the same
+        // quiet slot and the card's team order.
+        if let liveProjection = liveProjectedFinal2920 {
+            LiveProjectedFinalLine2920(
+                printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam,
+                sportKey: event.sport)
+        }
+
+        // live/048 — the shared summary, in the slot the settled card
+        // uses for its result. Same string the web Discover card
+        // prints for the same row.
+        if isSuspended {
+            Text(closedNoWinner
+                 ? EventState.venueClosedNoWinnerLabel
+                 : EventState.suspendedSummary(
+                    away: event.awayScore, home: event.homeScore,
+                    authorityPeriod: event.espn?.period))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(DS.textSecondaryReadable)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private var discoverFooterRow: some View {
+        // Context text + footer (#10373 — share button rides the caption row).
+        if let contextText {
+            if dynamicTypeSize.isAccessibilitySize {
+                contextCaption(contextText)
+                HStack {
+                    Spacer()
+                    footerMarks
+                }
+            } else {
+                HStack(alignment: .center, spacing: 8) {
+                    contextCaption(contextText)
+                    footerMarks
+                }
+            }
+        } else {
+            HStack {
+                Spacer()
+                footerMarks
+            }
+        }
+    }
+
+    private var pictureCardBody: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Hero section with gradient background.
-            //
-            // #2095 / #7074, third instance. This was
-            // `ZStack { backdrop; content }.frame(height: 160)`, and 160 is not
-            // enough room for this content at large text sizes: the sport chip,
-            // the LIVE/FINAL badge, two crests, two team names and two scores
-            // all ramp. Because the fixed height sat on the ZStack and the
-            // `clipShape` below clips to it, the surplus was not merely drawn in
-            // the wrong place — it was CUT OFF. At the largest accessibility
-            // size the whole top row (`MLB`, `• LIVE`) and the bottom of both
-            // scores were simply not on screen, and the card looked like one
-            // that had never had a chip rather than one that had lost it.
-            //
-            // Same repair as the other two heroes: the backdrop becomes the
-            // content's BACKGROUND, so the hero has ONE height instead of two,
-            // and 160 becomes a FLOOR.
-            //
-            // ⚠️ THE DEFAULT-TYPE CARD MOVES, by 4pt, and that is the finding
-            // rather than a cost: measured AFTER, this content wants 164pt at
-            // `large`, so the 160 it was pinned at had ALREADY been eating 2pt
-            // of the chip's 14pt padding on every phone at the default text
-            // size. A floor of 160 is kept anyway — it is the number the card
-            // has always been written against, and a card with less content
-            // than this one still draws the hero it always drew.
+            // Hero section with gradient background (#2095 / #7074, third instance).
             heroContent
                 .padding(14)
                 .frame(
@@ -290,35 +405,7 @@ struct NativeEventDiscoverCard: View {
                         isDone: isDone, typeSize: dynamicTypeSize))
                     .fixedSize(horizontal: false, vertical: true)
 
-                // #11296 — the final score is the hero above; the forecast
-                // before it is one quiet line here, in the title's team order.
-                if let finalForecast = finalForecast11296 {
-                    FinalForecastLine11296(
-                        comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
-                }
-
-                // #2920 — live: the marked in-play projected final, in the same
-                // quiet slot and the title's team order. The score is the hero.
-                if let liveProjection = liveProjectedFinal2920 {
-                    LiveProjectedFinalLine2920(
-                        printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam,
-                        sportKey: event.sport)
-                }
-
-                // live/048 — the shared summary, in the slot the settled card
-                // uses for its result. Same string the web Discover card
-                // prints for the same row.
-                if isSuspended {
-                    Text(closedNoWinner
-                         ? EventState.venueClosedNoWinnerLabel
-                         : EventState.suspendedSummary(
-                            away: event.awayScore, home: event.homeScore,
-                            authorityPeriod: event.espn?.period))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                discoverProjectionAndSuspendedLines
 
                 // Probability bar — hidden once the game is done: a settled
                 // game's "Win Probability" is stale/meaningless (the result is
@@ -424,110 +511,80 @@ struct NativeEventDiscoverCard: View {
                                     .lineLimit(1)
                                     .fixedSize()
                                     .foregroundStyle(homeColor)
+                                discoverInlinePregameLabel(discoverLiveSidePregame12616.home)
+                            }
+                        }
+                        if printable.away != nil,
+                           discoverLiveSidePregame12616.away != nil || discoverLiveSidePregame12616.home != nil {
+                            HStack {
+                                if let awayPre = discoverLiveSidePregame12616.away {
+                                    Text(awayPre)
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(DS.textSecondaryReadable)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                                Spacer()
+                                Text("Pregame")
+                                    .font(.caption2)
+                                    .foregroundStyle(DS.textSecondaryReadable)
+                                    .lineLimit(1)
+                                Spacer()
+                                if let homePre = discoverLiveSidePregame12616.home {
+                                    Text(homePre)
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(DS.textSecondaryReadable)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
                             }
                         }
                         probabilityBar(
                             awayProbability: printable.away ?? (1 - homeProbability),
                             homeProbability: homeProbability,
+                            drawProbability: CompactGameCard12616.hasExplicitThreeWayCurrent(event)
+                                ? event.currentOdds?.drawProbability
+                                : nil,
                             awayIsWithheld: printable.away == nil
                         )
                     }
                 }
 
-                // Context text + footer.
-                //
-                // #10373 — Alex, rage shake 169: "I like including our liquidity
-                // and confidence indicator on the card, but it looks like doing so
-                // has cost us a ton of white space". The signal bars and the share
-                // button sat on a row of their own under the caption — a 44pt tap
-                // target plus this stack's 12pt spacing, on every game card, for
-                // two small marks at the right edge. They now ride the caption's
-                // row, trailing it. Measured on the served feed (2026-10-03, 11
-                // event cards) the longest caption is 53 characters, so the
-                // narrower caption column still fits in its two lines.
-                //
-                // At accessibility text sizes the caption keeps the full width and
-                // the marks keep their own row: a 44pt button beside AX5 type would
-                // squeeze the caption to a few words a line. A card with no
-                // caption also keeps the row — there is no row to share.
-                if let contextText {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        contextCaption(contextText)
-                        HStack {
-                            Spacer()
-                            footerMarks
-                        }
-                    } else {
-                        HStack(alignment: .center, spacing: 8) {
-                            contextCaption(contextText)
-                            footerMarks
-                        }
-                    }
-                } else {
-                    HStack {
-                        Spacer()
-                        footerMarks
-                    }
-                }
+                discoverFooterRow
             }
             .padding(14)
         }
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.07), radius: 12, x: 0, y: 5)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            navigationPath.append(Route.eventDetail(id: event.id))
-            onOpen?()
-        }
-        // The card opens on `.onTapGesture`, not a Button or a NavigationLink,
-        // so it carries no trait a tap-driven test can find it by: in the
-        // accessibility tree it is an unnamed `Other` among ~40 of them. A test
-        // that instead located it by some label inside it ("the element holding
-        // a StaticText with ' @ '") would be keyed on the card's COPY, so a
-        // formatting ship would red the navigation journey.
-        //
-        // `.contain` is load-bearing and was MEASURED, not assumed. An
-        // identifier on its own INHERITS down to every leaf in the subtree, so
-        // one card became 20-odd matching elements and the query's `.firstMatch`
-        // resolved to whichever leaf came first — on a live feed, the ⚾ emoji, a
-        // 104pt-wide StaticText. Tapping it still worked (the gesture bubbles),
-        // which is the trap: the navigation test passed while the SWIPE test
-        // failed, because a 104pt element cannot be dragged the 120pt
-        // `DiscoverSwipeState.commitDistance` needs, and the count-the-cards
-        // assertions were counting leaves (48 of them across the page).
-        //
-        // `.contain` makes the card one accessibility CONTAINER, so the
-        // identifier lands once, on an element with the card's own frame. It
-        // does not hide or merge the children — a VoiceOver reader still hears
-        // every label in the same order; the card is additionally navigable as
-        // the group it visually already is.
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(Self.tapTargetIdentifier)
     }
 
     /// How a tap-driven test finds this card. See the `onTapGesture` above.
     static let tapTargetIdentifier = "discover-card-event"
 
+    @ViewBuilder
+    private func discoverInlinePregameLabel(_ text: String?) -> some View {
+        if showsDiscoverInlinePregame12616, let text {
+            Text("\(text) pregame")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(DS.textSecondaryReadable)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
     private func contextCaption(_ text: String) -> some View {
         ExpandableNativeContextText(
             text: text,
-            expandedText: expandedContext,
+            expandedText: CompactGameCard12616.sanitizedReason(expandedContext),
             font: .caption,
             onExpand: onContextExpand,
             onCollapse: onContextCollapse
         )
     }
 
-    /// The signal bars and the share button — one view so the caption row and
-    /// the own-row fallback (#10373) cannot draw two different footers.
+    /// Ruling 182-A — game cards remove signal bars; `footerMarks` holds the
+    /// bookmark pin and share buttons and still rides the caption's row (#10373).
     private var footerMarks: some View {
-        HStack {
-            // #490 / L2-184: confidence signal (1-3 bars) — renders nothing
-            // when absent. Same tier map + placement as the native
-            // multi-candidate kernels (Comparison/Distribution/HeatMap).
-            SignalBarsView(tier: event.confidenceTier)
+        HStack(spacing: 2) {
+            PinButton(type: "event", id: event.id)
 
             ShareLink(
                 item: shareURL,
@@ -572,11 +629,29 @@ struct NativeEventDiscoverCard: View {
     /// `event.sport` reaches only the re-lettering, so a person gets first and last
     /// initial; the pair itself is asked exactly as before.
     private var cardBadges: (away: String, home: String) {
-        Self.cardBadges(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+        Self.cardBadges(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport
+        )
     }
 
-    static func cardBadges(away: String, home: String, sportKey: String?) -> (away: String, home: String) {
-        let pair = TeamShortName.abbreviationPair(away: away, home: home)
+    static func cardBadges(
+        away: String,
+        home: String,
+        awayServed: String? = nil,
+        homeServed: String? = nil,
+        sportKey: String?
+    ) -> (away: String, home: String) {
+        let pair = TeamShortName.abbreviationPair(
+            away: away,
+            home: home,
+            awayServed: awayServed,
+            homeServed: homeServed,
+            sportKey: TeamShortName.isCollegeSport(sportKey: sportKey) ? sportKey : nil
+        )
         return (
             TeamShortName.refusingResultWord(pair.away, name: away, sportKey: sportKey),
             TeamShortName.refusingResultWord(pair.home, name: home, sportKey: sportKey)
@@ -639,15 +714,14 @@ struct NativeEventDiscoverCard: View {
     /// to its minimum and the hero grows instead of cutting the chip off.
     private var heroContent: some View {
         VStack(spacing: 0) {
-            // Top row: sport label + live badge
+            // Top row: Ruling 182-A — plain text for league, scheduled time
+            // (date when days away, countdown inside the last hour), finished
+            // date, and stoppage; a capsule is ONLY for live status.
             HStack {
                 Text(sportLabel)
                     .font(.caption2.weight(.heavy))
                     .tracking(0.8)
-                    .foregroundStyle(.white.opacity(0.78))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.black.opacity(0.24), in: Capsule())
+                    .foregroundStyle(.white.opacity(0.85))
 
                 Spacer()
 
@@ -664,23 +738,23 @@ struct NativeEventDiscoverCard: View {
                     .padding(.vertical, 4)
                     .background(Color.red.opacity(0.85), in: Capsule())
                 } else if isDone {
-                    Text("FINAL")
-                        .font(.caption2.weight(.heavy))
-                        .foregroundStyle(.white.opacity(0.78))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.black.opacity(0.24), in: Capsule())
+                    Text(StatusBadge.finishedGameCardTimeText(
+                        commenceTime: event.commenceTime,
+                        now: clock.now))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
                 } else if isSuspended {
-                    // The corner that says FINAL or LIVE has to say something
-                    // here too — leaving it empty is how the state stayed
-                    // invisible (live/048). #9208 — a game its authority
-                    // called off is not paused: it says POSTPONED / CANCELED.
                     Text(closedNoWinner ? "ENDED" : suspendedCornerWord)
                         .font(.caption2.weight(.heavy))
-                        .foregroundStyle(.white.opacity(0.78))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.black.opacity(0.24), in: Capsule())
+                        .foregroundStyle(.white.opacity(0.85))
+                } else if let scheduledWhen = StatusBadge.scheduledGameCardTimeText(
+                    commenceTime: event.commenceTime,
+                    startIsTbd: event.startIsTbd == true,
+                    now: clock.now) {
+                    Text(scheduledWhen)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(1)
                 }
             }
 
@@ -831,16 +905,38 @@ struct NativeEventDiscoverCard: View {
     private func probabilityBar(
         awayProbability: Double,
         homeProbability: Double,
+        drawProbability: Double? = nil,
         awayIsWithheld: Bool
     ) -> some View {
-        GeometryReader { geo in
+        let explicitAway = event.currentOdds?.awayProbability ?? awayProbability
+        let threeWayShares = drawProbability.map {
+            ProbabilityBar.normalizedShares(
+                awayProb: explicitAway,
+                homeProb: homeProbability,
+                drawProb: $0
+            )
+        }
+        return GeometryReader { geo in
             HStack(spacing: 0) {
-                Rectangle()
-                    .fill(awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor)
-                    .frame(width: max(3, geo.size.width * awayProbability))
-                Rectangle()
-                    .fill(homeColor)
-                    .frame(width: max(3, geo.size.width * homeProbability))
+                if let shares = threeWayShares, shares.draw > 0 {
+                    // #12616 (187-A) — Draw goes in the middle (`away · draw · home`).
+                    Rectangle()
+                        .fill(awayColor)
+                        .frame(width: max(3, geo.size.width * shares.away))
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.28))
+                        .frame(width: max(3, geo.size.width * shares.draw))
+                    Rectangle()
+                        .fill(homeColor)
+                        .frame(width: max(3, geo.size.width * shares.home))
+                } else {
+                    Rectangle()
+                        .fill(awayIsWithheld ? Color.secondary.opacity(0.25) : awayColor)
+                        .frame(width: max(3, geo.size.width * awayProbability))
+                    Rectangle()
+                        .fill(homeColor)
+                        .frame(width: max(3, geo.size.width * homeProbability))
+                }
             }
             .clipShape(Capsule())
         }

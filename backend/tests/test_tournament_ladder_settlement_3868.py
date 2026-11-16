@@ -366,14 +366,15 @@ class TestASettledLegStopsServingAFractionalProbability:
         assert stats["legs_settled"] == 0
 
     async def test_an_open_market_is_priced_and_never_graded(self, monkeypatch):
-        """The refresh half is unchanged: a live book moves the number only."""
+        """The shared writer uses the live book, without grading an open leg."""
         session, stats = await _run(
             monkeypatch,
             _market(closed=False, outcome_prices=[0.885, 0.115]),
             condition_keyed=[(LADDER_ID, "Alexander Zverev", CID)],
         )
         row = _outcome_writes(session)[LADDER_ID]
-        assert row["current_probability"] == pytest.approx(0.885)
+        # #12658: raw outcomePrices may be an old trade; the 77/78 book wins.
+        assert row["current_probability"] == pytest.approx(0.775)
         assert "is_winner" not in row
         assert "resolution_source" not in row
         assert stats["legs_settled"] == 0

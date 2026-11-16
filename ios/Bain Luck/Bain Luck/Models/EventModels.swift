@@ -113,6 +113,16 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     /// on a server that still serves only `players`; Game Segments then keeps
     /// its `espn_history` inference. See `EventBoxScoreData`.
     let boxScoreData: EventBoxScoreData?
+    /// #12581 / #12472 — server-owned provenance marks for the displayed hero
+    /// probability (`source_mark` / `away_source_mark`). Optional and defaulted
+    /// to `nil` so older caches, memberwise fixtures, and pushed SSE frames
+    /// without a fresh detail read omit it cleanly.
+    var sourceMark: SourceMark? = nil
+    var awaySourceMark: SourceMark? = nil
+    /// #12472 — optional served competition name (`sport_name`, e.g. `"Premier League"`,
+    /// `"Liga MX"`) and completion timestamp (`completed_at`) for event-page headlines.
+    var sportName: String? = nil
+    var completedAt: String? = nil
 }
 
 // MARK: - Standings Context

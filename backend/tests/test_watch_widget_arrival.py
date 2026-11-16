@@ -20,7 +20,7 @@ def test_gallery_waits_for_complete_parent_or_detail_before_normalization():
         "return retainedDetail || appGallery",
         "XCTWaiter.wait(for: [arrived], timeout: 15) == .completed",
         "parentPage.waitForExistence(timeout: 15)",
-        "for step in 0..<32",
+        "for step in 0..<48",
         "visits[position, default: 0] <= 3",
     ]:
         assert requirement in helper

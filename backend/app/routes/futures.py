@@ -1092,6 +1092,15 @@ async def build_and_cache_movers(
 
 def _movers_payload(outcomes, hours: int) -> dict:
     """Shape the response. The ONLY place this dict is spelled."""
+    # #12658: a per-write Polymarket delta only nominates a candidate. A dated
+    # basis must support the move before it may appear in the public list.
+    outcomes = [
+        o for o in outcomes
+        if getattr(o.market, "source", None) != "polymarket"
+        or reader_change_24h(
+            o.market, o.id, o.current_probability, o.probability_change_24h
+        ) not in (None, 0)
+    ]
     return {
         "movers": [
             {
@@ -6022,9 +6031,9 @@ def _overlay_current(row: dict, overlay, prob_key: str) -> bool:
 
 
 def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
-    """Effective verified mode changes current values; nothing else moves.
+    """Effective verified mode uses the shared current values and club names.
 
-    Outcome ids, names, array order, `source` and `bookmakers` stay the
+    Outcome ids, array order, `source` and `bookmakers` stay the
     requested row's provenance. Badges are renumbered by the canonical
     `assign_display_ranks`, because the client sorts on the value it is given.
     """

@@ -277,11 +277,26 @@ async def _discover_events():
                     # happens in poll_all_odds when games are imminent.
                     # This saves 5/6 of quota vs default (3 markets × 2 regions).
                     pre_used = service.last_requests_used
+                    # #11286 (138: A): a scheduled NFL or NBA game also gets
+                    # spreads and totals, once an hour per league (shared stamp
+                    # with the poller's "later" tier). Every other fetch stays
+                    # h2h; `_ingest_event_odds` records whatever markets arrive.
+                    from app.utils.scheduled_full_markets import (
+                        SCHEDULED_FULL_MARKETS,
+                        record_full_fetch,
+                        scheduled_markets,
+                    )
+
+                    discover_markets = scheduled_markets(
+                        sport_key, r, datetime.now(timezone.utc).timestamp()
+                    )
                     events_data = await service.get_odds(
                         sport_key,
                         regions="us",
-                        markets="h2h",
+                        markets=discover_markets,
                     )
+                    if discover_markets == SCHEDULED_FULL_MARKETS:
+                        record_full_fetch(sport_key, r, datetime.now(timezone.utc).timestamp())
                     sports_polled += 1
 
                     # Record successful discovery timestamp in Redis

@@ -87,6 +87,13 @@ def test_real_builder_keeps_all_input_bindings_and_real_quote_age():
     assert body["totals"]  # Actual existing projection, not a mocked builder.
     from tests.test_a_game_market_row_carries_its_own_price_age_4970 import _priced_legs
     for path, row in _priced_legs(body):
+        if ".source_mark.sources[" in path:
+            # A venue's quote is evidence within a row, not a subscribable
+            # outcome. Its own observation still has to be the quote's age.
+            assert row["observed_at"] == (
+                NOW - timedelta(hours=7)
+            ).isoformat().replace("+00:00", "Z"), path
+            continue
         assert row.get("contributor_outcome_ids"), path
         for oid in row["contributor_outcome_ids"]:
             assert str(oid) in body["outcome_market_ids"], path

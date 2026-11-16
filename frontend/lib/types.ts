@@ -1624,6 +1624,8 @@ export interface SearchTeam {
   logo: string | null;
   record: string | null;
   sport_key: string | null;
+  /** Server-owned whole-name, nickname or curated misspelling match. */
+  query_names_team?: boolean;
 }
 
 /** #993 L2-41: a backend-composed topical family of related futures markets.
@@ -1649,7 +1651,13 @@ export interface SearchEventConcept {
   market_id: number;
 }
 
+export interface SearchGameSet {
+  title: string;
+  selector: { team_id: number | null; count: number; state: "scheduled" };
+}
+
 export interface SearchResponse {
+  game_set?: SearchGameSet;
   results: Event[];
   futures: FuturesMarket[];
   futures_families?: FuturesFamily[]; // #993: composed topical families (additive)
@@ -1893,6 +1901,8 @@ export interface FeedEventData {
 export interface FeedFuturesOutcome {
   id: number;
   name: string;
+  /** Verified Wikipedia identity, when the collection register supplies one. */
+  image_title?: string | null;
   probability: number | null;
   rank: number | null;
   movement: number | null;
@@ -3664,4 +3674,20 @@ export interface EventTournamentResponse {
    */
   broadcasts?: { region: string; channels: string[]; note: string | null }[];
   generated_at?: string;
+}
+/** #12581: the server's selected contributors; clients do not reconstruct them. */
+export interface SourceMark {
+  state: "single" | "blend" | "settled" | "none";
+  /** The actual server calculation, without inferred weights or depth. */
+  method?: string;
+  sources: {
+    key: string;
+    name: string;
+    probability: number;
+    observed_at: string | null;
+    count?: number;
+    reason?: string;
+  }[];
+  settled?: { source: string | null; result: string; at: string | null };
+  reason?: string;
 }

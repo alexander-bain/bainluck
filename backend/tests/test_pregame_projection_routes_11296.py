@@ -277,3 +277,13 @@ class TestSearch:
         cards, _ = _search([_event(FINAL_ID)], [])
         assert "pregame_projection" not in cards[FINAL_ID]
         assert cards[FINAL_ID]["pregame_projection_unavailable"] == "no_pregame_reading"
+
+
+@pytest.fixture(autouse=True)
+def _recent_lines_clock_at_kickoff(monkeypatch):
+    """#12595: a scheduled pair counts only line readings within 90 min of now.
+    These fixtures are dated, so the clock is pinned to their kickoff, the
+    moment the rows describe, rather than the wall clock."""
+    from app.utils import recent_line_readings
+
+    monkeypatch.setattr(recent_line_readings, "_utcnow", lambda: KICK)

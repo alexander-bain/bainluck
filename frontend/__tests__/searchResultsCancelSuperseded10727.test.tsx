@@ -41,6 +41,10 @@ jest.mock("@/hooks", () => ({
 }));
 jest.mock("@/components/CategoryBrowser", () => ({ __esModule: true, default: () => null }));
 jest.mock("@/components/LeagueChips", () => ({ __esModule: true, default: () => null }));
+jest.mock("@/components/EventCard", () => ({
+  __esModule: true,
+  default: ({ event }: { event: { id: number } }) => <p>GAME {event.id}</p>,
+}));
 jest.mock("@/components/LoadingState", () => ({
   __esModule: true,
   default: ({ message }: { message: string }) => <p>LOADING {message}</p>,
@@ -105,6 +109,22 @@ function render(qs: string) {
   act(() => root.render(<SearchPage />));
 }
 
+test("an explicit next-three set keeps its heading and all three members", async () => {
+  installFetch({ abortable: true });
+  render("q=celtics+next+three+games");
+  await flush();
+  calls[0].resolve({
+    ...body(""), query: "celtics next three games",
+    game_set: { title: "Boston Celtics: next 3 games", selector: { team_id: 123, count: 3, state: "scheduled" } },
+    results: [101, 102, 103].map((id) => ({ id, status: "scheduled", sport: "basketball_nba" })),
+    pagination: { page: 1, per_page: 3, total_results: 3, total_pages: 1, has_next: false, has_prev: false },
+  });
+  await flush();
+  expect(host.textContent).toContain("Boston Celtics: next 3 games");
+  for (const id of [101, 102, 103]) expect(host.textContent).toContain(`GAME ${id}`);
+  expect(host.textContent).not.toContain("Next page");
+});
+
 beforeEach(() => {
   calls = [];
   mockTrack.mockReset();
@@ -126,6 +146,37 @@ afterEach(() => {
 });
 
 const searchCalls = () => calls.filter((c) => c.url.includes("/api/events/search?"));
+
+describe("#12290 team-name results lead collections", () => {
+  it.each([
+    ["chiefs", "Kansas City Chiefs", true],
+    ["patroits", "New England Patriots", true],
+    ["niners", "San Francisco 49ers", true],
+    ["nfl week 10", "Kansas City Chiefs", false],
+    ["celtics next three games", "Boston Celtics", false],
+    ["legacy cached response", "Kansas City Chiefs", undefined],
+  ])("%s keeps the team in its requested position", async (query, name, matches) => {
+    installFetch({ abortable: true });
+    render(`q=${encodeURIComponent(query)}`);
+    await flush();
+    searchCalls()[0].resolve({
+      ...body(""),
+      teams: [{ id: 1, name, sport_key: name.includes("Celtics") ? "basketball_nba" : "americanfootball_nfl", query_names_team: matches }],
+      collections: [{
+        id: 10, slug: "nfl-2026-week-10", name: "NFL 2026 · Week 10",
+        state: "published", revision: 3, game_count: 14, question_count: 96,
+        destination: { kind: "container", slug: "nfl-2026-week-10", web: "/collections/nfl-2026-week-10" },
+      }],
+    });
+    await flush();
+    const text = host.textContent;
+    expect(text).toContain(name);
+    expect(text).toContain("NFL 2026 · Week 10");
+    expect(text.indexOf(name) < text.indexOf("NFL 2026 · Week 10")).toBe(matches === true);
+    // Moving a section must not duplicate its cards.
+    expect(text.split(name)).toHaveLength(2);
+  });
+});
 
 describe("#10727 a superseded full-results request is cancelled", () => {
   it.each([

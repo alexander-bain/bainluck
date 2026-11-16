@@ -47,7 +47,7 @@ const LIVE_ORDER: CalibrationCorrection[] = [
   c("2026-07-13", "Kalshi player-prop threshold exclusion — corrected discriminator (Queue #186)"),
   c("2026-09-12", "Prices nobody could have traded at"),
   c("2026-09-12", "A price ladder is one forecast, not forty"),
-  c("2026-09-13", "The one-question markets we were throwing away are now scored"),
+  c("2026-09-13", "The yes-or-no markets we were throwing away are now scored"),
 ];
 
 const dates = (rows: CalibrationCorrection[]) => rows.map(r => r.date);

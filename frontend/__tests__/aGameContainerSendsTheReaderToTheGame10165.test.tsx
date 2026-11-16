@@ -84,7 +84,9 @@ describe("#10165 the container board redirects to its game", () => {
     respondWith(200, containerBoard());
     await expect(renderLayout()).rejects.toThrow();
     const [url] = (global.fetch as jest.Mock).mock.calls[0];
-    expect(String(url)).toMatch(/\/api\/futures\/63612402$/);
+    const request = new URL(String(url));
+    expect(request.pathname).toBe("/api/futures/63612402");
+    expect(request.searchParams.get("representation")).toBe("verified_title");
   });
 });
 

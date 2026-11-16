@@ -43,7 +43,7 @@ export const CATALOG_FAMILIES = [
   "Periods",
   "Player props",
   "Matchups",
-  "Other",
+  "Other markets",
 ] as const;
 export type CatalogFamily = (typeof CATALOG_FAMILIES)[number];
 
@@ -226,7 +226,7 @@ export function buildQuestionCatalog(
   // title is never read here, so an unclassified question stays in Other.
   const other = (data.other ?? []) as LooseRow[];
   addRows("Game lines", other.filter((row) => row.market_type === "moneyline"));
-  addRows("Other", other.filter((row) => row.market_type !== "moneyline"));
+  addRows("Other markets", other.filter((row) => row.market_type !== "moneyline"));
 
   return [...groups.values()].sort(
     (a, b) =>
