@@ -7,7 +7,7 @@ import EventCard183A, { buildUnifiedCardFromFeed } from "@/components/EventCard1
 import { PinIcon } from "@/components/PinButton";
 import { fetchFeed } from "@/lib/api";
 import { APP_STORE_URL } from "@/lib/brandCopy";
-import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { formatProbabilityPercent, movementPoints } from "@/lib/probabilityDisplay";
 import type { FeedEventData, FeedFuturesData, FeedItem } from "@/lib/types";
 
 /**
@@ -80,11 +80,9 @@ function SharedFuturesTeaserCard({ item }: { item: FeedItem }) {
     : normalizeSharedTeaserCopy(item.context_summary || item.headline || item.reason);
 
   let moveChip: string | null = null;
-  if (typeof leader.movement === "number" && Math.abs(leader.movement) >= 0.02) {
-    const pts = Math.round(Math.abs(leader.movement) * 100);
-    if (pts >= 2) {
-      moveChip = `${leader.movement > 0 ? "up" : "down"} ${pts} points`;
-    }
+  const movePts = movementPoints(leader.movement);
+  if (movePts !== null && Math.abs(movePts) >= 2) {
+    moveChip = `${movePts > 0 ? "up" : "down"} ${Math.abs(movePts)} points`;
   }
 
   return (
