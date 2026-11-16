@@ -222,6 +222,22 @@ describe("EventCard183A unified web game card (#12616, Rulings 199, 200-B, 201)"
     expect(unified.pregame_projected_home).toBe("27");
     expect(unified.pregame_projected_away).toBe("24");
 
+    // Finished search/list cards with opening_odds but no prematch_odds must also leave
+    // pregame_* null and print Final alone (never passing opening_odds off as Pregame).
+    const finishedNoPrematch = buildUnifiedCardFromEvent({
+      ...fakeEvent,
+      status: "completed",
+      home_score: 28,
+      away_score: 20,
+    } as unknown as Event);
+    expect(finishedNoPrematch.pregame_home_pct).toBeNull();
+    expect(finishedNoPrematch.pregame_away_pct).toBeNull();
+    render(<EventCard183A card={finishedNoPrematch} surface="standard" />);
+    expect(byTestId("col-header-pregame")).toBeNull();
+    expect(byTestId("col-header-now")?.textContent).toBe("Final");
+    expect(host.textContent).not.toContain("42%");
+    expect(host.textContent).not.toContain("58%");
+
     expect(
       extractPregameProjectedPair(
         {

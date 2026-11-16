@@ -894,22 +894,18 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
 
   const eventPrematch = (event as Event & { prematch_odds?: FeedEventData["prematch_odds"] })
     .prematch_odds;
-  // Direction 209 & Ruling 199: finished search/league cards fall back to `opening_odds`
-  // when `prematch_odds` is absent on `/api/events/search`; live and scheduled games
-  // strictly ignore `opening_odds`.
+  // Ruling 199 & #12801 review: never fill "Pregame" from `opening_odds` (in any state,
+  // including finished search/list cards). Where no `prematch_odds` cutoff reading is sent,
+  // finished cards print Final alone until the endpoint supplies `prematch_odds`.
   const pre = prematchReading({
     prematch_odds: eventPrematch,
-    opening_odds: isDone ? event.opening_odds : undefined,
   });
   const openAway = pre?.awayPercent ?? null;
   const openHome = pre?.homePercent ?? null;
 
-  const rawOpenDraw =
-    (eventPrematch as { draw_probability?: number | null } | null | undefined)?.draw_probability ??
-    (isDone
-      ? (event.opening_odds as { draw_probability?: number | null } | null | undefined)
-          ?.draw_probability
-      : undefined);
+  const rawOpenDraw = (
+    eventPrematch as { draw_probability?: number | null } | null | undefined
+  )?.draw_probability;
   const openDrawPct =
     rawOpenDraw != null && Number.isFinite(rawOpenDraw) && rawOpenDraw > 0 && rawOpenDraw < 1
       ? Math.round(rawOpenDraw * 100)
@@ -1036,15 +1032,10 @@ export function buildUnifiedCardFromFeed(
 
   const pre = prematchReading({
     prematch_odds: data.prematch_odds,
-    opening_odds: isDone ? data.opening_odds : undefined,
   });
-  const rawOpenDraw =
-    (data.prematch_odds as { draw_probability?: number | null } | null | undefined)
-      ?.draw_probability ??
-    (isDone
-      ? (data.opening_odds as { draw_probability?: number | null } | null | undefined)
-          ?.draw_probability
-      : undefined);
+  const rawOpenDraw = (
+    data.prematch_odds as { draw_probability?: number | null } | null | undefined
+  )?.draw_probability;
   const openDrawPct =
     rawOpenDraw != null && Number.isFinite(rawOpenDraw) && rawOpenDraw > 0 && rawOpenDraw < 1
       ? Math.round(rawOpenDraw * 100)
