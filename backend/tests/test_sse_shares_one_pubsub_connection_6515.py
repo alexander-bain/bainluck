@@ -38,6 +38,7 @@ import socket
 import threading
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 import pytest
 
@@ -84,6 +85,11 @@ class _TinyPubSubServer:
         self.subscriptions: dict[bytes, set] = {}
         self._protocol: dict = {}
         self._held: dict[bytes, list] = {}
+        #: A hold with no duration waits here, so its reply cannot arrive
+        #: until the test says so (`release_held`, or `close`).
+        self._release = threading.Event()
+        #: Replies being held right now, for a test to wait on.
+        self.holding = 0
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._acceptor = threading.Thread(target=self._accept_loop, daemon=True)
@@ -138,10 +144,17 @@ class _TinyPubSubServer:
         verb = args[0].upper() if args else b""
         with self._lock:
             held = self._held.get(verb)
-            pause = held[0] if held and held[1] > 0 else 0
-            if pause:
+            due = bool(held) and held[1] > 0
+            pause = held[0] if due else 0
+            if due:
                 held[1] -= 1
-        if pause:
+        if due and pause is None:
+            with self._lock:
+                self.holding += 1
+            self._release.wait()
+            with self._lock:
+                self.holding -= 1
+        elif pause:
             time.sleep(pause)
         if verb == b"HELLO":
             proto = int(args[1]) if len(args) > 1 else 3
@@ -194,10 +207,22 @@ class _TinyPubSubServer:
                     pass
         return len(targets)
 
-    def hold_next(self, verb: bytes, seconds: float, times: int = 1) -> None:
-        """Answer the next `times` commands named `verb` `seconds` late."""
+    def hold_next(
+        self, verb: bytes, seconds: Optional[float] = None, times: int = 1
+    ) -> None:
+        """Answer the next `times` commands named `verb` `seconds` late.
+
+        With no `seconds`, the reply waits for `release_held()`. That is the
+        only form a test may use to say "the client gave up first": a reply on
+        a timer races the client's deadline, and a stalled event loop can let
+        the reply win (#11521's re-run, 2026-11-16).
+        """
         with self._lock:
             self._held[verb.upper()] = [seconds, times]
+
+    def release_held(self) -> None:
+        """Let every held reply go."""
+        self._release.set()
 
     def subscriber_count(self, channel: str) -> int:
         with self._lock:
@@ -229,6 +254,7 @@ class _TinyPubSubServer:
 
     def close(self):
         self._stop.set()
+        self._release.set()
         try:
             self.sock.close()
         except OSError:
@@ -522,8 +548,11 @@ class TestTheBudgetHoldsAcrossConcurrentStreams:
             for reader in readers:
                 await reader.stop()
 
+    @pytest.mark.parametrize(
+        "stall_s", [0.0, 0.6], ids=["no-stall", "loop-stalls-past-the-old-hold"]
+    )
     async def test_a_replay_read_cancelled_at_its_deadline_is_replaced_not_added(
-        self, wired
+        self, wired, stall_s
     ):
         """#11521 — the false red, reproduced on purpose.
 
@@ -533,8 +562,26 @@ class TestTheBudgetHoldsAcrossConcurrentStreams:
         replacement: the server accepts a fifth socket while the pool never
         holds more than four. The cumulative bound this arm replaced reads that
         as a breach; the budget assertion must not.
+
+        The reply is held until the test lets it go, not for a fixed time. A
+        0.5 s hold raced the 250 ms deadline: when a loaded runner stalled the
+        loop across both, the reply was already read when the loop resumed,
+        and on Python 3.11 `wait_for` returns a result that is ready rather
+        than cancelling, so nothing was discarded and the arm reproduced
+        nothing (master run 43826085791, attempt 1). Held until released, the
+        deadline is the only way the read can end, however long the loop
+        stalls. The second case is that CI shape on purpose: once the held read
+        reaches the server, the loop blocks for 0.6 s, past the old hold.
         """
-        wired.request_server.hold_next(b"MGET", 0.5)
+        server = wired.request_server
+        server.hold_next(b"MGET")
+
+        async def stall_once_held():
+            while not server.holding:
+                await asyncio.sleep(0.001)
+            time.sleep(stall_s)
+
+        staller = asyncio.create_task(stall_once_held()) if stall_s else None
         readers = [_Reader(4050 + n) for n in range(12)]
         try:
             for reader in readers:
@@ -549,6 +596,10 @@ class TestTheBudgetHoldsAcrossConcurrentStreams:
             )
             _assert_request_pool_within_budget(wired)
         finally:
+            server.release_held()
+            if staller is not None:
+                staller.cancel()
+                await asyncio.gather(staller, return_exceptions=True)
             for reader in readers:
                 await reader.stop()
 
