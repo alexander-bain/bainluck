@@ -8,6 +8,7 @@ import SwiftUI
 /// (`ClipLoader12307`), and refreshes it every minute while it's open.
 @main
 struct BainLuckClipApp: App {
+    @UIApplicationDelegateAdaptor(ClipAppDelegate12307.self) private var appDelegate
     @State private var model = ClipModel12307()
 
     var body: some Scene {
@@ -16,17 +17,22 @@ struct BainLuckClipApp: App {
                 .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                     model.open(activity.webpageURL)
                 }
+                // The app is light only; its clip matches it.
+                .preferredColorScheme(.light)
         }
     }
 }
 
 @Observable
+@MainActor
 final class ClipModel12307 {
     private(set) var subject: SavedWidgetSubject10875?
     private(set) var load: ClipLoad12307 = .loading
     /// The last refresh failed while an earlier answer is still on screen.
     private(set) var lastUpdateFailed = false
     private(set) var invoked = false
+    /// 176-A — a game link's page: the app's own headline, from the app's event read.
+    private(set) var game: ClipGameModel12307?
 
     /// How long the clip waits for an invocation before saying it has no page.
     static let invocationWait: Duration = .seconds(3)
@@ -39,6 +45,7 @@ final class ClipModel12307 {
         subject = next
         load = next == nil ? .unsupported : .loading
         lastUpdateFailed = false
+        game = next.flatMap { $0.kind == .game ? ClipGameModel12307(eventID: $0.id) : nil }
     }
 
     /// Called when no invocation has arrived in `invocationWait`.
@@ -57,6 +64,7 @@ final class ClipModel12307 {
 
     func refresh() async {
         guard let subject else { return }
+        await game?.refresh()
         let next = await ClipLoader12307.load(subject, fetch: ClipLoader12307.productionFetch)
         guard subject == self.subject else { return }
         // A failed refresh keeps the page it had; the reading goes on ageing on

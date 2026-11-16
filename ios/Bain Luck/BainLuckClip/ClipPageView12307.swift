@@ -6,6 +6,7 @@ import SwiftUI
 struct ClipPageView12307: View {
     let model: ClipModel12307
     @State private var showGetApp = false
+    @State private var alerts = ClipEndingAlertService12307.shared
 
     var body: some View {
         NavigationStack {
@@ -34,12 +35,38 @@ struct ClipPageView12307: View {
             // after the reader has what they came for.
             if case .detail = load { showGetApp = true }
         }
+        .onChange(of: model.game?.event != nil) { _, shown in
+            if shown { showGetApp = true }
+        }
         .appStoreOverlay(isPresented: $showGetApp) {
-            SKOverlay.AppClipConfiguration(position: .bottom)
+            // The campaign Alex made on Nov 13 (provider 128590604), counted
+            // under its own campaign word so App Store Connect can tell clip
+            // installs from shared-link installs.
+            let overlay = SKOverlay.AppClipConfiguration(position: .bottom)
+            overlay.providerToken = "128590604"
+            overlay.campaignToken = "appclip"
+            return overlay
         }
     }
 
     @ViewBuilder private var content: some View {
+        if let game = model.game, let event = game.event {
+            // 176-A — a game opens on the app's own headline.
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                ClipGamePage12307(
+                    event: event,
+                    now: context.date,
+                    lastReadFailed: game.lastReadFailed,
+                    notify: alerts.state,
+                    tellMeHowItEnds: { Task { await alerts.request(eventID: game.eventID) } },
+                    getApp: { showGetApp = true })
+            }
+        } else {
+            readingContent
+        }
+    }
+
+    @ViewBuilder private var readingContent: some View {
         switch model.load {
         case .loading:
             ProgressView("Loading…")
