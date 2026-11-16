@@ -222,20 +222,36 @@ struct SavedWidgetArt12466: Equatable, Sendable {
     /// A bar's or stripe's two colours on a surface, away first.
     func barHexes(surfaceLuminance: Double) -> (away: String, home: String) {
         if surfaceLuminance >= 0.5 {
-            return TeamTextContrast.cardColorHexes(awayHex: away.primaryHex, homeHex: home.primaryHex)
+            return TeamTextContrast.cardColorHexes(
+                awayHex: away.primaryHex,
+                homeHex: home.primaryHex,
+                awaySecondaryHex: away.secondaryHex
+            )
         }
-        func readable(_ side: Side) -> String? {
-            [side.primaryHex, side.secondaryHex].lazy.compactMap { $0 }.first {
-                Self.contrast($0, againstLuminance: surfaceLuminance).map { $0 >= TeamTextContrast.minimumRatio } ?? false
-            }
+        func readableHex(_ hex: String?) -> String? {
+            guard let hex,
+                  let ratio = Self.contrast(hex, againstLuminance: surfaceLuminance),
+                  ratio >= TeamTextContrast.minimumRatio
+            else { return nil }
+            return hex
         }
-        return ProbabilityBarPalette.pair(awayHex: readable(away), homeHex: readable(home))
+        let awayPrimary = readableHex(away.primaryHex) ?? readableHex(away.secondaryHex)
+        let homePrimary = readableHex(home.primaryHex) ?? readableHex(home.secondaryHex)
+        return ProbabilityBarPalette.pair(
+            awayHex: awayPrimary,
+            homeHex: homePrimary,
+            awaySecondaryHex: readableHex(away.secondaryHex)
+        )
     }
 
     /// Two full-bleed fills, away first: each team's primary colour, kept
-    /// apart by the palette.
+    /// apart by the palette (with Ruling 197 away secondary fallback).
     func fillHexes() -> (away: String, home: String) {
-        ProbabilityBarPalette.pair(awayHex: away.primaryHex, homeHex: home.primaryHex)
+        ProbabilityBarPalette.pair(
+            awayHex: away.primaryHex,
+            homeHex: home.primaryHex,
+            awaySecondaryHex: away.secondaryHex
+        )
     }
 
     /// The text colour for a fill: white or the app's ink, whichever has more

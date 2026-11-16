@@ -68,7 +68,8 @@ struct NativeEventDiscoverCard: View {
     var barColorHexes: (away: String, home: String) {
         TeamTextContrast.cardColorHexes(
             awayHex: event.awayTeamData?.primaryColor,
-            homeHex: event.homeTeamData?.primaryColor
+            homeHex: event.homeTeamData?.primaryColor,
+            awaySecondaryHex: event.awayTeamData?.secondaryColor
         )
     }
 

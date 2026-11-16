@@ -122,7 +122,8 @@ struct EventCardView: View {
     var barColorHexes: (away: String, home: String) {
         TeamTextContrast.cardColorHexes(
             awayHex: event.awayTeamData?.primaryColor,
-            homeHex: event.homeTeamData?.primaryColor
+            homeHex: event.homeTeamData?.primaryColor,
+            awaySecondaryHex: event.awayTeamData?.secondaryColor
         )
     }
     private var barColors: (away: Color, home: Color) {
