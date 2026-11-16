@@ -38,6 +38,7 @@ final class EventAtlasGolfTournament11666Tests: XCTestCase {
         status: String = "open",
         source: String = "datagolf",
         commenceTime: String? = "2025-11-06T12:00:00Z",
+        createdAt: String? = "2025-11-03T12:00:00Z",
         updatedAt: String? = nil,
         outcomes: [FuturesOutcome]
     ) throws -> FuturesMarketDetail {
@@ -58,6 +59,7 @@ final class EventAtlasGolfTournament11666Tests: XCTestCase {
             "outcomes": outcomeDicts,
         ]
         if let commenceTime { dict["commence_time"] = commenceTime }
+        if let createdAt { dict["created_at"] = createdAt }
         if let updatedAt { dict["updated_at"] = updatedAt }
         let data = try JSONSerialization.data(withJSONObject: dict)
         let decoder = JSONDecoder()
@@ -201,16 +203,16 @@ final class EventAtlasGolfTournament11666Tests: XCTestCase {
         )
         XCTAssertEqual(input5.slots.count, 5)
         XCTAssertEqual(input5.slots.map(\.name), ["Win", "Top 5", "Top 10", "Top 20", "Make cut"])
-        XCTAssertEqual(input5.beforeLabel, "Opened")
-        XCTAssertEqual(input5.beforeColumnLabel, "Opened")
+        XCTAssertEqual(input5.beforeLabel, "Pregame")
+        XCTAssertEqual(input5.beforeColumnLabel, "Pregame")
         XCTAssertEqual(input5.win.before?.text, "18%")
         XCTAssertEqual(input5.win.recorded?.text, "24%")
-        XCTAssertEqual(input5.win.deltaText, "+6.0 pts since open")
-        XCTAssertTrue(input5.accessibilityValue(for: input5.win).contains("Opened: 18%"))
-        XCTAssertTrue(input5.accessibilityValue(for: input5.win).contains("+6.0 pts since open"))
+        XCTAssertEqual(input5.win.deltaText, "+6.0 pts since pregame")
+        XCTAssertTrue(input5.accessibilityValue(for: input5.win).contains("Pregame: 18%"))
+        XCTAssertTrue(input5.accessibilityValue(for: input5.win).contains("+6.0 pts since pregame"))
         XCTAssertEqual(input5.makeCut?.before?.text, "89%")
         XCTAssertEqual(input5.makeCut?.recorded?.text, "92%")
-        XCTAssertEqual(input5.makeCut?.deltaText, "+3.0 pts since open")
+        XCTAssertEqual(input5.makeCut?.deltaText, "+3.0 pts since pregame")
         // Stale quote (>30m old during play) ages to nil with "No recent probability"
         XCTAssertNil(input5.top20.recorded)
         XCTAssertEqual(input5.top20.recordedMissing, "No recent probability")

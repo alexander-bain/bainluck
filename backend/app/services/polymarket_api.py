@@ -308,6 +308,35 @@ class PolymarketAPIService:
         response.raise_for_status()
         return response.json()
 
+    async def get_events_keyset(
+        self,
+        *,
+        active: Optional[bool] = True,
+        closed: Optional[bool] = False,
+        limit: int = 100,
+        after_cursor: Optional[str] = None,
+    ) -> tuple[list[dict], Optional[str]]:
+        """One page of ``/events/keyset``: ``(events, next_cursor)``.
+
+        #219E: Gamma caps ``/events`` offset paging at 2,000, so an offset scan
+        can never reach an older active event. The keyset endpoint has no cap: it
+        pages in id order and returns ``next_cursor`` (``None``/empty at the end),
+        which is passed back as ``after_cursor``. Measured Nov 13: ``cursor`` and
+        ``next_cursor`` are ignored as parameters (they return page one again);
+        only ``after_cursor`` advances.
+        """
+        params: dict = {"limit": min(limit, 100)}
+        if active is not None:
+            params["active"] = str(active).lower()
+        if closed is not None:
+            params["closed"] = str(closed).lower()
+        if after_cursor:
+            params["after_cursor"] = after_cursor
+        response = await self.gamma_client.get("/events/keyset", params=params)
+        response.raise_for_status()
+        body = response.json() or {}
+        return list(body.get("events") or []), (body.get("next_cursor") or None)
+
     async def get_event_by_id(self, event_id: str) -> Optional[dict]:
         """
         Get a single event by its Polymarket event ID (includes all markets

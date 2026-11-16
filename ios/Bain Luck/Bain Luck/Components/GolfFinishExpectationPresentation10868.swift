@@ -488,10 +488,10 @@ struct GolfFinishExpectationPresentation10868: View {
                     .font(.subheadline.weight(.semibold))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                if input.phase == .recorded {
+                if input.phase == .recorded, let before = slot.before {
                     VStack(spacing: 4) {
                         Text(input.beforeColumnLabel).foregroundStyle(DS.textSecondary)
-                        Text(input.beforeReading(slot).text).bold()
+                        Text(before.text).bold()
                     }
                     .font(.footnote)
                     .multilineTextAlignment(.center)
@@ -501,6 +501,7 @@ struct GolfFinishExpectationPresentation10868: View {
                     resultLabel(slot.actual, font: .caption)
                 }
             }
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .top)
             .contentShape(Rectangle())
         }
@@ -619,9 +620,16 @@ struct GolfFinishExpectationPresentation10868: View {
     }
 
     private var keyRow: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 16) { key(hollow: true); key(hollow: false) }
-            VStack(alignment: .leading, spacing: 8) { key(hollow: true); key(hollow: false) }
+        let hasAnyBefore = input.slots.contains { $0.before != nil }
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                if hasAnyBefore { key(hollow: true) }
+                key(hollow: false)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                if hasAnyBefore { key(hollow: true) }
+                key(hollow: false)
+            }
         }
         .accessibilityHidden(true)
     }
