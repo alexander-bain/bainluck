@@ -158,11 +158,64 @@ describe("Website probability chart scale & soccer 3-line rules (#12750, Rulings
     expect(html.toLowerCase()).toContain('stroke="#94a3b8"');
     expect(html.toLowerCase()).toContain('stroke="#c8102e"');
 
-    // 3. Three-line legend labels Home, Draw, and Away
+    // 3. Three-line legend labels Home, Draw, and Away, and hides the one-team left-margin pole ("↑ EVE")
     expect(html).toContain('data-testid="soccer-three-line-legend"');
+    expect(html).not.toContain('data-testid="chart-axis-pole"');
     expect(html).toContain(">Everton<");
     expect(html).toContain(">Draw<");
     expect(html).toContain(">Chelsea<");
+  });
+
+  it("uses Crystal Palace's curated Eagle Red (#C4122E) over ESPN's generic #000000 against Coventry, and falls back to slate (#64748B) when an uncurated club has #000000", () => {
+    const pts = [
+      { timestamp: isoAt(0), home_probability: 0.395, draw_probability: 0.265, away_probability: 0.34 },
+      { timestamp: isoAt(15), home_probability: 0.4, draw_probability: 0.26, away_probability: 0.34 },
+    ];
+    const palaceHtml = renderToStaticMarkup(
+      <OddsChart
+        history={[]}
+        winProbHistory={{ kalshi: pts }}
+        winProbSources={{
+          kalshi: { display_name: "Kalshi", color: "#22c55e", type: "market", snapshot_count: 2 },
+        }}
+        homeTeam="Coventry City"
+        awayTeam="Crystal Palace"
+        homeTeamColor="#87CCED"
+        awayTeamColor="#0202FB"
+        awayTeamSecondaryColor="#000000"
+        sportKey="soccer_epl"
+        commenceTime={isoAt(0)}
+        isLive
+        eventStatus="live"
+        externalTimeRange="all"
+        awayWithheld
+      />,
+    );
+    expect(palaceHtml.toLowerCase()).toContain('stroke="#c4122e"');
+    expect(palaceHtml.toLowerCase()).not.toContain('stroke="#000000"');
+
+    const uncuratedHtml = renderToStaticMarkup(
+      <OddsChart
+        history={[]}
+        winProbHistory={{ kalshi: pts }}
+        winProbSources={{
+          kalshi: { display_name: "Kalshi", color: "#22c55e", type: "market", snapshot_count: 2 },
+        }}
+        homeTeam="Coventry City"
+        awayTeam="Unknown Town FC"
+        homeTeamColor="#87CCED"
+        awayTeamColor="#0202FB"
+        awayTeamSecondaryColor="#000000"
+        sportKey="soccer_epl"
+        commenceTime={isoAt(0)}
+        isLive
+        eventStatus="live"
+        externalTimeRange="all"
+        awayWithheld
+      />,
+    );
+    expect(uncuratedHtml.toLowerCase()).toContain('stroke="#64748b"');
+    expect(uncuratedHtml.toLowerCase()).not.toContain('stroke="#000000"');
   });
 
   it("scales TeamSeasonJourney and many-way charts from 0 to stepped ceiling (Ruling 202-A)", () => {

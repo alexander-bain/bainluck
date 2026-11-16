@@ -46,7 +46,12 @@ import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { teamShortNames } from "@/lib/teamShortName";
 import { useAxisPoleFit } from "@/hooks/useAxisPoleFit";
 import { axisPoleStyle, axisLabelStyle } from "@/lib/axisPoleFit";
-import { resolveMatchupTeamColors, teamTextColor } from "@/lib/teamColors";
+import {
+  effectiveAwaySecondaryColor,
+  lookupTeamColors,
+  resolveMatchupTeamColors,
+  teamTextColor,
+} from "@/lib/teamColors";
 import { createChartTimestampMs } from "@/lib/chartTimestampMs";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
@@ -3211,10 +3216,13 @@ export default function OddsChart({
     if (edge.side === "even") return `the ${where} of this ${noun} is 50/50.`;
     return `the ${where} of this ${noun} is ${sideName(edge.side)} at ${edge.percent}%.`;
   };
+  const awayCurated = lookupTeamColors(awayTeam);
+  const homeCurated = lookupTeamColors(homeTeam);
+  const resolvedAwaySec = effectiveAwaySecondaryColor(awayTeam, awayTeamSecondaryColor);
   const resolvedTeamColors = resolveMatchupTeamColors({
-    homePrimary: homeTeamColor,
-    awayPrimary: awayTeamColor,
-    awaySecondary: awayTeamSecondaryColor,
+    homePrimary: homeTeamColor ?? homeCurated?.primary,
+    awayPrimary: awayTeamColor ?? awayCurated?.primary,
+    awaySecondary: resolvedAwaySec,
   });
   const effectiveHomeTeamColor = resolvedTeamColors.home ?? homeTeamColor;
   const effectiveAwayTeamColor = resolvedTeamColors.away ?? awayTeamColor;
@@ -3224,8 +3232,8 @@ export default function OddsChart({
     "#2563EB";
   const soccerAwayLineHex =
     teamTextColor(effectiveAwayTeamColor) ??
-    teamTextColor(awayTeamSecondaryColor) ??
-    "#475569";
+    teamTextColor(resolvedAwaySec ?? awayTeamSecondaryColor) ??
+    "#64748B";
   const soccerDrawLineHex = SOCCER_DRAW_LINE_HEX;
   const tickInk = {
     home: teamTextColor(effectiveHomeTeamColor) || "#16a34a",
@@ -3878,10 +3886,10 @@ export default function OddsChart({
             `aria-hidden` on the caret and a real sentence in `sr-only`: a
             screen reader cannot see which end of a gutter a label is at, so the
             glyph carries nothing for it and the sentence carries everything. */}
-        {/* #11356 — the gutter is drawn in every state: one line, two poles.
-            Each pole is a DIRECTION, and its spoken sentence names the reading
-            at that edge of the window actually drawn — "100%" only where the
-            edge is the end of the scale, never at a zoomed crop. */}
+        {/* #11356 — the gutter is drawn in every two-pole / one-line state:
+            when three soccer lines (Home, Draw, Away) are drawn (Ruling 211-A),
+            "up" belongs to no single team, so the one-team pole gutter is hidden. */}
+        {!hasSoccerThreeLines && (
         <div
           ref={axisGutterRef}
           className="flex flex-col items-center justify-between py-3 shrink-0"
@@ -3943,6 +3951,7 @@ export default function OddsChart({
             </div>
           )}
         </div>
+        )}
 
         {/* Chart area. #10249: Recharts' own touch handling never ends an
             inspection, so the last finger lifting ends it here. */}

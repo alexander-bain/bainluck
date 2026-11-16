@@ -46,6 +46,7 @@ import {
 } from "@/lib/soccerEventCards";
 import { getLeagueDisplay } from "@/lib/sportCategories";
 import {
+  effectiveAwaySecondaryColor,
   lookupTeamColors,
   resolveMatchupTeamColors,
   teamTextColor,
@@ -831,7 +832,10 @@ export function resolveEventPageHeadline199(
   const teamHexes = resolveHeadlineTeamHexes199({
     homePrimary: event.home_team_data?.primary_color ?? homeKnown?.primary,
     awayPrimary: event.away_team_data?.primary_color ?? awayKnown?.primary,
-    awaySecondary: event.away_team_data?.secondary_color ?? awayKnown?.secondary,
+    awaySecondary: effectiveAwaySecondaryColor(
+      event.away_team,
+      event.away_team_data?.secondary_color,
+    ),
   });
   const colors = {
     away: teamHexes.away,
