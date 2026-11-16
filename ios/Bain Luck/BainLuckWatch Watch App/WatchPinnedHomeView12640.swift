@@ -278,7 +278,7 @@ struct WatchPinnedHomeView12640: View {
         return VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(eventRowBadge(game: game, now: now))
-                    .font(.caption2.weight(.semibold))
+                    .font(HeadlineStyleTable199.headers(.wristTile))
                     .foregroundStyle(game.isLive ? Color.cyan : Color.secondary)
                 Spacer(minLength: 4)
                 if isSelected {
@@ -288,17 +288,15 @@ struct WatchPinnedHomeView12640: View {
                 }
             }
             Text(eventRowMatchup(game: game, awayShort: awayShort, homeShort: homeShort))
-                .font(.footnote.weight(.semibold))
+                .font(HeadlineStyleTable199.names(.wristTile))
                 .fixedSize(horizontal: false, vertical: true)
 
             if game.isFinal, let hs = game.homeScore, let ascore = game.awayScore {
                 Text(hs >= ascore ? "\(homeShort) \(hs), \(awayShort) \(ascore)" : "\(awayShort) \(ascore), \(homeShort) \(hs)")
-                    .font(.body.bold())
-                    .monospacedDigit()
+                    .font(HeadlineStyleTable199.secondNumbers(.wristTile, prominent: true))
             } else if let pct = game.homeProbabilityText {
                 Text("\(homeShort) \(pct)")
-                    .font(.title3.bold())
-                    .monospacedDigit()
+                    .font(HeadlineStyleTable199.now(.wristTile))
                     .foregroundStyle(.cyan)
             }
         }

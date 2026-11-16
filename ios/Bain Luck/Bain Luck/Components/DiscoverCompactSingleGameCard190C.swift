@@ -199,7 +199,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     private var headerFont: Font {
         let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 14.5 : 13
-        return .system(size: min(headerFontSize, cap), weight: .semibold).monospacedDigit()
+        return HeadlineStyleTable199.headers(.card, scaledSize: min(headerFontSize, cap)).monospacedDigit()
     }
 
     private var columnHeadersCluster: some View {

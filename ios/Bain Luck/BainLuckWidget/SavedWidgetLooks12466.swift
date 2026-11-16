@@ -208,12 +208,12 @@ struct SavedSideValue12466: View {
         VStack(alignment: alignment, spacing: 0) {
             if let figure = row.figure {
                 Text(figure)
-                    .font(.system(size: size, weight: .bold, design: .rounded).monospacedDigit())
+                    .font(HeadlineStyleTable199.now(.widget, scaledSize: size))
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
             } else if row.verdict == nil {
                 Text("—")
-                    .font(.system(size: size * 0.7, weight: .semibold, design: .rounded))
+                    .font(HeadlineStyleTable199.secondNumbers(.widget, scaledSize: size * 0.7))
                     .opacity(0.5)
                     .accessibilityLabel("No number")
             }
@@ -221,7 +221,7 @@ struct SavedSideValue12466: View {
                 // #12466 (Fable, Nov 11): "LOST" is quieter than "WON", not faint:
                 // at 0.6 it disappeared on the Vikings' purple at small size.
                 Text(verdict)
-                    .font(.system(size: max(11, size * 0.4), weight: row.emphasized ? .heavy : .bold, design: .rounded))
+                    .font(HeadlineStyleTable199.headers(.widget, scaledSize: max(11, size * 0.4)))
                     .textCase(.uppercase)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)

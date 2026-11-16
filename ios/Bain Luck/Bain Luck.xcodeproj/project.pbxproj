@@ -139,6 +139,7 @@
 				Utilities/PeriodLabel.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/SportVocab.swift,
+				Utilities/HeadlineStyleTable199.swift,
 				Utilities/WatchTelemetryProtocol.swift,
 			);
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
@@ -193,6 +194,7 @@
 		A7C0000000000000000000DF /* Exceptions for "Bain Luck" folder in "BainLuckComplication" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Utilities/HeadlineStyleTable199.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
@@ -203,6 +205,7 @@
 				Utilities/GameActivityAttributes.swift,
 				Utilities/GameActivitySnapshot.swift,
 				Utilities/GameContinuation.swift,
+				Utilities/HeadlineStyleTable199.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/SportVocab.swift,
