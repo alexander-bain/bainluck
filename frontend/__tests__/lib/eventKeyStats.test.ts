@@ -304,7 +304,7 @@ describe("resolveProbability — live hero binds to the blend (L2-163 Item 2b)",
       true, // isFinished
     );
     expect(r.homeProb).toBeCloseTo(0.35);
-    expect(r.probSourceLabel).toBe("Pre-game odds");
+    expect(r.probSourceLabel).toBe("Pregame odds");
   });
 });
 

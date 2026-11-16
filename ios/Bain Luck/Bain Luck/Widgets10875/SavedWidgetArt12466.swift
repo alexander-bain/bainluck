@@ -35,10 +35,35 @@ struct SavedWidgetArt12466: Equatable, Sendable {
     /// while live and only with both sides held (`EventState`'s partial-line
     /// rule): a finished game's score is already each row's figure.
     var scores: Scores? = nil
+    /// Headline size-family fields (#12616, 183-A): short club/school names,
+    /// league label, live period/clock capsule, scheduled projected final, and
+    /// full-word `"Pregame"` baseline chances.
+    var awayShortName: String? = nil
+    var homeShortName: String? = nil
+    var leagueLabel: String? = nil
+    var isLive: Bool = false
+    var isFinished: Bool = false
+    var liveBadgeText: String? = nil
+    var commenceTime: Date? = nil
+    var startIsTbd: Bool = false
+    var projectedBefore: ProjectedPair? = nil
+    var pregameChances: PregamePair? = nil
 
-    struct Scores: Equatable, Sendable {
+    nonisolated struct Scores: Equatable, Sendable {
         let away: Int
         let home: Int
+    }
+
+    nonisolated struct ProjectedPair: Equatable, Sendable {
+        let away: Int
+        let home: Int
+    }
+
+    nonisolated struct PregamePair: Equatable, Sendable {
+        let awayText: String?
+        let homeText: String?
+        let awayPercent: Int?
+        let homePercent: Int?
     }
 
     static func game(_ event: SavedWidgetEventDetail10875) -> SavedWidgetArt12466 {
@@ -46,17 +71,140 @@ struct SavedWidgetArt12466: Equatable, Sendable {
             away: event.awayTeam, home: event.homeTeam,
             awayServed: event.awayTeamData?.abbreviation, homeServed: event.homeTeamData?.abbreviation,
             sportKey: event.sport)
+        let names = TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
         func side(_ data: SavedWidgetTeamData10875?, short: String) -> Side {
             let logo = data?.logoSmall.flatMap { URL(string: $0) }
             return Side(short: short, primaryHex: data?.primaryColor, secondaryHex: data?.secondaryColor,
                         logoURL: logo?.scheme == "https" ? logo : nil)
         }
+        let live = event.status == "live"
+        let finished = EventState.isFinished(event.status)
         var scores: Scores?
-        if event.status == "live", let away = event.awayScore, let home = event.homeScore {
+        if live, let away = event.awayScore, let home = event.homeScore {
             scores = Scores(away: away, home: home)
         }
-        return SavedWidgetArt12466(away: side(event.awayTeamData, short: short.away),
-                                   home: side(event.homeTeamData, short: short.home), scores: scores)
+        let liveBadge: String? = live
+            ? (PeriodLabel.liveStatusText(period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "Live")
+            : nil
+        let projected: ProjectedPair? = (!live && !finished)
+            ? resolveScheduledProjection(odds: event.currentOdds, sportKey: event.sport)
+            : nil
+        let pregame: PregamePair? = (live || finished)
+            ? resolvePregamePair(prematch: event.prematchOdds, sportKey: event.sport)
+            : nil
+        return SavedWidgetArt12466(
+            away: side(event.awayTeamData, short: short.away),
+            home: side(event.homeTeamData, short: short.home),
+            scores: scores,
+            awayShortName: names.away,
+            homeShortName: names.home,
+            leagueLabel: resolveLeagueLabel(sport: event.sport, sportName: event.sportName),
+            isLive: live,
+            isFinished: finished,
+            liveBadgeText: liveBadge,
+            commenceTime: SavedWidgetDetailDecoding10875.date(event.commenceTime),
+            startIsTbd: event.startIsTbd == true,
+            projectedBefore: projected,
+            pregameChances: pregame
+        )
+    }
+
+    static func resolveLeagueLabel(sport: String?, sportName: String?) -> String? {
+        if let explicit = sportName?.trimmingCharacters(in: .whitespacesAndNewlines), !explicit.isEmpty {
+            return explicit
+        }
+        guard let key = sport?.lowercased(), !key.isEmpty else { return nil }
+        if key == "americanfootball_nfl" { return "NFL" }
+        if key == "americanfootball_ncaaf" { return "NCAAF" }
+        if key == "americanfootball_ncaaf_fcs" { return "NCAAF FCS" }
+        if key == "basketball_nba" { return "NBA" }
+        if key == "basketball_wnba" { return "WNBA" }
+        if key == "basketball_ncaab" { return "NCAAB" }
+        if key == "basketball_wncaab" { return "WNCAAB" }
+        if key == "baseball_mlb" { return "MLB" }
+        if key == "icehockey_nhl" { return "NHL" }
+        if key.hasPrefix("soccer_epl") { return "EPL" }
+        if key.hasPrefix("soccer_uefa") { return "UEFA" }
+        if key.hasPrefix("soccer_usa_mls") { return "MLS" }
+        if key.hasPrefix("soccer_") { return "Soccer" }
+        if key.hasPrefix("tennis_atp") { return "ATP" }
+        if key.hasPrefix("tennis_wta") { return "WTA" }
+        if key.hasPrefix("tennis_") { return "Tennis" }
+        if key.hasPrefix("mma_") || key == "mma" { return "MMA" }
+        return nil
+    }
+
+    static func resolveScheduledProjection(
+        odds: SavedWidgetEventOdds10875?,
+        sportKey: String?
+    ) -> ProjectedPair? {
+        let key = (sportKey ?? "").lowercased()
+        let admitsUnit = key.hasPrefix("americanfootball_") || key.hasPrefix("basketball_") || key.hasPrefix("soccer_")
+        guard admitsUnit else { return nil }
+        let vocab = SportVocab.forSport(sportKey)
+        guard vocab.sportsbookSpreadIsAMargin else { return nil }
+        guard let odds,
+              let home = odds.projectedHomeScore,
+              let away = odds.projectedAwayScore,
+              home.isFinite, away.isFinite,
+              home > 0, away > 0,
+              let roundedHome = Int(exactly: home.rounded()),
+              let roundedAway = Int(exactly: away.rounded()),
+              roundedHome != roundedAway || vocab.canEndInATie
+        else { return nil }
+        return ProjectedPair(away: roundedAway, home: roundedHome)
+    }
+
+    static func resolvePregamePair(
+        prematch: SavedWidgetEventOdds10875?,
+        sportKey: String?
+    ) -> PregamePair? {
+        guard let prematch else { return nil }
+        if prematch.drawProbability != nil {
+            guard let h = prematch.homeProbability, h.isFinite, h > 0, h < 1 else { return nil }
+            let bothServed = prematch.awayRenderedPercent != nil && prematch.homeRenderedPercent != nil
+            let hPct = bothServed ? prematch.homeRenderedPercent : renderedPercent(h)
+            let aPct: Int? = {
+                guard let a = prematch.awayProbability, a.isFinite, a > 0, a < 1 else { return nil }
+                return bothServed ? prematch.awayRenderedPercent : renderedPercent(a)
+            }()
+            return PregamePair(
+                awayText: prematch.awayProbability.map { formatProbability($0, renderedPercent: aPct) },
+                homeText: formatProbability(h, renderedPercent: hPct),
+                awayPercent: aPct,
+                homePercent: hPct
+            )
+        }
+        guard let pair = DrawPricedWinner.printablePair(
+            away: prematch.awayProbability,
+            home: prematch.homeProbability,
+            sport: sportKey
+        ) else { return nil }
+        if let away = pair.away {
+            let hero = SavedWidgetReadingRules10875.HeroPair(
+                away: away,
+                home: pair.home,
+                awayRenderedPercent: prematch.awayRenderedPercent,
+                homeRenderedPercent: prematch.homeRenderedPercent,
+                isOpeningLine: false
+            )
+            let percents = SavedWidgetReadingRules10875.heroPairPercents(hero, away: away, home: pair.home)
+            return PregamePair(
+                awayText: formatProbability(away, renderedPercent: percents.away),
+                homeText: formatProbability(pair.home, renderedPercent: percents.home),
+                awayPercent: percents.away,
+                homePercent: percents.home
+            )
+        } else {
+            let hPct = renderedPercent(pair.home)
+            return PregamePair(
+                awayText: nil,
+                homeText: formatProbability(pair.home, renderedPercent: hPct),
+                awayPercent: nil,
+                homePercent: hPct
+            )
+        }
     }
 
     // MARK: - Surfaces
