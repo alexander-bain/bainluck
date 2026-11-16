@@ -4,7 +4,7 @@ import SwiftUI
 /// #12616 (183-A, Saturday goal item 5) — Apple Watch wrist tile (`WatchPinnedHomeView12640`
 /// game pin row and selected-game hero).
 ///
-/// Never crams 2 rows × 3 columns onto a 41 mm wrist: names ONE side (the favoured
+/// Never crams 2 rows × 3 columns onto a 41 mm wrist: names ONE side (the favored
 /// side before/during, or the winner after — and home on a draw-priced sport whose
 /// away price is withheld by `DrawPricedWinner`) in bold type beside a 30 pt
 /// rounded primary reading, a circular team monogram badge, and one supporting line.
@@ -73,10 +73,14 @@ struct WatchWristTileModel12616: Equatable, Sendable {
             awayServed: input.awayServedAbbreviation,
             homeServed: input.homeServedAbbreviation
         )
-        let names = TeamShortName.shortPair(
+        let rawNames = TeamShortName.shortPair(
             away: input.awayTeam,
             home: input.homeTeam,
             sportKey: input.sportKey
+        )
+        let names = (
+            away: wristClubName(rawNames.away, sportKey: input.sportKey),
+            home: wristClubName(rawNames.home, sportKey: input.sportKey)
         )
 
         let badgeFills = ProbabilityBarPalette.pair(
@@ -223,7 +227,7 @@ struct WatchWristTileModel12616: Equatable, Sendable {
         }
 
         let statusWord: String = {
-            if resolved.isFavoured { return "Favoured" }
+            if resolved.isFavored { return "Favored" }
             if resolved.isEven { return "Even matchup" }
             return "Home win chance"
         }()
@@ -248,9 +252,32 @@ struct WatchWristTileModel12616: Equatable, Sendable {
 
     // MARK: - Pure Helpers
 
+    private static let soccerClubInitialismSuffixes = [
+        " AFC", " CFC", " LFC", " FC", " CF", " SC"
+    ]
+
+    /// Strips trailing football-club initialisms (`"Arsenal FC"` → `"Arsenal"`,
+    /// `"Liverpool FC"` → `"Liverpool"`) on soccer wrist tiles so the 41 mm card
+    /// matches the short club name shown on the game page while preserving gender/
+    /// reserve designators (`"Arsenal WFC"`, `"Alverca B"`) and leading prefixes
+    /// (`"FC Köln"`).
+    private static func wristClubName(_ label: String, sportKey: String?) -> String {
+        guard TeamShortName.keepsWholeClubName(sportKey: sportKey) else { return label }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let upper = trimmed.uppercased()
+        for suffix in soccerClubInitialismSuffixes where upper.hasSuffix(suffix) {
+            let base = String(trimmed.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let letterCount = base.unicodeScalars.filter { CharacterSet.letters.contains($0) }.count
+            if letterCount >= 3 {
+                return base
+            }
+        }
+        return trimmed
+    }
+
     private static func resolveLeader(
         _ input: WatchWristTileInput12616
-    ) -> (isHome: Bool, percent: Int?, isFavoured: Bool, isEven: Bool) {
+    ) -> (isHome: Bool, percent: Int?, isFavored: Bool, isEven: Bool) {
         let trimmedSport = input.sportKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let hasSport = !trimmedSport.isEmpty
         let sportPricesDraw = hasSport && DrawPricedWinner.sportPricesADraw(trimmedSport)
@@ -269,7 +296,7 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                 return (
                     isHome: isHome,
                     percent: leadPct,
-                    isFavoured: leadPct > oppPct && leadPct > dPct,
+                    isFavored: leadPct > oppPct && leadPct > dPct,
                     isEven: hPct == aPct
                 )
             }
@@ -282,7 +309,7 @@ struct WatchWristTileModel12616: Equatable, Sendable {
             return (
                 isHome: true,
                 percent: hPct,
-                isFavoured: (hPct ?? 0) > 50,
+                isFavored: (hPct ?? 0) > 50,
                 isEven: false
             )
         }
@@ -295,7 +322,7 @@ struct WatchWristTileModel12616: Equatable, Sendable {
             return (
                 isHome: isHome,
                 percent: leadPct,
-                isFavoured: leadPct > 50,
+                isFavored: leadPct > 50,
                 isEven: hPct == aPct
             )
         }
@@ -304,7 +331,7 @@ struct WatchWristTileModel12616: Equatable, Sendable {
         return (
             isHome: true,
             percent: hPct,
-            isFavoured: (hPct ?? 0) > 50,
+            isFavored: (hPct ?? 0) > 50,
             isEven: hPct == 50
         )
     }

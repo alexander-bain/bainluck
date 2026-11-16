@@ -200,7 +200,7 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
         XCTAssertEqual(beforeHome.topMetaText, "SUN 10:00 AM · VS PIT")
         XCTAssertEqual(beforeHome.leaderName, "Bengals")
         XCTAssertEqual(beforeHome.heroFigureText, "66%")
-        XCTAssertEqual(beforeHome.supportingLine, "Favoured · Proj. 25–20")
+        XCTAssertEqual(beforeHome.supportingLine, "Favored · Proj. 25–20")
 
         // 2. Before (Away leader + dark navy primary uses contrast-safe gold secondary)
         let beforeAway = WatchWristTileModel12616.build(
@@ -226,7 +226,7 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
         XCTAssertEqual(beforeAway.leaderName, "Steelers")
         XCTAssertEqual(beforeAway.heroFigureText, "62%")
         XCTAssertEqual(beforeAway.heroInkHex, "#FFB612")
-        XCTAssertEqual(beforeAway.supportingLine, "Favoured · Proj. 24–20")
+        XCTAssertEqual(beforeAway.supportingLine, "Favored · Proj. 24–20")
 
         // 3. During (Live edge + score + pregame delta)
         let duringLive = WatchWristTileModel12616.build(
@@ -302,9 +302,24 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
             now: fixedNow,
             timeZone: pacific
         )
-        XCTAssertEqual(soccerWithheld.leaderName, "Arsenal FC")
+        XCTAssertEqual(soccerWithheld.leaderName, "Arsenal")
         XCTAssertEqual(soccerWithheld.heroFigureText, "34%")
         XCTAssertEqual(soccerWithheld.supportingLine, "Home win chance")
+
+        // Women's / reserve designators and leading prefixes stay intact.
+        let womensClub = WatchWristTileModel12616.build(
+            WatchWristTileInput12616(
+                homeTeam: "Arsenal WFC",
+                awayTeam: "Chelsea FC Women",
+                sportKey: "soccer_england_wsl",
+                homeProbability: 0.55,
+                commenceTime: sundayMorning
+            ),
+            now: fixedNow,
+            timeZone: pacific
+        )
+        XCTAssertEqual(womensClub.leaderName, "Arsenal WFC")
+        XCTAssertEqual(womensClub.supportingLine, "Favored")
 
         for copy in [
             beforeHome.supportingLine,
@@ -312,7 +327,7 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
             afterUpset.supportingLine,
             soccerWithheld.supportingLine
         ] {
-            for forbidden in ["opened", "stale", "settled", "venues"] {
+            for forbidden in ["opened", "stale", "settled", "venues", "favoured"] {
                 XCTAssertFalse(copy.localizedCaseInsensitiveContains(forbidden), copy)
             }
         }
@@ -585,7 +600,7 @@ final class SavedGameWidgetAndWristTileSat5Tests: XCTestCase {
                     .foregroundStyle(Color.white.opacity(0.65))
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("BEFORE · WHO IS FAVOURED")
+                    Text("BEFORE · WHO IS FAVORED")
                         .font(.system(size: 9.5, weight: .bold))
                         .foregroundStyle(Color.white.opacity(0.5))
                     WatchWristTileView12616(model: watchBefore) {
