@@ -8005,7 +8005,9 @@ celery_app.conf.beat_schedule = {
     },
     "poll-futures-every-4h": {
         "task": "app.tasks.poll_futures_odds",
-        "schedule": crontab(minute=30, hour="*/4"),  # Every 4 hours — futures change very slowly, quota conservation
+        # Direction 215 (Nov 16 2026): every 4 h -> hourly. Futures were 0.2%
+        # of credits (792 in 7 days); hourly is ~4x that, still under 1%.
+        "schedule": crontab(minute=30),
     },
     "poll-kalshi": {
         "task": "app.tasks.poll_kalshi_markets",
