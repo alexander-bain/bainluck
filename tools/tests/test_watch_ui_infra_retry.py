@@ -50,6 +50,15 @@ class InfraRetryTests(unittest.TestCase):
         self.assertIn('cp "$OUT/tests.log" "$OUT/tests-infra-abort.log"', harness)
         self.assertIn('wait_services_ready "$PHONE_UDID" com.apple.SpringBoard', harness)
         self.assertIn('wait_services_ready "$TEST_UDID" com.apple.Carousel', harness)
+        retry = harness.split('cp "$OUT/tests.log" "$OUT/tests-infra-abort.log"', 1)[1].split("fi\n", 1)[0]
+        self.assertIn("reboot_pair_until_ready", retry, "the retry waits for a ready pair first")
+
+    def test_setup_waits_for_readiness_and_installs_at_most_twice(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        self.assertIn('ready_or_reboot_once "$PHONE_UDID" com.apple.SpringBoard', harness)
+        self.assertIn('ready_or_reboot_once "$TEST_UDID" com.apple.Carousel', harness)
+        self.assertEqual(harness.count("install_pair\n"), 1, "one retried install, never a loop")
+        self.assertIn("if ! install_pair; then", harness)
 
 
 if __name__ == "__main__":

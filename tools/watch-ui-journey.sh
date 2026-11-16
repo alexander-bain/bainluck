@@ -56,6 +56,27 @@ wait_services_ready() {
   echo "$udid not ready after 120 s: $home or the instruments device service missing" >> "$OUT/preflight.log"
   return 1
 }
+# A device whose home app never came up gets ONE shutdown and boot, then must be ready.
+# (Run 43892482800: the Watch boot sat on "Waiting on System App" for 4 min.)
+ready_or_reboot_once() {
+  local udid="$1" home="$2"
+  if wait_services_ready "$udid" "$home"; then return 0; fi
+  echo "$udid: one shutdown and boot after it was not ready" >> "$OUT/preflight.log"
+  xcrun simctl shutdown "$udid" >> "$OUT/preflight.log" 2>&1 || true
+  boot_until_ready "$udid"
+  wait_services_ready "$udid" "$home"
+}
+# Shut down and boot this run's own pair, then wait for both to be ready.
+reboot_pair_until_ready() {
+  local udid
+  for udid in "$TEST_UDID" "$PHONE_UDID"; do
+    xcrun simctl shutdown "$udid" >> "$OUT/preflight.log" 2>&1 || true
+  done
+  boot_until_ready "$PHONE_UDID"
+  boot_until_ready "$TEST_UDID"
+  wait_services_ready "$PHONE_UDID" com.apple.SpringBoard
+  wait_services_ready "$TEST_UDID" com.apple.Carousel
+}
 if [[ "$STAGE" == prepare ]]; then
 PHASE=preflight
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
@@ -173,6 +194,8 @@ PHASE='boot and await only the new disposable Watch'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 boot_until_ready "$TEST_UDID"
 boot_until_ready "$PHONE_UDID"
+ready_or_reboot_once "$PHONE_UDID" com.apple.SpringBoard
+ready_or_reboot_once "$TEST_UDID" com.apple.Carousel
 # Resolve the exact devices through their available booted runtime metadata.
 # uname inside a simulator can report x86_64 on an arm64-only runtime.
 PHASE='verify exact paired simulator runtime architecture'
@@ -193,8 +216,18 @@ BUILT_APP="$BUILT_PHONE/Watch/BainLuckWatch Watch App.app"
 PHASE='explicitly install companion and nested Watch app on the new pair'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 date -u '+%Y-%m-%dT%H:%M:%SZ preinstall' >> "$OUT/install-lifecycle.txt"
-xcrun simctl install "$PHONE_UDID" "$BUILT_PHONE" >> "$OUT/preflight.log" 2>&1
-xcrun simctl install "$TEST_UDID" "$BUILT_APP" >> "$OUT/preflight.log" 2>&1
+install_pair() {
+  xcrun simctl install "$PHONE_UDID" "$BUILT_PHONE" >> "$OUT/preflight.log" 2>&1 \
+    && xcrun simctl install "$TEST_UDID" "$BUILT_APP" >> "$OUT/preflight.log" 2>&1
+}
+# Install once more, after rebooting both, only if the first install failed
+# (run 43892482800: "CoreSimulatorService: Connection interrupted" mid-install).
+if ! install_pair; then
+  echo 'install failed; one shutdown, boot and reinstall of this pair' >> "$OUT/preflight.log"
+  date -u '+%Y-%m-%dT%H:%M:%SZ install-retry' >> "$OUT/install-lifecycle.txt"
+  reboot_pair_until_ready
+  install_pair
+fi
 xcrun simctl get_app_container "$PHONE_UDID" com.bainluck.Bain-Luck app >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp app >> "$OUT/install-lifecycle.txt"
 PHASE='post-install shutdown of only this run disposable Watch'
@@ -257,12 +290,7 @@ if [[ "$TEST_EXIT" -ne 0 ]] \
   && python3 "$ROOT/tools/watch_ui_infra_retry.py" "$OUT/tests.log" "$OUT/infra-retry.json"; then
   cp "$OUT/tests.log" "$OUT/tests-infra-abort.log"
   rm -rf "$RESULT"
-  xcrun simctl shutdown "$TEST_UDID" >> "$OUT/preflight.log" 2>&1 || true
-  xcrun simctl shutdown "$PHONE_UDID" >> "$OUT/preflight.log" 2>&1 || true
-  boot_until_ready "$PHONE_UDID"
-  boot_until_ready "$TEST_UDID"
-  wait_services_ready "$PHONE_UDID" com.apple.SpringBoard
-  wait_services_ready "$TEST_UDID" com.apple.Carousel
+  reboot_pair_until_ready
   run_xctest_suite
 fi
 printf '%s\n' "$TEST_EXIT" > "$OUT/test-exit.txt"

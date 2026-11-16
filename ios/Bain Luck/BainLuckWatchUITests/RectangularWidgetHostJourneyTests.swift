@@ -64,7 +64,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         let editorArrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             editors.count == 1 && namedEditors.count == 1 && !library.exists
         }, object: host)
-        XCTAssertEqual(XCTWaiter.wait(for: [editorArrived], timeout: 15), .completed,
+        XCTAssertEqual(XCTWaiter.wait(for: [editorArrived], timeout: 45), .completed,
                        "Named Modular Add did not reach its face editor")
         capture(host, "Named Modular editor before bounded page search")
         for _ in 0..<8 {
@@ -358,7 +358,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         let editorArrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             editors.count == 1 && namedEditors.count == 1 && !library.exists
         }, object: host)
-        XCTAssertEqual(XCTWaiter.wait(for: [editorArrived], timeout: 15), .completed,
+        XCTAssertEqual(XCTWaiter.wait(for: [editorArrived], timeout: 45), .completed,
                        "Named Modular Add did not reach its face editor")
         capture(host, "Named Modular editor before bounded page search")
         for _ in 0..<8 {
