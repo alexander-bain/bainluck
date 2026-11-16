@@ -20178,9 +20178,10 @@ async def resolve_served_event(
 
 
 async def _settled_prematch_odds(
-    db: AsyncSession, event: Event, sport_key: Optional[str], absorbed=()
+    db: AsyncSession, event: Event, sport_key: Optional[str], absorbed=(),
+    *, live_detail: bool = False,
 ) -> Optional[dict]:
-    """The settled page's pre-game reading, the one its Discover card prints (#8315).
+    """The page's pre-game reading, also used by its settled card (#8315).
 
     The card has followed Alex's ladder — Kalshi → Polymarket → sportsbooks —
     since ux/1036, served by `routes/feed.py` as `prematch_odds`. This route
@@ -20192,10 +20193,14 @@ async def _settled_prematch_odds(
     and the books disagree more.
 
     NO SECOND LADDER. The same statement (`PREMATCH_PRIOR_SQL`, bound by
-    `prematch_prior_binds` so a non-settled or kickoff-less event never reads),
+    `prematch_prior_binds` with the detail-only live opt-in, always cutoff-bound),
     the same row shape (`prematch_row_to_reading`), the same resolver, the same
     books inputs — including the feed's truthiness test on the opening columns —
     and the same sport. The served shape is the card's, rounded once as a pair.
+
+    #12633: the live headline also prints this prior. Its route opts in only
+    when the served status is live; future and missing kickoffs cannot read.
+    The existing per-kickoff cache and the feed/list default stay unchanged.
 
     A failed read costs the page nothing but this key: it runs in a SAVEPOINT so
     an error cannot poison the transaction the rest of the route is still using,
@@ -20208,7 +20213,7 @@ async def _settled_prematch_odds(
     rule `merge_probability_sources` applies to the live number.
     """
     by_source: dict[str, tuple] = {}
-    binds = prematch_prior_binds([event])
+    binds = prematch_prior_binds([event], live_detail=live_detail)
     if binds is not None and absorbed:
         cutoff = binds["cutoffs"][0]
         for row in absorbed:
@@ -20898,12 +20903,13 @@ async def get_event(
             "favorite": event.opening_favorite,
         }
 
-    # #8315 — the settled hero's pre-game number follows the card's ladder. See
-    # `_settled_prematch_odds`. Settled only: that is the only state whose hero
-    # prints it, and `prematch_prior_binds` would skip the venue read otherwise.
-    if event.status in SETTLED_STATUSES:
+    # #8315/#12633 — the finished and live headlines share the kickoff prior.
+    # Use the served status so a premature stored live claim cannot ask early.
+    # Feed/list callers keep their settled-only binds and read cost.
+    _prior_status = response.get("status")
+    if _prior_status in SETTLED_STATUSES or _prior_status == "live":
         _prematch_odds = await _settled_prematch_odds(
-            db, event, event_sport_key, absorbed
+            db, event, event_sport_key, absorbed, live_detail=_prior_status == "live",
         )
         if _prematch_odds is not None:
             response["prematch_odds"] = _prematch_odds
