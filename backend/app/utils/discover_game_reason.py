@@ -151,7 +151,7 @@ def game_reason(item: dict) -> Optional[dict]:
                     "kind": "upset",
                     "team": winner,
                     "pregame": round(winner_pregame, 4),
-                    "line": f"{winner} won after starting at {_pregame_pct(data, home_won, winner_pregame)}",
+                    "line": f"{winner} won as a {_pregame_pct(data, home_won, winner_pregame)} underdog",
                 }
         moves = signals.get("team_moves") or []
         if moves:

@@ -81,7 +81,7 @@ class TestEachReason:
         card = _by("Indiana")  # home 71% pregame
         card["data"]["home_score"], card["data"]["away_score"] = 101, 110
         reason = gr.game_reason(card)
-        assert reason["kind"] == "upset" and reason["line"] == "Indiana Pacers won after starting at 29%"
+        assert reason["kind"] == "upset" and reason["line"] == "Indiana Pacers won as a 29% underdog"
 
     def test_a_fast_move_counts_when_the_total_is_small(self):
         card = _by("New York Knicks")
@@ -169,4 +169,4 @@ def test_the_reason_line_prints_the_cards_own_pregame_number():
         "prematch_odds": {"home_probability": 0.785, "away_probability": 0.215,
                           "home_rendered_percent": 79, "away_rendered_percent": 21},
     }}
-    assert gr.game_reason(item)["line"] == "Vancouver Canucks won after starting at 21%"
+    assert gr.game_reason(item)["line"] == "Vancouver Canucks won as a 21% underdog"
