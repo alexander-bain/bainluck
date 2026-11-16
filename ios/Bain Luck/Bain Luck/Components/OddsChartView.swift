@@ -5003,18 +5003,9 @@ extension OddsChartView {
         }
     }
 
-    /// Ruling 201: use 0 to 100 (`ChartProbabilityAxis9483.full`) only for soccer and
-    /// anything with a draw; for two teams or two players with no draw, keep the fitted
-    /// vertical scale the live page uses today (`probabilityWindow9483`).
+    /// Ruling 201 (#12750): delegates to the single shared scale rule (`ChartScaleRule201`).
     nonisolated static func usesZeroToHundredVerticalScale201(sportKey: String?) -> Bool {
-        if DrawPricedWinner.sportPricesADraw(sportKey) { return true }
-        guard let key = sportKey?.lowercased(), !key.isEmpty else { return false }
-        for prefix in ["soccer", "cricket", "boxing", "rugby", "rugbyunion", "rugbyleague", "chess"] {
-            if key == prefix || key.hasPrefix("\(prefix)_") {
-                return true
-            }
-        }
-        return false
+        ChartScaleRule201.usesZeroToHundredVerticalScale(sportKey: sportKey)
     }
 
     /// This chart's axis plan for one Sources state, from the points it draws
@@ -5023,9 +5014,10 @@ extension OddsChartView {
                               sourcesOpen: Bool) -> AxisPlan9483 {
         let revealed = sourcesOpen ? Self.revealableSources9483(in: dataPoints, withheld: withheldSources9483) : []
         let window: ChartProbabilityAxis9483.Window
-        if Self.usesZeroToHundredVerticalScale201(sportKey: sportKey) {
+        switch ChartScaleRule201.gameMode(sportKey: sportKey) {
+        case .fullZeroToHundred:
             window = ChartProbabilityAxis9483.full
-        } else {
+        case .fittedTwoWay, .zeroToTopValue:
             window = Self.probabilityWindow9483(
                 points: dataPoints,
                 defaultSources: Self.defaultVisibleSources(in: dataPoints),
