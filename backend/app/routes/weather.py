@@ -1519,7 +1519,7 @@ async def get_rain(db: AsyncSession):
 
     # --- Monthly city rain ---
     monthly_query = _open_weather_query().where(
-        FuturesMarket.name.ilike("Rain in%in%"),
+        FuturesMarket.name.ilike("Rain in% in %"),
     )
     monthly_result = await db.execute(monthly_query)
     monthly_markets: list[FuturesMarket] = list(monthly_result.scalars().all())
@@ -1528,18 +1528,17 @@ async def get_rain(db: AsyncSession):
 
     monthly_rain = []
     for city_name, (_, m, period) in city_best.items():
+        yes_outcome = _get_yes_outcome(m)
         raw = _get_yes_probability_raw(m)
         prob = _get_yes_probability(m)
+        settled = _get_yes_settled(m)
         delta = 0
-        best_prob = 0.0
-        for o in m.outcomes:
-            p = float(o.current_probability or 0)
-            if p > best_prob:
-                best_prob = p
-                if o.probability_change_24h is not None:
-                    delta = round(float(o.probability_change_24h) * 100)
-                else:
-                    delta = 0
+        if (
+            not settled
+            and yes_outcome is not None
+            and yes_outcome.probability_change_24h is not None
+        ):
+            delta = round(float(yes_outcome.probability_change_24h) * 100)
 
         monthly_rain.append({
             "city": city_name,
@@ -1549,7 +1548,7 @@ async def get_rain(db: AsyncSession):
             # loudest: Miami, Seattle, NYC and Houston all store 0.995000 on an
             # OPEN "Above 1 inch" market and all four printed a flat 100%.
             "probability": raw,
-            "settled": _get_yes_settled(m),
+            "settled": settled,
             "src": _market_source(m) or None,
             "delta24h": delta,
             "market_id": getattr(m, "id", None),
@@ -1566,7 +1565,17 @@ async def get_rain(db: AsyncSession):
 #: "Rain in <city> in <Mon YYYY>?" — Kalshi's monthly city-rain title. The city
 #: capture is non-greedy so "Rain in Los Angeles in Sep 2026?" keeps the whole
 #: city name and stops at the month, not at the first " in ".
-_MONTHLY_CITY_RE = re.compile(r"Rain in (.+?) in (\w+ \d{4})", re.I)
+_MONTHLY_CITY_RE = re.compile(r"^\s*Rain in (.+?) in ([A-Za-z]+ \d{4})\??\s*$", re.I)
+
+
+def _clean_monthly_city_name(raw_city: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (raw_city or "").strip()).rstrip("?.!,")
+    if re.fullmatch(r"washington,\s*d\.?c\.?", cleaned, re.I):
+        return "Washington DC"
+    return cleaned
+
+
+_MONTHLY_FALLBACK_CITY_RE = re.compile(r"^\s*Rain in (.+?) in (.+?)\??\s*$", re.I)
 
 
 def _monthly_city_best(markets) -> dict:
@@ -1602,16 +1611,35 @@ def _monthly_city_best(markets) -> dict:
     a test that reconstructs a production judgement is only accidentally
     testing production (`stripped_market_series`, CERT-1893).
     """
-    city_best: dict[str, tuple] = {}  # city -> (resolution_date, market, period)
+    by_key: dict[str, tuple[str, tuple]] = {}  # lower_city -> (display_city, (res_date, market, period))
     for m in markets:
-        city_match = _MONTHLY_CITY_RE.search(m.name or "")
-        city_name = city_match.group(1).strip() if city_match else m.name
-        period = city_match.group(2).strip() if city_match else None
+        raw_name = m.name or ""
+        if _rain_day(m) is not None:
+            continue
+        city_match = _MONTHLY_CITY_RE.search(raw_name)
+        if city_match:
+            city_name = _clean_monthly_city_name(city_match.group(1))
+            period: Optional[str] = city_match.group(2).strip()
+        else:
+            # #12093: single-day rain markets ("Rain in Austin on Feb 14, 2027?",
+            # "Rain in Indianapolis on Nov 27, 2026?") have no second " in "
+            # clause and matched `ilike("Rain in%in%")` only because the city
+            # name contains "in". Exclude them while preserving `period=None`
+            # when a genuine `Rain in <place> in <qualifier>` title carries no month.
+            fb_match = _MONTHLY_FALLBACK_CITY_RE.search(raw_name)
+            if not fb_match:
+                continue
+            city_name = _clean_monthly_city_name(fb_match.group(1))
+            period = None
+        if not city_name:
+            continue
+        city_key = city_name.lower()
         res_date = m.resolution_date
-        existing = city_best.get(city_name)
+        existing_entry = by_key.get(city_key)
+        existing = existing_entry[1] if existing_entry else None
         if not existing or (res_date and (not existing[0] or res_date < existing[0])):
-            city_best[city_name] = (res_date, m, period)
-    return city_best
+            by_key[city_key] = (city_name, (res_date, m, period))
+    return {display_city: payload for display_city, payload in by_key.values()}
 
 
 #: The date Kalshi puts at the end of a daily rain ticker: `KXRAIN-26SEP06`,
@@ -1780,8 +1808,20 @@ def _nyc_rain_probability(market: FuturesMarket) -> Optional[int]:
 
 
 def _get_yes_outcome(market: FuturesMarket):
-    """The outcome behind ``_get_yes_probability_raw``."""
-    for o in market.outcomes or []:
+    """The outcome behind ``_get_yes_probability_raw``.
+
+    Kalshi monthly city-rain markets (``KXRAINAUSM-26NOV``) are multi-rung
+    cumulative ladders (``Above 1 inch``, ``Above 2 inches``, ...), and the
+    monthly rainfall card explicitly promises ``"Above 1 inch of rain"``. Select
+    the ``Above 1 inch`` rung explicitly before falling back to binary ``Yes``
+    or ``_leader_outcome``.
+    """
+    outcomes = list(market.outcomes or [])
+    for o in outcomes:
+        label = (o.name or "").strip().lower()
+        if label in ("above 1 inch", "above 1 inches", "above 1.0 inch", "above 1.0 inches"):
+            return o
+    for o in outcomes:
         if o.name and o.name.lower() in ("yes", "y"):
             return o
     return _leader_outcome(market)
@@ -1793,16 +1833,15 @@ def _get_yes_settled(market: FuturesMarket) -> bool:
 
 
 def _get_yes_probability_raw(market: FuturesMarket) -> float:
-    """The 'Yes' probability of a binary market, 0-1.
+    """The 'Above 1 inch' / 'Yes' probability of a monthly rain market, 0-1.
 
     The unrounded twin of ``_get_yes_probability`` — see
     ``_highest_probability`` (#6616). This is the scan behind the monthly
     rainfall card, where four cities quoted at ``0.995`` printed ``100%``.
     """
-    for o in market.outcomes:
-        if o.name and o.name.lower() in ("yes", "y"):
-            return float(o.current_probability or 0)
-    # Fallback: use highest probability
+    outcome = _get_yes_outcome(market)
+    if outcome is not None and outcome.current_probability is not None:
+        return float(outcome.current_probability)
     return _highest_probability(market)
 
 

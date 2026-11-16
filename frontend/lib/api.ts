@@ -2419,6 +2419,7 @@ export interface EconDistribution {
   q: string;
   kind: "ladder" | "brackets";
   rows: [number, string][];
+  reached_labels?: string[];
   src: string;
   market_id: number;
 }
