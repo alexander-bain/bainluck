@@ -411,7 +411,12 @@ struct EventCardView: View {
             return nil
         }
         let abbrevs = TeamShortName.abbreviationPair(
-            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+            away: event.awayTeam,
+            home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport
+        )
         return (
             visible: "Projected: \(abbrevs.away) \(pair.away) \u{2013} \(abbrevs.home) \(pair.home)",
             spoken: "Projected final: \(event.awayTeam) \(pair.away), \(event.homeTeam) \(pair.home)"
@@ -434,7 +439,7 @@ struct EventCardView: View {
             hasCurrentChance: hasCurrent,
             hasPrematchChance: hasPrematch,
             hasScore: hasScore,
-            showsLivePregameColumn: showsInlineLivePregame12616
+            hasProjectedLive: showsInlineLiveProjected204C
         )
     }
 
@@ -454,6 +459,17 @@ struct EventCardView: View {
                 side: .away
             )
 
+            if !usesFinishedAccessibilityLayout,
+               let drawChance = CompactGameCard12616.drawChanceText(
+                event: event,
+                isScheduled: isScheduled,
+                isLive: isLive,
+                isFinished: isFinished,
+                isSuspended: isSuspended
+               ) {
+                compactDrawRow(drawChance: drawChance)
+            }
+
             if !compactScheduleStyle && usesFinishedAccessibilityLayout {
                 probabilityBar
             }
@@ -468,17 +484,6 @@ struct EventCardView: View {
                 side: .home
             )
 
-            if !usesFinishedAccessibilityLayout,
-               let drawChance = CompactGameCard12616.drawChanceText(
-                event: event,
-                isScheduled: isScheduled,
-                isLive: isLive,
-                isFinished: isFinished,
-                isSuspended: isSuspended
-               ) {
-                compactDrawRow(drawChance: drawChance)
-            }
-
             if !compactScheduleStyle && !usesFinishedAccessibilityLayout {
                 probabilityBar
             }
@@ -491,77 +496,48 @@ struct EventCardView: View {
                 )
             }
 
-            if !compactScheduleStyle, let finalForecast = finalForecast11296 {
-                if usesFinishedAccessibilityLayout {
-                    FinalForecastLine11296(
-                        comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
-                        // Under the team names, past the 24pt crest and the row's 8pt gap.
-                        .padding(.leading, 32)
-                } else {
-                    CompactProjectedContextLine12616(
-                        text: CompactGameCard12616.finalContextText(finalForecast),
-                        spokenText: FinalForecastComparison11296.spokenText(
-                            finalForecast, awayName: event.awayTeam, homeName: event.homeTeam),
-                        accessibilityId: FinalForecastLine11296.accessibilityIdentifier
-                    )
-                }
-            }
-
-            if !compactScheduleStyle, isLive, !isSuspended {
-                let pregameContext = showsInlineLivePregame12616 ? nil : livePregameContext12616
-                if dynamicTypeSize.isAccessibilitySize {
-                    if let liveProjection = liveProjectedFinal2920 {
-                        LiveProjectedFinalLine2920(
-                            printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam,
-                            sportKey: event.sport)
+            if !compactScheduleStyle {
+                if let finalForecast = finalForecast11296 {
+                    if usesFinishedAccessibilityLayout {
+                        FinalForecastLine11296(
+                            comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+                            // Under the team names, past the 24pt crest and the row's 8pt gap.
                             .padding(.leading, 32)
-                    }
-                    if let pregameContext {
+                    } else {
                         CompactProjectedContextLine12616(
-                            text: pregameContext.visible,
-                            spokenText: pregameContext.spoken,
-                            accessibilityId: "eventCard.livePregameContext"
+                            text: CompactGameCard12616.finalContextText(finalForecast),
+                            spokenText: FinalForecastComparison11296.spokenText(
+                                finalForecast, awayName: event.awayTeam, homeName: event.homeTeam),
+                            accessibilityId: FinalForecastLine11296.accessibilityIdentifier
                         )
                     }
-                } else if let combinedText = CompactGameCard12616.combinedLiveContextText(
-                    projected: liveProjectedFinal2920,
-                    pregameClause: pregameContext?.visible
-                ) {
-                    let spokenParts = [
-                        liveProjectedFinal2920.map {
-                            LiveProjectedFinal2920.spokenText(
-                                $0, awayName: event.awayTeam, homeName: event.homeTeam)
-                        },
-                        pregameContext?.spoken,
-                    ].compactMap { $0 }
-                    CompactProjectedContextLine12616(
-                        text: combinedText,
-                        spokenText: spokenParts.joined(separator: ". "),
-                        accessibilityId: liveProjectedFinal2920 != nil
-                            ? LiveProjectedFinalLine2920.accessibilityIdentifier
-                            : "eventCard.livePregameContext"
-                    )
                 }
             }
         }
     }
 
-    private var liveSidePregame12616: (away: String?, home: String?, draw: String?) {
-        guard isLive, !isSuspended,
-              !EventCardFooter.reasonStatesTheOpening(CompactGameCard12616.sanitizedReason(reason)) else {
-            return (nil, nil, nil)
-        }
-        return CompactGameCard12616.liveSidePregameLabels(event: event, prematch: prematch)
+    private var liveProjectedLabels204C: (away: String, home: String)? {
+        CompactGameCard12616.liveProjectedColumnLabels(
+            printed: liveProjectedFinal2920,
+            awayScore: event.awayScore,
+            homeScore: event.homeScore
+        )
     }
 
-    private var showsInlineLivePregame12616: Bool {
-        let labels = liveSidePregame12616
-        guard labels.away != nil || labels.home != nil else { return false }
+    private var showsInlineLiveProjected204C: Bool {
+        guard isLive, !isSuspended, liveProjectedLabels204C != nil else { return false }
+        if dynamicTypeSize.isAccessibilitySize {
+            return true
+        }
         return CompactGameCard12616.liveInlinePregameFits(
             awayShortName: shortTeamNames.away,
             homeShortName: shortTeamNames.home,
             typeSize: dynamicTypeSize
         )
+    }
+
+    private var usesLiveAccessibilityRowStack204C: Bool {
+        isLive && !isSuspended && dynamicTypeSize.isAccessibilitySize
     }
 
     private var showsMediumColumn12616: Bool {
@@ -588,8 +564,8 @@ struct EventCardView: View {
         return min(compactLiveScoreWidth, 52)
     }
 
-    private var effectiveLivePregameColWidth: CGFloat {
-        min(compactPregameWidth, 66)
+    private var effectiveLiveProjectedColWidth204C: CGFloat {
+        min(compactLiveScoreWidth, 52)
     }
 
     private var effectiveLargeColWidth: CGFloat {
@@ -603,17 +579,17 @@ struct EventCardView: View {
     }
 
     private var largeColumnLeadingGap12616: CGFloat {
-        if showsInlineLivePregame12616 {
-            return pregameToNowGap
+        if showsInlineLiveProjected204C {
+            return pregameToNowGap + 4
         }
         return showsMediumColumn12616 ? scoreToPregameGutter : 0
     }
 
     private var trailingColumnsClusterWidth12616: CGFloat {
         let medW = showsMediumColumn12616 ? effectiveMediumColWidth : 0
-        let preW = showsInlineLivePregame12616 ? effectiveLivePregameColWidth + pregameColumnLeadingGap12616 : 0
+        let projW = showsInlineLiveProjected204C ? effectiveLiveProjectedColWidth204C + pregameColumnLeadingGap12616 : 0
         let lrgW = showsLargeColumn12616 ? effectiveLargeColWidth + largeColumnLeadingGap12616 : 0
-        return medW + preW + lrgW
+        return medW + projW + lrgW
     }
 
     private var sharedCompactTeamNameFontSize: CGFloat {
@@ -644,12 +620,12 @@ struct EventCardView: View {
                         .lineLimit(1)
                         .frame(width: effectiveMediumColWidth, alignment: .trailing)
                 }
-                if showsInlineLivePregame12616 {
+                if showsInlineLiveProjected204C {
                     Text(headers.pregame ?? "")
                         .font(compactHeaderFont12616)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
-                        .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
+                        .frame(width: effectiveLiveProjectedColWidth204C, alignment: .trailing)
                         .padding(.leading, pregameColumnLeadingGap12616)
                 }
                 if showsLargeColumn12616 {
@@ -697,10 +673,65 @@ struct EventCardView: View {
         if usesFinishedAccessibilityLayout {
             finishedAccessibilityTeamRow(
                 name: name, avatar: avatar, color: color, score: score, won: won, side: side)
+        } else if usesLiveAccessibilityRowStack204C {
+            liveAccessibilityTeamRow204C(
+                name: name, avatar: avatar, color: color, score: score, won: won, side: side)
         } else {
             singleRowTeamRow(
                 name: name, avatar: avatar, color: color, record: record, score: score, won: won, side: side)
         }
+    }
+
+    private func liveAccessibilityTeamRow204C(
+        name: String,
+        avatar: ParticipantAvatar,
+        color: Color,
+        score: Int?,
+        won: Bool,
+        side: TeamSide
+    ) -> some View {
+        let displayLabel = TeamShortName.isCollegeSport(sportKey: event.sport)
+            ? (side == .away ? shortTeamNames.away : shortTeamNames.home)
+            : name
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(displayLabel)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(alignment: .center, spacing: 8) {
+                TeamLogoView(
+                    url: avatar.url,
+                    teamName: name,
+                    color: color,
+                    size: 24,
+                    sportKey: event.sport,
+                    isPhotograph: avatar.isPhotograph,
+                    opponentName: side == .away ? event.homeTeam : event.awayTeam,
+                    abbreviation: side == .away ? event.awayTeamData?.abbreviation : event.homeTeamData?.abbreviation,
+                    opponentAbbreviation: side == .away ? event.homeTeamData?.abbreviation : event.awayTeamData?.abbreviation
+                )
+                Spacer(minLength: 0)
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    if showsMediumColumn12616 {
+                        mediumSlotView(score: score, won: won, side: side)
+                            .frame(width: effectiveMediumColWidth, alignment: .trailing)
+                    }
+                    if showsInlineLiveProjected204C {
+                        liveInlineProjectedSlotView(for: side)
+                            .frame(width: effectiveLiveProjectedColWidth204C, alignment: .trailing)
+                            .padding(.leading, pregameColumnLeadingGap12616)
+                    }
+                    if showsLargeColumn12616 {
+                        largeSlotView(score: score, won: won, side: side)
+                            .frame(width: effectiveLargeColWidth, alignment: .trailing)
+                            .padding(.leading, largeColumnLeadingGap12616)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private func singleRowTeamRow(name: String, avatar: ParticipantAvatar, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
@@ -742,9 +773,9 @@ struct EventCardView: View {
                     mediumSlotView(score: score, won: won, side: side)
                         .frame(width: effectiveMediumColWidth, alignment: .trailing)
                 }
-                if showsInlineLivePregame12616 {
-                    liveInlinePregameSlotView(for: side)
-                        .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
+                if showsInlineLiveProjected204C {
+                    liveInlineProjectedSlotView(for: side)
+                        .frame(width: effectiveLiveProjectedColWidth204C, alignment: .trailing)
                         .padding(.leading, pregameColumnLeadingGap12616)
                 }
                 if showsLargeColumn12616 {
@@ -757,12 +788,12 @@ struct EventCardView: View {
     }
 
     @ViewBuilder
-    private func liveInlinePregameSlotView(for side: TeamSide) -> some View {
-        let label = side == .home ? liveSidePregame12616.home : liveSidePregame12616.away
+    private func liveInlineProjectedSlotView(for side: TeamSide) -> some View {
+        let label = side == .home ? liveProjectedLabels204C?.home : liveProjectedLabels204C?.away
         if let label {
             Text(label)
-                .font(.system(size: min(compactPregameSize, 18), weight: .regular).monospacedDigit())
-                .foregroundStyle(DS.textSecondaryReadable)
+                .font(.system(size: min(compactScoreSize, 20), weight: .semibold).monospacedDigit())
+                .foregroundStyle(.primary)
                 .lineLimit(1)
         }
     }
@@ -859,17 +890,10 @@ struct EventCardView: View {
                     .frame(width: effectiveMediumColWidth, alignment: .trailing)
                 }
 
-                if showsInlineLivePregame12616 {
-                    Group {
-                        if let drawPre = liveSidePregame12616.draw {
-                            Text(drawPre)
-                                .font(.system(size: min(compactPregameSize, 18), weight: .regular).monospacedDigit())
-                                .foregroundStyle(DS.textSecondaryReadable)
-                                .lineLimit(1)
-                        }
-                    }
-                    .frame(width: effectiveLivePregameColWidth, alignment: .trailing)
-                    .padding(.leading, pregameColumnLeadingGap12616)
+                if showsInlineLiveProjected204C {
+                    Color.clear
+                        .frame(width: effectiveLiveProjectedColWidth204C, height: 1)
+                        .padding(.leading, pregameColumnLeadingGap12616)
                 }
 
                 if showsLargeColumn12616 {
@@ -976,10 +1000,12 @@ struct EventCardView: View {
             homeOpening: Double? = nil,
             sport: String? = nil
         ) -> Bool {
-            // #12616 / Ruling 182-A — finished game cards never draw the reason
-            // line, and records captions ("TOR 77-80 · BAL 76-81") are dropped
-            // so `footerRow` draws only a real non-finished reason to care.
+            // #12616 / Ruling 182-A + Direction 199 / Ruling 204-C — live and
+            // finished game cards draw no grey sentence under the bar; records
+            // captions ("TOR 77-80 · BAL 76-81") are dropped so `footerRow` draws
+            // only a real pre-game reason to care.
             guard !isFinished, let reason, !reason.isEmpty else { return false }
+            guard !isLive else { return false }
             guard !CompactGameCard12616.isRecordsCaption(reason) else { return false }
             return true
         }
@@ -1014,7 +1040,7 @@ struct EventCardView: View {
 
     private var footerRow: some View {
         HStack(spacing: 6) {
-            if !isFinished, let cleaned = CompactGameCard12616.sanitizedReason(reason), !cleaned.isEmpty {
+            if !isFinished, !isLive, let cleaned = CompactGameCard12616.sanitizedReason(reason), !cleaned.isEmpty {
                 reasonBadge(cleaned)
             }
             Spacer(minLength: 0)
@@ -1376,7 +1402,7 @@ struct EventCardView: View {
                 height: 6,
                 animated: isLive,
                 glowing: isLive,
-                notchProb: notch
+                notchProb: currentAwayIsWithheld ? nil : notch
             )
         }
     }

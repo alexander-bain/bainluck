@@ -60,7 +60,8 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
             prematch: prematch(liveGame),
             usesPictureLayout: true
         )
-        XCTAssertNil(livePictureModel.bar, "191-A chart panel replaces the 5pt bar on live games")
+        XCTAssertNotNil(livePictureModel.bar, "Ruling 204-C: live Discover card keeps the segmented bar with pregame tick above the 191-A chart panel")
+        XCTAssertEqual(livePictureModel.bar?.pregameNotch ?? -1, 0.64, accuracy: 0.001)
 
         // Finished game: carries the 191-A chart panel under the rows.
         let finishedGame = try decodeEvent("""
@@ -153,7 +154,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         XCTAssertEqual(complementModel.rows[1].primaryCell, .probability("68%"))
         XCTAssertEqual(complementModel.bar?.awayIsWithheld, true)
 
-        // 3. During (Live NBA: Score | Pregame | Now, streaming tenths summing to 100.0%)
+        // 3. During (Ruling 204-C Live NBA: Score | Proj. | Now, no Pregame column, pregame tick on bar)
         let liveNBA = try decodeEvent("""
         {"id": 15346136, "sport": "basketball_nba", "sport_name": "NBA",
          "away_team": "Boston Celtics", "home_team": "Toronto Raptors",
@@ -162,18 +163,28 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
          "espn": {"period": "Halftime"},
          "prematch_odds": {"away_probability": 0.64, "home_probability": 0.36,
                            "away_rendered_percent": 64, "home_rendered_percent": 36, "source": "kalshi"},
-         "current_odds": {"away_probability": 0.429, "home_probability": 0.571}}
+         "current_odds": {"away_probability": 0.429, "home_probability": 0.571,
+                          "live_projection": {
+                              "projected_away_score": 112.4, "projected_home_score": 116.8,
+                              "kind": "in_play", "boundary": "commence_time",
+                              "boundary_at": "2026-11-13T18:00:00Z",
+                              "earliest_confirmed_at": "2026-11-13T18:35:00Z",
+                              "latest_captured_at": "2026-11-13T18:36:00Z",
+                              "source": "sportsbooks", "basis": "consensus_spread_total",
+                              "bookmaker_count": 4, "unit": "points", "period": "full_game"
+                          }}}
         """)
         let liveModel = DiscoverSingleGameCard190C.build(
             event: liveNBA,
             prematch: prematch(liveNBA),
-            usesPictureLayout: false
+            usesPictureLayout: true
         )
-        XCTAssertEqual(liveModel.headers, .init(score: "Score", pregame: "Pregame", primary: "Now"))
+        XCTAssertEqual(liveModel.headers, .init(score: "Score", pregame: "Proj.", primary: "Now"))
         XCTAssertEqual(liveModel.rows.map(\.scoreText), ["54", "61"])
-        XCTAssertEqual(liveModel.rows.map(\.pregameText), ["64%", "36%"])
+        XCTAssertEqual(liveModel.rows.map(\.pregameText), ["112", "117"])
         XCTAssertEqual(liveModel.rows.map(\.primaryCell), [.probability("42.9%"), .probability("57.1%")])
         XCTAssertNotNil(liveModel.bar)
+        XCTAssertEqual(liveModel.bar?.pregameNotch ?? -1, 0.64, accuracy: 0.001)
 
         // 4. After (Finished NBA: Score | Pregame | Result, Won ✓ on winner, — on loser, NO bar)
         let afterNBA = try decodeEvent("""

@@ -123,10 +123,19 @@ struct EventSportHeadlineCard12472: View {
         return presentation.mode != .flat
     }
 
+    private func extraLeadingGap(at index: Int) -> CGFloat {
+        guard index > 0, !isManyColumnScoreboard else { return 0 }
+        if model.columns[index].role == .now {
+            return 8
+        }
+        return 0
+    }
+
     private var totalColumnsWidth: CGFloat {
         let widths = model.columns.enumerated().reduce(CGFloat(0)) { $0 + resolvedColumnWidth(for: $1.element, at: $1.offset) }
         let gaps = CGFloat(max(model.columns.count - 1, 0)) * columnSpacing
-        return widths + gaps
+        let extra = model.columns.indices.reduce(CGFloat(0)) { $0 + extraLeadingGap(at: $1) }
+        return widths + gaps + extra
     }
 
     private var sharedTeamNameFontSize: CGFloat {
@@ -397,6 +406,7 @@ struct EventSportHeadlineCard12472: View {
                     .minimumScaleFactor(0.8)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(width: resolvedColumnWidth(for: col, at: idx), alignment: .trailing)
+                    .padding(.leading, extraLeadingGap(at: idx))
             }
         }
         .accessibilityHidden(true)
@@ -501,6 +511,7 @@ struct EventSportHeadlineCard12472: View {
                 tint: tint
             )
             .frame(width: resolvedColumnWidth(for: col, at: idx), alignment: .trailing)
+            .padding(.leading, extraLeadingGap(at: idx))
         }
     }
 
