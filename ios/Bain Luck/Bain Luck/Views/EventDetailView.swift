@@ -201,14 +201,9 @@ struct EventDetailView: View {
     static func heroLogoSize(stacked: Bool, regular: CGFloat) -> CGFloat {
         stacked ? min(regular, stackedHeroLogoSize) : regular
     }
+    static let readableDetailMaxWidth: CGFloat = 720
     private var scoreFontSize: CGFloat { isIPad ? 52 : 40 }
-    private var contentMaxWidth: CGFloat {
-        #if os(macOS)
-        return 1200
-        #else
-        return isIPad ? 1100 : 700
-        #endif
-    }
+    private var contentMaxWidth: CGFloat { Self.readableDetailMaxWidth }
 
     /// The title's rungs, or nil before a score exists to protect.
     private var titleRungs: EventNavTitle.Rungs? {

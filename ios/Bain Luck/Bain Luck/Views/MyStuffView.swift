@@ -56,6 +56,9 @@ struct MyStuffView: View {
         isAuthenticated
     }
 
+    static let signInMaxWidth: CGFloat = 560
+    static let signedInManagePinsMaxWidth: CGFloat = 800
+
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
@@ -64,12 +67,29 @@ struct MyStuffView: View {
                 } label: {
                     HStack {
                         Label("Manage pins", systemImage: "bookmark.fill")
+                            .font(.subheadline.weight(.medium))
                         Spacer()
                         Text("\(pinManager.savedPins.count)")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
                         Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
                     }
-                    .padding()
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.cardBackgroundDark)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                    )
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+                .frame(maxWidth: authManager.isAuthenticated ? Self.signedInManagePinsMaxWidth : Self.signInMaxWidth)
+                .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("myStuffManagePins")
                 Group {
                     if authManager.isLoading {
@@ -85,7 +105,7 @@ struct MyStuffView: View {
             }
             .navigationTitle("My Stuff")
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(sizeClass == .regular ? .inline : .large)
             #endif
             .toolbar {
                 // Gated on being SIGNED IN and nothing else. It used to also
@@ -259,6 +279,8 @@ struct MyStuffView: View {
                     .foregroundStyle(.tertiary)
                     .padding(.bottom, 40)
             }
+            .frame(maxWidth: Self.signInMaxWidth)
+            .frame(maxWidth: .infinity)
         }
     }
 
