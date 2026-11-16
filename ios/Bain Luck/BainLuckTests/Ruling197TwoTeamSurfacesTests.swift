@@ -264,6 +264,32 @@ final class Ruling197TwoTeamSurfacesTests: XCTestCase {
         }
     }
 
+    func testWebsiteHueFamilyParitySeparatesBlueGreenAndPurple() {
+        // Matches frontend/lib/teamColors.ts colorHueFamily (#12757):
+        // Knicks blue (#006BB6) vs Celtics green (#007A33) -> .blue vs .green (untouched)
+        XCTAssertEqual(ProbabilityBarPalette.colorHueFamily("#006BB6"), .blue)
+        XCTAssertEqual(ProbabilityBarPalette.colorHueFamily("#007A33"), .green)
+        XCTAssertFalse(ProbabilityBarPalette.sameHueFamily("#006BB6", "#007A33"))
+        let knicksCeltics = TeamTextContrast.cardColorHexes(awayHex: "#006BB6", homeHex: "#007A33", awaySecondaryHex: "#F58426")
+        XCTAssertEqual(knicksCeltics.away, "#006BB6")
+        XCTAssertEqual(knicksCeltics.home, "#007A33")
+
+        // Bears navy (#0B162A) vs Packers green (#203731) -> .blue vs .green (untouched)
+        XCTAssertEqual(ProbabilityBarPalette.colorHueFamily("#0B162A"), .blue)
+        XCTAssertEqual(ProbabilityBarPalette.colorHueFamily("#203731"), .green)
+        XCTAssertFalse(ProbabilityBarPalette.sameHueFamily("#0B162A", "#203731"))
+
+        // Bills blue (#00338D) vs Vikings purple (#4F2683) -> .blue vs .purple (untouched)
+        XCTAssertEqual(ProbabilityBarPalette.colorHueFamily("#00338D"), .blue)
+        XCTAssertEqual(ProbabilityBarPalette.colorHueFamily("#4F2683"), .purple)
+        XCTAssertFalse(ProbabilityBarPalette.sameHueFamily("#00338D", "#4F2683"))
+
+        // Claret (#660E36) vs red (#EF2F24) -> .magenta vs .red (untouched)
+        XCTAssertEqual(ProbabilityBarPalette.colorHueFamily("#660E36"), .magenta)
+        XCTAssertEqual(ProbabilityBarPalette.colorHueFamily("#EF2F24"), .red)
+        XCTAssertFalse(ProbabilityBarPalette.sameHueFamily("#660E36", "#EF2F24"))
+    }
+
     // MARK: - 390 px Render Export
 
     func testRuling197TwoTeamSurfacesFitAt390AndExportContactSheet() throws {
