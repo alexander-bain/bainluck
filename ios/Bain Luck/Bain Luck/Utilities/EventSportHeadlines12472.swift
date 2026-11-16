@@ -1820,7 +1820,7 @@ enum EventSportHeadlines12472 {
                     opponentFullName: homeFullName,
                     shortName: shortNames.away,
                     logoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
-                    record: trimmedNonEmpty(event.awayTeamData?.record),
+                    record: nil,
                     projectedText: nil,
                     pregameProjectedNumberText: nil,
                     liveProjectedNumberText: liveProjNumbers?.away,
@@ -1834,7 +1834,7 @@ enum EventSportHeadlines12472 {
                     opponentFullName: awayFullName,
                     shortName: shortNames.home,
                     logoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
-                    record: trimmedNonEmpty(event.homeTeamData?.record),
+                    record: nil,
                     projectedText: nil,
                     pregameProjectedNumberText: nil,
                     liveProjectedNumberText: liveProjNumbers?.home,
@@ -2653,7 +2653,21 @@ enum EventSportHeadlines12472 {
         String(format: "%.1f", value)
     }
 
-    /// Bare live projected numbers (`"24.0"` / `"27.5"`) for the Ruling 200-B
+    /// Football and basketball projections print as whole numbers (`24`, `28`);
+    /// baseball, hockey, and soccer keep one decimal (`4.5`, `3.2`, `1.8`).
+    nonisolated static func formatLiveProjectedColumnNumber(
+        _ value: Double,
+        sportKey: String?
+    ) -> String {
+        let lower = (sportKey ?? "").lowercased()
+        if lower.hasPrefix("americanfootball") || lower.hasPrefix("basketball") {
+            return "\(Int(value.rounded()))"
+        }
+        return formatProjectedNumber(value)
+    }
+
+    /// Bare live projected numbers (`"24"` / `"28"` on football & basketball;
+    /// one decimal on baseball, hockey, and soccer) for the Ruling 200-B
     /// `Proj.` column during a game — never repeating `"Proj."` in the cell.
     nonisolated static func admittedLiveProjectedNumberPair(
         event: EventDetail,
@@ -2690,8 +2704,8 @@ enum EventSportHeadlines12472 {
         let safeAway = max(rawPair.away, Double(awayScore))
         let safeHome = max(rawPair.home, Double(homeScore))
         return (
-            away: formatProjectedNumber(safeAway),
-            home: formatProjectedNumber(safeHome)
+            away: formatLiveProjectedColumnNumber(safeAway, sportKey: event.sport),
+            home: formatLiveProjectedColumnNumber(safeHome, sportKey: event.sport)
         )
     }
 
