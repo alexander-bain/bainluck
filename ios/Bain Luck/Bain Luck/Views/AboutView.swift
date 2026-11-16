@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// Native About screen — a clean in-app web view of the canonical /about story
-/// (L2-144 Item 3, Alex's ask; "clean webview of /about is acceptable v1"), paired
-/// with a native "Picture credits" link to the website's `/picture-credits` page
-/// (Ruling 195-A / #12659).
+/// (L2-144 Item 3, Alex's ask; "clean webview of /about is acceptable v1"), where
+/// the page's fine-print "Picture credits" link (`/picture-credits`, Ruling 195-A /
+/// #12659) hands off cleanly to Safari without a duplicate native footer row.
 ///
 /// Rendering the live /about keeps the app's About in lockstep with the
 /// single-source narrative rebuilt in L2-143 (one-liner → anti-thesis → the
@@ -34,8 +34,9 @@ struct AboutView: View {
     /// as one site regardless, so the apex form would still render in place.
     static let aboutURL = URL(string: "https://www.bainluck.com/about?embed=1")!
 
-    /// Ruling 195-A (#12659): opens the website's Picture credits page
-    /// (`/picture-credits`, coordinated with Atlas PR #12732) in the system browser.
+    /// Ruling 195-A (#12659): canonical `/picture-credits` destination linked from
+    /// `/about?embed=1`'s fine print (Atlas PR #12732) and verified by
+    /// `AboutPictureCredits195ATests` to hand off to the system browser.
     static let pictureCreditsURL = URL(string: "https://www.bainluck.com/picture-credits")!
 
     /// Intercepts the "Start exploring" CTA (`/discover`) at the bottom of `/about`
