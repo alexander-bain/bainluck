@@ -28,6 +28,15 @@ from tests.test_feed_live_cache_ceiling import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pre_190_game_admission(monkeypatch):
+    """These cases are about caching and page assembly, not about which games
+    earn a seat; their fixtures seat ordinary games as furniture. Ruling 190
+    (#11937) would remove those games, so the pre-190 admission is pinned here.
+    The 190 rule is guarded in `test_discover_game_reason_190.py`."""
+    monkeypatch.setenv("DISCOVER_GAME_NEEDS_REASON", "false")
+
+
 def _seed(monkeypatch, *, counted_age_s=None, strict_age_s=None):
     """Seed real origins into the route's own sinks at their binding seams.
 
