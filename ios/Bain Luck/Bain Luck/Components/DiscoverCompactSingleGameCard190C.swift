@@ -226,7 +226,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     private var headerFont: Font {
         let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 14.5 : 13
-        return .system(size: min(headerFontSize, cap), weight: .medium).monospacedDigit()
+        return HeadlineStyleTable199.headers(.card, scaledSize: min(headerFontSize, cap)).monospacedDigit()
     }
 
     private var columnHeadersCluster: some View {
@@ -384,7 +384,9 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 size: size,
                 sportKey: event.sport,
                 isPhotograph: avatar.isPhotograph,
-                opponentName: event.homeTeam
+                opponentName: event.homeTeam,
+                abbreviation: event.awayTeamData?.abbreviation,
+                opponentAbbreviation: event.homeTeamData?.abbreviation
             )
         case .home:
             let avatar = event.avatar(home: true)
@@ -395,7 +397,9 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 size: size,
                 sportKey: event.sport,
                 isPhotograph: avatar.isPhotograph,
-                opponentName: event.awayTeam
+                opponentName: event.awayTeam,
+                abbreviation: event.homeTeamData?.abbreviation,
+                opponentAbbreviation: event.awayTeamData?.abbreviation
             )
         case .draw:
             ZStack {

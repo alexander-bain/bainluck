@@ -9,6 +9,7 @@ swiftc -parse-as-library -swift-version 5 -D DEBUG \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/RenderedPercent.swift" \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/DrawPricedWinner.swift" \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/SportVocab.swift" \
+  "$ROOT/ios/Bain Luck/Bain Luck/Utilities/TeamShortName.swift" \
   "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchLaunchRoute.swift" \
   "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchComplicationSnapshot.swift" \
   "$ROOT/ios/Bain Luck/BainLuckWatch Watch App/WatchComplicationPublisher.swift" \

@@ -76,7 +76,15 @@ AUTHORED_STORY_TITLES = {
     "story:aliens_disclosure": "Aliens & UFOs",
     # Culture / entertainment
     "story:major_entertainment_events": "Awards Season",
+    "story:oscars": "Oscars",
+    "story:grammys": "Grammys",
+    "story:emmys": "Emmys",
+    "story:golden_globes": "Golden Globes",
+    "story:met_gala": "Met Gala",
     "story:music_charts": "Music Charts",
+    "story:billboard_hot100": "Billboard Hot 100",
+    "story:billboard_200": "Billboard 200",
+    "story:spotify_charts": "Spotify Charts",
     "story:drake_iceman": "Drake",
     # Sport
     "story:fifa_world_cup": "World Cup",
@@ -288,7 +296,15 @@ AUTHORED_STORY_QUESTIONS = {
     "story:aliens_disclosure": "Does anyone confirm we are not alone?",
     # Culture / entertainment
     "story:major_entertainment_events": "Who wins awards season?",
+    "story:oscars": "Where do the Oscars races stand?",
+    "story:grammys": "Where do the Grammys races stand?",
+    "story:emmys": "Where do the Emmys races stand?",
+    "story:golden_globes": "Where do the Golden Globes races stand?",
+    "story:met_gala": "Who shows up at the Met Gala?",
     "story:music_charts": "Who tops the charts?",
+    "story:billboard_hot100": "Who tops the Billboard Hot 100?",
+    "story:billboard_200": "Who tops the Billboard 200?",
+    "story:spotify_charts": "Who tops the Spotify charts?",
     "story:drake_iceman": "How does the Drake record land?",
     # Sport
     "story:fifa_world_cup": "Who wins the World Cup?",
@@ -1007,7 +1023,16 @@ def _member_answers_story_question(story_key: str, item: dict[str, Any]) -> bool
 # refused MAIN item is not dropped — it falls through to its own card — while a
 # refused overflow-reserve row only loses the bundle seat (the reserve is not in
 # ``items`` and was never emittable standalone; see `_with_story_overflow`).
-_STORY_KEYS_REQUIRING_ENTERTAINMENT = frozenset({"story:major_entertainment_events"})
+_STORY_KEYS_REQUIRING_ENTERTAINMENT = frozenset(
+    {
+        "story:major_entertainment_events",
+        "story:oscars",
+        "story:grammys",
+        "story:emmys",
+        "story:golden_globes",
+        "story:met_gala",
+    }
+)
 
 
 def _member_fits_story(story_key: str, item: dict[str, Any]) -> bool:

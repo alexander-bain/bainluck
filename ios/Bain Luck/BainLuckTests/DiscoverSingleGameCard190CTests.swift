@@ -642,6 +642,6 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         XCTAssertEqual(discoverHeaders.primary, "Chance")
         XCTAssertEqual(compactHeaders.medium, "Proj.")
         XCTAssertEqual(compactHeaders.large, "Chance")
-        XCTAssertEqual(headlineNFL?.pregameColumnHeaders?.chance, "Chance")
+        XCTAssertEqual(headlineNFL.pregameColumnHeaders?.chance, "Chance")
     }
 }
