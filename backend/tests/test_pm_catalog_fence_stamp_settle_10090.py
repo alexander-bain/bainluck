@@ -146,7 +146,18 @@ async def _root_order(monkeypatch):
         await _turns(0.05)
         p.ns["price_buffer"].update(r.games["B"])
         b = asyncio.create_task(p.ns["flush_prices"](flush_started=1001))
-        await _turns(0.1)
+        # Wait for B's frame, not for a fixed 0.1 s. A's stamp stays parked until
+        # this test sets `x.release` below, so a frame seen here was published
+        # WHILE A's stamp was held, whenever it arrived. A fixed 0.1 s raced the
+        # rig's preview admission read (a refused localhost Redis with jittered
+        # retries, up to its 0.25 s budget) and failed #12772's shard 6 on Nov 16
+        # with the same files and runner build that passed on master.
+        try:
+            async with asyncio.timeout(2):
+                while 2 not in x.published:
+                    await asyncio.sleep(0.01)
+        except TimeoutError:
+            pass  # recorded below as b_published_while_a_stamp_held = False
         out["a_stamp_held"] = stamp_running(1)
         out["b_written_while_a_stamp_held"] = {900, 901} <= r.written
         out["b_published_while_a_stamp_held"] = 2 in x.published
