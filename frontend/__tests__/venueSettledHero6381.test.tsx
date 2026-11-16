@@ -135,7 +135,7 @@ beforeEach(() => {
   historyPayload = HISTORY;
 });
 
-describe("#6381 the hero prints the venue's grade instead of denying it", () => {
+describe("#6381 the hero prints the venue's grade instead of denying it (Direction 199: 'Ended', never 'Settled')", () => {
   it("names the graded score on the issue's own specimen", () => {
     eventPayload = event({
       venue_settled: true,
@@ -144,14 +144,11 @@ describe("#6381 the hero prints the venue's grade instead of denying it", () => 
 
     const html = draw();
 
-    expect(html).toContain("Settled · Draw 0-0");
-    expect(html).not.toContain(DENIAL);
+    expect(html).toContain("Ended · Draw 0-0");
+    expect(html).not.toContain("Ended · no result reported");
   });
 
   it("does the same on a suspended row, which is the LARGER half of the class", () => {
-    // Measured on production 2026-09-15: suspended 889, scheduled 426 (the
-    // issue's own sample), live 8. A fix that landed only on the arm the issue
-    // happened to name would ship to a third of its own defect.
     eventPayload = event({
       status: "suspended",
       venue_settled: true,
@@ -160,16 +157,11 @@ describe("#6381 the hero prints the venue's grade instead of denying it", () => 
 
     const html = draw();
 
-    // `renderToStaticMarkup` escapes the ampersand; the string the READER sees
-    // is "Settled · Brighton & Hove Albion wins 5-0".
-    expect(html).toContain("Settled · Brighton &amp; Hove Albion wins 5-0");
-    expect(html).not.toContain(DENIAL);
+    expect(html).toContain("Ended · Brighton &amp; Hove Albion wins 5-0");
+    expect(html).not.toContain("Ended · no result reported");
   });
 
-  it("says Settled and invents no score when only props graded", () => {
-    // The tennis shape: 15304840 (Sabalenka–Townsend) holds 16 prop grades and
-    // no score market, so the venue settled the event without ever quoting a
-    // scoreline.
+  it("says Ended · no result reported and invents no score when only props graded", () => {
     eventPayload = event({
       sport_key: "tennis_wta",
       sport: "tennis_wta",
@@ -181,43 +173,34 @@ describe("#6381 the hero prints the venue's grade instead of denying it", () => 
 
     const html = draw();
 
-    expect(html).toContain(VENUE_SETTLED_LABEL);
-    expect(html).not.toContain(DENIAL);
-    // 🔴 The whole point of the null arm: nothing may stand in for the score we
-    // do not have. "no score" would read as 0-0 beside sibling states that
-    // print real scorelines, and a dash would read as one.
-    expect(html).not.toContain("Settled ·");
-    expect(html).not.toMatch(/Settled[^<]*\d/);
+    expect(html).toContain("Ended · no result reported");
+    expect(html).not.toContain("Settled");
+    expect(html).not.toMatch(/Ended ·[^<]*\d/);
   });
 
-  it("swaps the tooltip too, so the sentence behind the badge is not the old one", () => {
+  it("marks data-venue-settled on the suspended/ended header span", () => {
     eventPayload = event({ venue_settled: true, venue_settled_result: "Draw 0-0" });
-    expect(draw()).toContain(VENUE_SETTLED_DESCRIPTION);
+    expect(draw()).toContain('data-venue-settled="true"');
 
     eventPayload = event({ venue_settled: false, venue_settled_result: null });
-    expect(draw()).toContain(SUSPENDED_DESCRIPTION);
+    expect(draw()).not.toContain('data-venue-settled="true"');
   });
 
-  // ── controls: every row that is NOT venue-settled keeps what it had ────────
-
-  it("leaves the sentence alone when the venue graded nothing", () => {
+  it("prints Ended · no result reported when the venue graded nothing", () => {
     eventPayload = event({ venue_settled: false, venue_settled_result: null });
 
     const html = draw();
 
-    expect(html).toContain(DENIAL);
+    expect(html).toContain("Ended · no result reported");
     expect(html).not.toContain(VENUE_SETTLED_LABEL);
   });
 
-  it("leaves the sentence alone when the keys are absent — which is every row today", () => {
-    // Out of scope, and the state the entire site is in until PR #6410 ships.
-    // A consumer that read `undefined` as anything but "we never asked" would
-    // have gone live as a regression on 1,471 pages.
+  it("prints Ended · no result reported when the keys are absent", () => {
     eventPayload = event();
 
     const html = draw();
 
-    expect(html).toContain(DENIAL);
+    expect(html).toContain("Ended · no result reported");
     expect(html).not.toContain(VENUE_SETTLED_LABEL);
   });
 

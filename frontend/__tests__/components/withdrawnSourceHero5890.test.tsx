@@ -266,9 +266,9 @@ describe("the page hands the hero its state", () => {
       .map((line) => line.replace(/(^|\s)\/\/.*$/, "$1"))
       .join("\n");
 
-  test("`started` is wired from the page's own three answers", () => {
+  test("isLive, isFinished, and isSuspended are wired into resolveEventPageHeadline199", () => {
     expect(executable()).toMatch(
-      /started=\{isLive \|\| isFinished \|\| isSuspended\}/,
+      /resolveEventPageHeadline199\(\{\s*event,\s*effectivelyLive,\s*isLive,\s*isFinished,\s*isSuspended,/,
     );
   });
 });
