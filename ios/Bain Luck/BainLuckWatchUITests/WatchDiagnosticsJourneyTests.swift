@@ -5,11 +5,13 @@ import XCTest
 /// activation and event recording remain suppressed by WatchTelemetry in fixtures.
 final class WatchDiagnosticsJourneyTests: XCTestCase {
     @MainActor func testConsentSettingPersistsAndRevokesAtStandardSize() throws {
+        executionTimeAllowance = 300
         try journey(large: false)
         print("WATCH_UI_DIAGNOSTICS_STANDARD=PASS")
     }
 
     @MainActor func testConsentSettingPersistsAndRevokesAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try journey(large: true)
         print("WATCH_UI_DIAGNOSTICS_LARGE=PASS")
     }

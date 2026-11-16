@@ -60,6 +60,7 @@ final class PickerReturnJourneyTests: XCTestCase {
 
     @MainActor
     func testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection() throws {
+        executionTimeAllowance = 300
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }

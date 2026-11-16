@@ -362,6 +362,29 @@ def source_fingerprint(repo):
     return hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
 
 
+def _comparable_toolchain(identity):
+    """Normalize only the default host macOS point-release triple from `swiftc --version`.
+
+    GitHub's `xcode-27` runner pool serves both macOS 27.0 and macOS 27.2 host VMs
+    with the identical `/Applications/Xcode_27.2.app` (`27B52`), Swift 6.4.2 compiler,
+    and 27.2 Watch/iPhone simulator SDKs, causing `xcrun swiftc --version` (called
+    without `-target`) to print `Target: arm64-apple-macosx27.0.0` vs `27.2.0`.
+    Architecture, macOS major version, Swift/clang build, Xcode build, and all
+    simulator SDK versions/builds still fail closed on any difference.
+    """
+    if not isinstance(identity, dict):
+        return identity
+    normalized = dict(identity)
+    swift = normalized.get("swift")
+    if isinstance(swift, str):
+        normalized["swift"] = re.sub(
+            r"(?m)^(Target:\s+\S+-apple-macosx\d+)\.\d+(?:\.\d+)?$",
+            r"\1",
+            swift,
+        )
+    return normalized
+
+
 def verify_manifest(root, sha, environment, pins_hash, source_hash):
     path = root / "manifest.json"
     manifest = json.loads(path.read_text())
@@ -373,7 +396,9 @@ def verify_manifest(root, sha, environment, pins_hash, source_hash):
         raise ValueError("Wrong simulator product source/schema")
     if manifest.get("source_fingerprint") != source_hash:
         raise ValueError("Simulator product source fingerprint mismatch")
-    if manifest.get("toolchain") != environment:
+    if _comparable_toolchain(manifest.get("toolchain")) != _comparable_toolchain(
+        environment
+    ):
         raise ValueError("Simulator product toolchain/SDK mismatch")
     if manifest.get("pins_sha256") != pins_hash:
         raise ValueError("Simulator product package pins mismatch")

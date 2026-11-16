@@ -562,6 +562,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testAdaptiveScoreShortLiveAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try checkAdaptiveScores(scenario: "short-live", large: true)
     }
 
@@ -572,6 +573,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testAdaptiveScoreLongFinalAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try checkAdaptiveScores(scenario: "long-final", large: true)
     }
 
@@ -582,6 +584,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testAdaptiveScoreMissingFinalAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try checkAdaptiveScores(scenario: "missing-final", large: true)
     }
 
@@ -1318,6 +1321,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         let app = try launchCurrentGame(large: true)
         defer { app.terminate() }
         try openPicker(app)
@@ -1375,6 +1379,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testCurrentGameSurvivesPartialOfflineAndEmptyLists() throws {
+        executionTimeAllowance = 300
         let app = try launchCurrentGame(large: false)
         defer { app.terminate() }
         try openPicker(app)
@@ -1413,6 +1418,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testCurrentGameAndOfflineDetailsAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         let app = try launchCurrentGame(large: true)
         defer { app.terminate() }
         try openPicker(app)

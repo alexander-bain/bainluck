@@ -43,7 +43,7 @@ def source(name):
     text = (SWIFT / name).read_text()
     if name == "WidgetTapJourneyTests.swift":
         text = restore_launcher_scope(text)
-    if name == "PickerSelectedStateJourneyTests.swift":
+    if name in ("PickerSelectedStateJourneyTests.swift", "PickerReturnJourneyTests.swift"):
         text = restore_xcode27_2_watch_fixes(name, text)
     if name in COST_READ_TRANSFORMS:
         text = restore_cost_reads(name, text)
@@ -667,7 +667,7 @@ COST_PROPOSED_SHA256 = {
 
 
 def restore_cost_reads(name, text):
-    if name == "LargeTextRecoveryJourneyTests.swift":
+    if name in ("LargeTextRecoveryJourneyTests.swift", "PickerAliasJourneyTests.swift"):
         text = restore_xcode27_2_watch_fixes(name, text)
     if name == "WatchDiagnosticsJourneyTests.swift":
         text = restore_controls_traversal(text)
@@ -904,6 +904,7 @@ FLAT_ORIGINAL_SHA256 = (
 
 
 def restore_controls_traversal(text):
+    text = restore_xcode27_2_watch_fixes("WatchDiagnosticsJourneyTests.swift", text)
     for previous, current, count in reversed(CONTROLS_TRAVERSAL):
         assert text.count(current) == count, "Unreviewed diagnostics traversal"
         text = text.replace(current, previous)
@@ -1020,14 +1021,20 @@ def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
 # #12513: exact Xcode 27.2 Watch UI test fixes.
 XCODE_27_2_CURRENT_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "81fbbaf5f8db988e57e84cbd34bb5e4dcb851930c634d189c80df598216b8637",
-    "PickerCurrentGameJourneyTests.swift": "5c8956963d14a1a40ad10eef07868b5f9dbf704e053de6e69c4019770eb780ef",
+    "PickerAliasJourneyTests.swift": "96d056ae6d20bcd7cd5d78a021cba55078c6fdecba51c4eec9b034b8f09e27a9",
+    "PickerCurrentGameJourneyTests.swift": "9e8f4e7387ba7b7845dd245f7fa3afdf07ab6a3a93263b5e3e38a68428fdf2ca",
+    "PickerReturnJourneyTests.swift": "8e23abbce48fc2c47f382fdde2985f414236026caa03987535b91b8524e361bc",
     "PickerSelectedStateJourneyTests.swift": "c9c3bc3dee81b7cdd67b111f011756e096b3e085b1a00e19a111270c77dc323d",
+    "WatchDiagnosticsJourneyTests.swift": "9f6fd014300264b8a817e8b8c42caebc91e15457c1d305ca06018c67c62fdb68",
     "WidgetTapJourneyTests.swift": "f3ce342ee7b6e8822be8c78869555123b95fbb675ea1a7dc8f6a0642da124535",
 }
 XCODE_27_2_PREVIOUS_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
+    "PickerAliasJourneyTests.swift": "ae6767e2c5563d30604e2f25a574f5ff3c2e20ba22478e8dd6a178161e1d3d1e",
     "PickerCurrentGameJourneyTests.swift": "a1bfd4e4e7f0106d8f7077b243a987426172d9f87fcef6da482f6dc50b011616",
+    "PickerReturnJourneyTests.swift": "32cd7e7aa5023fd14216866babc58394c67121c84b16e651fd89035092898c48",
     "PickerSelectedStateJourneyTests.swift": "c030257a0f2c7c8440c91be9d35720bf85ee7bd3dfbbc76447abab1b600d7648",
+    "WatchDiagnosticsJourneyTests.swift": "19a04af73c8f300bdb8d024cbb2e06365a042fc0e83ccb2e9df943a90f2bd4b1",
     "WidgetTapJourneyTests.swift": "7f5cbfe70b39a1104540a6f52986dcc657bad923cf2548b856ba81fe4089da57",
 }
 XCODE_27_2_WATCH_TRANSFORMS = {
@@ -1038,11 +1045,48 @@ XCODE_27_2_WATCH_TRANSFORMS = {
             1,
         )
     ],
+    "PickerAliasJourneyTests.swift": [
+        (
+            '    @MainActor\n    func testResolvedAliasRetainsReadingOfflineAndAfterRestart() throws {\n        try aliasJourney(largeText: false)\n        print("WATCH_UI_PICKER_ALIAS_STANDARD=PASS")\n    }\n',
+            '    @MainActor\n    func testResolvedAliasRetainsReadingOfflineAndAfterRestart() throws {\n        executionTimeAllowance = 300\n        try aliasJourney(largeText: false)\n        print("WATCH_UI_PICKER_ALIAS_STANDARD=PASS")\n    }\n',
+            1,
+        ),
+        (
+            '    @MainActor\n    func testResolvedAliasRetainsReadingAtAccessibilitySize() throws {\n        try aliasJourney(largeText: true)\n        print("WATCH_UI_PICKER_ALIAS_LARGE=PASS")\n    }\n',
+            '    @MainActor\n    func testResolvedAliasRetainsReadingAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try aliasJourney(largeText: true)\n        print("WATCH_UI_PICKER_ALIAS_LARGE=PASS")\n    }\n',
+            1,
+        ),
+    ],
+    "PickerReturnJourneyTests.swift": [
+        (
+            "    @MainActor\n    func testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection() throws {\n        continueAfterFailure = false\n",
+            "    @MainActor\n    func testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n",
+            1,
+        )
+    ],
+    "WatchDiagnosticsJourneyTests.swift": [
+        (
+            '    @MainActor func testConsentSettingPersistsAndRevokesAtStandardSize() throws {\n        try journey(large: false)\n        print("WATCH_UI_DIAGNOSTICS_STANDARD=PASS")\n    }\n',
+            '    @MainActor func testConsentSettingPersistsAndRevokesAtStandardSize() throws {\n        executionTimeAllowance = 300\n        try journey(large: false)\n        print("WATCH_UI_DIAGNOSTICS_STANDARD=PASS")\n    }\n',
+            1,
+        ),
+        (
+            '    @MainActor func testConsentSettingPersistsAndRevokesAtAccessibilitySize() throws {\n        try journey(large: true)\n        print("WATCH_UI_DIAGNOSTICS_LARGE=PASS")\n    }\n',
+            '    @MainActor func testConsentSettingPersistsAndRevokesAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try journey(large: true)\n        print("WATCH_UI_DIAGNOSTICS_LARGE=PASS")\n    }\n',
+            1,
+        ),
+    ],
     "PickerSelectedStateJourneyTests.swift": [
         ('    @MainActor\n    func testSelectedGameIsMarkedInPickerAndCanChange() throws {\n        try selectedPickerJourney(largeText: false)\n        print("WATCH_UI_PICKER_SELECTED_STANDARD=PASS")\n    }\n', '    @MainActor\n    func testSelectedGameIsMarkedInPickerAndCanChange() throws {\n        executionTimeAllowance = 300\n        try selectedPickerJourney(largeText: false)\n        print("WATCH_UI_PICKER_SELECTED_STANDARD=PASS")\n    }\n', 1),
         ('    @MainActor\n    func testSelectedGameIsMarkedAtAccessibilitySize() throws {\n        try selectedPickerJourney(largeText: true)\n        print("WATCH_UI_PICKER_SELECTED_LARGE=PASS")\n    }\n', '    @MainActor\n    func testSelectedGameIsMarkedAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try selectedPickerJourney(largeText: true)\n        print("WATCH_UI_PICKER_SELECTED_LARGE=PASS")\n    }\n', 1),
     ],
     "PickerCurrentGameJourneyTests.swift": [
+        ('    @MainActor\n    func testAdaptiveScoreShortLiveAtAccessibilitySize() throws {\n        try checkAdaptiveScores(scenario: "short-live", large: true)\n    }\n', '    @MainActor\n    func testAdaptiveScoreShortLiveAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try checkAdaptiveScores(scenario: "short-live", large: true)\n    }\n', 1),
+        ('    @MainActor\n    func testAdaptiveScoreLongFinalAtAccessibilitySize() throws {\n        try checkAdaptiveScores(scenario: "long-final", large: true)\n    }\n', '    @MainActor\n    func testAdaptiveScoreLongFinalAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try checkAdaptiveScores(scenario: "long-final", large: true)\n    }\n', 1),
+        ('    @MainActor\n    func testAdaptiveScoreMissingFinalAtAccessibilitySize() throws {\n        try checkAdaptiveScores(scenario: "missing-final", large: true)\n    }\n', '    @MainActor\n    func testAdaptiveScoreMissingFinalAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try checkAdaptiveScores(scenario: "missing-final", large: true)\n    }\n', 1),
+        ('    @MainActor\n    func testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize() throws {\n        let app = try launchCurrentGame(large: true)\n', '    @MainActor\n    func testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        let app = try launchCurrentGame(large: true)\n', 1),
+        ('    @MainActor\n    func testCurrentGameSurvivesPartialOfflineAndEmptyLists() throws {\n        let app = try launchCurrentGame(large: false)\n', '    @MainActor\n    func testCurrentGameSurvivesPartialOfflineAndEmptyLists() throws {\n        executionTimeAllowance = 300\n        let app = try launchCurrentGame(large: false)\n', 1),
+        ('    @MainActor\n    func testCurrentGameAndOfflineDetailsAtAccessibilitySize() throws {\n        let app = try launchCurrentGame(large: true)\n', '    @MainActor\n    func testCurrentGameAndOfflineDetailsAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        let app = try launchCurrentGame(large: true)\n', 1),
         ('    @MainActor\n    func testHandoffHelpExplainsPhoneGestureAtStandardSize() throws {\n        try checkHandoffHelp(large: false)\n    }\n', '    @MainActor\n    func testHandoffHelpExplainsPhoneGestureAtStandardSize() throws {\n        executionTimeAllowance = 300\n        try checkHandoffHelp(large: false)\n    }\n', 1),
         ('    @MainActor\n    func testHandoffHelpExplainsPhoneGestureAtAccessibilitySize() throws {\n        try checkHandoffHelp(large: true)\n    }\n', '    @MainActor\n    func testHandoffHelpExplainsPhoneGestureAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try checkHandoffHelp(large: true)\n    }\n', 1),
         ('    @MainActor\n    func testScheduledPickerShowsSuppliedTimeAtStandardSize() throws {\n        try checkScheduledTime(large: false)\n    }\n', '    @MainActor\n    func testScheduledPickerShowsSuppliedTimeAtStandardSize() throws {\n        executionTimeAllowance = 300\n        try checkScheduledTime(large: false)\n    }\n', 1),

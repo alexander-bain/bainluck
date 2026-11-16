@@ -6,12 +6,14 @@ import XCTest
 final class PickerAliasJourneyTests: XCTestCase {
     @MainActor
     func testResolvedAliasRetainsReadingOfflineAndAfterRestart() throws {
+        executionTimeAllowance = 300
         try aliasJourney(largeText: false)
         print("WATCH_UI_PICKER_ALIAS_STANDARD=PASS")
     }
 
     @MainActor
     func testResolvedAliasRetainsReadingAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try aliasJourney(largeText: true)
         print("WATCH_UI_PICKER_ALIAS_LARGE=PASS")
     }

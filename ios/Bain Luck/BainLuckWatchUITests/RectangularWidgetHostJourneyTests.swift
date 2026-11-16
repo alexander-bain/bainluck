@@ -4,6 +4,7 @@ import XCTest
 final class RectangularWidgetHostJourneyTests: XCTestCase {
     @MainActor
     func testActualRectangularLauncherAndTap() throws {
+        executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }

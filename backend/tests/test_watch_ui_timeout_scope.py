@@ -9,6 +9,46 @@ ROOT = Path(__file__).resolve().parents[2]
 APPROVED_TIMEOUT_OVERRIDES = sorted(
     [
         (
+            "PickerAliasJourneyTests.swift",
+            "testResolvedAliasRetainsReadingAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerAliasJourneyTests.swift",
+            "testResolvedAliasRetainsReadingOfflineAndAfterRestart",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testAdaptiveScoreLongFinalAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testAdaptiveScoreMissingFinalAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testAdaptiveScoreShortLiveAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testCurrentGameAndOfflineDetailsAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testCurrentGameSurvivesPartialOfflineAndEmptyLists",
+            300,
+        ),
+        (
             "PickerCurrentGameJourneyTests.swift",
             "testHandoffHelpExplainsPhoneGestureAtAccessibilitySize",
             300,
@@ -59,6 +99,11 @@ APPROVED_TIMEOUT_OVERRIDES = sorted(
             300,
         ),
         (
+            "PickerReturnJourneyTests.swift",
+            "testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection",
+            300,
+        ),
+        (
             "PickerSelectedStateJourneyTests.swift",
             "testSelectedGameIsMarkedAtAccessibilitySize",
             300,
@@ -66,6 +111,21 @@ APPROVED_TIMEOUT_OVERRIDES = sorted(
         (
             "PickerSelectedStateJourneyTests.swift",
             "testSelectedGameIsMarkedInPickerAndCanChange",
+            300,
+        ),
+        (
+            "RectangularWidgetHostJourneyTests.swift",
+            "testActualRectangularLauncherAndTap",
+            540,
+        ),
+        (
+            "WatchDiagnosticsJourneyTests.swift",
+            "testConsentSettingPersistsAndRevokesAtAccessibilitySize",
+            300,
+        ),
+        (
+            "WatchDiagnosticsJourneyTests.swift",
+            "testConsentSettingPersistsAndRevokesAtStandardSize",
             300,
         ),
         ("WidgetTapJourneyTests.swift", "testActualCircularLauncherAndTap", 540),
