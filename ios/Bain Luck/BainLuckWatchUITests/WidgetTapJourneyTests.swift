@@ -2,11 +2,6 @@
 import XCTest
 
 final class WidgetTapJourneyTests: XCTestCase {
-    override func setUpWithError() throws {
-        try super.setUpWithError()
-        executionTimeAllowance = 540
-    }
-
     @MainActor
     func testColdActualWidgetTapRetainsOfflineReading() throws {
         executionTimeAllowance = 540

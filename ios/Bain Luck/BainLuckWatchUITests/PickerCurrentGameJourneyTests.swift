@@ -30,11 +30,6 @@ enum WatchHeaderLabelTopology {
 /// Local design journeys: actual store responses and mounted native controls.
 /// They do not substitute for the eventual complete release or device gates.
 final class PickerCurrentGameJourneyTests: XCTestCase {
-    override func setUpWithError() throws {
-        try super.setUpWithError()
-        executionTimeAllowance = 360
-    }
-
     @MainActor
     func testPopulatedPickerShowsChoicesBeforeRefreshAtStandardSize() throws {
         try checkPopulatedPickerChoicesBeforeRefresh(large: false)
@@ -116,11 +111,13 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testHandoffHelpExplainsPhoneGestureAtStandardSize() throws {
+        executionTimeAllowance = 300
         try checkHandoffHelp(large: false)
     }
 
     @MainActor
     func testHandoffHelpExplainsPhoneGestureAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try checkHandoffHelp(large: true)
     }
 
@@ -1276,11 +1273,13 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testScheduledPickerShowsSuppliedTimeAtStandardSize() throws {
+        executionTimeAllowance = 300
         try checkScheduledTime(large: false)
     }
 
     @MainActor
     func testScheduledPickerShowsSuppliedTimeAtAccessibilitySize() throws {
+        executionTimeAllowance = 300
         try checkScheduledTime(large: true)
     }
 

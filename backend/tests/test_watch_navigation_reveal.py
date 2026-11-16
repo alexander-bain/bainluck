@@ -43,6 +43,8 @@ def source(name):
     text = (SWIFT / name).read_text()
     if name == "WidgetTapJourneyTests.swift":
         text = restore_launcher_scope(text)
+    if name == "PickerSelectedStateJourneyTests.swift":
+        text = restore_xcode27_2_watch_fixes(name, text)
     if name in COST_READ_TRANSFORMS:
         text = restore_cost_reads(name, text)
     if name == "PickerReturnJourneyTests.swift":
@@ -1018,12 +1020,14 @@ def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
 # #12513: exact Xcode 27.2 Watch UI test fixes.
 XCODE_27_2_CURRENT_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "81fbbaf5f8db988e57e84cbd34bb5e4dcb851930c634d189c80df598216b8637",
-    "PickerCurrentGameJourneyTests.swift": "aa1fd06b5cb29f9799899975ccbc590e154fe81a97309629065f17c6f1670f12",
-    "WidgetTapJourneyTests.swift": "2bd38740fb6d65f21f49cb4cdca3745b5b2522b947da8779d39604f9d847da3e",
+    "PickerCurrentGameJourneyTests.swift": "5c8956963d14a1a40ad10eef07868b5f9dbf704e053de6e69c4019770eb780ef",
+    "PickerSelectedStateJourneyTests.swift": "c9c3bc3dee81b7cdd67b111f011756e096b3e085b1a00e19a111270c77dc323d",
+    "WidgetTapJourneyTests.swift": "f3ce342ee7b6e8822be8c78869555123b95fbb675ea1a7dc8f6a0642da124535",
 }
 XCODE_27_2_PREVIOUS_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
     "PickerCurrentGameJourneyTests.swift": "a1bfd4e4e7f0106d8f7077b243a987426172d9f87fcef6da482f6dc50b011616",
+    "PickerSelectedStateJourneyTests.swift": "c030257a0f2c7c8440c91be9d35720bf85ee7bd3dfbbc76447abab1b600d7648",
     "WidgetTapJourneyTests.swift": "7f5cbfe70b39a1104540a6f52986dcc657bad923cf2548b856ba81fe4089da57",
 }
 XCODE_27_2_WATCH_TRANSFORMS = {
@@ -1034,7 +1038,15 @@ XCODE_27_2_WATCH_TRANSFORMS = {
             1,
         )
     ],
+    "PickerSelectedStateJourneyTests.swift": [
+        ('    @MainActor\n    func testSelectedGameIsMarkedInPickerAndCanChange() throws {\n        try selectedPickerJourney(largeText: false)\n        print("WATCH_UI_PICKER_SELECTED_STANDARD=PASS")\n    }\n', '    @MainActor\n    func testSelectedGameIsMarkedInPickerAndCanChange() throws {\n        executionTimeAllowance = 300\n        try selectedPickerJourney(largeText: false)\n        print("WATCH_UI_PICKER_SELECTED_STANDARD=PASS")\n    }\n', 1),
+        ('    @MainActor\n    func testSelectedGameIsMarkedAtAccessibilitySize() throws {\n        try selectedPickerJourney(largeText: true)\n        print("WATCH_UI_PICKER_SELECTED_LARGE=PASS")\n    }\n', '    @MainActor\n    func testSelectedGameIsMarkedAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try selectedPickerJourney(largeText: true)\n        print("WATCH_UI_PICKER_SELECTED_LARGE=PASS")\n    }\n', 1),
+    ],
     "PickerCurrentGameJourneyTests.swift": [
+        ('    @MainActor\n    func testHandoffHelpExplainsPhoneGestureAtStandardSize() throws {\n        try checkHandoffHelp(large: false)\n    }\n', '    @MainActor\n    func testHandoffHelpExplainsPhoneGestureAtStandardSize() throws {\n        executionTimeAllowance = 300\n        try checkHandoffHelp(large: false)\n    }\n', 1),
+        ('    @MainActor\n    func testHandoffHelpExplainsPhoneGestureAtAccessibilitySize() throws {\n        try checkHandoffHelp(large: true)\n    }\n', '    @MainActor\n    func testHandoffHelpExplainsPhoneGestureAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try checkHandoffHelp(large: true)\n    }\n', 1),
+        ('    @MainActor\n    func testScheduledPickerShowsSuppliedTimeAtStandardSize() throws {\n        try checkScheduledTime(large: false)\n    }\n', '    @MainActor\n    func testScheduledPickerShowsSuppliedTimeAtStandardSize() throws {\n        executionTimeAllowance = 300\n        try checkScheduledTime(large: false)\n    }\n', 1),
+        ('    @MainActor\n    func testScheduledPickerShowsSuppliedTimeAtAccessibilitySize() throws {\n        try checkScheduledTime(large: true)\n    }\n', '    @MainActor\n    func testScheduledPickerShowsSuppliedTimeAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        try checkScheduledTime(large: true)\n    }\n', 1),
         (
             '    @MainActor\n    func testLiveMissingBothScoreIsExplainedAtStandardSize() throws {\n        try checkMissingLiveScore(scenario: "live-missing-both", large: false)\n    }\n',
             '    @MainActor\n    func testLiveMissingBothScoreIsExplainedAtStandardSize() throws {\n        executionTimeAllowance = 300\n        try checkMissingLiveScore(scenario: "live-missing-both", large: false)\n    }\n',
@@ -1119,32 +1131,32 @@ XCODE_27_2_WATCH_TRANSFORMS = {
     "WidgetTapJourneyTests.swift": [
         (
             "    @MainActor\n    func testColdActualWidgetTapRetainsOfflineReading() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
-            "    @MainActor\n    func testColdActualWidgetTapRetainsOfflineReading() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testColdActualWidgetTapRetainsOfflineReading() throws {\n        executionTimeAllowance = 540\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
             1,
         ),
         (
             "    @MainActor\n    func testColdActualWidgetTapOffersPickerWithoutSelection() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
-            "    @MainActor\n    func testColdActualWidgetTapOffersPickerWithoutSelection() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testColdActualWidgetTapOffersPickerWithoutSelection() throws {\n        executionTimeAllowance = 540\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
             1,
         ),
         (
             "    @MainActor\n    func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
-            "    @MainActor\n    func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {\n        executionTimeAllowance = 540\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
             1,
         ),
         (
             "    @MainActor\n    func testActualCornerLauncherAndTap() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
-            "    @MainActor\n    func testActualCornerLauncherAndTap() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testActualCornerLauncherAndTap() throws {\n        executionTimeAllowance = 540\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
             1,
         ),
         (
             "    @MainActor\n    func testActualCircularLauncherAndTap() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
-            "    @MainActor\n    func testActualCircularLauncherAndTap() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testActualCircularLauncherAndTap() throws {\n        executionTimeAllowance = 540\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
             1,
         ),
         (
             "    @MainActor\n    func testActualComplicationHost() throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
-            "    @MainActor\n    func testActualComplicationHost() throws {\n        executionTimeAllowance = 300\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
+            "    @MainActor\n    func testActualComplicationHost() throws {\n        executionTimeAllowance = 540\n        continueAfterFailure = false\n        let app = XCUIApplication()\n",
             1,
         ),
         (
