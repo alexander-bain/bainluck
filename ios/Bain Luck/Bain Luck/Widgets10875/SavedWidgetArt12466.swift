@@ -162,10 +162,11 @@ struct SavedWidgetArt12466: Equatable, Sendable {
         guard let prematch else { return nil }
         if prematch.drawProbability != nil {
             guard let h = prematch.homeProbability, h.isFinite, h > 0, h < 1 else { return nil }
-            let hPct = prematch.homeRenderedPercent ?? renderedPercent(h)
+            let bothServed = prematch.awayRenderedPercent != nil && prematch.homeRenderedPercent != nil
+            let hPct = bothServed ? prematch.homeRenderedPercent : renderedPercent(h)
             let aPct: Int? = {
                 guard let a = prematch.awayProbability, a.isFinite, a > 0, a < 1 else { return nil }
-                return prematch.awayRenderedPercent ?? renderedPercent(a)
+                return bothServed ? prematch.awayRenderedPercent : renderedPercent(a)
             }()
             return PregamePair(
                 awayText: prematch.awayProbability.map { formatProbability($0, renderedPercent: aPct) },
