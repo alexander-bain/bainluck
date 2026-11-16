@@ -225,8 +225,8 @@ final class EvolutionChartMarksResolveTeamColourThroughTheFloor7036Tests: XCTest
     func testAllThreeMarkSitesGoThroughTheOneResolver() throws {
         let body = try String(contentsOf: Self.chartURL, encoding: .utf8)
 
-        // Four call sites plus the declaration.
-        XCTAssertEqual(body.components(separatedBy: "colorForOutcome(name:").count - 1, 5,
+        // Five call sites plus the declaration (#12703 added the fifth mark site).
+        XCTAssertEqual(body.components(separatedBy: "colorForOutcome(name:").count - 1, 6,
                        "a mark site has stopped going through the chart's one resolver")
         XCTAssertFalse(body.contains("Color(hex: outcome.primaryColor"),
                        "the leaderboard row is painting a raw primary_color again")

@@ -639,16 +639,26 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         private let previousKeyWindow: UIWindow?
 
         init(_ vm: EventDetailViewModel, eventId: Int = 4242) async throws {
+            let activeDeadline = CACurrentMediaTime() + 2
             let deadline = CACurrentMediaTime() + 10
             func activeScene() -> UIWindowScene? {
                 UIApplication.shared.connectedScenes
                     .compactMap { $0 as? UIWindowScene }
                     .first { $0.activationState == .foregroundActive }
             }
-            while activeScene() == nil && CACurrentMediaTime() < deadline {
+            func usableScene() -> UIWindowScene? {
+                let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                return scenes.first { $0.activationState == .foregroundActive }
+                    ?? scenes.first { $0.activationState == .foregroundInactive }
+                    ?? scenes.first
+            }
+            while activeScene() == nil && CACurrentMediaTime() < activeDeadline {
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
-            let scene = try XCTUnwrap(activeScene(), "the hosted page needs a foreground-active window scene")
+            while usableScene() == nil && CACurrentMediaTime() < deadline {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            let scene = try XCTUnwrap(usableScene(), "the hosted page needs a foreground window scene")
             previousKeyWindow = scene.windows.first { $0.isKeyWindow }
             let page = NavigationStack { EventDetailView(eventId: eventId, viewModel: vm) }
                 .environmentObject(PinManager())

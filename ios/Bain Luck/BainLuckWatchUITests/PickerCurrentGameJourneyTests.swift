@@ -1581,7 +1581,8 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         var previousY: CGFloat?
         var stable = 0
         for _ in 0..<24 {
-            let bounds = try viewport(in: app)
+            let appFrame = app.frame
+            let bounds = try viewport(in: app, appFrame: appFrame)
             let identityFrame = identity.frame
             let y = identityFrame.minY
             let beginning = CGRect(x: identityFrame.minX, y: identityFrame.minY,
@@ -1602,7 +1603,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
                 return
             }
             previousY = y
-            move(in: app, bounds: bounds, earlier: true, fraction: 0.50)
+            move(in: app, appFrame: appFrame, bounds: bounds, earlier: true, fraction: 0.50)
         }
         throw failure("Cannot establish saved return natural top", in: app)
     }

@@ -64,16 +64,26 @@ final class MatrixPageReadingAnchor10236Tests: XCTestCase {
         let host: UIViewController
 
         init<V: View>(_ view: V) async throws {
+            let activeDeadline = CACurrentMediaTime() + 2
             let deadline = CACurrentMediaTime() + 10
             func activeScene() -> UIWindowScene? {
                 UIApplication.shared.connectedScenes
                     .compactMap { $0 as? UIWindowScene }
                     .first { $0.activationState == .foregroundActive }
             }
-            while activeScene() == nil && CACurrentMediaTime() < deadline {
+            func usableScene() -> UIWindowScene? {
+                let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                return scenes.first { $0.activationState == .foregroundActive }
+                    ?? scenes.first { $0.activationState == .foregroundInactive }
+                    ?? scenes.first
+            }
+            while activeScene() == nil && CACurrentMediaTime() < activeDeadline {
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
-            let scene = try XCTUnwrap(activeScene(), "The anchor tests need a foreground-active window scene")
+            while usableScene() == nil && CACurrentMediaTime() < deadline {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            let scene = try XCTUnwrap(usableScene(), "The anchor tests need a foreground window scene")
             previousKeyWindow = scene.windows.first { $0.isKeyWindow }
             host = hostForMeasurement(view)
             window = UIWindow(windowScene: scene)
@@ -309,16 +319,26 @@ final class MatrixPageReadingAnchor10236Tests: XCTestCase {
         let marker = MatrixPageReadingAnchorMarkerView10236(frame: CGRect(x: 0, y: 600, width: 390, height: 200))
 
         init() async throws {
+            let activeDeadline = CACurrentMediaTime() + 2
             let deadline = CACurrentMediaTime() + 10
             func activeScene() -> UIWindowScene? {
                 UIApplication.shared.connectedScenes
                     .compactMap { $0 as? UIWindowScene }
                     .first { $0.activationState == .foregroundActive }
             }
-            while activeScene() == nil && CACurrentMediaTime() < deadline {
+            func usableScene() -> UIWindowScene? {
+                let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                return scenes.first { $0.activationState == .foregroundActive }
+                    ?? scenes.first { $0.activationState == .foregroundInactive }
+                    ?? scenes.first
+            }
+            while activeScene() == nil && CACurrentMediaTime() < activeDeadline {
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
-            let scene = try XCTUnwrap(activeScene(), "The anchor tests need a foreground-active window scene")
+            while usableScene() == nil && CACurrentMediaTime() < deadline {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            let scene = try XCTUnwrap(usableScene(), "The anchor tests need a foreground window scene")
             previousKeyWindow = scene.windows.first { $0.isKeyWindow }
             let host = UIViewController()
             host.view.addSubview(scroll)

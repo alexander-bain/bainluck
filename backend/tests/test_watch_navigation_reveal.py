@@ -1018,8 +1018,8 @@ def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
 # #12513: exact Xcode 27.2 Watch UI test fixes.
 XCODE_27_2_CURRENT_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "81fbbaf5f8db988e57e84cbd34bb5e4dcb851930c634d189c80df598216b8637",
-    "PickerCurrentGameJourneyTests.swift": "7dbc72e778b9b37df19ba568d5387869e48dc4aff78c1b8dd0ccd1817e7e59ff",
-    "WidgetTapJourneyTests.swift": "b4db3ecd93b1df0eea0a0443bd7d9f7f031ff2c870bf171b3a71b992f82789b7",
+    "PickerCurrentGameJourneyTests.swift": "aa1fd06b5cb29f9799899975ccbc590e154fe81a97309629065f17c6f1670f12",
+    "WidgetTapJourneyTests.swift": "2bd38740fb6d65f21f49cb4cdca3745b5b2522b947da8779d39604f9d847da3e",
 }
 XCODE_27_2_PREVIOUS_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
@@ -1105,6 +1105,16 @@ XCODE_27_2_WATCH_TRANSFORMS = {
             '                if frame.maxY <= bounds.maxY { return }\n            }\n            move(in: app, appFrame: appFrame, bounds: bounds, earlier: false, fraction: 0.25)\n        }\n        throw failure("Missing readable end: \\(name)", in: app)\n',
             1,
         ),
+        (
+            '        for _ in 0..<24 {\n            let bounds = try viewport(in: app)\n            let identityFrame = identity.frame\n',
+            '        for _ in 0..<24 {\n            let appFrame = app.frame\n            let bounds = try viewport(in: app, appFrame: appFrame)\n            let identityFrame = identity.frame\n',
+            1,
+        ),
+        (
+            '            previousY = y\n            move(in: app, bounds: bounds, earlier: true, fraction: 0.50)\n        }\n        throw failure("Cannot establish saved return natural top", in: app)\n',
+            '            previousY = y\n            move(in: app, appFrame: appFrame, bounds: bounds, earlier: true, fraction: 0.50)\n        }\n        throw failure("Cannot establish saved return natural top", in: app)\n',
+            1,
+        ),
     ],
     "WidgetTapJourneyTests.swift": [
         (
@@ -1138,13 +1148,13 @@ XCODE_27_2_WATCH_TRANSFORMS = {
             1,
         ),
         (
-            '                             "Fresh face editor did not expose Bottom Left complication", host: host)\n        slot.tap()\n        let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host) { name in\n            freshFaceCapture(host, name: name)\n        }\n',
-            '                             "Fresh face editor did not expose Bottom Left complication", host: host)\n        slot.tap()\n        let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host, reopenSlot: {\n            try freshFaceRequire(slot.waitForExistence(timeout: 15) && slot.isHittable && host.frame.contains(slot.frame),\n                                 "Fresh face editor lost Bottom Left complication after gallery close", host: host)\n            slot.tap()\n        }) { name in\n            freshFaceCapture(host, name: name)\n        }\n',
+            '                             "Fresh face editor did not expose Bottom Left complication", host: host)\n        slot.tap()\n        let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host) { name in\n            freshFaceCapture(host, name: name)\n        }\n        choice.tap()\n        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { name in\n            freshFaceCapture(host, name: name)\n        }\n',
+            '                             "Fresh face editor did not expose Bottom Left complication", host: host)\n        slot.tap()\n        let choice = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host, reopenSlot: {\n            try self.freshFaceRequire(slot.waitForExistence(timeout: 15) && slot.isHittable && host.frame.contains(slot.frame),\n                                 "Fresh face editor lost Bottom Left complication after gallery close", host: host)\n            slot.tap()\n        }) { name in\n            self.freshFaceCapture(host, name: name)\n        }\n        choice.tap()\n        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { name in\n            self.freshFaceCapture(host, name: name)\n        }\n',
             1,
         ),
         (
             '                             "CORNER_FACE_DEPENDENCY: no unambiguous visible Exactograph upper-left complication", host: host)\n        choices[0].tap()\n        let appRow = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host) { freshFaceCapture(host, name: $0) }\n        appRow.tap()\n        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { freshFaceCapture(host, name: $0) }\n',
-            '                             "CORNER_FACE_DEPENDENCY: no unambiguous visible Exactograph upper-left complication", host: host)\n        choices[0].tap()\n        let appRow = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host, reopenSlot: {\n            try freshFaceRequire(choices[0].waitForExistence(timeout: 15) && choices[0].isHittable && host.frame.contains(choices[0].frame),\n                                 "CORNER_FACE_DEPENDENCY: Exactograph lost upper-left complication after gallery close", host: host)\n            choices[0].tap()\n        }) { freshFaceCapture(host, name: $0) }\n        appRow.tap()\n        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { freshFaceCapture(host, name: $0) }\n',
+            '                             "CORNER_FACE_DEPENDENCY: no unambiguous visible Exactograph upper-left complication", host: host)\n        choices[0].tap()\n        let appRow = try WatchComplicationGalleryNavigation.bainLuckAppRow(in: host, reopenSlot: {\n            try self.freshFaceRequire(choices[0].waitForExistence(timeout: 15) && choices[0].isHittable && host.frame.contains(choices[0].frame),\n                                 "CORNER_FACE_DEPENDENCY: Exactograph lost upper-left complication after gallery close", host: host)\n            choices[0].tap()\n        }) { self.freshFaceCapture(host, name: $0) }\n        appRow.tap()\n        try WatchComplicationGalleryNavigation.requireBainLuckDetail(in: host) { self.freshFaceCapture(host, name: $0) }\n',
             1,
         ),
         (

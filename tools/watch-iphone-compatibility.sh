@@ -19,19 +19,28 @@ xcodebuild -showsdks > "$OUT/sdks.txt"
 xcrun simctl list --json > "$OUT/simulators.json"
 SDK_VERSION="$(xcrun --sdk iphonesimulator --show-sdk-version)"
 python3 - "$OUT/simulators.json" "$SDK_VERSION" > "$OUT/destination-spec.txt" <<'PY'
-import json, sys
+import json, re, sys
 info = json.load(open(sys.argv[1]))
+# Prefer canonical slab-iPhone runtimes (`com.apple.CoreSimulator.SimRuntime.iOS-27-2`)
+# and single-screen iPhone types over Xcode 27.2's split `iOS-27-2-iPhone19-4` / `iPhone-Duo`.
 runtimes = sorted((r for r in info['runtimes']
                    if r.get('isAvailable') and 'iOS' in r['identifier']
                    and r['version'].split('.')[:2] == sys.argv[2].split('.')[:2]),
-                  key=lambda r: tuple(int(v) for v in r['version'].split('.')), reverse=True)
+                  key=lambda r: (
+                      tuple(int(v) for v in r['version'].split('.')),
+                      1 if re.fullmatch(r'.*\.iOS-\d+-\d+', r['identifier']) else 0,
+                  ), reverse=True)
+candidates = []
 for runtime in runtimes:
     for device in info['devices'].get(runtime['identifier'], []):
         kind = device.get('deviceTypeIdentifier', '')
         if device.get('isAvailable') and 'iPhone' in kind:
-            print(kind)
-            print(runtime['identifier'])
-            raise SystemExit(0)
+            candidates.append((0 if 'Duo' in kind else 1, kind, runtime['identifier']))
+candidates.sort(key=lambda item: item[0], reverse=True)
+if candidates:
+    print(candidates[0][1])
+    print(candidates[0][2])
+    raise SystemExit(0)
 raise SystemExit('No available iPhone simulator runtime; test gate is unpaid')
 PY
 DEVICE_TYPE="$(sed -n '1p' "$OUT/destination-spec.txt")"

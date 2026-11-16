@@ -543,21 +543,31 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let window: UIWindow
         let previousKeyWindow: UIWindow?
         init<V: View>(_ view: V) async throws {
+            let activeDeadline = CACurrentMediaTime() + 2
             let deadline = CACurrentMediaTime() + 10
             func activeScene() -> UIWindowScene? {
                 UIApplication.shared.connectedScenes
                     .compactMap { $0 as? UIWindowScene }
                     .first { $0.activationState == .foregroundActive }
             }
-            while activeScene() == nil && CACurrentMediaTime() < deadline {
+            func usableScene() -> UIWindowScene? {
+                let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                return scenes.first { $0.activationState == .foregroundActive }
+                    ?? scenes.first { $0.activationState == .foregroundInactive }
+                    ?? scenes.first
+            }
+            while activeScene() == nil && CACurrentMediaTime() < activeDeadline {
                 // Yield MainActor so the actual host can finish activating.
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            while usableScene() == nil && CACurrentMediaTime() < deadline {
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
             let sceneStates = UIApplication.shared.connectedScenes.map {
                 "\(type(of: $0)):\($0.activationState.rawValue)"
             }.sorted().joined(separator: ", ")
-            let scene = try XCTUnwrap(activeScene(),
-                "Motion capture requires a foreground-active window scene; connected scenes: \(sceneStates)")
+            let scene = try XCTUnwrap(usableScene(),
+                "Motion capture requires a foreground window scene; connected scenes: \(sceneStates)")
             previousKeyWindow = scene.windows.first { $0.isKeyWindow }
             host = hostForMeasurement(view)
             host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 360)

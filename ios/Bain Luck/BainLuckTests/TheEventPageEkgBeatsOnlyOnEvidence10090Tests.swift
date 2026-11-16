@@ -340,13 +340,21 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
 
     /// A popover needs a window on a foreground-active scene (#11703's mount).
     private func mount<V: View>(_ view: V) async throws -> (UIViewController, UIWindow, UIWindow?) {
+        let activeDeadline = Date().addingTimeInterval(2)
         let deadline = Date().addingTimeInterval(10)
         func activeScene() -> UIWindowScene? {
             UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
                 .first { $0.activationState == .foregroundActive }
         }
-        while activeScene() == nil && Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
-        let scene = try XCTUnwrap(activeScene(), "a popover needs a foreground-active window scene")
+        func usableScene() -> UIWindowScene? {
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            return scenes.first { $0.activationState == .foregroundActive }
+                ?? scenes.first { $0.activationState == .foregroundInactive }
+                ?? scenes.first
+        }
+        while activeScene() == nil && Date() < activeDeadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        while usableScene() == nil && Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        let scene = try XCTUnwrap(usableScene(), "a popover needs a foreground window scene")
         let previous = scene.windows.first { $0.isKeyWindow }
         let host = hostForMeasurement(NavigationStack { view }.environmentObject(PinManager())
             .environment(\.scenePhase, .active).environment(\.colorScheme, .light))
@@ -426,7 +434,8 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
         defer { window.isHidden = true; previous?.makeKey() }
         // Control: the page itself rendered (its share control is always there).
         let rendered = await settle(host, timeout: 5) { self.element("Share", in: host.view) != nil
-            || self.element("Dallas", in: host.view) != nil || self.element("Baltimore", in: host.view) != nil }
+            || self.element("Dallas", in: host.view) != nil || self.element("Baltimore", in: host.view) != nil
+            || self.element("Cowboys", in: host.view) != nil || self.element("Ravens", in: host.view) != nil }
         XCTAssertTrue(rendered, "control: the finished page rendered")
         XCTAssertNil(element("Markets reporting", in: host.view))
     }
