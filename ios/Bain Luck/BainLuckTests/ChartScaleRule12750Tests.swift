@@ -188,6 +188,15 @@ final class ChartScaleRule12750Tests: XCTestCase {
                 "\(file) must not hardcode .chartYScale(domain: 0...1)"
             )
         }
+
+        let discoverPanel = try String(
+            contentsOf: componentsDir.appendingPathComponent("DiscoverPictureChartPanel191A.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(
+            discoverPanel.contains("labelledEndsRow"),
+            "Discover small chart must not draw a visible caption repeating Now / Pregame below the plot"
+        )
     }
 
     // MARK: - 4. 390 px Contact Sheets: Every Sport Early in a Game & Late
@@ -627,6 +636,62 @@ final class ChartScaleRule12750Tests: XCTestCase {
         )
         allImages.append(try await renderSectionImage(banner))
 
+        let discoverLiveEvent = try decodeJSON(
+            FeedEventData.self,
+            """
+            {
+              "id": 9127509,
+              "sport": "americanfootball_nfl",
+              "sport_name": "NFL",
+              "away_team": "New England Patriots",
+              "home_team": "Detroit Lions",
+              "away_team_data": {"abbreviation": "NE", "primary_color": "#C60C30"},
+              "home_team_data": {"abbreviation": "DET", "primary_color": "#0076B6"},
+              "commence_time": "2026-11-16T18:00:00Z",
+              "status": "live",
+              "away_score": 17,
+              "home_score": 24,
+              "espn": {"period": "Q3", "game_clock": "08:14"},
+              "prematch_odds": {"away_probability": 0.42, "home_probability": 0.58, "source": "kalshi"},
+              "current_odds": {
+                "away_probability": 0.338,
+                "home_probability": 0.662,
+                "in_play_projected_away_score": 21.0,
+                "in_play_projected_home_score": 28.0
+              }
+            }
+            """
+        )
+        let discoverLiveHistory = try makeHistory(
+            for: part1Specs[0],
+            probs: [0.58, 0.53, 0.61, 0.662],
+            stepMinutes: 14
+        )
+        let discoverLiveBlock = AnyView(
+            VStack(alignment: .leading, spacing: 6) {
+                Text("DISCOVER LIVE CARD · Fitted Scale, No Repeated Caption (390 px)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+
+                DiscoverCompactSingleGameCard190CView(
+                    event: discoverLiveEvent,
+                    prematch: PrematchReading.resolve(
+                        prematch: discoverLiveEvent.prematchOdds,
+                        opening: discoverLiveEvent.openingOdds
+                    ),
+                    awayColor: Color(hex: "#C60C30"),
+                    homeColor: Color(hex: "#0076B6"),
+                    usesPictureLayout191A: true,
+                    preloadedChartHistory: discoverLiveHistory,
+                    projectionAndSuspendedLines: { EmptyView() },
+                    footerRow: { EmptyView() }
+                )
+                .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal, 16)
+            }
+        )
+
         for v in part1Views {
             allImages.append(try await renderSectionImage(v))
         }
@@ -635,11 +700,13 @@ final class ChartScaleRule12750Tests: XCTestCase {
         }
         allImages.append(try await renderSectionImage(golfBlock))
         allImages.append(try await renderSectionImage(futuresBlock))
+        allImages.append(try await renderSectionImage(discoverLiveBlock))
 
         try stitchImages(Array(allImages[0...3]), filename: "12750-charts-slice1-nfl-nba-cfb-390.png", outDir: outDir)
         try stitchImages(Array(allImages[4...6]), filename: "12750-charts-slice2-cbb-mlb-nhl-390.png", outDir: outDir)
         try stitchImages(Array(allImages[7...9]), filename: "12750-charts-slice3-tennis-mma-soccer-390.png", outDir: outDir)
         try stitchImages(Array(allImages[10...11]), filename: "12750-charts-slice4-golf-futures-390.png", outDir: outDir)
+        try stitchImages([allImages[12]], filename: "12750-charts-slice5-discover-live-card-390.png", outDir: outDir)
         try stitchImages(allImages, filename: "12750-charts-all-sports-early-and-late-390.png", outDir: outDir)
     }
 }
