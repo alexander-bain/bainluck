@@ -24,8 +24,10 @@ venue snapshots.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Iterable, Optional
+from types import SimpleNamespace
+from typing import Any, Callable, Iterable, Mapping, Optional
 
+from sqlalchemy import text
 
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.kalshi_occurrence_start import loaded_sport_key
@@ -45,6 +47,9 @@ async def settled_prematch_odds_by_event(
     *,
     opening: Optional[Callable[[Any], tuple]] = None,
     surface: str = "list",
+    status_of: Optional[Callable[[Any], str]] = None,
+    absorbed_ids: Optional[Mapping[int, Iterable[int]]] = None,
+    timeout_ms: Optional[int] = None,
 ) -> dict[int, dict]:
     """``{event_id: prematch_odds}`` for every settled row the ladder answers.
 
@@ -52,31 +57,54 @@ async def settled_prematch_odds_by_event(
     row's own opening columns, which is what the event route reads. A caller
     whose rows carry a folded opening line (the hub, #5853) passes it here.
 
+    ``status_of`` uses the status the card serves, after venue settlement.
+    ``absorbed_ids`` carries already-proven twins, read at the survivor's
+    kickoff, own source first and then twins in id order, as on detail.
+    ``timeout_ms`` bounds the optional read without leaking SET LOCAL into
+    later stages. Zero skips the venue read and retains the books fallback.
     ``surface`` only names the caller in the log lines.
 
     Rows that are not settled, or that the ladder cannot answer, are absent —
     never ``None`` — so a caller's ``.get(id)`` is its whole test.
     """
     events = list(events)
-    binds = prematch_prior_binds(events)
+    candidates = events if status_of is None else [
+        SimpleNamespace(id=e.id, status=status_of(e), commence_time=e.commence_time)
+        for e in events
+    ]
+    binds = prematch_prior_binds(candidates)
     if binds is None:
         return {}
 
+    settled_ids = set(binds["ids"])
+    source_ids = {eid: [eid] for eid in settled_ids}
+    for event_id, cutoff in list(zip(binds["ids"], binds["cutoffs"])):
+        twins = sorted(set((absorbed_ids or {}).get(event_id, ())) - {event_id})
+        source_ids[event_id].extend(twins)
+        binds["ids"].extend(twins)
+        binds["cutoffs"].extend([cutoff] * len(twins))
+
     by_event: dict = {}
     try:
-        nested = await db.begin_nested()
-        try:
-            for row in await fetch_prematch_prior_rows(db, binds):
-                by_event.setdefault(row.event_id, {}).setdefault(
-                    row.source, prematch_row_to_reading(row)
-                )
-        except Exception:
+        if timeout_ms is None or timeout_ms > 0:
+            nested = await db.begin_nested()
             try:
+                if timeout_ms is not None:
+                    await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
+                for row in await fetch_prematch_prior_rows(db, binds):
+                    by_event.setdefault(row.event_id, {}).setdefault(
+                        row.source, prematch_row_to_reading(row)
+                    )
+            except BaseException:
+                try:
+                    await nested.rollback()
+                except Exception:  # noqa: BLE001 — preserve the original error
+                    pass
+                raise
+            if timeout_ms is None:
+                await nested.commit()
+            else:
                 await nested.rollback()
-            except Exception:  # noqa: BLE001 — the read's error is the one to report
-                pass
-            raise
-        await nested.commit()
     except Exception as exc:  # noqa: BLE001 — one optional key, never the page
         by_event = {}
         logger.warning(
@@ -85,7 +113,6 @@ async def settled_prematch_odds_by_event(
             type(exc).__name__,
         )
 
-    settled_ids = set(binds["ids"])
     served: dict[int, dict] = {}
     for e in events:
         if e.id not in settled_ids:
@@ -96,8 +123,12 @@ async def settled_prematch_odds_by_event(
             else (e.opening_home_probability, e.opening_away_probability)
         )
         try:
+            by_source = {}
+            for source_id in source_ids[e.id]:
+                for source, row in by_event.get(source_id, {}).items():
+                    by_source.setdefault(source, row)
             reading = resolve_prematch_reading(
-                by_source=by_event.get(e.id, {}),
+                by_source=by_source,
                 books_home=float(open_home) if open_home else None,
                 books_away=float(open_away) if open_away else None,
                 sport=loaded_sport_key(e) or "",
@@ -118,3 +149,24 @@ async def settled_prematch_odds_by_event(
             "source": reading["source"],
         }
     return served
+
+
+async def attach_settled_prematch_odds(
+    db: Any, events: Iterable[Any], formatted: list[dict], folded: Mapping,
+    *, absorbed_ids: Mapping[int, Iterable[int]], timeout_ms: int, surface: str,
+) -> None:
+    """Attach the detail page's prior after the list's folds and settlement."""
+    status = {row["id"]: row.get("status") for row in formatted}
+    twins = {eid: set(ids) for eid, ids in absorbed_ids.items()}
+    for eid, numbers in folded.items():
+        twins.setdefault(eid, set()).update(numbers.absorbed_ids)
+    readings = await settled_prematch_odds_by_event(
+        db, events, surface=surface, status_of=lambda e: status.get(e.id),
+        opening=lambda e: folded[e.id].opening if e.id in folded else (
+            e.opening_home_probability, e.opening_away_probability
+        ),
+        absorbed_ids=twins, timeout_ms=timeout_ms,
+    )
+    for row in formatted:
+        if row["id"] in readings:
+            row["prematch_odds"] = readings[row["id"]]

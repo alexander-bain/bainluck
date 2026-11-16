@@ -267,6 +267,7 @@ from app.utils.search_match_class import (
 )
 from app.utils.blank_event_cards import not_a_blank_card
 from app.utils.event_list_order import in_reader_order
+from app.utils.settled_prematch_batch import attach_settled_prematch_odds
 from app.utils.feed_market_quality import (
     FEED_MIN_REAL_PROBABILITY,
     has_no_real_price,
@@ -11716,10 +11717,13 @@ async def search_events(
         )
 
     _twin_duplicates_dropped = 0
+    _prematch_absorbed_ids: dict[int, list[int]] = {}
     if events:
         try:
             _fold = fold_twin_events(events)
             if _fold.dropped_ids:
+                for _loser, _survivor in _fold.survivor_of.items():
+                    _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
                 for _survivor_id, _merged in _fold.merged_sources.items():
                     _survivor = next(e for e in _fold.events if e.id == _survivor_id)
                     set_committed_value(_survivor, "win_probability_sources", _merged)
@@ -11946,12 +11950,14 @@ async def search_events(
 
     # The page's folds (#3937), batched before the loop rather than per row in
     # it. Search returns at most `per_page` = 100, so this is one statement.
-    folded_map = await folded_probability_sources_batch(db, events)
+    folded_map = await folded_card_numbers_batch(db, events)
 
     for event in events:
+        _folded = folded_map.get(event.id)
         formatted = _format_event_with_aggregated_odds(
             event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup,
-            folded_sources=folded_map.get(event.id),
+            folded_sources=_folded.win_probability_sources if _folded is not None else None,
+            folded_opening=_folded.opening if _folded is not None else None,
         )
         # #2920 — the event page's marked in-play pair, from the rows this route
         # already read, so a search row and the page it opens agree.
@@ -12010,6 +12016,14 @@ async def search_events(
     # this mark they were billed to `futures`, so a slow futures number could not
     # say whether the futures arms or the event formatting spent it.
     _mark("event_format")
+
+    await attach_settled_prematch_odds(
+        db, events, formatted_results, folded_map,
+        absorbed_ids=_prematch_absorbed_ids,
+        timeout_ms=card_projection_read_timeout_ms(_deadline - time.monotonic()),
+        surface="search",
+    )
+    _mark("prematch_odds")
 
     # #11296: a final row's pregame projected score, the same object the event
     # page serves. One bounded statement for the page, billed to its own stage;
@@ -18997,9 +19011,12 @@ async def list_events(
             "serving the stored kick-offs"
         )
 
+    _prematch_absorbed_ids: dict[int, list[int]] = {}
     try:
         _fold = fold_twin_events(events)
         if _fold.dropped_ids:
+            for _loser, _survivor in _fold.survivor_of.items():
+                _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
             for _survivor_id, _merged in _fold.merged_sources.items():
                 _survivor = next(e for e in _fold.events if e.id == _survivor_id)
                 set_committed_value(_survivor, "win_probability_sources", _merged)
@@ -19243,6 +19260,12 @@ async def list_events(
     # still ahead of its kickoff is refused before a statement is issued, so
     # the ordinary page pays nothing at all.
     await attach_venue_settlement(db, events, formatted, now)
+
+    await attach_settled_prematch_odds(
+        db, events, formatted, folded_map,
+        absorbed_ids=_prematch_absorbed_ids,
+        timeout_ms=card_projection_read_timeout_ms(None), surface="events list",
+    )
 
     # #11296: a final row's pregame projected score and its score's period, the
     # same object search and the event page serve. `/sports/{key}` reads this
