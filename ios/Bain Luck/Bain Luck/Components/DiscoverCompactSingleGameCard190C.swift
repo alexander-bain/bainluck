@@ -295,11 +295,12 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 }
 
                 if model.headers.pregame != nil {
+                    let isProjColumn = model.headers.pregame == "Proj."
                     Text(row.pregameText ?? "")
                         .font(HeadlineStyleTable199.secondNumbers(
                             .card,
                             prominent: false,
-                            scaledSize: model.isLive ? min(compactScoreSize, 20) : min(compactPregameSize, 18)
+                            scaledSize: isProjColumn ? min(compactScoreSize, 20) : min(compactPregameSize, 18)
                         ))
                         .foregroundStyle(model.isLive ? Color.primary : DS.textSecondaryReadable)
                         .lineLimit(1)
@@ -357,18 +358,19 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .accessibilityLabel(row.scoreText.map { "Score \($0)" } ?? "")
         }
         if model.headers.pregame != nil {
+            let isProjColumn = model.headers.pregame == "Proj."
             Text(row.pregameText ?? "")
                 .font(HeadlineStyleTable199.secondNumbers(
                     .card,
                     prominent: false,
-                    scaledSize: model.isLive ? min(compactScoreSize, 22) : min(compactPregameSize, 19)
+                    scaledSize: isProjColumn ? min(compactScoreSize, 22) : min(compactPregameSize, 19)
                 ))
                 .foregroundStyle(model.isLive ? Color.primary : DS.textSecondaryReadable)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(width: effectivePregameWidth, alignment: .trailing)
                 .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
-                .accessibilityLabel(row.pregameText.map { model.isLive ? "Projected \($0)" : "Pregame \($0)" } ?? "")
+                .accessibilityLabel(row.pregameText.map { isProjColumn ? "Projected \($0)" : "Pregame \($0)" } ?? "")
         }
         if let primaryHeader = model.headers.primary {
             primaryCellView(row)
@@ -387,6 +389,11 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         switch row.primaryCell {
         case .probability(let text):
             return "\(primaryHeader) \(text)"
+        case .finalScore(let text, let won, _):
+            if won {
+                return text.map { "Final \($0), won" } ?? "Won"
+            }
+            return text.map { "Final \($0)" } ?? ""
         case .won(let text):
             return text
         case .settledDash, .none:
@@ -445,6 +452,32 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .foregroundStyle(sideAccentColor(for: row.kind))
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
+        case .finalScore(let text, let won, let isDrawOutcome):
+            if won {
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    if let text, !text.isEmpty {
+                        Text(text)
+                            .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactLargeSize, 24)))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                    }
+                    Text("\u{2713}")
+                        .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactLargeSize, 24) * 0.82))
+                        .foregroundStyle(HeadlineStyleTable199.winnerTickInk)
+                        .lineLimit(1)
+                }
+            } else if let text, !text.isEmpty {
+                Text(text)
+                    .font(HeadlineStyleTable199.secondNumbers(
+                        .card,
+                        prominent: isDrawOutcome,
+                        scaledSize: isDrawOutcome ? min(compactLargeSize, 24) : min(compactScoreSize, 20)
+                    ))
+                    .foregroundStyle(isDrawOutcome ? .primary : .secondary)
+                    .lineLimit(1)
+            } else {
+                EmptyView()
+            }
         case .won(let text):
             Text(text)
                 .font(HeadlineStyleTable199.secondNumbers(.card, prominent: true, scaledSize: min(compactPregameSize, 18)))

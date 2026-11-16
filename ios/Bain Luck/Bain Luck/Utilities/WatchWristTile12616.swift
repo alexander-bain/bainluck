@@ -173,14 +173,14 @@ struct WatchWristTileModel12616: Equatable, Sendable {
                 if let cur = resolved.percent, let pre = leaderPrePct {
                     let delta = cur - pre
                     if delta > 0 {
-                        let unit = delta == 1 ? "pt" : "pts"
-                        return "Up +\(delta) \(unit) from \(pre)% pregame"
+                        let unit = delta == 1 ? "point" : "points"
+                        return "Up \(delta) \(unit) from \(pre)%"
                     } else if delta < 0 {
                         let drop = abs(delta)
-                        let unit = drop == 1 ? "pt" : "pts"
-                        return "Down \(drop) \(unit) from \(pre)% pregame"
+                        let unit = drop == 1 ? "point" : "points"
+                        return "Down \(drop) \(unit) from \(pre)%"
                     } else {
-                        return "Even with \(pre)% pregame"
+                        return "Even with \(pre)%"
                     }
                 }
                 if let obs = input.probabilityObservedAt, obs <= now {

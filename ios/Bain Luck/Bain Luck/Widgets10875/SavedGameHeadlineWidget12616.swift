@@ -353,7 +353,7 @@ private enum SavedHeadlineTokens12616 {
 
     static let mediumLeadingColWidth: CGFloat = 38
     static let mediumPregameColWidth: CGFloat = 52
-    static let mediumPrimaryColWidth: CGFloat = 48
+    static let mediumPrimaryColWidth: CGFloat = 54
 }
 
 struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
@@ -452,32 +452,47 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                     .foregroundStyle(inkPrimary)
                     .lineLimit(1)
             } else {
-                HStack(spacing: 3) {
-                    Text(row.abbreviation)
-                        .font(HeadlineStyleTable199.names(.widget, isLoser: model.stage == .after && row.isLoser, scaledSize: 13))
-                        .foregroundStyle(model.stage == .after && row.isLoser ? inkSecondary : inkPrimary)
-                        .lineLimit(1)
-                    if row.isWinner {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 9.5, weight: .bold))
-                            .foregroundStyle(fullColor ? wonEmerald : Color.primary)
-                    }
-                }
+                Text(row.abbreviation)
+                    .font(HeadlineStyleTable199.names(.widget, isLoser: model.stage == .after && row.isLoser, scaledSize: 13))
+                    .foregroundStyle(model.stage == .after && row.isLoser ? inkSecondary : inkPrimary)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 4)
 
-            Text(row.figure)
-                .font(model.stage == .after
-                    ? HeadlineStyleTable199.secondNumbers(
-                        .widget,
-                        prominent: !row.isLoser,
-                        scaledSize: row.isLoser ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false) : HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
-                    )
-                    : HeadlineStyleTable199.now(.widget, scaledSize: HeadlineStyleTable199.nowBaseSize(.widget)))
-                .foregroundStyle(primaryFigureColor(row))
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+            if model.stage == .after && row.isWinner {
+                HStack(alignment: .firstTextBaseline, spacing: 2.5) {
+                    Text(row.figure)
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .widget,
+                            prominent: true,
+                            scaledSize: HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
+                        ))
+                        .foregroundStyle(primaryFigureColor(row))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    Text("\u{2713}")
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .widget,
+                            prominent: true,
+                            scaledSize: HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true) * 0.82
+                        ))
+                        .foregroundStyle(fullColor ? wonEmerald : Color.primary)
+                        .lineLimit(1)
+                }
+            } else {
+                Text(row.figure)
+                    .font(model.stage == .after
+                        ? HeadlineStyleTable199.secondNumbers(
+                            .widget,
+                            prominent: !row.isLoser,
+                            scaledSize: row.isLoser ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false) : HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
+                        )
+                        : HeadlineStyleTable199.now(.widget, scaledSize: HeadlineStyleTable199.nowBaseSize(.widget)))
+                    .foregroundStyle(primaryFigureColor(row))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
         }
     }
 
@@ -574,11 +589,7 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                     .foregroundStyle(model.stage == .after && row.isLoser ? inkSecondary : inkPrimary)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
-                if row.isWinner {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundStyle(fullColor ? wonEmerald : Color.primary)
-                } else if row.isDraw {
+                if row.isDraw {
                     Text("Draw")
                         .font(HeadlineStyleTable199.headers(.widget, scaledSize: 10))
                         .foregroundStyle(inkSecondary)
@@ -613,18 +624,41 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                         .lineLimit(1)
                 }
 
-                Text(row.figure)
-                    .font(model.stage == .after
-                        ? HeadlineStyleTable199.secondNumbers(
-                            .widget,
-                            prominent: !row.isLoser,
-                            scaledSize: row.isLoser ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false) : HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
-                        )
-                        : HeadlineStyleTable199.now(.widget, scaledSize: HeadlineStyleTable199.nowBaseSize(.widget)))
-                    .foregroundStyle(primaryFigureColor(row))
+                if model.stage == .after && row.isWinner {
+                    HStack(alignment: .firstTextBaseline, spacing: 2.5) {
+                        Text(row.figure)
+                            .font(HeadlineStyleTable199.secondNumbers(
+                                .widget,
+                                prominent: true,
+                                scaledSize: HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
+                            ))
+                            .foregroundStyle(primaryFigureColor(row))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        Text("\u{2713}")
+                            .font(HeadlineStyleTable199.secondNumbers(
+                                .widget,
+                                prominent: true,
+                                scaledSize: HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true) * 0.82
+                            ))
+                            .foregroundStyle(fullColor ? wonEmerald : Color.primary)
+                            .lineLimit(1)
+                    }
                     .frame(width: mediumPrimaryColWidth, alignment: .trailing)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+                } else {
+                    Text(row.figure)
+                        .font(model.stage == .after
+                            ? HeadlineStyleTable199.secondNumbers(
+                                .widget,
+                                prominent: !row.isLoser,
+                                scaledSize: row.isLoser ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false) : HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
+                            )
+                            : HeadlineStyleTable199.now(.widget, scaledSize: HeadlineStyleTable199.nowBaseSize(.widget)))
+                        .foregroundStyle(primaryFigureColor(row))
+                        .frame(width: mediumPrimaryColWidth, alignment: .trailing)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
             }
         }
     }
@@ -656,7 +690,7 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
         case .during:
             return Color(hex: row.teamInkHex)
         case .before:
-            return row.isEmphasized ? Color(hex: row.teamInkHex) : inkPrimary
+            return row.figure == "—" ? inkSecondary : Color(hex: row.teamInkHex)
         }
     }
 
