@@ -428,14 +428,14 @@ struct SavedMarketLook12466: View {
 extension SavedMarketLook12466 {
     func outcomeName(_ name: String) -> some View {
         Text(name)
-            .font(.footnote.weight(.semibold))
+            .font(HeadlineStyleTable199.names(.widget, scaledSize: HeadlineStyleTable199.nameBaseSize(.widget)))
             .lineLimit(1)
             .opacity(0.85)
     }
 
     func value(_ headline: SavedWidgetReading10875.Row) -> some View {
         Text(headline.verdict ?? headline.figure ?? "—")
-            .font(.system(size: family == .systemMedium ? 32 : 28, weight: .bold, design: .rounded).monospacedDigit())
+            .font(HeadlineStyleTable199.now(.widget, scaledSize: family == .systemMedium ? 32 : 28))
             .lineLimit(1)
             .minimumScaleFactor(0.5)
     }

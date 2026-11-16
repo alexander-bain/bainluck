@@ -413,22 +413,24 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                 Spacer(minLength: 2)
                 if let league = model.leagueLabel {
                     Text(league)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(HeadlineStyleTable199.headers(.widget, scaledSize: 10))
                         .foregroundStyle(inkSecondary)
                         .lineLimit(1)
                 }
             } else {
                 Text(model.smallTopMeta)
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.widget)))
                     .foregroundStyle(inkSecondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Spacer(minLength: 2)
+                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 3)
                 if let trailing = model.smallTopTrailing {
                     Text(trailing)
-                        .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                        .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: 9.5))
                         .foregroundStyle(inkSecondary)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
         }
@@ -446,13 +448,13 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
 
             if model.stage == .during, let liveScore = row.liveScoreText {
                 Text(liveScore)
-                    .font(.system(size: 14.5, weight: .bold).monospacedDigit())
+                    .font(HeadlineStyleTable199.secondNumbers(.widget, prominent: false, scaledSize: 14.5))
                     .foregroundStyle(inkPrimary)
                     .lineLimit(1)
             } else {
                 HStack(spacing: 3) {
                     Text(row.abbreviation)
-                        .font(.system(size: 13, weight: model.stage == .after ? (row.isWinner ? .bold : .medium) : .bold))
+                        .font(HeadlineStyleTable199.names(.widget, isLoser: model.stage == .after && row.isLoser, scaledSize: 13))
                         .foregroundStyle(model.stage == .after && row.isLoser ? inkSecondary : inkPrimary)
                         .lineLimit(1)
                     if row.isWinner {
@@ -466,7 +468,13 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
             Spacer(minLength: 4)
 
             Text(row.figure)
-                .font(.system(size: 18, weight: model.stage == .after && row.isLoser ? .semibold : .bold).monospacedDigit())
+                .font(model.stage == .after
+                    ? HeadlineStyleTable199.secondNumbers(
+                        .widget,
+                        prominent: !row.isLoser,
+                        scaledSize: row.isLoser ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false) : HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
+                    )
+                    : HeadlineStyleTable199.now(.widget, scaledSize: HeadlineStyleTable199.nowBaseSize(.widget)))
                 .foregroundStyle(primaryFigureColor(row))
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
@@ -510,13 +518,13 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                 liveCapsule(badge)
                 if !model.mediumTopMeta.isEmpty {
                     Text(model.mediumTopMeta)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: false, scaledSize: 11))
                         .foregroundStyle(inkSecondary)
                         .lineLimit(1)
                 }
             } else {
                 Text(model.mediumTopMeta)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: 11))
                     .foregroundStyle(inkSecondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -536,7 +544,7 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                 Text(model.headers.primary)
                     .frame(width: mediumPrimaryColWidth, alignment: .trailing)
             }
-            .font(.system(size: 10.5, weight: .medium))
+            .font(HeadlineStyleTable199.headers(.widget, scaledSize: HeadlineStyleTable199.headerBaseSize(.widget)))
             .foregroundStyle(inkSecondary)
             .lineLimit(1)
         }
@@ -558,9 +566,10 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
 
             HStack(spacing: 4) {
                 Text(useAbbreviation ? row.abbreviation : row.shortName)
-                    .font(.system(
-                        size: 14,
-                        weight: model.stage == .after ? (row.isWinner ? .bold : .regular) : .semibold
+                    .font(HeadlineStyleTable199.names(
+                        .widget,
+                        isLoser: model.stage == .after && row.isLoser,
+                        scaledSize: HeadlineStyleTable199.nameBaseSize(.widget)
                     ))
                     .foregroundStyle(model.stage == .after && row.isLoser ? inkSecondary : inkPrimary)
                     .lineLimit(1)
@@ -571,7 +580,7 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                         .foregroundStyle(fullColor ? wonEmerald : Color.primary)
                 } else if row.isDraw {
                     Text("Draw")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(HeadlineStyleTable199.headers(.widget, scaledSize: 10))
                         .foregroundStyle(inkSecondary)
                 }
             }
@@ -582,10 +591,11 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                 if model.headers.leading != nil {
                     let leadingValue = model.stage == .during ? row.liveScoreText : row.projectedText
                     Text(leadingValue ?? "")
-                        .font(.system(
-                            size: model.stage == .during ? 15 : 14,
-                            weight: model.stage == .during ? .semibold : .medium
-                        ).monospacedDigit())
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .widget,
+                            prominent: false,
+                            scaledSize: model.stage == .during ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false) : 14
+                        ))
                         .foregroundStyle(model.stage == .during ? inkPrimary : inkContext)
                         .frame(width: mediumLeadingColWidth, alignment: .trailing)
                         .lineLimit(1)
@@ -593,17 +603,24 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
 
                 if model.headers.pregame != nil {
                     Text(row.pregameText ?? "")
-                        .font(.system(size: 13, weight: .regular).monospacedDigit())
+                        .font(HeadlineStyleTable199.secondNumbers(
+                            .widget,
+                            prominent: false,
+                            scaledSize: HeadlineStyleTable199.pregameNumberBaseSize(.widget)
+                        ))
                         .foregroundStyle(inkSecondary)
                         .frame(width: mediumPregameColWidth, alignment: .trailing)
                         .lineLimit(1)
                 }
 
                 Text(row.figure)
-                    .font(.system(
-                        size: 18,
-                        weight: model.stage == .after && row.isLoser ? .semibold : .bold
-                    ).monospacedDigit())
+                    .font(model.stage == .after
+                        ? HeadlineStyleTable199.secondNumbers(
+                            .widget,
+                            prominent: !row.isLoser,
+                            scaledSize: row.isLoser ? HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: false) : HeadlineStyleTable199.secondNumberBaseSize(.widget, prominent: true)
+                        )
+                        : HeadlineStyleTable199.now(.widget, scaledSize: HeadlineStyleTable199.nowBaseSize(.widget)))
                     .foregroundStyle(primaryFigureColor(row))
                     .frame(width: mediumPrimaryColWidth, alignment: .trailing)
                     .lineLimit(1)
@@ -620,7 +637,7 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                 .fill(Color.white)
                 .frame(width: 5, height: 5)
             Text(text)
-                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .font(HeadlineStyleTable199.headers(.widget, scaledSize: 10).monospacedDigit())
                 .foregroundStyle(Color.white)
                 .lineLimit(1)
         }
@@ -645,7 +662,9 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
 
     private func footerText(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 10.5, weight: model.footerIsEmeraldCallout ? .semibold : .medium))
+            .font(model.footerIsEmeraldCallout
+                ? HeadlineStyleTable199.headers(.widget, scaledSize: 10.5)
+                : HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.widget)))
             .foregroundStyle(
                 fullColor && model.footerIsEmeraldCallout ? wonEmerald : inkSecondary
             )
