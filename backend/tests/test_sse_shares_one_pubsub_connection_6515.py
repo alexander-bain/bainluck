@@ -572,6 +572,14 @@ class TestTheBudgetHoldsAcrossConcurrentStreams:
         deadline is the only way the read can end, however long the loop
         stalls. The second case is that CI shape on purpose: once the held read
         reaches the server, the loop blocks for 0.6 s, past the old hold.
+
+        The replacement is made certain the same way. The pool hands out the
+        connection returned LAST, so whether some later read happened to take
+        the discarded one depended on the order other reads finished in (a
+        starved runner: `discarded=1, accepted=4`). Instead, once the pool is
+        idle, the test makes `cap` replay reads at once, each held: together
+        they take every connection the pool may hold, the discarded one
+        included, so its replacement socket must be opened.
         """
         server = wired.request_server
         server.hold_next(b"MGET")
@@ -586,8 +594,20 @@ class TestTheBudgetHoldsAcrossConcurrentStreams:
         try:
             for reader in readers:
                 await reader.opened()
-            assert await _until(
-                lambda: wired.request_pool.discarded >= 1
+            assert await _until(lambda: wired.request_pool.discarded >= 1), (
+                "the held replay read was never cancelled at its deadline: "
+                f"{wired.request_pool!r}, accepted={server.accepted}"
+            )
+            from app.utils import request_cache
+            from app.utils.live_push import latest_frames
+
+            pool = (await request_cache.get_shared_async_redis()).connection_pool
+            assert await _until(lambda: not pool._in_use_connections), pool
+            cap = redis_state._REDIS_MAX_CONNECTIONS
+            server.hold_next(b"MGET", times=cap)
+            await asyncio.gather(*(latest_frames([4050 + n]) for n in range(cap)))
+            assert (
+                wired.request_pool.discarded >= 1
                 and wired.request_server.accepted > wired.request_pool.peak
             ), (
                 "no replay read was replaced after its deadline, so this arm "
