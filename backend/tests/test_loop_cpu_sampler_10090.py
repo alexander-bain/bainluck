@@ -516,3 +516,90 @@ def test_sqlalchemy_statement_cpu_is_charged_to_its_stage_not_other(restore_sigp
     total = sum(stages.values())
     assert total >= 100, stages
     assert stages.get("flush", 0) / total >= 0.9, stages
+
+
+# ── EXPERIMENT (draft PR, not for merge): which handler call pulls samples? ──
+def _host_facts():
+    import platform
+
+    facts = {"kernel": platform.release()}
+    for name, path in (("clocksource", "/sys/devices/system/clocksource/clocksource0/current_clocksource"),
+                       ("hz_hint", "/proc/sys/kernel/sched_min_granularity_ns")):
+        try:
+            facts[name] = open(path).read().strip()
+        except OSError:
+            facts[name] = None
+    try:
+        for line in open("/proc/cpuinfo"):
+            if line.startswith("model name"):
+                facts["cpu"] = line.split(":", 1)[1].strip()
+                break
+    except OSError:
+        pass
+    return facts
+
+
+def _bare_variant(timer, rounds, extra):
+    import random
+
+    rng = random.Random(7)
+    counts: dict = {}
+    sig = _TIMER_SIGNAL[timer]
+
+    def on_signal(signum, frame):
+        extra()
+        if frame is not None:
+            counts[frame.f_code.co_name] = counts.get(frame.f_code.co_name, 0) + 1
+        extra()
+        signal.setitimer(timer, 0.003 * (0.5 + rng.random()))
+
+    signal.signal(sig, on_signal)
+    signal.setitimer(timer, 0.003)
+    try:
+        for _ in range(rounds):
+            hot_three()
+            syscall_decoy()
+    finally:
+        signal.setitimer(timer, 0)
+        signal.signal(sig, signal.SIG_DFL)
+    h, d = counts.get("hot_three", 0), counts.get("syscall_decoy", 0)
+    return round(h / max(1, h + d), 3), h + d
+
+
+def _sampler_variant(timer, rounds, monkeypatch, no_thread_time, no_clock):
+    if no_thread_time:
+        monkeypatch.setattr(mod.time, "thread_time", lambda: 0.0)
+    kwargs = {"clock": (lambda: 0.0)} if no_clock else {}
+    sampler = LoopCpuSampler(interval_s=0.003, enabled=_on, timer=timer, **kwargs).start(thread=False)
+    try:
+        for _ in range(rounds):
+            hot_three()
+            syscall_decoy()
+    finally:
+        sampler.stop()
+        monkeypatch.undo()
+    c = _names(sampler._window.self_counts)
+    h, d = c.get("hot_three", 0), c.get("syscall_decoy", 0)
+    return round(h / max(1, h + d), 3), h + d
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="experiment targets Linux runners")
+def test_EXPERIMENT_handler_syscalls_vs_attribution(restore_sigprof, monkeypatch):
+    import json as _json
+
+    timer = signal.ITIMER_PROF
+    hot, decoy = _cpu_per_call(hot_three), _cpu_per_call(syscall_decoy)
+    rounds = max(50, int(1.5 / (hot + decoy)))
+    rows = []
+    for i in range(6):
+        rows.append({
+            "bare": _bare_variant(timer, rounds, lambda: None),
+            "bare+thread_time": _bare_variant(timer, rounds, time.thread_time),
+            "bare+monotonic": _bare_variant(timer, rounds, time.monotonic),
+            "sampler": _sampler_variant(timer, rounds, monkeypatch, False, False),
+            "sampler-no-thread_time": _sampler_variant(timer, rounds, monkeypatch, True, False),
+            "sampler-no-clocks": _sampler_variant(timer, rounds, monkeypatch, True, True),
+        })
+    with open("/dev/stderr", "w") as err:
+        err.write("\nEXPERIMENT " + _json.dumps({"host": _host_facts(), "expected": round(hot / (hot + decoy), 3),
+                                                 "rows": rows}) + "\n")
