@@ -1514,6 +1514,7 @@ async def get_rain(db: AsyncSession):
             # from — a 99.5¢ day is not an umbrella day.
             "probability": raw,
             "icon": _rain_icon(raw),
+            "market_id": getattr(m, "id", None),
         })
 
     # --- Monthly city rain ---
@@ -1551,6 +1552,7 @@ async def get_rain(db: AsyncSession):
             "settled": _get_yes_settled(m),
             "src": _market_source(m) or None,
             "delta24h": delta,
+            "market_id": getattr(m, "id", None),
         })
 
     monthly_rain.sort(key=lambda x: x["prob"], reverse=True)
