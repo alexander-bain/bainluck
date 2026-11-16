@@ -1939,6 +1939,9 @@ def assemble_story_theme_bundles(
 
     bundle_by_story: dict[str, dict[str, Any]] = {}
     represented_ids: set[str] = set()
+    # Duplicates folded into a survivor that goes out as its own card (no
+    # bundle formed): never emitted, so the survivor is the only copy.
+    folded_into_single: set[str] = set()
     for story_key, members in groups.items():
         if len(members) < min_items:
             continue
@@ -1960,6 +1963,16 @@ def assemble_story_theme_bundles(
                 continue
             members = verified_members
         if len(members) < min_items:
+            # Monday's render (Nov 16, seat 22): "IPOs" held only Polymarket's two
+            # Anthropic market-cap listings. Folding one left one member, no card
+            # formed, and BOTH came back as standalone cards at 45% and 51%. A
+            # venue's second listing of ONE market goes with the card: the
+            # survivor emits on its own below. Two venues' copies of a question
+            # keep #4446's floor (both ship) — that fold is not this one.
+            folded_into_single.update(
+                _item_id(f) for f in folded
+                if any(_same_listing_with_a_qualifier(_futures_data(k), _futures_data(f)) for k in members)
+            )
             continue
         chosen = members[:max_items_per_bundle]
         if len(chosen) < min_items:
@@ -1983,12 +1996,14 @@ def assemble_story_theme_bundles(
         # represent it.
         represented_ids.update(_item_id(item) for item in folded)
 
-    if not represented_ids:
+    if not represented_ids and not folded_into_single:
         return items
 
     emitted: set[str] = set()
     output: list[dict[str, Any]] = []
     for item in items:
+        if _item_id(item) in folded_into_single:
+            continue
         if _item_id(item) not in represented_ids:
             output.append(item)
             continue

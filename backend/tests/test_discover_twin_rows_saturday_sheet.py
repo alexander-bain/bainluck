@@ -126,3 +126,17 @@ def test_brackets_inside_a_title_name_different_things_and_never_fold():
     # Same title twice, or another venue, is not this rule's business.
     assert not same(a, m("Anthropic IPO Closing Market Cap"))
     assert not same(a, {"name": b["name"], "source": "polymarket"})
+
+
+def test_a_fold_that_leaves_too_few_members_still_shows_one_card_not_two():
+    """Monday Nov 16, seat 22: "IPOs" was only Polymarket's two Anthropic
+    market-cap listings (the served members, verbatim). After the fold no card can
+    form; the survivor goes out alone and the duplicate must not come back too."""
+    import json
+    from pathlib import Path
+
+    members = json.loads((Path(__file__).parent / "fixtures" / "discover_ipos_2026_11_16.json").read_text())
+    out = db.assemble_story_theme_bundles(members)
+    names = [i["data"].get("name") for i in out if i.get("type") == "futures"]
+    assert not [i for i in out if i.get("type") == "bundle"]
+    assert names == ["Anthropic IPO Closing Market Cap (Middle Brackets)"], names
