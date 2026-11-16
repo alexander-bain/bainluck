@@ -112,6 +112,20 @@ class VerifiedSummaryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     RECEIPT.verified_summary(log, exit_code)
 
+    def test_selected_tests_floor_accepts_full_compatibility_slice_and_rejects_shortfall(self):
+        selected = summary(count=451).replace("'All tests'", "'Selected tests'") + "** TEST SUCCEEDED **\n"
+        count, line = RECEIPT.verified_summary(
+            selected, 0, suite_name="Selected tests", min_tests=400
+        )
+        self.assertEqual(count, 451)
+        self.assertIn("Executed 451 tests, with 0 failures", line)
+
+        shortfall = summary(count=399).replace("'All tests'", "'Selected tests'") + "** TEST SUCCEEDED **\n"
+        with self.assertRaises(ValueError):
+            RECEIPT.verified_summary(
+                shortfall, 0, suite_name="Selected tests", min_tests=400
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

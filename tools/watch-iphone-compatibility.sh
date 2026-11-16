@@ -50,10 +50,54 @@ printf '%s\n' "$TEST_UDID" > "$OUT/destination.txt"
 xcrun simctl boot "$TEST_UDID"
 xcrun simctl bootstatus "$TEST_UDID" -b
 # This simulator and all build files disappear when GitHub disposes the runner.
+# #4932 / #12513: compiles the entire Bain Luck + BainLuckTests targets unsigned,
+# then executes all Watch, Widget, WatchConnectivity/Pins, Wrist Tile, Siri/Spotlight,
+# and shared card/label/badge iPhone compatibility suites (450+ tests).
+COMPATIBILITY_SUITES=(
+  -only-testing:BainLuckTests/APinManagement9875Tests
+  -only-testing:BainLuckTests/APinRuntimeSeam9875Tests
+  -only-testing:BainLuckTests/APinTapAlwaysSaysWhatHappened9495Tests
+  -only-testing:BainLuckTests/APinnedItemShowsInMyStuffOutsideTheTeamFeed10011Tests
+  -only-testing:BainLuckTests/BookmarkPinEverywhereTests
+  -only-testing:BainLuckTests/CollegeSchoolNames194ATests
+  -only-testing:BainLuckTests/CompactGameCard12616Tests
+  -only-testing:BainLuckTests/ContextualTipsPinStore10876Tests
+  -only-testing:BainLuckTests/CrestBadgeInitialsTests
+  -only-testing:BainLuckTests/CrestBadgeNamesAPerson4624Tests
+  -only-testing:BainLuckTests/SavedGameWidgetAndWristTileSat5Tests
+  -only-testing:BainLuckTests/SavedItemWidget10875Tests
+  -only-testing:BainLuckTests/SavedItemWidgetLockScreen10875Tests
+  -only-testing:BainLuckTests/SavedItemWidgetParity10875Tests
+  -only-testing:BainLuckTests/SavedItemWidgetSettledResult10875Tests
+  -only-testing:BainLuckTests/SavedWidgetArt12466Tests
+  -only-testing:BainLuckTests/SiriShortcutsAnswerTheDetail10873Tests
+  -only-testing:BainLuckTests/SpotlightAbbreviations12315Tests
+  -only-testing:BainLuckTests/SpotlightIndex10874Tests
+  -only-testing:BainLuckTests/TeamLabelSingleSourceAcrossTargetsTests
+  -only-testing:BainLuckTests/TeamShortNameCountry5634Tests
+  -only-testing:BainLuckTests/TeamShortNameEsportsWholeOrg5634Tests
+  -only-testing:BainLuckTests/TeamShortNameEuroleagueWholeClub5634Tests
+  -only-testing:BainLuckTests/TeamShortNamePairTests
+  -only-testing:BainLuckTests/TeamShortNameSoccerWholeClub5634Tests
+  -only-testing:BainLuckTests/TeamShortNameSportWordClub5634Tests
+  -only-testing:BainLuckTests/TeamShortNameTests
+  -only-testing:BainLuckTests/TeamShortNameTwoWordNickname5634Tests
+  -only-testing:BainLuckTests/WatchDiscoveryHTTPTests
+  -only-testing:BainLuckTests/WatchDiscoveryTests
+  -only-testing:BainLuckTests/WatchFuturesLifecycleTests
+  -only-testing:BainLuckTests/WatchGuessPoolTests
+  -only-testing:BainLuckTests/WatchGuessViewModelTests
+  -only-testing:BainLuckTests/WatchMarqueeTests
+  -only-testing:BainLuckTests/WatchPins12640Tests
+  -only-testing:BainLuckTests/WatchTelemetryConsentTests
+  -only-testing:BainLuckTests/WidgetDiscoverLifecycleTests
+  -only-testing:BainLuckTests/WidgetFeedDecodeTests
+)
 set +e
 xcodebuild test -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -scheme BainLuckTests -configuration Debug \
   -destination "platform=iOS Simulator,id=$TEST_UDID" \
+  "${COMPATIBILITY_SUITES[@]}" \
   -derivedDataPath "$DERIVED" -resultBundlePath "$OUT/BainLuckTests.xcresult" \
   -parallel-testing-enabled NO -jobs 2 -collect-test-diagnostics never \
   -test-timeouts-enabled YES -maximum-test-execution-time-allowance 180 \
@@ -65,4 +109,5 @@ set -e
 printf 'xcodebuild exit: %s\n' "$TEST_EXIT"
 if [[ "$TEST_EXIT" -ne 0 ]]; then tail -80 "$OUT/tests.log"; fi
 python3 "$ROOT/tools/watch_iphone_receipt.py" --log "$OUT/tests.log" \
-  --exit-code "$TEST_EXIT" --sha "$SHA" --output "$OUT/receipt.json"
+  --exit-code "$TEST_EXIT" --sha "$SHA" --output "$OUT/receipt.json" \
+  --suite-name "Selected tests" --min-tests 400

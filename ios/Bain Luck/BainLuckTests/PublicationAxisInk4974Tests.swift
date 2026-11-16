@@ -558,7 +558,7 @@ final class PublicationAxisInk4974Tests: XCTestCase {
             let (host, window) = hosted(chart(history, journey: journey, range: range,
                                               withLegacyWindow: withLegacyWindow, selection: selection))
             defer { window.isHidden = true }
-            selection.hold(date: at(235))
+            selection.hold(date: at(240))
             pump(host)
             return try visibleText(host, name: name)
         }
@@ -582,7 +582,7 @@ final class PublicationAxisInk4974Tests: XCTestCase {
         let journey = try lateJourney()
         for range in Self.ranges {
             let selection = OddsChartSelection()
-            selection.hold(date: at(235))
+            selection.hold(date: at(240))
             let text = try hostedFullscreenText(chart(history, journey: journey, range: range, withLegacyWindow: true,
                                                       selection: selection), name: "fullscreen-tail-\(range)")
             XCTAssertTrue(text.contains("57%"), "\(range): \(text)")

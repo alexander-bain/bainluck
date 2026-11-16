@@ -190,13 +190,26 @@ extension VisibleLivePriceStatusTests {
             defer { vm.stopRefresh(); window.isHidden = true }
             settle(host, 0.4)
             let recognized = try text(shot(host, name))
-            // #12755 (Ruling 200-B) — live NFL mounts the compact Score · Proj. · Now
-            // headline, whose info control says every state (waiting included) in its
-            // details and spoken label, never as words beside the probability.
-            XCTAssertTrue(recognized.contains("Score") && recognized.contains("Now"), recognized)
+            // #9483 — the hero no longer prints "Win Probability" (it sits
+            // behind the info control with the confidence bars; the chart
+            // header below still names the chart). What the hero must carry
+            // instead: the pair's subject. The info control itself is
+            // rendered and measured in `HeadlineDisclosure9483Tests`.
+            XCTAssertTrue(recognized.contains("Current win chance"), recognized)
+            // #11285 — this NFL page takes the adopted headline, whose info
+            // control says every state (waiting included) in its details and
+            // spoken label, never as words beside the probability.
             XCTAssertFalse(recognized.contains("Waiting for update"), recognized)
+            // #8320 v24: the receipt row left the hero; the exact time is on tap only.
             XCTAssertNil(recognized.range(of: "No live.*update yet", options: .regularExpression), recognized)
-            XCTAssertTrue(recognized.contains("55.0") && recognized.contains("45.0"), recognized)
+            // #10830 — read as the hero's adjacent pair. With Start Live Activity
+            // moved under the chart, page-wide OCR reads the pixel-identical hero
+            // as "55% - 45" (the crest circle beside it swallows the trailing %).
+            // #9483 — this fixture is an NFL game, so the paired headline
+            // prints each chance under its own team ("Ravens 55% … Cowboys 45%").
+            // #10090 (ALEX item 39) — in tenths: "Ravens 55.0% … Cowboys 45.0%".
+            XCTAssertTrue(recognized.range(of: #"55\.0%\s*[-–—,]?\s*45\.0%?"#, options: .regularExpression) != nil
+                || (recognized.contains("Ravens 55.0%") && recognized.contains("Cowboys 45.0%")), recognized)
         }
     }
 }

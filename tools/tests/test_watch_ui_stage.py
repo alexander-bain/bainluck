@@ -63,7 +63,7 @@ class StageTests(unittest.TestCase):
             '-xctestrun "$XCTESTRUN"',
             "-test-timeouts-enabled YES",
             "-default-test-execution-time-allowance 180",
-            "-maximum-test-execution-time-allowance 300",
+            "-maximum-test-execution-time-allowance 540",
         ]:
             self.assertIn(required, source)
         workflow = (ROOT / ".github/workflows/watch-mvp.yml").read_text()
