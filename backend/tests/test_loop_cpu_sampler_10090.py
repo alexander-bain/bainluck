@@ -584,7 +584,7 @@ def _sampler_variant(timer, rounds, monkeypatch, no_thread_time, no_clock):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="experiment targets Linux runners")
-def test_EXPERIMENT_handler_syscalls_vs_attribution(restore_sigprof, monkeypatch):
+def test_EXPERIMENT_handler_syscalls_vs_attribution(restore_sigprof, monkeypatch, capsys):
     import json as _json
 
     timer = signal.ITIMER_PROF
@@ -600,6 +600,6 @@ def test_EXPERIMENT_handler_syscalls_vs_attribution(restore_sigprof, monkeypatch
             "sampler-no-thread_time": _sampler_variant(timer, rounds, monkeypatch, True, False),
             "sampler-no-clocks": _sampler_variant(timer, rounds, monkeypatch, True, True),
         })
-    with open("/dev/stderr", "w") as err:
-        err.write("\nEXPERIMENT " + _json.dumps({"host": _host_facts(), "expected": round(hot / (hot + decoy), 3),
-                                                 "rows": rows}) + "\n")
+    with capsys.disabled():
+        print("\nEXPERIMENT " + _json.dumps({"host": _host_facts(), "expected": round(hot / (hot + decoy), 3),
+                                             "rows": rows}), flush=True)
